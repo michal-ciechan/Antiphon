@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -46,15 +47,28 @@ public sealed class ChannelReplyDispatcher
 {
     private sealed record ReplyTarget(string Provider, string? ReplyHandle, string ConversationId);
 
-    /// <summary>Why a correlation was abandoned without an answer. Both are Critical incidents.</summary>
+    /// <summary>Why a correlation was abandoned without an answer. All are Critical incidents.</summary>
     private enum LossReason
     {
-        /// <summary>No turn matching this prompt completed inside <c>PendingReplyTtlMinutes</c>.</summary>
+        /// <summary>No matching UserPrompt/QueuedUserPrompt after SentAt inside <c>PendingReplyTtlMinutes</c>.</summary>
         StaleTtl,
 
         /// <summary>The turn WAS answered, but the stored conversation key names no routable target.</summary>
         Unroutable,
+
+        /// <summary>A matching prompt was recorded but no TurnEnd (and no AssistantText) followed it.</summary>
+        TurnIncomplete,
+
+        /// <summary>A matching prompt, TurnEnd and AssistantText exist, but dispatch never settled the row.</summary>
+        TurnUnmatched,
     }
+
+    /// <summary>
+    /// Prefix of the targeted send to the originating conversation when a correlation is abandoned
+    /// (CARD-0233 / CARD-0171). Distinct from an agent reply so tests (and humans) can tell them apart.
+    /// </summary>
+    internal const string LostReplyNoticePrefix =
+        "[Antiphon] A reply this chat was owed was never delivered:";
 
     // The last turn we replied for, per session. Claude can keep writing AssistantText AFTER the
     // TurnEnd that triggered dispatch (observed live 2026-07-29, AZ Care: TurnEnd, AssistantText,
@@ -411,9 +425,69 @@ public sealed class ChannelReplyDispatcher
 
         await SettleAsync(db, stale, ct);
         foreach (var bySession in stale.GroupBy(m => m.AgentSessionId))
-            await ReportLostAsync(bySession.Key, bySession.ToList(), LossReason.StaleTtl, ct);
+        {
+            var classified = new List<(SessionQueuedMessage Msg, LossReason Reason, TranscriptEntry? Prompt, int Chars)>();
+            foreach (var m in bySession)
+            {
+                var (reason, prompt, chars) = await ClassifyTtlLossAsync(db, m, ct);
+                classified.Add((m, reason, prompt, chars));
+            }
+
+            foreach (var byReason in classified.GroupBy(c => c.Reason))
+            {
+                var sample = byReason.First();
+                await ReportLostAsync(
+                    bySession.Key,
+                    byReason.Select(c => c.Msg).ToList(),
+                    sample.Reason,
+                    ct,
+                    unmatchedPrompt: sample.Prompt,
+                    assistantChars: sample.Chars);
+            }
+        }
 
         return stale.Count;
+    }
+
+    /// <summary>
+    /// CARD-0233: the TTL sweep used to always claim "no turn matching the message completed",
+    /// which was a lie when the agent had answered and dispatch attributed the turn to the wrong
+    /// prompt. Inspect the transcript before writing the incident.
+    /// </summary>
+    private async Task<(LossReason Reason, TranscriptEntry? Prompt, int AssistantChars)> ClassifyTtlLossAsync(
+        AppDbContext db, SessionQueuedMessage message, CancellationToken ct)
+    {
+        var sentAt = message.SentAt ?? message.CreatedAt;
+        var candidates = await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == message.AgentSessionId
+                && (t.Kind == TranscriptKinds.UserPrompt
+                    || t.Kind == TranscriptKinds.QueuedUserPrompt)
+                && (t.Timestamp ?? t.CreatedAt) >= sentAt)
+            .OrderBy(t => t.Sequence)
+            .ToListAsync(ct);
+
+        var normalizedBody = Normalize(message.Body);
+        var prompt = candidates.FirstOrDefault(t =>
+            t.Text is string text && PromptsMatch(normalizedBody, Normalize(text)));
+        if (prompt is null)
+            return (LossReason.StaleTtl, null, 0);
+
+        var hasTurnEnd = await db.TranscriptEntries.AnyAsync(
+            t => t.AgentSessionId == message.AgentSessionId
+                && t.Kind == TranscriptKinds.TurnEnd
+                && t.Sequence > prompt.Sequence, ct);
+        if (!hasTurnEnd)
+            return (LossReason.TurnIncomplete, prompt, 0);
+
+        var (_, entries) = await QueryTurnWindowAsync(
+            db, message.AgentSessionId, prompt.Sequence, afterSeq: prompt.Sequence, ct);
+        var assistantChars = entries
+            .Where(e => !string.IsNullOrWhiteSpace(e.Text))
+            .Sum(e => e.Text!.Length);
+        if (assistantChars == 0)
+            return (LossReason.TurnIncomplete, prompt, 0);
+
+        return (LossReason.TurnUnmatched, prompt, assistantChars);
     }
 
     /// <summary>
@@ -430,13 +504,19 @@ public sealed class ChannelReplyDispatcher
         Guid sessionId,
         IReadOnlyList<SessionQueuedMessage> lost,
         LossReason reason,
-        CancellationToken ct)
+        CancellationToken ct,
+        TranscriptEntry? unmatchedPrompt = null,
+        int assistantChars = 0)
     {
         var conversations = DescribeConversations(lost);
         var why = reason switch
         {
             LossReason.Unroutable =>
                 $"the stored conversation key names no routable target ({conversations})",
+            LossReason.TurnIncomplete =>
+                $"a matching prompt was recorded but no turn completed within {_settings.PendingReplyTtlMinutes} minutes",
+            LossReason.TurnUnmatched =>
+                $"a turn completed (prompt seq {unmatchedPrompt?.Sequence}, {assistantChars} chars) but the dispatcher did not route it",
             _ => $"no turn matching the message completed within {_settings.PendingReplyTtlMinutes} minutes",
         };
         var oldest = lost.Min(m => m.SentAt ?? m.CreatedAt);
@@ -479,24 +559,90 @@ public sealed class ChannelReplyDispatcher
 
             // Scoped supervisor sharing this scope's AppDbContext; RecordIncidentAsync does NOT save.
             var supervisor = scope.ServiceProvider.GetService<AgentSupervisorService>();
-            if (supervisor is null)
-                return;
+            if (supervisor is not null)
+            {
+                var incidentMessage =
+                    $"A reply this agent owed {conversations} was never sent: {lost.Count} message(s) went "
+                    + $"unanswered because {why}.";
+                if (reason == LossReason.TurnUnmatched && unmatchedPrompt?.Text is string promptBody)
+                {
+                    var excerpt = ColumnText.Clip(Normalize(promptBody), 80);
+                    incidentMessage += $" Unmatched prompt: \"{excerpt}\".";
+                }
+                incidentMessage += " Someone in that chat asked a question and got silence.";
 
-            await supervisor.RecordIncidentAsync(
-                owner,
-                sessionId,
-                AgentIncidentKind.ChannelReplyLost,
-                AlertSeverity.Critical,
-                $"A reply this agent owed {conversations} was never sent: {lost.Count} message(s) went "
-                + $"unanswered because {why}. Someone in that chat asked a question and got silence.",
-                failureReason: reason.ToString(),
-                ct: ct);
-            await db.SaveChangesAsync(ct);
+                await supervisor.RecordIncidentAsync(
+                    owner,
+                    sessionId,
+                    AgentIncidentKind.ChannelReplyLost,
+                    AlertSeverity.Critical,
+                    ColumnText.Clip(incidentMessage, AgentIncident.MessageMaxLength),
+                    failureReason: reason.ToString(),
+                    ct: ct);
+                await db.SaveChangesAsync(ct);
+            }
+
+            // CARD-0233 decision 2: tell the originating conversation, not ChannelAlertRouter
+            // (every AlertMinSeverity is null today; filling one would dump every Critical into
+            // Family). Unroutable has nowhere to send. A send failure is a Warning, never a
+            // failed sweep — the incident has already committed.
+            if (reason != LossReason.Unroutable)
+                await NotifyOriginatingConversationsAsync(scope.ServiceProvider, lost, why, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex,
                 "Recording the lost channel reply incident for session {SessionId} failed", sessionId);
+        }
+    }
+
+    /// <summary>
+    /// CARD-0171 shape: a targeted <see cref="ChatChannelService.SendAsync"/> to the conversation
+    /// named by each lost row's <c>ConversationKey</c>. Not the alert-sink path.
+    /// </summary>
+    private async Task NotifyOriginatingConversationsAsync(
+        IServiceProvider services,
+        IReadOnlyList<SessionQueuedMessage> lost,
+        string why,
+        CancellationToken ct)
+    {
+        var channels = services.GetService<ChatChannelService>();
+        if (channels is null)
+            return;
+
+        var db = services.GetRequiredService<AppDbContext>();
+        var text = $"{LostReplyNoticePrefix} {why}.";
+        foreach (var key in lost
+                     .Select(m => m.ConversationKey)
+                     .Where(k => !string.IsNullOrWhiteSpace(k))
+                     .Distinct(StringComparer.Ordinal))
+        {
+            if (!TrySplitConversationKey(key!, out var provider, out var conversationId))
+                continue;
+
+            var channel = await db.ChatChannels.AsNoTracking()
+                .FirstOrDefaultAsync(c => c.Provider == provider && c.ExternalId == conversationId, ct);
+            if (channel is null)
+            {
+                _logger.LogWarning(
+                    "ChannelReplyLost notice not sent: no catalog row for {ConversationKey}", key);
+                continue;
+            }
+
+            try
+            {
+                await channels.SendAsync(channel.Id, text, ct);
+            }
+            catch (ConflictException ex) when (ex.Code == "channel_disabled")
+            {
+                _logger.LogWarning(
+                    "ChannelReplyLost notice not sent: channel {ChannelId} ({ConversationKey}) is disabled",
+                    channel.Id, key);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "ChannelReplyLost notice to {ConversationKey} failed", key);
+            }
         }
     }
 

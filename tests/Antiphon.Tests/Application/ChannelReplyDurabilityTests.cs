@@ -131,7 +131,10 @@ public class ChannelReplyDurabilityTests
         var abandoned = await h.Dispatcher.SweepStaleCorrelationsAsync(CancellationToken.None);
         abandoned.ShouldBeGreaterThanOrEqualTo(1, "a shared database means other rows may ride along");
 
-        h.Messaging.SentReplies.ShouldBeEmpty("nothing to send — the agent never answered");
+        var notice = h.Messaging.SentReplies.Where(r => r.ConversationId == chatId).ShouldHaveSingleItem();
+        notice.Text.ShouldNotBeNull();
+        notice.Text.ShouldStartWith(ChannelReplyDispatcher.LostReplyNoticePrefix);
+        notice.Text.ShouldContain("no turn matching the message completed");
         (await RowAsync(messageId)).ChannelReplySettledAt.ShouldNotBeNull(
             "abandoning is terminal, or the incident would re-raise on every sweep");
 
@@ -142,6 +145,7 @@ public class ChannelReplyDurabilityTests
             .ShouldHaveSingleItem();
         incident.Severity.ShouldBe(AlertSeverity.Critical, "a human is waiting on this reply");
         incident.SessionId.ShouldBe(h.SessionId);
+        incident.FailureReason.ShouldBe("StaleTtl");
         incident.Message.ShouldContain(conversationKey);
         (await db.Alerts.AnyAsync(a => a.AgentId == h.AgentId))
             .ShouldBeTrue("the incident must reach the alert pipeline, not just the incident table");
@@ -314,7 +318,9 @@ public class ChannelReplyDurabilityTests
         var abandoned = await h.Dispatcher.SweepStaleCorrelationsAsync(CancellationToken.None);
         abandoned.ShouldBeGreaterThanOrEqualTo(1, "a shared database means other rows may ride along");
 
-        h.Messaging.SentReplies.ShouldBeEmpty();
+        h.Messaging.SentReplies.Where(r => r.ConversationId == chatId).ShouldHaveSingleItem()
+            .Text.ShouldNotBeNull()
+            .ShouldStartWith(ChannelReplyDispatcher.LostReplyNoticePrefix);
         (await RowAsync(messageId)).ChannelReplySettledAt.ShouldNotBeNull("abandoning is terminal");
 
         await using var db = CreateContext();
@@ -323,5 +329,92 @@ public class ChannelReplyDurabilityTests
                 .ToListAsync())
             .ShouldHaveSingleItem()
             .Severity.ShouldBe(AlertSeverity.Critical);
+    }
+
+    // CARD-0233 S3: three silences that used to share the StaleTtl lie "no turn matching the
+    // message completed". The TTL sweep now inspects the transcript first.
+
+    [Test]
+    public async Task Ttl_with_no_matching_prompt_is_stale_ttl()
+    {
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var prompt = "[Telegram \"AZ Care\" — Mike 21:03] Give me message to Phil";
+
+        var messageId = await h.SeedChannelCorrelationAsync(
+            prompt, $"telegram:{chatId}", sentAtUtc: DateTime.UtcNow.AddHours(-2));
+
+        await h.Dispatcher.SweepStaleCorrelationsAsync(CancellationToken.None);
+
+        (await RowAsync(messageId)).ChannelReplySettledAt.ShouldNotBeNull();
+        await using var db = CreateContext();
+        var incident = (await db.AgentIncidents
+                .Where(i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.ChannelReplyLost)
+                .ToListAsync())
+            .ShouldHaveSingleItem();
+        incident.FailureReason.ShouldBe("StaleTtl");
+        incident.Message.ShouldContain("no turn matching the message completed");
+        h.Messaging.SentReplies.Where(r => r.ConversationId == chatId).ShouldHaveSingleItem();
+    }
+
+    [Test]
+    public async Task Ttl_with_a_matching_prompt_but_no_turn_end_is_turn_incomplete()
+    {
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var prompt = "[Telegram \"AZ Care\" — Mike 21:03] Give me message to Phil";
+
+        var messageId = await h.SeedChannelCorrelationAsync(
+            prompt, $"telegram:{chatId}", sentAtUtc: DateTime.UtcNow.AddHours(-2));
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, prompt);
+
+        await h.Dispatcher.SweepStaleCorrelationsAsync(CancellationToken.None);
+
+        (await RowAsync(messageId)).ChannelReplySettledAt.ShouldNotBeNull();
+        await using var db = CreateContext();
+        var incident = (await db.AgentIncidents
+                .Where(i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.ChannelReplyLost)
+                .ToListAsync())
+            .ShouldHaveSingleItem();
+        incident.FailureReason.ShouldBe("TurnIncomplete");
+        incident.Message.ShouldContain("a matching prompt was recorded but no turn completed");
+        incident.Severity.ShouldBe(AlertSeverity.Critical);
+    }
+
+    [Test]
+    public async Task Ttl_with_a_completed_unmatched_turn_is_turn_unmatched()
+    {
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var prompt = "[Telegram \"AZ Care\" — Mike Ciechan 21:03] Give me message to Phil asking for quote for all 3 certificates";
+        const string hiPhil = "Hi Phil,\n\nCould you please quote for EPC, CP12 and EICR.\n\nThanks, Ola Zawojska";
+
+        var messageId = await h.SeedChannelCorrelationAsync(
+            prompt, $"telegram:{chatId}", sentAtUtc: DateTime.UtcNow.AddHours(-2));
+        // Previous settled turn, then the incident shape: UserPrompt, in-turn bootstrap,
+        // AssistantText, TurnEnd — dispatch is NEVER called (forced miss).
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var promptSeq = await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, prompt);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.QueuedUserPrompt, ChannelPreamble.BootstrapBody);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, hiPhil);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+
+        await h.Dispatcher.SweepStaleCorrelationsAsync(CancellationToken.None);
+
+        (await RowAsync(messageId)).ChannelReplySettledAt.ShouldNotBeNull();
+        var notice = h.Messaging.SentReplies.Where(r => r.ConversationId == chatId).ShouldHaveSingleItem();
+        notice.Text.ShouldNotBeNull();
+        notice.Text.ShouldStartWith(ChannelReplyDispatcher.LostReplyNoticePrefix);
+        notice.Text.ShouldNotContain(hiPhil);
+
+        await using var db = CreateContext();
+        var incident = (await db.AgentIncidents
+                .Where(i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.ChannelReplyLost)
+                .ToListAsync())
+            .ShouldHaveSingleItem();
+        incident.FailureReason.ShouldBe("TurnUnmatched");
+        incident.Severity.ShouldBe(AlertSeverity.Critical);
+        incident.Message.ShouldContain($"prompt seq {promptSeq}");
+        incident.Message.ShouldContain("Give me message to Phil");
     }
 }
