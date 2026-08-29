@@ -1463,8 +1463,11 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     // idle by construction, but on the resume/fallback paths the reused session row can carry a
     // stale mid-turn transcript that makes IsWorkingAsync read true — a WhenIdle enqueue would skip
     // the idle fast-path, no turn-end is coming, and the stranded watchdog only covers always-on
-    // agents. Failure falls back to a WhenIdle enqueue (watchdog / next turn-end recovery) and must
-    // never fail the launch. No reply correlation is tracked — notes never route to a chat.
+    // agents. CARD-0233: if a Channel-origin row is still owed a reply (Pending, or Sent with
+    // ChannelReplySettledAt null), yield to it — WhenIdle / Origin=System — instead of typing
+    // Mode.Now into a composer that is already answering a chat. Failure falls back to a WhenIdle
+    // enqueue (watchdog / next turn-end recovery) and must never fail the launch. No reply
+    // correlation is tracked — notes never route to a chat.
     private async Task DeliverLaunchNoteAsync(
         Guid sessionId, AgentSessionResumeMode? resumeMode, LaunchNotes? notes, CancellationToken ct)
     {
@@ -1474,9 +1477,20 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         if (string.IsNullOrWhiteSpace(body))
             return;
 
+        var yieldToChannel = await _db.SessionQueuedMessages.AnyAsync(
+            m => m.AgentSessionId == sessionId
+                && m.Origin == QueuedMessageOrigin.Channel
+                && m.ChannelReplySettledAt == null
+                && (m.Status == QueuedMessageStatus.Pending
+                    || m.Status == QueuedMessageStatus.Sent),
+            ct);
+        var mode = yieldToChannel ? MessageSendMode.WhenIdle : MessageSendMode.Now;
+
         try
         {
-            await _messageQueue.EnqueueAsync(sessionId, body, MessageSendMode.Now, ct);
+            await _messageQueue.EnqueueAsync(
+                sessionId, body, mode, ct,
+                origin: yieldToChannel ? QueuedMessageOrigin.System : QueuedMessageOrigin.Ui);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

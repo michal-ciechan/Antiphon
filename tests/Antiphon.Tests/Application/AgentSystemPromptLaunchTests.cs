@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
@@ -210,6 +211,72 @@ public class AgentSystemPromptLaunchTests
         await StartAsync(h, fresh: false);
 
         Factory(h).Created[1].SubmittedBodies.ShouldBe([ChannelPreamble.BootstrapBody]);
+    }
+
+    // CARD-0233 S4: a Mode.Now launch note typed into a composer that was already answering a
+    // Telegram message landed as QueuedUserPrompt inside that turn and stole its identity. When
+    // a Channel-origin row is still owed, the note is WhenIdle / Origin=System and waits for
+    // that turn's TurnEnd. The clean-start Now-mode case above is unchanged.
+    [Test]
+    public async Task Launch_note_yields_to_an_owed_channel_row()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await SetPreambleAsync(h, Template);
+        var chatId = await h.BindChannelAsync();
+        const string channelBody = "[Telegram \"AZ Care\" — Mike 21:03] Give me message to Phil";
+        await using (var db = CreateContext())
+        {
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = h.SessionId,
+                Body = channelBody,
+                Status = QueuedMessageStatus.Pending,
+                Sequence = 1,
+                Origin = QueuedMessageOrigin.Channel,
+                ConversationKey = $"telegram:{chatId}",
+                CreatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+        await EndSessionAsync(h, SessionStatus.Stopped);
+        await h.Runtime.DisposeSessionAsync(h.SessionId);
+
+        Factory(h).ConfigureNext.Enqueue(a =>
+        {
+            a.OnSubmitted = async submitted =>
+            {
+                if (a.StartedSessionId is not Guid sessionId)
+                    return;
+                await BridgeQueueHarness.InsertEntryAsync(
+                    sessionId, TranscriptKinds.UserPrompt, submitted, timestamp: DateTime.UtcNow);
+            };
+        });
+
+        await StartAsync(h, fresh: false);
+
+        var adapter = Factory(h).Created.ShouldHaveSingleItem();
+        adapter.SubmittedBodies.ShouldBe([channelBody],
+            "the launch note must not type until the owed channel turn ends");
+
+        await using (var db = CreateContext())
+        {
+            var note = await db.SessionQueuedMessages.SingleAsync(m =>
+                m.AgentSessionId == h.SessionId && m.Origin == QueuedMessageOrigin.System);
+            note.Body.ShouldBe(ChannelPreamble.RestartResumeBody);
+            note.Status.ShouldBe(QueuedMessageStatus.Pending);
+        }
+
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
+
+        adapter.SubmittedBodies.ShouldBe([channelBody, ChannelPreamble.RestartResumeBody]);
+        await using (var db = CreateContext())
+        {
+            var note = await db.SessionQueuedMessages.SingleAsync(m =>
+                m.AgentSessionId == h.SessionId && m.Origin == QueuedMessageOrigin.System);
+            note.Status.ShouldBe(QueuedMessageStatus.Sent);
+        }
     }
 
     [Test]
