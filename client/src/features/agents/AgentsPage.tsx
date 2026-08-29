@@ -9,11 +9,13 @@ import {
   Group,
   Loader,
   Menu,
+  Modal,
   Paper,
   SimpleGrid,
   Stack,
   Table,
   Text,
+  TextInput,
   Title,
   Tooltip,
   UnstyledButton,
@@ -28,6 +30,7 @@ import {
   TbLayoutKanban,
   TbPlayerPlay,
   TbPlayerStop,
+  TbPlugConnected,
   TbPlus,
   TbRefreshAlert,
   TbSettings,
@@ -43,6 +46,7 @@ import {
   useAgent,
   useAgentIncidents,
   useAgentList,
+  useAttachHerdrPane,
   useStartAgent,
   useStopAgent,
 } from '../../api/agents'
@@ -83,8 +87,11 @@ export function AgentsPage() {
   const [settingsAgent, setSettingsAgent] = useState<AgentSummaryDto | null>(null)
   const [terminalAgent, setTerminalAgent] = useState<AgentSummaryDto | null>(null)
   const [incidentsOpen, setIncidentsOpen] = useState(false)
+  const [attachOpen, setAttachOpen] = useState(false)
+  const [attachPaneId, setAttachPaneId] = useState('')
   const startAgent = useStartAgent(selectedAgentId ?? '')
   const stopAgent = useStopAgent(selectedAgentId ?? '')
+  const attachHerdr = useAttachHerdrPane(selectedAgentId ?? '')
   const incidents = useAgentIncidents(selectedAgentId, incidentsOpen)
 
   // Default to the first agent once the list arrives — adjusted during render, not in an effect,
@@ -200,6 +207,7 @@ export function AgentsPage() {
                     color="red"
                     leftSection={<TbPlayerStop size={16} />}
                     loading={stopAgent.isPending}
+                    data-testid="agent-session-stop"
                     onClick={() =>
                       stopAgent.mutate(undefined, {
                         onError: (error) =>
@@ -210,34 +218,48 @@ export function AgentsPage() {
                       })
                     }
                   >
-                    Stop
+                    {selected.data.liveSession?.herdrOrigin === 'attached' ? 'Detach' : 'Stop'}
                   </Button>
                 ) : (
-                  <Tooltip
-                    label="Boots the agent on its next queued card, or an interactive session if nothing is queued"
-                    openDelay={400}
-                  >
-                    <Button
-                      variant="light"
-                      leftSection={<TbPlayerPlay size={16} />}
-                      loading={startAgent.isPending}
-                      onClick={() =>
-                        // Remote control comes from the agent's persisted setting (Agent Settings).
-                        startAgent.mutate(
-                          {},
-                          {
-                            onError: (error) =>
-                              notifications.show({
-                                color: 'red',
-                                message: getApiErrorMessage(error, 'Could not start the agent'),
-                              }),
-                          },
-                        )
-                      }
+                  <>
+                    <Tooltip
+                      label="Boots the agent on its next queued card, or an interactive session if nothing is queued"
+                      openDelay={400}
                     >
-                      Start
-                    </Button>
-                  </Tooltip>
+                      <Button
+                        variant="light"
+                        leftSection={<TbPlayerPlay size={16} />}
+                        loading={startAgent.isPending}
+                        onClick={() =>
+                          // Remote control comes from the agent's persisted setting (Agent Settings).
+                          startAgent.mutate(
+                            {},
+                            {
+                              onError: (error) =>
+                                notifications.show({
+                                  color: 'red',
+                                  message: getApiErrorMessage(error, 'Could not start the agent'),
+                                }),
+                            },
+                          )
+                        }
+                      >
+                        Start
+                      </Button>
+                    </Tooltip>
+                    {selected.data.sessionBackend === 'Herdr' && (
+                      <Button
+                        variant="light"
+                        leftSection={<TbPlugConnected size={16} />}
+                        onClick={() => {
+                          setAttachPaneId('')
+                          setAttachOpen(true)
+                        }}
+                      >
+                        Attach…
+                      </Button>
+                    )}
+                  </>
                 )}
                 <Button
                   variant="subtle"
@@ -289,6 +311,47 @@ export function AgentsPage() {
         )}
       </Stack>
 
+      <Modal
+        opened={attachOpen}
+        onClose={() => setAttachOpen(false)}
+        title="Attach to Herdr pane"
+        data-testid="attach-herdr-modal"
+      >
+        <Stack>
+          <TextInput
+            label="Pane id"
+            placeholder="w2:p3"
+            description="herdr pane list shows ids"
+            value={attachPaneId}
+            onChange={(event) => setAttachPaneId(event.currentTarget.value)}
+            data-testid="attach-herdr-pane-id"
+          />
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => setAttachOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              loading={attachHerdr.isPending}
+              disabled={!attachPaneId.trim()}
+              onClick={() =>
+                attachHerdr.mutate(
+                  { paneId: attachPaneId.trim() },
+                  {
+                    onSuccess: () => setAttachOpen(false),
+                    onError: (error) =>
+                      notifications.show({
+                        color: 'red',
+                        message: getApiErrorMessage(error, 'Could not attach the Herdr pane'),
+                      }),
+                  },
+                )
+              }
+            >
+              Attach
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
       <AgentCreateModal opened={createOpen} onClose={() => setCreateOpen(false)} />
       <ProjectSetupModal opened={setupProjectOpen} onClose={() => setSetupProjectOpen(false)} />
       {settingsAgent && (

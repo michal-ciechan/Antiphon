@@ -506,6 +506,19 @@ export function useStartAgent(agentId: string) {
   })
 }
 
+export function useAttachHerdrPane(agentId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (request: { paneId: string }) =>
+      apiPost<AgentDetailDto>(`/agents/${agentId}/attach-herdr`, request),
+    onSuccess: (agent) => {
+      queryClient.setQueryData(agentKeys.detail(agentId), agent)
+      queryClient.invalidateQueries({ queryKey: agentKeys.all })
+      queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
+    },
+  })
+}
+
 export function useStopAgent(agentId: string) {
   const queryClient = useQueryClient()
   return useMutation({

@@ -188,6 +188,8 @@ export interface AgentSessionSummaryDto {
   transcriptBinding?: 'bound' | 'unbound' | 'awaiting-input' | null
   herdrAgentStatus?: HerdrAgentStatus | null
   herdrAgentStatusSinceUtc?: string | null
+  /** CARD-0213: `launched` | `attached`. Null for pty / older servers. */
+  herdrOrigin?: 'launched' | 'attached' | null
 }
 
 export type HerdrAgentStatus = 'idle' | 'working' | 'blocked' | 'done' | 'unknown'

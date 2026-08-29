@@ -105,9 +105,10 @@ sidecar to a **last-pane record** at `<SessionLogPath>/herdr/last-pane/<sessionI
 owns the pane) still plain-delete. Last-pane records older than 7 days are pruned on adoption.
 `LoadAll`, the allocator, and the event pump never read `last-pane/`.
 
-The sidecar's `Origin` is `launched` (Antiphon created the pane) or `attached` (CARD-0213; S1 never
-produces this). An attached-origin exit writes **no** last-pane record: Antiphon never types a
-launch script into a pane it did not create.
+The sidecar's `Origin` is `launched` (Antiphon created the pane) or `attached` (CARD-0213: the
+operator bound a standing agent to a pane Antiphon did not launch). An attached-origin exit
+writes **no** last-pane record: Antiphon never types a launch script into a pane it did not create.
+Attached panes are also excluded from the allocator census (they are never a slot to split).
 
 Adoption (Layer A) runs *before* the runner's HTTP API listens, so it structurally cannot read the
 server's database; and the server has no herdr client at all, so DB-resident pane ids would have no
@@ -125,6 +126,30 @@ or a session with no owning agent).
 
 Renaming an agent in Antiphon mid-life does not rename its live herdr agent or tab; the next
 launch does. Herdr forgets the agent name when that occupant exits.
+
+## 3a. Attaching an operator pane
+
+`POST /api/agents/{id}/attach-herdr` with `{ "paneId": "w2:p3" }` binds a **standing** Herdr agent
+(`CardId == null`) to a pane Antiphon did not launch. The session row id **is** the pane's native
+session id (Grok `--session-id` / herdr `agent_session`, argv first). Inspect is read-only; the
+DB row is written `Starting` before the runner binds anything.
+
+What attach does **not** do:
+
+- Rename the pane label or herdr agent name (the operator already addresses it that way).
+- Type a launch note, bootstrap prompt, or `/remote-control`.
+- Kill the process on Stop — Stop **detaches** (sidecar gone, metadata cleared, pane left running).
+- Survive a herdr restart with no sidecar (P7: the child dies with herdr). Re-attach by hand; a
+  same-id Stopped/Failed row restamps.
+
+Grok without `--session-id` and with nothing usable in `agent_session` is refused
+(`herdr_native_id_unknown`); a known id whose `GROK_HOME/sessions/*/{id}/` directory is missing
+is refused (`herdr_transcript_not_found`). The live smoke against `D:\src\maven.dropcopy` /
+`D:\src\mav-ref` could not run on the machine that built this card (no herdr, no those homes).
+P-A1 (what herdr fills in `agent_session` for a bare launch) is likewise unmeasured; attach tries
+argv first, then `agent_session` when `source != antiphon`, then refuses Grok.
+
+A pane picker (`GET /herdr/panes` list) is a follow-up card.
 
 ## 4. Where a pane lands
 
@@ -284,6 +309,18 @@ screen-heuristic class as our own probes: disagreement is corroboration for a hu
 | Launch throws instead of falling back | herdr missing/stopped/wrong protocol | start herdr, or set `Enabled: false` and relaunch on `PtyHost` |
 | Sessions `Exited(HerdrRestartPresumedDead)` in a batch | herdr restarted | expected; the next launch relaunches into the restored pane if it still exists, else allocates |
 | Launch throws `pane_occupied` | last-pane is held by a foreign / unidentifiable process | free the pane (or attach, CARD-0213); the always-on backoff will retry the same pane, never a new tab |
+| `409 herdr_refused` on attach | agent not on Herdr, kind unmapped, or runner lacks `herdr`/`herdr-attach` | pick another backend/kind, or restart the runner |
+| `409 session_active` on attach | the agent already has a live session | Stop (or Detach) first |
+| `404 herdr_pane_not_found` | pane id unknown to herdr | `herdr pane list` |
+| `409 herdr_pane_unoccupied` | `pane.get.agent` is null | the pane has no detected agent |
+| `409 herdr_kind_mismatch` | pane's agent ≠ the Antiphon agent's kind | attach a grok pane to a Grok agent |
+| `409 herdr_pane_foreign` | 0, ≥2, or a non-family foreground process | same kill-safety as `KillAsync` |
+| `409 herdr_pane_bound` | live session, sidecar, or another id's last-pane claims it | Stop/detach the holder |
+| `409 herdr_native_id_unknown` | Grok with no `--session-id` and silent `agent_session` | relaunch with `--session-id` |
+| `409 herdr_transcript_not_found` | Grok id known but no `sessions/*/{id}/` under `GROK_HOME` | the grok is on another home/machine |
+| `409 herdr_pane_changed` | pid or native id changed between inspect and attach | inspect again |
+| `409 session_id_taken` | native id is another agent's session or a card session | pick another pane |
+| `503 herdr_unreachable` | herdr is down | start herdr |
 | Deliveries silently deferring | `agent_status == "blocked"` — an approval UI has the pane | answer it in the pane, or attach and clear it |
 | Ceilings suddenly 900/3 000/1 024 | the runner is not advertising `herdr` | check `SessionRunner:Herdr:Enabled` and `GET :17204/capabilities` |
 | `HerdrStatusDisagreement` Warning | corroboration hint only | look at the pane; nothing is auto-corrected |

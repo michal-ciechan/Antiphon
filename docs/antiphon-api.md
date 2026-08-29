@@ -153,6 +153,7 @@ GET    /api/agents/bundles                   attachable instruction bundles (rea
 POST   /api/agents        POST /api/agents/draft        PATCH /api/agents/{id}    DELETE /api/agents/{id}
 GET    /api/agents/{id}/incidents
 POST   /api/agents/{id}/start  |  /stop      start refuses 409 `remote_control_refused` when `remoteControl: true` on a kind whose catalog row is not Supported
+POST   /api/agents/{id}/attach-herdr         bind a standing Herdr agent to an existing operator pane `{ "paneId": "w2:p3" }`. 409 `herdr_refused` / `session_active` / `herdr_kind_mismatch` / `herdr_pane_bound` / `herdr_native_id_unknown` / `herdr_transcript_not_found` / `herdr_pane_changed` / `session_id_taken`; 404 `herdr_pane_not_found`; 503 `herdr_unreachable`. Stop on an attached session detaches.
 POST   /api/agents/{id}/queue   PATCH /api/agents/{id}/queue   DELETE /api/agents/{id}/queue/{cardId}
 
 POST   /api/sessions                         launch an interactive session
@@ -174,6 +175,14 @@ POST   /api/sessions/{id}/resize  |  /resume  |  /kill
 today). See [herdr-sessions.md](herdr-sessions.md). `POST /api/agents/{id}/start` and
 `POST /api/cards/{id}/spawn` refuse with the same `remote_control_refused` code when the caller
 explicitly asks for remote control on a non-capable kind.
+
+Attach an existing herdr pane (CARD-0213) — standing agents only, no rename, no launch note:
+
+```
+curl -s -X POST http://localhost:17202/api/agents/{id}/attach-herdr \
+  -H "Content-Type: application/json" \
+  -d "{\"paneId\":\"w2:p3\"}"
+```
 
 ### Delegation
 
