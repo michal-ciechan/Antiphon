@@ -395,9 +395,10 @@ summary type); `features/agents/AgentsPage.tsx` (button + modal, Detach label);
 **Docs** `docs/herdr-sessions.md`: §3 (origin `attached` now produced), new §"Attaching an
 operator pane" (what is and is not touched: no rename, no launch note, detach-on-stop, the
 Grok id requirement, the P-A1 result), §8 rows for every §4 code; `docs/antiphon-api.md` agents
-block (+ `attach-herdr`, codes, a `curl` example); `docs/agent-kinds.md:358` "(ClaudeCode only)"
-fixed in passing; one `AGENTS.md` gotcha bullet: *"An attached herdr pane is never counted,
-never closed and never pid-killed — Stop detaches"*.
+block (+ `attach-herdr`, codes, a `curl` example); one `AGENTS.md` gotcha bullet: *"An
+attached herdr pane is never counted, never closed and never pid-killed — Stop detaches"*. (The
+2026-08-28 sketch's "`docs/agent-kinds.md:358` says ClaudeCode only" item is already gone —
+verified 2026-08-29, no match in the file.)
 
 ## 6. Verification
 
