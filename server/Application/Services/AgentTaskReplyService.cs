@@ -1088,6 +1088,11 @@ public sealed class AgentTaskReplyService
     /// agent, not the verdict: one response died, the session did not, so a live Shared delegate is
     /// as reusable as after any success — and skipping the release would leak it Busy forever,
     /// because settlement is the only thing that frees a delegate.</para>
+    ///
+    /// <para>CARD-0221: a CARD-0085 recovery (<paramref name="killSession"/> false) used to
+    /// <c>return</c> leaving the Worktree row <c>Running</c> with no owner. That is a zombie by
+    /// construction. The arm now marks the row Idle for the janitor without making it claimable
+    /// (no reservation; reuse skips worktree-shaped directories) and without killing now.</para>
     /// </summary>
     private async Task ReleaseDelegateAsync(
         IServiceProvider services, AppDbContext db, AgentTask task, DateTime now, CancellationToken ct,
@@ -1119,10 +1124,26 @@ public sealed class AgentTaskReplyService
             return;
         }
 
-        // CARD-0085: a recovered bind-refusal must not kill the session AND must not delete the
-        // agent row (AgentIncidents cascade with it). The worker may still be live.
+        // CARD-0085 / CARD-0221: do not kill now (a kill on a false Failed is how you kill a live
+        // worker) and do not delete the row (AgentIncidents cascade with it). Mark Idle so the
+        // janitor owns the process after PoolIdleRetireMinutes — the same hour a Shared recovery
+        // already gets. Clear the reservation: this is not a warm reuse candidate.
         if (!killSession)
+        {
+            agent.Status = AgentStatus.Idle;
+            agent.PoolIdleSince = now;
+            agent.PoolReservedForRootTaskId = null;
+            agent.UpdatedAt = now;
+            if (task.Workspace == WorkspaceMode.Worktree)
+            {
+                _logger.LogWarning(
+                    "Worktree delegate '{Name}' for task {ShortId} marked Idle for retirement in {Minutes} minutes (CARD-0085 recovery; session not killed)",
+                    agent.Name,
+                    DelegationReportFormatter.Short(task.Id),
+                    _settings.PoolIdleRetireMinutes);
+            }
             return;
+        }
 
         if (task.AgentSessionId is Guid sessionId)
         {

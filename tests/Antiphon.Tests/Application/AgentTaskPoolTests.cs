@@ -379,6 +379,121 @@ public class AgentTaskPoolTests
             .ShouldBeFalse("the stale environment receives no brief");
     }
 
+    // ---- CARD-0221: recovered Worktree delegates are Idle for the janitor, never reused ----
+
+    [Test]
+    public async Task a_recovered_worktree_task_marks_its_delegate_for_retirement()
+    {
+        using var workspace = new TempWorkspace();
+        var (dispatcher, stopper, provider) = CreateHarness();
+        var shortId = Guid.NewGuid().ToString("N")[..8];
+        var worktreePath = Path.Combine(workspace.Path, "worktrees", $"card-task-{shortId}");
+        Directory.CreateDirectory(worktreePath);
+        var (agentId, sessionId, taskId) = await SeedDispatchedPoolTaskAsync(
+            workspace.Path,
+            WorkspaceMode.Worktree,
+            worktreePath);
+
+        var replies = provider.GetRequiredService<AgentTaskReplyService>();
+        await replies.RecoverFromBindRefusalAsync(
+            taskId,
+            new DelegateBindRefusalEvidence(["abc1234"], null),
+            CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var agent = await verify.Agents.SingleAsync(a => a.Id == agentId);
+        agent.Status.ShouldBe(AgentStatus.Idle, "CARD-0221: the janitor query is Idle + PoolIdleSince");
+        agent.PoolIdleSince.ShouldNotBeNull();
+        agent.PoolReservedForRootTaskId.ShouldBeNull("not claimable — this is retirement, not a warm pool");
+        (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId))
+            .Status.ShouldBe(SessionStatus.Running, "CARD-0085: do not kill a live unbound worker");
+        (await verify.AgentIncidents.AnyAsync(
+            i => i.AgentId == agentId && i.Kind == AgentIncidentKind.DelegateBindRefusalRecovered))
+            .ShouldBeTrue();
+        stopper.Killed.ShouldNotContain(sessionId);
+        _ = dispatcher;
+    }
+
+    [Test]
+    public async Task the_janitor_kills_a_recovered_worktree_delegate_after_the_ttl()
+    {
+        using var workspace = new TempWorkspace();
+        var clock = new OffsetTimeProvider(DateTimeOffset.UtcNow);
+        var (dispatcher, stopper, _) = CreateHarness(clock);
+        var shortId = Guid.NewGuid().ToString("N")[..8];
+        var worktreePath = Path.Combine(workspace.Path, "worktrees", $"card-task-{shortId}");
+        var (agentId, sessionId) = await SeedRecoveredWorktreeDelegateAsync(
+            worktreePath, idleMinutes: 10, withIncident: true);
+
+        // Offset clock is in the graph (CARD-0222). A large Advance would move the cutoff into
+        // the future and retire other suites' just-idled rows in the shared fixture DB; the
+        // row itself is already older than PoolIdleRetireMinutes (5).
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var retired = await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
+
+        retired.ShouldBeGreaterThanOrEqualTo(1);
+        stopper.Killed.ShouldContain(sessionId, "the pool's own KillAsync, after the TTL");
+        await using var verify = CreateContext();
+        var agent = await verify.Agents.SingleAsync(a => a.Id == agentId);
+        agent.Status.ShouldBe(AgentStatus.Stopped, "option (a): keep the row when it carries an incident");
+        (await verify.AgentIncidents.AnyAsync(i => i.AgentId == agentId)).ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task a_recovered_worktree_delegate_is_never_reused_for_a_shared_task()
+    {
+        using var workspace = new TempWorkspace();
+        var (dispatcher, _, _) = CreateHarness();
+        var shortId = Guid.NewGuid().ToString("N")[..8];
+        var worktreePath = Path.Combine(workspace.Path, "worktrees", $"card-task-{shortId}");
+        var (warmAgentId, _) = await SeedRecoveredWorktreeDelegateAsync(
+            worktreePath, idleMinutes: 3, withIncident: true);
+        var task = await SeedQueuedTaskAsync(workspace.Path, AgentModelLevel.Medium);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var dispatched = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        dispatched.AgentId.ShouldNotBe(warmAgentId, "a worktree delegate is not a Shared-task warm pool");
+        (await verify.Agents.SingleAsync(a => a.Id == warmAgentId)).Status.ShouldBe(AgentStatus.Idle);
+    }
+
+    [Test]
+    public async Task the_janitor_removes_stale_pool_rows_with_ended_sessions()
+    {
+        using var workspace = new TempWorkspace();
+        var (dispatcher, stopper, _) = CreateHarness();
+        var keep = new List<Guid>();
+        var drop = new List<Guid>();
+        var staleSessions = new List<Guid>();
+        for (var i = 0; i < 4; i++)
+        {
+            var seeded = await SeedStalePoolDelegateAsync(workspace.Path, withIncident: true);
+            keep.Add(seeded.AgentId);
+            staleSessions.Add(seeded.SessionId);
+        }
+        for (var i = 0; i < 4; i++)
+        {
+            var seeded = await SeedStalePoolDelegateAsync(workspace.Path, withIncident: false);
+            drop.Add(seeded.AgentId);
+            staleSessions.Add(seeded.SessionId);
+        }
+
+        await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        foreach (var id in drop)
+            (await verify.Agents.AnyAsync(a => a.Id == id)).ShouldBeFalse("incident-free stale rows are junk");
+        foreach (var id in keep)
+        {
+            var row = await verify.Agents.SingleAsync(a => a.Id == id);
+            row.Status.ShouldBe(AgentStatus.Stopped);
+        }
+
+        foreach (var sid in staleSessions)
+            stopper.Killed.ShouldNotContain(sid, "stale sessions are already terminal — reconciler owns Failed/Stopped");
+    }
+
     // ---- the janitor -----------------------------------------------------------------------
 
     [Test]
@@ -437,14 +552,14 @@ public class AgentTaskPoolTests
     // ---- helpers ---------------------------------------------------------------------------
 
     private static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper, ServiceProvider Provider)
-        CreateHarness()
+        CreateHarness(TimeProvider? timeProvider = null)
     {
         var stopper = new RecordingSessionStopper();
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
         services.AddSingleton<IEventBus, MockEventBus>();
-        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton(timeProvider ?? TimeProvider.System);
         services.AddSingleton(Options.Create(new SupervisionSettings()));
         services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
         services.AddSingleton(Options.Create(new DelegationSettings
@@ -477,6 +592,7 @@ public class AgentTaskPoolTests
         services.AddSingleton<IGitService, Antiphon.Server.Infrastructure.Git.GitService>();
         services.AddScoped<DelegationWorktreeService>();
         services.AddScoped<AgentTaskService>();
+        services.AddSingleton<AgentTaskReplyService>();
         services.AddScoped<AgentTaskDispatcher>();
 
         var provider = services.BuildServiceProvider();
@@ -616,6 +732,217 @@ public class AgentTaskPoolTests
         await db.SaveChangesAsync();
     }
 
+    private static async Task<(Guid AgentId, Guid SessionId, Guid TaskId)> SeedDispatchedPoolTaskAsync(
+        string directory, WorkspaceMode workspace, string? worktreePath)
+    {
+        var sessionId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var taskId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        var agentName = $"task-{agentId:N}"[..13];
+        await using var db = CreateContext();
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = sessionId,
+            DefinitionName = "fake",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Running,
+            Cwd = worktreePath ?? directory,
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = now,
+            StartedAt = now,
+            LastSeenAt = now,
+        });
+        db.Agents.Add(new Agent
+        {
+            Id = agentId,
+            Name = agentName,
+            Slug = agentName,
+            WorkingDirectory = worktreePath ?? directory,
+            Details = "CARD-0221 recovery test delegate.",
+            Status = AgentStatus.Running,
+            Kind = AgentKind.ClaudeCode,
+            ModelLevel = AgentModelLevel.Medium,
+            IsPoolDelegate = true,
+            PersistentSessionId = sessionId.ToString("D"),
+            CreatedAt = now,
+            UpdatedAt = now,
+        });
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = taskId,
+            RootTaskId = taskId,
+            Title = "CARD-0221 recovered worktree",
+            Goal = "Do the thing.",
+            Role = AgentTaskRole.Docs,
+            AgentKind = AgentKind.ClaudeCode,
+            ModelLevel = AgentModelLevel.Medium,
+            Workspace = workspace,
+            WorkingDirectory = directory,
+            WorktreePath = worktreePath,
+            AgentId = agentId,
+            AgentName = agentName,
+            AgentSessionId = sessionId,
+            Status = AgentTaskStatus.Dispatched,
+            CreatedAt = now.AddMinutes(-11),
+            DispatchedAt = now.AddMinutes(-11),
+        });
+        await db.SaveChangesAsync();
+        return (agentId, sessionId, taskId);
+    }
+
+    private static async Task<(Guid AgentId, Guid SessionId)> SeedRecoveredWorktreeDelegateAsync(
+        string worktreePath, int idleMinutes, bool withIncident)
+    {
+        Directory.CreateDirectory(worktreePath);
+        var sessionId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        var agentName = $"task-{agentId:N}"[..13];
+        await using var db = CreateContext();
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = sessionId,
+            DefinitionName = "fake",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Running,
+            Cwd = worktreePath,
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = now,
+            StartedAt = now,
+            LastSeenAt = now,
+        });
+        db.Agents.Add(new Agent
+        {
+            Id = agentId,
+            Name = agentName,
+            Slug = agentName,
+            WorkingDirectory = worktreePath,
+            Details = "CARD-0221 recovered worktree delegate.",
+            Status = AgentStatus.Idle,
+            Kind = AgentKind.ClaudeCode,
+            ModelLevel = AgentModelLevel.Medium,
+            IsPoolDelegate = true,
+            PoolIdleSince = now.AddMinutes(-idleMinutes),
+            PoolReservedForRootTaskId = null,
+            PersistentSessionId = sessionId.ToString("D"),
+            CreatedAt = now,
+            UpdatedAt = now,
+        });
+        var taskId = Guid.NewGuid();
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = taskId,
+            RootTaskId = taskId,
+            Title = "recovered worktree",
+            Goal = "recovered worktree",
+            Role = AgentTaskRole.Docs,
+            ModelLevel = AgentModelLevel.Medium,
+            Workspace = WorkspaceMode.Worktree,
+            WorkingDirectory = worktreePath,
+            WorktreePath = worktreePath,
+            AgentId = agentId,
+            AgentSessionId = sessionId,
+            Status = AgentTaskStatus.Succeeded,
+            CompletedAt = now.AddMinutes(-idleMinutes),
+            RecoveredAt = now.AddMinutes(-idleMinutes),
+            CreatedAt = now.AddMinutes(-idleMinutes - 10),
+            DispatchedAt = now.AddMinutes(-idleMinutes - 10),
+        });
+        if (withIncident)
+        {
+            db.AgentIncidents.Add(new AgentIncident
+            {
+                Id = Guid.NewGuid(),
+                AgentId = agentId,
+                SessionId = sessionId,
+                Kind = AgentIncidentKind.DelegateBindRefusalRecovered,
+                Severity = AlertSeverity.Warning,
+                Message = "recovered from an unbound session",
+                CreatedAt = now.AddMinutes(-idleMinutes),
+            });
+        }
+
+        await db.SaveChangesAsync();
+        return (agentId, sessionId);
+    }
+
+    private static async Task<(Guid AgentId, Guid SessionId)> SeedStalePoolDelegateAsync(
+        string directory, bool withIncident)
+    {
+        var sessionId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        var agentName = $"task-{agentId:N}"[..13];
+        await using var db = CreateContext();
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = sessionId,
+            DefinitionName = "fake",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Stopped,
+            Cwd = directory,
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = now.AddDays(-8),
+            StartedAt = now.AddDays(-8),
+            EndedAt = now.AddDays(-8),
+            LastSeenAt = now.AddDays(-8),
+        });
+        db.Agents.Add(new Agent
+        {
+            Id = agentId,
+            Name = agentName,
+            Slug = agentName,
+            WorkingDirectory = directory,
+            Details = "CARD-0221 stale pool row.",
+            Status = AgentStatus.Running,
+            Kind = AgentKind.ClaudeCode,
+            ModelLevel = AgentModelLevel.Medium,
+            IsPoolDelegate = true,
+            PoolIdleSince = null,
+            PersistentSessionId = sessionId.ToString("D"),
+            CreatedAt = now.AddDays(-8),
+            UpdatedAt = now.AddDays(-8),
+        });
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = Guid.NewGuid(),
+            RootTaskId = Guid.NewGuid(),
+            Title = "stale recovered",
+            Goal = "stale recovered",
+            Role = AgentTaskRole.Docs,
+            ModelLevel = AgentModelLevel.Medium,
+            Workspace = WorkspaceMode.Worktree,
+            WorkingDirectory = directory,
+            AgentId = agentId,
+            AgentSessionId = sessionId,
+            Status = AgentTaskStatus.Succeeded,
+            CompletedAt = now.AddDays(-8),
+            RecoveredAt = now.AddDays(-8),
+            CreatedAt = now.AddDays(-8),
+            DispatchedAt = now.AddDays(-8),
+        });
+        if (withIncident)
+        {
+            db.AgentIncidents.Add(new AgentIncident
+            {
+                Id = Guid.NewGuid(),
+                AgentId = agentId,
+                SessionId = sessionId,
+                Kind = AgentIncidentKind.DelegateBindRefusalRecovered,
+                Severity = AlertSeverity.Warning,
+                Message = "stale recovered row",
+                CreatedAt = now.AddDays(-8),
+            });
+        }
+
+        await db.SaveChangesAsync();
+        return (agentId, sessionId);
+    }
+
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
     private static AgentService CreateAgentService(AppDbContext db) => new(
@@ -640,5 +967,19 @@ public class AgentTaskPoolTests
             try { Directory.Delete(Path, recursive: true); }
             catch (IOException) { }
         }
+    }
+
+    /// <summary>
+    /// CARD-0222: an OFFSET over the real clock, not a frozen instant. The janitor cutoff is
+    /// <c>UtcNow - PoolIdleRetireMinutes</c>; advancing the offset is how a test crosses the TTL
+    /// without wedging any <c>Task.Delay(..., timeProvider)</c> poll loop in the same graph.
+    /// </summary>
+    private sealed class OffsetTimeProvider(DateTimeOffset start) : TimeProvider
+    {
+        private TimeSpan _offset = start - DateTimeOffset.UtcNow;
+
+        public override DateTimeOffset GetUtcNow() => DateTimeOffset.UtcNow + _offset;
+
+        public void Advance(TimeSpan by) => _offset += by;
     }
 }

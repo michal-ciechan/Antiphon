@@ -2389,6 +2389,17 @@ public sealed class AgentTaskDispatcher
             if (await LiveSessionIdOfAsync(pinned, ct) is null)
                 return ReuseOutcome.SpawnFresh;
 
+            // CARD-0221: a recovered Worktree delegate is Idle so the janitor can see it, but it
+            // must never be handed to a Shared task — even if the directories happened to match.
+            if (claimed.Workspace == WorkspaceMode.Shared
+                && IsWorktreeWorkingDirectory(pinned.WorkingDirectory))
+            {
+                _logger.LogInformation(
+                    "Task {ShortId} is pinned to worktree delegate '{Agent}' — declining reuse so a Shared task cannot inherit it",
+                    DelegationReportFormatter.Short(claimed.Id), pinned.Name);
+                return ReuseOutcome.SpawnFresh;
+            }
+
             // A warm delegate of the wrong PROGRAM cannot run this task at all, so waiting for it
             // to free up would wait forever. The spawn path takes it instead — which relaunches
             // this same row on a session of the right kind (ResolveAgentAsync restamps
@@ -2439,6 +2450,8 @@ public sealed class AgentTaskDispatcher
 
             agent = warm
                 .Where(a => SameDirectory(a.WorkingDirectory, claimed.WorkingDirectory))
+                .Where(a => claimed.Workspace != WorkspaceMode.Shared
+                    || !IsWorktreeWorkingDirectory(a.WorkingDirectory))
                 .Where(a => a.PoolReservedForRootTaskId == claimed.RootTaskId
                     || a.PoolIdleSince <= reservationCutoff)
                 // Same-run context first — that agent has just read the code this run cares
@@ -2726,17 +2739,25 @@ public sealed class AgentTaskDispatcher
     /// Retire warm delegates that outstayed their welcome: idle past the TTL, or beyond the
     /// per-directory cap (oldest first). This bound is what makes "keep Claudes warm" a trade
     /// instead of a leak.
+    ///
+    /// <para>CARD-0221: rows that carry an <see cref="AgentIncident"/> are left <c>Stopped</c>
+    /// instead of deleted (incidents cascade with the agent). A second pass sweeps pool delegates
+    /// whose session is already terminal and who have no open task — the eight CARD-0085 Worktree
+    /// rows that recovery used to abandon as <c>Running</c>.</para>
     /// </summary>
     internal async Task<int> RetireIdleWarmAgentsAsync(CancellationToken ct)
     {
-        var warm = await _db.Agents
-            .Where(a => a.IsPoolDelegate && a.Status == AgentStatus.Idle && a.PoolIdleSince != null)
+        var pool = await _db.Agents
+            .Where(a => a.IsPoolDelegate && a.Status != AgentStatus.Stopped)
             .ToListAsync(ct);
-        if (warm.Count == 0)
+        if (pool.Count == 0)
             return 0;
 
         var now = UtcNow();
         var cutoff = now.AddMinutes(-Math.Max(1, _settings.PoolIdleRetireMinutes));
+        var warm = pool
+            .Where(a => a.Status == AgentStatus.Idle && a.PoolIdleSince != null)
+            .ToList();
         var retire = new HashSet<Agent>(warm.Where(a => !_settings.PoolEnabled || a.PoolIdleSince <= cutoff));
 
         // Per (directory, KIND), not per directory: the cap bounds how many warm processes of one
@@ -2754,28 +2775,136 @@ public sealed class AgentTaskDispatcher
             retire.Add(surplus);
         }
 
-        foreach (var agent in retire)
+        var parsed = pool
+            .Select(a => (
+                Agent: a,
+                SessionId: Guid.TryParse(a.PersistentSessionId, out var sid) ? sid : (Guid?)null))
+            .ToList();
+        var sessionIds = parsed
+            .Where(p => p.SessionId.HasValue)
+            .Select(p => p.SessionId!.Value)
+            .Distinct()
+            .ToList();
+        var liveSessionIds = new HashSet<Guid>();
+        if (sessionIds.Count > 0)
         {
-            if (Guid.TryParse(agent.PersistentSessionId, out var sessionId))
+            foreach (var id in await _db.AgentSessions.AsNoTracking()
+                .Where(s => sessionIds.Contains(s.Id)
+                    && (s.Status == SessionStatus.Starting || s.Status == SessionStatus.Running))
+                .Select(s => s.Id)
+                .ToListAsync(ct))
             {
-                try
-                {
-                    await _sessions.KillAsync(sessionId, ct);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.LogWarning(ex, "Could not stop pooled session {SessionId}", sessionId);
-                }
+                liveSessionIds.Add(id);
             }
-            _db.Agents.Remove(agent);
-            _logger.LogInformation(
-                "Retired warm delegate '{Name}' from {Dir} (idle since {Since:O})",
-                agent.Name, agent.WorkingDirectory, agent.PoolIdleSince);
         }
 
-        if (retire.Count > 0)
+        var agentIds = pool.Select(a => a.Id).ToList();
+        var busyAgentIds = (await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.AgentId != null
+                && agentIds.Contains(t.AgentId.Value)
+                && (t.Status == AgentTaskStatus.Queued
+                    || t.Status == AgentTaskStatus.Dispatched
+                    || t.Status == AgentTaskStatus.Working
+                    || t.Status == AgentTaskStatus.Blocked))
+            .Select(t => t.AgentId!.Value)
+            .Distinct()
+            .ToListAsync(ct))
+            .ToHashSet();
+
+        var stale = new HashSet<Agent>();
+        foreach (var row in parsed)
+        {
+            if (retire.Contains(row.Agent))
+                continue;
+            if (row.SessionId is Guid sid && liveSessionIds.Contains(sid))
+                continue;
+            if (busyAgentIds.Contains(row.Agent.Id))
+                continue;
+            stale.Add(row.Agent);
+        }
+
+        var incidentAgentIds = (await _db.AgentIncidents.AsNoTracking()
+            .Where(i => agentIds.Contains(i.AgentId))
+            .Select(i => i.AgentId)
+            .Distinct()
+            .ToListAsync(ct))
+            .ToHashSet();
+
+        var acted = 0;
+        foreach (var agent in retire)
+        {
+            var idleSince = agent.PoolIdleSince;
+            await KillPooledSessionAsync(agent, ct);
+            FinishPoolRetire(agent, incidentAgentIds.Contains(agent.Id), now);
+            _logger.LogInformation(
+                "Retired warm delegate '{Name}' from {Dir} (idle since {Since:O})",
+                agent.Name, agent.WorkingDirectory, idleSince);
+            acted++;
+        }
+
+        foreach (var agent in stale)
+        {
+            // Session is already terminal in the DB. Do not KillAsync: Failed is
+            // SessionReconciliationService's re-adopt arm (CARD-0056), Stopped is its only
+            // auto-kill. The agent row is the junk this pass is for.
+            FinishPoolRetire(agent, incidentAgentIds.Contains(agent.Id), now);
+            _logger.LogInformation(
+                "Swept stale pool delegate '{Name}' (session not live, no open task)",
+                agent.Name);
+            acted++;
+        }
+
+        if (acted > 0)
             await _db.SaveChangesAsync(ct);
-        return retire.Count;
+        return acted;
+    }
+
+    private async Task KillPooledSessionAsync(Agent agent, CancellationToken ct)
+    {
+        if (!Guid.TryParse(agent.PersistentSessionId, out var sessionId))
+            return;
+        try
+        {
+            await _sessions.KillAsync(sessionId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not stop pooled session {SessionId}", sessionId);
+        }
+    }
+
+    private void FinishPoolRetire(Agent agent, bool hasIncident, DateTime now)
+    {
+        if (hasIncident)
+        {
+            agent.Status = AgentStatus.Stopped;
+            agent.PoolIdleSince = null;
+            agent.PoolReservedForRootTaskId = null;
+            agent.UpdatedAt = now;
+            return;
+        }
+
+        _db.Agents.Remove(agent);
+    }
+
+    /// <summary>
+    /// Antiphon worktree leaf: <c>card-task-</c> plus 8 hex. A recovered Worktree delegate sits
+    /// Idle in one of these so the janitor can see it; reuse must not hand it to a Shared task.
+    /// </summary>
+    internal static bool IsWorktreeWorkingDirectory(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+        var name = Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        if (name.Length != 18 || !name.StartsWith("card-task-", StringComparison.OrdinalIgnoreCase))
+            return false;
+        for (var i = 10; i < 18; i++)
+        {
+            if (!char.IsAsciiHexDigit(name[i]))
+                return false;
+        }
+
+        return true;
     }
 
     private async Task<Guid?> LiveSessionIdOfAsync(Agent agent, CancellationToken ct)
