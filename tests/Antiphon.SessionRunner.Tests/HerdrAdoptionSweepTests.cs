@@ -706,6 +706,86 @@ public class HerdrAdoptionSweepTests
         DeleteLogRoot(settings.SessionLogPath);
     }
 
+    [Test]
+    public async Task R20_attached_orphan_is_dropped_not_killed()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        using var dummy = StartDummy();
+        try
+        {
+            var sidecar = WriteSidecar(
+                settings, paneId: "wZ:p-missing", workspaceId: "wZ", tabId: "wZ:t1", childPid: dummy.Id);
+            var attached = sidecar with { Origin = HerdrPaneOrigins.Attached };
+            attached.SaveAtomic(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sidecar.SessionId));
+
+            await using var runtime = BuildRuntime(settings, fake);
+            await runtime.AdoptOrphanedHostsAsync(new StubProbe(alive: true), CancellationToken.None);
+
+            var dto = runtime.Get(sidecar.SessionId);
+            dto.Status.ShouldBe("Exited");
+            dto.ExitReason.ShouldBe(HerdrExitReasons.RestartPresumedDead);
+            dummy.HasExited.ShouldBeFalse();
+            File.Exists(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sidecar.SessionId)).ShouldBeFalse();
+            File.Exists(HerdrLastPane.PathFor(settings.SessionLogPath, sidecar.SessionId)).ShouldBeFalse();
+        }
+        finally
+        {
+            KillBestEffort(dummy);
+            DeleteLogRoot(settings.SessionLogPath);
+        }
+    }
+
+    [Test]
+    public async Task R21_attached_exit_leaves_no_last_pane()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        var sessionId = Guid.NewGuid();
+        var launched = DateTime.UtcNow;
+        var sidecar = new HerdrPaneSidecar
+        {
+            SessionId = sessionId,
+            WorkspaceKey = "none",
+            WorkspaceId = "wZ",
+            TabId = "wZ:t1",
+            PaneId = "wZ:p1",
+            ChildPid = 4243,
+            ShellPid = 1,
+            LaunchedAtUtc = launched,
+            Cwd = settings.SessionLogPath,
+            Origin = HerdrPaneOrigins.Attached,
+            UpdatedAtUtc = launched,
+        };
+        sidecar.SaveAtomic(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId));
+        SeedPane(fake, sidecar);
+        var pane = fake.Workspaces[0].Tabs[0].Panes[0];
+
+        await using var runtime = BuildRuntime(settings, fake);
+        await runtime.AdoptOrphanedHostsAsync(new StubProbe(alive: true), CancellationToken.None);
+        runtime.Get(sessionId).Status.ShouldBe("Running");
+        runtime.Get(sessionId).HerdrOrigin.ShouldBe(HerdrPaneOrigins.Attached);
+
+        await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+        File.Exists(HerdrLastPane.PathFor(settings.SessionLogPath, sessionId)).ShouldBeFalse();
+        File.Exists(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId)).ShouldBeFalse();
+
+        var launchedAgain = await StartHerdrSessionAsync(runtime, sessionId, settings.SessionLogPath);
+        launchedAgain.Status.ShouldBe("Running");
+        CountMethod(fake, "tab.create").ShouldBeGreaterThanOrEqualTo(1);
+        fake.Requests.Any(r =>
+            r.GetProperty("method").GetString() == "pane.split"
+            && r.GetProperty("params").GetProperty("target_pane_id").GetString() == pane.PaneId)
+            .ShouldBeFalse();
+
+        await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
     private static SessionRunnerRuntime BuildRuntime(
         SessionRunnerSettings settings,
         FakeHerdrServer fake,

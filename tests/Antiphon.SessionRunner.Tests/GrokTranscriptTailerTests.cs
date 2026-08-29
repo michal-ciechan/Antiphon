@@ -447,6 +447,27 @@ public class GrokTranscriptTailerTests
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".grok"));
     }
 
+    [Test]
+    public void TryLocateSessionDirectory_finds_the_guid_under_a_foreign_cwd_encoding()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"antiphon-grok-locate-{Guid.NewGuid():N}");
+        var nativeId = Guid.NewGuid();
+        var encoded = Uri.EscapeDataString(@"D:\src\OTHER-machine\repo");
+        var sessionDir = Path.Combine(root, "sessions", encoded, nativeId.ToString("D"));
+        Directory.CreateDirectory(sessionDir);
+        try
+        {
+            var found = GrokTranscriptTailer.TryLocateSessionDirectory(root, nativeId);
+            found.ShouldBe(sessionDir);
+            GrokTranscriptTailer.EncodedCwdOf(found!).ShouldBe(encoded);
+            GrokTranscriptTailer.TryLocateSessionDirectory(root, Guid.NewGuid()).ShouldBeNull();
+        }
+        finally
+        {
+            BestEffortDelete(root);
+        }
+    }
+
     private static (string Dir, string Path) TempUpdatesPath()
     {
         var dir = Path.Combine(Path.GetTempPath(), $"antiphon-grok-tailer-{Guid.NewGuid():N}");

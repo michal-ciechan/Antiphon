@@ -95,6 +95,24 @@ public sealed record HerdrLastPane
         }
     }
 
+    /// <summary>Every last-pane record under a session-log root (CARD-0213 bound-pane check).</summary>
+    public static IEnumerable<HerdrLastPane> LoadAll(string sessionLogPath)
+    {
+        var dir = DirectoryFor(sessionLogPath);
+        if (!Directory.Exists(dir))
+            yield break;
+
+        string[] files;
+        try { files = Directory.GetFiles(dir, "*.json"); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { yield break; }
+
+        foreach (var file in files)
+        {
+            if (TryLoad(file) is { } record && record.SessionId != Guid.Empty)
+                yield return record;
+        }
+    }
+
     /// <summary>CARD-0224: drop last-pane records older than <paramref name="retention"/>.</summary>
     public static int DeleteOlderThan(string sessionLogPath, TimeSpan retention)
     {

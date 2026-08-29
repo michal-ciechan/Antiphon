@@ -522,6 +522,16 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
                 foreground.Select(p => (p.Pid, p.Name, new[] { p.Name }, (string?)"C:\\src")).ToArray());
     }
 
+    /// <summary>
+    /// CARD-0213: stamp herdr's own <c>agent_session</c> (source != antiphon) so attach can
+    /// take the native id from the pane when argv is silent.
+    /// </summary>
+    public void SetPaneAgentSession(string paneId, string source, string kind, string value, string agent = "grok")
+    {
+        var (_, _, pane) = RequirePane(paneId);
+        pane.AgentSession = new AgentSessionState(source, agent, kind, value);
+    }
+
     /// <summary>CARD-0224: script argv + cwd on each foreground process for identity checks.</summary>
     public void SetPaneProcessInfo(
         string paneId,

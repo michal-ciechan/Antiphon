@@ -156,10 +156,14 @@ app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings) =>
     IReadOnlyList<string> sessionBackends = herdrSettings.Value.Enabled
         ? [SessionBackends.PtyHost, SessionBackends.Herdr]
         : [SessionBackends.PtyHost];
+    IReadOnlyList<string>? features = herdrSettings.Value.Enabled
+        ? [RunnerCapabilityFeatures.HerdrAttach]
+        : null;
     return Results.Ok(new RunnerCapabilitiesDto(
         decision.Backend.ToString(), decision.Requested, decision.Reason, decision.FellBack,
         SessionRunnerRuntime.SupportedTranscriptFormats, runnerBuild, sessionBackends,
-        Version: runnerBuild.CommitSha ?? "unknown"));
+        Version: runnerBuild.CommitSha ?? "unknown",
+        Features: features));
 });
 
 app.MapGet("/sessions", (SessionRunnerRuntime runtime) => Results.Ok(runtime.List()));
@@ -180,6 +184,49 @@ app.MapPost("/sessions", async (
     catch (UnsupportedTranscriptFormatException ex)
     {
         return Results.BadRequest(new { error = ex.Message });
+    }
+    catch (HerdrLaunchException ex)
+    {
+        return HerdrProblemMapper.MapLaunch(ex);
+    }
+});
+
+app.MapGet("/herdr/panes/{paneId}", async (
+    string paneId,
+    SessionRunnerRuntime runtime,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        return Results.Ok(await runtime.InspectHerdrPaneAsync(paneId, cancellationToken));
+    }
+    catch (HerdrLaunchException ex)
+    {
+        return HerdrProblemMapper.MapLaunch(ex);
+    }
+    catch (HerdrBackendUnavailableException ex)
+    {
+        return HerdrProblemMapper.MapUnavailable(ex);
+    }
+});
+
+app.MapPost("/sessions/attach", async (
+    HerdrAttachRequest request,
+    SessionRunnerRuntime runtime,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var session = await runtime.AttachHerdrAsync(request, cancellationToken);
+        return Results.Created($"/sessions/{session.SessionId}", session);
+    }
+    catch (HerdrLaunchException ex)
+    {
+        return HerdrProblemMapper.MapLaunch(ex);
+    }
+    catch (HerdrBackendUnavailableException ex)
+    {
+        return HerdrProblemMapper.MapUnavailable(ex);
     }
 });
 

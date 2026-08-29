@@ -1,4 +1,5 @@
 using Antiphon.SessionRunner;
+using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 using TUnit.Core;
 
@@ -30,5 +31,28 @@ public class HerdrClientSurfaceTests
         methods.ShouldContain("AgentStartAsync");
         methods.ShouldContain("AgentListAsync");
         methods.ShouldContain("AgentRenameAsync");
+    }
+
+    [Test]
+    public void Herdr_pane_inspect_dto_round_trips_the_card0213_shape()
+    {
+        var dto = new HerdrPaneInspectDto(
+            "w2:p3", "w2", "w2:t1", "label", "title",
+            Agent: "grok",
+            AgentStatus: "idle",
+            ShellPid: 1,
+            ShellName: "pwsh",
+            Foreground: [new HerdrForegroundProcessDto(42, "grok.exe", ["grok", "--session-id", Guid.Empty.ToString("D")], @"D:\src", DateTime.UnixEpoch)],
+            NativeSessionId: Guid.Empty,
+            NativeSessionSource: HerdrNativeSessionSources.Argv,
+            BoundToSessionId: null,
+            BoundOrigin: null);
+        var roundTrip = System.Text.Json.JsonSerializer.Deserialize<HerdrPaneInspectDto>(
+            System.Text.Json.JsonSerializer.Serialize(dto));
+        roundTrip.ShouldNotBeNull();
+        roundTrip!.PaneId.ShouldBe("w2:p3");
+        roundTrip.NativeSessionSource.ShouldBe("argv");
+        roundTrip.Foreground.ShouldHaveSingleItem().Pid.ShouldBe(42);
+        roundTrip.BoundToSessionId.ShouldBeNull();
     }
 }

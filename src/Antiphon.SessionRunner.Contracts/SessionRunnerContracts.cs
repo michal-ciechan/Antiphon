@@ -56,6 +56,61 @@ public sealed record HerdrLaunchOptions(
     // front of a new runner gets the resume-arm behaviour. Never set on card spawns.
     Guid? ReusePaneOfSessionId = null);
 
+/// <summary>
+/// CARD-0213: bind a standing Antiphon session to a herdr pane Antiphon did not launch.
+/// <see cref="SessionId"/> is the id the server chose from inspect (the pane's native id when
+/// one was found). The runner re-runs every inspect check and refuses
+/// <see cref="HerdrProblemTypes.PaneChanged"/> on TOCTOU.
+/// </summary>
+public sealed record HerdrAttachRequest(
+    Guid SessionId,
+    string PaneId,
+    string ExpectedKind,
+    string TranscriptFormat,
+    int ExpectedChildPid,
+    string WorkspaceKey,
+    Guid? ExpectedNativeSessionId = null,
+    string? PaneTitle = null,
+    string? AgentSlug = null);
+
+/// <summary>CARD-0213: read-only snapshot of a herdr pane. Nothing is written, typed, or renamed.</summary>
+public sealed record HerdrPaneInspectDto(
+    string PaneId,
+    string WorkspaceId,
+    string TabId,
+    string? Label,
+    string? Title,
+    string? Agent,
+    string? AgentStatus,
+    int? ShellPid,
+    string? ShellName,
+    IReadOnlyList<HerdrForegroundProcessDto> Foreground,
+    Guid? NativeSessionId,
+    string? NativeSessionSource,
+    Guid? BoundToSessionId,
+    string? BoundOrigin);
+
+/// <summary>Non-shell foreground process on <see cref="HerdrPaneInspectDto"/>.</summary>
+public sealed record HerdrForegroundProcessDto(
+    int Pid,
+    string Name,
+    IReadOnlyList<string>? Argv,
+    string? Cwd,
+    DateTime? StartTimeUtc);
+
+/// <summary>Values for <see cref="HerdrPaneInspectDto.NativeSessionSource"/>.</summary>
+public static class HerdrNativeSessionSources
+{
+    public const string Argv = "argv";
+    public const string AgentSession = "agent_session";
+}
+
+/// <summary>CARD-0213: extra capability tokens on <see cref="RunnerCapabilitiesDto.Features"/>.</summary>
+public static class RunnerCapabilityFeatures
+{
+    public const string HerdrAttach = "herdr-attach";
+}
+
 /// <summary>Values for <see cref="RunnerLaunchRequest.TranscriptFormat"/>.</summary>
 public static class TranscriptFormats
 {
@@ -118,7 +173,9 @@ public sealed record RunnerSessionDto(
     string? Pending = null,
     // CARD-0186 S3: single-session GET stamps this after a passing herdr liveness verify.
     // The list endpoint is cheap (no herdr calls) and reports the last stamp.
-    DateTime? HerdrVerifiedAtUtc = null);
+    DateTime? HerdrVerifiedAtUtc = null,
+    // CARD-0213: HerdrPaneOrigins on a herdr session. Null for pty / older runners / unknown.
+    string? HerdrOrigin = null);
 
 public sealed record RunnerBufferDto(
     Guid SessionId,
@@ -516,6 +573,12 @@ public static class HerdrExitReasons
     /// foreign process — the refusal is ours).
     /// </summary>
     public const string PaneLeftOpen = "HerdrPaneLeftOpen";
+
+    /// <summary>
+    /// CARD-0213: Stop on an attached pane dropped the sidecar and cleared metadata; the
+    /// operator's process was left running. Maps to <c>AgentExitReason.HerdrDetached</c>.
+    /// </summary>
+    public const string Detached = "HerdrDetached";
 }
 
 /// <summary>
@@ -552,8 +615,45 @@ public static class HerdrProblemTypes
     /// <summary>
     /// 503 on <c>/input</c>, <c>/kill</c>, <c>/resize</c>, <c>/snapshot</c> when herdr is
     /// unreachable. The server maps this to a delivery deferral, never a kill.
+    /// CARD-0213: also 503 on inspect/attach.
     /// </summary>
     public const string Unreachable = "herdr_unreachable";
+
+    /// <summary>404: pane id is unknown to herdr.</summary>
+    public const string PaneNotFound = "herdr_pane_not_found";
+
+    /// <summary>409: pane.get.agent is null.</summary>
+    public const string PaneUnoccupied = "herdr_pane_unoccupied";
+
+    /// <summary>409: pane's detected agent does not match the expected kind.</summary>
+    public const string KindMismatch = "herdr_kind_mismatch";
+
+    /// <summary>409: 0, ≥2, or a non-family foreground process besides the shell.</summary>
+    public const string PaneForeign = "herdr_pane_foreign";
+
+    /// <summary>409: a live session, sidecar, or another id's last-pane already claims this pane.</summary>
+    public const string PaneBound = "herdr_pane_bound";
+
+    /// <summary>409: Grok with no --session-id and nothing usable in agent_session.</summary>
+    public const string NativeIdUnknown = "herdr_native_id_unknown";
+
+    /// <summary>409: Grok id known but no sessions/*/{id}/ directory under GROK_HOME.</summary>
+    public const string TranscriptNotFound = "herdr_transcript_not_found";
+
+    /// <summary>409: pid or native id changed between inspect and attach.</summary>
+    public const string PaneChanged = "herdr_pane_changed";
+
+    /// <summary>409: agent is not on the Herdr backend, kind is unmapped, or runner lacks herdr/herdr-attach.</summary>
+    public const string Refused = "herdr_refused";
+
+    /// <summary>409: the agent already has a live session.</summary>
+    public const string SessionActive = "session_active";
+
+    /// <summary>409: the native id is another agent's session, or any card session.</summary>
+    public const string SessionIdTaken = "session_id_taken";
+
+    /// <summary>409 on POST /sessions: last-pane is occupied by a foreign process (CARD-0224).</summary>
+    public const string PaneOccupied = "pane_occupied";
 }
 
 /// <summary>
@@ -672,7 +772,9 @@ public sealed record RunnerCapabilitiesDto(
     IReadOnlyList<string>? SessionBackends = null,
     // CARD-0179 R3: git SHA stamped at build time (InformationalVersion +SourceRevisionId).
     // Null on an older runner that predates the field.
-    string? Version = null);
+    string? Version = null,
+    // CARD-0213: extra capability tokens (e.g. herdr-attach). Null = older runner = no evidence.
+    IReadOnlyList<string>? Features = null);
 
 /// <summary>Build identity of the running session-runner process (CARD-0112).</summary>
 public sealed record RunnerBuildDto(

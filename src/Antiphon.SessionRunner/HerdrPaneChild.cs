@@ -62,6 +62,187 @@ internal sealed class HerdrPaneChild : ISessionChild
         return Task.CompletedTask;
     }
 
+    /// <summary>CARD-0213: read-only pane snapshot. Nothing written, typed, or renamed.</summary>
+    public async Task<HerdrPaneInspectDto> InspectAsync(string paneId, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(paneId);
+        var inspected = await InspectForegroundAsync(paneId, ct);
+        var foreground = inspected.NonShell
+            .Select(p => new HerdrForegroundProcessDto(
+                p.Pid,
+                p.Name,
+                p.Argv,
+                p.Cwd,
+                _processLiveness.TryGetStartTimeUtc(p.Pid)))
+            .ToList();
+        var shellName = inspected.Process.ShellPid is int shell
+            ? _processLiveness.TryGetProcessName(shell)
+            : null;
+        return new HerdrPaneInspectDto(
+            inspected.Pane.PaneId,
+            inspected.Pane.WorkspaceId,
+            inspected.Pane.TabId,
+            inspected.Pane.Label,
+            inspected.Pane.Title,
+            inspected.Pane.Agent,
+            inspected.Pane.AgentStatus,
+            inspected.Process.ShellPid,
+            shellName,
+            foreground,
+            inspected.NativeSessionId,
+            inspected.NativeSessionSource,
+            BoundToSessionId: null,
+            BoundOrigin: null);
+    }
+
+    /// <summary>
+    /// CARD-0213: bind this child to an operator pane. Re-runs every inspect check. Writes an
+    /// attached-origin sidecar; never types, and never renames unless the request carries
+    /// <see cref="HerdrAttachRequest.PaneTitle"/> / <see cref="HerdrAttachRequest.AgentSlug"/>.
+    /// </summary>
+    public async Task<HerdrAttachResult> AttachAsync(HerdrAttachRequest request, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(request.PaneId);
+        if (request.SessionId == Guid.Empty)
+            throw new ArgumentException("SessionId must not be empty.", nameof(request));
+
+        var expectedKind = string.IsNullOrEmpty(request.ExpectedKind)
+            ? HerdrAgentKinds.Claude
+            : request.ExpectedKind;
+        var inspected = await InspectForegroundAsync(request.PaneId, ct);
+        var pane = inspected.Pane;
+
+        if (string.IsNullOrEmpty(pane.Agent))
+        {
+            throw new HerdrLaunchException(
+                $"pane {request.PaneId} has no detected agent",
+                HerdrProblemTypes.PaneUnoccupied);
+        }
+
+        if (!string.Equals(pane.Agent, expectedKind, StringComparison.Ordinal))
+        {
+            throw new HerdrLaunchException(
+                $"pane {request.PaneId} is '{pane.Agent}' where '{expectedKind}' was expected",
+                HerdrProblemTypes.KindMismatch);
+        }
+
+        if (inspected.Occupant is null
+            || inspected.NonShell.Count != 1
+            || !HerdrAgentKinds.IsFamilyMember(expectedKind, inspected.Occupant.Name))
+        {
+            var listed = inspected.NonShell.Count == 0
+                ? "none"
+                : string.Join(", ", inspected.NonShell.Select(p => $"{p.Name} pid {p.Pid}"));
+            throw new HerdrLaunchException(
+                $"pane {request.PaneId} foreground is not a single {expectedKind} process ({listed})",
+                HerdrProblemTypes.PaneForeign);
+        }
+
+        var occupant = inspected.Occupant;
+        if (occupant.Pid != request.ExpectedChildPid)
+        {
+            throw new HerdrLaunchException(
+                $"pane {request.PaneId} pid {occupant.Pid} != expected {request.ExpectedChildPid}",
+                HerdrProblemTypes.PaneChanged);
+        }
+
+        if (request.ExpectedNativeSessionId is Guid expectedNative
+            && inspected.NativeSessionId != expectedNative)
+        {
+            throw new HerdrLaunchException(
+                $"pane {request.PaneId} native session id {inspected.NativeSessionId?.ToString("D") ?? "none"} != expected {expectedNative:D}",
+                HerdrProblemTypes.PaneChanged);
+        }
+
+        var isGrok = string.Equals(expectedKind, HerdrAgentKinds.Grok, StringComparison.Ordinal)
+            || string.Equals(request.TranscriptFormat, TranscriptFormats.Grok, StringComparison.OrdinalIgnoreCase);
+        if (isGrok && inspected.NativeSessionId is null)
+        {
+            throw new HerdrLaunchException(
+                $"pane {request.PaneId} grok has no --session-id in argv and agent_session did not name one; relaunch with --session-id",
+                HerdrProblemTypes.NativeIdUnknown);
+        }
+
+        string? grokUpdatesPath = null;
+        string? grokEncodedCwd = null;
+        if (isGrok)
+        {
+            var grokHome = GrokTranscriptTailer.ResolveGrokHome();
+            var located = GrokTranscriptTailer.TryLocateSessionDirectory(grokHome, inspected.NativeSessionId!.Value);
+            if (located is null)
+            {
+                throw new HerdrLaunchException(
+                    $"no grok session directory for {inspected.NativeSessionId:D} under {Path.Combine(grokHome, "sessions")}",
+                    HerdrProblemTypes.TranscriptNotFound);
+            }
+
+            grokUpdatesPath = Path.Combine(located, "updates.jsonl");
+            grokEncodedCwd = GrokTranscriptTailer.EncodedCwdOf(located);
+            if (occupant.Cwd is { } processCwd && grokEncodedCwd is not null)
+            {
+                string decoded;
+                try { decoded = Uri.UnescapeDataString(grokEncodedCwd); }
+                catch (UriFormatException) { decoded = grokEncodedCwd; }
+
+                string processFull;
+                try { processFull = Path.GetFullPath(processCwd); }
+                catch (Exception) { processFull = processCwd; }
+
+                if (!string.Equals(decoded, processFull, StringComparison.Ordinal))
+                {
+                    _logger.LogWarning(
+                        "Grok session directory cwd encoding {Encoded} decodes to {Decoded} which differs from process cwd {Cwd} for session {SessionId}",
+                        grokEncodedCwd, decoded, processFull, request.SessionId);
+                }
+            }
+        }
+
+        _sessionId = request.SessionId;
+        _paneId = request.PaneId;
+
+        try
+        {
+            await _client.PaneReportMetadataAsync(
+                request.PaneId,
+                new Dictionary<string, string?> { ["antiphon-session"] = request.SessionId.ToString("D") },
+                title: request.PaneTitle,
+                ct);
+        }
+        catch (Exception ex) when (ex is HerdrApiException or HerdrBackendUnavailableException)
+        {
+            _logger.LogWarning(ex, "pane.report_metadata failed during attach of {PaneId}; sidecar is authoritative", request.PaneId);
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.PaneTitle))
+            await _client.PaneRenameAsync(request.PaneId, request.PaneTitle, ct);
+        if (!string.IsNullOrWhiteSpace(request.AgentSlug))
+            await TryApplyAgentNameAsync(request.PaneId, request.AgentSlug, ct);
+
+        var startUtc = _processLiveness.TryGetStartTimeUtc(occupant.Pid) ?? DateTime.UtcNow;
+        _sidecar = new HerdrPaneSidecar
+        {
+            SessionId = request.SessionId,
+            WorkspaceKey = string.IsNullOrWhiteSpace(request.WorkspaceKey) ? "none" : request.WorkspaceKey,
+            WorkspaceId = pane.WorkspaceId,
+            TabId = pane.TabId,
+            PaneId = request.PaneId,
+            ChildPid = occupant.Pid,
+            ShellPid = inspected.Process.ShellPid,
+            LaunchedAtUtc = startUtc,
+            Cwd = occupant.Cwd,
+            AgentKind = expectedKind,
+            Origin = HerdrPaneOrigins.Attached,
+            UpdatedAtUtc = startUtc,
+        };
+        _sidecar.SaveAtomic(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, request.SessionId));
+
+        return new HerdrAttachResult(
+            new ChildStarted(occupant.Pid, HostPid: null, startUtc),
+            _sidecar,
+            grokUpdatesPath,
+            grokEncodedCwd);
+    }
+
     /// <summary>
     /// CARD-0162: raise Exited(<paramref name="reason"/>) once after verification fails. Retires
     /// the sidecar to a last-pane record (CARD-0224) so the next launch of this id can target
@@ -158,9 +339,11 @@ internal sealed class HerdrPaneChild : ISessionChild
         }
 
         HerdrPaneInfo pane;
+        HerdrPaneProcessInfo proc;
+        List<HerdrPaneProcess> nonShell;
         try
         {
-            pane = await _client.PaneGetAsync(candidate.PaneId, ct);
+            (pane, proc, nonShell) = await ReadForegroundAsync(candidate.PaneId, ct);
         }
         catch (HerdrApiException ex) when (IsPaneNotFound(ex))
         {
@@ -170,12 +353,6 @@ internal sealed class HerdrPaneChild : ISessionChild
             HerdrLastPane.TryDelete(_settings.SessionLogPath, candidate.SessionId);
             return new TargetPane(TargetPaneKind.Allocate, workspaceId, TabId: "", PaneId: "");
         }
-
-        var proc = await _client.PaneProcessInfoAsync(candidate.PaneId, ct);
-        var foreground = proc.ForegroundProcesses ?? [];
-        var nonShell = foreground
-            .Where(p => proc.ShellPid is not int shell || p.Pid != shell)
-            .ToList();
 
         if (nonShell.Count == 0)
         {
@@ -227,6 +404,94 @@ internal sealed class HerdrPaneChild : ISessionChild
     private static bool IsPaneNotFound(HerdrApiException ex) =>
         string.Equals(ex.Code, "pane_not_found", StringComparison.OrdinalIgnoreCase)
         || string.Equals(ex.Code, "not_found", StringComparison.OrdinalIgnoreCase);
+
+    private sealed record InspectedForeground(
+        HerdrPaneInfo Pane,
+        HerdrPaneProcessInfo Process,
+        IReadOnlyList<HerdrPaneProcess> NonShell,
+        HerdrPaneProcess? Occupant,
+        Guid? NativeSessionId,
+        string? NativeSessionSource);
+
+    private async Task<(HerdrPaneInfo Pane, HerdrPaneProcessInfo Process, List<HerdrPaneProcess> NonShell)> ReadForegroundAsync(
+        string paneId, CancellationToken ct)
+    {
+        var pane = await _client.PaneGetAsync(paneId, ct);
+        var proc = await _client.PaneProcessInfoAsync(paneId, ct);
+        var nonShell = (proc.ForegroundProcesses ?? [])
+            .Where(p => proc.ShellPid is not int shell || p.Pid != shell)
+            .ToList();
+        return (pane, proc, nonShell);
+    }
+
+    private async Task<InspectedForeground> InspectForegroundAsync(string paneId, CancellationToken ct)
+    {
+        HerdrPaneInfo pane;
+        HerdrPaneProcessInfo proc;
+        List<HerdrPaneProcess> nonShell;
+        try
+        {
+            (pane, proc, nonShell) = await ReadForegroundAsync(paneId, ct);
+        }
+        catch (HerdrApiException ex) when (IsPaneNotFound(ex))
+        {
+            throw new HerdrLaunchException(
+                $"pane {paneId} is unknown to herdr",
+                HerdrProblemTypes.PaneNotFound);
+        }
+
+        var occupant = nonShell.Count == 1 ? nonShell[0] : null;
+        Guid? nativeId = TryResolveNativeSessionId(occupant?.Argv, pane.AgentSession, out var parsed, out var source)
+            ? parsed
+            : null;
+        return new InspectedForeground(pane, proc, nonShell, occupant, nativeId, source);
+    }
+
+    /// <summary>
+    /// CARD-0213: argv first (CARD-0224 flags), then herdr <c>agent_session</c> when it is not
+    /// our own report. Source <c>antiphon</c> is treated as absent — that is our stamp, not
+    /// independent evidence.
+    /// </summary>
+    internal static bool TryResolveNativeSessionId(
+        IReadOnlyList<string>? argv,
+        HerdrAgentSessionInfo? agentSession,
+        out Guid sessionId,
+        out string? source)
+    {
+        if (TryReadNativeSessionId(argv, out sessionId))
+        {
+            source = HerdrNativeSessionSources.Argv;
+            return true;
+        }
+
+        if (agentSession is not null
+            && !string.Equals(agentSession.Source, HerdrSources.Antiphon, StringComparison.OrdinalIgnoreCase)
+            && TryParseAgentSessionValue(agentSession, out sessionId))
+        {
+            source = HerdrNativeSessionSources.AgentSession;
+            return true;
+        }
+
+        sessionId = default;
+        source = null;
+        return false;
+    }
+
+    private static bool TryParseAgentSessionValue(HerdrAgentSessionInfo info, out Guid id)
+    {
+        if (Guid.TryParse(info.Value, out id))
+            return true;
+
+        foreach (var part in info.Value.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var token = Path.GetFileNameWithoutExtension(part);
+            if (Guid.TryParse(token, out id) || Guid.TryParse(part, out id))
+                return true;
+        }
+
+        id = default;
+        return false;
+    }
 
     /// <summary>
     /// CARD-0224 4b: argv names our session via <c>--session-id</c> / <c>--resume</c> / <c>-s</c> /
@@ -419,6 +684,9 @@ internal sealed class HerdrPaneChild : ISessionChild
         if (_paneId is null)
             return false;
 
+        if (string.Equals(_sidecar?.Origin, HerdrPaneOrigins.Attached, StringComparison.OrdinalIgnoreCase))
+            return await DetachAsync(ct);
+
         try
         {
             var proc = await _client.PaneProcessInfoAsync(_paneId, ct);
@@ -459,6 +727,32 @@ internal sealed class HerdrPaneChild : ISessionChild
 
         HerdrPaneSidecar.TryDelete(_settings.SessionLogPath, _sessionId);
         RaiseExited(HerdrExitReasons.PaneClosed);
+        return true;
+    }
+
+    /// <summary>
+    /// CARD-0213: drop the sidecar and clear metadata; never <c>pane.close</c>, never pid-kill.
+    /// Attached exits write no last-pane record (<see cref="HerdrPaneSidecar.Retire"/> already skips).
+    /// </summary>
+    private async Task<bool> DetachAsync(CancellationToken ct)
+    {
+        try
+        {
+            await _client.PaneReportMetadataAsync(
+                new HerdrPaneReportMetadataParams(
+                    _paneId!,
+                    HerdrSources.Antiphon,
+                    Tokens: new Dictionary<string, string?> { ["antiphon-session"] = null },
+                    ClearStateLabels: true),
+                ct);
+        }
+        catch (Exception ex) when (ex is HerdrApiException or HerdrBackendUnavailableException)
+        {
+            _logger.LogWarning(ex, "pane.report_metadata (detach) failed for {PaneId}", _paneId);
+        }
+
+        HerdrPaneSidecar.TryDelete(_settings.SessionLogPath, _sessionId);
+        RaiseExited(HerdrExitReasons.Detached, exitCode: 0);
         return true;
     }
 
@@ -674,11 +968,11 @@ internal sealed class HerdrPaneChild : ISessionChild
         }
     }
 
-    private void RaiseExited(string reason)
+    private void RaiseExited(string reason, int? exitCode = null)
     {
         if (_exited) return;
         _exited = true;
-        Exited?.Invoke(new ChildExit(ExitCode: null, reason));
+        Exited?.Invoke(new ChildExit(exitCode, reason));
     }
 
     /// <summary>
@@ -798,3 +1092,10 @@ internal sealed class HerdrPaneChild : ISessionChild
         return trimmed + suffix;
     }
 }
+
+/// <summary>CARD-0213: result of <see cref="HerdrPaneChild.AttachAsync"/>.</summary>
+internal sealed record HerdrAttachResult(
+    ChildStarted Started,
+    HerdrPaneSidecar Sidecar,
+    string? GrokUpdatesPath,
+    string? GrokEncodedCwd);

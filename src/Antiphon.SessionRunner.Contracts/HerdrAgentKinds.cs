@@ -23,4 +23,34 @@ public static class HerdrAgentKinds
     /// </summary>
     public static bool IsSupported(string? kind) =>
         kind is null || Supported.Contains(kind, StringComparer.Ordinal);
+
+    /// <summary>
+    /// CARD-0213: executable names that may occupy a pane of this kind (process_info <c>name</c>).
+    /// A <c>pwsh</c> wrapper is deliberately absent (CARD-0187 K6). Codex includes <c>cmd</c>
+    /// because the interactive launcher is <c>codex.cmd</c>.
+    /// </summary>
+    public static IReadOnlyList<string> ExecutableFamily(string? kind)
+    {
+        var resolved = string.IsNullOrEmpty(kind) ? Claude : kind;
+        return resolved switch
+        {
+            Grok => ["grok", "grok.exe"],
+            Codex => ["codex", "codex.exe", "cmd", "cmd.exe"],
+            _ => ["claude", "claude.exe", "node", "node.exe"],
+        };
+    }
+
+    /// <summary>True when <paramref name="processName"/> belongs to <see cref="ExecutableFamily"/>.</summary>
+    public static bool IsFamilyMember(string? kind, string? processName)
+    {
+        if (string.IsNullOrWhiteSpace(processName))
+            return false;
+        foreach (var candidate in ExecutableFamily(kind))
+        {
+            if (string.Equals(candidate, processName, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
 }

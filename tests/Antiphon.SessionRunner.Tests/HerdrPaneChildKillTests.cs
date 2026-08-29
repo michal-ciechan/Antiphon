@@ -98,6 +98,92 @@ public class HerdrPaneChildKillTests
     }
 
     [Test]
+    public async Task Attached_kill_detaches_without_pane_close_or_pid_kill()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+
+        var settings = new SessionRunnerSettings
+        {
+            SessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-herdr-kill-attach-{Guid.NewGuid():N}"),
+            PtyHostLingerHours = 0.02,
+        };
+        var client = new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session });
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await fake.WaitUntilListeningAsync(cts.Token);
+        await client.WorkspaceCreateAsync(settings.SessionLogPath, "card0213-kill", cts.Token);
+
+        var pane = fake.Workspaces[0].Tabs[0].Panes[0];
+        using var dummy = StartDummy();
+        try
+        {
+            fake.SetPaneProcessInfo(pane.PaneId, shellPid: 1, (dummy.Id, "grok.exe"));
+
+            var sessionId = Guid.NewGuid();
+            var launched = DateTime.UtcNow;
+            var sidecar = new HerdrPaneSidecar
+            {
+                SessionId = sessionId,
+                WorkspaceKey = "none",
+                WorkspaceId = pane.WorkspaceId,
+                TabId = pane.TabId,
+                PaneId = pane.PaneId,
+                ChildPid = dummy.Id,
+                ShellPid = 1,
+                LaunchedAtUtc = launched,
+                Cwd = settings.SessionLogPath,
+                Origin = HerdrPaneOrigins.Attached,
+                UpdatedAtUtc = launched,
+            };
+            sidecar.SaveAtomic(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId));
+
+            var child = new HerdrPaneChild(
+                client,
+                settings,
+                NullLogger.Instance,
+                () => [],
+                new StubProbe(alive: true));
+            string? reason = null;
+            int? exitCode = null;
+            child.Exited += exit =>
+            {
+                reason = exit.Reason;
+                exitCode = exit.ExitCode;
+            };
+            await child.AttachExistingAsync(sidecar, cts.Token);
+
+            var killed = await child.KillAsync(cts.Token);
+            killed.ShouldBeTrue();
+            reason.ShouldBe(HerdrExitReasons.Detached);
+            exitCode.ShouldBe(0);
+            dummy.HasExited.ShouldBeFalse();
+            File.Exists(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId)).ShouldBeFalse();
+            File.Exists(HerdrLastPane.PathFor(settings.SessionLogPath, sessionId)).ShouldBeFalse();
+            fake.Workspaces[0].Tabs[0].Panes.ShouldContain(p => p.PaneId == pane.PaneId);
+            fake.Requests.Any(r => r.GetProperty("method").GetString() == "pane.close")
+                .ShouldBeFalse();
+            fake.Requests.Any(r =>
+                r.GetProperty("method").GetString() == "pane.report_metadata"
+                && r.GetProperty("params").TryGetProperty("clear_state_labels", out var clear)
+                && clear.GetBoolean()).ShouldBeTrue();
+        }
+        finally
+        {
+            KillBestEffort(dummy);
+            try
+            {
+                if (Directory.Exists(settings.SessionLogPath))
+                    Directory.Delete(settings.SessionLogPath, recursive: true);
+            }
+            catch
+            {
+                // Best-effort.
+            }
+        }
+    }
+
+    [Test]
     public async Task Kill_after_pane_close_writes_no_last_pane_record()
     {
         await using var fake = new FakeHerdrServer();

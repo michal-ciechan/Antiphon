@@ -187,6 +187,136 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
     }
 
+    /// <summary>CARD-0213: read-only pane snapshot. Nothing is written, typed, or renamed.</summary>
+    public async Task<HerdrPaneInspectDto> InspectHerdrPaneAsync(string paneId, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(paneId);
+        EnsureHerdrClient();
+        await _herdrClient!.ConnectAndValidateAsync(ct);
+
+        var child = new HerdrPaneChild(
+            _herdrClient, _settings, _logger, () => Array.Empty<HerdrPaneAllocator.LivePane>(), _processLiveness);
+        var dto = await child.InspectAsync(paneId, ct);
+        var bound = FindBoundPane(paneId, exceptSessionId: null);
+        return dto with { BoundToSessionId = bound?.SessionId, BoundOrigin = bound?.Origin };
+    }
+
+    /// <summary>CARD-0213: bind a standing session to an operator pane Antiphon did not launch.</summary>
+    public async Task<RunnerSessionDto> AttachHerdrAsync(HerdrAttachRequest request, CancellationToken ct)
+    {
+        if (request.SessionId == Guid.Empty)
+            throw new ArgumentException("SessionId must not be empty.", nameof(request));
+        ArgumentException.ThrowIfNullOrWhiteSpace(request.PaneId);
+        EnsureHerdrClient();
+        if (!HerdrAgentKinds.IsSupported(request.ExpectedKind))
+        {
+            throw new ArgumentException(
+                $"Unsupported herdr agent kind '{request.ExpectedKind}'. Supported: {string.Join(", ", HerdrAgentKinds.Supported)}.",
+                nameof(request));
+        }
+
+        await _herdrClient!.ConnectAndValidateAsync(ct);
+
+        var bound = FindBoundPane(request.PaneId, exceptSessionId: request.SessionId);
+        if (bound is { } holder)
+        {
+            throw new HerdrLaunchException(
+                $"pane {request.PaneId} is bound to session {holder.SessionId:D} ({holder.Origin})",
+                HerdrProblemTypes.PaneBound);
+        }
+
+        var session = new RunnerSession(request.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness);
+        if (!_sessions.TryAdd(request.SessionId, session))
+        {
+            if (_sessions.TryGetValue(request.SessionId, out var existing)
+                && existing.HasExited
+                && _sessions.TryUpdate(request.SessionId, session, existing))
+            {
+                await existing.EnsureExitedHostGoneAsync(TimeSpan.FromSeconds(5), ct);
+                await existing.DisposeAsync();
+            }
+            else
+            {
+                await session.DisposeAsync();
+                throw new InvalidOperationException($"Session '{request.SessionId}' is already running.");
+            }
+        }
+
+        try
+        {
+            await session.AttachHerdrAsync(
+                request,
+                _herdrClient,
+                () => CollectLiveAntiphonPanes(request.WorkspaceKey),
+                () => NotifyPaneSetChanged(),
+                ct);
+            NotifyPaneSetChanged();
+            return session.ToDto();
+        }
+        catch
+        {
+            _sessions.TryRemove(request.SessionId, out _);
+            session.TearDownFailedLaunch();
+            await session.DisposeAsync();
+            throw;
+        }
+    }
+
+    private void EnsureHerdrClient()
+    {
+        if (_herdrClient is null)
+        {
+            throw new HerdrBackendUnavailableException(
+                "Herdr backend is not available in this runner process (HerdrClient was not registered).");
+        }
+    }
+
+    private readonly record struct BoundPane(Guid SessionId, string Origin);
+
+    /// <summary>
+    /// A live session, on-disk sidecar, or another id's last-pane pointing at <paramref name="paneId"/>.
+    /// Same-id last-pane is allowed (the operator is reclaiming their own pane).
+    /// </summary>
+    private BoundPane? FindBoundPane(string paneId, Guid? exceptSessionId)
+    {
+        foreach (var (id, session) in _sessions)
+        {
+            if (exceptSessionId is Guid skip && id == skip)
+                continue;
+            if (session.HasExited)
+                continue;
+            if (string.Equals(session.HerdrPaneId, paneId, StringComparison.Ordinal))
+                return new BoundPane(id, session.HerdrOrigin ?? HerdrPaneOrigins.Launched);
+            if (session.PendingSidecar is { } pending
+                && string.Equals(pending.PaneId, paneId, StringComparison.Ordinal))
+            {
+                return new BoundPane(id, pending.Origin ?? HerdrPaneOrigins.Launched);
+            }
+        }
+
+        foreach (var sidecar in HerdrPaneSidecar.LoadAll(_settings.SessionLogPath))
+        {
+            if (exceptSessionId is Guid skip && sidecar.SessionId == skip)
+                continue;
+            if (!string.Equals(sidecar.PaneId, paneId, StringComparison.Ordinal))
+                continue;
+            if (_sessions.TryGetValue(sidecar.SessionId, out var live) && live.HasExited)
+                continue;
+            return new BoundPane(sidecar.SessionId, sidecar.Origin ?? HerdrPaneOrigins.Launched);
+        }
+
+        foreach (var last in HerdrLastPane.LoadAll(_settings.SessionLogPath))
+        {
+            if (exceptSessionId is Guid skip && last.SessionId == skip)
+                continue;
+            if (!string.Equals(last.PaneId, paneId, StringComparison.Ordinal))
+                continue;
+            return new BoundPane(last.SessionId, last.Origin);
+        }
+
+        return null;
+    }
+
     /// <summary>Live Antiphon herdr panes for the allocator (sidecar + still in this runner).</summary>
     private IReadOnlyList<HerdrPaneAllocator.LivePane> CollectLiveAntiphonPanes(string workspaceKey)
     {
@@ -194,6 +324,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         foreach (var sidecar in HerdrPaneSidecar.LoadAll(_settings.SessionLogPath))
         {
             if (!string.Equals(sidecar.WorkspaceKey, workspaceKey, StringComparison.Ordinal))
+                continue;
+            if (string.Equals(sidecar.Origin, HerdrPaneOrigins.Attached, StringComparison.OrdinalIgnoreCase))
                 continue;
             if (!_sessions.TryGetValue(sidecar.SessionId, out var session) || session.HasExited)
                 continue;
@@ -610,6 +742,13 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             return false;
         if (!probe.IsAlive(pid, sidecar.LaunchedAtUtc))
             return false;
+        if (string.Equals(sidecar.Origin, HerdrPaneOrigins.Attached, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning(
+                "HerdrOrphanNotOurs: pane {PaneId} session {SessionId} pid {Pid} was OS-alive but the sidecar is attached-origin; dropping sidecar, not killing",
+                sidecar.PaneId, sidecar.SessionId, pid);
+            return false;
+        }
 
         KillPidBestEffort(pid);
         _logger.LogWarning(
@@ -816,6 +955,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private string? _pendingReason;
         private HerdrPaneSidecar? _pendingSidecar;
         private DateTime? _herdrVerifiedAtUtc;
+        private string? _herdrOrigin;
 
         public RunnerSession(
             Guid sessionId,
@@ -840,6 +980,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         /// <summary>CARD-0162: pane id when this session is on the herdr lane.</summary>
         internal string? HerdrPaneId => (_herdrChild as HerdrPaneChild)?.PaneId;
+
+        /// <summary>CARD-0213: <see cref="HerdrPaneOrigins"/> once known.</summary>
+        internal string? HerdrOrigin => _herdrOrigin;
 
         /// <summary>CARD-0186 S3: adoption is waiting on herdr.</summary>
         internal bool IsPendingHerdr => _pendingReason is not null;
@@ -949,6 +1092,15 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         private void CloseHerdrAfterBarFailed(HerdrPaneChild herdr, HerdrPaneSidecar sidecar)
         {
+            if (string.Equals(sidecar.Origin, HerdrPaneOrigins.Attached, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning(
+                    "HerdrOrphanNotOurs: pane {PaneId} session {SessionId} pid {Pid} was OS-alive but the sidecar is attached-origin; dropping sidecar, not killing",
+                    sidecar.PaneId, sidecar.SessionId, sidecar.ChildPid);
+                herdr.RaiseVerifiedClosed(HerdrExitReasons.RestartPresumedDead);
+                return;
+            }
+
             if (sidecar.ChildPid is int pid && _processLiveness.IsAlive(pid, sidecar.LaunchedAtUtc))
             {
                 KillPidBestEffort(pid);
@@ -1001,6 +1153,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 var started = await _herdrChild.LaunchAsync(request, ct);
                 _childPid = started.ChildPid;
                 _startedAt = started.ChildStartUtc;
+                _herdrOrigin = (_herdrChild as HerdrPaneChild)?.Sidecar?.Origin ?? HerdrPaneOrigins.Launched;
                 lock (_gate)
                     _status = "Running";
                 _clientReady.TrySetResult(true);
@@ -1026,6 +1179,180 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
                 throw;
             }
+        }
+
+        /// <summary>
+        /// CARD-0213: bind a pane Antiphon did not launch. Mirrors <see cref="AdoptHerdrAsync"/>
+        /// with <c>_adopted = false</c> and a <see cref="SessionRunnerEventNames.SessionStarted"/>
+        /// publish, not SessionAdopted.
+        /// </summary>
+        public async Task AttachHerdrAsync(
+            HerdrAttachRequest request,
+            HerdrClient herdrClient,
+            Func<IReadOnlyList<HerdrPaneAllocator.LivePane>> liveAntiphonPanes,
+            Action onPaneSetChanged,
+            CancellationToken ct)
+        {
+            Directory.CreateDirectory(_settings.SessionLogPath);
+            _ansiLogPath = Path.Combine(_settings.SessionLogPath, $"{_sessionId:N}.ansi.log");
+            _screen = new TerminalScreen(120, 30);
+            _onHerdrPaneSetChanged = onPaneSetChanged;
+
+            try
+            {
+                _adopted = false;
+                _backend = SessionBackends.Herdr;
+                _herdrOrigin = HerdrPaneOrigins.Attached;
+                _herdrChild = new HerdrPaneChild(
+                    herdrClient, _settings, _logger, liveAntiphonPanes, _processLiveness);
+                _herdrChild.Exited += exit =>
+                {
+                    lock (_gate)
+                    {
+                        if (_status == "Exited") return;
+                        _status = "Exited";
+                        _exitCode = exit.ExitCode;
+                        _exitReason = exit.Reason;
+                    }
+
+                    _clientReady.TrySetResult(false);
+                    _exited.TrySetResult();
+                    _events.Publish(
+                        SessionRunnerEventNames.SessionExited,
+                        new RunnerSessionExitedEvent(_sessionId, exit.ExitCode, exit.Reason, LastSequence: 0));
+                    _onHerdrPaneSetChanged?.Invoke();
+                };
+
+                var attached = await ((HerdrPaneChild)_herdrChild).AttachAsync(request, ct);
+                _childPid = attached.Started.ChildPid;
+                _startedAt = attached.Started.ChildStartUtc;
+                lock (_gate)
+                    _status = "Running";
+                _clientReady.TrySetResult(true);
+
+                _events.Publish(
+                    SessionRunnerEventNames.SessionStarted,
+                    new RunnerSessionStartedEvent(_sessionId, _childPid, _startedAt));
+
+                StartAttachedTailer(request, attached);
+            }
+            catch
+            {
+                _clientReady.TrySetResult(false);
+                if (_herdrChild is not null)
+                {
+                    try { await _herdrChild.KillAsync(CancellationToken.None); }
+                    catch { /* tear-down must not replace the attach exception */ }
+                    await _herdrChild.DisposeAsync();
+                    _herdrChild = null;
+                }
+
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// CARD-0213: Grok uses the GUID-located path (offset 0); Claude exact-or-discovery;
+        /// Codex discovery. Conversation predates us so resumeLaunch is true (C3 waived).
+        /// </summary>
+        private void StartAttachedTailer(HerdrAttachRequest request, HerdrAttachResult attached)
+        {
+            var cwd = attached.Sidecar.Cwd ?? "";
+            var childStartUtc = attached.Started.ChildStartUtc;
+            var format = string.IsNullOrWhiteSpace(request.TranscriptFormat)
+                ? TranscriptFormats.Claude
+                : request.TranscriptFormat;
+
+            if (string.Equals(format, TranscriptFormats.Grok, StringComparison.OrdinalIgnoreCase)
+                && attached.GrokUpdatesPath is { } grokPath)
+            {
+                SaveSidecar(new TranscriptSidecar
+                {
+                    SessionId = _sessionId,
+                    Cwd = cwd,
+                    ChildStartUtc = childStartUtc,
+                    ResumeLaunch = true,
+                    TranscriptPath = grokPath,
+                    How = TranscriptBindMethods.Deterministic,
+                    Format = TranscriptFormats.Grok,
+                });
+                _tailer = new GrokTranscriptTailer(
+                    _sessionId, grokPath, _events, _logger, inputLog: _inputLog);
+                _tailer.Start();
+                return;
+            }
+
+            if (string.Equals(format, TranscriptFormats.Codex, StringComparison.OrdinalIgnoreCase))
+            {
+                SaveSidecar(new TranscriptSidecar
+                {
+                    SessionId = _sessionId,
+                    Cwd = cwd,
+                    ChildStartUtc = childStartUtc,
+                    ResumeLaunch = true,
+                    TranscriptPath = null,
+                    How = null,
+                    Format = TranscriptFormats.Codex,
+                });
+                _tailer = new CodexTranscriptTailer(
+                    _sessionId, cwd, _events, _logger,
+                    claims: _transcriptClaims,
+                    inputLog: _inputLog,
+                    firstInputUtc: null,
+                    childStartUtc: childStartUtc,
+                    resumeLaunch: true,
+                    sessionsRoot: CodexTranscriptTailer.ResolveSessionsRoot(null),
+                    onBound: RecordTranscriptBinding,
+                    onUnbound: RecordTranscriptUnbinding);
+                _tailer.Start();
+                return;
+            }
+
+            string? knownPath = null;
+            if (!string.IsNullOrEmpty(cwd))
+            {
+                try
+                {
+                    var configDir = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
+                    var root = string.IsNullOrWhiteSpace(configDir)
+                        ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude")
+                        : configDir;
+                    var candidate = Path.Combine(
+                        root,
+                        "projects",
+                        Uri.EscapeDataString(Path.GetFullPath(cwd)),
+                        $"{_sessionId:D}.jsonl");
+                    if (File.Exists(candidate))
+                        knownPath = candidate;
+                }
+                catch (Exception ex) when (ex is IOException or ArgumentException or UnauthorizedAccessException)
+                {
+                    _logger.LogDebug(ex, "Could not resolve Claude exact transcript path for attached session {SessionId}", _sessionId);
+                }
+            }
+
+            SaveSidecar(new TranscriptSidecar
+            {
+                SessionId = _sessionId,
+                Cwd = cwd,
+                ChildStartUtc = childStartUtc,
+                ResumeLaunch = true,
+                TranscriptPath = knownPath,
+                How = knownPath is null ? null : TranscriptBindMethods.Exact,
+                Format = TranscriptFormats.Claude,
+            });
+            _tailer = new TranscriptTailer(
+                _sessionId, cwd, _events, _logger,
+                claims: _transcriptClaims,
+                inputLog: _inputLog,
+                firstInputUtc: null,
+                childStartUtc: childStartUtc,
+                resumeLaunch: true,
+                knownTranscriptPath: knownPath,
+                onBound: RecordTranscriptBinding,
+                onUnbound: RecordTranscriptUnbinding,
+                knownSessions: new SidecarKnownSessionProbe(_settings.SessionLogPath));
+            _tailer.Start();
         }
 
         /// <summary>
@@ -1412,6 +1739,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _exitCode = null,
                 _exitReason = reason,
                 _backend = SessionBackends.Herdr,
+                _herdrOrigin = sidecar.Origin ?? HerdrPaneOrigins.Launched,
             };
             session._clientReady.TrySetResult(false);
             session._exited.TrySetResult();
@@ -1441,6 +1769,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _backend = SessionBackends.Herdr,
                 _pendingReason = HerdrPendingReasons.Unreachable,
                 _pendingSidecar = sidecar,
+                _herdrOrigin = sidecar.Origin ?? HerdrPaneOrigins.Launched,
             };
         }
 
@@ -1448,14 +1777,14 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         /// CARD-0186 S3: a pending session reached a death verdict (R2–R5 / R7). Sidecar deletion
         /// is the caller's job so the bar's orphan-kill side effects stay in one place.
         /// </summary>
-        internal void CompletePendingAsExited(string reason)
+        internal void CompletePendingAsExited(string reason, int? exitCode = null)
         {
             lock (_gate)
             {
                 if (_status == "Exited")
                     return;
                 _status = "Exited";
-                _exitCode = null;
+                _exitCode = exitCode;
                 _exitReason = reason;
                 _pendingReason = null;
             }
@@ -1464,7 +1793,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             _exited.TrySetResult();
             _events.Publish(
                 SessionRunnerEventNames.SessionExited,
-                new RunnerSessionExitedEvent(_sessionId, null, reason, LastSequence: 0));
+                new RunnerSessionExitedEvent(_sessionId, exitCode, reason, LastSequence: 0));
         }
 
         /// <summary>
@@ -1526,6 +1855,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             _pendingSidecar = null;
             _childPid = sidecar.ChildPid;
             _startedAt = sidecar.LaunchedAtUtc;
+            _herdrOrigin = sidecar.Origin ?? HerdrPaneOrigins.Launched;
             _onHerdrPaneSetChanged = onPaneSetChanged;
             _herdrChild = new HerdrPaneChild(
                 client,
@@ -1686,7 +2016,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     TranscriptUnboundReason: boundPath is null ? _tailer?.UnboundReason : null,
                     Backend: _backend,
                     Pending: _pendingReason,
-                    HerdrVerifiedAtUtc: _herdrVerifiedAtUtc);
+                    HerdrVerifiedAtUtc: _herdrVerifiedAtUtc,
+                    HerdrOrigin: _herdrOrigin);
             }
         }
 
@@ -1841,11 +2172,18 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private void KillPendingHerdr()
         {
             var sidecar = _pendingSidecar;
-            if (sidecar?.ChildPid is int pid && _processLiveness.IsAlive(pid, sidecar.LaunchedAtUtc))
+            var attached = string.Equals(sidecar?.Origin, HerdrPaneOrigins.Attached, StringComparison.OrdinalIgnoreCase);
+            if (!attached
+                && sidecar?.ChildPid is int pid
+                && _processLiveness.IsAlive(pid, sidecar.LaunchedAtUtc))
+            {
                 KillPidBestEffort(pid);
+            }
 
             HerdrPaneSidecar.TryDelete(_settings.SessionLogPath, _sessionId);
-            CompletePendingAsExited(HerdrExitReasons.PaneLeftOpen);
+            CompletePendingAsExited(
+                attached ? HerdrExitReasons.Detached : HerdrExitReasons.PaneLeftOpen,
+                attached ? 0 : null);
         }
 
         /// <summary>

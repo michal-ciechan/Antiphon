@@ -102,6 +102,88 @@ internal sealed class GrokTranscriptTailer : ITranscriptTailer
             "updates.jsonl");
     }
 
+    private static readonly AsyncLocal<string?> GrokHomeOverride = new();
+
+    /// <summary>
+    /// CARD-0213 test seam: pin <see cref="ResolveGrokHome"/> for this async context without
+    /// mutating process-wide <c>GROK_HOME</c> (other suites run in parallel).
+    /// </summary>
+    internal static IDisposable OverrideGrokHome(string home)
+    {
+        var previous = GrokHomeOverride.Value;
+        GrokHomeOverride.Value = home;
+        return new OverrideScope(() => GrokHomeOverride.Value = previous);
+    }
+
+    /// <summary>
+    /// CARD-0213: <c>GROK_HOME</c> from the launch env, else this process, else <c>~/.grok</c>.
+    /// </summary>
+    public static string ResolveGrokHome(IReadOnlyDictionary<string, string>? launchEnv = null)
+    {
+        if (!string.IsNullOrWhiteSpace(GrokHomeOverride.Value))
+            return GrokHomeOverride.Value;
+
+        string? grokHome = null;
+        launchEnv?.TryGetValue("GROK_HOME", out grokHome);
+        if (string.IsNullOrWhiteSpace(grokHome))
+            grokHome = Environment.GetEnvironmentVariable("GROK_HOME");
+        if (string.IsNullOrWhiteSpace(grokHome))
+            grokHome = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".grok");
+        return grokHome;
+    }
+
+    private sealed class OverrideScope(Action restore) : IDisposable
+    {
+        public void Dispose() => restore();
+    }
+
+    /// <summary>
+    /// CARD-0213: locate <c>{GROK_HOME}/sessions/*/{id:D}/</c> by GUID match. The GUID is globally
+    /// unique, so a hit is positive evidence regardless of how grok encoded the cwd. Does not
+    /// derive the path from cwd — live operator panes do not share this machine's encoding.
+    /// </summary>
+    /// <returns>
+    /// The session directory (parent of <c>updates.jsonl</c>), or <see langword="null"/> when
+    /// nothing under <paramref name="grokHome"/> contains <c>{nativeId:D}/</c>.
+    /// </returns>
+    public static string? TryLocateSessionDirectory(string grokHome, Guid nativeId)
+    {
+        if (string.IsNullOrWhiteSpace(grokHome) || nativeId == Guid.Empty)
+            return null;
+
+        var sessionsRoot = Path.Combine(grokHome, "sessions");
+        if (!Directory.Exists(sessionsRoot))
+            return null;
+
+        var id = nativeId.ToString("D");
+        string[] cwdDirs;
+        try
+        {
+            cwdDirs = Directory.GetDirectories(sessionsRoot);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+
+        foreach (var cwdDir in cwdDirs)
+        {
+            var candidate = Path.Combine(cwdDir, id);
+            if (Directory.Exists(candidate))
+                return candidate;
+        }
+
+        return null;
+    }
+
+    /// <summary>URL-encoded cwd folder that is the parent of a located session directory.</summary>
+    public static string? EncodedCwdOf(string sessionDirectory)
+    {
+        var parent = Directory.GetParent(sessionDirectory)?.Name;
+        return string.IsNullOrEmpty(parent) ? null : parent;
+    }
+
     public void Start() => _loop = Task.Run(() => RunAsync(_cts.Token));
 
     public void NotifyChildExited() => _childExitedAtUtc ??= DateTime.UtcNow;
