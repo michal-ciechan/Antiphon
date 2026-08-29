@@ -75,15 +75,11 @@ public sealed class ReviewReplyDispatcher
         if (turnEndSeq is not long endSeq)
             return;
 
-        // CARD-0154: same kind set as ChannelReplyDispatcher — a review prompt queued into a busy
-        // composer is QueuedUserPrompt, ranked by Sequence, never by record-to-record Timestamp.
-        var userPrompt = await db.TranscriptEntries
-            .Where(t => t.AgentSessionId == sessionId
-                && (t.Kind == TranscriptKinds.UserPrompt
-                    || t.Kind == TranscriptKinds.QueuedUserPrompt)
-                && t.Sequence < endSeq)
-            .OrderByDescending(t => t.Sequence)
-            .FirstOrDefaultAsync(ct);
+        // CARD-0154 / CARD-0233: same owning-prompt rule as ChannelReplyDispatcher — a review
+        // prompt queued into a busy composer is QueuedUserPrompt and still a legal opener, but a
+        // mid-turn queued body must not steal the UserPrompt that opened the turn. Sequence, never
+        // record-to-record Timestamp.
+        var userPrompt = await TranscriptTurnWindow.FindOwningPromptAsync(db, sessionId, endSeq, ct);
         if (userPrompt?.Text is not string promptText)
             return;
 
@@ -170,12 +166,8 @@ public sealed class ReviewReplyDispatcher
     private static async Task<(string? Text, bool ContainsApiErrorStub)> ExtractTurnResponseAsync(
         AppDbContext db, Guid sessionId, long promptSeq, CancellationToken ct)
     {
-        var nextPromptSeq = await db.TranscriptEntries
-            .Where(t => t.AgentSessionId == sessionId
-                && (t.Kind == TranscriptKinds.UserPrompt
-                    || t.Kind == TranscriptKinds.QueuedUserPrompt)
-                && t.Sequence > promptSeq)
-            .MinAsync(t => (long?)t.Sequence, ct);
+        var nextPromptSeq = await TranscriptTurnWindow.FindNextTurnOpeningPromptSeqAsync(
+            db, sessionId, promptSeq, ct);
 
         var query = db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId

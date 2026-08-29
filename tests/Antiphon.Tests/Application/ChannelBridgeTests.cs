@@ -115,6 +115,53 @@ public class ChannelBridgeTests
         (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(0);
     }
 
+    // CARD-0233 / live miss 2026-08-27 (AZ Care, "message to Phil"): a Mode.Now launch note landed
+    // as QueuedUserPrompt INSIDE an already-open channel UserPrompt turn. Dispatch ranked "latest
+    // of either kind" so it attributed Hi Phil to ChannelPreamble.BootstrapBody; PromptsMatch
+    // failed; the extraction window also capped at the in-turn queued prompt so even a naive
+    // "use the UserPrompt" fix still dropped seq 741. S1 owns the UserPrompt; S2 does not cap at
+    // an in-turn QueuedUserPrompt.
+    [Test]
+    public async Task A_mid_turn_launch_note_does_not_steal_the_channel_reply()
+    {
+        await using var h = await HarnessAsync();
+        await h.BindChannelAsync();
+
+        var msg = TelegramText(
+            h.ChatId,
+            "Give me message to Phil asking for quote for all 3 certificates",
+            title: "AZ Care",
+            author: "Mike Ciechan");
+        await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
+        var deliveredPrompt = h.Adapter.Inputs[0];
+        const string hiPhil =
+            "Hi Phil,\n\nCould you please quote for EPC, CP12 and EICR at Flat B, 39 Springfield Road.\n\nThanks, Ola Zawojska";
+
+        // Previous settled turn (seq 720 in the incident) so the AssistantText re-trigger still
+        // sees a TurnEnd that is not this turn's.
+        await h.InsertEntryAsync(TranscriptKinds.TurnEnd, null, stopReason: "end_turn");
+        await h.InsertEntryAsync(TranscriptKinds.UserPrompt, deliveredPrompt);
+        await h.InsertEntryAsync(TranscriptKinds.QueuedUserPrompt, ChannelPreamble.BootstrapBody);
+        await h.InsertEntryAsync(TranscriptKinds.AssistantText, hiPhil);
+
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        h.Messaging.SentReplies.ShouldBeEmpty(
+            "AssistantText before this turn's TurnEnd still attributes to the previous turn; the correlation stays owed");
+
+        await h.InsertEntryAsync(TranscriptKinds.TurnEnd, null, stopReason: "end_turn");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
+        reply.Channel.ShouldBe("telegram");
+        reply.ConversationId.ShouldBe(h.ChatId);
+        reply.Text.ShouldBe(hiPhil);
+        (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(0);
+
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        row.ChannelReplySettledAt.ShouldNotBeNull();
+    }
+
     // Live failure 2026-07-24 (Antiphon-Family, Ola's Apple Music question): Claude wrote the
     // turn as UserPrompt, TurnEnd, AssistantText, TurnEnd — the stop marker BEFORE the text. The
     // dispatch on the first (text-less) TurnEnd consumed the correlations, so when the text

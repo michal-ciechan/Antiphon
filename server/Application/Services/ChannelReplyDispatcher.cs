@@ -170,11 +170,14 @@ public sealed class ChannelReplyDispatcher
         if (open.Count == 0)
             return;
 
-        // The turn that just finished: latest TurnEnd, its preceding prompt (typed or queued), and
-        // the assistant text in between. CARD-0154: a channel message typed into a busy composer
-        // lands as QueuedUserPrompt with no accompanying UserPrompt; ranking is Sequence (drain
-        // order), never record-to-record Timestamp, so CARD-0132 S2.4's enqueue-clock trap does not
-        // apply — same reasoning as CARD-0135's TranscriptPromptSpan widen.
+        // The turn that just finished: latest TurnEnd, its owning prompt, and the assistant text
+        // in between. CARD-0154: a channel message typed into a busy composer lands as
+        // QueuedUserPrompt with no accompanying UserPrompt, so that kind is still a legal opener.
+        // CARD-0233: ranking is no longer "latest of either kind before latest TurnEnd" — a
+        // mid-turn QueuedUserPrompt (fresh-session bootstrap typed Mode.Now into a working
+        // composer) used to steal the UserPrompt that actually opened the turn. Owning prompt is
+        // the latest UserPrompt in (prevTurnEnd, thisTurnEnd), falling back to QueuedUserPrompt
+        // only when that window has none. Sequence, never Timestamp (CARD-0068).
         var turnEndSeq = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.TurnEnd)
             .MaxAsync(t => (long?)t.Sequence, ct);
@@ -189,13 +192,7 @@ public sealed class ChannelReplyDispatcher
             return;
         }
 
-        var userPrompt = await db.TranscriptEntries
-            .Where(t => t.AgentSessionId == sessionId
-                && (t.Kind == TranscriptKinds.UserPrompt
-                    || t.Kind == TranscriptKinds.QueuedUserPrompt)
-                && t.Sequence < endSeq)
-            .OrderByDescending(t => t.Sequence)
-            .FirstOrDefaultAsync(ct);
+        var userPrompt = await TranscriptTurnWindow.FindOwningPromptAsync(db, sessionId, endSeq, ct);
         if (userPrompt?.Text is not string promptText)
         {
             _logger.LogDebug(
@@ -714,21 +711,17 @@ public sealed class ChannelReplyDispatcher
 
     /// <summary>
     /// Assistant text belonging to <paramref name="promptSeq"/>'s turn: after
-    /// <paramref name="afterSeq"/>, before the next UserPrompt or QueuedUserPrompt (uncapped if
-    /// none). Main-path extraction uses <c>afterSeq == promptSeq</c>; follow-up uses the
-    /// already-sent watermark. The cap kind set must match the reply-match query (CARD-0154 /
-    /// CARD-0068): a queued prompt that opens a turn it cannot close would leak the next turn's
-    /// text into this one.
+    /// <paramref name="afterSeq"/>, before the next turn-opening prompt (uncapped if none).
+    /// Main-path extraction uses <c>afterSeq == promptSeq</c>; follow-up uses the already-sent
+    /// watermark. A <c>UserPrompt</c> always caps. A <c>QueuedUserPrompt</c> caps only when it
+    /// opens the next turn — i.e. a TurnEnd sits between this prompt and it (CARD-0154 /
+    /// CARD-0068 / CARD-0233). An in-turn queued body must not exclude this turn's AssistantText.
     /// </summary>
     private static async Task<(long? NextPromptSeq, IReadOnlyList<TurnWindowRow> Entries)> QueryTurnWindowAsync(
         AppDbContext db, Guid sessionId, long promptSeq, long afterSeq, CancellationToken ct)
     {
-        var nextPromptSeq = await db.TranscriptEntries
-            .Where(t => t.AgentSessionId == sessionId
-                && (t.Kind == TranscriptKinds.UserPrompt
-                    || t.Kind == TranscriptKinds.QueuedUserPrompt)
-                && t.Sequence > promptSeq)
-            .MinAsync(t => (long?)t.Sequence, ct);
+        var nextPromptSeq = await TranscriptTurnWindow.FindNextTurnOpeningPromptSeqAsync(
+            db, sessionId, promptSeq, ct);
 
         var query = db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId

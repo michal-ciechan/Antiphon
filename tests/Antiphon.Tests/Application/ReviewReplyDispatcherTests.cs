@@ -158,6 +158,29 @@ public class ReviewReplyDispatcherTests
         h.Dispatcher.PendingCount(h.SessionId).ShouldBe(0);
     }
 
+    // CARD-0233 lockstep with ChannelReplyDispatcher: a QueuedUserPrompt landing INSIDE a review
+    // UserPrompt turn must not become the turn's identity, and must not cap the extraction window.
+    [Test]
+    public async Task A_mid_turn_queued_prompt_does_not_steal_the_review_reply()
+    {
+        await using var h = await Harness.CreateAsync();
+        var prompt = h.TrackThread();
+
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, prompt);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.QueuedUserPrompt, ChannelPreamble.BootstrapBody);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "Checked — the number is correct.");
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        var thread = await h.ReloadThreadAsync();
+        thread.Status.ShouldBe(ReviewThreadStatus.AwaitingHuman);
+        thread.Comments.Count.ShouldBe(2);
+        thread.Comments[^1].Author.ShouldBe(ReviewCommentAuthor.Agent);
+        thread.Comments[^1].Body.ShouldBe("Checked — the number is correct.");
+        h.Dispatcher.PendingCount(h.SessionId).ShouldBe(0);
+    }
+
     private sealed class Harness : IAsyncDisposable
     {
         public required ServiceProvider Provider { get; init; }
