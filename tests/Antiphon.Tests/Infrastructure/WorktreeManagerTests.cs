@@ -64,6 +64,24 @@ public class WorktreeManagerTests
         entries[0].LockReason.ShouldBe("");
         entries[0].Prunable.ShouldBeFalse();
     }
+
+    [Test]
+    public void IsAlreadyUnregisteredWorktreeError_matches_only_the_not_a_working_tree_fatal()
+    {
+        WorktreeManager.IsAlreadyUnregisteredWorktreeError(
+            "fatal: 'C:\\trees\\card-x' is not a working tree\n").ShouldBeTrue();
+        WorktreeManager.IsAlreadyUnregisteredWorktreeError(
+            "fatal: 'C:/trees/card-x' is not a working tree").ShouldBeTrue();
+        WorktreeManager.IsAlreadyUnregisteredWorktreeError(
+            "fatal: cannot remove a locked working tree;\nuse 'remove -f -f' to override or unlock first\n")
+            .ShouldBeFalse();
+        WorktreeManager.IsAlreadyUnregisteredWorktreeError(
+            "fatal: validation failed, cannot remove working tree: 'C:\\trees\\card-x/.git' does not exist\n")
+            .ShouldBeFalse();
+        WorktreeManager.IsAlreadyUnregisteredWorktreeError(
+            "error: failed to delete '...': Permission denied\n").ShouldBeFalse();
+        WorktreeManager.IsAlreadyUnregisteredWorktreeError("").ShouldBeFalse();
+    }
 }
 
 [Category("Unit")]
@@ -191,6 +209,65 @@ public class WorktreeManagerGitIntegrationTests
     }
 
     [Test]
+    public async Task WorktreeManager_remove_treats_unregistered_leftover_directory_as_already_clean()
+    {
+        await GitTestEnvironment.SkipIfGitUnavailableAsync();
+        var env = await GitTestEnvironment.CreateAsync();
+
+        try
+        {
+            var manager = BuildManager(env.WorktreeRoot);
+            var worktree = await manager.CreateAsync(env.RepoPath, "E03-007", "HEAD", CancellationToken.None);
+
+            GitTestEnvironment.UnregisterWorktreeLeavingDirectory(worktree.Path);
+            Directory.Exists(worktree.Path).ShouldBeTrue();
+
+            var refused = await GitTestEnvironment.RunGitCaptureAsync(
+                env.RepoPath, "worktree", "remove", "--force", worktree.Path);
+            refused.ExitCode.ShouldBe(128);
+            refused.Stderr.ShouldContain("is not a working tree");
+
+            await manager.RemoveAsync(env.RepoPath, worktree.Path, CancellationToken.None);
+
+            Directory.Exists(worktree.Path).ShouldBeFalse();
+            (await GitTestEnvironment.RunGitAsync(env.RepoPath, "worktree", "list", "--porcelain"))
+                .ShouldNotContain(worktree.Path);
+            (await GitTestEnvironment.RunGitAsync(env.RepoPath, "branch", "--list", "feat/card-E03-007"))
+                .ShouldBe(string.Empty);
+            var metadataDir = Path.Combine(env.WorktreeRoot, ".antiphon", "worktrees");
+            Directory.EnumerateFiles(metadataDir, "*.json").ShouldBeEmpty();
+        }
+        finally
+        {
+            env.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task WorktreeManager_remove_still_throws_when_the_worktree_is_locked()
+    {
+        await GitTestEnvironment.SkipIfGitUnavailableAsync();
+        var env = await GitTestEnvironment.CreateAsync();
+
+        try
+        {
+            var manager = BuildManager(env.WorktreeRoot);
+            var worktree = await manager.CreateAsync(env.RepoPath, "E03-008", "HEAD", CancellationToken.None);
+            await GitTestEnvironment.RunGitAsync(env.RepoPath, "worktree", "lock", worktree.Path);
+
+            var ex = await Should.ThrowAsync<InvalidOperationException>(() =>
+                manager.RemoveAsync(env.RepoPath, worktree.Path, CancellationToken.None));
+
+            ex.Message.ShouldContain("locked working tree");
+            Directory.Exists(worktree.Path).ShouldBeTrue();
+        }
+        finally
+        {
+            env.Dispose();
+        }
+    }
+
+    [Test]
     public async Task WorktreeManager_create_throws_when_branch_or_path_exists()
     {
         await GitTestEnvironment.SkipIfGitUnavailableAsync();
@@ -229,6 +306,37 @@ public class WorktreeManagerGitIntegrationTests
             Directory.Exists(worktree.Path).ShouldBeFalse();
             (await GitTestEnvironment.RunGitAsync(env.RepoPath, "branch", "--list", "feat/card-E03-005"))
                 .ShouldBe(string.Empty);
+        }
+        finally
+        {
+            env.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task WorktreeJanitor_prunes_stale_unregistered_leftover_directory()
+    {
+        await GitTestEnvironment.SkipIfGitUnavailableAsync();
+        var env = await GitTestEnvironment.CreateAsync();
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 5, 1, 12, 0, 0, TimeSpan.Zero));
+
+        try
+        {
+            var manager = BuildManager(env.WorktreeRoot, clock, staleAfterDays: 7);
+            var worktree = await manager.CreateAsync(env.RepoPath, "E03-009", "HEAD", CancellationToken.None);
+
+            GitTestEnvironment.UnregisterWorktreeLeavingDirectory(worktree.Path);
+            Directory.Exists(worktree.Path).ShouldBeTrue();
+
+            clock.SetUtcNow(new DateTimeOffset(2026, 5, 10, 12, 0, 0, TimeSpan.Zero));
+            var pruned = await manager.PruneStaleAsync(CancellationToken.None);
+
+            pruned.ShouldBe(1);
+            Directory.Exists(worktree.Path).ShouldBeFalse();
+            (await GitTestEnvironment.RunGitAsync(env.RepoPath, "branch", "--list", "feat/card-E03-009"))
+                .ShouldBe(string.Empty);
+            var metadataDir = Path.Combine(env.WorktreeRoot, ".antiphon", "worktrees");
+            Directory.EnumerateFiles(metadataDir, "*.json").ShouldBeEmpty();
         }
         finally
         {
@@ -339,8 +447,38 @@ public class WorktreeManagerGitIntegrationTests
             return new GitTestEnvironment(tempRoot, repoPath, worktreeRoot);
         }
 
-        public static Task<string> RunGitAsync(string workingDirectory, params string[] arguments) =>
-            RunProcessAsync(workingDirectory, "git", arguments, throwOnError: true);
+        public static async Task<string> RunGitAsync(string workingDirectory, params string[] arguments)
+        {
+            var result = await RunProcessAsync(workingDirectory, "git", arguments, throwOnError: true);
+            return result.Stdout;
+        }
+
+        public static async Task<(int ExitCode, string Stdout, string Stderr)> RunGitCaptureAsync(
+            string workingDirectory, params string[] arguments)
+        {
+            var result = await RunProcessAsync(workingDirectory, "git", arguments, throwOnError: false);
+            return (result.ExitCode, result.Stdout, result.Stderr);
+        }
+
+        public static void UnregisterWorktreeLeavingDirectory(string worktreePath)
+        {
+            var gitFile = Path.Combine(worktreePath, ".git");
+            if (!File.Exists(gitFile))
+                throw new InvalidOperationException($"Worktree {worktreePath} has no .git file.");
+
+            var contents = File.ReadAllText(gitFile);
+            const string prefix = "gitdir:";
+            var line = contents.Replace("\r\n", "\n", StringComparison.Ordinal)
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .FirstOrDefault(l => l.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                ?? throw new InvalidOperationException($"Worktree {worktreePath} .git file has no gitdir line: {contents}");
+
+            var adminDir = Path.GetFullPath(line[prefix.Length..].Trim());
+            if (!Directory.Exists(adminDir))
+                throw new InvalidOperationException($"Worktree admin dir {adminDir} does not exist.");
+
+            DeleteDirectory(adminDir);
+        }
 
         public static async Task TryRunGitAsync(string workingDirectory, params string[] arguments)
         {
@@ -355,7 +493,7 @@ public class WorktreeManagerGitIntegrationTests
             }
         }
 
-        private static async Task<string> RunProcessAsync(
+        private static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
             string workingDirectory,
             string fileName,
             IReadOnlyList<string> arguments,
@@ -387,7 +525,7 @@ public class WorktreeManagerGitIntegrationTests
                 throw new InvalidOperationException(
                     $"{fileName} {string.Join(" ", arguments)} failed with exit code {process.ExitCode}: {stderr}");
 
-            return stdout;
+            return (process.ExitCode, stdout, stderr);
         }
 
         public void Dispose()

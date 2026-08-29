@@ -164,7 +164,7 @@ public sealed class WorktreeManager : IWorktreeManager
             throw new ValidationException(nameof(worktreePath), "Worktree is not an Antiphon-managed feat/card-* worktree.");
 
         if (Directory.Exists(worktreeFullPath))
-            await RunGitAsync(repoFullPath, ["worktree", "remove", "--force", worktreeFullPath], ct);
+            await RemoveWorktreeRegistrationAsync(repoFullPath, worktreeFullPath, ct);
 
         var deleteBranch = await RunGitAsync(repoFullPath, ["branch", "-D", branch!], ct, throwOnError: false);
         if (deleteBranch.ExitCode != 0)
@@ -555,6 +555,15 @@ public sealed class WorktreeManager : IWorktreeManager
         && branch.StartsWith(BranchPrefix, StringComparison.Ordinal)
         && branch.Length > BranchPrefix.Length;
 
+    /// <summary>
+    /// git 2.50: <c>fatal: '&lt;path&gt;' is not a working tree</c> (exit 128) when the directory
+    /// is still on disk but git's registration under <c>.git/worktrees/</c> is already gone
+    /// (CARD-0229 / CARD-0220 S4). Distinct from a still-registered tree whose <c>.git</c> is
+    /// missing (<c>validation failed … /.git does not exist</c>).
+    /// </summary>
+    internal static bool IsAlreadyUnregisteredWorktreeError(string stderr) =>
+        stderr.Contains("is not a working tree", StringComparison.Ordinal);
+
     private static WorktreeMetadata ToMetadata(WorktreeInfo info) => new(
         SchemaVersion: 1,
         CardId: info.CardId,
@@ -736,6 +745,37 @@ public sealed class WorktreeManager : IWorktreeManager
                 "Rollback of failed worktree add at {Path} failed; the original exception still propagates",
                 worktreePath);
         }
+    }
+
+    private async Task RemoveWorktreeRegistrationAsync(
+        string repoPath, string worktreePath, CancellationToken ct)
+    {
+        var remove = await RunGitAsync(
+            repoPath,
+            ["worktree", "remove", "--force", worktreePath],
+            ct,
+            throwOnError: false);
+
+        if (remove.ExitCode == 0)
+            return;
+
+        if (IsAlreadyUnregisteredWorktreeError(remove.Stderr))
+        {
+            // Registration already gone; leftover directory is ours to delete (CARD-0229).
+            _logger.LogWarning(
+                "git worktree remove --force reported {Path} is not a working tree (already unregistered); deleting leftover directory. stderr: {StdErr}",
+                worktreePath,
+                remove.Stderr);
+            TryDeleteDirectory(worktreePath);
+            return;
+        }
+
+        _logger.LogError(
+            "git worktree remove --force failed (exit {ExitCode}): {StdErr}",
+            remove.ExitCode,
+            remove.Stderr);
+        throw new InvalidOperationException(
+            $"git worktree remove --force failed with exit code {remove.ExitCode}: {remove.Stderr}");
     }
 
     private async Task<bool> IsRegisteredAsync(string repoPath, string worktreePath, CancellationToken ct)
