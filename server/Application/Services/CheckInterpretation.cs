@@ -25,12 +25,12 @@ public static class CheckInterpretation
     /// </summary>
     /// <remarks>
     /// It is now a legacy label beside the bundle's content hash (CARD-0058), which needs no bumping
-    /// at all. The number below and the literal <c>contract v1</c> in
+    /// at all. The number below and the literal <c>contract v2</c> in
     /// <c>server/Bundles/check-interpreter.md</c> are two copies of one fact, held together by
     /// <c>CheckInterpreterProvisionerTests</c>: bump this without editing the bundle and that test
     /// goes red.
     /// </remarks>
-    public const string ContractVersion = "1";
+    public const string ContractVersion = "2";
 
     /// <summary>
     /// The standing contract. Triage, not diagnosis: the specialist reads a bundle of facts about

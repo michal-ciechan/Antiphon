@@ -131,11 +131,41 @@ public sealed class DelegateCheckProbe
         string? ToolInput = null,
         bool? IsError = null);
 
+    /// <summary>
+    /// Whether the Git facts can be attributed to the checked task. Ownership is an explicit
+    /// discriminator, never inferred from a nullable range (CARD-0227).
+    /// </summary>
+    public enum CheckGitEvidenceScope
+    {
+        /// <summary>
+        /// Commits and working-tree counts are from <c>mergeTarget..taskBranch</c> on a Worktree
+        /// task — the dedicated branch the dispatcher created for this task.
+        /// </summary>
+        TaskBranch = 0,
+
+        /// <summary>
+        /// Shared (or ReadOnly) checkout: any commit or dirty file on HEAD can belong to another
+        /// writer, so commit and working-tree evidence is omitted.
+        /// </summary>
+        SharedWorkspaceUnattributable = 1,
+    }
+
+    /// <summary>
+    /// Digest line for <see cref="CheckGitEvidenceScope.SharedWorkspaceUnattributable"/>. No
+    /// numeric Git counts ride with it: zero would read as "no work" and any positive value
+    /// invites false credit.
+    /// </summary>
+    public const string SharedWorkspaceUnattributableExplanation =
+        "shared checkout — commits and working-tree state are deliberately omitted because they cannot be attributed to this task.";
+
+    /// <param name="Scope">
+    /// Who the Git facts belong to. <see cref="CheckGitEvidenceScope.TaskBranch"/> is the only
+    /// shape that may be read as this task's own commits or files.
+    /// </param>
     /// <param name="Range">
-    /// <c>mergeTarget..branch</c> for a worktree task — commit messages are the durable report in
-    /// this repo, so "what has landed on the branch" is the highest-signal fact available. Null for
-    /// a Shared task, which commits straight onto its checkout's HEAD; there the bound is the
-    /// task's own dispatch time instead.
+    /// <c>mergeTarget..branch</c> for a <see cref="CheckGitEvidenceScope.TaskBranch"/> probe —
+    /// commit messages are the durable report in this repo, so "what has landed on the branch" is
+    /// the highest-signal fact available. Null when there is no task-owned range.
     /// </param>
     /// <param name="Unavailable">
     /// Non-null when git could not answer, and why. A probe that reported "0 commits" for a git
@@ -143,6 +173,7 @@ public sealed class DelegateCheckProbe
     /// </param>
     public sealed record CheckGitFacts(
         string Directory,
+        CheckGitEvidenceScope Scope,
         string? Range,
         IReadOnlyList<string> Commits,
         int ChangedFiles,
@@ -308,9 +339,15 @@ public sealed class DelegateCheckProbe
     }
 
     /// <summary>
-    /// The two git reads. Both go through <see cref="GitWorkspaceService"/>'s read-only path, so
+    /// The git reads. Both go through <see cref="GitWorkspaceService"/>'s read-only path, so
     /// neither refreshes the index — the probe must not be able to change the workspace it is
     /// reporting on, even by a write git considers housekeeping.
+    ///
+    /// <para>Scope is selected from <see cref="AgentTask.Workspace"/>, not from a nullable range.
+    /// A Shared (or ReadOnly) checkout is confirmed to be a repository and then returned as
+    /// <see cref="CheckGitEvidenceScope.SharedWorkspaceUnattributable"/> with no log or status
+    /// call — those facts can belong to another writer (CARD-0227). A Worktree task whose
+    /// branch/merge-target coordinates are missing is unavailable, never silently Shared.</para>
     /// </summary>
     private async Task<CheckGitFacts?> GatherGitAsync(AgentTask task, CancellationToken ct)
     {
@@ -320,12 +357,33 @@ public sealed class DelegateCheckProbe
         if (!await _git.IsRepositoryAsync(directory, ct))
             return null;
 
-        var range = task.WorktreeBranch is { } branch && task.MergeTargetRef is { } target
-            ? $"{target}..{branch}"
-            : null;
-        var commits = range is null
-            ? await _git.LogOnelineAsync(directory, null, "HEAD", CommitLimit, task.DispatchedAt, ct)
-            : await _git.LogOnelineAsync(directory, task.MergeTargetRef, task.WorktreeBranch!, CommitLimit, null, ct);
+        if (task.Workspace != WorkspaceMode.Worktree)
+        {
+            return new CheckGitFacts(
+                directory,
+                CheckGitEvidenceScope.SharedWorkspaceUnattributable,
+                Range: null,
+                Commits: [],
+                ChangedFiles: 0,
+                UntrackedFiles: 0,
+                Unavailable: null);
+        }
+
+        if (string.IsNullOrWhiteSpace(task.WorktreeBranch) || string.IsNullOrWhiteSpace(task.MergeTargetRef))
+        {
+            return new CheckGitFacts(
+                directory,
+                CheckGitEvidenceScope.TaskBranch,
+                Range: null,
+                Commits: [],
+                ChangedFiles: 0,
+                UntrackedFiles: 0,
+                Unavailable: "the task-branch range could not be determined (WorktreeBranch or MergeTargetRef is missing)");
+        }
+
+        var range = $"{task.MergeTargetRef}..{task.WorktreeBranch}";
+        var commits = await _git.LogOnelineAsync(
+            directory, task.MergeTargetRef, task.WorktreeBranch, CommitLimit, null, ct);
         var counts = await _git.GetWorkingTreeCountsAsync(directory, ct);
 
         var unavailable = (commits, counts) switch
@@ -337,7 +395,13 @@ public sealed class DelegateCheckProbe
         };
 
         return new CheckGitFacts(
-            directory, range, commits ?? [], counts?.Changed ?? 0, counts?.Untracked ?? 0, unavailable);
+            directory,
+            CheckGitEvidenceScope.TaskBranch,
+            range,
+            commits ?? [],
+            counts?.Changed ?? 0,
+            counts?.Untracked ?? 0,
+            unavailable);
     }
 
     private static string? Excerpt(string? text) => Excerpt(text, ExcerptChars);
@@ -421,7 +485,11 @@ public sealed class DelegateCheckProbe
             if (git.Range is { } range)
                 sb.Append(' ').Append(range);
             sb.AppendLine(":");
-            if (git.Unavailable is { } why)
+            if (git.Scope == CheckGitEvidenceScope.SharedWorkspaceUnattributable)
+            {
+                sb.Append("  ").AppendLine(SharedWorkspaceUnattributableExplanation);
+            }
+            else if (git.Unavailable is { } why)
             {
                 sb.Append("  unavailable: ").AppendLine(why);
             }

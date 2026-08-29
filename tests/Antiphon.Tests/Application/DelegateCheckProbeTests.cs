@@ -167,16 +167,23 @@ public class DelegateCheckProbeTests
     {
         using var repo = new TempRepo();
         repo.Commit("first.txt", "one", "the first commit");
+        var trunk = repo.CurrentBranch();
+        repo.Run("checkout", "-q", "-b", "task/thing");
         repo.Commit("second.txt", "two", "the second commit");
         repo.Write("second.txt", "two, changed");
         repo.Write("brand-new.txt", "untracked");
 
-        var seed = await SeedAsync(workingDirectory: repo.Path, dispatchedMinutesAgo: 30);
+        var seed = await SeedAsync(
+            workingDirectory: repo.Path,
+            dispatchedMinutesAgo: 30,
+            worktreeBranch: "task/thing",
+            mergeTarget: trunk);
         var facts = await Probe().GatherAsync(seed.Task, CancellationToken.None);
 
         facts.Git.ShouldNotBeNull();
-        facts.Git!.Unavailable.ShouldBeNull();
-        facts.Git.Commits.Count.ShouldBe(2);
+        facts.Git!.Scope.ShouldBe(DelegateCheckProbe.CheckGitEvidenceScope.TaskBranch);
+        facts.Git.Unavailable.ShouldBeNull();
+        facts.Git.Commits.Count.ShouldBe(1, "only what the task branch added over the merge target");
         facts.Git.Commits[0].ShouldContain("the second commit", customMessage: "newest first");
         facts.Git.ChangedFiles.ShouldBe(1);
         facts.Git.UntrackedFiles.ShouldBe(1);
@@ -197,9 +204,105 @@ public class DelegateCheckProbeTests
             workingDirectory: repo.Path, worktreeBranch: "task/thing", mergeTarget: trunk);
         var facts = await Probe().GatherAsync(seed.Task, CancellationToken.None);
 
-        facts.Git!.Range.ShouldBe($"{trunk}..task/thing");
+        facts.Git!.Scope.ShouldBe(DelegateCheckProbe.CheckGitEvidenceScope.TaskBranch);
+        facts.Git.Range.ShouldBe($"{trunk}..task/thing");
         facts.Git.Commits.Count.ShouldBe(1, "only what the branch ADDED");
         facts.Git.Commits[0].ShouldContain("the delegate's own commit");
+    }
+
+    [Test]
+    public async Task a_shared_task_omits_foreign_commits_and_working_tree_counts()
+    {
+        // CARD-0227: the live incident was a Shared Plan task whose check attributed an unrelated
+        // merge onto the shared HEAD (CARD-0224, 23de792) as "PRODUCED - 1 commit created". The
+        // probe must not surface that commit, or any working-tree count, as this task's evidence.
+        using var repo = new TempRepo();
+        repo.Commit("base.txt", "base", "on the trunk before dispatch");
+
+        var seed = await SeedAsync(
+            workingDirectory: repo.Path,
+            dispatchedMinutesAgo: 30,
+            workspace: WorkspaceMode.Shared);
+
+        repo.Commit(
+            "unrelated.txt",
+            "from another card",
+            "feat(herdr): CARD-0224 S1 relaunch or adopt into the pane we already had");
+        repo.Write("dirty.txt", "unrelated working-tree edit");
+
+        var facts = await Probe().GatherAsync(seed.Task, CancellationToken.None);
+
+        facts.Git.ShouldNotBeNull();
+        facts.Git!.Scope.ShouldBe(
+            DelegateCheckProbe.CheckGitEvidenceScope.SharedWorkspaceUnattributable);
+        facts.Git.Unavailable.ShouldBeNull();
+        facts.Git.Range.ShouldBeNull();
+        facts.Git.Commits.ShouldBeEmpty();
+
+        var digest = DelegateCheckProbe.RenderDigest(facts);
+        digest.ShouldContain(DelegateCheckProbe.SharedWorkspaceUnattributableExplanation);
+        digest.ShouldNotContain("CARD-0224", customMessage:
+            "the foreign merge subject is exactly the fact that produced the false PRODUCED");
+        digest.ShouldNotContain("commits=");
+        digest.ShouldNotContain("changed=");
+        digest.ShouldNotContain("untracked=");
+    }
+
+    [Test]
+    public async Task a_worktree_task_does_not_see_commits_that_advanced_its_merge_target()
+    {
+        // The same external advancement that poisons Shared HEAD must not leak into the task
+        // branch's range: only what this branch added over the merge target is task-owned.
+        using var repo = new TempRepo();
+        repo.Commit("base.txt", "base", "on the trunk");
+        var trunk = repo.CurrentBranch();
+        repo.Run("checkout", "-q", "-b", "task/thing");
+        repo.Commit("work.txt", "work", "the delegate's own commit");
+        repo.Run("checkout", "-q", trunk);
+        repo.Commit(
+            "unrelated.txt",
+            "from another card",
+            "feat(herdr): CARD-0224 S1 relaunch or adopt into the pane we already had");
+        repo.Run("checkout", "-q", "task/thing");
+
+        var seed = await SeedAsync(
+            workingDirectory: repo.Path, worktreeBranch: "task/thing", mergeTarget: trunk);
+        var facts = await Probe().GatherAsync(seed.Task, CancellationToken.None);
+        var digest = DelegateCheckProbe.RenderDigest(facts);
+
+        facts.Git!.Scope.ShouldBe(DelegateCheckProbe.CheckGitEvidenceScope.TaskBranch);
+        facts.Git.Range.ShouldBe($"{trunk}..task/thing");
+        facts.Git.Commits.Count.ShouldBe(1);
+        facts.Git.Commits[0].ShouldContain("the delegate's own commit");
+        facts.Git.Commits.ShouldNotContain(c => c.Contains("CARD-0224"));
+        digest.ShouldContain("commits=1");
+        digest.ShouldNotContain("CARD-0224");
+        digest.ShouldNotContain(DelegateCheckProbe.SharedWorkspaceUnattributableExplanation);
+    }
+
+    [Test]
+    public async Task a_worktree_task_missing_its_branch_coordinates_is_unavailable_not_shared()
+    {
+        using var repo = new TempRepo();
+        repo.Commit("base.txt", "base", "on the trunk");
+        repo.Commit("later.txt", "later", "a commit that Shared --since would have claimed");
+
+        var seed = await SeedAsync(
+            workingDirectory: repo.Path,
+            dispatchedMinutesAgo: 30,
+            workspace: WorkspaceMode.Worktree);
+        var facts = await Probe().GatherAsync(seed.Task, CancellationToken.None);
+        var digest = DelegateCheckProbe.RenderDigest(facts);
+
+        facts.Git.ShouldNotBeNull();
+        facts.Git!.Scope.ShouldBe(DelegateCheckProbe.CheckGitEvidenceScope.TaskBranch);
+        facts.Git.Unavailable.ShouldNotBeNull();
+        facts.Git.Unavailable.ShouldContain("WorktreeBranch or MergeTargetRef");
+        digest.ShouldContain("unavailable");
+        digest.ShouldNotContain("commits=0", customMessage:
+            "a missing task-branch range must never be rendered as zero work");
+        digest.ShouldNotContain(DelegateCheckProbe.SharedWorkspaceUnattributableExplanation);
+        digest.ShouldNotContain("a commit that Shared --since would have claimed");
     }
 
     [Test]
@@ -230,12 +333,14 @@ public class DelegateCheckProbeTests
         var facts = await Probe().GatherAsync(seed.Task, CancellationToken.None);
 
         facts.Git.ShouldNotBeNull();
-        facts.Git!.Unavailable.ShouldNotBeNull();
+        facts.Git!.Scope.ShouldBe(DelegateCheckProbe.CheckGitEvidenceScope.TaskBranch);
+        facts.Git.Unavailable.ShouldNotBeNull();
         facts.Git.Unavailable.ShouldContain("commit log");
         var digest = DelegateCheckProbe.RenderDigest(facts);
         digest.ShouldContain("unavailable");
         digest.ShouldNotContain("commits=0", customMessage:
             "a failure must never be rendered as a count");
+        digest.ShouldNotContain(DelegateCheckProbe.SharedWorkspaceUnattributableExplanation);
     }
 
     // ---- delegate-side queue and incidents ----------------------------------------------------
@@ -610,7 +715,8 @@ public class DelegateCheckProbeTests
         int checkCount = 0,
         string? worktreeBranch = null,
         string? mergeTarget = null,
-        string? result = null)
+        string? result = null,
+        WorkspaceMode? workspace = null)
     {
         var sessionId = Guid.NewGuid();
         var id = Guid.NewGuid();
@@ -641,7 +747,8 @@ public class DelegateCheckProbeTests
             Kind = AgentTaskKind.Worker,
             Role = AgentTaskRole.Code,
             ModelLevel = AgentModelLevel.Frontier,
-            Workspace = worktreeBranch is null ? WorkspaceMode.Shared : WorkspaceMode.Worktree,
+            Workspace = workspace
+                ?? (worktreeBranch is null ? WorkspaceMode.Shared : WorkspaceMode.Worktree),
             WorkingDirectory = directory,
             WorktreeBranch = worktreeBranch,
             MergeTargetRef = mergeTarget,

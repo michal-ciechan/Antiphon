@@ -139,6 +139,9 @@ public class CheckInterpreterProvisionerTests
         reconciled.SystemPromptAppend.ShouldBe(CheckInterpretation.Contract);
         reconciled.SystemPromptAppend!.ShouldContain("NEVER say the task is complete");
         reconciled.SystemPromptAppend!.ShouldContain($"contract v{CheckInterpretation.ContractVersion}");
+        reconciled.SystemPromptAppend!.ShouldContain("contract v2");
+        reconciled.SystemPromptAppend!.ShouldContain("task-owned");
+        reconciled.SystemPromptAppend!.ShouldContain("shared-checkout disclaimer");
     }
 
     [Test]
@@ -171,6 +174,21 @@ public class CheckInterpreterProvisionerTests
     }
 
     // ---- the derived working directory ----------------------------------------------------------
+
+    [Test]
+    public void the_contract_forbids_git_authorship_from_a_shared_checkout_disclaimer()
+    {
+        // CARD-0227: the interpreter must not read the Shared-checkout digest line as PRODUCED.
+        // The digest itself is the safety boundary (DelegateCheckProbeTests); this pins that the
+        // standing contract the specialist is reconciled onto agrees with that fact shape.
+        CheckInterpretation.ContractVersion.ShouldBe("2");
+        CheckInterpretation.Contract.ShouldContain($"contract v{CheckInterpretation.ContractVersion}");
+        CheckInterpretation.Contract.ShouldContain("task-owned");
+        CheckInterpretation.Contract.ShouldContain("shared-checkout disclaimer");
+        CheckInterpretation.Contract.ShouldContain(
+            "never infer authorship",
+            customMessage: "a Shared disclaimer is not evidence the checked task wrote a commit or file");
+    }
 
     [Test]
     public void an_unconfigured_directory_is_derived_from_the_first_allowed_root()
