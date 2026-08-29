@@ -112,9 +112,13 @@ public sealed class AgentService
     /// <summary>
     /// Drift: the live session was launched carrying something other than what the repo composes
     /// now. No live session, or a session with no recorded stamp, is NO EVIDENCE — never drift.
+    /// CARD-0213: an attached operator pane writes <c>ComposedBundleStamp = null</c> on purpose
+    /// (the process's bundle is the operator's); null here is "unknown", not out of date.
     /// </summary>
     private static bool IsOutOfDate(LiveSession? live, ComposedInstructions current) =>
-        live is not null && InstructionBundleComposer.IsOutOfDate(live.BundleStamp, current);
+        live is not null
+        && live.BundleStamp is not null
+        && InstructionBundleComposer.IsOutOfDate(live.BundleStamp, current);
 
     /// <summary>
     /// The transcript-derived "mid-turn right now" signal for a live session — what the agent
@@ -213,6 +217,7 @@ public sealed class AgentService
                     null,
                     null,
                     null,
+                    null,
                     null),
                 s.ComposedBundleStamp))
             .ToListAsync(ct);
@@ -294,6 +299,8 @@ public sealed class AgentService
                         ? runner.AgentStatus : null,
                     HerdrAgentStatusSinceUtc = string.Equals(runner.Backend, "Herdr", StringComparison.OrdinalIgnoreCase)
                         ? runner.AgentStatusSinceUtc : null,
+                    HerdrOrigin = string.Equals(runner.Backend, "Herdr", StringComparison.OrdinalIgnoreCase)
+                        ? runner.HerdrOrigin : null,
                 },
             };
         }

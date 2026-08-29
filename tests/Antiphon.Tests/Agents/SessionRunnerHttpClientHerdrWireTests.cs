@@ -119,6 +119,60 @@ public class SessionRunnerHttpClientHerdrWireTests
     }
 
     [Test]
+    public void HerdrOrigin_round_trips_on_the_wire_and_absent_is_null()
+    {
+        var withOrigin = new RunnerSessionDto(
+            Guid.NewGuid(), 1, DateTime.UtcNow, "Running", null, "", 0, HerdrOrigin: HerdrPaneOrigins.Attached);
+        var roundTrip = JsonSerializer.Deserialize<RunnerSessionDto>(
+            JsonSerializer.Serialize(withOrigin, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        roundTrip.ShouldNotBeNull();
+        roundTrip!.HerdrOrigin.ShouldBe(HerdrPaneOrigins.Attached);
+
+        var old = JsonSerializer.Deserialize<RunnerSessionDto>(
+            """{"sessionId":"00000000-0000-0000-0000-000000000001","pid":1,"startedAt":"2026-01-01T00:00:00Z","status":"Running","exitCode":null,"exitReason":"","lastSequence":0}""",
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        old.ShouldNotBeNull();
+        old!.HerdrOrigin.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task Problem_details_409_maps_to_conflict_with_the_runner_code()
+    {
+        var handler = new CapturingHandler(_ => Task.FromResult(Problem(
+            409, HerdrProblemTypes.PaneBound, "pane w2:p3 is bound to session aaaa")));
+        var client = new SessionRunnerHttpClient(
+            new HttpClient(handler) { BaseAddress = new Uri("http://runner.test/") },
+            new StubFactory(),
+            Options.Create(new SessionRunnerSettings { BaseUrl = "http://runner.test" }));
+
+        var ex = await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ConflictException>(() =>
+            client.AttachHerdrAsync(
+                new HerdrAttachRequest(
+                    Guid.NewGuid(), "w2:p3", HerdrAgentKinds.Grok, TranscriptFormats.Grok,
+                    1, "none"),
+                CancellationToken.None));
+        ex.Code.ShouldBe(HerdrProblemTypes.PaneBound);
+        ex.Message.ShouldContain("w2:p3");
+    }
+
+    [Test]
+    public async Task Problem_details_404_maps_to_runner_problem()
+    {
+        var handler = new CapturingHandler(_ => Task.FromResult(Problem(
+            404, HerdrProblemTypes.PaneNotFound, "pane missing")));
+        var client = new SessionRunnerHttpClient(
+            new HttpClient(handler) { BaseAddress = new Uri("http://runner.test/") },
+            new StubFactory(),
+            Options.Create(new SessionRunnerSettings { BaseUrl = "http://runner.test" }));
+
+        var ex = await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.RunnerProblemException>(() =>
+            client.InspectHerdrPaneAsync("w-missing:p1", CancellationToken.None));
+        ex.StatusCode.ShouldBe(404);
+        ex.Code.ShouldBe(HerdrProblemTypes.PaneNotFound);
+    }
+
+    [Test]
     public async Task Claude_spec_on_herdr_posts_agent_kind_claude_and_null_transcript_format()
     {
         var launched = await CaptureLaunchAsync(
@@ -188,6 +242,15 @@ public class SessionRunnerHttpClientHerdrWireTests
             Encoding.UTF8,
             "application/json"),
     };
+
+    private static HttpResponseMessage Problem(int status, string type, string detail) =>
+        new((HttpStatusCode)status)
+        {
+            Content = new StringContent(
+                JsonSerializer.Serialize(new { type, title = type, status, detail }),
+                Encoding.UTF8,
+                "application/problem+json"),
+        };
 
     private sealed class StubFactory : IHttpClientFactory
     {

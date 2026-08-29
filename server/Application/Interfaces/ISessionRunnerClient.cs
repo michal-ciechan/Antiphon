@@ -33,6 +33,25 @@ public interface ISessionRunnerClient
         Task.FromResult<RunnerCapabilityMismatch?>(null);
 
     Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct);
+
+    /// <summary>
+    /// CARD-0213: read-only herdr pane snapshot. Default throws so existing fakes compile;
+    /// production <c>SessionRunnerHttpClient</c> and the in-proc test client implement it.
+    /// </summary>
+    Task<HerdrPaneInspectDto> InspectHerdrPaneAsync(string paneId, CancellationToken ct) =>
+        throw new NotSupportedException("This session-runner client cannot inspect herdr panes.");
+
+    /// <summary>CARD-0213: bind a standing session to an operator pane. Default throws.</summary>
+    Task<SessionRunnerSessionDto> AttachHerdrAsync(HerdrAttachRequest request, CancellationToken ct) =>
+        throw new NotSupportedException("This session-runner client cannot attach herdr panes.");
+
+    /// <summary>
+    /// Null when this runner can host herdr. A message means refuse (old runner / no herdr).
+    /// Default null so in-proc fakes do not block attach unless they override.
+    /// </summary>
+    Task<string?> GetSessionBackendCapabilityMismatchAsync(CancellationToken ct) =>
+        Task.FromResult<string?>(null);
+
     Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct);
     Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct);
     Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct);

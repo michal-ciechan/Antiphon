@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
@@ -27,6 +28,9 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
     /// runner restart need that shape; the default still kills so a forgotten session cannot leak.
     /// </summary>
     public bool KillOnDispose { get; set; } = true;
+
+    /// <summary>CARD-0213: when false, GetCapabilitiesAsync omits herdr-attach (R3).</summary>
+    public bool AdvertiseHerdrAttach { get; set; } = true;
 
     /// <param name="ptyBackend">
     /// Which pseudoconsole the detached pty-hosts this client spawns should use (<c>inbox</c> /
@@ -145,6 +149,77 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             Herdr: spec.Herdr);
 
         return Map(await _runtime.StartAsync(request, ct));
+    }
+
+    public Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        IReadOnlyList<string> backends = _herdrClient is null
+            ? [SessionBackends.PtyHost]
+            : [SessionBackends.PtyHost, SessionBackends.Herdr];
+        IReadOnlyList<string>? features = _herdrClient is not null && AdvertiseHerdrAttach
+            ? [RunnerCapabilityFeatures.HerdrAttach]
+            : null;
+        return Task.FromResult<RunnerCapabilitiesDto?>(new(
+            "ModernConPty",
+            "modern",
+            "in-proc test runner",
+            false,
+            SessionRunnerRuntime.SupportedTranscriptFormats,
+            SessionBackends: backends,
+            Features: features));
+    }
+
+    public Task<string?> GetSessionBackendCapabilityMismatchAsync(CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (_herdrClient is null)
+        {
+            return Task.FromResult<string?>(
+                "The in-proc test runner has no herdr client.");
+        }
+
+        return Task.FromResult<string?>(null);
+    }
+
+    public async Task<HerdrPaneInspectDto> InspectHerdrPaneAsync(string paneId, CancellationToken ct)
+    {
+        try
+        {
+            return await _runtime.InspectHerdrPaneAsync(paneId, ct);
+        }
+        catch (HerdrLaunchException ex)
+        {
+            throw MapLaunch(ex);
+        }
+        catch (HerdrBackendUnavailableException ex)
+        {
+            throw new ServiceUnavailableException(ex.Message, HerdrProblemTypes.Unreachable, ex);
+        }
+    }
+
+    public async Task<SessionRunnerSessionDto> AttachHerdrAsync(HerdrAttachRequest request, CancellationToken ct)
+    {
+        try
+        {
+            return Map(await _runtime.AttachHerdrAsync(request, ct));
+        }
+        catch (HerdrLaunchException ex)
+        {
+            throw MapLaunch(ex);
+        }
+        catch (HerdrBackendUnavailableException ex)
+        {
+            throw new ServiceUnavailableException(ex.Message, HerdrProblemTypes.Unreachable, ex);
+        }
+    }
+
+    private static Exception MapLaunch(HerdrLaunchException ex)
+    {
+        var code = string.IsNullOrWhiteSpace(ex.Code) ? "herdr_launch_failed" : ex.Code;
+        if (string.Equals(code, HerdrProblemTypes.PaneNotFound, StringComparison.OrdinalIgnoreCase))
+            return new RunnerProblemException(404, ex.Message, code, ex);
+        return new ConflictException(ex.Message, ex, code);
     }
 
     public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct)
@@ -316,7 +391,8 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             dto.TranscriptUnboundReason,
             dto.Backend,
             dto.Pending,
-            dto.HerdrVerifiedAtUtc);
+            dto.HerdrVerifiedAtUtc,
+            dto.HerdrOrigin);
 
     private static AgentExitReason MapExitReason(string reason) =>
         Enum.TryParse<AgentExitReason>(reason, ignoreCase: true, out var parsed)

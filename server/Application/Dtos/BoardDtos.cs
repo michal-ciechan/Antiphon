@@ -114,7 +114,9 @@ public sealed record AgentSessionSummaryDto(
     // CARD-0163: Herdr's screen-derived status, overlaid from the runner. Null means no Herdr
     // session or an older/unreachable runner; it is intentionally not guessed from transcript state.
     string? HerdrAgentStatus = null,
-    DateTime? HerdrAgentStatusSinceUtc = null);
+    DateTime? HerdrAgentStatusSinceUtc = null,
+    // CARD-0213: HerdrPaneOrigins mirrored from the runner sidecar. Null for pty / older runners.
+    string? HerdrOrigin = null);
 
 public sealed record CreateBoardRequest(
     Guid ProjectId,

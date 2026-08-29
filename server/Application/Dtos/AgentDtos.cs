@@ -287,6 +287,9 @@ public sealed record StartAgentRequest(
     /// </summary>
     IReadOnlyDictionary<string, string>? LaunchEnvOverride = null);
 
+/// <summary>CARD-0213: bind a standing Herdr agent to an existing operator pane.</summary>
+public sealed record AttachHerdrPaneRequest(string PaneId);
+
 public sealed record AssignAgentCardRequest(Guid CardId);
 
 public sealed record ReorderAgentQueueRequest(IReadOnlyList<Guid> CardIds);

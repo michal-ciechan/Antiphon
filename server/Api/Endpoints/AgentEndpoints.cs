@@ -136,6 +136,15 @@ public static class AgentEndpoints
             return Results.Ok(await service.StopAsync(id, cancellationToken));
         });
 
+        agents.MapPost("/{id:guid}/attach-herdr", async (
+            Guid id,
+            AttachHerdrPaneRequest request,
+            AgentControlService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.AttachHerdrAsync(id, request, cancellationToken));
+        });
+
         agents.MapPost("/{id:guid}/queue", async (
             Guid id,
             AssignAgentCardRequest request,

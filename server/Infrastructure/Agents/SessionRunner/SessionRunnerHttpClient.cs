@@ -521,6 +521,68 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             e.Model,
             e.ModelCalls);
 
+    public async Task<HerdrPaneInspectDto> InspectHerdrPaneAsync(string paneId, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(paneId);
+        var response = await _httpClient.GetAsync($"herdr/panes/{Uri.EscapeDataString(paneId)}", ct);
+        await ThrowForRunnerProblemAsync(response, ct);
+        return await response.Content.ReadFromJsonAsync<HerdrPaneInspectDto>(JsonOptions, ct)
+            ?? throw new InvalidOperationException("Session runner returned an empty inspect response.");
+    }
+
+    public async Task<SessionRunnerSessionDto> AttachHerdrAsync(HerdrAttachRequest request, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var response = await _httpClient.PostAsJsonAsync("sessions/attach", request, JsonOptions, ct);
+        await ThrowForRunnerProblemAsync(response, ct);
+        return Map(await response.Content.ReadFromJsonAsync<RunnerSessionDto>(JsonOptions, ct)
+            ?? throw new InvalidOperationException("Session runner returned an empty attach response."));
+    }
+
+    /// <summary>
+    /// CARD-0213: map the runner's RFC 9457 problem-details onto typed server exceptions.
+    /// 404 → <see cref="NotFoundException"/>-shaped <see cref="RunnerProblemException"/>,
+    /// 409 → <see cref="ConflictException"/>, 503 → <see cref="ServiceUnavailableException"/>.
+    /// </summary>
+    public static async Task ThrowForRunnerProblemAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        if (response.IsSuccessStatusCode)
+            return;
+
+        string? type = null;
+        string? detail = null;
+        try
+        {
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions, ct);
+            if (json.ValueKind == JsonValueKind.Object)
+            {
+                if (json.TryGetProperty("type", out var typeEl) && typeEl.ValueKind == JsonValueKind.String)
+                    type = typeEl.GetString();
+                if (json.TryGetProperty("detail", out var detailEl) && detailEl.ValueKind == JsonValueKind.String)
+                    detail = detailEl.GetString();
+            }
+        }
+        catch (Exception ex) when (ex is JsonException or NotSupportedException or InvalidOperationException)
+        {
+            // Body is not problem+json.
+        }
+
+        detail ??= response.ReasonPhrase ?? $"Session runner returned {(int)response.StatusCode}.";
+        var code = string.IsNullOrWhiteSpace(type) ? "herdr_launch_failed" : type;
+
+        throw (int)response.StatusCode switch
+        {
+            404 => new RunnerProblemException(404, detail, code),
+            409 => new ConflictException(detail, code),
+            503 => new ServiceUnavailableException(
+                detail,
+                string.Equals(code, "herdr_launch_failed", StringComparison.Ordinal)
+                    ? HerdrProblemTypes.Unreachable
+                    : code),
+            _ => new HttpRequestException($"Session runner returned {(int)response.StatusCode}: {detail}"),
+        };
+    }
+
     /// <summary>
     /// CARD-0186 S3: a 503 with problem-type <see cref="HerdrProblemTypes.Unreachable"/> (or a
     /// bare 503 on these endpoints) is a deferral, never a 500-shaped transport failure.
@@ -580,7 +642,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             dto.TranscriptUnboundReason,
             dto.Backend,
             dto.Pending,
-            dto.HerdrVerifiedAtUtc);
+            dto.HerdrVerifiedAtUtc,
+            dto.HerdrOrigin);
 
     private static AgentExitReason MapExitReason(string reason) =>
         Enum.TryParse<AgentExitReason>(reason, ignoreCase: true, out var parsed)

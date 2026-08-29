@@ -28,5 +28,11 @@ public enum AgentExitReason
     /// Herdr kill left the pane open because a foreign process was in it; our child was killed by
     /// pid (CARD-0186). Failed on the unsolicited exit path; operator KillAsync still lands Stopped.
     /// </summary>
-    HerdrPaneLeftOpen = 8
+    HerdrPaneLeftOpen = 8,
+
+    /// <summary>
+    /// CARD-0213: Stop on an attached pane dropped the sidecar and left the operator's process
+    /// running. Clean stop (exit code 0); the session stays resumable.
+    /// </summary>
+    HerdrDetached = 9
 }

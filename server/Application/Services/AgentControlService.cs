@@ -43,6 +43,8 @@ public sealed class AgentControlService
     // CARD-0136. Optional so the existing integration harness keeps constructing this
     // unchanged; tests that want the gate wire it explicitly. Production always registers it.
     private readonly SubscriptionQuotaGate? _quotaGate;
+    private readonly ISessionRunnerClient? _sessionRunner;
+    private readonly HerdrLaunchContextResolver? _herdrContext;
 
     public AgentControlService(
         AppDbContext db,
@@ -61,7 +63,9 @@ public sealed class AgentControlService
         // still starts agents, it just starts them without the CLAUDE.md floor.
         AgentWorkspaceProvisioner? workspace = null,
         ApiKeyEnvResolver? apiKeyEnvResolver = null,
-        SubscriptionQuotaGate? quotaGate = null)
+        SubscriptionQuotaGate? quotaGate = null,
+        ISessionRunnerClient? sessionRunner = null,
+        HerdrLaunchContextResolver? herdrContext = null)
     {
         _db = db;
         _agentService = agentService;
@@ -78,6 +82,8 @@ public sealed class AgentControlService
         _workspace = workspace;
         _apiKeyEnvResolver = apiKeyEnvResolver;
         _quotaGate = quotaGate;
+        _sessionRunner = sessionRunner;
+        _herdrContext = herdrContext;
     }
 
     /// <summary>
@@ -357,6 +363,194 @@ public sealed class AgentControlService
         }
 
         return previous;
+    }
+
+    /// <summary>
+    /// CARD-0213: bind a standing Herdr agent to an operator pane Antiphon did not launch.
+    /// Inspect is read-only; the DB row is written Starting before the runner binds anything.
+    /// Nothing is typed (no remote-control, no launch note, no queue flush).
+    /// </summary>
+    public async Task<AgentDetailDto> AttachHerdrAsync(Guid agentId, AttachHerdrPaneRequest request, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (string.IsNullOrWhiteSpace(request.PaneId))
+            throw new ConflictException("paneId is required.", HerdrProblemTypes.Refused);
+
+        var agent = await LockAgentAsync(agentId, ct);
+        if (agent.SessionBackend != SessionBackend.Herdr)
+        {
+            throw new ConflictException(
+                $"Agent '{agent.Name}' is not on the Herdr session backend.",
+                HerdrProblemTypes.Refused);
+        }
+
+        AgentService.ValidateSessionBackendPairing(SessionBackend.Herdr, agent.Kind);
+
+        if (await HasLiveSessionAsync(agent, ct))
+            throw new ConflictException($"Agent '{agent.Name}' already has a live session.", HerdrProblemTypes.SessionActive);
+
+        if (_sessionRunner is null)
+            throw new ServiceUnavailableException("Session runner is not configured.", HerdrProblemTypes.Unreachable);
+
+        if (await _sessionRunner.GetSessionBackendCapabilityMismatchAsync(ct) is { } herdrMismatch)
+            throw new ConflictException(herdrMismatch, HerdrProblemTypes.Refused);
+
+        var caps = await _sessionRunner.GetCapabilitiesAsync(ct);
+        if (caps?.Features is not { } features
+            || !features.Contains(RunnerCapabilityFeatures.HerdrAttach, StringComparer.OrdinalIgnoreCase))
+        {
+            throw new ConflictException(
+                "The session runner does not advertise herdr-attach. Rebuild and restart it: pwsh -File scripts/restart-session-runner.ps1.",
+                HerdrProblemTypes.Refused);
+        }
+
+        var inspect = await _sessionRunner.InspectHerdrPaneAsync(request.PaneId, ct);
+        if (!HerdrAgentKindMap.TryMap(agent.Kind, out var expectedKind)
+            || !string.Equals(inspect.Agent, expectedKind, StringComparison.Ordinal))
+        {
+            throw new ConflictException(
+                $"pane {request.PaneId} is '{inspect.Agent ?? "none"}' where '{expectedKind}' was expected",
+                HerdrProblemTypes.KindMismatch);
+        }
+
+        if (inspect.BoundToSessionId is Guid bound)
+        {
+            throw new ConflictException(
+                $"pane {request.PaneId} is bound to session {bound:D} ({inspect.BoundOrigin ?? "unknown"})",
+                HerdrProblemTypes.PaneBound);
+        }
+
+        if (inspect.Foreground.Count != 1)
+        {
+            throw new ConflictException(
+                $"pane {request.PaneId} foreground is not a single {expectedKind} process",
+                HerdrProblemTypes.PaneForeign);
+        }
+
+        var occupant = inspect.Foreground[0];
+
+        var cwd = occupant.Cwd is { Length: > 0 } processCwd
+            ? Path.GetFullPath(processCwd)
+            : Path.GetFullPath(agent.WorkingDirectory);
+        var sessionId = inspect.NativeSessionId ?? Guid.NewGuid();
+        var existing = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct);
+        AgentSession session;
+        if (existing is not null)
+        {
+            var owner = await _db.Agents.FirstOrDefaultAsync(
+                a => a.PersistentSessionId == sessionId.ToString("D"), ct);
+            var ours = owner is not null
+                && owner.Id == agent.Id
+                && existing.CardId is null
+                && existing.Status is SessionStatus.Stopped or SessionStatus.Failed
+                && string.Equals(
+                    Path.GetFullPath(existing.Cwd), cwd,
+                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+            if (!ours)
+            {
+                var ownerName = existing.CardId is not null
+                    ? "a card session"
+                    : owner?.Name ?? "another agent";
+                throw new ConflictException(
+                    $"session {sessionId:D} is owned by {ownerName}",
+                    HerdrProblemTypes.SessionIdTaken);
+            }
+
+            session = existing;
+            var resumeNow = UtcNow();
+            session.Status = SessionStatus.Starting;
+            session.StartedAt = occupant.StartTimeUtc ?? resumeNow;
+            session.LastSeenAt = resumeNow;
+            session.EndedAt = null;
+            session.ExitCode = null;
+            session.FailureReason = null;
+            session.SessionBackend = SessionBackend.Herdr;
+            session.AgentKind = agent.Kind;
+            session.Cwd = cwd;
+            session.TuiProfileRevisionId = null;
+            session.EffectiveModelId = null;
+            session.ComposedBundleStamp = null;
+        }
+        else
+        {
+            var definitionName = _agentRegistry.Settings.DefaultDefinition;
+            var now = UtcNow();
+            session = new AgentSession
+            {
+                Id = sessionId,
+                CardId = null,
+                WorktreeId = null,
+                DefinitionName = definitionName,
+                AgentKind = agent.Kind,
+                SessionBackend = SessionBackend.Herdr,
+                Status = SessionStatus.Starting,
+                Cwd = cwd,
+                Cols = 120,
+                Rows = 30,
+                CreatedAt = now,
+                StartedAt = occupant.StartTimeUtc ?? now,
+                LastSeenAt = now,
+                TuiProfileRevisionId = null,
+                EffectiveModelId = null,
+                ComposedBundleStamp = null,
+            };
+            _db.AgentSessions.Add(session);
+        }
+
+        await _db.SaveChangesAsync(ct);
+
+        var workspaceKey = "none";
+        if (_herdrContext is not null)
+        {
+            var opts = await _herdrContext.ResolveAsync(session, agent, agent.Name, ct);
+            workspaceKey = opts.WorkspaceKey;
+        }
+
+        var transcriptFormat = agent.Kind switch
+        {
+            AgentKind.Grok => TranscriptFormats.Grok,
+            AgentKind.Codex => TranscriptFormats.Codex,
+            _ => TranscriptFormats.Claude,
+        };
+        try
+        {
+            await _sessionRunner.AttachHerdrAsync(
+                new HerdrAttachRequest(
+                    sessionId,
+                    request.PaneId,
+                    expectedKind,
+                    transcriptFormat,
+                    occupant.Pid,
+                    workspaceKey,
+                    inspect.NativeSessionId),
+                ct);
+        }
+        catch (Exception ex)
+        {
+            session.Status = SessionStatus.Failed;
+            session.FailureReason = ex is HttpException http && http.Code is { } code ? code : ex.Message;
+            session.EndedAt = UtcNow();
+            session.LastSeenAt = session.EndedAt.Value;
+            await _db.SaveChangesAsync(CancellationToken.None);
+            throw;
+        }
+
+        session.Status = SessionStatus.Running;
+        session.LastSeenAt = UtcNow();
+        agent.PersistentSessionId = sessionId.ToString("D");
+        agent.Status = AgentStatus.Running;
+        agent.UpdatedAt = UtcNow();
+        await _db.SaveChangesAsync(ct);
+
+        await ClearSupervisionLatchAsync(agent, ct);
+        await _eventBus.PublishToGroupAsync(
+            AgentSessionGroups.Session(session.Id),
+            "SessionStarted",
+            new { sessionId = session.Id, cardId = (Guid?)null },
+            ct);
+        await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
+
+        return await _agentService.GetByIdAsync(agent.Id, ct);
     }
 
     /// <summary>Stops the agent's persistent session (if live) and marks the agent stopped.</summary>

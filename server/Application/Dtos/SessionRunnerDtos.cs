@@ -28,7 +28,9 @@ public sealed record SessionRunnerSessionDto(
     // CARD-0186 S3: HerdrPendingReasons.Unreachable while adoption is waiting on herdr.
     string? Pending = null,
     // CARD-0186 S3: stamped by the single-session GET after a passing herdr liveness verify.
-    DateTime? HerdrVerifiedAtUtc = null);
+    DateTime? HerdrVerifiedAtUtc = null,
+    // CARD-0213: HerdrPaneOrigins. Null for pty / older runners.
+    string? HerdrOrigin = null);
 
 public sealed record SessionRunnerBufferDto(
     Guid SessionId,
