@@ -701,6 +701,12 @@ public class AgentTaskDeadSessionReconciliationTests
         public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct) =>
             Task.FromResult(new SessionRunnerBufferDto(sessionId, "> ", 10));
 
+        // CARD-0228 (auditing CARD-0222's frozen-clock deadlock): this throw is why this
+        // harness's frozen FakeTimeProvider(DateTimeOffset.UtcNow) is safe today — it short-circuits
+        // SessionMessageQueueService's verify path before any Task.Delay(..., _timeProvider) wait
+        // loop is reached. Giving this a real implementation exposes the CARD-0222 class here too;
+        // switch the clock to the offset-over-real-clock pattern (HerdrAlwaysOnChannelParityTests /
+        // AgentSupervisionTests) in the same change.
         public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
             throw new NotSupportedException();
 
