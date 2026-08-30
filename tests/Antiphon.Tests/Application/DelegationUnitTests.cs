@@ -472,6 +472,8 @@ public class DelegationReportFormatterTests
         var contract = DelegationReportFormatter.ReportingContract(task.Id, AgentTaskKind.Worker, 20_000);
         contract.ShouldContain(DelegationReportFormatter.ReportToken(task.Id, "done"));
         contract.ShouldContain("Nothing after it");
+        contract.ShouldContain("an `[[attach:]]` marker here reaches only your");
+        contract.ShouldContain("it is never sent to any chat");
     }
 
     [Test]

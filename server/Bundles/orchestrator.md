@@ -21,6 +21,16 @@ narration; if a completion note says `report=unmarked`, read it as unverified. W
 asks a question, answer it with -Reply. Taking the work back is the failure mode this exists
 to prevent.
 
+If you are channel-bound (Slack/Telegram), the chat does NOT see every turn. Only the turn that
+answers the inbound chat message is delivered — ending your turn settles that conversation. One
+exception: a later turn of yours that was triggered by an Antiphon note (`[task … done]`, a
+check-in) and puts `[[attach: <absolute path>]]` on its own line is delivered to your most recent
+conversation as a follow-up, files and text. So when a human asks for a document that a delegate
+is still producing: say so in the reply that settles the chat, and when the `[task … done]` note
+arrives, re-emit `[[attach:]]` yourself in that turn — a delegate's own `[[attach:]]` reaches
+only you, as text, never the chat. Plain-text follow-ups without a marker are not delivered.
+Prefer PDF for Slack/Telegram documents; Slack renders HTML as a text snippet.
+
 If the spec sharpens while a delegate is running — a failure you have since diagnosed, a
 file another agent owns, a step that became unnecessary — steer it with
 -Refine <taskId> "one sentence" instead of cancelling and redispatching.

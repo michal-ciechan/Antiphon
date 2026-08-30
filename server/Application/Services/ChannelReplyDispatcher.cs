@@ -142,6 +142,12 @@ public sealed class ChannelReplyDispatcher
             // follow-up. No-op unless this session's last dispatched turn is still the live one.
             if (_dispatched.ContainsKey(sessionId))
                 await DispatchFollowUpAsync(sessionId, ct);
+
+            // CARD-0250: a later machine-triggered turn (task-done / check-in / system note) that
+            // carries [[attach:]] still reaches the last-known conversation after the ack turn
+            // settled the Channel correlation. Additive; never matches or settles Channel-origin
+            // rows. The main path always wins first claim on the turn.
+            await DispatchMachineTurnAttachmentsAsync(sessionId, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -716,6 +722,7 @@ public sealed class ChannelReplyDispatcher
     private static string InferMime(string extension) => extension.ToLowerInvariant() switch
     {
         ".pdf" => "application/pdf",
+        ".html" or ".htm" => "text/html",
         ".png" => "image/png",
         ".jpg" or ".jpeg" => "image/jpeg",
         ".gif" => "image/gif",
@@ -824,6 +831,240 @@ public sealed class ChannelReplyDispatcher
         // the advanced watermark for a later fragment of the same turn.
         if (nextPromptSeq is not null)
             _dispatched.TryRemove(new KeyValuePair<Guid, DispatchedTurn>(sessionId, claimed));
+    }
+
+    /// <summary>
+    /// CARD-0250: after the Channel-origin match/settle path has had first claim, a later turn
+    /// whose owning prompt is one of Antiphon's own injections (Delegation / Check / System) and
+    /// whose AssistantText carries <c>[[attach:]]</c> is published as a follow-up
+    /// <see cref="ChannelReply"/> to the session's newest Channel-origin conversation.
+    ///
+    /// Idempotency reuses the injection row's own <see cref="SessionQueuedMessage.ChannelReplySettledAt"/>
+    /// as the claim-before-produce marker. <see cref="OpenCorrelations"/> filters
+    /// <c>Origin == Channel</c>, so this is invisible to correlation logic and costs no migration.
+    /// A first trigger that sees text without markers does not claim — a marker landing in a later
+    /// transcript batch of the same turn still sends.
+    /// </summary>
+    private async Task DispatchMachineTurnAttachmentsAsync(Guid sessionId, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        // Gate 1: channel-bound. One indexed query — the only cost added to every non-channel
+        // session's turn end. Newest ConversationKey is the follow-up target.
+        var conversationKey = await db.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == sessionId
+                && m.Origin == QueuedMessageOrigin.Channel
+                && m.ConversationKey != null)
+            .OrderByDescending(m => m.Sequence)
+            .Select(m => m.ConversationKey)
+            .FirstOrDefaultAsync(ct);
+        if (conversationKey is null)
+            return;
+
+        var turnEndSeq = await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.TurnEnd)
+            .MaxAsync(t => (long?)t.Sequence, ct);
+        if (turnEndSeq is not long endSeq)
+            return;
+
+        var userPrompt = await TranscriptTurnWindow.FindOwningPromptAsync(db, sessionId, endSeq, ct);
+        if (userPrompt?.Text is not string promptText)
+            return;
+
+        var (responseText, _, containsApiErrorStub) =
+            await ExtractTurnResponseAsync(db, sessionId, userPrompt.Sequence, ct);
+        if (containsApiErrorStub)
+            return;
+        if (string.IsNullOrWhiteSpace(responseText))
+            return;
+
+        var (_, paths) = ChannelContracts.ExtractAttachments(responseText);
+        if (paths.Count == 0)
+            return;
+
+        var normalizedTurn = Normalize(promptText);
+
+        // Gate 2: the main path already owns this turn (Channel-origin prompt match). Its
+        // attachments went with it, or CARD-0071 / NO_REPLY withheld them on purpose.
+        var channelBodies = await db.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == sessionId && m.Origin == QueuedMessageOrigin.Channel)
+            .Select(m => m.Body)
+            .ToListAsync(ct);
+        if (channelBodies.Any(b => PromptsMatch(Normalize(b), normalizedTurn)))
+            return;
+
+        var candidates = await db.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == sessionId
+                && (m.Origin == QueuedMessageOrigin.Delegation
+                    || m.Origin == QueuedMessageOrigin.Check
+                    || m.Origin == QueuedMessageOrigin.System)
+                && m.Status == QueuedMessageStatus.Sent
+                && m.ChannelReplySettledAt == null)
+            .OrderBy(m => m.Sequence)
+            .ToListAsync(ct);
+        var matches = candidates.Where(m => PromptsMatch(Normalize(m.Body), normalizedTurn)).ToList();
+        if (matches.Count == 0)
+        {
+            await ReportAttachmentsDroppedAsync(
+                sessionId, userPrompt.Sequence, conversationKey,
+                AlertSeverity.Warning, "UnmatchedHuman", ct);
+            return;
+        }
+
+        if (!TrySplitConversationKey(conversationKey, out var provider, out var conversationId))
+        {
+            await ReportAttachmentsDroppedAsync(
+                sessionId, userPrompt.Sequence, conversationKey,
+                AlertSeverity.Critical, "Unroutable", ct);
+            return;
+        }
+
+        var channel = await db.ChatChannels.AsNoTracking()
+            .Where(c => c.Provider == provider && c.ExternalId == conversationId)
+            .Select(c => new { c.ReplyHandle })
+            .FirstOrDefaultAsync(ct);
+        if (channel is null)
+        {
+            _logger.LogWarning(
+                "No channel catalog row for {ConversationKey} (session {SessionId}); addressing the "
+                + "machine-turn attachment follow-up by conversation id alone",
+                conversationKey, sessionId);
+        }
+
+        await SettleAsync(db, matches, ct);
+
+        var (bodyText, attachments) = PrepareReplyBody(responseText, sessionId);
+        // A remaining-text of NO_REPLY still sends — the marker is the explicit ask. Empty text
+        // (the file IS the follow-up), never a skip.
+        if (ChannelContracts.IsNoReply(bodyText))
+            bodyText = "";
+        var text = Truncate(bodyText);
+        var kind = ClassifyKind(bodyText);
+
+        try
+        {
+            var reply = new ChannelReply
+            {
+                Channel = provider,
+                ReplyHandle = channel?.ReplyHandle,
+                ConversationId = conversationId,
+                Text = text.Length == 0 ? null : text,
+                Kind = kind,
+                Attachments = attachments,
+            };
+            await _producer.SendAsync(reply, ct);
+            _logger.LogInformation(
+                "Sent machine-turn follow-up {Kind} reply ({Chars} chars, {AttachmentCount} attachment(s)) "
+                + "to {Provider} conversation {ConversationId} from session {SessionId}",
+                reply.Kind, text.Length, attachments.Count, provider, conversationId, sessionId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            foreach (var m in matches)
+                m.ChannelReplySettledAt = null;
+            await db.SaveChangesAsync(CancellationToken.None);
+            _logger.LogError(ex,
+                "Producing the machine-turn attachment follow-up for session {SessionId} failed; "
+                + "{Count} injection row(s) returned to unclaimed for the next turn end",
+                sessionId, matches.Count);
+        }
+    }
+
+    /// <summary>
+    /// CARD-0250: attach markers that neither the main path nor the follow-up path delivered.
+    /// Deduped per (session, owning-prompt sequence) so transcript re-triggers of one turn raise
+    /// once. Own scope, same plumbing as <see cref="ReportLostAsync"/>.
+    /// </summary>
+    private async Task ReportAttachmentsDroppedAsync(
+        Guid sessionId,
+        long promptSeq,
+        string conversationKey,
+        AlertSeverity severity,
+        string branch,
+        CancellationToken ct)
+    {
+        var failureReason = $"{branch}:{promptSeq}";
+        var why = branch switch
+        {
+            "Unroutable" =>
+                $"a machine-triggered turn produced attach markers but the follow-up conversation key "
+                + $"({conversationKey}) names no routable target",
+            _ =>
+                $"a completed turn produced attach markers but the owning prompt (seq {promptSeq}) was "
+                + "not an Antiphon injection and matched no channel correlation — publishing would be a stray reply",
+        };
+
+        if (severity == AlertSeverity.Critical)
+        {
+            _logger.LogError(
+                "CHANNEL ATTACHMENTS DROPPED: session {SessionId} turn prompt seq {PromptSeq} — {Why}.",
+                sessionId, promptSeq, why);
+        }
+        else
+        {
+            _logger.LogWarning(
+                "CHANNEL ATTACHMENTS DROPPED: session {SessionId} turn prompt seq {PromptSeq} — {Why}.",
+                sessionId, promptSeq, why);
+        }
+
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            var already = await db.AgentIncidents.AnyAsync(
+                i => i.SessionId == sessionId
+                    && i.Kind == AgentIncidentKind.ChannelAttachmentsDropped
+                    && i.FailureReason == failureReason,
+                ct);
+            if (already)
+                return;
+
+            var sessionIdText = sessionId.ToString("D");
+            var agentId = await db.Agents
+                .Where(a => a.PersistentSessionId == sessionIdText)
+                .Select(a => (Guid?)a.Id)
+                .FirstOrDefaultAsync(ct);
+            if (agentId is null && TrySplitConversationKey(conversationKey, out var p, out var cid))
+            {
+                agentId = await db.ChatChannels
+                    .Where(c => c.Provider == p && c.ExternalId == cid && c.AgentId != null)
+                    .Select(c => c.AgentId)
+                    .FirstOrDefaultAsync(ct);
+            }
+            if (agentId is not Guid owner)
+            {
+                _logger.LogError(
+                    "No agent owns session {SessionId}, so the dropped-attachments event could not be "
+                    + "recorded as an incident. {Why}.",
+                    sessionId, why);
+                return;
+            }
+
+            var supervisor = scope.ServiceProvider.GetService<AgentSupervisorService>();
+            if (supervisor is null)
+                return;
+
+            var incidentMessage = branch == "Unroutable"
+                ? $"This agent tried to send a file to {conversationKey} and there is no routable conversation to deliver it to. {why}."
+                : $"This agent produced attach markers on a turn that was not started by an Antiphon note and matched no channel message. The file was not sent to {conversationKey}. {why}.";
+
+            await supervisor.RecordIncidentAsync(
+                owner,
+                sessionId,
+                AgentIncidentKind.ChannelAttachmentsDropped,
+                severity,
+                ColumnText.Clip(incidentMessage, AgentIncident.MessageMaxLength),
+                failureReason: failureReason,
+                ct: ct);
+            await db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex,
+                "Recording the dropped-attachments incident for session {SessionId} failed", sessionId);
+        }
     }
 
     private string Truncate(string responseText) =>

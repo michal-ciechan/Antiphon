@@ -63,11 +63,21 @@ public class SessionQueuedMessage
     public long? LastDeliveryBaselineSequence { get; set; }
 
     /// <summary>
-    /// For <see cref="QueuedMessageOrigin.Channel"/> rows: when the reply this message OWES its
-    /// human was settled — either a <c>ChannelReply</c> was produced for it, or it was abandoned
-    /// unanswered (which raises a Critical <see cref="Domain.Enums.AgentIncidentKind.ChannelReplyLost"/>
-    /// incident). Null on a Sent channel row means "somebody in a chat is still waiting". Always
-    /// null on non-Channel rows — they owe nobody a reply.
+    /// Consume marker for a channel-facing send that this row caused.
+    ///
+    /// <para>On <see cref="QueuedMessageOrigin.Channel"/> rows (CARD-0067): when the reply this
+    /// message OWES its human was settled — either a <c>ChannelReply</c> was produced for it, or
+    /// it was abandoned unanswered (which raises a Critical
+    /// <see cref="Domain.Enums.AgentIncidentKind.ChannelReplyLost"/> incident). Null on a Sent
+    /// channel row means "somebody in a chat is still waiting". Open-correlation queries filter
+    /// <c>Origin == Channel</c>, so this is the Channel-row settlement bit.</para>
+    ///
+    /// <para>On Delegation / Check / System rows (CARD-0250): claim-before-produce for a
+    /// machine-turn attachment follow-up. Invisible to open-correlation logic because of that
+    /// Origin filter; reused so a <c>[task done]</c> turn that re-emits <c>[[attach:]]</c> after
+    /// the ack turn already settled the Channel row is still delivered once, and a restart does
+    /// not double-send. Null until that follow-up is produced (or un-claimed if the produce
+    /// throws).</para>
     ///
     /// <para>CARD-0067. This column is the durable half of the round trip. The message coming IN
     /// was always in Postgres; the route back OUT lived in a <c>ConcurrentDictionary</c> inside

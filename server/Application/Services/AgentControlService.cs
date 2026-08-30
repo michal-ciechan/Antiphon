@@ -123,7 +123,19 @@ public sealed class AgentControlService
         // from cwd at every process start, so writing it here means a floor improved in a PR reaches
         // every agent at its next launch with nothing stored to drift. Deliberately BEFORE the card
         // branch, so a card spawn gets it too. Never clobbers an unmarked file and never throws.
-        _workspace?.Provision(agent);
+        // CARD-0250: pass current channel bindings so a bound agent's floor names the follow-up
+        // attach rule. Bindings change without relaunch; the content hash moves at the next Start.
+        IReadOnlyList<(string Provider, string Title)> boundChannels = [];
+        if (_workspace is not null)
+        {
+            var rows = await _db.ChatChannels.AsNoTracking()
+                .Where(c => c.AgentId == agent.Id)
+                .OrderBy(c => c.Provider).ThenBy(c => c.Title)
+                .Select(c => new { c.Provider, Title = c.Title ?? c.ExternalId })
+                .ToListAsync(ct);
+            boundChannels = rows.Select(c => (c.Provider, c.Title)).ToList();
+        }
+        _workspace?.Provision(agent, boundChannels);
 
         var launchKind = kind ?? agent.Kind;
         RemoteControlPolicy.Require(launchKind, request.RemoteControl == true, $"start of agent '{agent.Name}'");

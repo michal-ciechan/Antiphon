@@ -228,7 +228,9 @@ public static class DelegationReportFormatter
         return $"""
             --- how to report back ---
             Your final message is the entire report the caller receives. Nothing else from this
-            session is forwarded, and the caller cannot see your screen.
+            session is forwarded, and the caller cannot see your screen. If a file is your
+            deliverable, give its absolute path; an `[[attach:]]` marker here reaches only your
+            caller as text — it is never sent to any chat.
 
             Lead with the outcome in one line: what you did or found, and whether it worked.
             Then only what the caller needs in order to act — files changed, commands to rerun,

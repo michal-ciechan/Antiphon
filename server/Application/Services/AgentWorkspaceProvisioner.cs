@@ -97,9 +97,11 @@ public sealed class AgentWorkspaceProvisioner
     /// directory that cannot be written is a degraded agent, not a failed create or a failed launch,
     /// and the same reasoning as the deny-hook write it generalises (log loudly, carry on).
     /// </summary>
-    public WorkspaceFloorOutcome Provision(Agent agent)
+    public WorkspaceFloorOutcome Provision(
+        Agent agent,
+        IReadOnlyList<(string Provider, string Title)>? boundChannels = null)
     {
-        var outcome = ProvisionCore(agent);
+        var outcome = ProvisionCore(agent, boundChannels);
         if (outcome is WorkspaceFloorOutcome.Written or WorkspaceFloorOutcome.Rewritten or WorkspaceFloorOutcome.Adopted)
         {
             _logger.LogInformation(
@@ -118,7 +120,9 @@ public sealed class AgentWorkspaceProvisioner
         return outcome;
     }
 
-    private WorkspaceFloorOutcome ProvisionCore(Agent agent)
+    private WorkspaceFloorOutcome ProvisionCore(
+        Agent agent,
+        IReadOnlyList<(string Provider, string Title)>? boundChannels)
     {
         if (string.IsNullOrWhiteSpace(agent.WorkingDirectory))
             return WorkspaceFloorOutcome.NoDirectory;
@@ -135,7 +139,7 @@ public sealed class AgentWorkspaceProvisioner
                 return WorkspaceFloorOutcome.NoDirectory;
 
             var path = Path.Combine(directory, FileName);
-            var desired = Render(agent, directory);
+            var desired = Render(agent, directory, boundChannels);
 
             if (!File.Exists(path))
             {
@@ -184,13 +188,19 @@ public sealed class AgentWorkspaceProvisioner
     /// <see cref="ConventionsFileName"/> is — both of which are properties of the workspace and
     /// therefore belong in a file that describes the workspace.
     /// </summary>
-    public static string Render(Agent agent, string directory)
+    public static string Render(
+        Agent agent,
+        string directory,
+        IReadOnlyList<(string Provider, string Title)>? boundChannels = null)
     {
-        var body = RenderBody(agent, directory);
+        var body = RenderBody(agent, directory, boundChannels);
         return $"{MarkerPrefix}{Sha256Hex(body)[..8]}{MarkerSuffix}\n{body}";
     }
 
-    private static string RenderBody(Agent agent, string directory)
+    private static string RenderBody(
+        Agent agent,
+        string directory,
+        IReadOnlyList<(string Provider, string Title)>? boundChannels)
     {
         var text = new StringBuilder();
         text.Append(
@@ -242,6 +252,18 @@ public sealed class AgentWorkspaceProvisioner
             + "SOUL.md, MEMORY.md, today's memory log. There is nothing of the sort here. Do not go\n"
             + "looking, and do not spend a turn reporting that you could not find it: read this file and\n"
             + "start the work you were given.");
+
+        if (boundChannels is { Count: > 0 })
+        {
+            var label = string.Join(", ", boundChannels.Select(c => $"{c.Provider} \"{c.Title}\""));
+            text.Append(
+                $"\n\n## You are channel-bound ({label})\n\n"
+                + "To send a file to the chat, put `[[attach: <absolute path>]]` on its own line in the turn that\n"
+                + "answers the chat — or in a turn triggered by an Antiphon note (`[task … done]`, a check-in).\n"
+                + "Up to 14 MB per turn. Always attach a PDF for documents: Slack renders HTML as a text snippet,\n"
+                + "local paths mean nothing to the chat, and a chat user cannot see later file edits. A delegate's\n"
+                + "own `[[attach:]]` is not delivered to the chat — re-emit it yourself.");
+        }
 
         return text.ToString();
     }

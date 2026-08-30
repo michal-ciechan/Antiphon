@@ -28,9 +28,9 @@ public class ChannelContractsTests
         "",
         "Photos and files sent to the chat are saved into your workspace's .antiphon\\inbox folder and referenced in the message as [photo attached: <absolute path>] (or [file attached: ...]). Read that path to view it — you can read images. A note like \"could not be imported\" means the file never made it to this machine; ask the sender to resend or describe it.",
         "",
-        $"The final text of each of your turns is delivered back to the originating chat, truncated at 4000 characters. Keep replies phone-sized. Use plain Markdown only — no tables. To say nothing this turn, reply with exactly {ChannelContracts.NoReplyToken} and nothing else.",
+        $"Your reply to each chat message — the final text of the turn that answers it — is delivered back to the originating chat, truncated at 4000 characters. A turn started by anything else (a system note, a task report, someone typing in your terminal) is not delivered — except that a turn triggered by an Antiphon note which puts [[attach:]] on its own line is sent to your most recent conversation as a follow-up. Keep replies phone-sized. Use plain Markdown only — no tables. To say nothing this turn, reply with exactly {ChannelContracts.NoReplyToken} and nothing else.",
         "",
-        $"To send a file to the chat (PDF, image, document, ...), put {ChannelContracts.AttachMarkerFormat} on its own line anywhere in your reply, e.g. [[attach: C:\\work\\invoice.pdf]]. The marker line is removed from the delivered text and the file is sent as a document. Use absolute paths to files on this machine; up to 14 MB per turn.",
+        $"To send a file to the chat (PDF, image, document, ...), put {ChannelContracts.AttachMarkerFormat} on its own line anywhere in your reply, e.g. [[attach: C:\\work\\invoice.pdf]]. The marker line is removed from the delivered text and the file is sent as a document. Use absolute paths to files on this machine; up to 14 MB per turn. Prefer PDF for documents — Slack shows HTML files as a text snippet, not a document.",
         "",
         $"Bound channels: {ChannelPreamble.ChannelsPlaceholder}",
         "",
@@ -123,6 +123,8 @@ public class ChannelContractsTests
         slack.ShouldContain("4000 characters");
         slack.ShouldContain(ChannelContracts.NoReplyToken);
         slack.ShouldContain(ChannelContracts.AttachMarkerFormat);
+        slack.ShouldContain("Prefer PDF for documents — Slack shows HTML files as a text snippet, not a document.");
+        slack.ShouldContain("Your reply to each chat message");
         ChannelPreamble.PresetTemplateFor("unknown").ShouldBeNull();
     }
 

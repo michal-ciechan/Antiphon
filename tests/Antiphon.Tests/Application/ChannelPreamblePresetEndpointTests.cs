@@ -22,11 +22,16 @@ public sealed class ChannelPreamblePresetEndpointTests(AntiphonWebAppFactory fac
 
         var telegram = await client.GetAsync("/api/agents/preamble-preset?provider=telegram");
         telegram.StatusCode.ShouldBe(HttpStatusCode.OK);
-        (await TemplateAsync(telegram)).ShouldBe(ChannelPreamble.TelegramPresetTemplate);
+        var telegramTemplate = await TemplateAsync(telegram);
+        telegramTemplate.ShouldBe(ChannelPreamble.TelegramPresetTemplate);
+        telegramTemplate.ShouldContain("Your reply to each chat message");
 
         var slack = await client.GetAsync("/api/agents/preamble-preset?provider=slack");
         slack.StatusCode.ShouldBe(HttpStatusCode.OK);
-        (await TemplateAsync(slack)).ShouldBe(ChannelPreamble.SlackPresetTemplate);
+        var slackTemplate = await TemplateAsync(slack);
+        slackTemplate.ShouldBe(ChannelPreamble.SlackPresetTemplate);
+        slackTemplate.ShouldContain("Your reply to each chat message");
+        slackTemplate.ShouldContain("Prefer PDF for documents — Slack shows HTML files as a text snippet, not a document.");
 
         var unknown = await client.GetAsync("/api/agents/preamble-preset?provider=unknown");
         unknown.StatusCode.ShouldBe(HttpStatusCode.NotFound);

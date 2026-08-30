@@ -253,6 +253,46 @@ public class AgentWorkspaceProvisionerTests
     }
 
     [Test]
+    public void a_bound_agent_gets_a_channel_section_naming_the_attach_follow_up_rule()
+    {
+        using var scratch = new TempWorkspace();
+        var agent = AgentIn(scratch.Path);
+
+        Provision(agent, [("slack", "PredictionMarkets"), ("telegram", "Family")])
+            .ShouldBe(WorkspaceFloorOutcome.Written);
+
+        var content = scratch.ReadFloor();
+        content.ShouldContain("## You are channel-bound (slack \"PredictionMarkets\", telegram \"Family\")");
+        content.ShouldContain("[[attach: <absolute path>]]");
+        content.ShouldContain("A delegate's");
+        content.ShouldContain("is not delivered to the chat");
+        content.ShouldContain("Slack renders HTML as a text snippet");
+    }
+
+    [Test]
+    public void an_unbound_agent_does_not_get_the_channel_section()
+    {
+        using var scratch = new TempWorkspace();
+
+        Provision(AgentIn(scratch.Path));
+
+        scratch.ReadFloor().ShouldNotContain("You are channel-bound");
+    }
+
+    [Test]
+    public void an_unmarked_file_stays_left_alone_even_when_the_agent_is_channel_bound()
+    {
+        using var scratch = new TempWorkspace();
+        const string theirs = "# Claude Code Configuration\n\nSee AGENTS.md for all project conventions.\n";
+        File.WriteAllText(scratch.FloorPath, theirs);
+
+        Provision(AgentIn(scratch.Path), [("slack", "PredictionMarkets")])
+            .ShouldBe(WorkspaceFloorOutcome.LeftAlone);
+
+        scratch.ReadFloor().ShouldBe(theirs);
+    }
+
+    [Test]
     public void an_agent_with_no_written_job_gets_a_floor_that_says_so_instead_of_inventing_one()
     {
         using var scratch = new TempWorkspace();
@@ -334,7 +374,10 @@ public class AgentWorkspaceProvisionerTests
     private static AgentWorkspaceProvisioner NewProvisioner() =>
         new(NullLogger<AgentWorkspaceProvisioner>.Instance);
 
-    private static WorkspaceFloorOutcome Provision(Agent agent) => NewProvisioner().Provision(agent);
+    private static WorkspaceFloorOutcome Provision(
+        Agent agent,
+        IReadOnlyList<(string Provider, string Title)>? boundChannels = null) =>
+        NewProvisioner().Provision(agent, boundChannels);
 
     private static Agent AgentIn(string directory, string details = "Answer questions about this directory.") =>
         new()

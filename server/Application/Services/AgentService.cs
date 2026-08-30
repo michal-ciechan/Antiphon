@@ -502,8 +502,9 @@ public sealed class AgentService
 
             // The CLAUDE.md floor (CARD-0059), after the row exists so it can name the agent and its
             // job. Never clobbers an unmarked file, so an agent created in a repository checkout gets
-            // nothing written — the repo's own CLAUDE.md already serves it.
-            _workspace?.Provision(agent);
+            // nothing written — the repo's own CLAUDE.md already serves it. Bindings at create are
+            // almost always empty; Start is the reconcile point (CARD-0250).
+            _workspace?.Provision(agent, await LoadBoundChannelsAsync(agent.Id, ct));
 
             if (boardCreated)
                 await _eventBus.PublishToAllAsync("BoardChanged", new { boardId = board.Id }, ct);
@@ -1504,4 +1505,19 @@ public sealed class AgentService
     }
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
+
+    /// <summary>
+    /// Bindings for the generated CLAUDE.md channel section (CARD-0250). Empty at create almost
+    /// always; Start is the reconcile point because bindings change without relaunch.
+    /// </summary>
+    private async Task<IReadOnlyList<(string Provider, string Title)>> LoadBoundChannelsAsync(
+        Guid agentId, CancellationToken ct)
+    {
+        var rows = await _db.ChatChannels.AsNoTracking()
+            .Where(c => c.AgentId == agentId)
+            .OrderBy(c => c.Provider).ThenBy(c => c.Title)
+            .Select(c => new { c.Provider, Title = c.Title ?? c.ExternalId })
+            .ToListAsync(ct);
+        return rows.Select(c => (c.Provider, c.Title)).ToList();
+    }
 }

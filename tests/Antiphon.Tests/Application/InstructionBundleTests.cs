@@ -224,6 +224,9 @@ public class InstructionBundleTests
         DelegationReportFormatter.OrchestratorContract.ShouldContain("Delegate everything else");
         DelegationReportFormatter.OrchestratorContract.ShouldContain("-Reply");
         DelegationReportFormatter.OrchestratorContract.ShouldContain("StoppedBeforeFirstPrompt");
+        DelegationReportFormatter.OrchestratorContract.ShouldContain(
+            "If you are channel-bound (Slack/Telegram), the chat does NOT see every turn.");
+        DelegationReportFormatter.OrchestratorContract.ShouldContain("re-emit `[[attach:]]` yourself");
     }
 
     [Test]
@@ -255,10 +258,13 @@ public class InstructionBundleTests
         //
         // Measured 2026-08-17: board-api 2 607, delegate-basics 2 216, check-interpreter 1 276,
         // orchestrator 1 156, telegram preset 1 802 => 9 198 composed chars, 31% of the 30 000 budget
-        // and 28% of the OS limit. That is what makes 30 000 a runaway stop rather than a working
+        // and 28% of the OS limit. Re-measured 2026-08-30 after CARD-0250's channel-bound paragraph
+        // (orchestrator 2 441, telegram preset 2 189) plus catalog growth since: 15 307 composed,
+        // 51% of the budget. That is what makes 30 000 a runaway stop rather than a working
         // constraint, and it is why the guard can afford to THROW instead of truncating. The
         // assertion is a headroom bound rather than the exact number so ordinary prose edits do not
-        // fail it — an order-of-magnitude growth does.
+        // fail it — an order-of-magnitude growth does. /2 (15 000) was crossed by that planned
+        // paragraph; 2/3 still sits far under the 30 000 throw and would still catch a doubling.
         var budget = new DelegationSettings().CommandLineBudgetChars;
         var everything = InstructionBundles.All.Keys.Order().ToList();
 
@@ -268,7 +274,7 @@ public class InstructionBundleTests
         var detail = string.Join(", ", composed.Bundles.Select(b => $"{b.Stamp} {b.Text.Length}"))
             + $", telegram-preset {ChannelPreamble.TelegramPresetTemplate.Length}"
             + $" => composed {composed.Text.Length} chars against a budget of {budget}";
-        composed.Text.Length.ShouldBeLessThan(budget / 2, detail);
+        composed.Text.Length.ShouldBeLessThan(budget * 2 / 3, detail);
         // And it fits with every other launch argument beside it, which is what the guard measures.
         Should.NotThrow(() => InstructionBundleComposer.EnsureWithinCommandLineBudget(
             composed,
