@@ -18,7 +18,13 @@ internal static class DelegateScriptRunner
     /// What the script sees as <c>ANTIPHON_API</c>. Trailing slash tolerated — the script trims it,
     /// and passing it verbatim is what an agent's environment actually looks like.
     /// </param>
-    public static async Task<(int ExitCode, string Output)> RunAsync(string apiBaseUrl, params string[] args)
+    public static Task<(int ExitCode, string Output)> RunAsync(string apiBaseUrl, params string[] args) =>
+        RunAsync(apiBaseUrl, environment: null, args);
+
+    public static async Task<(int ExitCode, string Output)> RunAsync(
+        string apiBaseUrl,
+        IReadOnlyDictionary<string, string?>? environment,
+        params string[] args)
     {
         var scriptPath = Path.Combine(RepoRoot, "scripts", "delegate.ps1");
         var startInfo = new ProcessStartInfo("pwsh")
@@ -33,6 +39,11 @@ internal static class DelegateScriptRunner
         foreach (var arg in args) startInfo.ArgumentList.Add(arg);
         startInfo.Environment["ANTIPHON_API"] = apiBaseUrl.TrimEnd('/');
         startInfo.Environment["ANTIPHON_TASK_TOKEN"] = string.Empty;
+        if (environment is not null)
+        {
+            foreach (var (name, value) in environment)
+                startInfo.Environment[name] = value;
+        }
 
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("pwsh did not start.");

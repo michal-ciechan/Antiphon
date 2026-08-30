@@ -517,6 +517,85 @@ public sealed class LaunchEnvLayersIntegrationTests
     }
 
     [Test]
+    public async Task CreateAsync_prefers_the_supplied_live_LLM_env_over_server_side_reconstruction()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = NewDb(schema);
+        using var workspace = new TempWorkspace();
+        var parentAgent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "stored-parent",
+            Slug = $"stored-{Guid.NewGuid():N}"[..16],
+            WorkingDirectory = workspace.Path,
+            LaunchEnvJson = AgentLaunchEnv.Serialize(new Dictionary<string, string>
+            {
+                ["X_LLM_PROJECT"] = "StoredProject",
+            }),
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        var parent = NewParentOrchestrator(workspace.Path, null);
+        parent.AgentId = parentAgent.Id;
+        db.AddRange(parentAgent, parent);
+        await db.SaveChangesAsync(Ct);
+
+        var created = await CreateTaskService(db, [workspace.Path]).CreateAsync(
+            new CreateAgentTaskRequest(
+                Goal: "use live project",
+                WorkingDirectory: workspace.Path,
+                InheritedLlmEnv: new Dictionary<string, string> { ["X_LLM_PROJECT"] = "LiveProject" }),
+            new AgentTaskService.Caller(parent, Guid.NewGuid(), workspace.Path),
+            Ct);
+
+        var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, Ct);
+        AgentLaunchEnv.Parse(stored.InheritedLaunchEnvJson)["X_LLM_PROJECT"].ShouldBe("LiveProject");
+    }
+
+    [Test]
+    public async Task CreateAsync_drops_unknown_supplied_LLM_env_names_with_a_warning()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = NewDb(schema);
+        using var workspace = new TempWorkspace();
+
+        var created = await CreateTaskService(db, [workspace.Path]).CreateAsync(
+            new CreateAgentTaskRequest(
+                Goal: "use live project",
+                WorkingDirectory: workspace.Path,
+                InheritedLlmEnv: new Dictionary<string, string>
+                {
+                    ["X_LLM_PROJECT"] = "LiveProject",
+                    ["NOT_ROUTING"] = "discard",
+                }),
+            new AgentTaskService.Caller(null, null, workspace.Path),
+            Ct);
+
+        var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, Ct);
+        AgentLaunchEnv.Parse(stored.InheritedLaunchEnvJson).ShouldNotContainKey("NOT_ROUTING");
+        created.Warning.ShouldContain("NOT_ROUTING");
+    }
+
+    [Test]
+    public async Task CreateAsync_refuses_ANTIPHON_names_in_supplied_LLM_env()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = NewDb(schema);
+        using var workspace = new TempWorkspace();
+
+        var ex = await Should.ThrowAsync<ValidationException>(() => CreateTaskService(db, [workspace.Path]).CreateAsync(
+            new CreateAgentTaskRequest(
+                Goal: "override plumbing",
+                WorkingDirectory: workspace.Path,
+                InheritedLlmEnv: new Dictionary<string, string> { ["ANTIPHON_TASK_TOKEN"] = "no" }),
+            new AgentTaskService.Caller(null, null, workspace.Path),
+            Ct));
+
+        ex.StatusCode.ShouldBe(422);
+        ex.Errors["inheritedLlmEnv"].Single().ShouldContain("ANTIPHON_TASK_TOKEN");
+    }
+
+    [Test]
     public async Task BuildLaunchSpec_carries_inherited_env_and_the_override_still_wins()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();

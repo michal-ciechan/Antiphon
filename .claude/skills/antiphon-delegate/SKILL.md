@@ -81,6 +81,13 @@ A sub-orchestrator defaults to `Plan` and never runs below opus.
 | `-Title "<text>"` | a short label for the board; defaults to the goal's first line |
 | `-Card <id>` | which CARD this work is against — `CARD-0040`, `card-40`, `#40`, `40`, or the guid. Omitted, the server derives it: your own task's card, else the first `CARD-nnnn` in `-Title` |
 | `-ExpectAbout <minutes>` | how long the work should honestly take (1-1440) — schedules the first automatic check-in. Defaults to 10 when omitted |
+| `-NoInheritEnv` | do not forward this shell's `X_LLM_PROJECT` / `X_LLM_KEY`; server-side stored-env inheritance remains the fallback |
+
+**LLM project routing follows the caller by default.** `delegate.ps1` forwards the live shell's
+`X_LLM_PROJECT` and `X_LLM_KEY` into the child's inherited routing layer, because the server cannot
+see process-only values. An explicit `-EnvOverride` for either name wins and is not duplicated in
+that snapshot. Use `-NoInheritEnv` only when the child must not follow the current shell project;
+server-side reconstruction from stored agent/task env remains available when nothing is forwarded.
 
 **Bind the card, and the card moves itself (CARD-0040).** A bound task drags its card to In Progress
 when it dispatches and to Review when it settles `Succeeded` with nothing else open — within 60 s,

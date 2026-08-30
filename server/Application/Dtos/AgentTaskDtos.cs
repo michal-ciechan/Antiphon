@@ -67,6 +67,13 @@ public sealed record CreateAgentTaskRequest(
     /// </summary>
     IReadOnlyDictionary<string, string>? LaunchEnvOverride = null,
     /// <summary>
+    /// LLM-routing values visible only in the caller's live process environment (CARD-0263 S3).
+    /// The server keeps only configured inheritance names and prefers this snapshot over its
+    /// reconstruction from the caller's stored Antiphon layers. This is not a launch override:
+    /// it keeps the inherited merge position and warm-pool semantics.
+    /// </summary>
+    IReadOnlyDictionary<string, string>? InheritedLlmEnv = null,
+    /// <summary>
     /// The card this work is against (CARD-0040), as a guid or any identifier shape
     /// <c>card.ps1</c> accepts (<c>CARD-0040</c>, <c>card-40</c>, <c>#40</c>, <c>40</c>). Omitted,
     /// the binding is derived: the parent / followed-up task's card, else the FIRST

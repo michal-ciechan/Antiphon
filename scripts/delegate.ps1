@@ -105,6 +105,12 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [hashtable]$EnvOverride,
 
+    # Forward the caller's live X_LLM_PROJECT/X_LLM_KEY routing facts unless an explicit
+    # -EnvOverride already names them. Use this only when the child must not inherit the shell's
+    # current key-proxy project; server-side inheritance from stored agent layers still applies.
+    [Parameter(ParameterSetName = 'Create')]
+    [switch]$NoInheritEnv,
+
     # Answer a blocked delegate's question: -Reply <taskId> "your answer"
     [Parameter(ParameterSetName = 'Reply', Mandatory = $true)]
     [string]$Reply,
@@ -246,6 +252,15 @@ switch ($PSCmdlet.ParameterSetName) {
         if ($ExpectAbout -gt 0) { $body['expectedMinutes'] = $ExpectAbout }
         if ($IgnoreSubscriptionQuota) { $body['ignoreSubscriptionQuota'] = $true }
         if ($EnvOverride -and $EnvOverride.Count -gt 0) { $body['launchEnvOverride'] = $EnvOverride }
+        if (-not $NoInheritEnv) {
+            $inheritedLlmEnv = @{}
+            foreach ($name in @('X_LLM_PROJECT', 'X_LLM_KEY')) {
+                if ($EnvOverride -and $EnvOverride.ContainsKey($name)) { continue }
+                $value = [Environment]::GetEnvironmentVariable($name)
+                if ($null -ne $value) { $inheritedLlmEnv[$name] = $value }
+            }
+            if ($inheritedLlmEnv.Count -gt 0) { $body['inheritedLlmEnv'] = $inheritedLlmEnv }
+        }
 
         $created = Invoke-Antiphon -Method POST -Path '/api/agent-tasks' -Body $body
         # The RESOLVED kind is echoed, not the requested one - a role policy promoted to Grok in

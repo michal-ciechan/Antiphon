@@ -60,6 +60,11 @@ is more specific than the blanket; a project default outranks the shared profile
 credential/endpoint fact about this project's agents; none of them outrank `ExtraEnv`, which
 carries Antiphon's own identity plumbing. An explicit `-EnvOverride` still wins over inherited.
 
+`delegate.ps1` also snapshots its live `X_LLM_PROJECT` and `X_LLM_KEY` process variables into the
+inherited layer by default; this is the one caller environment the server cannot reconstruct from
+stored agent/task layers. `-EnvOverride` wins name-by-name, and `-NoInheritEnv` opts out of that
+client-side snapshot without disabling the server-side fallback.
+
 **Then** two things happen, in this order:
 
 1. **Kind defaults are applied** (`ApplyClaudeEnvironmentDefaults`, `ApplyGrokEnvironmentDefaults`)
@@ -168,6 +173,10 @@ not.**
   credential lookup and nothing else; real turns still reach xAI and still cost money. The
   chat redirect is `GROK_CLI_CHAT_PROXY_BASE_URL`. `RealCliStubEnv.ForGrok` throws rather than let
   you build the unsafe overlay.
+- **Setting `X_LLM_PROJECT` without a routing URL and expecting a child to use the proxy.** The
+  marker selects a proxy project only after the child kind's own route is present:
+  `ANTHROPIC_BASE_URL` for Claude, or `GROK_CLI_CHAT_PROXY_BASE_URL` / `GROK_BASE_URL` for Grok.
+  Without one, creation warns and the child legitimately uses wrapper-managed credentials.
 - **Putting a secret in a launch argument.** Refused, by design — see §3.
 - **Assuming `Llm:Providers:*:ApiKey` powers agent sessions.** It does not. It powers Antiphon's
   own model calls.

@@ -109,6 +109,8 @@ public sealed class AgentTaskService
 
         var launchEnvOverride = AgentLaunchEnv.ValidateOverride(
             request.LaunchEnvOverride, "launchEnvOverride");
+        var suppliedInheritedLlmEnv = AgentLaunchEnv.ValidateOverride(
+            request.InheritedLlmEnv, "inheritedLlmEnv");
         // Follow-ups and standing-agent pins continue an existing process — snapshotting the
         // caller's env onto them would record a routing the live process cannot take.
         var skipInheritedSnapshot = !string.IsNullOrWhiteSpace(request.FollowUpOnTask);
@@ -303,7 +305,11 @@ public sealed class AgentTaskService
         if (binding.Warning is not null)
             warning = warning is null ? binding.Warning : warning + " " + binding.Warning;
 
-        var inheritedLaunchEnv = await ComputeInheritedLlmEnvAsync(caller, skipInheritedSnapshot, ct);
+        var inheritedLaunchEnv = skipInheritedSnapshot
+            ? AgentLaunchEnv.Empty
+            : request.InheritedLlmEnv is not null
+                ? FilterSuppliedInheritedLlmEnv(suppliedInheritedLlmEnv)
+                : await ComputeInheritedLlmEnvAsync(caller, false, ct);
 
         if (!skipInheritedSnapshot)
         {
@@ -319,6 +325,10 @@ public sealed class AgentTaskService
             if (proxyWarning is not null)
                 warning = warning is null ? proxyWarning : warning + " " + proxyWarning;
         }
+
+        var unknownInheritedNamesWarning = UnknownInheritedNamesWarning(suppliedInheritedLlmEnv);
+        if (unknownInheritedNamesWarning is not null)
+            warning = warning is null ? unknownInheritedNamesWarning : warning + " " + unknownInheritedNamesWarning;
 
         var task = new AgentTask
         {
@@ -464,6 +474,32 @@ public sealed class AgentTaskService
         }
 
         return AgentLaunchEnv.FilterTo(merged, inherit.Names);
+    }
+
+    /// <summary>
+    /// The process-env snapshot supplied by delegate.ps1 is truer than the server's stored caller
+    /// layers, but it remains constrained to the same allowlist. Unknown names are deliberately
+    /// ignored: this is routing metadata, not a second arbitrary launch-env surface.
+    /// </summary>
+    private IReadOnlyDictionary<string, string> FilterSuppliedInheritedLlmEnv(
+        IReadOnlyDictionary<string, string> supplied) =>
+        !_settings.LlmEnvInheritance.Enabled
+            ? AgentLaunchEnv.Empty
+            : AgentLaunchEnv.FilterTo(supplied, _settings.LlmEnvInheritance.Names);
+
+    private string? UnknownInheritedNamesWarning(IReadOnlyDictionary<string, string> supplied)
+    {
+        if (supplied.Count == 0)
+            return null;
+
+        var allowed = new HashSet<string>(_settings.LlmEnvInheritance.Names, StringComparer.Ordinal);
+        var unknown = supplied.Keys
+            .Where(name => !allowed.Contains(name))
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        return unknown.Length == 0
+            ? null
+            : $"Ignored inheritedLlmEnv names outside Delegation:LlmEnvInheritance:Names: {string.Join(", ", unknown)}.";
     }
 
     /// <summary>

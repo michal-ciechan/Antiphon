@@ -160,6 +160,61 @@ public sealed class DelegateScriptKindTests
     }
 
     [Test]
+    public async Task a_live_LLM_project_is_forwarded_as_inheritedLlmEnv()
+    {
+        using var server = new StubApi();
+        var run = await DelegateScriptRunner.RunAsync(
+            server.BaseUrl,
+            new Dictionary<string, string?>
+            {
+                ["X_LLM_PROJECT"] = "PredictionMarkets",
+                ["X_LLM_KEY"] = "pm-key",
+            },
+            "-Role", "Test", "-Goal", "run the suite");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastBody.ShouldNotBeNull();
+        var inherited = body.RootElement.GetProperty("inheritedLlmEnv");
+        inherited.GetProperty("X_LLM_PROJECT").GetString().ShouldBe("PredictionMarkets");
+        inherited.GetProperty("X_LLM_KEY").GetString().ShouldBe("pm-key");
+    }
+
+    [Test]
+    public async Task NoInheritEnv_omits_the_live_LLM_env_snapshot()
+    {
+        using var server = new StubApi();
+        var run = await DelegateScriptRunner.RunAsync(
+            server.BaseUrl,
+            new Dictionary<string, string?> { ["X_LLM_PROJECT"] = "PredictionMarkets" },
+            "-Role", "Test", "-Goal", "run the suite", "-NoInheritEnv");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.TryGetProperty("inheritedLlmEnv", out _).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task EnvOverride_keeps_its_own_LLM_project_out_of_inheritedLlmEnv()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateCommandAsync(
+            server,
+            "-Role Test -Goal 'run the suite' -EnvOverride @{ X_LLM_PROJECT = 'override' }",
+            new Dictionary<string, string?>
+            {
+                ["X_LLM_PROJECT"] = "from-shell",
+                ["X_LLM_KEY"] = "pm-key",
+            });
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.GetProperty("launchEnvOverride").GetProperty("X_LLM_PROJECT").GetString().ShouldBe("override");
+        var inherited = body.RootElement.GetProperty("inheritedLlmEnv");
+        inherited.TryGetProperty("X_LLM_PROJECT", out _).ShouldBeFalse();
+        inherited.GetProperty("X_LLM_KEY").GetString().ShouldBe("pm-key");
+    }
+
+    [Test]
     public async Task an_omitted_IgnoreSubscriptionQuota_sends_no_ignoreSubscriptionQuota_at_all()
     {
         using var server = new StubApi();
@@ -185,7 +240,9 @@ public sealed class DelegateScriptKindTests
     /// <c>-Command</c> the same way.
     /// </summary>
     private static async Task<(int ExitCode, string Output)> RunDelegateCommandAsync(
-        StubApi server, string argumentTail)
+        StubApi server,
+        string argumentTail,
+        IReadOnlyDictionary<string, string?>? environment = null)
     {
         var scriptPath = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "delegate.ps1");
         var startInfo = new System.Diagnostics.ProcessStartInfo("pwsh")
@@ -199,6 +256,11 @@ public sealed class DelegateScriptKindTests
         startInfo.ArgumentList.Add($"& '{scriptPath}' {argumentTail}");
         startInfo.Environment["ANTIPHON_API"] = server.BaseUrl.TrimEnd('/');
         startInfo.Environment["ANTIPHON_TASK_TOKEN"] = string.Empty;
+        if (environment is not null)
+        {
+            foreach (var (name, value) in environment)
+                startInfo.Environment[name] = value;
+        }
 
         using var process = System.Diagnostics.Process.Start(startInfo)
             ?? throw new InvalidOperationException("pwsh did not start.");
