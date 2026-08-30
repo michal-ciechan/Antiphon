@@ -421,6 +421,45 @@ public sealed class GitWorkspaceService
     }
 
     /// <summary>
+    /// Dirty paths among an explicit, repo-relative path set. This is deliberately a scoped
+    /// <c>git status --porcelain</c> rather than a diff: callers can learn whether reported work
+    /// landed without reading its contents or inferring who made it.
+    /// </summary>
+    /// <returns>Null when git could not answer; otherwise the dirty or untracked paths only.</returns>
+    public async Task<IReadOnlyList<string>?> GetDirtyPathsAsync(
+        string workingDirectory, IReadOnlyList<string> relativePaths, CancellationToken ct)
+    {
+        if (relativePaths.Count == 0)
+            return [];
+
+        var args = new List<string> { "status", "--porcelain", "-z", "--untracked-files=all", "--" };
+        args.AddRange(relativePaths);
+        var (code, stdout, stderr) = await RunReadOnlyAsync(workingDirectory, ct, [.. args]);
+        if (code != 0)
+        {
+            _logger.LogDebug("scoped git status failed in {Dir}: {Err}", workingDirectory, stderr);
+            return null;
+        }
+
+        var dirty = new List<string>();
+        var records = stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        for (var i = 0; i < records.Length; i++)
+        {
+            var record = records[i];
+            if (record.Length < 4)
+                continue;
+
+            dirty.Add(record[3..].Replace('\\', '/'));
+            // A rename/copy emits its original path as the next record. It is still one dirty
+            // reported path, so skip that extra porcelain record.
+            if (record[0] is 'R' or 'C')
+                i++;
+        }
+
+        return dirty.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>
     /// A git read that takes NO optional locks. A bare <c>git status</c> refreshes — and therefore
     /// WRITES — the index; <c>--no-optional-locks</c> is what turns the call into an honest read,
     /// which matters when the caller has promised not to touch the workspace it is inspecting

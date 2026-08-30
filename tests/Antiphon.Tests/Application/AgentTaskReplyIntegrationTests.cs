@@ -2166,6 +2166,62 @@ public class AgentTaskReplyIntegrationTests
     }
 
     [Test]
+    public async Task a_shared_report_naming_an_uncommitted_path_warns_the_caller()
+    {
+        using var repo = new ScratchGitRepo("antiphon-reply-shared-uncommitted");
+        var claimedPath = Path.Combine(repo.Path, "docs", "superpowers", "uncommitted-plan.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(claimedPath)!);
+        await File.WriteAllTextAsync(claimedPath, "uncommitted plan\n");
+        var factory = new TestScopeFactory(repo.WorktreeRoot);
+        var parentSessionId = await SeedSessionAsync(repo.Path);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(repo.Path, parentSessionId, t =>
+        {
+            t.RepoPath = repo.Path;
+            t.Workspace = WorkspaceMode.Shared;
+        });
+
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id), $"Wrote {claimedPath}.");
+        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var warning = await verify.AgentTaskEvents.SingleAsync(e =>
+            e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning
+                && e.Detail.Contains("still uncommitted"));
+        warning.Detail.ShouldContain("docs/superpowers/uncommitted-plan.md");
+        var note = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == parentSessionId);
+        note.NoteHeader.ShouldContain("git=uncommitted:1");
+        note.Body.ShouldContain("the work has not landed");
+    }
+
+    [Test]
+    public async Task a_shared_report_whose_claimed_paths_are_clean_reports_git_landed()
+    {
+        using var repo = new ScratchGitRepo("antiphon-reply-shared-landed");
+        Directory.CreateDirectory(Path.Combine(repo.Path, "docs", "superpowers"));
+        await repo.CommitFileAsync("docs/superpowers/committed-plan.md", "committed plan\n");
+        var factory = new TestScopeFactory(repo.WorktreeRoot);
+        var parentSessionId = await SeedSessionAsync(repo.Path);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(repo.Path, parentSessionId, t =>
+        {
+            t.RepoPath = repo.Path;
+            t.Workspace = WorkspaceMode.Shared;
+        });
+
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id), "Wrote `docs/superpowers/committed-plan.md`.");
+        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTaskEvents.AnyAsync(e =>
+            e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning
+                && e.Detail.Contains("still uncommitted"))).ShouldBeFalse();
+        var note = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == parentSessionId);
+        note.NoteHeader.ShouldContain("git=landed");
+        note.Body.ShouldNotContain("the work has not landed");
+    }
+
+    [Test]
     public async Task a_merge_conflict_blocks_the_task_and_spawns_a_merge_delegate()
     {
         // "Done" work that cannot land is not done. The task blocks, and the conflict goes to a

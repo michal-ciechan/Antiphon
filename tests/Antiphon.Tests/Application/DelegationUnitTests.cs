@@ -438,6 +438,19 @@ public class DelegationReportFormatterTests
     }
 
     [Test]
+    public void reported_repository_paths_normalize_relative_and_absolute_windows_forms()
+    {
+        var paths = AgentTaskReplyService.ExtractReportedRepositoryPaths(
+            "Updated `docs/superpowers/plans/CARD-0261.md` and C:\\src\\Antiphon\\server\\Bundles\\delegate-basics.md.",
+            "C:\\src\\Antiphon");
+
+        paths.ShouldBe([
+            "docs/superpowers/plans/CARD-0261.md",
+            "server/Bundles/delegate-basics.md",
+        ]);
+    }
+
+    [Test]
     public void a_brief_tells_the_delegate_to_spill_past_the_ceiling()
     {
         var brief = DelegationReportFormatter.BuildBrief(NewTask(), Settings);

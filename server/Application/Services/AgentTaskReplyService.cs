@@ -1905,12 +1905,34 @@ public sealed class AgentTaskReplyService
     {
         try
         {
-            if (task.Workspace is WorkspaceMode.Shared or WorkspaceMode.ReadOnly)
-                return ("unattributable", null);
-
             var git = services.GetService<GitWorkspaceService>();
             if (git is null)
                 return (null, null);
+
+            if (task.Workspace is WorkspaceMode.Shared or WorkspaceMode.ReadOnly)
+            {
+                var repository = task.RepoPath ?? task.WorkingDirectory;
+                if (string.IsNullOrWhiteSpace(repository) || !Directory.Exists(repository))
+                    return ("unattributable", null);
+
+                var reportedPaths = ExtractReportedRepositoryPaths(report, repository);
+                if (reportedPaths.Count == 0)
+                    return ("unattributable", null);
+
+                var dirtyPaths = await git.GetDirtyPathsAsync(repository, reportedPaths, ct);
+                if (dirtyPaths is null)
+                    return ("unattributable", null);
+                if (dirtyPaths.Count == 0)
+                    return ("landed", null);
+
+                var detail = $"Report names {dirtyPaths.Count} file(s) still uncommitted in the shared checkout: "
+                    + string.Join(", ", dirtyPaths) + ".";
+                var sharedWarning =
+                    $"The report names {dirtyPaths.Count} file(s) that are still uncommitted in the shared checkout "
+                    + "— the work has not landed. Commit before building on it.";
+                db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, detail, now));
+                return ($"uncommitted:{dirtyPaths.Count}", sharedWarning);
+            }
 
             var directory = task.WorktreePath is { Length: > 0 } wt && Directory.Exists(wt)
                 ? wt
@@ -1947,6 +1969,83 @@ public sealed class AgentTaskReplyService
                 ex, "Could not gather git facts for task {ShortId}",
                 DelegationReportFormatter.Short(task.Id));
             return (null, null);
+        }
+    }
+
+    private static readonly Regex ReportedBacktickPathPattern = new(
+        "`(?<path>[^`\\r\\n]+)`", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex ReportedWindowsPathPattern = new(
+        "(?<![A-Za-z0-9])(?<path>[A-Za-z]:[\\\\/][^\\s`\\\"'<>|]+)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex ReportedRelativePathPattern = new(
+        "(?<![A-Za-z0-9_.-])(?<path>(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\\.[A-Za-z0-9]+)(?![A-Za-z0-9_.-])",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// Paths the delegate named in its own report, normalized to repo-relative forward-slash form.
+    /// This is intentionally a small mechanical extractor, not an attempt to interpret prose: the
+    /// settlement check only asks git whether these claimed paths are dirty, never reads a diff.
+    /// </summary>
+    internal static IReadOnlyList<string> ExtractReportedRepositoryPaths(string report, string repoPath)
+    {
+        if (string.IsNullOrWhiteSpace(report) || string.IsNullOrWhiteSpace(repoPath))
+            return [];
+
+        var paths = new List<string>(20);
+        foreach (var pattern in new[]
+                 {
+                     ReportedBacktickPathPattern,
+                     ReportedWindowsPathPattern,
+                     ReportedRelativePathPattern,
+                 })
+        {
+            foreach (Match match in pattern.Matches(report))
+            {
+                if (paths.Count == 20)
+                    return paths;
+
+                var candidate = match.Groups["path"].Value.Trim()
+                    .Trim('`', '\"', '\'')
+                    .TrimEnd('.', ',', ';', ':', '!', '?', ')', ']', '}');
+                if (!LooksLikePath(candidate) || !TryMakeRepoRelative(candidate, repoPath, out var relative))
+                    continue;
+                if (!paths.Contains(relative, StringComparer.OrdinalIgnoreCase))
+                    paths.Add(relative);
+            }
+        }
+
+        return paths;
+    }
+
+    private static bool LooksLikePath(string candidate) =>
+        candidate.Contains('/') || candidate.Contains('\\') || Path.HasExtension(candidate);
+
+    private static bool TryMakeRepoRelative(string candidate, string repoPath, out string relative)
+    {
+        relative = string.Empty;
+        try
+        {
+            var root = Path.GetFullPath(repoPath);
+            var full = Path.IsPathRooted(candidate)
+                ? Path.GetFullPath(candidate)
+                : Path.GetFullPath(candidate, root);
+            var fromRoot = Path.GetRelativePath(root, full);
+            if (Path.IsPathRooted(fromRoot)
+                || fromRoot.Equals("..", StringComparison.Ordinal)
+                || fromRoot.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                || fromRoot.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            relative = fromRoot.Replace('\\', '/');
+            return relative.Length > 0 && relative != ".";
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
         }
     }
 
