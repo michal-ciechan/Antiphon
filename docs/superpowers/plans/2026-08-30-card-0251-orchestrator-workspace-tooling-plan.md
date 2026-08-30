@@ -111,12 +111,15 @@ working directory. Never allow this for third-party repositories."*, with the pe
 `ClaudeMdExternalIncludesDialog`. In the interactive TUI this is a **blocking modal of the same
 class as the trust dialog** CARD-0047 answers in `ClaudeBlockingPrompt.ClearStartupTrustPromptAsync`
 (`src/Antiphon.Agents.Pty/ClaudeBlockingPrompt.cs`); in `-p` it is skipped and the import is
-dropped without a message. Both `C:/src/Antiphon` and `C:/src/gym-stat` already carry the approved
-flag on this machine (the user's global `~/.claude/CLAUDE.md` imports `C:\src\browser-harness\SKILL.md`
-and two skills, which is "outside the project" for every project). **Setup must write this flag
-for the orchestrator folder's path before the first launch**, which is what makes the sibling
-layout viable for Antiphon-launched sessions (a launch that parks on the dialog is invisible to
-every readiness signal we have — CARD-0047's exact failure).
+dropped without a message. On this machine `C:/src/Antiphon` carries
+`hasClaudeMdExternalIncludesApproved: true`, but `C:/src/gym-stat` carries the same two keys set
+to **`false`** — the dialog was shown there and *declined* (the user's global `~/.claude/CLAUDE.md`
+imports `C:\src\browser-harness\SKILL.md` and two skills, which is "outside the project" for every
+project, so every project meets this dialog once). A `false` is a third state the detector must
+read as `DedicatedUnapproved`, not as "flag absent". **Setup must write this flag as `true` for
+the orchestrator folder's path before the first launch**, which is what makes the sibling layout
+viable for Antiphon-launched sessions (a launch that parks on the dialog is invisible to every
+readiness signal we have — CARD-0047's exact failure).
 
 ### 1.2 Codex CLI 0.151.0 — no import, walk bounded at `.git`, hooks discovered but not seen firing
 
