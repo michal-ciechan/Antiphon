@@ -410,6 +410,34 @@ public class DelegationReportFormatterTests
     }
 
     [Test]
+    [Arguments(AgentTaskRole.Plan)]
+    [Arguments(AgentTaskRole.Docs)]
+    [Arguments(AgentTaskRole.Code)]
+    public void a_shared_write_role_brief_explicitly_requires_a_commit(AgentTaskRole role)
+    {
+        var task = NewTask();
+        task.Workspace = WorkspaceMode.Shared;
+        task.Role = role;
+
+        DelegationReportFormatter.BuildBrief(task, Settings)
+            .ShouldContain(DelegationReportFormatter.SharedWriteCommitLine);
+    }
+
+    [Test]
+    public void a_non_shared_or_read_only_brief_does_not_request_a_commit()
+    {
+        var task = NewTask();
+        task.Role = AgentTaskRole.Code;
+        task.Workspace = WorkspaceMode.Worktree;
+        DelegationReportFormatter.BuildBrief(task, Settings)
+            .ShouldNotContain(DelegationReportFormatter.SharedWriteCommitLine);
+
+        task.Workspace = WorkspaceMode.ReadOnly;
+        DelegationReportFormatter.BuildBrief(task, Settings)
+            .ShouldNotContain(DelegationReportFormatter.SharedWriteCommitLine);
+    }
+
+    [Test]
     public void a_brief_tells_the_delegate_to_spill_past_the_ceiling()
     {
         var brief = DelegationReportFormatter.BuildBrief(NewTask(), Settings);
