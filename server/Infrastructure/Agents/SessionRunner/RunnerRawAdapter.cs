@@ -102,6 +102,12 @@ public sealed class RunnerRawAdapter : IAgentProtocolAdapter
         return _terminal.SnapshotTextAsync(CancellationToken.None).GetAwaiter().GetResult();
     }
 
+    public async Task<string> SnapshotRawOutputAsync(CancellationToken ct)
+    {
+        EnsureStarted();
+        return await _terminal.SnapshotTextAsync(ct);
+    }
+
     public string SnapshotRenderedScreen()
     {
         EnsureStarted();

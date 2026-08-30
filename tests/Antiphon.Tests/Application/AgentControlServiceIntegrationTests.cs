@@ -1377,6 +1377,7 @@ public class AgentControlServiceIntegrationTests
             ReplayBufferMaxChars = 128 * 1024,
             SessionLogPath = Path.Combine(tempRoot, "session-logs"),
             RemoteControlArmTimeoutMs = 500, // fakes without the armed marker must not stall boots
+            RemoteControlSetupTimeoutMs = 1_000,
         }));
         services.AddSingleton<IOptions<OrchestratorSettings>>(Options.Create(new OrchestratorSettings
         {

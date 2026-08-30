@@ -22,10 +22,19 @@ public class AgentSessionSettingsTests
             StallTimeoutMs = 0,
             StallScanIntervalMs = 0,
             ManualTurnQuietPeriodMs = 0,
-            MemoryLimitMb = -1
+            MemoryLimitMb = -1,
+            RemoteControlSetupTimeoutMs = 0
         });
 
         result.Failed.ShouldBeTrue();
-        result.Failures.Count().ShouldBe(9);
+        result.Failures.Count().ShouldBe(10);
+    }
+
+    [Test]
+    public void AgentSessionSettings_remote_control_timeouts_default_to_documented_budgets()
+    {
+        var settings = new AgentSessionSettings();
+        settings.RemoteControlArmTimeoutMs.ShouldBe(20_000);
+        settings.RemoteControlSetupTimeoutMs.ShouldBe(60_000);
     }
 }

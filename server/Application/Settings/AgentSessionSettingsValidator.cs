@@ -26,6 +26,8 @@ public sealed class AgentSessionSettingsValidator : IValidateOptions<AgentSessio
             failures.Add("AgentSessions:ManualTurnQuietPeriodMs must be positive.");
         if (options.MemoryLimitMb < 0)
             failures.Add("AgentSessions:MemoryLimitMb must not be negative.");
+        if (options.RemoteControlSetupTimeoutMs <= 0)
+            failures.Add("AgentSessions:RemoteControlSetupTimeoutMs must be positive.");
 
         return failures.Count == 0
             ? ValidateOptionsResult.Success

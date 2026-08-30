@@ -192,8 +192,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 ct);
 
             // Best-effort (it is monitoring here too); the WORK prompt below stays fatal on failure
-            // — that prompt is the session's whole purpose.
-            await SendRemoteControlCommandsAsync(adapter, request.RemoteControlName, session, agentId: null, ct);
+            // — that prompt is the session's whole purpose. Pass the card's assigned agent so an
+            // RcDegraded Warning has something to hang on; card spawn with no assigned agent still
+            // degrades (log only), matching the unclaimed-session path.
+            await SendRemoteControlCommandsAsync(adapter, request.RemoteControlName, session, card.AssignedAgentId, ct);
 
             await SendBootPromptWithRetryAsync(adapter, prompt, session.Id, ct);
             var firstDeltaReceived = await adapter.WaitForFirstPromptOutputAsync(
@@ -1255,6 +1257,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
     // Cap on how long we wait for each remote-control slash command to echo output before moving on.
     private static readonly TimeSpan RemoteControlCommandTimeout = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan RemoteControlArmedPollInterval = TimeSpan.FromMilliseconds(250);
 
     // What the TUI prints once the remote-control bridge is genuinely connected.
     private const string RemoteControlArmedMarker = "remote-control is active";
@@ -1269,21 +1272,18 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     // bridge finished connecting (title lost) and typing into the still-busy resume composer
     // jammed "/remote-control /rename <name>" into one submission that armed the bridge twice.
     //
-    // BEST-EFFORT (CARD-0056). Remote control is MONITORING, not the session's purpose, so nothing
-    // in here may fail a launch. On 2026-08-16 a 15-character "/remote-control" was typed into a
-    // healthy, resuming orchestrator and never surfaced in its composer while the TUI re-rendered a
-    // large resume history; VerifiedPromptSubmitter correctly reported no evidence, the launch was
-    // declared failed, the process was left running (slice 1) and the supervisor started a second
-    // orchestrator against that false signal. Every decision after the false signal was correct —
-    // the signal was the defect. A delivery failure now costs an RcDegraded incident and the
-    // session keeps running, un-monitored but alive.
-    //
-    // The /rename is skipped by construction when /remote-control fails: the exception leaves the
-    // try block, so nothing appends to a composer that may still be holding the first body.
+    // BEST-EFFORT (CARD-0056 / CARD-0240). Remote control is MONITORING, not the session's purpose,
+    // so nothing in here may fail a launch. The whole bootstrap is under one cancellable budget
+    // (RemoteControlSetupTimeoutMs); the arm-marker wait is an inner bound inside that. A local
+    // deadline expiry or an RC transport/read failure degrades and RETURNS — /rename is not sent
+    // unless the bridge actually armed, because Claude only syncs a title while armed and a
+    // connecting TUI must not receive another slash command. External cancellation of the launch
+    // still propagates; it is never rewritten as RcDegraded.
     //
     // Both commands go through SendBootPromptWithRetryAsync (CARD-0056 slice 3), so "fails" here
     // now means all three typings showed no composer evidence AND no transcript record confirms
-    // the command ran. Degrading is what is left after retrying and after asking ground truth.
+    // the command ran, OR the outer budget expired while they were still trying. Degrading is
+    // what is left after retrying and after asking ground truth.
     private async Task SendRemoteControlCommandsAsync(
         IAgentProtocolAdapter adapter,
         string? remoteControlName,
@@ -1303,68 +1303,160 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             return;
         }
 
+        var setupTimeoutMs = Math.Max(1, _settings.RemoteControlSetupTimeoutMs);
+        using var setupCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        setupCts.CancelAfter(setupTimeoutMs);
+        var rcCt = setupCts.Token;
+        var stage = "start";
+
+        _logger.LogInformation(
+            "Remote-control setup starting for session {SessionId} (budget {TimeoutMs}ms)",
+            sessionId, setupTimeoutMs);
+
         try
         {
             // Baseline BEFORE arming: a resumed TUI can redraw a previous run's "remote-control is
             // active" line, which must not satisfy the wait.
-            var baseline = adapter.SnapshotRawOutput().Length;
-            await SendBootPromptWithRetryAsync(adapter, "/remote-control", sessionId, ct);
-            await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, ct);
-            if (!await WaitForRemoteControlArmedAsync(adapter, baseline, ct))
+            stage = "baseline";
+            var baseline = (await adapter.SnapshotRawOutputAsync(rcCt)).Length;
+
+            stage = "remote-control-submit";
+            await SendBootPromptWithRetryAsync(adapter, "/remote-control", sessionId, rcCt);
+
+            stage = "first-output-wait";
+            await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, rcCt);
+
+            stage = "armed-marker-wait";
+            if (!await WaitForRemoteControlArmedAsync(adapter, baseline, rcCt, ct))
             {
+                _logger.LogWarning(
+                    "Remote-control setup unarmed for session {SessionId} at stage {Stage}",
+                    sessionId, stage);
                 await RaiseRemoteControlDegradedAsync(
                     sessionId,
                     agentId,
-                    $"Remote control did not report itself armed within {_settings.RemoteControlArmTimeoutMs}ms. "
-                    + "The session is running; it may not be reachable from claude.ai, and its entry there "
-                    + "may keep its first-message title. /rename was sent anyway.",
+                    $"Remote control did not report itself armed within {_settings.RemoteControlArmTimeoutMs}ms "
+                    + $"(setup budget {setupTimeoutMs}ms, stage {stage}). "
+                    + "The session is running; it may not be reachable from claude.ai. /rename was skipped "
+                    + "because Claude only syncs a title while the bridge is armed.",
                     "RemoteControlNotArmed",
                     ct);
+                return;
             }
 
-            await SendBootPromptWithRetryAsync(adapter, $"/rename {remoteControlName.Trim()}", sessionId, ct);
-            await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, ct);
+            _logger.LogInformation("Remote-control armed for session {SessionId}", sessionId);
+
+            stage = "rename-submit";
+            await SendBootPromptWithRetryAsync(adapter, $"/rename {remoteControlName.Trim()}", sessionId, rcCt);
+
+            stage = "rename-first-output";
+            await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, rcCt);
+
+            _logger.LogInformation("Remote-control setup completed for session {SessionId}", sessionId);
         }
-        catch (PromptDeliveryException ex)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            var timedOut = rcCt.IsCancellationRequested && !ct.IsCancellationRequested;
+            var reason = timedOut ? "RemoteControlSetupTimeout" : "RemoteControlNotDelivered";
+            var outcome = timedOut ? "timed out" : "degraded";
             _logger.LogWarning(ex,
-                "Remote-control setup could not be delivered to session {SessionId}; continuing the launch "
-                + "without it", sessionId);
+                "Remote-control setup {Outcome} for session {SessionId} at stage {Stage}",
+                outcome, sessionId, stage);
             await RaiseRemoteControlDegradedAsync(
                 sessionId,
                 agentId,
-                $"Remote control could not be set up: {ex.Message} The session is running and usable, but it "
-                + "is not reachable from claude.ai. A monitoring command's delivery must never fail a healthy "
-                + "session (CARD-0056), so the launch continued.",
-                "RemoteControlNotDelivered",
+                timedOut
+                    ? $"Remote control setup timed out after {setupTimeoutMs}ms at stage {stage}: {ex.Message} "
+                      + "The session is running and usable, but it is not reachable from claude.ai. "
+                      + "A monitoring command's delivery must never fail a healthy session (CARD-0056), so the launch continued."
+                    : $"Remote control could not be set up at stage {stage}: {ex.Message} The session is running and usable, but it "
+                      + "is not reachable from claude.ai. A monitoring command's delivery must never fail a healthy session "
+                      + "(CARD-0056), so the launch continued.",
+                reason,
                 ct);
         }
     }
 
     // Polls the raw output (append-only — the rendered screen can scroll the line away) for the
-    // armed marker appearing AFTER the baseline. Returns whether it arrived. On timeout the boot
-    // proceeds anyway: the local rename is still worth sending, and holding the launch hostage to a
-    // claude.ai outage isn't — but the caller now records the miss as an incident rather than one
-    // log line, so a silently un-monitored session is always visible (CARD-0056).
+    // armed marker appearing AFTER the baseline. Returns whether it arrived. A local RC-budget
+    // expiry is an expected unarmed result, not an error; external cancellation still propagates.
+    // On unarmed the caller degrades and returns — it does not send /rename (CARD-0240).
     private async Task<bool> WaitForRemoteControlArmedAsync(
-        IAgentProtocolAdapter adapter, int baseline, CancellationToken ct)
+        IAgentProtocolAdapter adapter,
+        int baseline,
+        CancellationToken rcCt,
+        CancellationToken callerCt)
     {
         var deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(_settings.RemoteControlArmTimeoutMs);
         var searchFrom = Math.Max(0, baseline - RemoteControlArmedMarker.Length);
-        while (DateTime.UtcNow < deadline)
+        while (true)
         {
-            ct.ThrowIfCancellationRequested();
-            var raw = adapter.SnapshotRawOutput();
+            if (callerCt.IsCancellationRequested)
+                callerCt.ThrowIfCancellationRequested();
+
+            var remainingArm = deadline - DateTime.UtcNow;
+            if (remainingArm <= TimeSpan.Zero || rcCt.IsCancellationRequested)
+            {
+                _logger.LogWarning(
+                    "Remote-control armed marker did not appear within {TimeoutMs}ms; skipping /rename",
+                    _settings.RemoteControlArmTimeoutMs);
+                return false;
+            }
+
+            string raw;
+            try
+            {
+                using var readCts = CancellationTokenSource.CreateLinkedTokenSource(rcCt);
+                readCts.CancelAfter(remainingArm);
+                raw = await adapter.SnapshotRawOutputAsync(readCts.Token);
+            }
+            catch (OperationCanceledException) when (callerCt.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning(
+                    "Remote-control armed marker wait canceled after {TimeoutMs}ms; skipping /rename",
+                    _settings.RemoteControlArmTimeoutMs);
+                return false;
+            }
+
             if (raw.IndexOf(RemoteControlArmedMarker, Math.Min(searchFrom, raw.Length), StringComparison.OrdinalIgnoreCase) >= 0)
                 return true;
 
-            await Task.Delay(250, ct);
-        }
+            remainingArm = deadline - DateTime.UtcNow;
+            if (remainingArm <= TimeSpan.Zero)
+            {
+                _logger.LogWarning(
+                    "Remote-control armed marker did not appear within {TimeoutMs}ms; skipping /rename",
+                    _settings.RemoteControlArmTimeoutMs);
+                return false;
+            }
 
-        _logger.LogWarning(
-            "Remote-control armed marker did not appear within {TimeoutMs}ms; sending /rename anyway "
-            + "(the claude.ai entry may keep its first-message title)", _settings.RemoteControlArmTimeoutMs);
-        return false;
+            var delay = remainingArm < RemoteControlArmedPollInterval
+                ? remainingArm
+                : RemoteControlArmedPollInterval;
+            try
+            {
+                await Task.Delay(delay, rcCt);
+            }
+            catch (OperationCanceledException) when (callerCt.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning(
+                    "Remote-control armed marker wait canceled after {TimeoutMs}ms; skipping /rename",
+                    _settings.RemoteControlArmTimeoutMs);
+                return false;
+            }
+        }
     }
 
     /// <summary>
@@ -1426,10 +1518,20 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var owner = agentId ?? await db.Agents
-                .Where(a => a.PersistentSessionId == sessionId.ToString("D"))
-                .Select(a => (Guid?)a.Id)
-                .FirstOrDefaultAsync(ct);
+            if (await db.AgentIncidents.AnyAsync(
+                    i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.RcDegraded, ct))
+                return;
+
+            var owner = agentId
+                ?? await db.Agents
+                    .Where(a => a.PersistentSessionId == sessionId.ToString("D"))
+                    .Select(a => (Guid?)a.Id)
+                    .FirstOrDefaultAsync(ct)
+                ?? await db.AgentSessions
+                    .AsNoTracking()
+                    .Where(s => s.Id == sessionId && s.CardId != null)
+                    .Join(db.Cards, s => s.CardId, c => c.Id, (_, c) => c.AssignedAgentId)
+                    .FirstOrDefaultAsync(ct);
             if (owner is not Guid ownerId)
             {
                 _logger.LogWarning(

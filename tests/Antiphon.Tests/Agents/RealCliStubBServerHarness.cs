@@ -65,6 +65,7 @@ internal static class RealCliStubBServerHarness
             ReplayBufferMaxChars = 128 * 1024,
             SessionLogPath = Path.Combine(worktreeRoot, "session-logs"),
             RemoteControlArmTimeoutMs = 1_000,
+            RemoteControlSetupTimeoutMs = 2_000,
         });
         var runtime = new AgentSessionRuntime(
             runnerClient,

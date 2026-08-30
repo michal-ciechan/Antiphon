@@ -168,6 +168,12 @@ public sealed class CodexAdapter : IAgentProtocolAdapter
         return _runner.SnapshotText();
     }
 
+    public Task<string> SnapshotRawOutputAsync(CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        return Task.FromResult(SnapshotRawOutput());
+    }
+
     public string SnapshotRenderedScreen()
     {
         EnsureStarted();

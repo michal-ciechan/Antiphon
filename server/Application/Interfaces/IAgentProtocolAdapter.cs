@@ -33,6 +33,13 @@ public interface IAgentProtocolAdapter : IAsyncDisposable
     Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct);
 
     string SnapshotRawOutput();
+
+    /// <summary>
+    /// Cancellable raw-output snapshot. The remote-control arm wait must use this rather than
+    /// <see cref="SnapshotRawOutput"/> so a hung runner HTTP call cannot outlive the setup budget.
+    /// </summary>
+    Task<string> SnapshotRawOutputAsync(CancellationToken ct);
+
     string SnapshotRenderedScreen();
 
     string? AuditDirectory { get; }

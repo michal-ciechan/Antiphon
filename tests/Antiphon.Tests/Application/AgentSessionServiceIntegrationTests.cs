@@ -1438,6 +1438,7 @@ public class AgentSessionServiceIntegrationTests
         public Task<bool> WaitForReadyAsync(CancellationToken ct) => _inner.WaitForReadyAsync(ct);
         public Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct) => _inner.WaitForTurnCompleteAsync(ct);
         public string SnapshotRawOutput() => _inner.SnapshotRawOutput();
+        public Task<string> SnapshotRawOutputAsync(CancellationToken ct) => _inner.SnapshotRawOutputAsync(ct);
         public string SnapshotRenderedScreen() => _inner.SnapshotRenderedScreen();
         public ValueTask DisposeAsync() => _inner.DisposeAsync();
     }

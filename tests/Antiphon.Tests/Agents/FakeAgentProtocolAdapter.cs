@@ -311,6 +311,26 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
 
     public string SnapshotRawOutput() => _rawOutput.ToString();
 
+    /// <summary>
+    /// When true, <see cref="SnapshotRawOutputAsync"/> waits until its supplied token is canceled
+    /// once <c>/remote-control</c> has been typed. Models the hung runner HTTP snapshot that
+    /// CARD-0240's synchronous <c>GetResult()</c> call could not interrupt. The baseline snapshot
+    /// before the RC submit still returns immediately so the command can be typed.
+    /// </summary>
+    public bool HangRawSnapshotUntilCanceled { get; set; }
+
+    public async Task<string> SnapshotRawOutputAsync(CancellationToken ct)
+    {
+        if (HangRawSnapshotUntilCanceled
+            && _prompts.Exists(p => p.StartsWith("/remote-control", StringComparison.Ordinal)))
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+        }
+
+        ct.ThrowIfCancellationRequested();
+        return SnapshotRawOutput();
+    }
+
     public string SnapshotRenderedScreen()
     {
         if (ThrowOnRenderedSnapshot)

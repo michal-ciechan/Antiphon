@@ -283,17 +283,20 @@ public class AgentSessionLaunchFailureTests
     /// <summary>
     /// The other half: the command lands but the bridge never reports itself armed. That was
     /// log-only, so a session that is silently unreachable from claude.ai looked identical to a
-    /// healthy one. It is an incident now — and the /rename still goes out, as it always did.
+    /// healthy one. It is an incident now — and /rename is NOT sent: Claude only syncs a title
+    /// while the bridge is armed, so typing it into a connecting TUI cannot help and can only
+    /// jam another slash command into the composer (CARD-0240).
     /// </summary>
     [Test]
-    public async Task Remote_control_that_never_arms_records_an_incident_and_still_renames()
+    public async Task Remote_control_that_never_arms_records_an_incident_and_does_not_rename()
     {
         var adapter = new FakeAgentProtocolAdapter { PromptOutput = "some output, but never the marker" };
         await using var fixture = await LaunchFixture.CreateAsync(adapter);
 
         await fixture.LaunchInteractiveAsync(remoteControlName: "Antiphon-Orchestrator");
 
-        adapter.Prompts.ShouldBe(["/remote-control", "/rename Antiphon-Orchestrator"]);
+        adapter.Prompts.ShouldBe(["/remote-control"]);
+        adapter.Prompts.ShouldNotContain(p => p.StartsWith("/rename", StringComparison.Ordinal));
 
         await using var db = LaunchFixture.CreateContext();
         var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
@@ -302,6 +305,109 @@ public class AgentSessionLaunchFailureTests
             i => i.AgentId == fixture.AgentId && i.Kind == AgentIncidentKind.RcDegraded);
         incident.FailureReason.ShouldBe("RemoteControlNotArmed");
         incident.Severity.ShouldBe(AlertSeverity.Warning);
+        incident.Message.ShouldContain("armed");
+    }
+
+    /// <summary>
+    /// Card path: RC accepts, never arms, and the actual work body still goes out after setup
+    /// gives up. A failed monitor bootstrap must not convert an otherwise-deliverable work
+    /// prompt into a hung or silently-healthy-looking launch.
+    /// </summary>
+    [Test]
+    public async Task Card_launch_unarmed_remote_control_still_delivers_the_work_prompt()
+    {
+        var adapter = new FakeAgentProtocolAdapter { PromptOutput = "working, but never the armed marker" };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        var card = await fixture.CreateCardAsync();
+        await fixture.AssignAgentAsync(card);
+
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var started = await fixture.StartCardSessionAsync(
+            card, "do the work", remoteControlName: "Card Agent", kind: AgentKind.ClaudeCode,
+            ct: deadline.Token);
+
+        adapter.Prompts.ShouldBe(["/remote-control", "do the work"]);
+        adapter.Prompts.ShouldNotContain(p => p.StartsWith("/rename", StringComparison.Ordinal));
+
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == started.SessionId);
+        session.Status.ShouldBe(SessionStatus.Running);
+        var attempt = await db.RunAttempts.SingleAsync(a => a.Id == started.RunAttemptId);
+        attempt.Phase.ShouldBe(RunPhase.Succeeded);
+        var incident = await db.AgentIncidents.SingleAsync(
+            i => i.AgentId == fixture.AgentId && i.Kind == AgentIncidentKind.RcDegraded);
+        incident.Severity.ShouldBe(AlertSeverity.Warning);
+        incident.FailureReason.ShouldBe("RemoteControlNotArmed");
+        incident.SessionId.ShouldBe(started.SessionId);
+    }
+
+    /// <summary>
+    /// The actual CARD-0240 deadline leak: a snapshot call that never returns. The polling loop
+    /// could only check its deadline BETWEEN snapshots; a hung HTTP GetResult() held the launch
+    /// forever. The async snapshot must honor the supplied token so the outer RC budget releases
+    /// the launch, records the degradation, skips /rename, and still reaches the work prompt.
+    /// </summary>
+    [Test]
+    public async Task Hung_raw_snapshot_during_rc_arm_wait_is_bounded_and_reaches_the_work_prompt()
+    {
+        var adapter = new FakeAgentProtocolAdapter
+        {
+            PromptOutput = "some output, but never the marker",
+            HangRawSnapshotUntilCanceled = true,
+        };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        var card = await fixture.CreateCardAsync();
+        await fixture.AssignAgentAsync(card);
+
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var started = await fixture.StartCardSessionAsync(
+            card, "do the work", remoteControlName: "Card Agent", kind: AgentKind.ClaudeCode,
+            ct: deadline.Token);
+
+        adapter.Prompts.ShouldBe(["/remote-control", "do the work"]);
+        adapter.Prompts.ShouldNotContain(p => p.StartsWith("/rename", StringComparison.Ordinal));
+
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == started.SessionId);
+        session.Status.ShouldBe(SessionStatus.Running);
+        var attempt = await db.RunAttempts.SingleAsync(a => a.Id == started.RunAttemptId);
+        attempt.Phase.ShouldBe(RunPhase.Succeeded);
+        var incident = await db.AgentIncidents.SingleAsync(
+            i => i.AgentId == fixture.AgentId && i.Kind == AgentIncidentKind.RcDegraded);
+        incident.Severity.ShouldBe(AlertSeverity.Warning);
+        incident.FailureReason.ShouldBe("RemoteControlNotArmed");
+    }
+
+    /// <summary>
+    /// Cancelling the launch itself is not an RC timeout. The local setup CTS is linked to the
+    /// caller token; expiry of that caller token must propagate, never be rewritten as RcDegraded.
+    /// </summary>
+    [Test]
+    public async Task External_cancellation_during_rc_setup_is_not_reported_as_degraded()
+    {
+        var adapter = new FakeAgentProtocolAdapter
+        {
+            PromptOutput = "some output, but never the marker",
+            HangRawSnapshotUntilCanceled = true,
+        };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        using var cts = new CancellationTokenSource();
+
+        var launch = fixture.LaunchInteractiveAsync(
+            remoteControlName: "Antiphon-Orchestrator", ct: cts.Token);
+
+        var waitUntil = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (adapter.Prompts.Count == 0 && !launch.IsCompleted && DateTime.UtcNow < waitUntil)
+            await Task.Delay(10);
+        adapter.Prompts.Count.ShouldBeGreaterThan(0, "the RC command should have been typed before we cancel");
+        cts.Cancel();
+
+        await Should.ThrowAsync<OperationCanceledException>(launch);
+
+        await using var db = LaunchFixture.CreateContext();
+        (await db.AgentIncidents.CountAsync(
+            i => i.AgentId == fixture.AgentId && i.Kind == AgentIncidentKind.RcDegraded))
+            .ShouldBe(0);
     }
 
     /// <summary>
@@ -681,6 +787,10 @@ public class AgentSessionLaunchFailureTests
                         FirstDeltaTimeoutMs = 200,
                         KillGraceMs = 100,
                         RemoteControlArmTimeoutMs = 300,
+                        // Outer budget must still fit the production 3s first-output wait plus
+                        // the compressed arm wait; 800ms was clipping late-confirm tests that
+                        // emit no PromptOutput and therefore sit in WaitForFirstPromptOutputAsync.
+                        RemoteControlSetupTimeoutMs = 8_000,
                         SessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-launch-fail-{Guid.NewGuid():N}"),
                     }));
                     extraServices?.Invoke(s);
@@ -733,7 +843,8 @@ public class AgentSessionLaunchFailureTests
             LaunchNotes? notes = null,
             // CARD-0106 S2: lets a test hand the launch a spec the resolvers never saw, which is
             // exactly the "future forgotten path" the tripwire exists for.
-            AgentLaunchSpec? spec = null) =>
+            AgentLaunchSpec? spec = null,
+            CancellationToken ct = default) =>
             Services.GetRequiredService<AgentSessionService>().LaunchInteractiveAsync(
                 SessionId,
                 AgentId,
@@ -741,7 +852,7 @@ public class AgentSessionLaunchFailureTests
                 remoteControlName,
                 resume,
                 notes,
-                CancellationToken.None);
+                ct);
 
         /// <summary>A project/board/card graph for the card-launch path. Returns the card id.</summary>
         public async Task<Guid> CreateCardAsync(string? description = null)
@@ -773,13 +884,29 @@ public class AgentSessionLaunchFailureTests
             return card.Id;
         }
 
+        public async Task AssignAgentAsync(Guid cardId)
+        {
+            // Must mutate the launch-scope tracked card: CreateCardAsync loaded it on this
+            // context, and StartAsync's LoadCardAsync would otherwise return the stale
+            // AssignedAgentId=null instance (ExecuteUpdate on a second context does not
+            // refresh tracked entities).
+            var db = Services.GetRequiredService<AppDbContext>();
+            var card = await db.Cards.FirstAsync(c => c.Id == cardId);
+            card.AssignedAgentId = AgentId;
+            await db.SaveChangesAsync();
+        }
+
         public Task<AgentSessionStartResult> StartCardSessionAsync(
-            Guid cardId, string prompt, string? remoteControlName = null, AgentKind kind = AgentKind.Raw) =>
+            Guid cardId,
+            string prompt,
+            string? remoteControlName = null,
+            AgentKind kind = AgentKind.Raw,
+            CancellationToken ct = default) =>
             Services.GetRequiredService<AgentSessionService>().StartAsync(
                 new StartAgentSessionRequest(
                     cardId, "fake", kind, prompt, RemoteControlName: remoteControlName),
                 LaunchSpec(Path.Combine(Harness.TempRoot, "repo"), kind),
-                CancellationToken.None);
+                ct);
 
         private static AgentLaunchSpec LaunchSpec(string cwd, AgentKind kind = AgentKind.Raw) =>
             new("fake", kind, "fake", [], new Dictionary<string, string>(), cwd, 120, 30);

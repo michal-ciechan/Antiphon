@@ -503,6 +503,7 @@ public class HerdrAlwaysOnChannelParityTests
             KillGraceMs = 100,
             SessionLogPath = Path.Combine(tempRoot, "session-logs"),
             RemoteControlArmTimeoutMs = 200,
+            RemoteControlSetupTimeoutMs = 500,
         }));
         services.AddSingleton<IOptions<OrchestratorSettings>>(Options.Create(new OrchestratorSettings
         {
