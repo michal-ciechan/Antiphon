@@ -1,11 +1,15 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Tests.AgentTui;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -326,6 +330,58 @@ public class AgentBundleAttachmentTests
         await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
         // Scoped to THIS agent's rows: the test database is shared by the whole assembly run.
         (await verify.AgentBundleAttachments.CountAsync(a => a.AgentId == agent.Id)).ShouldBe(0);
+    }
+
+    // ---- CARD-0247 S2 launch env ----------------------------------------------------------------
+
+    [Test]
+    [Category("Integration")]
+    public async Task an_agent_with_the_orchestrator_bundle_launches_with_ANTIPHON_ORCHESTRATOR_1()
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        var agent = await AddAgentAsync(db);
+        await AgentBundleAttachments.SetAsync(
+            db, agent, [InstructionBundles.Orchestrator], DateTime.UtcNow, default);
+        await db.SaveChangesAsync();
+
+        var composition = await ComposeAsync(db, agent);
+
+        composition.ExtraEnv["ANTIPHON_ORCHESTRATOR"].ShouldBe("1");
+        composition.ExtraEnv.ShouldContainKey("ANTIPHON_AGENT_ID");
+        composition.ExtraEnv.ShouldNotContainKey("ANTIPHON_TASK_ID");
+    }
+
+    [Test]
+    [Category("Integration")]
+    public async Task an_agent_without_the_orchestrator_bundle_does_not_set_ANTIPHON_ORCHESTRATOR()
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        var agent = await AddAgentAsync(db);
+        await AgentBundleAttachments.SetAsync(
+            db, agent, [InstructionBundles.BoardApi], DateTime.UtcNow, default);
+        await db.SaveChangesAsync();
+
+        var composition = await ComposeAsync(db, agent);
+
+        composition.ExtraEnv.ShouldNotContainKey("ANTIPHON_ORCHESTRATOR");
+    }
+
+    private static Task<AgentLaunchComposition> ComposeAsync(AppDbContext db, Agent agent)
+    {
+        var registry = new AgentRegistry(new OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
+        {
+            DefaultDefinition = "claude",
+            Definitions =
+            {
+                ["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "claude" },
+            },
+        }));
+        var composer = new AgentSessionLaunchComposer(
+            db,
+            Options.Create(new DelegationSettings()),
+            registry,
+            NullLogger<AgentSessionLaunchComposer>.Instance);
+        return composer.ComposeForAgentAsync(agent, CancellationToken.None);
     }
 
     private static async Task<Agent> AddAgentAsync(AppDbContext db)

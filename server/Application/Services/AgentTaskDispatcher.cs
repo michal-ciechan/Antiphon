@@ -2394,6 +2394,9 @@ public sealed class AgentTaskDispatcher
             ["ANTIPHON_SESSION_ID"] = session.Id.ToString("D"),
             ["ANTIPHON_AGENT_ID"] = agent.Id.ToString("D"),
             ["ANTIPHON_TASK_ID"] = task.Id.ToString("D"),
+            // CARD-0247 S2: the PreToolUse investigation hook arms on Orchestrator and
+            // unarms on any other kind via ANTIPHON_TASK_ID (plan §3.1 rules 2 and 3).
+            ["ANTIPHON_TASK_KIND"] = task.Kind.ToString(),
         };
 
         // The raw token exists only between creation and this injection — it is stored hashed, so

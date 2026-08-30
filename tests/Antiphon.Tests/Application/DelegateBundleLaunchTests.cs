@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -147,6 +148,35 @@ public class DelegateBundleLaunchTests
     }
 
     [Test]
+    public void a_worker_launch_sets_task_kind_worker_alongside_task_id()
+    {
+        // CARD-0247 S2: the investigation hook unarms on ANTIPHON_TASK_ID (rule 3) for
+        // every worker; Kind is still exported so a future discriminator can key on it.
+        var (dispatcher, _) = CreateHarness();
+        var task = TaskFor(AgentTaskKind.Worker, AgentTaskRole.Code);
+
+        var env = EnvOf(dispatcher, task);
+
+        env["ANTIPHON_TASK_ID"].ShouldBe(task.Id.ToString("D"));
+        env["ANTIPHON_TASK_KIND"].ShouldBe(nameof(AgentTaskKind.Worker));
+        env.ShouldNotContainKey("ANTIPHON_ORCHESTRATOR");
+    }
+
+    [Test]
+    public void an_orchestrator_task_sets_task_kind_orchestrator_so_the_hook_arms()
+    {
+        // Plan §3.1 rule 2: ANTIPHON_TASK_KIND=Orchestrator arms the hook even though
+        // ANTIPHON_TASK_ID is also set (rule 3 would otherwise unarm a worker).
+        var (dispatcher, _) = CreateHarness();
+        var task = TaskFor(AgentTaskKind.Orchestrator, AgentTaskRole.Plan);
+
+        var env = EnvOf(dispatcher, task);
+
+        env["ANTIPHON_TASK_KIND"].ShouldBe(nameof(AgentTaskKind.Orchestrator));
+        env.ShouldContainKey("ANTIPHON_TASK_ID");
+    }
+
+    [Test]
     public void a_check_task_still_launches_with_nothing_even_when_its_agent_carries_attachments()
     {
         // The check interpreter is the agent most likely to be PINNED, and therefore the one most
@@ -171,6 +201,14 @@ public class DelegateBundleLaunchTests
 
     private static List<string> ArgsOf(
         AgentTaskDispatcher dispatcher, AgentTask task, IReadOnlyList<string>? attached = null)
+        => [.. SpecOf(dispatcher, task, attached).Args];
+
+    private static IReadOnlyDictionary<string, string> EnvOf(
+        AgentTaskDispatcher dispatcher, AgentTask task, IReadOnlyList<string>? attached = null)
+        => SpecOf(dispatcher, task, attached).Env;
+
+    private static AgentLaunchSpec SpecOf(
+        AgentTaskDispatcher dispatcher, AgentTask task, IReadOnlyList<string>? attached = null)
     {
         var agent = new Agent
         {
@@ -191,7 +229,7 @@ public class DelegateBundleLaunchTests
             Rows = 30,
         };
 
-        return [.. dispatcher.BuildLaunchSpec(task, agent, session, attached).Args];
+        return dispatcher.BuildLaunchSpec(task, agent, session, attached);
     }
 
     private static AgentTask TaskFor(AgentTaskKind kind, AgentTaskRole role) => new()
@@ -239,6 +277,9 @@ public class DelegateBundleLaunchTests
         }));
         services.AddSingleton<IWorktreeManager, Antiphon.Server.Infrastructure.Git.WorktreeManager>();
         services.AddSingleton<IGitService, Antiphon.Server.Infrastructure.Git.GitService>();
+        // CARD-0230: DelegationWorktreeService now takes GitWorkspaceService (c4d7e0d). Pre-existing
+        // red on this harness; CARD-0247 S2 needs CreateHarness to resolve so BuildEnv is pin-able.
+        services.AddSingleton<GitWorkspaceService>();
         services.AddScoped<DelegationWorktreeService>();
         services.AddScoped<AgentTaskService>();
         services.AddScoped<AgentTaskDispatcher>();

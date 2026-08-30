@@ -9,6 +9,9 @@
 
     Usage (from repo root or anywhere):
       pwsh -File scripts/test-hooks.ps1
+
+    Runs every file under scripts/hooks/__tests__/*.test.mjs. The live claude -p
+    probe (live-s2-probe.mjs) is not a .test.mjs and is not part of this suite.
 #>
 $ErrorActionPreference = 'Continue'
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -19,7 +22,7 @@ $logFile = Join-Path $logDir 'hooks-tests.log'
 
 Push-Location $hooksDir
 try {
-    node --test --test-reporter=spec __tests__/orchestrator-investigation.test.mjs 2>&1 | Tee-Object -FilePath $logFile
+    node --test --test-reporter=spec ./__tests__/orchestrator-investigation.test.mjs ./__tests__/orchestrator-investigation-hook.test.mjs 2>&1 | Tee-Object -FilePath $logFile
     $code = $LASTEXITCODE
 }
 finally {

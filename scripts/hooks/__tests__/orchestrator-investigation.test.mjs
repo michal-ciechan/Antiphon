@@ -12,6 +12,7 @@ import {
   N_REPORT,
   N_DISPATCH,
   NUDGE_CONTEXT,
+  COMPACT_CONTEXT,
 } from '../orchestrator-investigation.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -40,6 +41,9 @@ describe('thresholds', () => {
     assert.equal(R, 3);
     assert.equal(N_REPORT, 25);
     assert.equal(N_DISPATCH, 10);
+    assert.ok(NUDGE_CONTEXT.startsWith('[antiphon-orchestrator]'));
+    assert.ok(COMPACT_CONTEXT.startsWith('[antiphon-orchestrator]'));
+    assert.match(COMPACT_CONTEXT, /After compaction/);
   });
 });
 

@@ -39,6 +39,10 @@ const SOURCE_ROOT_TOKENS = new Set([
 export const NUDGE_CONTEXT =
   '[antiphon-orchestrator] This is the 3rd consecutive source read with no delegate dispatched and no report naming these files. Diagnosis is a Debug delegate, not an inline read: pwsh -NoProfile -File scripts/delegate.ps1 -Role Debug -Goal "…" — and take its answer. If you are verifying a delegate\'s named claim, carry on; this note will not repeat for this run.';
 
+/** SessionStart(compact) re-injection: the rule, without the "3rd consecutive read" trigger text. */
+export const COMPACT_CONTEXT =
+  '[antiphon-orchestrator] After compaction: diagnosis is a Debug delegate, not an inline read. Verification is a file or diff a report named; investigation is everything else — pwsh -NoProfile -File scripts/delegate.ps1 -Role Debug -Goal "…" — and take its answer. ANTIPHON_ORCHESTRATOR=0 silences the PreToolUse nudge.';
+
 /**
  * @param {object} input hook stdin JSON (S0 contract)
  * @param {string} transcriptTail JSONL text, already read by the caller

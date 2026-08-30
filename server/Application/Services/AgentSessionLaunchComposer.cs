@@ -45,6 +45,10 @@ public sealed class AgentSessionLaunchComposer
             ["ANTIPHON_TASK_TOKEN"] = delegationToken,
         };
 
+        var attachedKeys = await AgentBundleAttachments.LoadAsync(_db, agent.Id, _logger, ct);
+        if (attachedKeys.Contains(InstructionBundles.Orchestrator, StringComparer.Ordinal))
+            extraEnv["ANTIPHON_ORCHESTRATOR"] = "1";
+
         var profileKind = await PeekProfileKindAsync(agent, ct);
         var isClaudeCode = profileKind == AgentKind.ClaudeCode;
         var isGrok = profileKind == AgentKind.Grok;
@@ -67,7 +71,6 @@ public sealed class AgentSessionLaunchComposer
                 ]);
             }
 
-            var attachedKeys = await AgentBundleAttachments.LoadAsync(_db, agent.Id, _logger, ct);
             var composed = InstructionBundleComposer.Compose(
                 attachedKeys,
                 AgentReplyStyles.ComposedKey(agent.ReplyStyle),
