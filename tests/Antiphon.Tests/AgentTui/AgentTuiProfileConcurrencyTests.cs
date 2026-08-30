@@ -55,14 +55,14 @@ public sealed class AgentTuiProfileConcurrencyTests
         await using var firstDb = CreateContext();
         await using var secondDb = CreateContext();
 
-        var firstSearchPath = new NpgsqlConnectionStringBuilder(firstDb.Database.GetConnectionString())
-            .SearchPath;
-        var secondSearchPath = new NpgsqlConnectionStringBuilder(secondDb.Database.GetConnectionString())
-            .SearchPath;
+        var firstDatabase = new NpgsqlConnectionStringBuilder(firstDb.Database.GetConnectionString())
+            .Database;
+        var secondDatabase = new NpgsqlConnectionStringBuilder(secondDb.Database.GetConnectionString())
+            .Database;
 
-        (firstSearchPath?.StartsWith("test_", StringComparison.Ordinal) == true).ShouldBeTrue(
-            "profile concurrency tests must not use the shared public schema");
-        secondSearchPath.ShouldBe(firstSearchPath);
+        (firstDatabase?.StartsWith("test_", StringComparison.Ordinal) == true).ShouldBeTrue(
+            "profile concurrency tests must not use the shared antiphon_test database");
+        secondDatabase.ShouldBe(firstDatabase);
         (await firstDb.AgentTuiProfiles.AnyAsync()).ShouldBeFalse(
             "a new profile concurrency schema must not inherit profiles from another test");
         (await firstDb.Agents.AnyAsync()).ShouldBeFalse(

@@ -22,8 +22,8 @@ using TUnit.Core;
 namespace Antiphon.Tests;
 
 [Category("Integration")]
-// Each test owns an isolated schema, but its 38-migration setup is DDL-heavy. Serializing this
-// class's setup avoids exhausting PostgreSQL shared memory while keeping it independent of public.
+// Each test owns a cloned database. The group key is kept so this class still serialises against
+// itself (CARD-0110 S2 does not change NotInParallel attributes).
 [NotInParallel("AgentTuiProfileServiceSchema")]
 [ClassDataSource<TestDbFixture>(Shared = SharedType.PerTestSession)]
 public class AgentTuiProfileServiceTests
@@ -68,13 +68,13 @@ public class AgentTuiProfileServiceTests
     }
 
     [Test]
-    public async Task Uses_a_fresh_non_public_schema_for_each_test()
+    public async Task Uses_a_fresh_cloned_database_for_each_test()
     {
-        var searchPath = new NpgsqlConnectionStringBuilder(DbContext.Database.GetConnectionString())
-            .SearchPath;
+        var database = new NpgsqlConnectionStringBuilder(DbContext.Database.GetConnectionString())
+            .Database;
 
-        (searchPath?.StartsWith("test_", StringComparison.Ordinal) == true).ShouldBeTrue(
-            "profile service tests must not write managed-profile state into the shared public schema");
+        (database?.StartsWith("test_", StringComparison.Ordinal) == true).ShouldBeTrue(
+            "profile service tests must not write managed-profile state into the shared antiphon_test database");
         (await DbContext.AgentTuiProfiles.AnyAsync()).ShouldBeFalse();
         (await DbContext.Agents.AnyAsync()).ShouldBeFalse();
     }

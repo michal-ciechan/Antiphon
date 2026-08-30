@@ -30,9 +30,9 @@ namespace Antiphon.Tests.TestHelpers;
 public class AntiphonWebAppFactory : WebApplicationFactory<Program>
 {
     /// <summary>
-    /// This host's own migrated schema. It must NOT be the shared public one, because booting the
-    /// real app is not a read-only act: Program.cs runs AgentTuiProfileImporter.ImportAsync at
-    /// startup, which materialises a profile per configured agent definition and marks one the
+    /// This host's own cloned database. It must NOT be the shared antiphon_test store, because
+    /// booting the real app is not a read-only act: Program.cs runs AgentTuiProfileImporter.ImportAsync
+    /// at startup, which materialises a profile per configured agent definition and marks one the
     /// INSTALLATION DEFAULT. AgentService.CreateAsync then hands that default to every agent any
     /// other suite creates — its lookup is an unscoped SingleOrDefaultAsync(p => p.IsDefault) —
     /// and a harness that wires no AgentTuiLaunchResolver (AgentSupervisionTests, among others)
@@ -41,14 +41,15 @@ public class AntiphonWebAppFactory : WebApplicationFactory<Program>
     /// so it moved with scheduling order rather than with any test's own behaviour.
     ///
     /// Lazy and blocking because ConfigureWebHost is synchronous and runs inside
-    /// WebApplicationFactory.EnsureServer(); one schema per factory instance, one migration run.
-    /// Subclasses that already own a schema override <see cref="ConnectionString"/> and this is
+    /// WebApplicationFactory.EnsureServer(); one cloned database per factory instance. CARD-0110 S2
+    /// clones the assembly template (~100–300 ms); Program.cs MigrateAsync is then a version check.
+    /// Subclasses that already own a store override <see cref="ConnectionString"/> and this is
     /// never created.
     /// </summary>
     private readonly Lazy<IsolatedTestSchema> _schema = new(() =>
         TestDbFixture.CreateIsolatedSchemaAsync().GetAwaiter().GetResult());
 
-    /// <summary>The database this host runs against. Override to supply your own schema.</summary>
+    /// <summary>The database this host runs against. Override to supply your own store.</summary>
     protected virtual string ConnectionString => _schema.Value.ConnectionString;
 
     private readonly string _workspacePath =
