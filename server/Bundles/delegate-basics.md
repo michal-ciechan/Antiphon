@@ -15,7 +15,10 @@ work itself: each one is here because ignoring it has already cost a real task.
 - COMMIT AND PUSH EACH SLICE as it completes, with the real outcome in the commit message. Commits
   are the durable report: two delegates were cut loose mid-task and their work survived only because
   it was committed. In this repo the commit message is read in preference to the report, so a message
-  claiming "tests green" while two still fail is worse than no message at all.
+  claiming "tests green" while two still fail is worse than no message at all. This instruction IS
+  the explicit request: committing and pushing what you changed is part of the task itself, never a
+  "next step" to offer in your report — there is no user at the other end to accept the offer, and a
+  report naming an uncommitted file is flagged at settlement.
 
 - BUILD TO AN ALTERNATE OUTPUT PATH while the daemons hold their bin directories:
   `--property:OutputPath=bin-<name>/` with a FORWARD slash, and delete the resulting `bin-<name>`
