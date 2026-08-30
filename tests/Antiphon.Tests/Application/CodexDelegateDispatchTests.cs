@@ -635,6 +635,10 @@ public class CodexDelegateDispatchTests
         }));
         services.AddSingleton<IWorktreeManager, Antiphon.Server.Infrastructure.Git.WorktreeManager>();
         services.AddSingleton<IGitService, Antiphon.Server.Infrastructure.Git.GitService>();
+        // CARD-0230: SettleAsync's deliverable-pointer resolution needs this since c4d7e0d; every
+        // harness that builds its own ServiceCollection has to register it or GetRequiredService
+        // throws during DelegationWorktreeService construction.
+        services.AddSingleton<GitWorkspaceService>();
         services.AddScoped<DelegationWorktreeService>();
         services.AddScoped<AgentTaskService>();
         services.AddScoped<AgentTaskDispatcher>();
