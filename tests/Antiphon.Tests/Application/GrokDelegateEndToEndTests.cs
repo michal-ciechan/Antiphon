@@ -450,7 +450,11 @@ public class GrokDelegateEndToEndTests
         configure?.Invoke(delegation);
 
         var services = new ServiceCollection();
-        services.AddLogging();
+        // Warning-and-up to the console, which TUnit captures per test: OnTurnEndAsync swallows any
+        // settlement exception as a Warning, so with no sink a settle that threw is indistinguishable
+        // from one that never fired - both tests here sat red for four days reading "never settled"
+        // with the real cause (a missing DI registration) logged into nothing (CARD-0230).
+        services.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Warning));
         services.AddDbContext<AppDbContext>(options =>
             options.UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
             {
@@ -507,6 +511,10 @@ public class GrokDelegateEndToEndTests
         services.AddSingleton<DelegationWorkspaceResolver>();
         services.AddSingleton<IWorktreeManager, Antiphon.Server.Infrastructure.Git.WorktreeManager>();
         services.AddSingleton<IGitService, Antiphon.Server.Infrastructure.Git.GitService>();
+        // Settlement resolves the report's deliverable pointer through GitWorkspaceService since
+        // c4d7e0d (2026-08-26); without this registration SettleAsync throws before SaveChanges and
+        // the task stays Dispatched forever (CARD-0230).
+        services.AddSingleton<GitWorkspaceService>();
         services.AddScoped<DelegationWorktreeService>();
         services.AddScoped<AgentTaskService>();
         services.AddScoped<AgentSessionService>();
