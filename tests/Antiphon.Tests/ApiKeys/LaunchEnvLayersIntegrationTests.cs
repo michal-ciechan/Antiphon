@@ -221,6 +221,477 @@ public sealed class LaunchEnvLayersIntegrationTests
     }
 
     [Test]
+    public async Task CreateAsync_snapshots_the_session_caller_env_filtered_to_the_inherit_list()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = NewDb(schema);
+        using var workspace = new TempWorkspace();
+        var sessionId = Guid.NewGuid();
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = sessionId,
+            DefinitionName = "grok",
+            AgentKind = AgentKind.Grok,
+            Status = SessionStatus.Running,
+            Cwd = workspace.Path,
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = DateTime.UtcNow,
+            StartedAt = DateTime.UtcNow,
+            LastSeenAt = DateTime.UtcNow,
+        });
+        db.Agents.Add(new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "pm-orchestrator",
+            Slug = "pm-orchestrator",
+            WorkingDirectory = workspace.Path,
+            PersistentSessionId = sessionId.ToString("D"),
+            LaunchEnvJson = AgentLaunchEnv.Serialize(new Dictionary<string, string>
+            {
+                ["X_LLM_PROJECT"] = "PredictionMarkets",
+                ["GROK_BASE_URL"] = "http://localhost:10746/v1",
+                ["UNRELATED"] = "must-drop",
+            }),
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync(Ct);
+
+        var service = CreateTaskService(db, [workspace.Path]);
+        var created = await service.CreateAsync(
+            new CreateAgentTaskRequest(Goal: "plan the next slice", Role: AgentTaskRole.Plan),
+            new AgentTaskService.Caller(null, sessionId, workspace.Path),
+            Ct);
+
+        var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, Ct);
+        var inherited = AgentLaunchEnv.Parse(stored.InheritedLaunchEnvJson);
+        inherited["X_LLM_PROJECT"].ShouldBe("PredictionMarkets");
+        inherited["GROK_BASE_URL"].ShouldBe("http://localhost:10746/v1");
+        inherited.ShouldNotContainKey("UNRELATED");
+    }
+
+    [Test]
+    public async Task CreateAsync_task_token_layers_parent_override_over_parent_agent_env()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = NewDb(schema);
+        using var workspace = new TempWorkspace();
+        var parentAgent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "parent-orch",
+            Slug = $"orch-{Guid.NewGuid():N}"[..16],
+            WorkingDirectory = workspace.Path,
+            Kind = AgentKind.ClaudeCode,
+            LaunchEnvJson = AgentLaunchEnv.Serialize(new Dictionary<string, string>
+            {
+                ["X_LLM_PROJECT"] = "FromAgent",
+                ["ANTHROPIC_BASE_URL"] = "http://localhost:10746",
+            }),
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        db.Agents.Add(parentAgent);
+        var parent = new AgentTask
+        {
+            Id = Guid.NewGuid(),
+            Title = "parent",
+            Goal = "parent",
+            Kind = AgentTaskKind.Orchestrator,
+            WorkingDirectory = workspace.Path,
+            AgentId = parentAgent.Id,
+            LaunchEnvOverrideJson = AgentLaunchEnv.Serialize(new Dictionary<string, string>
+            {
+                ["X_LLM_PROJECT"] = "FromOverride",
+            }),
+            CreatedAt = DateTime.UtcNow,
+        };
+        parent.RootTaskId = parent.Id;
+        db.AgentTasks.Add(parent);
+        await db.SaveChangesAsync(Ct);
+
+        var service = CreateTaskService(db, [workspace.Path]);
+        var created = await service.CreateAsync(
+            new CreateAgentTaskRequest(Goal: "child work", WorkingDirectory: workspace.Path),
+            new AgentTaskService.Caller(parent, Guid.NewGuid(), workspace.Path),
+            Ct);
+
+        var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, Ct);
+        var inherited = AgentLaunchEnv.Parse(stored.InheritedLaunchEnvJson);
+        inherited["X_LLM_PROJECT"].ShouldBe("FromOverride");
+        inherited["ANTHROPIC_BASE_URL"].ShouldBe("http://localhost:10746");
+    }
+
+    [Test]
+    public async Task FollowUpOnTask_computes_no_inherited_snapshot()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = NewDb(schema);
+        using var workspace = new TempWorkspace();
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = $"task-{Guid.NewGuid():N}"[..13],
+            Slug = $"pool-{Guid.NewGuid():N}"[..13],
+            WorkingDirectory = workspace.Path,
+            Details = "Warm pool delegate.",
+            Status = AgentStatus.Idle,
+            IsPoolDelegate = true,
+            LaunchEnvJson = AgentLaunchEnv.Serialize(new Dictionary<string, string>
+            {
+                ["X_LLM_PROJECT"] = "ShouldNotCopy",
+            }),
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        db.Agents.Add(agent);
+        var prior = new AgentTask
+        {
+            Id = Guid.NewGuid(),
+            Title = "prior",
+            Goal = "prior",
+            WorkingDirectory = workspace.Path,
+            Status = AgentTaskStatus.Succeeded,
+            AgentId = agent.Id,
+            CreatedAt = DateTime.UtcNow,
+        };
+        prior.RootTaskId = prior.Id;
+        db.AgentTasks.Add(prior);
+        await db.SaveChangesAsync(Ct);
+
+        var service = CreateTaskService(db, [workspace.Path]);
+        var created = await service.CreateAsync(
+            new CreateAgentTaskRequest(
+                Goal: "follow up",
+                WorkingDirectory: workspace.Path,
+                FollowUpOnTask: DelegationReportFormatter.Short(prior.Id)),
+            new AgentTaskService.Caller(null, null, workspace.Path),
+            Ct);
+
+        var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, Ct);
+        AgentLaunchEnv.Parse(stored.InheritedLaunchEnvJson).ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task a_standing_agent_pin_computes_no_inherited_snapshot()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = NewDb(schema);
+        using var workspace = new TempWorkspace();
+        var standing = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "standing-specialist",
+            Slug = "standing-specialist",
+            WorkingDirectory = workspace.Path,
+            IsPoolDelegate = false,
+            LaunchEnvJson = AgentLaunchEnv.Serialize(new Dictionary<string, string>
+            {
+                ["X_LLM_PROJECT"] = "ShouldNotCopy",
+            }),
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        db.Agents.Add(standing);
+        await db.SaveChangesAsync(Ct);
+
+        var service = CreateTaskService(db, [workspace.Path]);
+        var created = await service.CreateAsync(
+            new CreateAgentTaskRequest(
+                Goal: "pin to standing",
+                WorkingDirectory: workspace.Path,
+                AgentId: standing.Id),
+            new AgentTaskService.Caller(null, null, workspace.Path),
+            Ct);
+
+        var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, Ct);
+        AgentLaunchEnv.Parse(stored.InheritedLaunchEnvJson).ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task BuildLaunchSpec_carries_inherited_env_and_the_override_still_wins()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildDispatcherProvider(schema.ConnectionString);
+        var (dispatcher, _) = DispatcherOf(provider);
+
+        var task = new AgentTask
+        {
+            Id = Guid.NewGuid(),
+            Title = "inherit",
+            Goal = "inherit",
+            WorkingDirectory = Path.GetTempPath(),
+            InheritedLaunchEnvJson = AgentLaunchEnv.Serialize(new Dictionary<string, string>
+            {
+                ["X_LLM_PROJECT"] = "PredictionMarkets",
+                ["ANTHROPIC_BASE_URL"] = "http://inherited:8080",
+            }),
+            LaunchEnvOverrideJson = AgentLaunchEnv.Serialize(new Dictionary<string, string>
+            {
+                ["X_LLM_PROJECT"] = "Other",
+            }),
+            CreatedAt = DateTime.UtcNow,
+        };
+        task.RootTaskId = task.Id;
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "pool",
+            Slug = "pool",
+            WorkingDirectory = task.WorkingDirectory,
+            IsPoolDelegate = true,
+        };
+        var session = new AgentSession
+        {
+            Id = Guid.NewGuid(),
+            DefinitionName = "claude",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Starting,
+            Cwd = task.WorkingDirectory,
+            Cols = 120,
+            Rows = 30,
+        };
+
+        var spec = dispatcher.BuildLaunchSpec(task, agent, session);
+
+        spec.Env["ANTHROPIC_BASE_URL"].ShouldBe("http://inherited:8080");
+        spec.Env["X_LLM_PROJECT"].ShouldBe("Other");
+    }
+
+    [Test]
+    public async Task BuildLaunchSpecAsync_carries_inherited_env_on_the_profile_less_path()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildDispatcherProvider(schema.ConnectionString, withApiKeys: true);
+        var (dispatcher, _) = DispatcherOf(provider);
+
+        var task = NewQueued(Path.GetTempPath(), AgentModelLevel.High);
+        task.InheritedLaunchEnvJson = AgentLaunchEnv.Serialize(new Dictionary<string, string>
+        {
+            ["X_LLM_PROJECT"] = "PredictionMarkets",
+            ["GROK_BASE_URL"] = "http://localhost:10746/v1",
+        });
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "pool",
+            Slug = $"pool-{Guid.NewGuid():N}"[..16],
+            WorkingDirectory = task.WorkingDirectory,
+            IsPoolDelegate = true,
+        };
+        var session = new AgentSession
+        {
+            Id = Guid.NewGuid(),
+            DefinitionName = "claude",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Starting,
+            Cwd = task.WorkingDirectory,
+            Cols = 120,
+            Rows = 30,
+        };
+
+        var spec = await dispatcher.BuildLaunchSpecAsync(
+            task,
+            agent,
+            session,
+            new AgentTaskDispatcher.DelegateProgram(AgentKind.ClaudeCode, "claude", null),
+            attachedBundleKeys: null,
+            Ct);
+
+        spec.Env["X_LLM_PROJECT"].ShouldBe("PredictionMarkets");
+        spec.Env["GROK_BASE_URL"].ShouldBe("http://localhost:10746/v1");
+    }
+
+    [Test]
+    public async Task the_child_agent_env_beats_inherited_and_inherited_beats_the_project_default()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildDispatcherProvider(schema.ConnectionString, withApiKeys: true);
+        var (dispatcher, db) = DispatcherOf(provider);
+        var project = await AddProjectAsync(db, new Dictionary<string, string>
+        {
+            ["X_LLM_PROJECT"] = "FromProject",
+            ["ANTHROPIC_BASE_URL"] = "http://from-project",
+        });
+
+        var task = NewQueued(Path.GetTempPath(), AgentModelLevel.High);
+        task.ProjectId = project.Id;
+        task.InheritedLaunchEnvJson = AgentLaunchEnv.Serialize(new Dictionary<string, string>
+        {
+            ["X_LLM_PROJECT"] = "FromInherited",
+            ["ANTHROPIC_BASE_URL"] = "http://from-inherited",
+        });
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "pool",
+            Slug = $"pool-{Guid.NewGuid():N}"[..16],
+            WorkingDirectory = task.WorkingDirectory,
+            IsPoolDelegate = true,
+            LaunchEnvJson = AgentLaunchEnv.Serialize(new Dictionary<string, string>
+            {
+                ["X_LLM_PROJECT"] = "FromAgent",
+            }),
+        };
+        var session = new AgentSession
+        {
+            Id = Guid.NewGuid(),
+            DefinitionName = "claude",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Starting,
+            Cwd = task.WorkingDirectory,
+            Cols = 120,
+            Rows = 30,
+        };
+
+        var spec = await dispatcher.BuildLaunchSpecAsync(
+            task,
+            agent,
+            session,
+            new AgentTaskDispatcher.DelegateProgram(AgentKind.ClaudeCode, "claude", null),
+            null,
+            Ct);
+
+        spec.Env["X_LLM_PROJECT"].ShouldBe("FromAgent");
+        spec.Env["ANTHROPIC_BASE_URL"].ShouldBe("http://from-inherited");
+    }
+
+    [Test]
+    public async Task TryReuseWarmAgentAsync_declines_when_inherited_env_projections_differ()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildDispatcherProvider(schema.ConnectionString);
+        var (dispatcher, db) = DispatcherOf(provider);
+        using var workspace = new TempWorkspace();
+        var now = DateTime.UtcNow;
+        var session = new AgentSession
+        {
+            Id = Guid.NewGuid(),
+            DefinitionName = "claude",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Running,
+            Cwd = workspace.Path,
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = now,
+            StartedAt = now,
+            LastSeenAt = now,
+        };
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = $"task-{Guid.NewGuid():N}"[..13],
+            Slug = $"pool-{Guid.NewGuid():N}"[..13],
+            WorkingDirectory = workspace.Path,
+            Status = AgentStatus.Idle,
+            IsPoolDelegate = true,
+            Kind = AgentKind.ClaudeCode,
+            ModelLevel = AgentModelLevel.Medium,
+            PoolIdleSince = now.AddMinutes(-10),
+            PersistentSessionId = session.Id.ToString("D"),
+            LaunchEnvJson = AgentLaunchEnv.Serialize(new Dictionary<string, string>
+            {
+                ["X_LLM_PROJECT"] = "PredictionMarkets",
+            }),
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        db.AgentSessions.Add(session);
+        db.Agents.Add(agent);
+        await db.SaveChangesAsync(Ct);
+
+        var matching = NewQueued(workspace.Path, AgentModelLevel.Medium);
+        matching.InheritedLaunchEnvJson = AgentLaunchEnv.Serialize(new Dictionary<string, string>
+        {
+            ["X_LLM_PROJECT"] = "PredictionMarkets",
+        });
+        var different = NewQueued(workspace.Path, AgentModelLevel.Medium);
+        different.InheritedLaunchEnvJson = AgentLaunchEnv.Serialize(new Dictionary<string, string>
+        {
+            ["X_LLM_PROJECT"] = "Other",
+        });
+        var empty = NewQueued(workspace.Path, AgentModelLevel.Medium);
+        db.AgentTasks.AddRange(matching, different, empty);
+        await db.SaveChangesAsync(Ct);
+
+        // Mismatches first: SpawnFresh does not claim the warm row, so the matching
+        // case can still reuse it afterwards.
+        (await dispatcher.TryReuseWarmAgentAsync(different, now, Ct))
+            .ShouldBe(AgentTaskDispatcher.ReuseOutcome.SpawnFresh);
+        (await dispatcher.TryReuseWarmAgentAsync(empty, now, Ct))
+            .ShouldBe(AgentTaskDispatcher.ReuseOutcome.SpawnFresh,
+                "a {}-stamped caller must not reuse a process launched with a project marker");
+        (await dispatcher.TryReuseWarmAgentAsync(matching, now, Ct))
+            .ShouldBe(AgentTaskDispatcher.ReuseOutcome.Reused);
+    }
+
+    [Test]
+    public async Task PlaceOnStandingAgentAsync_warns_when_inherited_names_differ_and_never_values()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildDispatcherProvider(schema.ConnectionString);
+        var (dispatcher, db) = DispatcherOf(provider);
+        using var workspace = new TempWorkspace();
+        var now = DateTime.UtcNow;
+        var session = new AgentSession
+        {
+            Id = Guid.NewGuid(),
+            DefinitionName = "claude",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Running,
+            Cwd = workspace.Path,
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = now,
+            StartedAt = now,
+            LastSeenAt = now,
+        };
+        var standing = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "standing-specialist",
+            Slug = "standing-specialist",
+            WorkingDirectory = workspace.Path,
+            Status = AgentStatus.Running,
+            IsPoolDelegate = false,
+            Kind = AgentKind.ClaudeCode,
+            PersistentSessionId = session.Id.ToString("D"),
+            LaunchEnvJson = AgentLaunchEnv.Serialize(new Dictionary<string, string>
+            {
+                ["X_LLM_PROJECT"] = "StandingProject",
+            }),
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        db.AgentSessions.Add(session);
+        db.Agents.Add(standing);
+        var claimed = NewQueued(workspace.Path, AgentModelLevel.High);
+        claimed.AgentId = standing.Id;
+        claimed.InheritedLaunchEnvJson = AgentLaunchEnv.Serialize(new Dictionary<string, string>
+        {
+            ["X_LLM_PROJECT"] = "CallerProject",
+            ["ANTHROPIC_BASE_URL"] = "http://localhost:10746",
+        });
+        db.AgentTasks.Add(claimed);
+        await db.SaveChangesAsync(Ct);
+
+        (await dispatcher.TryReuseWarmAgentAsync(claimed, now, Ct))
+            .ShouldBe(AgentTaskDispatcher.ReuseOutcome.Reused);
+        await db.SaveChangesAsync(Ct);
+
+        var warnings = await db.AgentTaskEvents
+            .Where(e => e.AgentTaskId == claimed.Id && e.Type == AgentTaskEventType.Warning)
+            .ToListAsync(Ct);
+        warnings.ShouldContain(e => e.Detail != null && e.Detail.Contains("X_LLM_PROJECT"));
+        warnings.ShouldContain(e => e.Detail != null && e.Detail.Contains("ANTHROPIC_BASE_URL"));
+        warnings.ShouldNotContain(e => e.Detail != null && e.Detail.Contains("CallerProject"));
+        warnings.ShouldNotContain(e => e.Detail != null && e.Detail.Contains("StandingProject"));
+        standing.LaunchEnvJson.ShouldContain("StandingProject",
+            customMessage: "a standing agent is never restamped from inherited env");
+    }
+
+    [Test]
     public async Task a_project_default_reaches_a_pool_delegate_and_resolves_a_project_scoped_key()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -509,6 +980,8 @@ public sealed class LaunchEnvLayersIntegrationTests
         }));
         services.AddSingleton<IWorktreeManager, Antiphon.Server.Infrastructure.Git.WorktreeManager>();
         services.AddSingleton<IGitService, Antiphon.Server.Infrastructure.Git.GitService>();
+        // CARD-0230: DelegationWorktreeService now takes GitWorkspaceService (c4d7e0d).
+        services.AddSingleton<GitWorkspaceService>();
         services.AddScoped<DelegationWorktreeService>();
         services.AddScoped<AgentTaskService>();
         if (withApiKeys)

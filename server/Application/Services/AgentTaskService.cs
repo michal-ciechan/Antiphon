@@ -105,7 +105,10 @@ public sealed class AgentTaskService
 
         var launchEnvOverride = AgentLaunchEnv.ValidateOverride(
             request.LaunchEnvOverride, "launchEnvOverride");
-        if (launchEnvOverride.Count > 0 && !string.IsNullOrWhiteSpace(request.FollowUpOnTask))
+        // Follow-ups and standing-agent pins continue an existing process — snapshotting the
+        // caller's env onto them would record a routing the live process cannot take.
+        var skipInheritedSnapshot = !string.IsNullOrWhiteSpace(request.FollowUpOnTask);
+        if (launchEnvOverride.Count > 0 && skipInheritedSnapshot)
         {
             throw new ValidationException(
                 "launchEnvOverride",
@@ -180,6 +183,7 @@ public sealed class AgentTaskService
             subscriptionOwner = pinned;
             if (pinned is { IsPoolDelegate: false })
             {
+                skipInheritedSnapshot = true;
                 if (request.AgentKind is { } wantedKind && wantedKind != pinned.Kind)
                 {
                     throw new ConflictException(
@@ -292,6 +296,8 @@ public sealed class AgentTaskService
         if (binding.Warning is not null)
             warning = warning is null ? binding.Warning : warning + " " + binding.Warning;
 
+        var inheritedLaunchEnv = await ComputeInheritedLlmEnvAsync(caller, skipInheritedSnapshot, ct);
+
         var task = new AgentTask
         {
             Id = id,
@@ -308,6 +314,7 @@ public sealed class AgentTaskService
             ProjectId = projectId,
             CardId = binding.CardId,
             LaunchEnvOverrideJson = AgentLaunchEnv.Serialize(launchEnvOverride),
+            InheritedLaunchEnvJson = AgentLaunchEnv.Serialize(inheritedLaunchEnv),
             AgentKind = agentKind,
             ModelLevel = level,
             Workspace = workspace,
@@ -379,6 +386,56 @@ public sealed class AgentTaskService
             ScopeOverlaps: await FindScopeOverlapsAsync(task, ct),
             CardId: binding.CardId,
             CardIdentifier: binding.Identifier);
+    }
+
+    /// <summary>
+    /// Snapshot the caller's Antiphon-visible LLM-routing env for the child (CARD-0260 S1).
+    /// Task-token: parent agent <c>LaunchEnvJson</c>, then the parent task's override.
+    /// Session-token: the standing agent bound via <c>PersistentSessionId</c>.
+    /// Filtered to <c>Delegation:LlmEnvInheritance:Names</c>. Never logs a value.
+    /// </summary>
+    private async Task<IReadOnlyDictionary<string, string>> ComputeInheritedLlmEnvAsync(
+        Caller caller,
+        bool skip,
+        CancellationToken ct)
+    {
+        var inherit = _settings.LlmEnvInheritance;
+        if (skip || !inherit.Enabled || inherit.Names.Count == 0)
+            return AgentLaunchEnv.Empty;
+
+        var merged = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (caller.Task is { } parent)
+        {
+            if (parent.AgentId is Guid agentId)
+            {
+                var json = await _db.Agents.AsNoTracking()
+                    .Where(a => a.Id == agentId)
+                    .Select(a => a.LaunchEnvJson)
+                    .FirstOrDefaultAsync(ct);
+                Overlay(merged, AgentLaunchEnv.Parse(json));
+            }
+
+            Overlay(merged, AgentLaunchEnv.Parse(parent.LaunchEnvOverrideJson));
+        }
+        else if (caller.SessionId is Guid sessionId)
+        {
+            var persistentSessionId = sessionId.ToString("D");
+            var json = await _db.Agents.AsNoTracking()
+                .Where(a => a.PersistentSessionId == persistentSessionId)
+                .Select(a => a.LaunchEnvJson)
+                .FirstOrDefaultAsync(ct);
+            Overlay(merged, AgentLaunchEnv.Parse(json));
+        }
+
+        return AgentLaunchEnv.FilterTo(merged, inherit.Names);
+    }
+
+    private static void Overlay(
+        Dictionary<string, string> target,
+        IReadOnlyDictionary<string, string> source)
+    {
+        foreach (var (key, value) in source)
+            target[key] = value;
     }
 
     /// <summary>

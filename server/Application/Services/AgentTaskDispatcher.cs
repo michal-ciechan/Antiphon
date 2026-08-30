@@ -1870,8 +1870,15 @@ public sealed class AgentTaskDispatcher
         // scope at every cold launch (including a deliberate relaunch of an existing pool row),
         // so the warm-pool predicate can never hand that process work from another scope.
         // Pool delegates have no board-derived scope: null is intentionally global-only.
+        // CARD-0260: the inherited-env snapshot is the other half of that honesty — a warm
+        // process retains whatever LLM routing it launched with.
         if (agent.IsPoolDelegate)
+        {
             agent.PoolProjectId = claimed.ProjectId;
+            agent.LaunchEnvJson = string.IsNullOrWhiteSpace(claimed.InheritedLaunchEnvJson)
+                ? "{}"
+                : claimed.InheritedLaunchEnvJson;
+        }
 
         var cwd = claimed.WorktreePath ?? claimed.WorkingDirectory;
         var session = new AgentSession
@@ -2222,6 +2229,7 @@ public sealed class AgentTaskDispatcher
                 ExtraEnv: BuildEnv(task, agent, session),
                 LaunchEnvOverride: AgentLaunchEnv.Parse(task.LaunchEnvOverrideJson),
                 ProjectDefaultEnv: projectDefaultEnv,
+                InheritedEnv: AgentLaunchEnv.Parse(task.InheritedLaunchEnvJson),
                 TierModelAlias: TierAliasFor(kind, task.ModelLevel)));
     }
 
@@ -2276,6 +2284,7 @@ public sealed class AgentTaskDispatcher
                 ExtraEnv: BuildEnv(task, agent, session),
                 ApiKeyProjectId: apiKeyProjectId,
                 LaunchEnvOverride: AgentLaunchEnv.Parse(task.LaunchEnvOverrideJson),
+                InheritedEnv: AgentLaunchEnv.Parse(task.InheritedLaunchEnvJson),
                 TierModelAlias: tierModelAlias),
             ct,
             _apiKeyEnvResolver);
@@ -2613,6 +2622,14 @@ public sealed class AgentTaskDispatcher
                 return ReuseOutcome.SpawnFresh;
             }
 
+            if (!InheritedEnvMatchesPool(pinned, claimed))
+            {
+                _logger.LogInformation(
+                    "Task {ShortId} is pinned to warm delegate '{Agent}' whose inherited env does not match this task — relaunching it",
+                    DelegationReportFormatter.Short(claimed.Id), pinned.Name);
+                return ReuseOutcome.SpawnFresh;
+            }
+
             if (pinned.Status != AgentStatus.Idle || pinned.PoolIdleSince is null)
                 return ReuseOutcome.WaitForAgent;
 
@@ -2640,6 +2657,7 @@ public sealed class AgentTaskDispatcher
                 .Where(a => SameDirectory(a.WorkingDirectory, claimed.WorkingDirectory))
                 .Where(a => claimed.Workspace != WorkspaceMode.Shared
                     || !IsWorktreeWorkingDirectory(a.WorkingDirectory))
+                .Where(a => InheritedEnvMatchesPool(a, claimed))
                 .Where(a => a.PoolReservedForRootTaskId == claimed.RootTaskId
                     || a.PoolIdleSince <= reservationCutoff)
                 // Same-run context first — that agent has just read the code this run cares
@@ -2729,6 +2747,46 @@ public sealed class AgentTaskDispatcher
     /// not the task-kind registry default that used to launch <c>claude.exe</c> under a Codex
     /// agent's name.</para>
     /// </summary>
+    /// <summary>
+    /// Warm-pool reuse may only keep a process whose inherit-list projection matches this
+    /// task's snapshot (CARD-0260). Same names and Ordinal values; two empties match.
+    /// </summary>
+    private bool InheritedEnvMatchesPool(Agent agent, AgentTask task) =>
+        AgentLaunchEnv.ProjectionsEqual(
+            AgentLaunchEnv.Parse(agent.LaunchEnvJson),
+            AgentLaunchEnv.Parse(task.InheritedLaunchEnvJson),
+            _settings.LlmEnvInheritance.Names);
+
+    /// <summary>
+    /// Standing agents keep the env the operator configured. When that disagrees with the
+    /// task's inherited snapshot, record the differing NAMES (never values) so the mismatch
+    /// is visible. Empty inherited (follow-up / pin skip) is not a mismatch to warn about.
+    /// </summary>
+    private void WarnIfStandingInheritedEnvDiffers(AgentTask claimed, Agent standing, DateTime now)
+    {
+        var names = _settings.LlmEnvInheritance.Names;
+        var inherited = AgentLaunchEnv.Parse(claimed.InheritedLaunchEnvJson);
+        if (AgentLaunchEnv.FilterTo(inherited, names).Count == 0)
+            return;
+
+        var differing = AgentLaunchEnv.DifferingNames(
+            inherited,
+            AgentLaunchEnv.Parse(standing.LaunchEnvJson),
+            names);
+        if (differing.Count == 0)
+            return;
+
+        _db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = claimed.Id,
+            Type = AgentTaskEventType.Warning,
+            Detail = $"Standing agent '{standing.Name}' launch env differs from inherited on: "
+                + string.Join(", ", differing),
+            At = now,
+        });
+    }
+
     private async Task<ReuseOutcome> PlaceOnStandingAgentAsync(
         AgentTask claimed, Agent standing, DateTime now, CancellationToken ct)
     {
@@ -2770,6 +2828,8 @@ public sealed class AgentTaskDispatcher
             ct);
         if (busy)
             return ReuseOutcome.WaitForAgent;
+
+        WarnIfStandingInheritedEnvDiffers(claimed, standing, now);
 
         claimed.AgentName = standing.Name;
         claimed.AgentSessionId = session;

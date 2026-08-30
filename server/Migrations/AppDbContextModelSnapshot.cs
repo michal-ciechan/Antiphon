@@ -460,6 +460,12 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(20000)
                         .HasColumnType("character varying(20000)");
 
+                    b.Property<string>("InheritedLaunchEnvJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("{}");
+
                     b.Property<int>("Kind")
                         .HasColumnType("integer");
 

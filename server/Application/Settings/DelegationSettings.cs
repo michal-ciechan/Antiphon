@@ -664,6 +664,12 @@ public sealed class DelegationSettings
     /// deadline owns "nothing landed"; this owns "rows keep landing and none of them is new".
     /// </summary>
     public StallDetectionSettings StallDetection { get; set; } = new();
+
+    /// <summary>
+    /// Create-time snapshot of the caller's LLM-routing env onto the child task (CARD-0260 S1).
+    /// Names are opaque passthrough; Antiphon does not interpret <c>X_LLM_*</c>.
+    /// </summary>
+    public LlmEnvInheritanceSettings LlmEnvInheritance { get; set; } = new();
 }
 
 /// <summary>Knobs for <c>TaskProgressPolicy</c> / the ninth dispatcher clock (CARD-0153).</summary>
@@ -696,4 +702,47 @@ public sealed class StallDetectionSettings
     /// about to be failed by that clock has an Error row first. <c>&lt;= 0</c> disables the step.
     /// </summary>
     public int EscalateToErrorAfterMinutes { get; set; } = 90;
+}
+
+/// <summary>
+/// CARD-0260: which caller-env names a child task inherits, and (for a later refusal) which
+/// of those names mark a local key-proxy. S1 only reads <see cref="Enabled"/> and
+/// <see cref="Names"/>; the rest is configuration surface for the create-time gate.
+/// </summary>
+public sealed class LlmEnvInheritanceSettings
+{
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// Opaque passthrough names copied from the caller's Antiphon-visible env layers.
+    /// <c>X_LLM_*</c> are Mikey.LlmKeyProxy conventions, unknown to this code.
+    /// </summary>
+    public List<string> Names { get; set; } =
+    [
+        "X_LLM_PROJECT",
+        "X_LLM_KEY",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_CUSTOM_HEADERS",
+        "GROK_BASE_URL",
+        "GROK_CLI_CHAT_PROXY_BASE_URL",
+        "GROK_XAI_API_BASE_URL",
+        "OPENAI_BASE_URL",
+        "OPENAI_API_KEY",
+    ];
+
+    public string ProjectMarkerName { get; set; } = "X_LLM_PROJECT";
+
+    public List<string> ProxyUrlNames { get; set; } =
+    [
+        "ANTHROPIC_BASE_URL",
+        "GROK_BASE_URL",
+        "GROK_CLI_CHAT_PROXY_BASE_URL",
+        "GROK_XAI_API_BASE_URL",
+        "OPENAI_BASE_URL",
+    ];
+
+    public List<string> ProxyHostMarkers { get; set; } = ["localhost", "127.0.0.1"];
+
+    public bool RequireProjectAtProxy { get; set; } = true;
 }

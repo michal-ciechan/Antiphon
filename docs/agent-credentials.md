@@ -48,14 +48,17 @@ authenticates with `ANTHROPIC_API_KEY=<this>`"*; an API key says *"the value cal
 | 1 | Profile revision non-secret env | TUI profile revision |
 | 2 | Profile managed secrets | `PUT /api/agent-tui/profiles/{id}/secrets/{name}` |
 | 3 | Project default env | `Project.DefaultLaunchEnvJson` |
-| 4 | **The agent's own launch env** | `Agent.LaunchEnvJson` (agent PATCH `launchEnv`) |
-| 5 | Launch-time override | task `envOverride` / `delegate.ps1 -EnvOverride` |
-| 6 | `ExtraEnv` — Antiphon's `ANTIPHON_*` orchestration identity | code |
+| 4 | Inherited caller env | task `InheritedLaunchEnvJson` (CARD-0260: snapshot of the caller's LLM-routing names at create) |
+| 5 | **The agent's own launch env** | `Agent.LaunchEnvJson` (agent PATCH `launchEnv`) |
+| 6 | Launch-time override | task `envOverride` / `delegate.ps1 -EnvOverride` |
+| 7 | `ExtraEnv` — Antiphon's `ANTIPHON_*` orchestration identity | code |
 
 The reasoning, which is worth keeping in mind when you are tempted to reorder it: the agent's own
-field outranks the profile because it is the more specific thing somebody wrote about *this agent*;
-a project default outranks the shared profile because it is a credential/endpoint fact about this
-project's agents; neither outranks `ExtraEnv`, which carries Antiphon's own identity plumbing.
+field outranks inherited env and the profile because it is the more specific thing somebody wrote
+about *this agent*; inherited env outranks the project default because the caller's actual routing
+is more specific than the blanket; a project default outranks the shared profile because it is a
+credential/endpoint fact about this project's agents; none of them outrank `ExtraEnv`, which
+carries Antiphon's own identity plumbing. An explicit `-EnvOverride` still wins over inherited.
 
 **Then** two things happen, in this order:
 

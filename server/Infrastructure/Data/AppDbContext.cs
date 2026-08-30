@@ -1380,6 +1380,10 @@ public class AppDbContext : DbContext
                 .IsRequired()
                 .HasColumnType("jsonb")
                 .HasDefaultValue("{}");
+            entity.Property(t => t.InheritedLaunchEnvJson)
+                .IsRequired()
+                .HasColumnType("jsonb")
+                .HasDefaultValue("{}");
             // CARD-0084 S2. ClaudeCode on every pre-existing row, which is what they actually ran —
             // the default is a backfill, not a guess.
             entity.Property(t => t.AgentKind).IsRequired().HasDefaultValue(AgentKind.ClaudeCode);

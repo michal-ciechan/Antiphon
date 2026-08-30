@@ -295,6 +295,113 @@ public class AgentLaunchEnvTests
     }
 
     [Test]
+    public void inherited_env_beats_a_project_default_and_loses_to_the_agent()
+    {
+        var registry = NewRegistry();
+
+        var spec = registry.Resolve("test", new AgentLaunchOptions(
+            Cwd: "C:\\tmp",
+            ProjectDefaultEnv: new Dictionary<string, string>
+            {
+                ["X_LLM_PROJECT"] = "project",
+                ["FROM_PROJECT"] = "project",
+            },
+            InheritedEnv: new Dictionary<string, string>
+            {
+                ["X_LLM_PROJECT"] = "inherited",
+                ["FROM_INHERITED"] = "inherited",
+                ["CONTESTED_INH_AGENT"] = "inherited",
+            },
+            AgentEnv: new Dictionary<string, string>
+            {
+                ["CONTESTED_INH_AGENT"] = "agent",
+                ["FROM_AGENT"] = "agent",
+            }));
+
+        spec.Env["FROM_PROJECT"].ShouldBe("project");
+        spec.Env["FROM_INHERITED"].ShouldBe("inherited");
+        spec.Env["X_LLM_PROJECT"].ShouldBe("inherited");
+        spec.Env["CONTESTED_INH_AGENT"].ShouldBe("agent");
+        spec.Env["FROM_AGENT"].ShouldBe("agent");
+    }
+
+    [Test]
+    public void six_layers_contest_and_inherited_sits_between_project_and_agent()
+    {
+        // definition < project default < inherited < agent < override < ExtraEnv.
+        var registry = NewRegistry(definitionEnv: new Dictionary<string, string>
+        {
+            ["A"] = "definition",
+            ["B"] = "definition",
+        });
+
+        var spec = registry.Resolve("test", new AgentLaunchOptions(
+            Cwd: "C:\\tmp",
+            ProjectDefaultEnv: new Dictionary<string, string>
+            {
+                ["B"] = "project",
+                ["C"] = "project",
+            },
+            InheritedEnv: new Dictionary<string, string>
+            {
+                ["C"] = "inherited",
+                ["D"] = "inherited",
+            },
+            AgentEnv: new Dictionary<string, string>
+            {
+                ["D"] = "agent",
+                ["E"] = "agent",
+            },
+            LaunchEnvOverride: new Dictionary<string, string>
+            {
+                ["E"] = "override",
+                ["F"] = "override",
+            },
+            ExtraEnv: new Dictionary<string, string>
+            {
+                ["F"] = "extra",
+            }));
+
+        spec.Env["A"].ShouldBe("definition");
+        spec.Env["B"].ShouldBe("project");
+        spec.Env["C"].ShouldBe("inherited");
+        spec.Env["D"].ShouldBe("agent");
+        spec.Env["E"].ShouldBe("override");
+        spec.Env["F"].ShouldBe("extra");
+    }
+
+    [Test]
+    public void FilterTo_keeps_only_allowlisted_names_and_ProjectionsEqual_is_ordinal()
+    {
+        var names = new LlmEnvInheritanceSettings().Names;
+        var env = new Dictionary<string, string>
+        {
+            ["X_LLM_PROJECT"] = "PredictionMarkets",
+            ["ANTHROPIC_BASE_URL"] = "http://localhost:10746",
+            ["UNRELATED"] = "drop-me",
+            ["GROK_CLI_CHAT_PROXY_BASE_URL"] = "http://localhost:10746/v1",
+        };
+
+        var filtered = AgentLaunchEnv.FilterTo(env, names);
+        filtered.ShouldContainKey("X_LLM_PROJECT");
+        filtered.ShouldContainKey("ANTHROPIC_BASE_URL");
+        filtered.ShouldContainKey("GROK_CLI_CHAT_PROXY_BASE_URL");
+        filtered.ShouldNotContainKey("UNRELATED");
+
+        AgentLaunchEnv.ProjectionsEqual(env, filtered, names).ShouldBeTrue();
+        AgentLaunchEnv.ProjectionsEqual(
+            env,
+            new Dictionary<string, string> { ["X_LLM_PROJECT"] = "Other" },
+            names).ShouldBeFalse();
+        AgentLaunchEnv.ProjectionsEqual(null, new Dictionary<string, string>(), names).ShouldBeTrue();
+
+        AgentLaunchEnv.DifferingNames(
+            env,
+            new Dictionary<string, string> { ["X_LLM_PROJECT"] = "Other", ["ANTHROPIC_BASE_URL"] = "http://localhost:10746" },
+            names).ShouldBe(["GROK_CLI_CHAT_PROXY_BASE_URL", "X_LLM_PROJECT"]);
+    }
+
+    [Test]
     public void an_override_can_deliberately_set_a_kind_default_that_would_otherwise_be_gap_filled()
     {
         var registry = NewRegistry();

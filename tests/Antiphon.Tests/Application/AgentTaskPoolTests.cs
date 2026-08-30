@@ -151,6 +151,62 @@ public class AgentTaskPoolTests
     }
 
     [Test]
+    public async Task a_fresh_pool_spawn_stamps_inherited_env_onto_the_pool_agent()
+    {
+        using var workspace = new TempWorkspace();
+        var (dispatcher, _, _) = CreateHarness();
+        var inherited = AgentLaunchEnv.Serialize(new Dictionary<string, string>
+        {
+            ["X_LLM_PROJECT"] = "PredictionMarkets",
+            ["ANTHROPIC_BASE_URL"] = "http://localhost:10746",
+        });
+        var task = await SeedQueuedTaskAsync(
+            workspace.Path, AgentModelLevel.Medium, inheritedLaunchEnvJson: inherited);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var dispatched = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        dispatched.AgentId.ShouldNotBeNull();
+        var poolAgent = await verify.Agents.SingleAsync(a => a.Id == dispatched.AgentId!.Value);
+        poolAgent.IsPoolDelegate.ShouldBeTrue();
+        AgentLaunchEnv.Parse(poolAgent.LaunchEnvJson)["X_LLM_PROJECT"].ShouldBe("PredictionMarkets");
+        AgentLaunchEnv.Parse(poolAgent.LaunchEnvJson)["ANTHROPIC_BASE_URL"].ShouldBe("http://localhost:10746");
+    }
+
+    [Test]
+    public async Task a_warm_agent_is_not_reused_when_inherited_env_differs()
+    {
+        using var workspace = new TempWorkspace();
+        var (dispatcher, _, _) = CreateHarness();
+        var (warmAgentId, _) = await SeedWarmAgentAsync(
+            workspace.Path,
+            AgentModelLevel.Medium,
+            idleMinutes: 3,
+            launchEnvJson: AgentLaunchEnv.Serialize(new Dictionary<string, string>
+            {
+                ["X_LLM_PROJECT"] = "PredictionMarkets",
+            }));
+        var task = await SeedQueuedTaskAsync(
+            workspace.Path,
+            AgentModelLevel.Medium,
+            inheritedLaunchEnvJson: AgentLaunchEnv.Serialize(new Dictionary<string, string>
+            {
+                ["X_LLM_PROJECT"] = "Other",
+            }));
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var dispatched = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        dispatched.AgentId.ShouldNotBe(warmAgentId, "a process launched for one caller env cannot serve another");
+        (await verify.Agents.SingleAsync(a => a.Id == warmAgentId)).Status.ShouldBe(AgentStatus.Idle);
+        AgentLaunchEnv.Parse(
+            (await verify.Agents.SingleAsync(a => a.Id == dispatched.AgentId)).LaunchEnvJson)
+            ["X_LLM_PROJECT"].ShouldBe("Other");
+    }
+
+    [Test]
     public async Task unrelated_work_compacts_the_session_first_focused_on_the_new_task()
     {
         // The reused context is only an asset for RELATED work. For unrelated work it is baggage —
@@ -590,6 +646,8 @@ public class AgentTaskPoolTests
         }));
         services.AddSingleton<IWorktreeManager, Antiphon.Server.Infrastructure.Git.WorktreeManager>();
         services.AddSingleton<IGitService, Antiphon.Server.Infrastructure.Git.GitService>();
+        // CARD-0230: DelegationWorktreeService now takes GitWorkspaceService (c4d7e0d).
+        services.AddSingleton<GitWorkspaceService>();
         services.AddScoped<DelegationWorktreeService>();
         services.AddScoped<AgentTaskService>();
         services.AddSingleton<AgentTaskReplyService>();
@@ -601,7 +659,8 @@ public class AgentTaskPoolTests
 
     private static async Task<(Guid AgentId, Guid SessionId)> SeedWarmAgentAsync(
         string directory, AgentModelLevel level, int idleMinutes, Guid? reservedForRoot = null,
-        Guid? projectId = null, AgentKind kind = AgentKind.ClaudeCode)
+        Guid? projectId = null, AgentKind kind = AgentKind.ClaudeCode,
+        string? launchEnvJson = null)
     {
         var sessionId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
@@ -635,6 +694,7 @@ public class AgentTaskPoolTests
             PoolReservedForRootTaskId = reservedForRoot,
             PoolProjectId = projectId,
             PersistentSessionId = sessionId.ToString("D"),
+            LaunchEnvJson = launchEnvJson ?? "{}",
             CreatedAt = now,
             UpdatedAt = now,
         });
@@ -668,7 +728,8 @@ public class AgentTaskPoolTests
         Guid? pinnedAgentId = null,
         Guid? projectId = null,
         AgentKind kind = AgentKind.ClaudeCode,
-        string? worktreePath = null)
+        string? worktreePath = null,
+        string? inheritedLaunchEnvJson = null)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -687,6 +748,7 @@ public class AgentTaskPoolTests
             AgentId = pinnedAgentId,
             Ephemeral = pinnedAgentId is null,
             Status = AgentTaskStatus.Queued,
+            InheritedLaunchEnvJson = inheritedLaunchEnvJson ?? "{}",
             CreatedAt = DateTime.UtcNow,
         };
         await using var db = CreateContext();

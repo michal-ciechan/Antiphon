@@ -349,6 +349,44 @@ public class ApiKeyLaunchPathTests
         resolved.Spec.Env["CONTESTED_PROJ_AGENT"].ShouldBe("agent");
     }
 
+    [Test]
+    public async Task inherited_env_beats_the_project_default_and_loses_to_the_agent_on_the_managed_path()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildProvider(schema.ConnectionString);
+        var profile = await SeedProfileAsync(
+            provider,
+            nonSecretEnv: new Dictionary<string, string> { ["FROM_PROFILE"] = "profile" });
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "Managed",
+            TuiProfileId = profile,
+            LaunchEnvJson = JsonSerializer.Serialize(new Dictionary<string, string>
+            {
+                ["X_LLM_PROJECT"] = "agent",
+            }),
+        };
+
+        var resolved = await ResolveManagedAsync(
+            provider,
+            agent,
+            projectDefaultEnv: new Dictionary<string, string>
+            {
+                ["X_LLM_PROJECT"] = "project",
+                ["ANTHROPIC_BASE_URL"] = "http://from-project",
+            },
+            inheritedEnv: new Dictionary<string, string>
+            {
+                ["X_LLM_PROJECT"] = "inherited",
+                ["ANTHROPIC_BASE_URL"] = "http://from-inherited",
+            });
+
+        resolved.Spec.Env["FROM_PROFILE"].ShouldBe("profile");
+        resolved.Spec.Env["X_LLM_PROJECT"].ShouldBe("agent");
+        resolved.Spec.Env["ANTHROPIC_BASE_URL"].ShouldBe("http://from-inherited");
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     private static string NewName() => $"launch-{Guid.NewGuid():N}";
@@ -386,7 +424,8 @@ public class ApiKeyLaunchPathTests
         IReadOnlyList<string>? extraArgs = null,
         IReadOnlyDictionary<string, string>? extraEnv = null,
         IReadOnlyDictionary<string, string>? launchEnvOverride = null,
-        IReadOnlyDictionary<string, string>? projectDefaultEnv = null)
+        IReadOnlyDictionary<string, string>? projectDefaultEnv = null,
+        IReadOnlyDictionary<string, string>? inheritedEnv = null)
     {
         await using var scope = provider.CreateAsyncScope();
         var resolver = scope.ServiceProvider.GetRequiredService<AgentTuiLaunchResolver>();
@@ -398,7 +437,8 @@ public class ApiKeyLaunchPathTests
                 ExtraArgs: extraArgs,
                 ExtraEnv: extraEnv,
                 LaunchEnvOverride: launchEnvOverride,
-                ProjectDefaultEnv: projectDefaultEnv),
+                ProjectDefaultEnv: projectDefaultEnv,
+                InheritedEnv: inheritedEnv),
             Ct);
     }
 

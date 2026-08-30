@@ -142,4 +142,79 @@ public static class AgentLaunchEnv
 
         return validated;
     }
+
+    /// <summary>
+    /// Keep only the names in <paramref name="names"/> (Ordinal). Used to project a launch env
+    /// onto the CARD-0260 inherit list — never log the values.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> FilterTo(
+        IReadOnlyDictionary<string, string>? env,
+        IReadOnlyList<string>? names)
+    {
+        if (env is null || env.Count == 0 || names is null || names.Count == 0)
+            return Empty;
+
+        var allow = new HashSet<string>(names, StringComparer.Ordinal);
+        Dictionary<string, string>? result = null;
+        foreach (var (name, value) in env)
+        {
+            if (!allow.Contains(name))
+                continue;
+            result ??= new Dictionary<string, string>(StringComparer.Ordinal);
+            result[name] = value;
+        }
+
+        return result is null ? Empty : result;
+    }
+
+    /// <summary>
+    /// True when the inherit-list projections of both dictionaries match (same names and
+    /// Ordinal values). Two empty projections are equal.
+    /// </summary>
+    public static bool ProjectionsEqual(
+        IReadOnlyDictionary<string, string>? left,
+        IReadOnlyDictionary<string, string>? right,
+        IReadOnlyList<string>? names)
+    {
+        var a = FilterTo(left, names);
+        var b = FilterTo(right, names);
+        if (a.Count != b.Count)
+            return false;
+        foreach (var (key, value) in a)
+        {
+            if (!b.TryGetValue(key, out var other) || !string.Equals(value, other, StringComparison.Ordinal))
+                return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Inherit-list names whose values differ (present-vs-absent counts as a difference).
+    /// Sorted Ordinal so a warning line is stable. Never returns values.
+    /// </summary>
+    public static IReadOnlyList<string> DifferingNames(
+        IReadOnlyDictionary<string, string>? left,
+        IReadOnlyDictionary<string, string>? right,
+        IReadOnlyList<string>? names)
+    {
+        var a = FilterTo(left, names);
+        var b = FilterTo(right, names);
+        var keys = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var key in a.Keys)
+            keys.Add(key);
+        foreach (var key in b.Keys)
+            keys.Add(key);
+
+        var differing = new List<string>();
+        foreach (var key in keys)
+        {
+            a.TryGetValue(key, out var leftValue);
+            b.TryGetValue(key, out var rightValue);
+            if (!string.Equals(leftValue, rightValue, StringComparison.Ordinal))
+                differing.Add(key);
+        }
+
+        return differing;
+    }
 }

@@ -52,6 +52,15 @@ public class AgentTask
     public string LaunchEnvOverrideJson { get; set; } = "{}";
 
     /// <summary>
+    /// Caller-sourced LLM-routing env snapshot, taken at create (CARD-0260 S1). JSON object,
+    /// default <c>{}</c>. Filtered to <c>Delegation:LlmEnvInheritance:Names</c>. Merged after
+    /// the project default and before this task's agent env, so an explicit override and the
+    /// child agent's own <c>LaunchEnvJson</c> still win. Follow-ups and standing-agent pins
+    /// leave this empty — those continue an existing process.
+    /// </summary>
+    public string InheritedLaunchEnvJson { get; set; } = "{}";
+
+    /// <summary>
     /// WHICH AGENT PROGRAM runs this task — a different axis from <see cref="Kind"/> (which is
     /// worker-vs-orchestrator). Defaults to <see cref="AgentKind.ClaudeCode"/>, which is what every
     /// row created before CARD-0084 carries, so nothing about an existing task changes.

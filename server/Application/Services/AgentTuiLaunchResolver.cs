@@ -349,16 +349,23 @@ public sealed class AgentTuiLaunchResolver
             }
         }
 
-        // Merge order (CARD-0106): profile non-secret env and managed secrets -> project default
-        // -> the AGENT's own launch env -> launch-time override -> ExtraEnv. The agent's field
-        // outranks the profile because it is the more specific thing somebody wrote about THIS
-        // agent; a project default outranks the shared profile (a credential/endpoint fact about
-        // this project's agents) and loses to the agent. Neither outranks ExtraEnv, which carries
-        // Antiphon's own ANTIPHON_* orchestration identity. Null AgentEnv means "read it off the
-        // agent" — an explicit (possibly empty) dictionary from a caller wins.
+        // Merge order (CARD-0106 / CARD-0260): profile non-secret env and managed secrets ->
+        // project default -> inherited caller env -> the AGENT's own launch env -> launch-time
+        // override -> ExtraEnv. The agent's field outranks inherited because it is the more
+        // specific thing somebody wrote about THIS agent; inherited outranks the project default
+        // (the caller's actual routing is more specific than the blanket). Neither outranks
+        // ExtraEnv, which carries Antiphon's own ANTIPHON_* orchestration identity. Null AgentEnv
+        // means "read it off the agent" — an explicit (possibly empty) dictionary from a caller
+        // wins.
         if (options.ProjectDefaultEnv is not null)
         {
             foreach (var (key, value) in options.ProjectDefaultEnv)
+                environment[key] = value;
+        }
+
+        if (options.InheritedEnv is not null)
+        {
+            foreach (var (key, value) in options.InheritedEnv)
                 environment[key] = value;
         }
 

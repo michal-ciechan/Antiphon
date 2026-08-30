@@ -32,6 +32,10 @@ public sealed record AgentLaunchOptions(
     // Project-level default env (CARD-0106 gap 2). Merged after definition/profile env and before
     // the agent's LaunchEnvJson. Null means "none" (no project identity, or not yet fetched).
     IReadOnlyDictionary<string, string>? ProjectDefaultEnv = null,
+    // Caller-sourced LLM-routing env (CARD-0260 S1). Merged after the project default and before
+    // the agent's LaunchEnvJson, so a value written about THIS child agent, an explicit
+    // LaunchEnvOverride, and ExtraEnv all still win. Null or empty means "none".
+    IReadOnlyDictionary<string, string>? InheritedEnv = null,
     // CARD-0182 D2: the tier alias the caller wants appended as a model argument. Null means "do
     // not offer one" (card-spawn today, or an exact ModelId already won). The profile resolver
     // honours a blank ModelArgumentName by dropping this; AgentRegistry.Resolve appends
