@@ -402,6 +402,50 @@ public class SessionMessageQueueServiceTests
         }
     }
 
+    // CARD-0264: a clean turn's AssistantText and TurnEnd share a timestamp. A single stale
+    // record backfilled above that end must not stay working merely because the activity group's
+    // maximum timestamp comes from the earlier AssistantText rather than the backfilled row.
+    [Test]
+    public async Task A_stale_backfill_above_a_clean_same_timestamp_turn_end_reads_idle()
+    {
+        var h = await CreateHarnessAsync();
+        try
+        {
+            var endAt = DateTime.UtcNow.AddMinutes(-10);
+            await InsertEntryAsync(h, TranscriptKinds.AssistantText, "clean turn output", timestamp: endAt);
+            await InsertEntryAsync(h, TranscriptKinds.TurnEnd, null, timestamp: endAt);
+            await InsertEntryAsync(h, TranscriptKinds.ToolResult, "stale backfill", timestamp: endAt.AddMinutes(-5));
+
+            (await h.Queue.GetQueueAsync(h.SessionId, CancellationToken.None)).Working
+                .ShouldBeFalse("the only activity above the end is proven stale by its own timestamp");
+        }
+        finally
+        {
+            await h.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task A_real_post_end_activity_keeps_a_mixed_backfill_shape_working()
+    {
+        var h = await CreateHarnessAsync();
+        try
+        {
+            var endAt = DateTime.UtcNow.AddMinutes(-10);
+            await InsertEntryAsync(h, TranscriptKinds.AssistantText, "clean turn output", timestamp: endAt);
+            await InsertEntryAsync(h, TranscriptKinds.TurnEnd, null, timestamp: endAt);
+            await InsertEntryAsync(h, TranscriptKinds.UserPrompt, "new work", timestamp: endAt.AddMinutes(1));
+            await InsertEntryAsync(h, TranscriptKinds.ToolResult, "stale backfill", timestamp: endAt.AddMinutes(-5));
+
+            (await h.Queue.GetQueueAsync(h.SessionId, CancellationToken.None)).Working
+                .ShouldBeTrue("a qualifying post-end activity remains evidence of a working session");
+        }
+        finally
+        {
+            await h.DisposeAsync();
+        }
+    }
+
     // Guard for the timestamp override's direction: genuinely NEW activity after the last end
     // (later timestamp AND later sequence) must still read as working.
     [Test]

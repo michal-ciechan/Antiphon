@@ -2616,7 +2616,7 @@ public sealed class SessionMessageQueueService
         // activity as well, because it lands AFTER the boundary). An AUTO boundary stays
         // housekeeping — it fires mid-turn, so counting it as an end would read a working session
         // as idle. Predicates inlined for EF translation, like the interrupt prefix.
-        var end = await db.TranscriptEntries
+        var end = db.TranscriptEntries
             .Where(t => sessionIds.Contains(t.AgentSessionId)
                 && (t.Kind == TranscriptKinds.TurnEnd
                     || t.Kind == TranscriptKinds.SessionRestartBoundary
@@ -2627,9 +2627,8 @@ public sealed class SessionMessageQueueService
                         && t.Text != null
                         && t.Text.StartsWith(TranscriptKinds.InterruptedPromptPrefix))))
             .GroupBy(t => t.AgentSessionId)
-            .Select(g => new { SessionId = g.Key, Seq = g.Max(t => t.Sequence), Ts = g.Max(t => t.Timestamp) })
-            .ToDictionaryAsync(entry => entry.SessionId, ct);
-        var activity = await db.TranscriptEntries
+            .Select(g => new { SessionId = g.Key, Seq = g.Max(t => t.Sequence), Ts = g.Max(t => t.Timestamp) });
+        var activity = db.TranscriptEntries
             .Where(t => sessionIds.Contains(t.AgentSessionId)
                 && t.Kind != TranscriptKinds.TurnEnd
                 && t.Kind != TranscriptKinds.TurnTitle
@@ -2657,41 +2656,35 @@ public sealed class SessionMessageQueueService
                     && t.Text.StartsWith(TranscriptKinds.CompactionContinuationPromptPrefix))
                 && !(t.Kind == TranscriptKinds.UserPrompt
                     && t.Text != null
-                    && t.Text.StartsWith(TranscriptKinds.InterruptedPromptPrefix)))
-            .GroupBy(t => t.AgentSessionId)
-            .Select(g => new { SessionId = g.Key, Seq = g.Max(t => t.Sequence), Ts = g.Max(t => t.Timestamp) })
-            .ToDictionaryAsync(entry => entry.SessionId, ct);
+                    && t.Text.StartsWith(TranscriptKinds.InterruptedPromptPrefix)));
 
-        var result = new Dictionary<Guid, bool>(sessionIds.Count);
-        foreach (var sessionId in sessionIds)
-        {
-            end.TryGetValue(sessionId, out var sessionEnd);
-            activity.TryGetValue(sessionId, out var sessionActivity);
+        var workingAfterEnd = await (
+            from activityEntry in activity
+            join sessionEnd in end on activityEntry.AgentSessionId equals sessionEnd.SessionId
+            // Stored sequences are ARRIVAL-ordered: catch-up can rebase stale pre-gap activity
+            // above a persisted TurnEnd. The timestamp decision must therefore be row-correlated,
+            // not a comparison of group maxima: working requires ONE post-end activity whose own
+            // timestamp does not prove it predates that end. Null timestamps preserve the prior
+            // conservative rule (they cannot prove stale).
+            where activityEntry.Sequence > sessionEnd.Seq
+                && (activityEntry.Timestamp == null
+                    || sessionEnd.Ts == null
+                    || activityEntry.Timestamp >= sessionEnd.Ts)
+            select activityEntry.AgentSessionId)
+            .Distinct()
+            .ToListAsync(ct);
 
-            if ((sessionActivity?.Seq ?? 0) <= (sessionEnd?.Seq ?? 0))
-            {
-                result[sessionId] = false;
-                continue;
-            }
+        // Sessions without an end have always read working when they contain activity. Keep that
+        // rule in SQL too; splitting it from the inner join above avoids EF's untranslatable left
+        // join over the grouped end projection.
+        var workingWithoutEnd = await activity
+            .Where(t => !end.Select(e => e.SessionId).Contains(t.AgentSessionId))
+            .Select(t => t.AgentSessionId)
+            .Distinct()
+            .ToListAsync(ct);
 
-        // Sequence says working — but stored sequences are ARRIVAL-ordered: a catch-up sync that
-        // backfills entries missed during a stream gap rebases them past the session's max, so
-        // stale pre-gap activity can leapfrog an already-persisted TurnEnd. That exact shape left
-        // Antiphon-Opus badged "Working" forever after a server restart (2026-08-08): 8 backfilled
-        // tool records landed ABOVE the turn's end. Record timestamps come from the transcript
-        // itself and survive reordering — when they PROVE all activity predates the last end, the
-        // session is idle. Equal timestamps stay with the sequence verdict (same-line record pairs
-        // share one timestamp), and missing ones (TurnTitle-only in practice, excluded anyway)
-        // never override.
-            if (sessionActivity?.Ts is DateTime activityTs && sessionEnd?.Ts is DateTime endTs && activityTs < endTs)
-            {
-                result[sessionId] = false;
-                continue;
-            }
-
-            result[sessionId] = true;
-        }
-        return result;
+        var working = workingAfterEnd.Concat(workingWithoutEnd).ToHashSet();
+        return sessionIds.ToDictionary(sessionId => sessionId, working.Contains);
     }
 
     /// <param name="maxAttempts">

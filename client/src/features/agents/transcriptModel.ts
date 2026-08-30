@@ -99,9 +99,7 @@ function isCompactionContinuation(e: TranscriptEntryDto): boolean {
 // SessionRestartBoundary (server-synthesized on relaunch of a mid-turn transcript) is a turn END too.
 // Exported for tests: the exclusion list must stay in lockstep with the server.
 export function isWorking(entries: TranscriptEntryDto[]): boolean {
-  let lastActivitySeq = 0
   let lastEndSeq = 0
-  let lastActivityTs: number | null = null
   let lastEndTs: number | null = null
   for (const e of entries) {
     const t = e.timestamp ? Date.parse(e.timestamp) : null
@@ -113,24 +111,26 @@ export function isWorking(entries: TranscriptEntryDto[]): boolean {
     ) {
       lastEndSeq = Math.max(lastEndSeq, e.sequence)
       if (t !== null) lastEndTs = lastEndTs === null ? t : Math.max(lastEndTs, t)
-    } else if (
+    }
+  }
+  for (const e of entries) {
+    if (
       e.kind !== 'TurnTitle' &&
       e.kind !== 'CompactBoundary' &&
       e.kind !== 'QueuedUserPrompt' &&
       !isCompactionContinuation(e) &&
       !isLocalCommandRecord(e)
     ) {
-      lastActivitySeq = Math.max(lastActivitySeq, e.sequence)
-      if (t !== null) lastActivityTs = lastActivityTs === null ? t : Math.max(lastActivityTs, t)
+      const t = e.timestamp ? Date.parse(e.timestamp) : null
+      // Sequences are ARRIVAL-ordered: a catch-up sync can backfill stale pre-gap activity ABOVE
+      // an already-persisted TurnEnd. Work only if some post-end activity's OWN timestamp cannot
+      // prove it is stale; comparing group-max timestamps is not row-correlated and fails when a
+      // same-line AssistantText shares the TurnEnd timestamp. Null preserves the conservative
+      // rule: an unstamped record cannot prove it predates the end.
+      if (e.sequence > lastEndSeq && (t === null || lastEndTs === null || t >= lastEndTs)) return true
     }
   }
-  if (lastActivitySeq <= lastEndSeq) return false
-  // Sequences are ARRIVAL-ordered: a catch-up sync can backfill stale pre-gap activity ABOVE an
-  // already-persisted TurnEnd (mirror of the server's IsWorkingAsync; live miss 2026-08-08).
-  // Record timestamps survive that reordering — when they prove all activity predates the last
-  // end, the session is idle. Equal timestamps keep the sequence verdict.
-  if (lastActivityTs !== null && lastEndTs !== null && lastActivityTs < lastEndTs) return false
-  return true
+  return false
 }
 
 /** Token totals + wall-clock for one turn, plus the idle gap since the previous turn ended. */

@@ -189,6 +189,27 @@ describe('isWorking', () => {
     ).toBe(false)
   })
 
+  it('reads idle when one stale backfill follows a clean same-timestamp turn end', () => {
+    expect(
+      isWorking([
+        entry(1, 'AssistantText', 'clean turn output', { timestamp: at(30) }),
+        entry(2, 'TurnEnd', null, { timestamp: at(30) }),
+        entry(3, 'ToolResult', 'stale backfill', { timestamp: at(10) }),
+      ]),
+    ).toBe(false)
+  })
+
+  it('keeps a mixed backfill shape working when real activity follows the turn end', () => {
+    expect(
+      isWorking([
+        entry(1, 'AssistantText', 'clean turn output', { timestamp: at(30) }),
+        entry(2, 'TurnEnd', null, { timestamp: at(30) }),
+        entry(3, 'UserPrompt', 'new work', { timestamp: at(60) }),
+        entry(4, 'ToolResult', 'stale backfill', { timestamp: at(10) }),
+      ]),
+    ).toBe(true)
+  })
+
   it('keeps reading working when the newest activity is genuinely newer than the last end', () => {
     expect(
       isWorking([
