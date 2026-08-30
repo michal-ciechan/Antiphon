@@ -1730,31 +1730,47 @@ public sealed class AgentTaskReplyService
     /// a second, drifting index of the workspace. Disk wins: a merged plan remains readable after
     /// its transient worktree branch has gone. Only a branch-only hit retains its ref.
     /// </summary>
-    private static async Task<(string? Path, string? Ref)> ResolveDeliverableAsync(
+    /// <summary>
+    /// CARD-0230: an enrichment of the report, not a requirement of it — a harness/host missing
+    /// <see cref="GitWorkspaceService"/> (or any other failure here) must never abort settlement
+    /// before <c>SaveChangesAsync</c>, the same contract <see cref="RecordScopeDriftAsync"/> already
+    /// holds itself to for the same reason.
+    /// </summary>
+    private async Task<(string? Path, string? Ref)> ResolveDeliverableAsync(
         IServiceProvider services, AgentTask task, string report, CancellationToken ct)
     {
-        var git = services.GetRequiredService<GitWorkspaceService>();
-        foreach (Match match in DeliverablePathPattern.Matches(report))
+        try
         {
-            var relative = match.Groups["path"].Value;
-            if (string.IsNullOrWhiteSpace(relative))
-                continue;
-
-            foreach (var root in new[] { task.WorkingDirectory, task.RepoPath }.Where(root => !string.IsNullOrWhiteSpace(root)).Distinct(StringComparer.OrdinalIgnoreCase))
+            var git = services.GetRequiredService<GitWorkspaceService>();
+            foreach (Match match in DeliverablePathPattern.Matches(report))
             {
-                if (File.Exists(Path.Combine(root!, relative.Replace('/', Path.DirectorySeparatorChar))))
-                    return (relative, null);
+                var relative = match.Groups["path"].Value;
+                if (string.IsNullOrWhiteSpace(relative))
+                    continue;
+
+                foreach (var root in new[] { task.WorkingDirectory, task.RepoPath }.Where(root => !string.IsNullOrWhiteSpace(root)).Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    if (File.Exists(Path.Combine(root!, relative.Replace('/', Path.DirectorySeparatorChar))))
+                        return (relative, null);
+                }
+
+                if (task.Workspace == WorkspaceMode.Worktree && !string.IsNullOrWhiteSpace(task.WorktreeBranch))
+                {
+                    var repository = task.RepoPath ?? task.WorkingDirectory;
+                    if (await git.GetContentAtAsync(repository, relative, task.WorktreeBranch, ct) is not null)
+                        return (relative, task.WorktreeBranch);
+                }
             }
 
-            if (task.Workspace == WorkspaceMode.Worktree && !string.IsNullOrWhiteSpace(task.WorktreeBranch))
-            {
-                var repository = task.RepoPath ?? task.WorkingDirectory;
-                if (await git.GetContentAtAsync(repository, relative, task.WorktreeBranch, ct) is not null)
-                    return (relative, task.WorktreeBranch);
-            }
+            return (null, null);
         }
-
-        return (null, null);
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex, "Could not resolve a deliverable pointer for task {ShortId}.",
+                DelegationReportFormatter.Short(task.Id));
+            return (null, null);
+        }
     }
 
     /// <summary>
