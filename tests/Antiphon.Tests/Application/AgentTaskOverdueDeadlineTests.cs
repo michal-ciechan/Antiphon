@@ -480,7 +480,7 @@ public class AgentTaskOverdueDeadlineTests
             await db.TranscriptEntries.Where(e => _sessions.Contains(e.AgentSessionId)).ExecuteDeleteAsync();
             await db.SessionQueuedMessages.Where(m => _sessions.Contains(m.AgentSessionId)).ExecuteDeleteAsync();
             await db.AgentTaskEvents.Where(e => _tasks.Contains(e.AgentTaskId)).ExecuteDeleteAsync();
-            await db.AgentIncidents.Where(i => _agents.Contains(i.AgentId)).ExecuteDeleteAsync();
+            await db.AgentIncidents.Where(i => i.AgentId != null && _agents.Contains(i.AgentId.Value)).ExecuteDeleteAsync();
             await db.AgentTasks.Where(t => _tasks.Contains(t.Id)).ExecuteDeleteAsync();
             await db.AgentSessions.Where(s => _sessions.Contains(s.Id)).ExecuteDeleteAsync();
             await db.Agents.Where(a => _agents.Contains(a.Id)).ExecuteDeleteAsync();

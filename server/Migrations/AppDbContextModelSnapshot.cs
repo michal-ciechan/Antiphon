@@ -178,7 +178,7 @@ namespace Antiphon.Server.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<Guid>("AgentId")
+                    b.Property<Guid?>("AgentId")
                         .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
@@ -3013,8 +3013,7 @@ namespace Antiphon.Server.Migrations
                     b.HasOne("Antiphon.Server.Domain.Entities.Agent", "Agent")
                         .WithMany()
                         .HasForeignKey("AgentId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Cascade);
 
                     b.Navigation("Agent");
                 });

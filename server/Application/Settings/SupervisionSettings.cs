@@ -29,6 +29,19 @@ public sealed class SupervisionSettings
     public DeliveryVerificationSettings DeliveryVerification { get; set; } = new();
     public ApiErrorRecoverySettings ApiErrorRecovery { get; set; } = new();
     public HerdrCorroborationSettings HerdrCorroboration { get; set; } = new();
+    public OrchestratorInvestigationSettings OrchestratorInvestigation { get; set; } = new();
+}
+
+/// <summary>
+/// CARD-0247 S3: periodic detection of orchestrator investigation runs. Detection only —
+/// Warning incident + Process-group attention row; never kills or retypes.
+/// </summary>
+public sealed class OrchestratorInvestigationSettings
+{
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>How often the supervisor tick piggy-backs the investigation sweep.</summary>
+    public int SweepPeriodSeconds { get; set; } = 60;
 }
 
 /// <summary>

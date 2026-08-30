@@ -118,6 +118,14 @@ public enum AttentionKind
     /// acknowledges it. Not subject to RecentFailure's 24-hour window.
     /// </summary>
     FailureUnacknowledged = 15,
+
+    /// <summary>
+    /// An orchestrator session did a cold investigation run — consecutive source reads with no
+    /// dispatch and no report naming those files (CARD-0247). Warning, Process group, after
+    /// <see cref="FailureUnacknowledged"/>. Detection only: the row exists because the sweep
+    /// wrote an <c>OrchestratorInvestigation</c> incident, and nothing here dispatches or kills.
+    /// </summary>
+    OrchestratorInvestigation = 16,
 }
 
 /// <summary>

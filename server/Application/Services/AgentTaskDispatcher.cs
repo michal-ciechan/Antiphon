@@ -3012,8 +3012,8 @@ public sealed class AgentTaskDispatcher
         }
 
         var incidentAgentIds = (await _db.AgentIncidents.AsNoTracking()
-            .Where(i => agentIds.Contains(i.AgentId))
-            .Select(i => i.AgentId)
+            .Where(i => i.AgentId != null && agentIds.Contains(i.AgentId.Value))
+            .Select(i => i.AgentId!.Value)
             .Distinct()
             .ToListAsync(ct))
             .ToHashSet();

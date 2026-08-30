@@ -11,6 +11,7 @@ import {
   TbPlayerPlayFilled,
   TbPlugConnectedX,
   TbRepeat,
+  TbSearch,
   TbSkull,
   TbX,
 } from 'react-icons/tb'
@@ -129,6 +130,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     color: 'danger',
     icon: TbAlertTriangle,
     hint: 'Failed before dispatch, and the completion note has not reached the caller.',
+  },
+  OrchestratorInvestigation: {
+    label: 'Investigation',
+    color: 'warning',
+    icon: TbSearch,
+    hint: 'The orchestrator read source files itself instead of dispatching. Detection only.',
   },
 }
 

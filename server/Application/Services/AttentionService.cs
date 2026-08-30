@@ -163,6 +163,7 @@ public sealed class AttentionService
         items.AddRange(await BuildParkedMessageItemsAsync(ct));
         items.AddRange(await BuildRecentIncidentItemsAsync(since, attachedIncidents, ct));
         items.AddRange(BuildFailureUnacknowledgedItems(unacknowledged, costs, checkDigests));
+        items.AddRange(await BuildOrchestratorInvestigationItemsAsync(since, ct));
         items.AddRange(BuildRecentFailureItems(failed, costs, checkDigests));
 
         // Asked unconditionally, because RunnerConsulted is a claim about whether anybody asked and a
@@ -789,11 +790,13 @@ public sealed class AttentionService
         if (fresh.Count == 0)
             return items;
 
-        var agentIds = fresh.Select(i => i.AgentId).Distinct().ToList();
-        var agentNames = await _db.Agents.AsNoTracking()
-            .Where(a => agentIds.Contains(a.Id))
-            .Select(a => new { a.Id, a.Name })
-            .ToDictionaryAsync(a => a.Id, a => a.Name, ct);
+        var agentIds = fresh.Where(i => i.AgentId != null).Select(i => i.AgentId!.Value).Distinct().ToList();
+        var agentNames = agentIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await _db.Agents.AsNoTracking()
+                .Where(a => agentIds.Contains(a.Id))
+                .Select(a => new { a.Id, a.Name })
+                .ToDictionaryAsync(a => a.Id, a => a.Name, ct);
 
         // Grouped per agent AND per kind. Per agent alone was the plan's word, but it would fold
         // DeliveryVerificationFailed into DeliveryTransportFailed on the same agent and lose the
@@ -804,7 +807,9 @@ public sealed class AttentionService
             var newest = group.OrderByDescending(i => i.CreatedAt).First();
             var oldest = group.Min(i => i.CreatedAt);
             var severity = group.Max(i => i.Severity);
-            var name = agentNames.GetValueOrDefault(group.Key.AgentId) ?? group.Key.AgentId.ToString("N")[..8];
+            var name = group.Key.AgentId is Guid agentId
+                ? agentNames.GetValueOrDefault(agentId) ?? agentId.ToString("N")[..8]
+                : $"session {newest.SessionId?.ToString("N")[..8] ?? "unknown"}";
 
             items.Add(new AttentionItemDto(
                 AttentionKind.RecentCriticalIncident,
@@ -853,6 +858,56 @@ public sealed class AttentionService
                 task.CompletedAt,
                 costs.GetValueOrDefault(task.Id),
                 [AttentionAction.Retry, AttentionAction.OpenDrawer]);
+        }).ToList();
+    }
+
+    // ---- CARD-0247: an orchestrator did a cold investigation run --------------------------------
+
+    private async Task<List<AttentionItemDto>> BuildOrchestratorInvestigationItemsAsync(
+        DateTime since, CancellationToken ct)
+    {
+        var rows = await _db.AgentIncidents.AsNoTracking()
+            .Where(i => i.Kind == AgentIncidentKind.OrchestratorInvestigation
+                && i.CreatedAt >= since
+                && i.SessionId != null)
+            .Select(i => new { i.AgentId, i.SessionId, i.Message, i.CreatedAt, i.FailureReason })
+            .ToListAsync(ct);
+        if (rows.Count == 0)
+            return [];
+
+        var agentIds = rows.Where(r => r.AgentId is not null).Select(r => r.AgentId!.Value).Distinct().ToList();
+        var agentNames = agentIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await _db.Agents.AsNoTracking()
+                .Where(a => agentIds.Contains(a.Id))
+                .Select(a => new { a.Id, a.Name })
+                .ToDictionaryAsync(a => a.Id, a => a.Name, ct);
+
+        return rows.Select(r =>
+        {
+            var shortSession = DelegationReportFormatter.Short(r.SessionId!.Value);
+            var title = r.AgentId is Guid agentId && agentNames.TryGetValue(agentId, out var name)
+                ? name
+                : $"Orchestrator session {shortSession}";
+            var actions = r.AgentId is null
+                ? new[] { AttentionAction.OpenDrawer }
+                : new[] { AttentionAction.OpenAgent, AttentionAction.OpenDrawer };
+            return new AttentionItemDto(
+                AttentionKind.OrchestratorInvestigation,
+                AlertSeverity.Warning,
+                null,
+                r.SessionId,
+                r.AgentId,
+                null,
+                title,
+                r.Message,
+                Excerpt(
+                    "The orchestrator read source files itself instead of dispatching a Debug "
+                    + "delegate. Detection only — nothing is killed. "
+                    + (r.FailureReason ?? "")),
+                r.CreatedAt,
+                null,
+                actions);
         }).ToList();
     }
 

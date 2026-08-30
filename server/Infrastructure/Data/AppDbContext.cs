@@ -181,6 +181,7 @@ public class AppDbContext : DbContext
             entity.HasOne(i => i.Agent)
                 .WithMany()
                 .HasForeignKey(i => i.AgentId)
+                .IsRequired(false)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

@@ -273,7 +273,7 @@ public sealed class AgentSupervisorService
     }
 
     public async Task RecordIncidentAsync(
-        Guid agentId,
+        Guid? agentId,
         Guid? sessionId,
         AgentIncidentKind kind,
         AlertSeverity severity,
@@ -306,13 +306,14 @@ public sealed class AgentSupervisorService
         if (!raiseAlert)
             return;
 
+        var subject = agentId is Guid id ? id.ToString("D") : sessionId?.ToString("D") ?? "unclaimed";
         await _alerts.RaiseAsync(
             new AlertRaise(
                 severity,
                 Source: "supervisor",
                 Title: $"{kind}: agent supervision",
                 Detail: message,
-                DedupKey: $"supervisor:{kind}:{agentId}",
+                DedupKey: $"supervisor:{kind}:{subject}",
                 AgentId: agentId,
                 SessionId: sessionId),
             ct);

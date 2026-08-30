@@ -189,7 +189,7 @@ public sealed class AgentService
             .OrderByDescending(i => i.CreatedAt)
             .Take(Math.Clamp(take, 1, 200))
             .Select(i => new AgentIncidentDto(
-                i.Id, i.AgentId, i.SessionId, i.Kind, i.Severity, i.Message, i.ExitCode, i.FailureReason, i.CreatedAt))
+                i.Id, i.AgentId!.Value, i.SessionId, i.Kind, i.Severity, i.Message, i.ExitCode, i.FailureReason, i.CreatedAt))
             .ToListAsync(ct);
     }
 

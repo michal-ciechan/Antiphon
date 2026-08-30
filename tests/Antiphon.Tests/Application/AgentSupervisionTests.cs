@@ -514,7 +514,7 @@ public class AgentSupervisionTests
             .Where(a => a.WorkingDirectory.StartsWith(tempRoot))
             .Select(a => a.Id)
             .ToListAsync();
-        await db.AgentIncidents.Where(i => agentIds.Contains(i.AgentId)).ExecuteDeleteAsync();
+        await db.AgentIncidents.Where(i => i.AgentId != null && agentIds.Contains(i.AgentId.Value)).ExecuteDeleteAsync();
         await db.Alerts.Where(a => a.AgentId != null && agentIds.Contains(a.AgentId.Value)).ExecuteDeleteAsync();
         await db.AgentSupervisionStates.Where(s => agentIds.Contains(s.AgentId)).ExecuteDeleteAsync();
         await db.Agents.Where(a => agentIds.Contains(a.Id))

@@ -768,6 +768,26 @@ public class AttentionServiceTests
     }
 
     [Test]
+    public async Task an_orchestrator_investigation_incident_is_a_warning_process_row()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var agent = await scenario.AddAgentAsync(session);
+        await scenario.AddIncidentAsync(
+            agent, session, AgentIncidentKind.OrchestratorInvestigation, AlertSeverity.Warning,
+            "8 reads over 77s across 4 files, no dispatch; nudged=no", minutesAgo: 3);
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.SessionId == session
+            && i.Kind == AttentionKind.OrchestratorInvestigation);
+
+        item.Severity.ShouldBe(AlertSeverity.Warning);
+        item.Headline.ShouldContain("8 reads over 77s");
+        item.Headline.ShouldContain("nudged=no");
+        item.AgentId.ShouldBe(agent);
+        item.Actions.ShouldContain(AttentionAction.OpenAgent);
+    }
+
+    [Test]
     public async Task once_disarmed_it_is_a_RecentFailure()
     {
         await using var scenario = new Scenario();
@@ -1586,7 +1606,7 @@ public class AttentionServiceTests
             await db.TranscriptEntries.Where(e => _sessions.Contains(e.AgentSessionId)).ExecuteDeleteAsync();
             await db.SessionQueuedMessages.Where(m => _sessions.Contains(m.AgentSessionId)).ExecuteDeleteAsync();
             await db.AgentTaskEvents.Where(e => _tasks.Contains(e.AgentTaskId)).ExecuteDeleteAsync();
-            await db.AgentIncidents.Where(i => _agents.Contains(i.AgentId)).ExecuteDeleteAsync();
+            await db.AgentIncidents.Where(i => i.AgentId != null && _agents.Contains(i.AgentId.Value)).ExecuteDeleteAsync();
             await db.AgentTasks.Where(t => _tasks.Contains(t.Id)).ExecuteDeleteAsync();
             // A session pointed at one of our cards would block the card delete (CARD-0040 tests).
             await db.AgentSessions.Where(s => s.CardId != null && _cards.Contains(s.CardId!.Value))

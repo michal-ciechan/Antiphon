@@ -668,7 +668,7 @@ public class HerdrAlwaysOnChannelParityTests
             .ToListAsync();
         await db.SessionQueuedMessages.Where(m => sessionIds.Contains(m.AgentSessionId)).ExecuteDeleteAsync();
         await db.TranscriptEntries.Where(t => sessionIds.Contains(t.AgentSessionId)).ExecuteDeleteAsync();
-        await db.AgentIncidents.Where(i => agentIds.Contains(i.AgentId)).ExecuteDeleteAsync();
+        await db.AgentIncidents.Where(i => i.AgentId != null && agentIds.Contains(i.AgentId.Value)).ExecuteDeleteAsync();
         await db.Alerts.Where(a => a.AgentId != null && agentIds.Contains(a.AgentId.Value)).ExecuteDeleteAsync();
         await db.AgentSupervisionStates.Where(s => agentIds.Contains(s.AgentId)).ExecuteDeleteAsync();
         await db.ChatChannels.Where(c => c.AgentId != null && agentIds.Contains(c.AgentId.Value)).ExecuteDeleteAsync();

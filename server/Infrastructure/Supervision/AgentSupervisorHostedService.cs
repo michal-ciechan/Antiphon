@@ -8,7 +8,8 @@ namespace Antiphon.Server.Infrastructure.Supervision;
 /// Drives <see cref="AgentSupervisorService"/> on a fixed tick (same shape as the reconciliation
 /// and orchestrator hosted services), plus a slow incident-retention pass every 6 hours, the
 /// channel-reply correlation sweep every minute, the idle auto-compact sweep every minute,
-/// and the API-error recovery sweep every minute.
+/// the API-error recovery sweep every minute, and the orchestrator-investigation detection
+/// sweep every minute (CARD-0247).
 /// </summary>
 public sealed class AgentSupervisorHostedService : BackgroundService
 {
@@ -33,6 +34,7 @@ public sealed class AgentSupervisorHostedService : BackgroundService
     private readonly ContextCompactionService _compaction;
     private readonly ApiErrorRecoveryService _apiErrorRecovery;
     private readonly HerdrStatusCorroborationService _herdrCorroboration;
+    private readonly OrchestratorInvestigationSweepService _investigation;
     private readonly SupervisionSettings _settings;
     private readonly ILogger<AgentSupervisorHostedService> _logger;
     private DateTime _lastPruneUtc = DateTime.MinValue;
@@ -40,6 +42,7 @@ public sealed class AgentSupervisorHostedService : BackgroundService
     private DateTime _lastCompactionSweepUtc = DateTime.MinValue;
     private DateTime _lastApiErrorRecoverySweepUtc = DateTime.MinValue;
     private DateTime _lastHerdrCorroborationSweepUtc = DateTime.MinValue;
+    private DateTime _lastInvestigationSweepUtc = DateTime.MinValue;
 
     public AgentSupervisorHostedService(
         IServiceScopeFactory scopeFactory,
@@ -47,6 +50,7 @@ public sealed class AgentSupervisorHostedService : BackgroundService
         ContextCompactionService compaction,
         ApiErrorRecoveryService apiErrorRecovery,
         HerdrStatusCorroborationService herdrCorroboration,
+        OrchestratorInvestigationSweepService investigation,
         IOptions<SupervisionSettings> settings,
         ILogger<AgentSupervisorHostedService> logger)
     {
@@ -55,6 +59,7 @@ public sealed class AgentSupervisorHostedService : BackgroundService
         _compaction = compaction;
         _apiErrorRecovery = apiErrorRecovery;
         _herdrCorroboration = herdrCorroboration;
+        _investigation = investigation;
         _settings = settings.Value;
         _logger = logger;
     }
@@ -135,6 +140,21 @@ public sealed class AgentSupervisorHostedService : BackgroundService
                             _logger.LogWarning(
                                 "Raised {Count} HerdrStatusDisagreement incident(s) (corroboration only)",
                                 disagreements);
+                        }
+                    }
+
+                    var investigationPeriod = TimeSpan.FromSeconds(
+                        Math.Max(1, _settings.OrchestratorInvestigation.SweepPeriodSeconds));
+                    if (_settings.OrchestratorInvestigation.Enabled
+                        && DateTime.UtcNow - _lastInvestigationSweepUtc >= investigationPeriod)
+                    {
+                        _lastInvestigationSweepUtc = DateTime.UtcNow;
+                        var investigations = await _investigation.SweepAsync(stoppingToken);
+                        if (investigations > 0)
+                        {
+                            _logger.LogInformation(
+                                "Raised {Count} OrchestratorInvestigation incident(s) (detection only)",
+                                investigations);
                         }
                     }
                 }

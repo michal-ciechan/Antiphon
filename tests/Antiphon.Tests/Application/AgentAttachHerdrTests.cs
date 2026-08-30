@@ -498,7 +498,7 @@ public class AgentAttachHerdrTests
             .ToListAsync();
         await db.SessionQueuedMessages.Where(m => sessionIds.Contains(m.AgentSessionId)).ExecuteDeleteAsync();
         await db.TranscriptEntries.Where(t => sessionIds.Contains(t.AgentSessionId)).ExecuteDeleteAsync();
-        await db.AgentIncidents.Where(i => agentIds.Contains(i.AgentId)).ExecuteDeleteAsync();
+        await db.AgentIncidents.Where(i => i.AgentId != null && agentIds.Contains(i.AgentId.Value)).ExecuteDeleteAsync();
         await db.AgentSupervisionStates.Where(s => agentIds.Contains(s.AgentId)).ExecuteDeleteAsync();
         await db.Agents.Where(a => agentIds.Contains(a.Id))
             .ExecuteUpdateAsync(u => u.SetProperty(a => a.PersistentSessionId, (string?)null));

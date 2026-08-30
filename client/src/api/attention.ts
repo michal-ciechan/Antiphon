@@ -63,6 +63,11 @@ export type AttentionKind =
    * RecentFailure; disappears the moment a note is Sent/Dropped, a status poll, or a drawer read.
    */
   | 'FailureUnacknowledged'
+  /**
+   * The orchestrator did a cold source-read run with no dispatch (CARD-0247). Detection only —
+   * Process group, Warning, never counted as Broken.
+   */
+  | 'OrchestratorInvestigation'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =

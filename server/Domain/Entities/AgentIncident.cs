@@ -14,7 +14,12 @@ public class AgentIncident
     public const int FailureReasonMaxLength = 4000;
 
     public Guid Id { get; set; }
-    public Guid AgentId { get; set; }
+
+    /// <summary>
+    /// Null when the session has no standing agent (the operator's own orchestrator session is
+    /// the CARD-0247 founding case). The row still attaches via <see cref="SessionId"/>.
+    /// </summary>
+    public Guid? AgentId { get; set; }
     public Guid? SessionId { get; set; }
     public AgentIncidentKind Kind { get; set; }
     public AlertSeverity Severity { get; set; }

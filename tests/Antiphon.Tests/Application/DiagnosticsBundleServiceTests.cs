@@ -229,7 +229,7 @@ public class DiagnosticsBundleServiceTests
         await using var db = CreateContext();
         var agentIds = await db.Agents.Where(a => a.Name == marker).Select(a => a.Id).ToListAsync();
         var sessionIds = await db.AgentSessions.Where(s => s.Cwd.EndsWith(marker)).Select(s => s.Id).ToListAsync();
-        await db.AgentIncidents.Where(i => agentIds.Contains(i.AgentId)).ExecuteDeleteAsync();
+        await db.AgentIncidents.Where(i => i.AgentId != null && agentIds.Contains(i.AgentId.Value)).ExecuteDeleteAsync();
         await db.SessionQueuedMessages.Where(m => sessionIds.Contains(m.AgentSessionId)).ExecuteDeleteAsync();
         await db.TranscriptEntries.Where(t => sessionIds.Contains(t.AgentSessionId)).ExecuteDeleteAsync();
         await db.Agents.Where(a => agentIds.Contains(a.Id)).ExecuteDeleteAsync();

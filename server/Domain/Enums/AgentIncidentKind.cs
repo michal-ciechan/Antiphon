@@ -371,4 +371,13 @@ public enum AgentIncidentKind
     /// Kind 38 so S3 can take 37 for <c>HerdrUnreachable</c>.
     /// </summary>
     HerdrPaneLeftOpen = 38,
+
+    /// <summary>
+    /// CARD-0247 S3: an orchestrator session did ≥3 consecutive source reads with no dispatch,
+    /// no report naming those files, and no recent delegate nearby. Warning, detection only —
+    /// never kills, retypes, blocks, or moves a card (CARD-0153's rule). Idempotent by
+    /// <c>(session, run start sequence)</c>. Surfaces as
+    /// <c>AttentionKind.OrchestratorInvestigation</c> in the Process group.
+    /// </summary>
+    OrchestratorInvestigation = 39,
 }

@@ -396,6 +396,8 @@ try
     builder.Services.AddSingleton<ApiErrorRecoveryService>();
     // CARD-0162: herdr status corroboration (Warning-only; never kills/retypes).
     builder.Services.AddSingleton<HerdrStatusCorroborationService>();
+    // CARD-0247 S3: orchestrator investigation detection (Warning-only; never kills/retypes).
+    builder.Services.AddSingleton<OrchestratorInvestigationSweepService>();
     // Compaction recovery (incident + workspace re-read note); dispatched lazily from the runtime
     // on CompactBoundary transcript entries.
     builder.Services.AddSingleton<CompactionRecoveryService>();
