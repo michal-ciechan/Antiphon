@@ -1389,10 +1389,16 @@ public sealed class AgentTaskDispatcher
             var end = await _db.TranscriptEntries.AsNoTracking()
                 .Where(e => e.AgentSessionId == sessionId && e.Kind == TranscriptKinds.TurnEnd)
                 .OrderByDescending(e => e.Sequence)
-                .Select(e => new { e.ApiCallId, e.CreatedAt })
+                .Select(e => new { e.ApiCallId, e.CreatedAt, e.Kind, e.StopReason })
                 .FirstOrDefaultAsync(ct);
             if (end is null)
                 continue; // no boundary at all — nothing has been deferred here
+
+            // CARD-0159: a cancelled TurnEnd is an idle boundary, never a report. Re-invoking
+            // settlement on it after the grace would recreate the incident — Succeeded on the
+            // interrupted turn's narration. Skip both arms; the task stays Working.
+            if (!TranscriptKinds.IsReportBoundary(end.Kind, end.StopReason))
+                continue;
 
             // (1) The turn-ending response never wrote its own text. No id to wait on, or still
             // inside the grace, means nothing was deferred. CreatedAt, never the record's

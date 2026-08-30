@@ -273,6 +273,54 @@ public class FakeGrokContractTests
     }
 
     [Test]
+    public async Task Submit_while_working_emits_cancelled_then_the_new_user_chunk()
+    {
+        SkipIfUnavailable();
+        var home = Path.Combine(Path.GetTempPath(), $"fakegrok-home-{Guid.NewGuid():N}");
+        var cwd = Path.Combine(Path.GetTempPath(), $"fakegrok-cwd-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(cwd);
+        var sessionId = Guid.NewGuid().ToString("D");
+        try
+        {
+            await using var runner = await LaunchReadyFakeAsync(
+                env: new Dictionary<string, string>
+                {
+                    ["GROK_HOME"] = home,
+                    ["ANTIPHON_FAKE_SUBMIT_WHILE_WORKING"] = "cancel",
+                },
+                args: ["--cwd", cwd, "--session-id", sessionId]);
+
+            await runner.WriteAsync("first turn\r");
+            (await runner.WaitForOutputAsync(
+                s => s.Contains("SUBMITTED:first turn"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue();
+
+            await runner.WriteAsync("Proceed as planned\r");
+            (await runner.WaitForOutputAsync(
+                s => s.Contains("SUBMITTED:Proceed as planned"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue();
+
+            var sessionDir = Path.Combine(home, "sessions", Uri.EscapeDataString(Path.GetFullPath(cwd)), sessionId);
+            var updatesPath = Path.Combine(sessionDir, "updates.jsonl");
+            var text = await WaitForUpdatesAsync(
+                updatesPath,
+                "\"stop_reason\":\"cancelled\"",
+                "Proceed as planned");
+
+            var cancelledAt = text.IndexOf("\"stop_reason\":\"cancelled\"", StringComparison.Ordinal);
+            var secondUserAt = text.IndexOf("Proceed as planned", StringComparison.Ordinal);
+            cancelledAt.ShouldBeGreaterThanOrEqualTo(0);
+            secondUserAt.ShouldBeGreaterThan(cancelledAt,
+                "measured order: turn_completed cancelled, then the new user_message_chunk 43ms later");
+        }
+        finally
+        {
+            try { Directory.Delete(home, true); } catch { /* best effort */ }
+            try { Directory.Delete(cwd, true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
     public async Task Compact_command_writes_the_measured_pair_and_no_turn_completed()
     {
         SkipIfUnavailable();

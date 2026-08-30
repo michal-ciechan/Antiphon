@@ -369,7 +369,8 @@ public sealed class DelegateCheckProbe
                 Unavailable: null);
         }
 
-        if (string.IsNullOrWhiteSpace(task.WorktreeBranch) || string.IsNullOrWhiteSpace(task.MergeTargetRef))
+        var gitBase = DelegationGitFacts.ResolveBase(task);
+        if (string.IsNullOrWhiteSpace(task.WorktreeBranch) || string.IsNullOrWhiteSpace(gitBase))
         {
             return new CheckGitFacts(
                 directory,
@@ -378,12 +379,12 @@ public sealed class DelegateCheckProbe
                 Commits: [],
                 ChangedFiles: 0,
                 UntrackedFiles: 0,
-                Unavailable: "the task-branch range could not be determined (WorktreeBranch or MergeTargetRef is missing)");
+                Unavailable: "the task-branch range could not be determined (WorktreeBranch or MergeTargetRef/WorktreeBaseSha is missing)");
         }
 
-        var range = $"{task.MergeTargetRef}..{task.WorktreeBranch}";
+        var range = $"{gitBase}..{task.WorktreeBranch}";
         var commits = await _git.LogOnelineAsync(
-            directory, task.MergeTargetRef, task.WorktreeBranch, CommitLimit, null, ct);
+            directory, gitBase, task.WorktreeBranch, CommitLimit, null, ct);
         var counts = await _git.GetWorkingTreeCountsAsync(directory, ct);
 
         var unavailable = (commits, counts) switch

@@ -65,6 +65,8 @@ public sealed class GrokTranscriptNormalizer
     // flush emits keyless chunks alongside the turn they streamed with.
     private readonly Dictionary<string, PendingTurn> _pending = new(StringComparer.Ordinal);
     private readonly List<string> _pendingOrder = new();
+    private readonly Dictionary<string, int> _nextSegment = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string?> _lastSegmentId = new(StringComparer.Ordinal);
     private readonly Queue<string> _completedOrder = new();
     private readonly HashSet<string> _completedPromptIds = new(StringComparer.Ordinal);
 
@@ -98,7 +100,7 @@ public sealed class GrokTranscriptNormalizer
                 "user_message_chunk" => FromUserChunk(update, uuid, ts),
                 "agent_message_chunk" => AccumulateOrEmit(update, uuid, ts, promptId, thought: false),
                 "agent_thought_chunk" => AccumulateOrEmit(update, uuid, ts, promptId, thought: true),
-                "tool_call" => FromToolCall(update, uuid, ts),
+                "tool_call" => FromToolCall(update, uuid, ts, promptId),
                 "turn_completed" => FromTurnCompleted(update, uuid, ts),
                 "auto_compact_completed" => FromAutoCompactCompleted(update, uuid, ts),
                 _ => [],
@@ -114,8 +116,8 @@ public sealed class GrokTranscriptNormalizer
     public IReadOnlyList<TranscriptPart> FlushPending()
     {
         var parts = new List<TranscriptPart>();
-        foreach (var key in _pendingOrder)
-            EmitPending(parts, key, _pending[key]);
+        foreach (var key in _pendingOrder.ToList())
+            CloseCurrentSegment(parts, key.Length == 0 ? null : key);
         _pending.Clear();
         _pendingOrder.Clear();
         return parts;
@@ -174,17 +176,21 @@ public sealed class GrokTranscriptNormalizer
         return [];
     }
 
-    private static List<TranscriptPart> FromToolCall(JsonElement update, string? uuid, DateTimeOffset? ts)
+    private List<TranscriptPart> FromToolCall(
+        JsonElement update, string? uuid, DateTimeOffset? ts, string? promptId)
     {
+        // CARD-0159 S4: a tool_call closes the current message segment so the turn-ending
+        // response is its OWN AssistantText, the way Claude's per-message.id rows already are.
+        var parts = new List<TranscriptPart>();
+        CloseCurrentSegment(parts, promptId);
+
         var input = update.TryGetProperty("rawInput", out var raw)
             ? Truncate(raw.GetRawText(), MaxToolInputChars)
             : null;
-        return
-        [
-            new TranscriptPart(
-                TranscriptKinds.ToolCall, uuid, null, ts, "assistant",
-                null, GetString(update, "title"), input, GetString(update, "toolCallId"), null, null),
-        ];
+        parts.Add(new TranscriptPart(
+            TranscriptKinds.ToolCall, uuid, null, ts, "assistant",
+            null, GetString(update, "title"), input, GetString(update, "toolCallId"), null, null));
+        return parts;
     }
 
     private List<TranscriptPart> FromTurnCompleted(JsonElement update, string? uuid, DateTimeOffset? ts)
@@ -193,8 +199,11 @@ public sealed class GrokTranscriptNormalizer
 
         // Everything still streaming belongs to the turn that just ended (chunks carry the turn's
         // promptId, or nothing at all); flush in arrival order so the parts land under the end.
-        foreach (var key in _pendingOrder)
-            EmitPending(parts, key, _pending[key]);
+        // CARD-0159 S4: each remaining pending is the LAST segment; TurnEnd.ApiCallId is that
+        // segment's id so CARD-0046's "final message" is the closing response, not the join.
+        var flushedKeys = _pendingOrder.ToList();
+        foreach (var key in flushedKeys)
+            CloseCurrentSegment(parts, key.Length == 0 ? null : key);
         _pending.Clear();
         _pendingOrder.Clear();
 
@@ -221,14 +230,38 @@ public sealed class GrokTranscriptNormalizer
 
         // stop_reason verbatim: "end_turn" normally, "cancelled" for an Esc interrupt (which
         // carries no usage). Either way the turn is OVER — cancelled is still a turn end.
+        // ApiCallId is the LAST segment's id when we segmented; otherwise the promptId (legacy).
+        var turnApiCallId = promptId is not null
+            && _lastSegmentId.TryGetValue(promptId, out var lastSeg)
+            && lastSeg is not null
+                ? lastSeg
+                : promptId;
         parts.Add(new TranscriptPart(
             TranscriptKinds.TurnEnd, uuid, null, ts, "assistant", null, null, null, null, null,
             GetString(update, "stop_reason"),
-            ApiCallId: promptId,
+            ApiCallId: turnApiCallId,
             InputTokens: inTok, OutputTokens: outTok,
             CacheReadTokens: cacheRead, CacheCreationTokens: cacheCreate,
             Model: model, ModelCalls: modelCalls));
         return parts;
+    }
+
+    private void CloseCurrentSegment(List<TranscriptPart> parts, string? promptId)
+    {
+        var key = promptId ?? "";
+        var index = _nextSegment.GetValueOrDefault(key);
+        var segmentId = key.Length == 0 ? $":{index}" : $"{key}:{index}";
+        if (_pending.TryGetValue(key, out var turn))
+        {
+            EmitPending(parts, turn, segmentId);
+            _pending.Remove(key);
+            _pendingOrder.Remove(key);
+        }
+
+        // Always advance: a tool_call with no pending text still closes a segment, so
+        // turn_completed's last-segment id is the empty post-tool response (CARD-0159 S4).
+        _nextSegment[key] = index + 1;
+        _lastSegmentId[key] = segmentId;
     }
 
     /// <summary>
@@ -253,9 +286,8 @@ public sealed class GrokTranscriptNormalizer
         ];
     }
 
-    private void EmitPending(List<TranscriptPart> parts, string key, PendingTurn turn)
+    private void EmitPending(List<TranscriptPart> parts, PendingTurn turn, string? apiCallId)
     {
-        var apiCallId = key.Length == 0 ? null : key;
         if (turn.Thought.Length > 0)
         {
             parts.Add(new TranscriptPart(

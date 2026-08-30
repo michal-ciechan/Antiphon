@@ -276,7 +276,8 @@ public class AgentTaskDeadSessionReconciliationTests
         var worktrees = new DelegationWorktreeService(
             manager,
             new GitService(NullLogger<GitService>.Instance),
-            NullLogger<DelegationWorktreeService>.Instance);
+            NullLogger<DelegationWorktreeService>.Instance,
+            new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance));
         var draft = new AgentTask
         {
             Id = Guid.NewGuid(),

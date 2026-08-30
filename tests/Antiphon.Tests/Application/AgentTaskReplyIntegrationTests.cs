@@ -76,6 +76,218 @@ public class AgentTaskReplyIntegrationTests
         (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
     }
 
+    // ---- CARD-0159: a cancelled boundary is never a report; a report closes with a verdict line ----
+
+    [Test]
+    public async Task a_cancelled_turn_end_does_not_settle_the_task_and_says_so()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+        const string narration =
+            "I'll read the full brief first, then follow its instructions exactly.";
+
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.",
+            narration, stopReason: TranscriptKinds.StopReasons.Cancelled, closingVerdict: false);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Dispatched, "a cancelled boundary is idle, not a report");
+        stored.Result.ShouldBeNull();
+
+        var warning = await verify.AgentTaskEvents.SingleAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning);
+        warning.Detail.ShouldContain("Turn interrupted (cancelled)");
+        warning.Detail.ShouldContain("not a report");
+        warning.Detail.ShouldContain("stays Working");
+    }
+
+    [Test]
+    public async Task the_interrupted_warning_is_written_once_per_boundary()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+        var service = CreateService();
+
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id),
+            "narration", stopReason: TranscriptKinds.StopReasons.Cancelled, closingVerdict: false);
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning))
+            .ShouldBe(1);
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+            .Status.ShouldBe(AgentTaskStatus.Dispatched);
+    }
+
+    [Test]
+    public async Task the_next_end_turn_after_a_cancel_settles_normally()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+        var service = CreateService();
+        var marker = DelegationReportFormatter.TaskMarker(task.Id);
+
+        await SeedTurnAsync(
+            sessionId, marker, "I'll start by reading the spec.",
+            stopReason: TranscriptKinds.StopReasons.Cancelled, closingVerdict: false);
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        const string report = "Added Fizz(int) in Numbers.cs. 142 passed, 0 failed.";
+        await SeedTurnAsync(sessionId, marker, report);
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.Result.ShouldBe(report);
+        settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
+    }
+
+    [Test]
+    public async Task an_end_turn_without_the_closing_line_is_nudged_once_not_settled()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+        const string narration = "Proceeding with S1 and S2: applying the config changes.";
+
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id), narration, closingVerdict: false);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Dispatched, "unmarked narration is not a report");
+        stored.Result.ShouldBeNull();
+        stored.ReportNudgedAt.ShouldNotBeNull();
+
+        var queued = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == sessionId);
+        queued.Origin.ShouldBe(QueuedMessageOrigin.Delegation);
+        queued.Body.ShouldContain(DelegationReportFormatter.TaskMarker(task.Id));
+        queued.Body.ShouldContain(DelegationReportFormatter.ReportToken(task.Id, "done"));
+        queued.Body.ShouldContain("Your turn ended without the closing report line");
+
+        (await verify.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning
+                && e.Detail.Contains("closing report line")))
+            .ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task the_nudged_delegates_marked_reply_settles_with_marked_evidence()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+        var service = CreateService();
+        var marker = DelegationReportFormatter.TaskMarker(task.Id);
+
+        await SeedTurnAsync(sessionId, marker, "I'll start.", closingVerdict: false);
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        const string report = "Shipped Fizz. 142 passed, 0 failed.";
+        await SeedTurnAsync(
+            sessionId, marker,
+            report + "\n" + DelegationReportFormatter.ReportToken(task.Id, "done"),
+            closingVerdict: false);
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.Result.ShouldBe(report);
+        settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
+    }
+
+    [Test]
+    public async Task a_second_unmarked_end_turn_settles_as_unmarked_after_nudge()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+        var service = CreateService();
+        var marker = DelegationReportFormatter.TaskMarker(task.Id);
+
+        await SeedTurnAsync(sessionId, marker, "I'll start.", closingVerdict: false);
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        const string report = "I think this is done, no closing line though.";
+        await SeedTurnAsync(sessionId, marker, report, closingVerdict: false);
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.Result.ShouldBe(report);
+        settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.UnmarkedAfterNudge);
+
+        var completed = await verify.AgentTaskEvents.SingleAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Completed);
+        completed.Detail.ShouldContain("no closing line; settled after one nudge");
+    }
+
+    [Test]
+    public async Task a_check_role_task_is_never_nudged()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => t.Role = AgentTaskRole.Check);
+
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id),
+            "LOOKS FINE — last tool 2m ago.", closingVerdict: false);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Exempt);
+        settled.ReportNudgedAt.ShouldBeNull();
+        (await verify.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == sessionId))
+            .ShouldBe(0);
+    }
+
+    [Test]
+    public async Task a_failed_verdict_fails_the_task_with_the_first_line_as_reason()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+        const string report = "Could not apply S1: the helper is missing.\nSee AgentTaskReplyService.cs.";
+
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id),
+            report + "\n" + DelegationReportFormatter.ReportToken(task.Id, "failed"),
+            closingVerdict: false);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Failed);
+        settled.FailureReason.ShouldBe("Could not apply S1: the helper is missing.");
+        settled.Result.ShouldBe(report);
+        settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
+    }
+
+    [Test]
+    public async Task the_completion_header_carries_report_marked()
+    {
+        using var workspace = new TempWorkspace();
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, parentSessionId);
+        const string report = "Shipped.";
+
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), report);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var note = await verify.SessionQueuedMessages.SingleAsync(
+            m => m.AgentSessionId == parentSessionId);
+        note.Body.ShouldContain("report=marked");
+        note.NoteHeader.ShouldContain("report=marked");
+    }
+
     /// <summary>
     /// The 2026-08-11 live miss, replayed end to end: three delegates ran, did real work and
     /// reported, and their tasks sat Dispatched overnight because the brief reached them with its
@@ -302,7 +514,9 @@ public class AgentTaskReplyIntegrationTests
             finalMessage: null);
         await service.OnTurnEndAsync(sessionId, CancellationToken.None);
 
-        await AppendFinalMessageAsync(sessionId, apiCallId, "Verdict: keep as is. 142 passed, 0 failed.");
+        await AppendFinalMessageAsync(
+            sessionId, apiCallId, "Verdict: keep as is. 142 passed, 0 failed.",
+            promptForVerdict: DelegationReportFormatter.TaskMarker(task.Id));
         await service.OnTurnEndAsync(sessionId, CancellationToken.None);
 
         await using var verify = CreateContext();
@@ -364,6 +578,15 @@ public class AgentTaskReplyIntegrationTests
 
         clock.Advance(TimeSpan.FromSeconds(121));
         await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+        await using (var afterNudge = CreateContext())
+        {
+            var nudged = await afterNudge.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            if (nudged.Status == AgentTaskStatus.Dispatched)
+            {
+                nudged.ReportNudgedAt.ShouldNotBeNull();
+                await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+            }
+        }
 
         await using var verify = CreateContext();
         var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
@@ -381,9 +604,9 @@ public class AgentTaskReplyIntegrationTests
 
         var warned = await verify.AgentTaskEvents
             .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning)
-            .SingleAsync();
-        warned.Detail.ShouldContain("never wrote its own text within 120s");
-        warned.Detail.ShouldContain("31 characters");
+            .ToListAsync();
+        warned.ShouldContain(e => e.Detail.Contains("never wrote its own text within 120s"));
+        warned.ShouldContain(e => e.Detail.Contains("31 characters"));
 
         var note = await verify.SessionQueuedMessages
             .Where(m => m.AgentSessionId == parentSessionId)
@@ -464,6 +687,7 @@ public class AgentTaskReplyIntegrationTests
 
         clock.Advance(TimeSpan.FromSeconds(121));
         await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
 
         await using var verify = CreateContext();
         var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
@@ -501,7 +725,10 @@ public class AgentTaskReplyIntegrationTests
             (await deferred.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
         }
 
-        await SeedEntryAsync(sessionId, TranscriptKinds.AssistantText, finalMessage, DateTime.UtcNow, turnId);
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.AssistantText,
+            ApplyClosingVerdict(DelegationReportFormatter.TaskMarker(task.Id), finalMessage, true),
+            DateTime.UtcNow, turnId);
         await service.OnTurnEndAsync(sessionId, CancellationToken.None);
 
         await using var verify = CreateContext();
@@ -509,7 +736,8 @@ public class AgentTaskReplyIntegrationTests
         settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
         settled.Result.ShouldBe(finalMessage);
         (await verify.AgentTaskEvents.AnyAsync(
-            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning)).ShouldBeFalse();
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning
+                && e.Detail.Contains("final message"))).ShouldBeFalse();
     }
 
     /// <summary>
@@ -590,12 +818,14 @@ public class AgentTaskReplyIntegrationTests
             narration: "Reading the spec now.", finalMessage: null);
         clock.Advance(TimeSpan.FromSeconds(121));
         await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
 
         // The warm delegate takes a SECOND task in the same session and does it again.
         var second = await SeedFollowUpTaskAsync(workspace.Path, sessionId, agentId);
         await SeedSplitTurnAsync(
             sessionId, DelegationReportFormatter.TaskMarker(second.Id),
             narration: "Reading the other spec now.", finalMessage: null);
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
         await service.OnTurnEndAsync(sessionId, CancellationToken.None);
 
         await using var verify = CreateContext();
@@ -636,7 +866,9 @@ public class AgentTaskReplyIntegrationTests
         }
 
         // seq 98-99: the text record (re-triggers settlement) and its duplicate TurnEnd sibling.
-        await AppendFinalMessageAsync(sessionId, apiCallId, finalMessage);
+        await AppendFinalMessageAsync(
+            sessionId, apiCallId, finalMessage,
+            promptForVerdict: DelegationReportFormatter.TaskMarker(task.Id));
         await service.OnTurnEndAsync(sessionId, CancellationToken.None);
         await service.OnTurnEndAsync(sessionId, CancellationToken.None);
 
@@ -739,7 +971,7 @@ public class AgentTaskReplyIntegrationTests
             e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Completed);
         completed.Detail.ShouldBe(
             $"Delegate reported {finalMessage.Length:N0} characters (final message; "
-            + "31 characters of mid-turn narration not included).");
+            + "31 characters of mid-turn narration not included) (verdict: done).");
     }
 
     /// <summary>
@@ -758,7 +990,9 @@ public class AgentTaskReplyIntegrationTests
             narration: "I'll start by reading the spec.",
             finalMessage: null);
         await AppendFinalMessageAsync(sessionId, apiCallId, "Outcome: shipped.");
-        await AppendFinalMessageAsync(sessionId, apiCallId, "Files: Numbers.cs (+11).");
+        await AppendFinalMessageAsync(
+            sessionId, apiCallId, "Files: Numbers.cs (+11).",
+            promptForVerdict: DelegationReportFormatter.TaskMarker(task.Id));
         await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
 
         await using var verify = CreateContext();
@@ -1051,6 +1285,105 @@ public class AgentTaskReplyIntegrationTests
     /// per-kind work — only the price does.
     /// </summary>
     [Test]
+    public async Task a_grok_turn_whose_last_segment_is_empty_defers_then_warns()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+        var settings = new DelegationSettings { ReplyInlineMaxChars = 20_000, FinalMessageGraceSeconds = 120 };
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var service = CreateService(settings: settings, timeProvider: clock);
+        var promptId = Guid.NewGuid().ToString("D");
+        var marker = DelegationReportFormatter.TaskMarker(task.Id);
+
+        await using (var db = CreateContext())
+        {
+            var seq = 0L;
+            db.TranscriptEntries.Add(NewEntry(sessionId, ++seq, TranscriptKinds.UserPrompt, marker + "\n\nDo the thing."));
+            var narration = NewEntry(sessionId, ++seq, TranscriptKinds.AssistantText, "I'll start by reading the spec.");
+            narration.ApiCallId = $"{promptId}:0";
+            db.TranscriptEntries.Add(narration);
+            var end = NewEntry(sessionId, ++seq, TranscriptKinds.TurnEnd, null);
+            end.StopReason = TranscriptKinds.StopReasons.EndTurn;
+            end.ApiCallId = $"{promptId}:1";
+            db.TranscriptEntries.Add(end);
+            await db.SaveChangesAsync();
+        }
+
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+        await using (var mid = CreateContext())
+        {
+            (await mid.AgentTasks.SingleAsync(t => t.Id == task.Id))
+                .Status.ShouldBe(AgentTaskStatus.Dispatched, "last segment is empty — CARD-0046 defers");
+        }
+
+        clock.Advance(TimeSpan.FromSeconds(121));
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.Result.ShouldBe("I'll start by reading the spec.");
+        settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.FinalMessageMissing);
+        (await verify.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning
+                && e.Detail.Contains("never wrote its own text")))
+            .ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task grok_per_segment_ids_on_text_rows_do_not_double_count_turn_usage()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => t.AgentKind = AgentKind.Grok);
+        var promptId = Guid.NewGuid().ToString("D");
+        var marker = DelegationReportFormatter.TaskMarker(task.Id);
+        var now = DateTime.UtcNow;
+
+        await using (var db = CreateContext())
+        {
+            var seq = 0L;
+            db.TranscriptEntries.Add(NewEntry(sessionId, ++seq, TranscriptKinds.UserPrompt, marker));
+            var seg0 = NewEntry(sessionId, ++seq, TranscriptKinds.AssistantText, "narration");
+            seg0.ApiCallId = $"{promptId}:0";
+            seg0.Timestamp = now;
+            db.TranscriptEntries.Add(seg0);
+            var seg1 = NewEntry(sessionId, ++seq, TranscriptKinds.AssistantText,
+                "Done.\n" + DelegationReportFormatter.ReportToken(task.Id, "done"));
+            seg1.ApiCallId = $"{promptId}:1";
+            seg1.Timestamp = now;
+            db.TranscriptEntries.Add(seg1);
+            var end = NewEntry(sessionId, ++seq, TranscriptKinds.TurnEnd, null);
+            end.StopReason = TranscriptKinds.StopReasons.EndTurn;
+            end.ApiCallId = $"{promptId}:1";
+            end.Timestamp = now;
+            end.InputTokens = 18_400;
+            end.OutputTokens = 12_300;
+            end.CacheReadTokens = 742_000;
+            end.CacheCreationTokens = 61_500;
+            db.TranscriptEntries.Add(end);
+            await db.SaveChangesAsync();
+        }
+
+        await using (var db = CreateContext())
+        {
+            var spend = await DelegationUsageRollup.ForSessionAsync(
+                db, sessionId, task.DispatchedAt, DateTime.UtcNow.AddMinutes(1), CancellationToken.None);
+            spend.InputTokens.ShouldBe(18_400, "segment ids on text rows have no usage — the TurnEnd is priced once");
+            spend.OutputTokens.ShouldBe(12_300);
+            spend.CacheReadTokens.ShouldBe(742_000);
+            spend.CacheCreationTokens.ShouldBe(61_500);
+        }
+
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.CostUsd.ShouldBe(0.604600m);
+        settled.TokensIn.ShouldBe(18_400);
+    }
+
+    [Test]
     public async Task a_grok_delegates_spend_is_priced_at_grok_rates_not_at_the_claude_rung_it_shares()
     {
         using var workspace = new TempWorkspace();
@@ -1230,7 +1563,8 @@ public class AgentTaskReplyIntegrationTests
         const string report = "Shipped and pushed — 3 commits. 187 passed, 0 failed.";
 
         await SeedWarmReuseAfterCompactionAsync(sessionId, dispatched, task.Id);
-        await SeedResponseAsync(sessionId, report, dispatched.AddMinutes(5));
+        await SeedResponseAsync(
+            sessionId, report, dispatched.AddMinutes(5), DelegationReportFormatter.TaskMarker(task.Id));
         await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
 
         await using var verify = CreateContext();
@@ -1262,7 +1596,8 @@ public class AgentTaskReplyIntegrationTests
             sessionId, TranscriptKinds.AssistantText, "Reading the spec.", dispatched.AddMinutes(2));
         await SeedCompactionRecordsAsync(
             sessionId, dispatched.AddMinutes(5), "/compact Keep only the review context.");
-        await SeedResponseAsync(sessionId, report, dispatched.AddMinutes(8));
+        await SeedResponseAsync(
+            sessionId, report, dispatched.AddMinutes(8), DelegationReportFormatter.TaskMarker(task.Id));
 
         await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
 
@@ -1313,7 +1648,8 @@ public class AgentTaskReplyIntegrationTests
             sessionId, TranscriptKinds.QueuedUserPrompt,
             DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.",
             dispatched.AddMinutes(1));
-        await SeedResponseAsync(sessionId, report, dispatched.AddMinutes(2));
+        await SeedResponseAsync(
+            sessionId, report, dispatched.AddMinutes(2), DelegationReportFormatter.TaskMarker(task.Id));
         await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
 
         await using var verify = CreateContext();
@@ -1339,7 +1675,10 @@ public class AgentTaskReplyIntegrationTests
             sessionId, TranscriptKinds.UserPrompt,
             DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.",
             dispatched.AddMinutes(1));
-        await SeedEntryAsync(sessionId, TranscriptKinds.AssistantText, report, dispatched.AddMinutes(2));
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.AssistantText,
+            ApplyClosingVerdict(DelegationReportFormatter.TaskMarker(task.Id), report, true),
+            dispatched.AddMinutes(2));
         await SeedEntryAsync(sessionId, TranscriptKinds.TurnEnd, null, dispatched.AddMinutes(2));
         await SeedEntryAsync(
             sessionId, TranscriptKinds.QueuedUserPrompt,
@@ -1466,7 +1805,7 @@ public class AgentTaskReplyIntegrationTests
 
         var launched = await SeedSubagentFanOutAsync(sessionId, dispatched, task.Id);
         await SeedSubagentNotificationAsync(
-            sessionId, launched[2], "The allocator review came back clean.", dispatched.AddMinutes(2));
+            sessionId, launched[2], "The allocator review came back clean.", dispatched.AddMinutes(2), task.Id);
         await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
 
         await using var verify = CreateContext();
@@ -1497,7 +1836,7 @@ public class AgentTaskReplyIntegrationTests
         {
             await SeedSubagentNotificationAsync(
                 sessionId, launched[i], $"Reviewer {i} came back clean.",
-                dispatched.AddMinutes(2 + i));
+                dispatched.AddMinutes(2 + i), task.Id);
             await service.OnTurnEndAsync(sessionId, CancellationToken.None);
         }
 
@@ -1507,7 +1846,7 @@ public class AgentTaskReplyIntegrationTests
                 .Status.ShouldBe(AgentTaskStatus.Dispatched, "the fourth has not reported");
         }
 
-        await SeedSubagentNotificationAsync(sessionId, launched[3], verdict, dispatched.AddMinutes(5));
+        await SeedSubagentNotificationAsync(sessionId, launched[3], verdict, dispatched.AddMinutes(5), task.Id);
         await service.OnTurnEndAsync(sessionId, CancellationToken.None);
 
         await using var verify = CreateContext();
@@ -1541,7 +1880,9 @@ public class AgentTaskReplyIntegrationTests
             sessionId, TranscriptKinds.ToolResult,
             "The subagent's whole answer, returned inline: nothing to fix.", dispatched.AddMinutes(2),
             toolUseId: toolUseId);
-        await SeedResponseAsync(sessionId, "Verdict: keep as is.", dispatched.AddMinutes(3));
+        await SeedResponseAsync(
+            sessionId, "Verdict: keep as is.", dispatched.AddMinutes(3),
+            DelegationReportFormatter.TaskMarker(task.Id));
 
         await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
 
@@ -1578,7 +1919,8 @@ public class AgentTaskReplyIntegrationTests
         settled.Result.ShouldContain("Four review agents are running in parallel");
 
         var warning = await verify.AgentTaskEvents.SingleAsync(
-            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning);
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning
+                && e.Detail.Contains("background subagent"));
         warning.Detail.ShouldContain("4 background subagent(s)");
 
         var incident = await verify.AgentIncidents.SingleAsync(
@@ -1743,6 +2085,84 @@ public class AgentTaskReplyIntegrationTests
         var note = await verify.SessionQueuedMessages
             .SingleAsync(m => m.AgentSessionId == parentSessionId);
         note.Body.ShouldContain("merged → feat/parent", customMessage: "the caller must learn the branch landed");
+        note.Body.ShouldContain("git=");
+        note.NoteHeader.ShouldContain("report=marked");
+    }
+
+    [Test]
+    public async Task a_worktree_code_task_with_no_commits_warns_in_the_header()
+    {
+        using var repo = new ScratchGitRepo("antiphon-reply-no-commits");
+        await repo.CommitFileAsync("README.md", "base\n");
+        var factory = new TestScopeFactory(repo.WorktreeRoot);
+        var parentSessionId = await SeedSessionAsync(repo.Path);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(repo.Path, parentSessionId, t =>
+        {
+            t.Workspace = WorkspaceMode.Worktree;
+            t.RepoPath = repo.Path;
+            t.Role = AgentTaskRole.Code;
+            t.MergeTargetRef = null;
+        });
+        await CreateWorktreeForAsync(factory, task);
+
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), "I read the code. Nothing to implement yet.");
+        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        (await verify.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning
+                && e.Detail.Contains("produced no commits")))
+            .ShouldBeTrue();
+        var note = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == parentSessionId);
+        note.Body.ShouldContain("git=no changes");
+        note.Body.ShouldContain("Verify before merging");
+    }
+
+    [Test]
+    public async Task a_plan_task_with_no_commits_does_not_warn()
+    {
+        using var repo = new ScratchGitRepo("antiphon-reply-plan-no-commits");
+        await repo.CommitFileAsync("README.md", "base\n");
+        var factory = new TestScopeFactory(repo.WorktreeRoot);
+        var parentSessionId = await SeedSessionAsync(repo.Path);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(repo.Path, parentSessionId, t =>
+        {
+            t.Workspace = WorkspaceMode.Worktree;
+            t.RepoPath = repo.Path;
+            t.Role = AgentTaskRole.Plan;
+            t.MergeTargetRef = null;
+        });
+        await CreateWorktreeForAsync(factory, task);
+
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), "The plan is to wait.");
+        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning
+                && e.Detail.Contains("produced no commits")))
+            .ShouldBeFalse();
+        var note = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == parentSessionId);
+        note.Body.ShouldContain("git=no changes");
+        note.Body.ShouldNotContain("Verify before merging");
+    }
+
+    [Test]
+    public async Task a_shared_task_reports_git_unattributable()
+    {
+        using var workspace = new TempWorkspace();
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, parentSessionId);
+
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), "Done in the shared checkout.");
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var note = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == parentSessionId);
+        note.Body.ShouldContain("git=unattributable");
+        note.NoteHeader.ShouldContain("git=unattributable");
     }
 
     [Test]
@@ -1838,6 +2258,7 @@ public class AgentTaskReplyIntegrationTests
         var row = await db.AgentTasks.SingleAsync(t => t.Id == seeded.Id);
         row.WorktreePath = seeded.WorktreePath;
         row.WorktreeBranch = seeded.WorktreeBranch;
+        row.WorktreeBaseSha = seeded.WorktreeBaseSha;
         await db.SaveChangesAsync();
     }
 
@@ -2270,8 +2691,10 @@ public class AgentTaskReplyIntegrationTests
     private static async Task SeedTurnAsync(
         Guid sessionId, string prompt, string? assistantText, int? inputTokens = null, int? outputTokens = null,
         int? cacheReadTokens = null, int? cacheCreationTokens = null, int entriesPerApiCall = 1,
-        DateTime? timestamp = null, string? turnEndApiCallId = null)
+        DateTime? timestamp = null, string? turnEndApiCallId = null, string? stopReason = null,
+        bool closingVerdict = true)
     {
+        assistantText = ApplyClosingVerdict(prompt, assistantText, closingVerdict);
         await using var db = CreateContext();
         var seq = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId)
@@ -2294,10 +2717,30 @@ public class AgentTaskReplyIntegrationTests
             }
         }
         var end = NewEntry(sessionId, ++seq, TranscriptKinds.TurnEnd, null);
-        end.StopReason = "end_turn";
+        end.StopReason = stopReason ?? TranscriptKinds.StopReasons.EndTurn;
         end.ApiCallId = turnEndApiCallId;
         db.TranscriptEntries.Add(end);
         await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// CARD-0159: existing settlement tests predate the closing-line contract. Appending the
+    /// matching <c>[antiphon-report:id done]</c> (stripped again at settle) keeps them on the
+    /// marked path. Question reports and tests that pass <paramref name="closingVerdict"/> false
+    /// are left untouched so they exercise the heuristic / nudge arms.
+    /// </summary>
+    private static string? ApplyClosingVerdict(string prompt, string? assistantText, bool closingVerdict)
+    {
+        if (!closingVerdict || string.IsNullOrEmpty(assistantText))
+            return assistantText;
+        if (AgentTaskReplyService.LooksLikeAQuestion(assistantText))
+            return assistantText;
+        if (assistantText.Contains("[antiphon-report:", StringComparison.Ordinal))
+            return assistantText;
+        var shortId = DelegationReportFormatter.TryReadTaskMarkerId(prompt);
+        if (shortId is null)
+            return assistantText;
+        return assistantText.TrimEnd() + "\n" + DelegationReportFormatter.ReportToken(shortId, "done");
     }
 
     /// <summary>
@@ -2322,7 +2765,8 @@ public class AgentTaskReplyIntegrationTests
 
         if (finalMessage is not null)
         {
-            var final = NewEntry(sessionId, ++seq, TranscriptKinds.AssistantText, finalMessage);
+            var final = NewEntry(sessionId, ++seq, TranscriptKinds.AssistantText,
+                ApplyClosingVerdict(prompt, finalMessage, closingVerdict: true));
             final.ApiCallId = turnId;
             final.Timestamp = at.AddMilliseconds(65);
             db.TranscriptEntries.Add(final);
@@ -2375,13 +2819,16 @@ public class AgentTaskReplyIntegrationTests
         }
 
         if (finalMessage is not null)
-            await AppendFinalMessageAsync(sessionId, finalCallId, finalMessage);
+            await AppendFinalMessageAsync(sessionId, finalCallId, ApplyClosingVerdict(prompt, finalMessage, true)!);
         return finalCallId;
     }
 
     /// <summary>The text record of an already-ended response, and its duplicate TurnEnd sibling.</summary>
-    private static async Task AppendFinalMessageAsync(Guid sessionId, string apiCallId, string finalMessage)
+    private static async Task AppendFinalMessageAsync(
+        Guid sessionId, string apiCallId, string finalMessage, string? promptForVerdict = null)
     {
+        if (promptForVerdict is not null)
+            finalMessage = ApplyClosingVerdict(promptForVerdict, finalMessage, true) ?? finalMessage;
         await using var db = CreateContext();
         var seq = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId)
@@ -2461,7 +2908,8 @@ public class AgentTaskReplyIntegrationTests
             sessionId,
             "Four review agents are running in parallel — proposal fidelity, the state model, the "
             + "allocator, and menu safety. I'll synthesize when they report.",
-            dispatchedAt.AddMinutes(1));
+            dispatchedAt.AddMinutes(1),
+            DelegationReportFormatter.TaskMarker(taskId));
         return launched;
     }
 
@@ -2471,7 +2919,7 @@ public class AgentTaskReplyIntegrationTests
     /// notification turns really are the split shape, ac09cffd seqs 21-23) and then its text.
     /// </summary>
     private static async Task SeedSubagentNotificationAsync(
-        Guid sessionId, string toolUseId, string delegateReply, DateTime at)
+        Guid sessionId, string toolUseId, string delegateReply, DateTime at, Guid? taskId = null)
     {
         await SeedEntryAsync(
             sessionId, TranscriptKinds.UserPrompt,
@@ -2481,16 +2929,21 @@ public class AgentTaskReplyIntegrationTests
             at);
 
         var apiCallId = $"msg_{Guid.NewGuid():N}";
+        var text = taskId is Guid id
+            ? ApplyClosingVerdict(DelegationReportFormatter.TaskMarker(id), delegateReply, true) ?? delegateReply
+            : delegateReply;
         await SeedEntryAsync(sessionId, TranscriptKinds.TurnEnd, null, at, apiCallId);
-        await SeedEntryAsync(sessionId, TranscriptKinds.AssistantText, delegateReply, at, apiCallId);
+        await SeedEntryAsync(sessionId, TranscriptKinds.AssistantText, text, at, apiCallId);
         await SeedEntryAsync(sessionId, TranscriptKinds.TurnEnd, null, at, apiCallId);
     }
 
     /// <summary>An assistant response: its text and the TurnEnd sibling that shares its message id.</summary>
-    private static async Task SeedResponseAsync(Guid sessionId, string text, DateTime timestamp)
+    private static async Task SeedResponseAsync(
+        Guid sessionId, string text, DateTime timestamp, string? promptForVerdict = null)
     {
         var apiCallId = $"msg_{Guid.NewGuid():N}";
-        await SeedEntryAsync(sessionId, TranscriptKinds.AssistantText, text, timestamp, apiCallId);
+        var body = promptForVerdict is null ? text : ApplyClosingVerdict(promptForVerdict, text, true) ?? text;
+        await SeedEntryAsync(sessionId, TranscriptKinds.AssistantText, body, timestamp, apiCallId);
         await SeedEntryAsync(sessionId, TranscriptKinds.TurnEnd, null, timestamp, apiCallId);
     }
 

@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Linq;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -78,13 +80,14 @@ public class GrokTranscriptTailerTests
                 UserChunkRow, ThoughtChunkRow, AgentChunkRow, ToolCallRow, ToolCallUpdateRow,
                 TaskBackgroundedRow, AgentChunkRow2, TurnCompletedRow, SessionRecapRow);
 
-            var entries = await PollForEntriesAsync(tailer, want: 5, TimeSpan.FromSeconds(10));
+            var entries = await PollForEntriesAsync(tailer, want: 6, TimeSpan.FromSeconds(10));
             entries.Select(e => e.Kind).ShouldBe(
             [
                 TranscriptKinds.UserPrompt,   // immediate
-                TranscriptKinds.ToolCall,     // immediate (the mid-turn activity signal)
-                TranscriptKinds.Thinking,     // coalesced, flushed by turn_completed
+                TranscriptKinds.Thinking,     // CARD-0159 S4: tool_call closes the current segment
                 TranscriptKinds.AssistantText,
+                TranscriptKinds.ToolCall,
+                TranscriptKinds.AssistantText, // post-tool segment, flushed by turn_completed
                 TranscriptKinds.TurnEnd,
             ]);
 
@@ -94,26 +97,30 @@ public class GrokTranscriptTailerTests
             user.Role.ShouldBe("user");
             user.Timestamp.ShouldBe(DateTimeOffset.FromUnixTimeMilliseconds(1786999655763));
 
-            var tool = entries[1];
+            var tool = entries[3];
             tool.ToolName.ShouldBe("read_file");
             tool.ToolUseId.ShouldBe("call-bb331df7-4505-47df-822e-d2e29fd0a19c-0");
             tool.ToolInput.ShouldNotBeNull();
             tool.ToolInput.ShouldContain("project-context.md");
 
-            var text = entries[3];
-            text.Text.ShouldBe(
+            var firstText = entries[2];
+            firstText.Text.ShouldBe(
                 "I'll start by checking how Antiphon currently treats agent TUIs and whether Grok is "
                 + "already in the picture, then plan and implement support to match Claude's test "
-                + "coverage. SECOND-CHUNK tail.");
-            text.Uuid.ShouldBe($"{Sid}-84", "the coalesced part keeps the FIRST chunk's eventId");
-            text.ApiCallId.ShouldBe(PromptId);
+                + "coverage.");
+            firstText.Uuid.ShouldBe($"{Sid}-84", "the coalesced part keeps the FIRST chunk's eventId");
+            firstText.ApiCallId.ShouldBe($"{PromptId}:0");
 
-            var end = entries[4];
+            var lastText = entries[4];
+            lastText.Text.ShouldBe(" SECOND-CHUNK tail.");
+            lastText.ApiCallId.ShouldBe($"{PromptId}:1");
+
+            var end = entries[5];
             end.StopReason.ShouldBe("end_turn");
             end.Uuid.ShouldBe($"{Sid}-5081");
-            end.ApiCallId.ShouldBe(PromptId);
-            text.ApiCallId.ShouldBe(end.ApiCallId,
-                "the turn-ending response text and turn_completed boundary share Grok's promptId");
+            end.ApiCallId.ShouldBe($"{PromptId}:1",
+                "turn_completed stamps the LAST segment's id so CARD-0046's final message is the closing response");
+            lastText.ApiCallId.ShouldBe(end.ApiCallId);
             end.InputTokens.ShouldBe(18747424);
             end.OutputTokens.ShouldBe(70713);
             end.CacheReadTokens.ShouldBe(18482432);
@@ -129,6 +136,41 @@ public class GrokTranscriptTailerTests
             await tailer.DisposeAsync();
             BestEffortDelete(dir);
         }
+    }
+
+    [Test]
+    public void a_tool_call_closes_the_message_segment()
+    {
+        var n = new GrokTranscriptNormalizer();
+        var parts = new List<TranscriptPart>();
+        foreach (var row in new[] { UserChunkRow, AgentChunkRow, ToolCallRow, AgentChunkRow2, TurnCompletedRow })
+            parts.AddRange(n.Normalize(row));
+
+        var texts = parts.Where(p => p.Kind == TranscriptKinds.AssistantText).ToList();
+        texts.Count.ShouldBe(2, "text → tool → text are two segments, not one coalesced row");
+        texts[0].ApiCallId.ShouldBe($"{PromptId}:0");
+        texts[1].ApiCallId.ShouldBe($"{PromptId}:1");
+        texts[0].Text.ShouldNotContain("SECOND-CHUNK");
+        texts[1].Text.ShouldContain("SECOND-CHUNK");
+    }
+
+    [Test]
+    public void turn_completed_carries_the_last_segments_id()
+    {
+        var n = new GrokTranscriptNormalizer();
+        TranscriptPart? end = null;
+        foreach (var row in new[] { UserChunkRow, AgentChunkRow, ToolCallRow, AgentChunkRow2, TurnCompletedRow })
+        {
+            foreach (var part in n.Normalize(row))
+            {
+                if (part.Kind == TranscriptKinds.TurnEnd)
+                    end = part;
+            }
+        }
+
+        end.ShouldNotBeNull();
+        end.Value.ApiCallId.ShouldBe($"{PromptId}:1");
+        end.Value.InputTokens.ShouldBe(18747424, "usage stays on the TurnEnd row");
     }
 
     [Test]

@@ -77,6 +77,12 @@ public sealed class AgentTaskReplyService
 
             var turn = await ExtractMarkedTurnAsync(db, sessionId, task, ct);
 
+            if (turn.Interrupted is { } interrupted)
+            {
+                await RecordInterruptedTurnAsync(db, task, interrupted, ct);
+                return;
+            }
+
             if (turn.ApiErrorStub is { } stub)
             {
                 // CARD-0071 S3 / CARD-0072 S5a-3: the marked turn was killed by the API itself.
@@ -380,15 +386,58 @@ public sealed class AgentTaskReplyService
             task, _settings, spillPath, body.Length, agentKind);
     }
 
+    /// <summary>
+    /// One Warning per cancelled boundary (CARD-0159). Deduped on the boundary's sequence so a
+    /// re-trigger (split response, replay, deferred sweep that we now skip) cannot stack the same
+    /// line. Task status is untouched — the task stays Working.
+    /// </summary>
+    private async Task RecordInterruptedTurnAsync(
+        AppDbContext db, AgentTask task, InterruptedFacts interrupted, CancellationToken ct)
+    {
+        var reason = interrupted.StopReason ?? "interrupted";
+        var needle = $"at #{interrupted.Sequence}";
+        var already = await db.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task.Id
+                && e.Type == AgentTaskEventType.Warning
+                && e.Detail.Contains(needle),
+            ct);
+        if (already)
+            return;
+
+        db.AgentTaskEvents.Add(NewEvent(
+            task.Id, AgentTaskEventType.Warning,
+            $"Turn interrupted ({reason}) at #{interrupted.Sequence} — not a report; the task stays Working.",
+            UtcNow()));
+        await db.SaveChangesAsync(ct);
+        _logger.LogInformation(
+            "Task {ShortId}: cancelled turn at #{Seq} is not a report; staying {Status}",
+            DelegationReportFormatter.Short(task.Id), interrupted.Sequence, task.Status);
+    }
+
     private async Task SettleAsync(
         IServiceProvider services, AppDbContext db, AgentTask task, string report, TurnOutcome turn,
         CancellationToken ct)
     {
         var now = UtcNow();
-        task.Result = report;
+        if (!DelegationReportFormatter.TryReadReportVerdict(task.Id, report, out var verdict, out var body))
+        {
+            body = report;
+            verdict = string.Empty;
+        }
+
+        var classified = await ClassifyReportAsync(
+            services, db, task, body, verdict, turn, now, ct);
+        if (classified is null)
+            return;
+
+        var (status, evidence, settledBody, failureReason) = classified.Value;
+        task.Result = settledBody;
+        task.ReportEvidence = evidence;
+        if (failureReason is not null)
+            task.FailureReason = failureReason;
         task.CompletedAt = now;
         task.ConcurrencyToken = Guid.NewGuid();
-        task.Status = LooksLikeAQuestion(report) ? AgentTaskStatus.Blocked : AgentTaskStatus.Succeeded;
+        task.Status = status;
 
         // Roll the delegate's token spend up onto the task so the board and the per-root ceiling
         // see it. The four counters stay SEPARATE all the way to the price: collapsing them and
@@ -415,22 +464,26 @@ public sealed class AgentTaskReplyService
 
         // The delegate was told to spill a long report to a file. Note it if it did — and if it
         // ignored the instruction, write the file ourselves so the excerpt has somewhere to point.
-        task.ResultFilePath = await ResolveSpillFileAsync(task, report, ct);
-        (task.DeliverablePath, task.DeliverableRef) = await ResolveDeliverableAsync(services, task, report, ct);
+        task.ResultFilePath = await ResolveSpillFileAsync(task, settledBody, ct);
+        (task.DeliverablePath, task.DeliverableRef) = await ResolveDeliverableAsync(services, task, settledBody, ct);
 
         // What the report was built from, on the record. The report is the turn-ending response's
         // own text, so a delegate that front-loaded findings mid-turn left some behind — name how
-        // much, or that loss is invisible from every surface (CARD-0046 slice 2).
-        var reported = turn.NarrationDiscardedChars > 0
-            ? $"Delegate reported {report.Length:N0} characters (final message; "
-              + $"{turn.NarrationDiscardedChars:N0} characters of mid-turn narration not included)."
-            : $"Delegate reported {report.Length:N0} characters.";
+        // much, or that loss is invisible from every surface (CARD-0046 slice 2). CARD-0159 adds
+        // the verdict / evidence class so a Succeeded that was not positively reported is never silent.
+        var reported = DescribeReported(
+            settledBody.Length, turn, evidence, string.IsNullOrEmpty(verdict) ? null : verdict);
 
-        db.AgentTaskEvents.Add(NewEvent(
-            task.Id,
-            task.Status == AgentTaskStatus.Blocked ? AgentTaskEventType.Blocked : AgentTaskEventType.Completed,
-            task.Status == AgentTaskStatus.Blocked ? "Delegate asked a question." : reported,
-            now));
+        var eventType = task.Status switch
+        {
+            AgentTaskStatus.Blocked => AgentTaskEventType.Blocked,
+            AgentTaskStatus.Failed => AgentTaskEventType.Failed,
+            _ => AgentTaskEventType.Completed,
+        };
+        var eventDetail = task.Status == AgentTaskStatus.Blocked && evidence == AgentTaskReportEvidence.QuestionHeuristic
+            ? "Delegate asked a question."
+            : reported;
+        db.AgentTaskEvents.Add(NewEvent(task.Id, eventType, eventDetail, now));
 
         // A settlement that could not get the final message is LOUD (CARD-0046 slice 3). Succeeded
         // is still the right status — the work happened and the text is real — but "Succeeded" on
@@ -441,10 +494,10 @@ public sealed class AgentTaskReplyService
         string? callerWarning = null;
         if (turn.FinalMessageMissing)
         {
-            callerWarning = FinalMessageMissingWarning(report.Length, _settings.FinalMessageGraceSeconds);
+            callerWarning = FinalMessageMissingWarning(settledBody.Length, _settings.FinalMessageGraceSeconds);
             db.AgentTaskEvents.Add(NewEvent(
                 task.Id, AgentTaskEventType.Warning,
-                FinalMessageMissingDetail(report.Length, _settings.FinalMessageGraceSeconds), now));
+                FinalMessageMissingDetail(settledBody.Length, _settings.FinalMessageGraceSeconds), now));
         }
 
         // Same three surfaces, different fact: the turn handed work to background subagents that
@@ -463,6 +516,10 @@ public sealed class AgentTaskReplyService
         string? workspaceNote = null;
         if (task.Status == AgentTaskStatus.Succeeded && task.Workspace == WorkspaceMode.Worktree)
             workspaceNote = await MergeBackAsync(services, db, task, now, ct);
+
+        var (gitHeader, gitWarning) = await TryDescribeGitAsync(services, db, task, settledBody, now, ct);
+        if (gitWarning is not null)
+            callerWarning = callerWarning is null ? gitWarning : $"{callerWarning}\n\n{gitWarning}";
 
         // A finished Merge task is what un-blocks the conflicted task it was spawned for.
         if (task.Status == AgentTaskStatus.Succeeded && task.Role == AgentTaskRole.Merge)
@@ -488,7 +545,7 @@ public sealed class AgentTaskReplyService
             await RecordFinalMessageMissingAsync(
                 services, db, task, missingFrom,
                 $"Task {DelegationReportFormatter.Short(task.Id)} settled without the delegate's final "
-                + $"message. {FinalMessageMissingDetail(report.Length, _settings.FinalMessageGraceSeconds)} "
+                + $"message. {FinalMessageMissingDetail(settledBody.Length, _settings.FinalMessageGraceSeconds)} "
                 + "The caller has been told the report may be preamble; the whole turn is in this "
                 + "session's transcript.",
                 ct);
@@ -510,10 +567,11 @@ public sealed class AgentTaskReplyService
         }
 
         _logger.LogInformation(
-            "Task {ShortId} settled as {Status} ({Chars:N0} chars, ${Cost:0.000})",
-            DelegationReportFormatter.Short(task.Id), task.Status, report.Length, task.CostUsd);
+            "Task {ShortId} settled as {Status} ({Chars:N0} chars, ${Cost:0.000}, {Evidence})",
+            DelegationReportFormatter.Short(task.Id), task.Status, settledBody.Length, task.CostUsd, evidence);
 
-        await DeliverToParentAsync(task, report, ct, workspaceNote, callerWarning, drift);
+        await DeliverToParentAsync(
+            task, settledBody, ct, workspaceNote, callerWarning, drift, gitHeader);
         await PublishAsync(task, ct);
     }
 
@@ -1166,14 +1224,15 @@ public sealed class AgentTaskReplyService
     /// </summary>
     private async Task DeliverToParentAsync(
         AgentTask task, string report, CancellationToken ct, string? workspaceNote = null,
-        string? warning = null, string? drift = null)
+        string? warning = null, string? drift = null, string? git = null)
     {
         if (task.ReplyTo != AgentTaskReplyTo.Session || task.ParentSessionId is not Guid parentSession)
             return;
 
         var note = DelegationReportFormatter.BuildCompletionNote(
             task, _settings, report, workspaceNote, ReplyInlineMaxChars, warning,
-            await DescribeOverlappingRunningAsync(task, ct), drift);
+            await DescribeOverlappingRunningAsync(task, ct), drift,
+            ReportEvidenceHeader(task.ReportEvidence), git);
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
@@ -1296,11 +1355,18 @@ public sealed class AgentTaskReplyService
         bool FinalMessageMissing = false,
         int NarrationDiscardedChars = 0,
         int AbandonedSubagents = 0,
-        ApiErrorStubFacts? ApiErrorStub = null)
+        ApiErrorStubFacts? ApiErrorStub = null,
+        InterruptedFacts? Interrupted = null)
     {
         public static readonly TurnOutcome Nothing = new(null, false);
         public static readonly TurnOutcome Deferred = new(null, false, DeferredForFinalMessage: true);
     }
+
+    /// <summary>
+    /// A <c>TurnEnd</c> that is an idle boundary but never a report (CARD-0159) — currently only
+    /// Grok's measured <c>stop_reason=cancelled</c>.
+    /// </summary>
+    private readonly record struct InterruptedFacts(long Sequence, string? Uuid, string? StopReason);
 
     /// <summary>
     /// What the stub itself carried (S1's three fields plus its error string) — everything the
@@ -1327,6 +1393,13 @@ public sealed class AgentTaskReplyService
             .FirstOrDefaultAsync(ct);
         if (end is null)
             return TurnOutcome.Nothing;
+
+        // CARD-0159: a cancelled boundary is idle (the queue already flushed) but never a report.
+        // Checked before the walk-back so we cannot settle on the interrupted turn's narration.
+        if (!TranscriptKinds.IsReportBoundary(end.Kind, end.StopReason))
+            return new TurnOutcome(
+                null, false, Interrupted: new InterruptedFacts(end.Sequence, end.Uuid, end.StopReason));
+
         var turnEnd = end.Sequence;
 
         var span = await LoadPromptsInSpanAsync(db, sessionId, task.DispatchedAt, ct);
@@ -1689,6 +1762,178 @@ public sealed class AgentTaskReplyService
     /// conservative: only a question mark in the last couple of lines counts, so a report that
     /// merely mentions a question mid-text still reads as finished.
     /// </summary>
+    /// <summary>
+    /// CARD-0159 S2: a closing verdict line settles immediately; an unmarked live session is
+    /// nudged once; a second unmarked end (or a dead session, or a Check role) settles with the
+    /// evidence class recorded. Returns null when the task was nudged and must NOT settle.
+    /// </summary>
+    private async Task<(AgentTaskStatus Status, AgentTaskReportEvidence Evidence, string Body, string? FailureReason)?>
+        ClassifyReportAsync(
+            IServiceProvider services, AppDbContext db, AgentTask task, string body, string verdict,
+            TurnOutcome turn, DateTime now, CancellationToken ct)
+    {
+        if (verdict == "done")
+            return (AgentTaskStatus.Succeeded, AgentTaskReportEvidence.Marked, body, null);
+        if (verdict == "blocked")
+            return (AgentTaskStatus.Blocked, AgentTaskReportEvidence.Marked, body, null);
+        if (verdict == "failed")
+        {
+            var reason = FirstLine(body);
+            return (AgentTaskStatus.Failed, AgentTaskReportEvidence.Marked, body,
+                string.IsNullOrWhiteSpace(reason) ? "Delegate reported failed." : reason);
+        }
+
+        if (LooksLikeAQuestion(body))
+            return (AgentTaskStatus.Blocked, AgentTaskReportEvidence.QuestionHeuristic, body, null);
+
+        if (task.Role == AgentTaskRole.Check)
+            return (AgentTaskStatus.Succeeded, AgentTaskReportEvidence.Exempt, body, null);
+
+        var sessionLive = task.AgentSessionId is Guid sid && await IsSessionLiveAsync(db, sid, ct);
+        if (task.ReportNudgedAt is null && sessionLive)
+        {
+            await NudgeForClosingLineAsync(services, db, task, now, ct);
+            return null;
+        }
+
+        var evidence = turn.FinalMessageMissing
+            ? AgentTaskReportEvidence.FinalMessageMissing
+            : AgentTaskReportEvidence.UnmarkedAfterNudge;
+        return (AgentTaskStatus.Succeeded, evidence, body, null);
+    }
+
+    private static string FirstLine(string text)
+    {
+        foreach (var line in text.ReplaceLineEndings("\n").Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Length > 0)
+                return trimmed;
+        }
+        return string.Empty;
+    }
+
+    private async Task<bool> IsSessionLiveAsync(AppDbContext db, Guid sessionId, CancellationToken ct)
+    {
+        var session = await db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId)
+            .Select(s => new { s.Status, s.EndedAt })
+            .FirstOrDefaultAsync(ct);
+        if (session is null || session.EndedAt is not null)
+            return false;
+        return session.Status is SessionStatus.Created or SessionStatus.Starting or SessionStatus.Running;
+    }
+
+    private async Task NudgeForClosingLineAsync(
+        IServiceProvider services, AppDbContext db, AgentTask task, DateTime now, CancellationToken ct)
+    {
+        if (task.AgentSessionId is not Guid sessionId)
+            return;
+
+        var shortId = DelegationReportFormatter.Short(task.Id);
+        var done = DelegationReportFormatter.ReportToken(task.Id, "done");
+        var body =
+            $"{DelegationReportFormatter.TaskMarker(task.Id)} Your turn ended without the closing report line. "
+            + $"If the work is finished, send the report now, ending with `{done}` (or `blocked` / `failed`). "
+            + "If it is not finished, continue.";
+
+        task.ReportNudgedAt = now;
+        task.ConcurrencyToken = Guid.NewGuid();
+        db.AgentTaskEvents.Add(NewEvent(
+            task.Id, AgentTaskEventType.Warning,
+            "Turn ended without the closing report line — asked once for `[antiphon-report:"
+            + $"{shortId} done|blocked|failed]`. The task stays Working.",
+            now));
+        await db.SaveChangesAsync(ct);
+
+        var queue = services.GetRequiredService<SessionMessageQueueService>();
+        await queue.EnqueueAsync(sessionId, body, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
+        _logger.LogInformation(
+            "Task {ShortId}: nudged once for the closing report line", shortId);
+    }
+
+    private static string DescribeReported(
+        int chars, TurnOutcome turn, AgentTaskReportEvidence evidence, string? markedVerdict)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append("Delegate reported ").Append(chars.ToString("N0")).Append(" characters");
+        if (turn.NarrationDiscardedChars > 0)
+        {
+            sb.Append(" (final message; ")
+              .Append(turn.NarrationDiscardedChars.ToString("N0"))
+              .Append(" characters of mid-turn narration not included)");
+        }
+
+        if (evidence == AgentTaskReportEvidence.Marked && markedVerdict is { Length: > 0 })
+            sb.Append(" (verdict: ").Append(markedVerdict).Append(").");
+        else if (evidence == AgentTaskReportEvidence.UnmarkedAfterNudge)
+            sb.Append(" (no closing line; settled after one nudge).");
+        else
+            sb.Append('.');
+        return sb.ToString();
+    }
+
+    private static string? ReportEvidenceHeader(AgentTaskReportEvidence evidence) => evidence switch
+    {
+        AgentTaskReportEvidence.Marked => "marked",
+        AgentTaskReportEvidence.UnmarkedAfterNudge
+            or AgentTaskReportEvidence.QuestionHeuristic
+            or AgentTaskReportEvidence.FinalMessageMissing => "unmarked",
+        AgentTaskReportEvidence.Exempt => "exempt",
+        _ => null,
+    };
+
+    private async Task<(string? Header, string? Warning)> TryDescribeGitAsync(
+        IServiceProvider services, AppDbContext db, AgentTask task, string report, DateTime now,
+        CancellationToken ct)
+    {
+        try
+        {
+            if (task.Workspace is WorkspaceMode.Shared or WorkspaceMode.ReadOnly)
+                return ("unattributable", null);
+
+            var git = services.GetService<GitWorkspaceService>();
+            if (git is null)
+                return (null, null);
+
+            var directory = task.WorktreePath is { Length: > 0 } wt && Directory.Exists(wt)
+                ? wt
+                : task.RepoPath ?? task.WorkingDirectory;
+            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+                return (DelegationGitFacts.ResolveBase(task) is null ? "base unknown" : null, null);
+
+            var gitBase = DelegationGitFacts.ResolveBase(task);
+            if (string.IsNullOrWhiteSpace(gitBase))
+                return ("base unknown", null);
+
+            var (commits, files) = await git.CountRangeAsync(directory, gitBase, "HEAD", ct);
+            if (commits is null)
+                return ("base unknown", null);
+
+            var header = DelegationGitFacts.FormatHeader(commits.Value, files ?? 0);
+            string? warning = null;
+            if (task.Workspace == WorkspaceMode.Worktree
+                && DelegationGitFacts.IsCodeProducing(task.Role)
+                && commits.Value == 0
+                && !DelegationGitFacts.MentionsNoChanges(report))
+            {
+                var branch = task.WorktreeBranch ?? "the task branch";
+                warning =
+                    $"This Worktree task in a code role produced no commits on `{branch}`. Verify before merging.";
+                db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, warning, now));
+            }
+
+            return (header, warning);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex, "Could not gather git facts for task {ShortId}",
+                DelegationReportFormatter.Short(task.Id));
+            return (null, null);
+        }
+    }
+
     internal static bool LooksLikeAQuestion(string report)
     {
         var lines = report.ReplaceLineEndings("\n")

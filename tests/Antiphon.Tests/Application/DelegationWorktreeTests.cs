@@ -39,6 +39,8 @@ public class DelegationWorktreeTests
         task.WorktreePath.ShouldNotBeNull();
         Directory.Exists(task.WorktreePath).ShouldBeTrue();
         task.WorktreeBranch.ShouldNotBeNull();
+        task.WorktreeBaseSha.ShouldNotBeNull();
+        task.WorktreeBaseSha!.Length.ShouldBeGreaterThanOrEqualTo(7);
         // Branched FROM the target, so the eventual rebase-back is linear.
         (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "merge-base", "--is-ancestor", "feat/parent", "HEAD"))
             .Ok.ShouldBeTrue("the task branch must start at the merge target");
@@ -501,7 +503,8 @@ public class DelegationWorktreeTests
         var service = new DelegationWorktreeService(
             manager,
             new GitService(NullLogger<GitService>.Instance),
-            NullLogger<DelegationWorktreeService>.Instance);
+            NullLogger<DelegationWorktreeService>.Instance,
+            new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance));
         return (service, manager);
     }
 

@@ -34,3 +34,10 @@ work itself: each one is here because ignoring it has already cost a real task.
   "/*/Antiphon.Tests.Application/*/*"`). After a fix, re-run only what you touched. When you verify
   that red is pre-existing, re-run the failing tests at the base commit, not the assembly —
   confirming four known test names costs one minute targeted and twelve full.
+
+- CLOSE THE REPORT WITH A VERDICT LINE. End your final message with one line, on its own:
+  `[antiphon-report:<id> done]` if the work is complete, `[antiphon-report:<id> blocked]` if you
+  need a decision or an answer to continue, `[antiphon-report:<id> failed]` if you could not do
+  it. Nothing after it. Without that line the harness cannot tell your report from a status
+  update and will ask you once. This token is distinct from `[antiphon-task:<id>]` (the prompt
+  marker).

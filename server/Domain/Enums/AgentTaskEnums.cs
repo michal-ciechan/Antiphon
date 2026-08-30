@@ -154,3 +154,30 @@ public enum AgentTaskEventType
     /// </summary>
     ScopeDrift = 19,
 }
+
+/// <summary>
+/// How a settled report was classified (CARD-0159). Legacy is the column default so every
+/// pre-existing row is labelled rather than guessed; new settlements always write a non-Legacy
+/// value. Never a new <see cref="AgentTaskStatus"/> — Succeeded with UnmarkedAfterNudge is still
+/// Succeeded to every consumer of <c>IsSettled</c>.
+/// </summary>
+public enum AgentTaskReportEvidence
+{
+    /// <summary>Row predates CARD-0159 — no evidence class was recorded.</summary>
+    Legacy = 0,
+
+    /// <summary>The report closed with <c>[antiphon-report:id done|blocked|failed]</c>.</summary>
+    Marked = 1,
+
+    /// <summary>No closing line; settled after the one nudge (or a dead session skipped the nudge).</summary>
+    UnmarkedAfterNudge = 2,
+
+    /// <summary>No closing line; last-two-lines <c>?</c> heuristic (kept from before CARD-0159).</summary>
+    QuestionHeuristic = 3,
+
+    /// <summary>CARD-0046: the turn-ending response never wrote its own text; settled on the join.</summary>
+    FinalMessageMissing = 4,
+
+    /// <summary><see cref="AgentTaskRole.Check"/> — the nudge is skipped; the check interpreter has its own format.</summary>
+    Exempt = 5,
+}

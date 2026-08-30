@@ -1104,7 +1104,8 @@ public sealed class AgentTaskService
             task.CardId is Guid cardId && cardIdentifiers is not null
                 && cardIdentifiers.TryGetValue(cardId, out var identifier)
                     ? identifier
-                    : null);
+                    : null,
+            task.ReportEvidence);
     }
 
     /// <summary>Internal so the attention projection rolls up subtree spend the SAME way the board

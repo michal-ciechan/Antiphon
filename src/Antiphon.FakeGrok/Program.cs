@@ -41,6 +41,20 @@ internal static class Program
     private static int _eventCounter;
     private static int _promptCounter;
     private static readonly byte[] PasteStartBytes = Encoding.ASCII.GetBytes("\x1b[200~");
+    private static bool _turnInFlight;
+    private static string? _inFlightPromptId;
+
+    /// <summary>
+    /// CARD-0159 S0: a prompt received while a turn is in flight emits
+    /// <c>turn_completed stop_reason=cancelled</c> then the new
+    /// <c>user_message_chunk</c>, 43 ms apart — the measured live order of submitting into a
+    /// working Grok composer.
+    /// </summary>
+    private static bool SubmitWhileWorkingCancels =>
+        string.Equals(
+            Environment.GetEnvironmentVariable("ANTIPHON_FAKE_SUBMIT_WHILE_WORKING"),
+            "cancel",
+            StringComparison.OrdinalIgnoreCase);
 
     private static int Main(string[] args)
     {
@@ -317,6 +331,30 @@ internal static class Program
 
         var echo = escaped.Length > 60 ? escaped[..60] : escaped;
         write($"FAKE response to: {echo}\r\n");
+
+        if (SubmitWhileWorkingCancels && _turnInFlight)
+        {
+            // Measured live order (CARD-0159): cancelled turn_completed, then the new
+            // user_message_chunk 43 ms later. No Esc is involved — submitting into a working
+            // composer is itself the cancel.
+            AppendTurnCompleted(sessionDir, sessionId, _inFlightPromptId, "cancelled", withUsage: false);
+            Thread.Sleep(43);
+            _turnInFlight = false;
+            _inFlightPromptId = null;
+            write("Worked for 1.7s\r\n");
+            write(IdleTitle);
+            AppendSessionFiles(sessionDir, sessionId, text, $"FAKE response to: {echo}");
+            return;
+        }
+
+        if (SubmitWhileWorkingCancels && !_turnInFlight)
+        {
+            // Hold the turn open so the next prompt is the measured mid-turn submit.
+            _inFlightPromptId = AppendPartialTurn(sessionDir, sessionId, text, $"FAKE response to: {echo}");
+            _turnInFlight = true;
+            return;
+        }
+
         // The real turn-end line, measured 1.0.5: decimal seconds ("Worked for 1.7s"), which the
         // integer " for \d+s" regex does NOT match — do not "fix" this to an integer.
         write("Worked for 1.7s\r\n");
@@ -397,6 +435,97 @@ internal static class Program
                 JsonSerializer.Serialize(new { role = "user", content = user }) + "\n");
             File.AppendAllText(history,
                 JsonSerializer.Serialize(new { role = "assistant", content = assistant }) + "\n");
+        }
+        catch
+        {
+            // Session files are test plumbing; a write failure must not kill the TUI contract.
+        }
+    }
+
+    /// <summary>User + agent chunks of a turn, no <c>turn_completed</c> — the in-flight half of S0.</summary>
+    private static string AppendPartialTurn(string sessionDir, string sessionId, string user, string assistant)
+    {
+        var promptId = Guid.NewGuid().ToString("D");
+        try
+        {
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var promptIndex = _promptCounter++;
+            var updates = Path.Combine(sessionDir, "updates.jsonl");
+            object Meta() => new { eventId = $"{sessionId}-{++_eventCounter}", agentTimestampMs = nowMs };
+            AppendShared(updates, JsonSerializer.Serialize(new
+            {
+                timestamp = now,
+                method = "session/update",
+                @params = new
+                {
+                    sessionId,
+                    update = new
+                    {
+                        sessionUpdate = "user_message_chunk",
+                        content = new { type = "text", text = user },
+                        _meta = new { modelId = "grok-4.6", promptIndex }
+                    },
+                    _meta = Meta()
+                }
+            }));
+            AppendShared(updates, JsonSerializer.Serialize(new
+            {
+                timestamp = now,
+                method = "session/update",
+                @params = new
+                {
+                    sessionId,
+                    update = new
+                    {
+                        sessionUpdate = "agent_message_chunk",
+                        content = new { type = "text", text = assistant }
+                    },
+                    _meta = Meta()
+                }
+            }));
+        }
+        catch
+        {
+            // Session files are test plumbing; a write failure must not kill the TUI contract.
+        }
+
+        return promptId;
+    }
+
+    private static void AppendTurnCompleted(
+        string sessionDir, string sessionId, string? promptId, string stopReason, bool withUsage)
+    {
+        try
+        {
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var updates = Path.Combine(sessionDir, "updates.jsonl");
+            object update = withUsage
+                ? new
+                {
+                    sessionUpdate = "turn_completed",
+                    prompt_id = promptId,
+                    stop_reason = stopReason,
+                    usage = BuildTurnUsage()
+                }
+                : new
+                {
+                    sessionUpdate = "turn_completed",
+                    prompt_id = promptId,
+                    stop_reason = stopReason
+                };
+            AppendShared(updates, JsonSerializer.Serialize(new
+            {
+                timestamp = now,
+                method = "_x.ai/session/update",
+                @params = new
+                {
+                    sessionId,
+                    update,
+                    _meta = new { eventId = $"{sessionId}-{++_eventCounter}", agentTimestampMs = nowMs }
+                }
+            }));
         }
         catch
         {

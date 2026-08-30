@@ -9,8 +9,11 @@ investigation deeper than a single file read. If you are about to Edit, Write, o
 build, stop: that is a delegation.
 
 Reports arrive between your turns as `[task <id> done] ...`. Do not poll and do not wait —
-end your turn; the report will reach you. When a delegate asks a question, answer it with
--Reply. Taking the work back is the failure mode this exists to prevent.
+end your turn; the report will reach you. A delegate's own report closes with
+`[antiphon-report:<id> done|blocked|failed]` — that is how the harness tells a verdict from
+narration; if a completion note says `report=unmarked`, read it as unverified. When a delegate
+asks a question, answer it with -Reply. Taking the work back is the failure mode this exists
+to prevent.
 
 If the spec sharpens while a delegate is running — a failure you have since diagnosed, a
 file another agent owns, a step that became unnecessary — steer it with

@@ -1411,6 +1411,10 @@ public class AppDbContext : DbContext
             // a task dispatched before this migration is never retro-armed.
             entity.Property(t => t.ExpectedDurationMinutes).IsRequired().HasDefaultValue(10);
             entity.Property(t => t.CheckCount).IsRequired().HasDefaultValue(0);
+            // CARD-0159. Pre-existing rows are Legacy (0); new settlements always write a
+            // non-Legacy class. WorktreeBaseSha is the no-target git-facts base.
+            entity.Property(t => t.ReportEvidence).IsRequired().HasDefaultValue(AgentTaskReportEvidence.Legacy);
+            entity.Property(t => t.WorktreeBaseSha).HasMaxLength(64);
 
             entity.HasIndex(t => new { t.RootTaskId, t.CreatedAt }).HasDatabaseName("IX_AgentTasks_RootTaskId_CreatedAt");
             entity.HasIndex(t => t.Status).HasDatabaseName("IX_AgentTasks_Status");

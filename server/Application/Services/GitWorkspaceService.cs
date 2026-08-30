@@ -347,6 +347,39 @@ public sealed class GitWorkspaceService
         return stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     }
 
+    /// <summary>
+    /// Commits and changed-file counts on <c><paramref name="from"/>..<paramref name="to"/></c>
+    /// (CARD-0159 S3). Null either counter when that git command could not answer, so a caller can
+    /// tell "zero commits" apart from "the question could not be asked". Read-only.
+    /// </summary>
+    public async Task<(int? Commits, int? Files)> CountRangeAsync(
+        string workingDirectory, string from, string to, CancellationToken ct)
+    {
+        var range = $"{from}..{to}";
+        var (commitCode, commitOut, commitErr) = await RunReadOnlyAsync(
+            workingDirectory, ct, "rev-list", "--count", range);
+        int? commits = null;
+        if (commitCode == 0 && int.TryParse(commitOut.Trim(), out var n))
+            commits = n;
+        else
+            _logger.LogDebug("git rev-list --count failed in {Dir}: {Err}", workingDirectory, commitErr);
+
+        var (fileCode, fileOut, fileErr) = await RunReadOnlyAsync(
+            workingDirectory, ct, "diff", "--name-only", range);
+        int? files = null;
+        if (fileCode == 0)
+        {
+            files = fileOut.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Length;
+        }
+        else
+        {
+            _logger.LogDebug("git diff --name-only failed in {Dir}: {Err}", workingDirectory, fileErr);
+        }
+
+        return (commits, files);
+    }
+
     /// <summary>How much uncommitted work is sitting in a workspace. Null when git could not answer.</summary>
     public sealed record WorkingTreeCounts(int Changed, int Untracked);
 

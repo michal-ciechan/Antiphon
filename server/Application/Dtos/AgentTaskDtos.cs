@@ -137,7 +137,13 @@ public sealed record AgentTaskSummaryDto(
     /// <summary>The card this task's work is against (CARD-0040); null when nothing bound.</summary>
     Guid? CardId = null,
     /// <summary>Denormalised at read time so a row can name its card without a second request.</summary>
-    string? CardIdentifier = null);
+    string? CardIdentifier = null,
+    /// <summary>
+    /// How the stored report was classified at settlement (CARD-0159). <c>Legacy</c> on every
+    /// pre-existing row; a new settlement is <c>Marked</c> / <c>UnmarkedAfterNudge</c> /
+    /// <c>QuestionHeuristic</c> / <c>FinalMessageMissing</c> / <c>Exempt</c>.
+    /// </summary>
+    AgentTaskReportEvidence ReportEvidence = AgentTaskReportEvidence.Legacy);
 
 /// <summary>Fleet-wide counters for the delegations board, independent of its history window.</summary>
 public sealed record AgentTaskListSummaryDto(

@@ -588,13 +588,92 @@ public class AgentTaskDeliveryWatchdogTests
         (await harness.SettleDeferredReportsAsync(CancellationToken.None))
             .ShouldBeGreaterThanOrEqualTo(1, "a global sweep count, so other suites' rows may add to it");
 
+        await using (var mid = CreateContext())
+        {
+            var nudged = await mid.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            nudged.Status.ShouldBe(
+                AgentTaskStatus.Dispatched,
+                "CARD-0159: an unmarked FinalMessageMissing turn is nudged once, not settled");
+            nudged.ReportNudgedAt.ShouldNotBeNull();
+        }
+
+        (await harness.SettleDeferredReportsAsync(CancellationToken.None))
+            .ShouldBeGreaterThanOrEqualTo(1);
+
         await using var verify = CreateContext();
         var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
         settled.Status.ShouldBe(
             AgentTaskStatus.Succeeded,
             "no transcript arrives for a response that never writes text — only the sweep can end this");
         settled.Result.ShouldBe("I'll start by reading the spec.");
+        settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.FinalMessageMissing);
         settled.RecoveredAt.ShouldBeNull("ordinary settlement observes the task's own transcript");
+    }
+
+    [Test]
+    public async Task a_cancelled_end_is_skipped_by_the_deferred_report_sweep()
+    {
+        var (harness, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 5);
+        var sessionId = task.AgentSessionId!.Value;
+        var at = DateTime.UtcNow.AddMinutes(-3);
+        var apiCallId = $"msg_{Guid.NewGuid():N}";
+        await using (var db = CreateContext())
+        {
+            db.TranscriptEntries.AddRange(
+                new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(),
+                    AgentSessionId = sessionId,
+                    Sequence = 1,
+                    Kind = TranscriptKinds.UserPrompt,
+                    Uuid = $"cancelled-{Guid.NewGuid():N}",
+                    Role = "user",
+                    Text = DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.",
+                    Timestamp = at,
+                    CreatedAt = at,
+                },
+                new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(),
+                    AgentSessionId = sessionId,
+                    Sequence = 2,
+                    Kind = TranscriptKinds.AssistantText,
+                    Uuid = $"cancelled-{Guid.NewGuid():N}",
+                    Role = "assistant",
+                    Text = "I'll start by reading the spec.",
+                    ApiCallId = apiCallId,
+                    Timestamp = at,
+                    CreatedAt = at,
+                },
+                new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(),
+                    AgentSessionId = sessionId,
+                    Sequence = 3,
+                    Kind = TranscriptKinds.TurnEnd,
+                    Uuid = $"cancelled-{Guid.NewGuid():N}",
+                    Role = "assistant",
+                    StopReason = TranscriptKinds.StopReasons.Cancelled,
+                    ApiCallId = apiCallId,
+                    Timestamp = at,
+                    CreatedAt = at,
+                });
+            await db.SaveChangesAsync();
+        }
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(
+            AgentTaskStatus.Dispatched,
+            "a cancelled end is never a report — the grace sweep must not settle it");
+        stored.Result.ShouldBeNull();
+        stored.ReportNudgedAt.ShouldBeNull();
+        (await verify.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Completed))
+            .ShouldBeFalse();
     }
 
     [Test]
@@ -627,6 +706,15 @@ public class AgentTaskDeliveryWatchdogTests
 
         (await harness.SettleDeferredReportsAsync(CancellationToken.None))
             .ShouldBeGreaterThanOrEqualTo(1, "a global sweep count, so other suites' rows may add to it");
+
+        await using (var mid = CreateContext())
+        {
+            var nudged = await mid.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            if (nudged.Status == AgentTaskStatus.Dispatched)
+                nudged.ReportNudgedAt.ShouldNotBeNull("unmarked announcement is nudged once");
+        }
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
 
         await using var verify = CreateContext();
         var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
@@ -1568,7 +1656,8 @@ public class AgentTaskDeliveryWatchdogTests
         var service = new DelegationWorktreeService(
             manager,
             new GitService(NullLogger<GitService>.Instance),
-            NullLogger<DelegationWorktreeService>.Instance);
+            NullLogger<DelegationWorktreeService>.Instance,
+            new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance));
         return (service, manager);
     }
 

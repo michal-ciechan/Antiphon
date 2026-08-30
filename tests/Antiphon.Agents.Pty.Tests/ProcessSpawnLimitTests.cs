@@ -40,6 +40,7 @@ public class ProcessSpawnLimitTests
             typeof(PtyInputLossExperiments),
             typeof(ClaudeSignalCanaryTests),
             typeof(GrokCanaryTests),
+            typeof(GrokSubmitWhileWorkingCanaryTests),
             typeof(ClaudePasteLossCanaryTests),
             typeof(FakeVsRealClipParityTests),
             typeof(ClaudeLocalCommandCanaryTests),

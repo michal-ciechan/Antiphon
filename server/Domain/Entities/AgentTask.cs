@@ -239,6 +239,27 @@ public class AgentTask
     /// </summary>
     public int CostPricingVersion { get; set; }
 
+    /// <summary>
+    /// How the stored report was classified at settlement (CARD-0159). Default
+    /// <see cref="AgentTaskReportEvidence.Legacy"/> so every pre-existing row is labelled rather
+    /// than guessed; a new settlement always writes a non-Legacy value.
+    /// </summary>
+    public AgentTaskReportEvidence ReportEvidence { get; set; }
+
+    /// <summary>
+    /// When the one "please send the closing report line" nudge was queued (CARD-0159). Null means
+    /// not yet asked; a second unmarked <c>end_turn</c> after this settles rather than nudging again.
+    /// </summary>
+    public DateTime? ReportNudgedAt { get; set; }
+
+    /// <summary>
+    /// HEAD SHA of the task worktree at creation (CARD-0159 S3). The no-merge-target base for
+    /// <c>git=N commits, M files</c> on the completion header, and the same base
+    /// <c>DelegateCheckProbe</c> uses so the check digest and the header agree. Null on legacy
+    /// rows → <c>git=base unknown</c>.
+    /// </summary>
+    public string? WorktreeBaseSha { get; set; }
+
     public Card? Card { get; set; }
     public AgentTask? ParentTask { get; set; }
     public ICollection<AgentTask> Children { get; set; } = new List<AgentTask>();

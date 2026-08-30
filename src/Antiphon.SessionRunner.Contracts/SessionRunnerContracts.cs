@@ -297,6 +297,25 @@ public static class TranscriptKinds
     public const string TurnEnd = "TurnEnd";
 
     /// <summary>
+    /// Stop-reason vocabulary that already existed as string literals on the turn-boundary rule
+    /// (<c>AgentSessionRuntime.IsTurnBoundary</c>) and Grok's <c>turn_completed</c> rows. Only
+    /// <see cref="Cancelled"/> is a measured "stopped, not finished" value (CARD-0159).
+    /// </summary>
+    public static class StopReasons
+    {
+        public const string EndTurn = "end_turn";
+        public const string Cancelled = "cancelled";
+    }
+
+    /// <summary>
+    /// A <see cref="TurnEnd"/> the delegate FINISHED, as opposed to one that ended because
+    /// something stopped it. Null is the legacy/synthetic/Codex row and keeps today's behaviour;
+    /// only a measured interrupt value is excluded (CARD-0159).
+    /// </summary>
+    public static bool IsReportBoundary(string? kind, string? stopReason) =>
+        kind == TurnEnd && !string.Equals(stopReason, StopReasons.Cancelled, StringComparison.Ordinal);
+
+    /// <summary>
     /// A context compaction boundary (Claude Code JSONL: type=system, subtype=compact_boundary —
     /// shape pinned by ClaudeCompactionCanaryTests / Fixtures/compact-boundary.jsonl). Never a turn
     /// end at the NORMALIZER level (no stop_reason is emitted), and never activity — compaction is

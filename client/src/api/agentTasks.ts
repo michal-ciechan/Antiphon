@@ -41,6 +41,15 @@ export type AgentTaskStatus =
   | 'Failed'
   | 'Canceled'
 
+/** How a settled report was classified (CARD-0159). Legacy on every pre-existing row. */
+export type AgentTaskReportEvidence =
+  | 'Legacy'
+  | 'Marked'
+  | 'UnmarkedAfterNudge'
+  | 'QuestionHeuristic'
+  | 'FinalMessageMissing'
+  | 'Exempt'
+
 export type WorkspaceMode = 'Shared' | 'Worktree' | 'ReadOnly'
 
 export type AgentTaskEventType =
@@ -125,6 +134,8 @@ export interface AgentTaskSummaryDto {
   cardId?: string | null
   /** The bound card's identifier, denormalised at read time. */
   cardIdentifier?: string | null
+  /** How the stored report was classified at settlement (CARD-0159). */
+  reportEvidence?: AgentTaskReportEvidence
 }
 
 export interface AgentTaskEventDto {

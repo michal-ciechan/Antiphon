@@ -337,13 +337,14 @@ public sealed class AgentSessionRuntime
     /// <summary>A transcript entry that means "the agent stopped and is waiting" (see the callers of
     /// <see cref="FlushQueueOnIdleAsync"/> for why the interrupt marker counts).</summary>
     private static bool IsTurnBoundary(SessionRunnerTranscriptEvent entry) =>
-        (entry.Kind == TranscriptKinds.TurnEnd && entry.StopReason == "end_turn")
+        (entry.Kind == TranscriptKinds.TurnEnd && entry.StopReason == TranscriptKinds.StopReasons.EndTurn)
         // Grok's Esc interrupt is an EXPLICIT turn_completed with stop_reason "cancelled"
         // (measured 1.0.5, CARD-0080 S1) — the structured analog of Claude's "[Request
         // interrupted…" marker below, and like it, the queue must flush on it or every WhenIdle
         // delivery strands until some later turn completes. Claude's API never emits "cancelled"
-        // as a stop_reason, so this arm cannot change Claude behaviour.
-        || (entry.Kind == TranscriptKinds.TurnEnd && entry.StopReason == "cancelled")
+        // as a stop_reason, so this arm cannot change Claude behaviour. CARD-0159: this stays
+        // an idle boundary (the queue must flush) but is never a report boundary.
+        || (entry.Kind == TranscriptKinds.TurnEnd && entry.StopReason == TranscriptKinds.StopReasons.Cancelled)
         || TranscriptKinds.IsInterruptPrompt(entry.Kind, entry.Text);
 
     /// <summary>

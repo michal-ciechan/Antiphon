@@ -427,6 +427,66 @@ public class DelegationReportFormatterTests
     }
 
     [Test]
+    public void TryReadReportVerdict_reads_the_last_line_and_strips_it()
+    {
+        var task = NewTask();
+        var body = "Shipped Fizz.\n142 passed.";
+        var text = body + "\n" + DelegationReportFormatter.ReportToken(task.Id, "done");
+
+        DelegationReportFormatter.TryReadReportVerdict(task.Id, text, out var verdict, out var stripped)
+            .ShouldBeTrue();
+        verdict.ShouldBe("done");
+        stripped.ShouldBe(body);
+    }
+
+    [Test]
+    public void TryReadReportVerdict_ignores_a_token_for_a_different_task()
+    {
+        var task = NewTask();
+        var other = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000000");
+        var text = "Quoted a child.\n" + DelegationReportFormatter.ReportToken(other, "done");
+
+        DelegationReportFormatter.TryReadReportVerdict(task.Id, text, out _, out var stripped)
+            .ShouldBeFalse();
+        stripped.ShouldBe(text);
+    }
+
+    [Test]
+    public void TryReadReportVerdict_accepts_blocked_and_failed_case_insensitively()
+    {
+        var task = NewTask();
+        foreach (var word in new[] { "blocked", "BLOCKED", "Failed", "failed" })
+        {
+            var text = $"Could not.\n[antiphon-report:{DelegationReportFormatter.Short(task.Id)} {word}]";
+            DelegationReportFormatter.TryReadReportVerdict(task.Id, text, out var verdict, out var body)
+                .ShouldBeTrue(word);
+            verdict.ShouldBe(word.ToLowerInvariant());
+            body.ShouldBe("Could not.");
+        }
+    }
+
+    [Test]
+    public void the_reporting_contract_asks_for_the_closing_verdict_line()
+    {
+        var task = NewTask();
+        var contract = DelegationReportFormatter.ReportingContract(task.Id, AgentTaskKind.Worker, 20_000);
+        contract.ShouldContain(DelegationReportFormatter.ReportToken(task.Id, "done"));
+        contract.ShouldContain("Nothing after it");
+    }
+
+    [Test]
+    public void a_completion_note_header_carries_report_and_git()
+    {
+        var note = DelegationReportFormatter.BuildCompletionNote(
+            NewTask(), Settings, "Rewrote the section.",
+            reportEvidence: "marked", git: "3 commits, 7 files");
+
+        note.Header.ShouldContain("report=marked");
+        note.Header.ShouldContain("git=3 commits, 7 files");
+        note.Body.ShouldStartWith(note.Header);
+    }
+
+    [Test]
     public void a_sub_orchestrator_brief_asks_for_a_rollup_not_a_relay()
     {
         // Without this clause a sub-orchestrator forwards everything it received and the nesting

@@ -19,6 +19,99 @@ public static class DelegationReportFormatter
     public static string Short(Guid id) => id.ToString("N")[..8];
 
     /// <summary>
+    /// Closing line of a finished report (CARD-0159). Distinct from <see cref="TaskMarker"/>: that
+    /// one correlates the PROMPT and is scrubbed from bodies typed into other sessions; this one
+    /// is read from <c>AssistantText</c> — the transcript, not the pty — so CARD-0027 clipping
+    /// cannot eat it.
+    /// </summary>
+    public static string ReportToken(Guid taskId, string verdict) =>
+        $"[antiphon-report:{Short(taskId)} {verdict.Trim().ToLowerInvariant()}]";
+
+    public static string ReportToken(string shortId, string verdict) =>
+        $"[antiphon-report:{shortId} {verdict.Trim().ToLowerInvariant()}]";
+
+    /// <summary>The 8-char id inside a <c>[antiphon-task:…]</c> marker, or null when none is present.</summary>
+    public static string? TryReadTaskMarkerId(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return null;
+        const string prefix = "[antiphon-task:";
+        var start = text.IndexOf(prefix, StringComparison.Ordinal);
+        if (start < 0)
+            return null;
+        start += prefix.Length;
+        if (start + 8 > text.Length || text[start + 8] != ']')
+            return null;
+        return text.Substring(start, 8);
+    }
+
+    /// <summary>
+    /// Reads the closing verdict line <c>[antiphon-report:&lt;id&gt; done|blocked|failed]</c> from
+    /// the last non-empty line of <paramref name="text"/>. A token naming a DIFFERENT task id is
+    /// not a verdict (a sub-orchestrator quoting its own delegate). On a match,
+    /// <paramref name="body"/> is the text with that line stripped.
+    /// </summary>
+    public static bool TryReadReportVerdict(
+        Guid taskId, string? text, out string verdict, out string body)
+    {
+        verdict = string.Empty;
+        body = text ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        var normalized = text.ReplaceLineEndings("\n");
+        var lines = normalized.Split('\n');
+        var last = -1;
+        for (var i = lines.Length - 1; i >= 0; i--)
+        {
+            if (lines[i].Trim().Length > 0)
+            {
+                last = i;
+                break;
+            }
+        }
+        if (last < 0)
+            return false;
+
+        var line = lines[last].Trim();
+        const string prefix = "[antiphon-report:";
+        if (!line.StartsWith(prefix, StringComparison.Ordinal)
+            || !line.EndsWith(']')
+            || line.Length < prefix.Length + 8 + 3)
+        {
+            return false;
+        }
+
+        var inner = line[prefix.Length..^1];
+        var space = inner.IndexOf(' ');
+        if (space != 8)
+            return false;
+
+        var id = inner[..8];
+        if (!id.Equals(Short(taskId), StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var word = inner[(space + 1)..].Trim();
+        if (!word.Equals("done", StringComparison.OrdinalIgnoreCase)
+            && !word.Equals("blocked", StringComparison.OrdinalIgnoreCase)
+            && !word.Equals("failed", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        verdict = word.ToLowerInvariant();
+        var kept = new StringBuilder();
+        for (var i = 0; i < last; i++)
+        {
+            if (kept.Length > 0)
+                kept.Append('\n');
+            kept.Append(lines[i]);
+        }
+        body = kept.ToString().TrimEnd();
+        return true;
+    }
+
+    /// <summary>
     /// Folded into the marked brief when a reuse lands on a kind that does not implement a typed
     /// <c>/compact</c> as housekeeping (CARD-0117). Marked, correlated, costs no extra turn.
     /// </summary>
@@ -149,6 +242,11 @@ public static class DelegationReportFormatter
             .antiphon/task-{Short(taskId)}.md and make your final message a summary that points
             at that path.
 
+            End your final message with one line, on its own: `{ReportToken(taskId, "done")}` if the work
+            is complete, `{ReportToken(taskId, "blocked")}` if you need a decision or an answer to continue,
+            `{ReportToken(taskId, "failed")}` if you could not do it. Nothing after it. Without that line the
+            harness cannot tell your report from a status update and will ask you once.
+
             {TaskMarker(taskId)}
             """;
     }
@@ -193,7 +291,7 @@ public static class DelegationReportFormatter
     public static Note BuildCompletionNote(
         AgentTask task, DelegationSettings settings, string report, string? workspaceNote = null,
         int? replyInlineMaxChars = null, string? warning = null, string? overlappingRunning = null,
-        string? drift = null)
+        string? drift = null, string? reportEvidence = null, string? git = null)
     {
         var header = new StringBuilder();
         header.Append('[').Append("task ").Append(Short(task.Id)).Append(' ')
@@ -212,6 +310,10 @@ public static class DelegationReportFormatter
         // caller, never a verdict on the work.
         if (!string.IsNullOrWhiteSpace(drift))
             bits.Add($"drift={drift.Trim()}");
+        if (!string.IsNullOrWhiteSpace(reportEvidence))
+            bits.Add($"report={reportEvidence.Trim()}");
+        if (!string.IsNullOrWhiteSpace(git))
+            bits.Add($"git={git.Trim()}");
         if (bits.Count > 0) header.Append(' ').Append(string.Join(" · ", bits));
 
         var (body, excerpted) = FitReport(report ?? string.Empty, task, settings, replyInlineMaxChars);

@@ -19,16 +19,19 @@ public sealed class DelegationWorktreeService
 {
     private readonly IWorktreeManager _worktrees;
     private readonly IGitService _git;
+    private readonly GitWorkspaceService _gitWorkspace;
     private readonly ILogger<DelegationWorktreeService> _logger;
 
     public DelegationWorktreeService(
         IWorktreeManager worktrees,
         IGitService git,
-        ILogger<DelegationWorktreeService> logger)
+        ILogger<DelegationWorktreeService> logger,
+        GitWorkspaceService gitWorkspace)
     {
         _worktrees = worktrees;
         _git = git;
         _logger = logger;
+        _gitWorkspace = gitWorkspace;
     }
 
     /// <summary>
@@ -104,9 +107,11 @@ public sealed class DelegationWorktreeService
 
         task.WorktreePath = info.Path;
         task.WorktreeBranch = info.Branch;
+        task.WorktreeBaseSha = await _gitWorkspace.GetHeadShaAsync(info.Path, ct);
         _logger.LogInformation(
-            "Task {ShortId}: worktree at {Path} on {Branch} (base {BaseRef})",
-            DelegationReportFormatter.Short(task.Id), info.Path, info.Branch, baseRef);
+            "Task {ShortId}: worktree at {Path} on {Branch} (base {BaseRef}, sha {Sha})",
+            DelegationReportFormatter.Short(task.Id), info.Path, info.Branch, baseRef,
+            task.WorktreeBaseSha ?? "(unknown)");
     }
 
     /// <summary>
