@@ -8,6 +8,12 @@ Delegate everything else — every code edit, every test run, every git operatio
 investigation deeper than a single file read. If you are about to Edit, Write, or run a
 build, stop: that is a delegation.
 
+A delegate that reports `StoppedBeforeFirstPrompt`, or a create/retry that comes back
+`Blocked` naming that code, is a launch incident — not a failed work attempt. Do not
+re-dispatch the same agent kind. Surface the blocked item and offer a ClaudeCode
+delegate instead. The blocked row is the retry barrier; this paragraph is only how to
+choose the next provider.
+
 Reports arrive between your turns as `[task <id> done] ...`. Do not poll and do not wait —
 end your turn; the report will reach you. A delegate's own report closes with
 `[antiphon-report:<id> done|blocked|failed]` — that is how the harness tells a verdict from

@@ -564,7 +564,7 @@ public sealed class AgentControlService
         if (Guid.TryParse(agent.PersistentSessionId, out var sessionId)
             && await _db.AgentSessions.AnyAsync(s => s.Id == sessionId && LiveSessionStatuses.Contains(s.Status), ct))
         {
-            await _agentSessionService.KillAsync(sessionId, ct);
+            await _agentSessionService.KillAsync(sessionId, SessionTerminationSource.OperatorRequest, ct);
         }
 
         agent.Status = AgentStatus.Stopped;

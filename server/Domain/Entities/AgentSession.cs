@@ -35,6 +35,14 @@ public class AgentSession
     public string? FailureReason { get; set; }
 
     /// <summary>
+    /// Who asked for this session to end, or whether the process exited on its own (CARD-0256).
+    /// Default <see cref="SessionTerminationSource.Unknown"/> covers every pre-existing row.
+    /// A later process-exit event must not overwrite <see cref="SessionTerminationSource.OperatorRequest"/>
+    /// or <see cref="SessionTerminationSource.SystemRequest"/>.
+    /// </summary>
+    public SessionTerminationSource TerminationSource { get; set; }
+
+    /// <summary>
     /// Highest transcript sequence for which compaction recovery has already run. The durable
     /// dedupe anchor: TranscriptTailer restarts at offset 0 on every runner restart/adoption and
     /// republishes ALL historical events — an incident-row check would be defeated by incident

@@ -27,7 +27,17 @@ public static class AgentTaskLiveness
     /// about what a present-but-empty snapshot would mean.
     /// </summary>
     public readonly record struct SessionSnapshot(
-        SessionStatus Status, DateTime? EndedAt, string? FailureReason);
+        SessionStatus Status,
+        DateTime? EndedAt,
+        string? FailureReason,
+        SessionTerminationSource TerminationSource = SessionTerminationSource.Unknown);
+
+    /// <summary>
+    /// The reason written onto a task the dead-session sweep fails, plus the durable failure
+    /// code when the evidence supports one (CARD-0256).
+    /// </summary>
+    public readonly record struct DeadSessionFailure(
+        string Reason, AgentTaskFailureCode? FailureCode);
 
     /// <summary>
     /// Is the session behind an open (Dispatched/Working) task dead — i.e. is it certain that no
@@ -39,8 +49,11 @@ public static class AgentTaskLiveness
     /// is <see cref="SessionStatus.Stopped"/> or <see cref="SessionStatus.Failed"/>; or
     /// <c>EndedAt</c> is set while the status still says otherwise.</para>
     ///
-    /// <para><b>Stopped counts.</b> An operator ended the session; settlement is not coming, and
-    /// leaving the task open forever is exactly the 2026-08-09 zombie shape this card is about.</para>
+    /// <para><b>Stopped counts.</b> Settlement is not coming from a terminal session, and leaving
+    /// the task open forever is the 2026-08-09 zombie shape this card is about. Stopped is <i>not</i>
+    /// evidence that an operator ended it — a clean process exit lands the same status. Name an
+    /// operator only when <see cref="SessionSnapshot.TerminationSource"/> is
+    /// <see cref="SessionTerminationSource.OperatorRequest"/>.</para>
     /// </summary>
     public static bool IsDeadSession(Guid? agentSessionId, SessionSnapshot? session) =>
         agentSessionId is null
@@ -65,4 +78,51 @@ public static class AgentTaskLiveness
                 : s.EndedAt is not null && s.Status is not (SessionStatus.Stopped or SessionStatus.Failed)
                     ? $"its session ended at {s.EndedAt:u} while still marked {s.Status}"
                     : $"its session is {s.Status}";
+
+    /// <summary>
+    /// Evidence-based failure text (and optional code) for a dead session the sweep is about to
+    /// fail. Bind-refusal recovery must already have been offered: this classifier does not guess
+    /// a cause the row cannot prove.
+    /// </summary>
+    public static DeadSessionFailure ClassifyFailure(
+        Guid? agentSessionId, SessionSnapshot? session, bool hasTranscriptEntries)
+    {
+        var what = Describe(agentSessionId, session);
+        if (session?.FailureReason is { Length: > 0 } existing)
+            return new DeadSessionFailure(Format(what, existing, agentSessionId), null);
+
+        if (session is { Status: SessionStatus.Stopped } stopped && !hasTranscriptEntries)
+        {
+            if (stopped.TerminationSource == SessionTerminationSource.OperatorRequest)
+            {
+                return new DeadSessionFailure(
+                    Format(what, "stopped by an operator request before any prompt was recorded", agentSessionId),
+                    null);
+            }
+
+            return new DeadSessionFailure(
+                Format(
+                    what,
+                    "StoppedBeforeFirstPrompt: Antiphon observed no prompt before the session stopped, "
+                    + "and the stop origin was not recorded",
+                    agentSessionId),
+                AgentTaskFailureCode.StoppedBeforeFirstPrompt);
+        }
+
+        if (session is { Status: SessionStatus.Stopped, TerminationSource: SessionTerminationSource.OperatorRequest })
+        {
+            return new DeadSessionFailure(
+                Format(what, "stopped by an operator request before the task settled", agentSessionId),
+                null);
+        }
+
+        var evidence = session?.Status == SessionStatus.Stopped
+            ? "stopped before the task settled, with no failure reason recorded"
+            : "no failure reason recorded";
+        return new DeadSessionFailure(Format(what, evidence, agentSessionId), null);
+    }
+
+    private static string Format(string what, string evidence, Guid? sessionId) =>
+        $"Session died before the task settled: {what} ({evidence}). No report is coming"
+        + (sessionId is Guid id ? $"; read session {id} before re-running this task." : ".");
 }

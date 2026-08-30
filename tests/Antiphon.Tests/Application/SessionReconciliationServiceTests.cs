@@ -92,6 +92,47 @@ public class SessionReconciliationServiceTests
             dbSession.Status.ShouldBe(SessionStatus.Stopped); // exit code 0 → clean stop
             dbSession.ExitCode.ShouldBe(0);
             dbSession.EndedAt.ShouldNotBeNull();
+            dbSession.TerminationSource.ShouldBe(SessionTerminationSource.ProcessExit);
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    public async Task Unobserved_exit_does_not_overwrite_an_OperatorRequest_source()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Running, staleAgent: true);
+            await using (var stamp = CreateContext())
+            {
+                var session = await stamp.AgentSessions.SingleAsync(s => s.Id == sessionId);
+                session.TerminationSource = SessionTerminationSource.OperatorRequest;
+                await stamp.SaveChangesAsync();
+            }
+
+            await using var db = CreateContext();
+            var runner = new FakeRunnerClient
+            {
+                Sessions =
+                [
+                    new SessionRunnerSessionDto(
+                        sessionId, Pid: 4242, StartedAt: DateTime.UtcNow.AddHours(-1),
+                        Status: "Exited", ExitCode: 0, ExitReason: AgentExitReason.Unknown, LastSequence: 10)
+                ]
+            };
+            var service = BuildService(db, runner, new MockEventBus());
+
+            await service.ScanAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            var dbSession = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            dbSession.Status.ShouldBe(SessionStatus.Stopped);
+            dbSession.TerminationSource.ShouldBe(SessionTerminationSource.OperatorRequest);
         }
         finally
         {

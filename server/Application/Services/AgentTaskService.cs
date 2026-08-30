@@ -234,9 +234,10 @@ public sealed class AgentTaskService
         }
         catch (DelegationWorkspaceResolver.RejectedException ex)
         {
+            var message = AugmentWorktreeRejection(request, ex.Message);
             if (parent is not null)
-                await RecordRejectionAsync(parent, ex.Message, ct);
-            throw new ValidationException(nameof(request.WorkingDirectory), ex.Message);
+                await RecordRejectionAsync(parent, message, ct);
+            throw new ValidationException(nameof(request.WorkingDirectory), message);
         }
 
         if (request.Workspace == WorkspaceMode.Worktree && resolved.RepoPath is null)
@@ -342,6 +343,14 @@ public sealed class AgentTaskService
             ExpectedDurationMinutes = expectedMinutes,
         };
 
+        var repeatOf = await FindStoppedBeforeFirstPromptRepeatAsync(
+            task.CardId, task.Goal, task.Kind, task.Role, task.AgentKind, ct);
+        if (repeatOf is not null)
+        {
+            task.Status = AgentTaskStatus.Blocked;
+            task.FailureReason = RepeatBlockReason(repeatOf, task.AgentKind);
+        }
+
         _db.AgentTasks.Add(task);
         _db.AgentTaskEvents.Add(new AgentTaskEvent
         {
@@ -361,7 +370,13 @@ public sealed class AgentTaskService
                 + CardScopeSuffix(binding.Identifier),
             At = now,
         });
-        if (warning is not null)
+        if (repeatOf is not null)
+        {
+            AddEvent(id, AgentTaskEventType.Blocked, null, task.FailureReason!, now);
+            await EnqueueBlockedParentNoteAsync(task, task.FailureReason!, ct);
+            warning = warning is null ? task.FailureReason : warning + " " + task.FailureReason;
+        }
+        if (warning is not null && (repeatOf is null || warning != task.FailureReason))
             AddEvent(id, AgentTaskEventType.Warning, null, warning, now);
         // D1: an area name the repo's map does not know is ACCEPTED as an opaque label and warned
         // about. A bookkeeping field must never refuse a launch — this one would be refusing it for
@@ -636,7 +651,7 @@ public sealed class AgentTaskService
         return new AgentTaskDetailDto(
             ToSummary(task, family, await LoadCardIdentifiersAsync([task], ct)), task.Goal, task.Result,
             task.ResultFilePath, task.DeliverablePath, task.DeliverableRef,
-            task.FailureReason, task.MergeTargetRef, events);
+            task.FailureReason, task.MergeTargetRef, events, task.FailureCode);
     }
 
     /// <summary>Record the first operator read; repeat opens deliberately preserve that timestamp.</summary>
@@ -695,6 +710,14 @@ public sealed class AgentTaskService
         {
             throw new ConflictException(
                 $"Task {DelegationReportFormatter.Short(id)} has not run yet — it is already queued.");
+        }
+
+        var repeatOf = await FindStoppedBeforeFirstPromptRepeatAsync(
+            task.CardId, task.Goal, task.Kind, task.Role, task.AgentKind, ct);
+        if (repeatOf is not null)
+        {
+            await BlockRepeatAsync(task, repeatOf, ct);
+            return await SummaryOfAsync(task, ct);
         }
 
         await RequeueAsync(
@@ -1196,6 +1219,95 @@ public sealed class AgentTaskService
 
     private static string Clamp(string value, int max) =>
         value.Length <= max ? value : value[..(max - 1)] + "…";
+
+    /// <summary>
+    /// CARD-0256. A Worktree task's <c>-Dir</c> is the source repository; Antiphon creates the
+    /// worktree at dispatch. The 422 still enforces <c>AllowedRoots</c> — this only names the
+    /// valid shape so a caller who pointed <c>-Dir</c> at the worktree path itself can recover.
+    /// </summary>
+    internal const string WorktreeSourceRepositoryGuidance =
+        " A Worktree task takes the source repository as -Dir (or inherits it), and Antiphon "
+        + "creates a new worktree at dispatch. Use -Dir <repo> -Worktree rather than pointing "
+        + "-Dir at the worktree path itself.";
+
+    private static string AugmentWorktreeRejection(CreateAgentTaskRequest request, string message)
+    {
+        if (request.Workspace == WorkspaceMode.Worktree
+            && !string.IsNullOrWhiteSpace(request.WorkingDirectory))
+            return message + WorktreeSourceRepositoryGuidance;
+        return message;
+    }
+
+    private async Task<AgentTask?> FindStoppedBeforeFirstPromptRepeatAsync(
+        Guid? cardId,
+        string goal,
+        AgentTaskKind kind,
+        AgentTaskRole role,
+        AgentKind agentKind,
+        CancellationToken ct)
+    {
+        var trimmed = goal.Trim();
+        var matches = await _db.AgentTasks.AsNoTracking()
+            .Where(t =>
+                t.Status == AgentTaskStatus.Failed
+                && t.FailureCode == AgentTaskFailureCode.StoppedBeforeFirstPrompt
+                && t.Kind == kind
+                && t.Role == role
+                && t.AgentKind == agentKind
+                && t.Goal == trimmed)
+            .OrderByDescending(t => t.CompletedAt)
+            .ToListAsync(ct);
+        return matches.FirstOrDefault(t => t.CardId == cardId);
+    }
+
+    private static string RepeatBlockReason(AgentTask prior, AgentKind kind) =>
+        $"Repeat of task {DelegationReportFormatter.Short(prior.Id)} "
+        + $"({AgentTaskFailureCode.StoppedBeforeFirstPrompt}) is blocked; no {kind} process or "
+        + "worktree was started. Offer a ClaudeCode delegate or resolve the launch incident.";
+
+    private async Task BlockRepeatAsync(AgentTask task, AgentTask prior, CancellationToken ct)
+    {
+        var now = UtcNow();
+        var reason = RepeatBlockReason(prior, task.AgentKind);
+        task.Status = AgentTaskStatus.Blocked;
+        task.FailureReason = reason;
+        task.AgentSessionId = null;
+        task.ConcurrencyToken = Guid.NewGuid();
+        AddEvent(task.Id, AgentTaskEventType.Blocked, null, reason, now);
+        await EnqueueBlockedParentNoteAsync(task, reason, ct);
+        await _db.SaveChangesAsync(ct);
+        await _eventBus.PublishToAllAsync(
+            "AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
+        _logger.LogWarning(
+            "Task {ShortId} blocked as a StoppedBeforeFirstPrompt repeat of {PriorShortId}",
+            DelegationReportFormatter.Short(task.Id), DelegationReportFormatter.Short(prior.Id));
+    }
+
+    private async Task EnqueueBlockedParentNoteAsync(AgentTask task, string reason, CancellationToken ct)
+    {
+        if (task.ParentSessionId is not Guid parentSession)
+            return;
+        if (!await _db.AgentSessions.AnyAsync(s => s.Id == parentSession, ct))
+            return;
+
+        var note = DelegationReportFormatter.BuildCompletionNote(task, _settings, reason);
+        var nextSequence = (await _db.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == parentSession)
+            .MaxAsync(m => (long?)m.Sequence, ct) ?? 0) + 1;
+        _db.SessionQueuedMessages.Add(new SessionQueuedMessage
+        {
+            Id = Guid.NewGuid(),
+            AgentSessionId = parentSession,
+            Body = note.Body,
+            Status = QueuedMessageStatus.Pending,
+            Sequence = nextSequence,
+            Origin = QueuedMessageOrigin.Delegation,
+            SourceTaskId = task.Id,
+            ContentDigest = DelegationNoteDigest.Compute(reason),
+            NoteHeader = note.Header,
+            CreatedAt = UtcNow(),
+        });
+    }
 
     private async Task RecordRejectionAsync(AgentTask task, string detail, CancellationToken ct)
     {

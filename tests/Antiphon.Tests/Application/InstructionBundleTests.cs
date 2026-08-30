@@ -223,6 +223,7 @@ public class InstructionBundleTests
         DelegationReportFormatter.OrchestratorContract.ShouldStartWith("You are an orchestrator.");
         DelegationReportFormatter.OrchestratorContract.ShouldContain("Delegate everything else");
         DelegationReportFormatter.OrchestratorContract.ShouldContain("-Reply");
+        DelegationReportFormatter.OrchestratorContract.ShouldContain("StoppedBeforeFirstPrompt");
     }
 
     [Test]

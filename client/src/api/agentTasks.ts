@@ -156,6 +156,8 @@ export interface AgentTaskDetailDto {
   failureReason: string | null
   mergeTargetRef: string | null
   events: AgentTaskEventDto[]
+  /** CARD-0256. Machine-readable class of failureReason when one was assigned. */
+  failureCode?: string | null
 }
 
 /** Fleet-wide header counters; unlike the board list, these never use its history window. */

@@ -167,6 +167,10 @@ public sealed class AgentSessionRuntime
                 session.ExitCode = exitCode;
                 if (session.Status == SessionStatus.Failed)
                     session.FailureReason = $"Process exited ({exitReason}, code {exitCode?.ToString() ?? "unknown"}).";
+                // A prior KillAsync may already have persisted OperatorRequest/SystemRequest;
+                // an exit event must not erase it (CARD-0256).
+                if (session.TerminationSource == SessionTerminationSource.Unknown)
+                    session.TerminationSource = SessionTerminationSource.ProcessExit;
                 session.EndedAt ??= now;
                 session.LastSeenAt = now;
                 changed = true;

@@ -181,3 +181,18 @@ public enum AgentTaskReportEvidence
     /// <summary><see cref="AgentTaskRole.Check"/> — the nudge is skipped; the check interpreter has its own format.</summary>
     Exempt = 5,
 }
+
+/// <summary>
+/// Durable, machine-readable class of a task failure (CARD-0256). Null on every existing and
+/// otherwise-unclassified failure — prose in <c>FailureReason</c> stays the human record.
+/// The repeat-dispatch guard keys on this rather than parsing that prose.
+/// </summary>
+public enum AgentTaskFailureCode
+{
+    /// <summary>
+    /// The bound session reached <see cref="SessionStatus.Stopped"/> with zero transcript
+    /// entries and no persisted operator-stop source. Antiphon observed no prompt; it does
+    /// not know who ended the session.
+    /// </summary>
+    StoppedBeforeFirstPrompt = 0,
+}

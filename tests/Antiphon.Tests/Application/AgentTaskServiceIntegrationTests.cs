@@ -265,6 +265,167 @@ public class AgentTaskServiceIntegrationTests
         ex.Errors[nameof(CreateAgentTaskRequest.Workspace)][0].ShouldContain("not a git repository");
     }
 
+    [Test]
+    public async Task a_worktree_dir_outside_the_roots_names_the_source_repository_shape()
+    {
+        using var caller = new TempWorkspace();
+        using var stranger = new TempWorkspace();
+
+        await using var db = CreateContext();
+        var service = CreateService(db);
+
+        var ex = await Should.ThrowAsync<ValidationException>(
+            () => service.CreateAsync(
+                NewRequest("write the code", role: AgentTaskRole.Code) with
+                {
+                    Workspace = WorkspaceMode.Worktree,
+                    WorkingDirectory = stranger.Path,
+                },
+                ManualCaller(caller.Path),
+                CancellationToken.None));
+
+        var detail = ex.Errors[nameof(CreateAgentTaskRequest.WorkingDirectory)][0];
+        detail.ShouldContain("outside the allowed roots");
+        detail.ShouldContain("Delegation:AllowedRoots");
+        detail.ShouldContain("-Dir <repo> -Worktree");
+        detail.ShouldContain(stranger.Path);
+    }
+
+    [Test]
+    public async Task a_shared_dir_outside_the_roots_does_not_gain_worktree_guidance()
+    {
+        using var caller = new TempWorkspace();
+        using var stranger = new TempWorkspace();
+
+        await using var db = CreateContext();
+        var service = CreateService(db);
+
+        var ex = await Should.ThrowAsync<ValidationException>(
+            () => service.CreateAsync(
+                NewRequest("do a thing") with { WorkingDirectory = stranger.Path },
+                ManualCaller(caller.Path),
+                CancellationToken.None));
+
+        ex.Errors[nameof(CreateAgentTaskRequest.WorkingDirectory)][0]
+            .ShouldNotContain("-Dir <repo> -Worktree");
+    }
+
+    // ---- CARD-0256: StoppedBeforeFirstPrompt repeat guard ----------------------------------
+
+    [Test]
+    public async Task a_second_identical_grok_dispatch_is_blocked_without_starting_work()
+    {
+        using var workspace = new TempWorkspace();
+        var goal = $"CARD-0256 grok repeat {Guid.NewGuid():N}";
+        var parentSessionId = Guid.NewGuid();
+        var prior = await SeedFailedEmptyStopAsync(
+            workspace.Path, goal, AgentKind.Grok, parentSessionId);
+
+        await using var db = CreateContext();
+        await SeedParentSessionAsync(db, parentSessionId, workspace.Path);
+        var eventBus = new MockEventBus();
+        var created = await CreateService(db, eventBus: eventBus).CreateAsync(
+            NewRequest(goal, role: AgentTaskRole.Code) with { AgentKind = AgentKind.Grok },
+            new AgentTaskService.Caller(null, parentSessionId, workspace.Path),
+            CancellationToken.None);
+
+        try
+        {
+            created.Status.ShouldBe(AgentTaskStatus.Blocked);
+            created.Warning.ShouldNotBeNull();
+            created.Warning.ShouldContain("StoppedBeforeFirstPrompt");
+            created.Warning.ShouldContain(DelegationReportFormatter.Short(prior.Id));
+
+            await using var verify = CreateContext();
+            var row = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
+            row.Status.ShouldBe(AgentTaskStatus.Blocked);
+            row.AgentSessionId.ShouldBeNull();
+            row.WorktreePath.ShouldBeNull();
+            row.AgentId.ShouldBeNull();
+            row.FailureReason.ShouldContain("StoppedBeforeFirstPrompt");
+            row.FailureReason.ShouldContain("no Grok process or worktree was started");
+
+            (await verify.AgentTaskEvents.CountAsync(
+                    e => e.AgentTaskId == created.Id && e.Type == AgentTaskEventType.Blocked))
+                .ShouldBe(1);
+            (await verify.SessionQueuedMessages.CountAsync(
+                    m => m.AgentSessionId == parentSessionId
+                         && m.SourceTaskId == created.Id
+                         && m.Body.Contains("StoppedBeforeFirstPrompt")))
+                .ShouldBe(1);
+            eventBus.PublishedEvents.ShouldContain(e => e.EventName == "AgentTaskChanged");
+
+            var attention = new AttentionService(
+                CreateContext(), new RefusingSessionRunnerClient(),
+                Options.Create(new SupervisionSettings()),
+                Options.Create(new DelegationSettings()),
+                TimeProvider.System,
+                NullLogger<AttentionService>.Instance);
+            var item = (await attention.GetAsync(CancellationToken.None)).Items
+                .Single(i => i.TaskId == created.Id);
+            item.Kind.ShouldBe(AttentionKind.BlockedQuestion);
+            item.Severity.ShouldBe(AlertSeverity.Critical);
+        }
+        finally
+        {
+            await DeleteTaskTreeAsync(created.Id, prior.Id, parentSessionId);
+        }
+    }
+
+    [Test]
+    public async Task an_otherwise_identical_ClaudeCode_dispatch_is_not_blocked()
+    {
+        using var workspace = new TempWorkspace();
+        var goal = $"CARD-0256 claude alternative {Guid.NewGuid():N}";
+        var prior = await SeedFailedEmptyStopAsync(workspace.Path, goal, AgentKind.Grok);
+
+        await using var db = CreateContext();
+        var created = await CreateService(db).CreateAsync(
+            NewRequest(goal, role: AgentTaskRole.Code) with { AgentKind = AgentKind.ClaudeCode },
+            ManualCaller(workspace.Path),
+            CancellationToken.None);
+
+        try
+        {
+            created.Status.ShouldBe(AgentTaskStatus.Queued);
+            await using var verify = CreateContext();
+            (await verify.AgentTasks.SingleAsync(t => t.Id == created.Id))
+                .Status.ShouldBe(AgentTaskStatus.Queued);
+        }
+        finally
+        {
+            await DeleteTaskTreeAsync(created.Id, prior.Id);
+        }
+    }
+
+    [Test]
+    public async Task retrying_a_StoppedBeforeFirstPrompt_failure_is_blocked()
+    {
+        using var workspace = new TempWorkspace();
+        var goal = $"CARD-0256 retry block {Guid.NewGuid():N}";
+        var prior = await SeedFailedEmptyStopAsync(workspace.Path, goal, AgentKind.Grok);
+
+        await using var db = CreateContext();
+        var summary = await CreateService(db).RetryAsync(prior.Id, CancellationToken.None);
+
+        try
+        {
+            summary.Status.ShouldBe(AgentTaskStatus.Blocked);
+            summary.AgentSessionId.ShouldBeNull();
+            await using var verify = CreateContext();
+            var row = await verify.AgentTasks.SingleAsync(t => t.Id == prior.Id);
+            row.Status.ShouldBe(AgentTaskStatus.Blocked);
+            row.FailureReason.ShouldContain("StoppedBeforeFirstPrompt");
+            (await verify.AgentTaskEvents.CountAsync(
+                    e => e.AgentTaskId == prior.Id && e.Type == AgentTaskEventType.Blocked))
+                .ShouldBe(1);
+        }
+        finally
+        {
+            await DeleteTaskTreeAsync(prior.Id);
+        }
+    }
+
     // ---- fan-out caps ----------------------------------------------------------------------
 
     [Test]
@@ -901,6 +1062,59 @@ public class AgentTaskServiceIntegrationTests
     }
 
     // ---- helpers ---------------------------------------------------------------------------
+
+    private static async Task<AgentTask> SeedFailedEmptyStopAsync(
+        string workingDirectory,
+        string goal,
+        AgentKind agentKind,
+        Guid? parentSessionId = null)
+    {
+        var task = await SeedTaskAsync(
+            AgentTaskKind.Worker,
+            workingDirectory,
+            status: AgentTaskStatus.Failed,
+            role: AgentTaskRole.Code,
+            parentSessionId: parentSessionId);
+        await using var db = CreateContext();
+        var row = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        row.Goal = goal;
+        row.AgentKind = agentKind;
+        row.FailureCode = AgentTaskFailureCode.StoppedBeforeFirstPrompt;
+        row.FailureReason = "StoppedBeforeFirstPrompt: Antiphon observed no prompt before the session stopped, and the stop origin was not recorded";
+        row.CompletedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+        return row;
+    }
+
+    private static async Task SeedParentSessionAsync(AppDbContext db, Guid sessionId, string cwd)
+    {
+        var now = DateTime.UtcNow;
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = sessionId,
+            DefinitionName = "repeat-guard-parent",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Running,
+            Cwd = cwd,
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = now,
+            StartedAt = now,
+            LastSeenAt = now,
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task DeleteTaskTreeAsync(params Guid[] ids)
+    {
+        var taskIds = ids.Where(id => id != Guid.Empty).Distinct().ToArray();
+        await using var db = CreateContext();
+        await db.AgentTaskEvents.Where(e => taskIds.Contains(e.AgentTaskId)).ExecuteDeleteAsync();
+        await db.SessionQueuedMessages.Where(m => m.SourceTaskId != null && taskIds.Contains(m.SourceTaskId.Value))
+            .ExecuteDeleteAsync();
+        await db.AgentTasks.Where(t => taskIds.Contains(t.Id)).ExecuteDeleteAsync();
+        await db.AgentSessions.Where(s => taskIds.Contains(s.Id)).ExecuteDeleteAsync();
+    }
 
     private static CreateAgentTaskRequest NewRequest(
         string goal,

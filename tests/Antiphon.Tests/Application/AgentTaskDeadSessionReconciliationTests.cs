@@ -130,20 +130,78 @@ public class AgentTaskDeadSessionReconciliationTests
     }
 
     [Test]
-    public async Task a_stopped_session_counts_as_dead_and_the_reason_names_the_stop()
+    public async Task a_stopped_empty_session_without_an_operator_source_is_StoppedBeforeFirstPrompt()
     {
-        // An operator ended it. No settlement is coming, so leaving the task open forever is the
-        // zombie shape this card is about — but the reason must not read like a crash.
         await using var scenario = new Scenario();
-        var task = await scenario.AddTaskAsync(AgentTaskStatus.Dispatched, SessionStatus.Stopped);
+        var task = await scenario.AddTaskAsync(
+            AgentTaskStatus.Dispatched, SessionStatus.Stopped,
+            agentKind: AgentKind.Grok);
         var harness = scenario.Harness(task.SessionId);
 
         await scenario.PastGraceAsync(harness);
 
         var failed = await scenario.ReadTaskAsync(task.Id);
         failed.Status.ShouldBe(AgentTaskStatus.Failed);
-        failed.FailureReason.ShouldContain("Stopped");
-        failed.FailureReason.ShouldContain("an operator ended it");
+        failed.FailureCode.ShouldBe(AgentTaskFailureCode.StoppedBeforeFirstPrompt);
+        failed.FailureReason.ShouldNotBeNull();
+        failed.FailureReason.ShouldContain("StoppedBeforeFirstPrompt");
+        failed.FailureReason.ShouldNotContain("operator");
+        failed.FailureReason.ShouldContain(task.SessionId.ToString());
+        harness.Stopper.Killed.ShouldBeEmpty("THE SWEEP NEVER KILLS");
+
+        (await scenario.ParentNoteBodiesAsync())
+            .ShouldContain(b => b.Contains("StoppedBeforeFirstPrompt"));
+    }
+
+    [Test]
+    public async Task a_stopped_empty_session_with_OperatorRequest_names_the_operator_source()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(
+            AgentTaskStatus.Dispatched, SessionStatus.Stopped,
+            terminationSource: SessionTerminationSource.OperatorRequest);
+        var harness = scenario.Harness(task.SessionId);
+
+        await scenario.PastGraceAsync(harness);
+
+        var failed = await scenario.ReadTaskAsync(task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureCode.ShouldBeNull();
+        failed.FailureReason.ShouldNotBeNull();
+        failed.FailureReason.ShouldContain("operator request");
+        failed.FailureReason.ShouldNotContain("StoppedBeforeFirstPrompt");
+    }
+
+    [Test]
+    public async Task a_clean_process_exit_is_not_promoted_to_an_operator_stop()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(
+            AgentTaskStatus.Dispatched, SessionStatus.Stopped,
+            terminationSource: SessionTerminationSource.ProcessExit);
+        var harness = scenario.Harness(task.SessionId);
+
+        await scenario.PastGraceAsync(harness);
+
+        var failed = await scenario.ReadTaskAsync(task.Id);
+        failed.FailureCode.ShouldBe(AgentTaskFailureCode.StoppedBeforeFirstPrompt);
+        failed.FailureReason.ShouldNotContain("operator");
+    }
+
+    [Test]
+    public async Task a_legacy_unknown_stop_is_not_promoted_to_an_operator_stop()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(
+            AgentTaskStatus.Dispatched, SessionStatus.Stopped,
+            terminationSource: SessionTerminationSource.Unknown);
+        var harness = scenario.Harness(task.SessionId);
+
+        await scenario.PastGraceAsync(harness);
+
+        var failed = await scenario.ReadTaskAsync(task.Id);
+        failed.FailureCode.ShouldBe(AgentTaskFailureCode.StoppedBeforeFirstPrompt);
+        failed.FailureReason.ShouldNotContain("operator");
     }
 
     // ---- 6-8: the evidence gates -----------------------------------------------------------------
@@ -350,7 +408,7 @@ public class AgentTaskDeadSessionReconciliationTests
             (SessionStatus.Starting, null, false, "Starting"),
             (SessionStatus.Running, null, false, "Running"),
             (SessionStatus.Stopping, null, false, "Stopping — on its way out, but a report may still land"),
-            (SessionStatus.Stopped, null, true, "Stopped — an operator ended it"),
+            (SessionStatus.Stopped, null, true, "Stopped — terminal, origin unknown unless TerminationSource says otherwise"),
             (SessionStatus.Failed, null, true, "Failed"),
             (SessionStatus.Running, 6, true, "ended while still marked Running"),
         ];
@@ -487,7 +545,9 @@ public class AgentTaskDeadSessionReconciliationTests
             string? worktreeBranch = null,
             string? mergeTargetRef = null,
             string? repoPath = null,
-            string? sessionCwd = null)
+            string? sessionCwd = null,
+            AgentKind agentKind = AgentKind.ClaudeCode,
+            SessionTerminationSource terminationSource = SessionTerminationSource.Unknown)
         {
             await EnsureParentSessionAsync();
 
@@ -505,7 +565,7 @@ public class AgentTaskDeadSessionReconciliationTests
             {
                 Id = sessionId,
                 DefinitionName = "dead-session-test",
-                AgentKind = AgentKind.ClaudeCode,
+                AgentKind = agentKind,
                 Status = sessionStatus,
                 Cwd = cwd,
                 Cols = 120,
@@ -515,6 +575,7 @@ public class AgentTaskDeadSessionReconciliationTests
                 LastSeenAt = dispatched,
                 EndedAt = endedMinutesAgo is { } ago ? DateTime.UtcNow.AddMinutes(-ago) : null,
                 FailureReason = failureReason,
+                TerminationSource = terminationSource,
             });
             db.Agents.Add(new Agent
             {
@@ -538,6 +599,7 @@ public class AgentTaskDeadSessionReconciliationTests
                 Goal = "Do the thing.",
                 Kind = AgentTaskKind.Worker,
                 Role = role,
+                AgentKind = agentKind,
                 ModelLevel = AgentModelLevel.High,
                 Workspace = workspace,
                 WorkingDirectory = workingDirectory ?? Path.GetTempPath(),
@@ -586,11 +648,12 @@ public class AgentTaskDeadSessionReconciliationTests
             await using var db = CreateContext();
             var row = await db.AgentSessions.AsNoTracking()
                 .Where(s => s.Id == sessionId)
-                .Select(s => new { s.Status, s.EndedAt, s.FailureReason })
+                .Select(s => new { s.Status, s.EndedAt, s.FailureReason, s.TerminationSource })
                 .SingleOrDefaultAsync();
             return row is null
                 ? null
-                : new AgentTaskLiveness.SessionSnapshot(row.Status, row.EndedAt, row.FailureReason);
+                : new AgentTaskLiveness.SessionSnapshot(
+                    row.Status, row.EndedAt, row.FailureReason, row.TerminationSource);
         }
 
         /// <summary>Everything queued into THIS scenario's parent session, and nothing else.</summary>

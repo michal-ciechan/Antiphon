@@ -179,6 +179,13 @@ public class AgentTask
 
     public string? FailureReason { get; set; }
 
+    /// <summary>
+    /// Machine-readable class of <see cref="FailureReason"/> when one was assigned (CARD-0256).
+    /// Null on every legacy failure and on failures that still only have prose. The create/retry
+    /// repeat guard keys on this, never on parsing <see cref="FailureReason"/>.
+    /// </summary>
+    public AgentTaskFailureCode? FailureCode { get; set; }
+
     /// <summary>The normalized digest of the settled report last read by this task's parent session.</summary>
     public string? LastPolledResultHash { get; set; }
 

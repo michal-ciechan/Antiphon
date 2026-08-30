@@ -1040,6 +1040,10 @@ public class AppDbContext : DbContext
             entity.Property(s => s.StartedAt).IsRequired();
             entity.Property(s => s.LastSeenAt).IsRequired();
             entity.Property(s => s.FailureReason).HasMaxLength(2000);
+            // CARD-0256. Unknown (0) on every pre-existing row — a Stopped session is not
+            // evidence of an operator action until a later write records one.
+            entity.Property(s => s.TerminationSource).IsRequired()
+                .HasDefaultValue(SessionTerminationSource.Unknown);
             entity.Property(s => s.DelegationTokenHash).HasMaxLength(64);
             entity.Property(s => s.EffectiveModelId).HasMaxLength(500);
             // Stamps, not text — one "key vhash8" per composed bundle. Generous but bounded: the
@@ -1400,6 +1404,9 @@ public class AppDbContext : DbContext
             entity.Property(t => t.Status).IsRequired();
             entity.Property(t => t.ReplyTo).IsRequired();
             entity.Property(t => t.FailureReason).HasMaxLength(4000);
+            // CARD-0256. Null on every pre-existing and otherwise-unclassified failure; the
+            // repeat-dispatch guard keys on this rather than parsing FailureReason.
+            entity.Property(t => t.FailureCode).IsRequired(false);
             entity.Property(t => t.LastPolledResultHash).HasColumnType("text");
             entity.Property(t => t.ResultFilePath).HasMaxLength(1000);
             entity.Property(t => t.DeliverablePath).HasMaxLength(1000);

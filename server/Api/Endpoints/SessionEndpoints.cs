@@ -1,6 +1,7 @@
 ﻿using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -153,7 +154,7 @@ public static class SessionEndpoints
             AgentSessionService service,
             CancellationToken cancellationToken) =>
         {
-            await service.KillAsync(id, cancellationToken);
+            await service.KillAsync(id, SessionTerminationSource.OperatorRequest, cancellationToken);
             return Results.NoContent();
         });
     }

@@ -886,11 +886,12 @@ public sealed class AgentTaskDispatcher
             .ToList();
         var sessionById = (await _db.AgentSessions.AsNoTracking()
                 .Where(s => sessionIds.Contains(s.Id))
-                .Select(s => new { s.Id, s.Status, s.EndedAt, s.FailureReason })
+                .Select(s => new { s.Id, s.Status, s.EndedAt, s.FailureReason, s.TerminationSource })
                 .ToListAsync(ct))
             .ToDictionary(
                 s => s.Id,
-                s => new AgentTaskLiveness.SessionSnapshot(s.Status, s.EndedAt, s.FailureReason));
+                s => new AgentTaskLiveness.SessionSnapshot(
+                    s.Status, s.EndedAt, s.FailureReason, s.TerminationSource));
 
         var dead = new List<(AgentTask Task, AgentTaskLiveness.SessionSnapshot? Session)>();
         foreach (var task in open)
@@ -955,29 +956,24 @@ public sealed class AgentTaskDispatcher
             // CARD-0085: same gate as FailNeverStartedAsync, and ONLY when this session also has
             // zero TranscriptEntries. A dead session that ingested turns is CARD-0021's "no report
             // is coming"; do not widen.
-            if (task.AgentSessionId is Guid unbound
-                && !await _db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == unbound, ct)
-                && await TryRecoverBindRefusalAsync(task, unbound, ct))
+            var hasTranscript = false;
+            if (task.AgentSessionId is Guid unbound)
             {
-                _deadSessions.Forget(task.Id);
-                continue;
+                hasTranscript = await _db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == unbound, ct);
+                if (!hasTranscript && await TryRecoverBindRefusalAsync(task, unbound, ct))
+                {
+                    _deadSessions.Forget(task.Id);
+                    continue;
+                }
             }
 
-            var what = AgentTaskLiveness.Describe(task.AgentSessionId, session);
-            var evidence = session?.FailureReason
-                ?? (session?.Status == SessionStatus.Stopped
-                    ? "stopped before the task settled, with no failure reason — an operator ended it"
-                    : "no failure reason recorded");
-            var reason =
-                $"Session died before the task settled: {what} ({evidence}). No report is coming"
-                + (task.AgentSessionId is Guid sessionId
-                    ? $"; read session {sessionId} before re-running this task."
-                    : ".");
+            var classified = AgentTaskLiveness.ClassifyFailure(task.AgentSessionId, session, hasTranscript);
 
             // The FailNeverStartedAsync tail, minus its KillAsync. Nothing here may be destructive:
             // the whole justification for acting is that the session is already gone, so if that
             // evidence is ever wrong a kill would be the CARD-0056 disaster rather than tidiness.
-            await FailAndNotifyAsync(task, reason, "dead-session reconciler", ct);
+            await FailAndNotifyAsync(
+                task, classified.Reason, "dead-session reconciler", ct, classified.FailureCode);
 
             _deadSessions.Forget(task.Id);
             failed++;
@@ -1319,9 +1315,10 @@ public sealed class AgentTaskDispatcher
     /// leave the task open.</para>
     /// </summary>
     private async Task FailAndNotifyAsync(
-        AgentTask task, string reason, string sweep, CancellationToken ct)
+        AgentTask task, string reason, string sweep, CancellationToken ct,
+        AgentTaskFailureCode? failureCode = null)
     {
-        await FailAsync(task, reason, ct);
+        await FailAsync(task, reason, ct, failureCode);
         await _tasks.RemoveEphemeralAgentAsync(task, task.AgentId, ct);
         if (task.DispatchedAt is null)
             ArmFailureReminder(task, task.CompletedAt ?? UtcNow());
@@ -2521,11 +2518,13 @@ public sealed class AgentTaskDispatcher
         return true;
     }
 
-    private async Task FailAsync(AgentTask task, string reason, CancellationToken ct)
+    private async Task FailAsync(
+        AgentTask task, string reason, CancellationToken ct, AgentTaskFailureCode? failureCode = null)
     {
         var now = UtcNow();
         task.Status = AgentTaskStatus.Failed;
         task.FailureReason = reason;
+        task.FailureCode = failureCode;
         task.CompletedAt = now;
         task.ConcurrencyToken = Guid.NewGuid();
         _db.AgentTaskEvents.Add(new AgentTaskEvent

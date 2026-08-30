@@ -754,10 +754,22 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         return end < 0 ? trimmed : trimmed[..end];
     }
 
-    public async Task KillAsync(Guid sessionId, CancellationToken ct)
+    public Task KillAsync(Guid sessionId, CancellationToken ct) =>
+        KillAsync(sessionId, SessionTerminationSource.SystemRequest, ct);
+
+    public async Task KillAsync(Guid sessionId, SessionTerminationSource source, CancellationToken ct)
     {
         var session = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct)
             ?? throw new NotFoundException(nameof(AgentSession), sessionId);
+
+        // Persist the request source BEFORE asking the runner to kill so an exit-event race
+        // cannot record ProcessExit and erase operator/system intent (CARD-0256).
+        if (session.TerminationSource == SessionTerminationSource.Unknown
+            && session.Status is SessionStatus.Created or SessionStatus.Starting
+                or SessionStatus.Running or SessionStatus.Stopping)
+        {
+            session.TerminationSource = source;
+        }
 
         session.Status = SessionStatus.Stopping;
         session.LastSeenAt = UtcNow();

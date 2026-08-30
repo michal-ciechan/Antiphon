@@ -163,7 +163,12 @@ public sealed record AgentTaskDetailDto(
     string? DeliverableRef,
     string? FailureReason,
     string? MergeTargetRef,
-    IReadOnlyList<AgentTaskEventDto> Events);
+    IReadOnlyList<AgentTaskEventDto> Events,
+    /// <summary>
+    /// Machine-readable class of <see cref="FailureReason"/> when one was assigned (CARD-0256).
+    /// Null on legacy and otherwise-unclassified failures.
+    /// </summary>
+    AgentTaskFailureCode? FailureCode = null);
 
 public sealed record AgentTaskEventDto(
     AgentTaskEventType Type,
