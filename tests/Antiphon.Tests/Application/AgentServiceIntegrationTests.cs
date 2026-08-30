@@ -724,6 +724,52 @@ public class AgentServiceIntegrationTests
     }
 
     [Test]
+    public async Task EnsureWorkingDirectoryAsync_unknown_agent_is_not_found()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db, new MockEventBus());
+
+        await Should.ThrowAsync<NotFoundException>(() =>
+            service.EnsureWorkingDirectoryAsync(Guid.NewGuid(), CancellationToken.None));
+    }
+
+    [Test]
+    public async Task EnsureWorkingDirectoryAsync_creates_missing_directory_and_is_idempotent()
+    {
+        var missing = Path.Combine(Path.GetTempPath(), $"antiphon-ensure-dir-{Guid.NewGuid():N}");
+        try
+        {
+            Directory.Exists(missing).ShouldBeFalse();
+            await using var db = CreateContext();
+            var writer = new FileSystemDirectoryWriter(new System.IO.Abstractions.FileSystem());
+            var service = CreateService(db, new MockEventBus(), writer);
+            var created = await service.CreateAsync(
+                new CreateAgentRequest(UniqueAgentName("Ensure Dir"), missing),
+                CancellationToken.None);
+
+            var first = await service.EnsureWorkingDirectoryAsync(created.Id, CancellationToken.None);
+            first.WorkingDirectory.ShouldBe(missing);
+            Directory.Exists(missing).ShouldBeTrue();
+
+            var second = await service.EnsureWorkingDirectoryAsync(created.Id, CancellationToken.None);
+            second.WorkingDirectory.ShouldBe(missing);
+            Directory.Exists(missing).ShouldBeTrue();
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(missing))
+                    Directory.Delete(missing, recursive: true);
+            }
+            catch (IOException)
+            {
+                // best effort
+            }
+        }
+    }
+
+    [Test]
     public async Task CreateAsync_with_flag_false_does_not_create_directory()
     {
         await using var db = CreateContext();

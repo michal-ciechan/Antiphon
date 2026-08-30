@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO.Abstractions;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
@@ -6,6 +7,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.FileSystem;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -275,6 +277,42 @@ public class ProjectReadinessTests
         check.Status.ShouldBe(ReadinessStatus.Missing);
         check.Summary.ShouldContain(agent.Name);
         check.Summary.ShouldContain(missing);
+        check.Fix.ShouldNotBeNull();
+        check.Fix!.Action.ShouldBe("create-directory");
+        check.Fix.Route.ShouldNotBeNull();
+        check.Fix.Route!.ShouldContain(agent.Id.ToString());
+    }
+
+    [Test]
+    public async Task create_directory_fix_creates_the_agent_working_directory_and_readiness_becomes_ok()
+    {
+        var missing = Path.Combine(Path.GetTempPath(), $"antiphon-agent-mkdir-{Guid.NewGuid():N}");
+        try
+        {
+            Directory.Exists(missing).ShouldBeFalse();
+            var project = await SeedProjectAsync();
+            var board = await SeedBoardAsync(project.Id);
+            var agent = await SeedAgentAsync(board.Id, workingDirectory: missing);
+
+            var before = await CheckAsync(project.Id, ReadinessKeys.AgentDirectory);
+            before.Status.ShouldBe(ReadinessStatus.Missing);
+            before.Fix.ShouldNotBeNull();
+            before.Fix!.Action.ShouldBe("create-directory");
+
+            await using var db = CreateContext();
+            var result = await CreateAgentService(db).EnsureWorkingDirectoryAsync(agent.Id, CancellationToken.None);
+            result.AgentId.ShouldBe(agent.Id);
+            result.WorkingDirectory.ShouldBe(missing);
+            Directory.Exists(missing).ShouldBeTrue();
+
+            var after = await CheckAsync(project.Id, ReadinessKeys.AgentDirectory);
+            after.Status.ShouldBe(ReadinessStatus.Ok);
+            after.Fix.ShouldBeNull();
+        }
+        finally
+        {
+            Cleanup(missing);
+        }
     }
 
     [Test]
@@ -524,6 +562,15 @@ public class ProjectReadinessTests
             new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
             Options.Create(settings ?? new DelegationSettings()),
             NullLogger<ProjectSetupService>.Instance);
+
+    private static AgentService CreateAgentService(AppDbContext db) =>
+        new(
+            db,
+            new CardWorkflowRunFactory(db, TimeProvider.System),
+            new MockEventBus(),
+            TimeProvider.System,
+            new FileSystemDirectoryWriter(new FileSystem()),
+            NullLogger<AgentService>.Instance);
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 

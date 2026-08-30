@@ -1,4 +1,5 @@
 import { Anchor, Badge, Button, Group, Stack, Text } from '@mantine/core'
+import { notifications } from '@mantine/notifications'
 import { Link } from 'react-router'
 import {
   TbAlertTriangle,
@@ -6,12 +7,29 @@ import {
   TbCircleDashed,
   TbCircleX,
 } from 'react-icons/tb'
+import { useEnsureAgentWorkingDirectory } from '../../api/agents'
+import { getApiErrorMessage } from '../../api/client'
 import {
   readinessHeader,
   type ProjectReadinessDto,
   type ReadinessCheckDto,
+  type ReadinessFixDto,
   type ReadinessStatus,
 } from '../../api/projectSetup'
+
+/** The agent-directory fix encodes the target as `/agents?agent={id}`. */
+function agentIdFromFixRoute(route: string | null | undefined): string | null {
+  if (!route) return null
+  try {
+    return new URL(route, 'http://antiphon.local').searchParams.get('agent')
+  } catch {
+    return null
+  }
+}
+
+function canRunCreateDirectory(fix: ReadinessFixDto): boolean {
+  return fix.action === 'create-directory' && !!agentIdFromFixRoute(fix.route)
+}
 
 function statusColor(status: ReadinessStatus, requiredMissing: boolean): string {
   if (requiredMissing) return 'red'
@@ -43,7 +61,36 @@ export function ProjectReadinessPanel({
   readiness: ProjectReadinessDto
   onAction?: (action: string, check: ReadinessCheckDto) => void
 }) {
+  const ensureDirectory = useEnsureAgentWorkingDirectory()
   const rows = orderedChecks(readiness.checks)
+
+  const runAction = (action: string, check: ReadinessCheckDto) => {
+    if (onAction) {
+      onAction(action, check)
+      return
+    }
+    if (action !== 'create-directory') return
+    const agentId = agentIdFromFixRoute(check.fix?.route)
+    if (!agentId) return
+    ensureDirectory.mutate(agentId, {
+      onSuccess: () => {
+        notifications.show({ color: 'green', message: 'Working directory created.' })
+      },
+      onError: (error) => {
+        notifications.show({
+          color: 'red',
+          message: getApiErrorMessage(error, 'Could not create the working directory.'),
+        })
+      },
+    })
+  }
+
+  const canRunAction = (check: ReadinessCheckDto) => {
+    if (!check.fix?.action) return false
+    if (onAction) return true
+    return canRunCreateDirectory(check.fix)
+  }
+
   return (
     <Stack gap="sm" data-testid="project-readiness-panel">
       <Text fw={600} data-testid="project-readiness-header">
@@ -72,7 +119,20 @@ export function ProjectReadinessPanel({
                   )}
                   {check.status !== 'Ok' && check.fix && (
                     <Group gap="xs" mt={4}>
-                      {check.fix.route && (
+                      {canRunAction(check) ? (
+                        <Button
+                          size="compact-xs"
+                          variant="light"
+                          loading={
+                            !onAction
+                            && check.fix.action === 'create-directory'
+                            && ensureDirectory.isPending
+                          }
+                          onClick={() => runAction(check.fix!.action!, check)}
+                        >
+                          {check.fix.label}
+                        </Button>
+                      ) : check.fix.route ? (
                         <Button
                           component={Link}
                           to={check.fix.route}
@@ -81,17 +141,7 @@ export function ProjectReadinessPanel({
                         >
                           {check.fix.label}
                         </Button>
-                      )}
-                      {check.fix.action && onAction && (
-                        <Button
-                          size="compact-xs"
-                          variant="light"
-                          onClick={() => onAction(check.fix!.action!, check)}
-                        >
-                          {check.fix.label}
-                        </Button>
-                      )}
-                      {!check.fix.route && !check.fix.action && (
+                      ) : (
                         <Text size="xs" c="dimmed">
                           {check.fix.label}
                         </Text>

@@ -145,6 +145,16 @@ public static class AgentEndpoints
             return Results.Ok(await service.AttachHerdrAsync(id, request, cancellationToken));
         });
 
+        // CARD-0214. Creates the agent's configured working directory (the readiness
+        // panel's create-directory fix action). No body: the path is never caller-supplied.
+        agents.MapPost("/{id:guid}/ensure-directory", async (
+            Guid id,
+            AgentService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.EnsureWorkingDirectoryAsync(id, cancellationToken));
+        });
+
         agents.MapPost("/{id:guid}/queue", async (
             Guid id,
             AssignAgentCardRequest request,

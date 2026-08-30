@@ -111,4 +111,60 @@ describe('ProjectConfig readiness column', () => {
       await screen.findByText('No projects yet. Set up a project from a directory path.'),
     ).toBeInTheDocument()
   })
+
+  it('creates the agent working directory from the readiness panel and re-evaluates', async () => {
+    let directoryExists = false
+    const missingReadiness: ProjectReadinessDto = {
+      projectId: 'project-1',
+      canDispatch: false,
+      checks: [
+        {
+          key: 'agent-directory',
+          level: 'Required',
+          status: 'Missing',
+          summary: "Agent 'Worker' working directory does not exist: D:/missing.",
+          detail: 'Start refuses with 409 until this path exists.',
+          fix: { label: 'Create directory', action: 'create-directory', route: '/agents?agent=a1' },
+        },
+      ],
+    }
+    const okReadiness: ProjectReadinessDto = {
+      projectId: 'project-1',
+      canDispatch: true,
+      checks: [
+        {
+          key: 'agent-directory',
+          level: 'Required',
+          status: 'Ok',
+          summary: "Agent 'Worker' working directory exists.",
+          detail: null,
+          fix: null,
+        },
+      ],
+    }
+
+    server.use(
+      http.get('/api/projects', () => HttpResponse.json([project])),
+      http.get('/api/boards', () => HttpResponse.json([])),
+      http.get('/api/github/repos', () => HttpResponse.json([])),
+      http.get('/api/projects/readiness', () =>
+        HttpResponse.json([directoryExists ? okReadiness : missingReadiness]),
+      ),
+      http.post('/api/agents/a1/ensure-directory', () => {
+        directoryExists = true
+        return HttpResponse.json({ agentId: 'a1', workingDirectory: 'D:/missing' })
+      }),
+    )
+
+    renderWithProviders(<ProjectConfig />)
+
+    await userEvent.click(await screen.findByLabelText('1 thing missing'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Create directory' }))
+
+    await waitFor(() => expect(screen.getByLabelText('Ready to dispatch')).toBeInTheDocument())
+    expect(notificationMock.show).toHaveBeenCalledWith(
+      expect.objectContaining({ color: 'green', message: 'Working directory created.' }),
+    )
+    expect(screen.getByText("Agent 'Worker' working directory exists.")).toBeInTheDocument()
+  })
 })

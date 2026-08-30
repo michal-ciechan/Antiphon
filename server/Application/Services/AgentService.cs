@@ -141,6 +141,43 @@ public sealed class AgentService
             agent, live?.Dto, supervision, await IsSessionWorkingAsync(live?.Dto, ct), live, attachedKeys);
     }
 
+    /// <summary>
+    /// CARD-0214. Creates the agent's stored working directory if it is missing. The path is
+    /// never taken from the caller — only the configured <see cref="Agent.WorkingDirectory"/>
+    /// is created, which is the whole of the security boundary for this fix action.
+    /// </summary>
+    public async Task<EnsureWorkingDirectoryResultDto> EnsureWorkingDirectoryAsync(Guid id, CancellationToken ct)
+    {
+        var agent = await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == id, ct)
+            ?? throw new NotFoundException(nameof(Agent), id);
+
+        var workingDirectory = agent.WorkingDirectory.Trim();
+        if (string.IsNullOrWhiteSpace(workingDirectory))
+            throw new ValidationException(nameof(Agent.WorkingDirectory), "Working directory is required.");
+
+        try
+        {
+            _directoryWriter.CreateDirectory(workingDirectory);
+        }
+        catch (Exception ex) when (
+            ex is IOException
+            or UnauthorizedAccessException
+            or NotSupportedException
+            or ArgumentException
+            or PathTooLongException)
+        {
+            throw new ValidationException(
+                nameof(Agent.WorkingDirectory),
+                $"Could not create working directory '{workingDirectory}': {ex.Message}");
+        }
+
+        _logger.LogInformation(
+            "Ensured working directory {WorkingDirectory} for agent {AgentId} ({AgentName})",
+            workingDirectory, agent.Id, agent.Name);
+
+        return new EnsureWorkingDirectoryResultDto(agent.Id, workingDirectory);
+    }
+
     public async Task<IReadOnlyList<AgentIncidentDto>> GetIncidentsAsync(Guid agentId, int take, CancellationToken ct)
     {
         _ = await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == agentId, ct)

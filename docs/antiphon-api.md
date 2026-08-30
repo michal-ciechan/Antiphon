@@ -154,6 +154,7 @@ POST   /api/agents        POST /api/agents/draft        PATCH /api/agents/{id}  
 GET    /api/agents/{id}/incidents
 POST   /api/agents/{id}/start  |  /stop      start refuses 409 `remote_control_refused` when `remoteControl: true` on a kind whose catalog row is not Supported
 POST   /api/agents/{id}/attach-herdr         bind a standing Herdr agent to an existing operator pane `{ "paneId": "w2:p3" }`. 409 `herdr_refused` / `session_active` / `herdr_kind_mismatch` / `herdr_pane_bound` / `herdr_native_id_unknown` / `herdr_transcript_not_found` / `herdr_pane_changed` / `session_id_taken`; 404 `herdr_pane_not_found`; 503 `herdr_unreachable`. Stop on an attached session detaches.
+POST   /api/agents/{id}/ensure-directory     create the agent's configured working directory (CARD-0214 readiness `create-directory` fix). Idempotent. 404 if the agent is missing; 422 if mkdir fails. Never takes a path from the caller.
 POST   /api/agents/{id}/queue   PATCH /api/agents/{id}/queue   DELETE /api/agents/{id}/queue/{cardId}
 
 POST   /api/sessions                         launch an interactive session

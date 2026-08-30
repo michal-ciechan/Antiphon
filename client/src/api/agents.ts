@@ -519,6 +519,26 @@ export function useAttachHerdrPane(agentId: string) {
   })
 }
 
+export interface EnsureWorkingDirectoryResultDto {
+  agentId: string
+  workingDirectory: string
+}
+
+/** CARD-0214. Creates the agent's configured working directory (readiness create-directory fix). */
+export function useEnsureAgentWorkingDirectory() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (agentId: string) =>
+      apiPost<EnsureWorkingDirectoryResultDto>(`/agents/${agentId}/ensure-directory`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: agentKeys.all })
+      // Readiness keys are `['projects', …, 'readiness']` — prefix-invalidating the list
+      // is what makes the readiness panel re-evaluate after mkdir.
+      queryClient.invalidateQueries({ queryKey: ['projects'] })
+    },
+  })
+}
+
 export function useStopAgent(agentId: string) {
   const queryClient = useQueryClient()
   return useMutation({

@@ -290,6 +290,12 @@ public sealed record StartAgentRequest(
 /// <summary>CARD-0213: bind a standing Herdr agent to an existing operator pane.</summary>
 public sealed record AttachHerdrPaneRequest(string PaneId);
 
+/// <summary>
+/// CARD-0214: result of <c>POST /api/agents/{id}/ensure-directory</c>. Creates the agent's
+/// already-configured working directory; never takes a path from the caller.
+/// </summary>
+public sealed record EnsureWorkingDirectoryResultDto(Guid AgentId, string WorkingDirectory);
+
 public sealed record AssignAgentCardRequest(Guid CardId);
 
 public sealed record ReorderAgentQueueRequest(IReadOnlyList<Guid> CardIds);
