@@ -62,6 +62,8 @@ public sealed class AgentSessionLaunchComposer
                 extraArgs.AddRange([
                     CodexLaunchArgs.ConfigFlag,
                     CodexLaunchArgs.ReasoningEffortOverride(agent.ModelLevel),
+                    CodexLaunchArgs.ConfigFlag,
+                    CodexLaunchArgs.DisablePasteBurst,
                 ]);
             }
 

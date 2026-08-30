@@ -77,4 +77,13 @@ public class CodexLaunchArgsTests
         arg.ShouldBe("developer_instructions=" + body);
         arg["developer_instructions=".Length..].ShouldBe(body);
     }
+
+    [Test]
+    public void disable_paste_burst_is_the_top_level_true_override()
+    {
+        // CARD-0133: a static launch flag, not a delay. Official Codex config key (boolean, default
+        // false); -c overrides ~/.codex/config.toml, which does not set this key today.
+        CodexLaunchArgs.DisablePasteBurst.ShouldBe("disable_paste_burst=true");
+        CodexLaunchArgs.DisablePasteBurst.ShouldNotStartWith("-c");
+    }
 }

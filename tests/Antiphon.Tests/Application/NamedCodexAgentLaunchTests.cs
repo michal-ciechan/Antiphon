@@ -44,6 +44,8 @@ public class NamedCodexAgentLaunchTests
         args[args.IndexOf("--model") + 1].ShouldBe("gpt-5.6-sol");
         ConfigValue(args, "model_reasoning_effort").ShouldBe(
             "xhigh", "sol's OWN default is low — a Frontier agent must not inherit it");
+        ConfigValue(args, "disable_paste_burst").ShouldBe("true",
+            "CARD-0133: named Codex agents take the same PasteBurst flag as delegates");
         args.ShouldNotContain("--name", customMessage: "Codex has no --name flag");
         args.ShouldNotContain("--append-system-prompt");
     }

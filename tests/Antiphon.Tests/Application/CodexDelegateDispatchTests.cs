@@ -54,8 +54,9 @@ public class CodexDelegateDispatchTests
             "Codex's standing-instruction channel is a -c config override, not Claude's flag");
         args.ShouldNotContain("--rules", customMessage: "--rules is Grok's flag");
 
-        // Both -c overrides are present, each as the TWO argv elements Codex expects.
+        // All -c overrides are present, each as the TWO argv elements Codex expects.
         ConfigValue(args, "model_reasoning_effort").ShouldBe("high");
+        ConfigValue(args, "disable_paste_burst").ShouldBe("true");
         ConfigValue(args, "developer_instructions").ShouldNotBeNullOrWhiteSpace();
     }
 
@@ -101,6 +102,7 @@ public class CodexDelegateDispatchTests
         slug.ShouldBe(expectedSlug);
         slug.ShouldStartWith("gpt-5.6-");
         ConfigValue(args, "model_reasoning_effort").ShouldBe(expectedEffort);
+        ConfigValue(args, "disable_paste_burst").ShouldBe("true");
     }
 
     [Test]

@@ -248,18 +248,20 @@ the whole session (reads must share write/delete), and is flushed per update.
 ## 6. Codex (OpenAI codex-cli)
 
 **Launch.** `codex.cmd --no-alt-screen --dangerously-bypass-approvals-and-sandbox
-[--model gpt-5.6-terra] -c model_reasoning_effort=<level> [-c developer_instructions=<text>]`
+[--model gpt-5.6-terra] -c model_reasoning_effort=<level> -c disable_paste_burst=true
+[-c developer_instructions=<text>]`
 — **and no session-identity argument**, because `SessionResume` is `Unknown` for Codex and
 `BuildSessionIdentityArgs` only fires for kinds whose resume contract is `Supported`.
 
 Codex has **no `--name`, no `--append-system-prompt` and no `--rules`.** Everything that is not
 the model rides `-c` TOML config overrides, all of which live in
-`server/Application/Services/CodexLaunchArgs.cs`. Two of them matter:
+`server/Application/Services/CodexLaunchArgs.cs`. Three of them matter:
 
 | `-c` override | Why |
 |---|---|
 | `developer_instructions=<text>` | the standing-instructions channel. **Measured, not read off the docs**: it lands as an additional `input_text` block at the head of the first developer message and *appends*, leaving Codex's own base instructions byte-identical. The neighbouring key `instructions` is **inert** in this CLI version — a bundle sent that way is silently dropped. Passed as one argv element with no quoting of our own; Codex parses it as TOML and falls back to the raw literal, which is what a multi-line markdown bundle always does (newlines, tabs, quotes, backticks and Windows backslashes all survive). |
 | `model_reasoning_effort=<low\|medium\|high\|xhigh>` | set **explicitly on every launch**, from the tier. Codex's own per-model defaults are wrong at both ends — `gpt-5.6-sol` defaults to `low`, and the operator's `~/.codex/config.toml` here says `xhigh` and would otherwise be inherited by a Low-tier delegate. Neither default tracks the tier the caller asked for. |
+| `disable_paste_burst=true` | CARD-0133. Codex's PasteBurst heuristic suppresses Enter for 120 ms after a typed burst and re-extends that window on every suppressed Enter; the queue's ~20 ms body→Enter gap lands inside it (9 of 78 cold Codex delegate launches). A static launch flag, not a delay. Official top-level boolean (default false); `-c` outranks `~/.codex/config.toml`, which does not set this key. Applied to both delegate and named-agent Codex launches. |
 
 Tier → reasoning effort: `Frontier`→`xhigh`, `High`→`high`, `Medium`→`medium`, `Low`→`low`.
 

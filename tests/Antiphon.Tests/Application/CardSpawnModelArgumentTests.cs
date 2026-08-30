@@ -90,6 +90,7 @@ public sealed class CardSpawnModelArgumentTests
 
             adapter.StartedArgs.ShouldContain(CodexLaunchArgs.ConfigFlag);
             adapter.StartedArgs.ShouldContain(CodexLaunchArgs.ReasoningEffortOverride(AgentModelLevel.High));
+            adapter.StartedArgs.ShouldContain(CodexLaunchArgs.DisablePasteBurst);
         }
         finally
         {

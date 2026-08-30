@@ -59,4 +59,12 @@ public static class CodexLaunchArgs
     /// <summary>The <c>-c</c> value that sets <see cref="ReasoningEffort"/>.</summary>
     public static string ReasoningEffortOverride(AgentModelLevel level) =>
         $"model_reasoning_effort={ReasoningEffort(level)}";
+
+    /// <summary>
+    /// CARD-0133: Codex's PasteBurst logic suppresses Enter for 120ms after a typed burst and
+    /// extends the window on every suppressed Enter - our queue's ~20ms body-then-Enter gap lands
+    /// inside it, which is the mechanism behind the measured 9/78 cold-launch boot wedge. This
+    /// config key makes every Enter submit unconditionally.
+    /// </summary>
+    public const string DisablePasteBurst = "disable_paste_burst=true";
 }

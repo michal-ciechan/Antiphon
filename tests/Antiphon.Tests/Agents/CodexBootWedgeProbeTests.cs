@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using Antiphon.Agents.Pty;
 using Antiphon.FakeLlmApi;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
@@ -111,6 +112,10 @@ public sealed class CodexBootWedgeProbeTests
         var env = new Dictionary<string, string>(overlay.Env, StringComparer.OrdinalIgnoreCase)
         {
             ["RUST_LOG"] = "codex_tui=debug,codex_core=debug",
+            // Windows hosts often leave TERM unset; this Grok/agent shell sets TERM=dumb, and
+            // Codex 0.151.0 then prompts "Continue anyway?" and refuses the TUI. Production
+            // PtyHost launches don't inherit that; pin a real type so P1 measures PasteBurst.
+            ["TERM"] = "xterm-256color",
         };
         var (app, launchArgs) = BuildInteractiveLaunch(executable);
         var args = new List<string>(launchArgs)
@@ -119,6 +124,9 @@ public sealed class CodexBootWedgeProbeTests
             "--dangerously-bypass-approvals-and-sandbox",
         };
         args.AddRange(overlay.Args);
+        // CARD-0133: the production launch path now carries this on every Codex process. P1 is
+        // measuring that path, not the pre-fix 20 ms gap against a PasteBurst-armed TUI.
+        args.AddRange([CodexLaunchArgs.ConfigFlag, CodexLaunchArgs.DisablePasteBurst]);
 
         await using var runtime = new SessionRunnerRuntime(
             Options.Create(new SessionRunnerSettings

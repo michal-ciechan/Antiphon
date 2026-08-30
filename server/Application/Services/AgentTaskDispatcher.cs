@@ -2328,6 +2328,8 @@ public sealed class AgentTaskDispatcher
             extraArgs.AddRange([
                 CodexLaunchArgs.ConfigFlag,
                 CodexLaunchArgs.ReasoningEffortOverride(task.ModelLevel),
+                CodexLaunchArgs.ConfigFlag,
+                CodexLaunchArgs.DisablePasteBurst,
             ]);
         }
 
