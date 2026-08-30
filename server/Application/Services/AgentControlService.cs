@@ -201,8 +201,11 @@ public sealed class AgentControlService
                 Rows: 30,
                 ExtraArgs: composition.ExtraArgs,
                 ExtraEnv: composition.ExtraEnv,
-                LaunchEnvOverride: launchEnvOverride,
-                ModelTier: agent.ModelLevel),
+                LaunchEnvOverride: launchEnvOverride),
+            // ModelTier deliberately omitted (CARD-0246): ResolveForAgentAsync itself fills it from
+            // agent.ModelLevel ONLY when agent.ModelId is blank (AgentTuiLaunchResolver.cs:51-55) -
+            // passing agent.ModelLevel here unconditionally short-circuited that null-coalesce and
+            // made a pinned exact ModelId launch on its tier alias instead.
             ct,
             _apiKeyEnvResolver);
         var spec = resolved.Spec;
