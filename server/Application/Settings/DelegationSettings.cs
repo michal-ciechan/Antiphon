@@ -705,9 +705,8 @@ public sealed class StallDetectionSettings
 }
 
 /// <summary>
-/// CARD-0260: which caller-env names a child task inherits, and (for a later refusal) which
-/// of those names mark a local key-proxy. S1 only reads <see cref="Enabled"/> and
-/// <see cref="Names"/>; the rest is configuration surface for the create-time gate.
+/// CARD-0260/CARD-0263: which caller-env names a child task inherits and which of those names
+/// mark a local key-proxy for the create-time project-marker gate.
 /// </summary>
 public sealed class LlmEnvInheritanceSettings
 {

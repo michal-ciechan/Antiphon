@@ -30,6 +30,8 @@ public sealed class AgentTaskService
     private readonly SubscriptionQuotaGate? _quotaGate;
     // CARD-0063 S2. Optional for the same reason; absent, every scope name is an opaque label.
     private readonly AreaMapLoader? _areas;
+    // CARD-0263 S2. Optional so focused harnesses without API-key plumbing retain their setup.
+    private readonly ApiKeyEnvResolver? _apiKeyEnvResolver;
 
     public AgentTaskService(
         AppDbContext db,
@@ -40,7 +42,8 @@ public sealed class AgentTaskService
         TimeProvider timeProvider,
         ILogger<AgentTaskService> logger,
         SubscriptionQuotaGate? quotaGate = null,
-        AreaMapLoader? areas = null)
+        AreaMapLoader? areas = null,
+        ApiKeyEnvResolver? apiKeyEnvResolver = null)
     {
         _areas = areas;
         _db = db;
@@ -51,6 +54,7 @@ public sealed class AgentTaskService
         _timeProvider = timeProvider;
         _logger = logger;
         _quotaGate = quotaGate;
+        _apiKeyEnvResolver = apiKeyEnvResolver;
     }
 
     /// <summary>
@@ -129,6 +133,7 @@ public sealed class AgentTaskService
         }
 
         Agent? subscriptionOwner = null;
+        Agent? pinnedStandingAgent = null;
         // CARD-0040: a follow-up continues the earlier task's work, so it continues its card too.
         Guid? followUpCardId = null;
 
@@ -184,6 +189,7 @@ public sealed class AgentTaskService
             if (pinned is { IsPoolDelegate: false })
             {
                 skipInheritedSnapshot = true;
+                pinnedStandingAgent = pinned;
                 if (request.AgentKind is { } wantedKind && wantedKind != pinned.Kind)
                 {
                     throw new ConflictException(
@@ -298,6 +304,21 @@ public sealed class AgentTaskService
             warning = warning is null ? binding.Warning : warning + " " + binding.Warning;
 
         var inheritedLaunchEnv = await ComputeInheritedLlmEnvAsync(caller, skipInheritedSnapshot, ct);
+
+        if (!skipInheritedSnapshot)
+        {
+            var projectDefaultEnv = _apiKeyEnvResolver is null
+                ? AgentLaunchEnv.Empty
+                : await _apiKeyEnvResolver.GetProjectDefaultEnvAsync(projectId, ct);
+            var proxyWarning = ValidateLlmProxyPreview(
+                projectDefaultEnv,
+                inheritedLaunchEnv,
+                AgentLaunchEnv.ParseForAgent(pinnedStandingAgent),
+                launchEnvOverride,
+                agentKind);
+            if (proxyWarning is not null)
+                warning = warning is null ? proxyWarning : warning + " " + proxyWarning;
+        }
 
         var task = new AgentTask
         {
@@ -444,6 +465,66 @@ public sealed class AgentTaskService
 
         return AgentLaunchEnv.FilterTo(merged, inherit.Names);
     }
+
+    /// <summary>
+    /// Checks the environment that would reach a newly launched child before profile resolution.
+    /// A local proxy without its project marker is never a usable child route; the converse is only
+    /// a warning because wrapper-managed credentials are the normal default for many agents.
+    /// </summary>
+    private string? ValidateLlmProxyPreview(
+        IReadOnlyDictionary<string, string> projectDefaultEnv,
+        IReadOnlyDictionary<string, string> inheritedEnv,
+        IReadOnlyDictionary<string, string> pinnedAgentEnv,
+        IReadOnlyDictionary<string, string> launchEnvOverride,
+        AgentKind agentKind)
+    {
+        var settings = _settings.LlmEnvInheritance;
+        if (!settings.Enabled)
+            return null;
+
+        var preview = new Dictionary<string, string>(StringComparer.Ordinal);
+        Overlay(preview, projectDefaultEnv);
+        Overlay(preview, inheritedEnv);
+        Overlay(preview, pinnedAgentEnv);
+        Overlay(preview, launchEnvOverride);
+
+        var hasProjectMarker = preview.TryGetValue(settings.ProjectMarkerName, out var projectMarker)
+            && !string.IsNullOrWhiteSpace(projectMarker);
+        var localProxyVariable = settings.ProxyUrlNames.FirstOrDefault(name =>
+            preview.TryGetValue(name, out var value) && IsLocalProxyUrl(value, settings.ProxyHostMarkers));
+        if (settings.RequireProjectAtProxy && localProxyVariable is not null && !hasProjectMarker)
+        {
+            throw new ValidationException(
+                settings.ProjectMarkerName,
+                $"'{localProxyVariable}' routes this child to a local key proxy, but '{settings.ProjectMarkerName}' is missing. "
+                + $"Pass launchEnvOverride {{ {settings.ProjectMarkerName} = '...' }} or seed the project's default launch environment.",
+                "llm_project_required");
+        }
+
+        if (!hasProjectMarker)
+            return null;
+
+        string[] requiredRouteNames = agentKind switch
+        {
+            AgentKind.ClaudeCode => ["ANTHROPIC_BASE_URL"],
+            AgentKind.Grok => ["GROK_CLI_CHAT_PROXY_BASE_URL", "GROK_BASE_URL"],
+            _ => [],
+        };
+        if (requiredRouteNames.Any(name => preview.ContainsKey(name)))
+            return null;
+
+        var missingRoute = agentKind switch
+        {
+            AgentKind.ClaudeCode => "ANTHROPIC_BASE_URL",
+            AgentKind.Grok => "GROK_CLI_CHAT_PROXY_BASE_URL or GROK_BASE_URL",
+            _ => "a Codex TUI profile route",
+        };
+        return $"'{settings.ProjectMarkerName}' is set, but {missingRoute} is absent; child will not route through the key proxy and its turns bill the wrapper credentials.";
+    }
+
+    private static bool IsLocalProxyUrl(string value, IReadOnlyList<string> proxyHostMarkers) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri)
+        && proxyHostMarkers.Any(host => string.Equals(uri.Host, host, StringComparison.OrdinalIgnoreCase));
 
     private static void Overlay(
         Dictionary<string, string> target,

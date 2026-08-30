@@ -410,6 +410,113 @@ public sealed class LaunchEnvLayersIntegrationTests
     }
 
     [Test]
+    public async Task CreateAsync_refuses_a_local_proxy_preview_without_an_LLM_project_marker()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = NewDb(schema);
+        using var workspace = new TempWorkspace();
+        var project = await AddProjectAsync(db, new Dictionary<string, string>
+        {
+            ["ANTHROPIC_BASE_URL"] = "http://localhost:10746/v1",
+        });
+        var parent = NewParentOrchestrator(workspace.Path, project.Id);
+        db.AgentTasks.Add(parent);
+        await db.SaveChangesAsync(Ct);
+
+        var service = CreateTaskService(db, [workspace.Path], ApiKeys(db));
+        var ex = await Should.ThrowAsync<ValidationException>(() => service.CreateAsync(
+            new CreateAgentTaskRequest(Goal: "use proxy", WorkingDirectory: workspace.Path),
+            new AgentTaskService.Caller(parent, Guid.NewGuid(), workspace.Path),
+            Ct));
+
+        ex.StatusCode.ShouldBe(422);
+        ex.Code.ShouldBe("llm_project_required");
+        ex.Errors["X_LLM_PROJECT"].Single().ShouldContain("ANTHROPIC_BASE_URL");
+    }
+
+    [Test]
+    public async Task CreateAsync_allows_a_local_proxy_preview_when_override_supplies_the_project_marker()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = NewDb(schema);
+        using var workspace = new TempWorkspace();
+        var project = await AddProjectAsync(db, new Dictionary<string, string>
+        {
+            ["ANTHROPIC_BASE_URL"] = "http://127.0.0.1:10746/v1",
+        });
+        var parent = NewParentOrchestrator(workspace.Path, project.Id);
+        db.AgentTasks.Add(parent);
+        await db.SaveChangesAsync(Ct);
+
+        var created = await CreateTaskService(db, [workspace.Path], ApiKeys(db)).CreateAsync(
+            new CreateAgentTaskRequest(
+                Goal: "use proxy",
+                WorkingDirectory: workspace.Path,
+                LaunchEnvOverride: new Dictionary<string, string> { ["X_LLM_PROJECT"] = "PredictionMarkets" }),
+            new AgentTaskService.Caller(parent, Guid.NewGuid(), workspace.Path),
+            Ct);
+
+        created.Warning.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task CreateAsync_does_not_refuse_a_non_local_proxy_url_without_a_project_marker()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = NewDb(schema);
+        using var workspace = new TempWorkspace();
+        var project = await AddProjectAsync(db, new Dictionary<string, string>
+        {
+            ["ANTHROPIC_BASE_URL"] = "https://proxy.example.test/v1",
+        });
+        var parent = NewParentOrchestrator(workspace.Path, project.Id);
+        db.AgentTasks.Add(parent);
+        await db.SaveChangesAsync(Ct);
+
+        var created = await CreateTaskService(db, [workspace.Path], ApiKeys(db)).CreateAsync(
+            new CreateAgentTaskRequest(Goal: "use remote proxy", WorkingDirectory: workspace.Path),
+            new AgentTaskService.Caller(parent, Guid.NewGuid(), workspace.Path),
+            Ct);
+
+        created.Warning.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task CreateAsync_warns_when_a_marker_has_no_Claude_proxy_route()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = NewDb(schema);
+        using var workspace = new TempWorkspace();
+        var parentAgent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "marker-parent",
+            Slug = $"marker-{Guid.NewGuid():N}"[..16],
+            WorkingDirectory = workspace.Path,
+            LaunchEnvJson = AgentLaunchEnv.Serialize(new Dictionary<string, string>
+            {
+                ["X_LLM_PROJECT"] = "PredictionMarkets",
+            }),
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        var parent = NewParentOrchestrator(workspace.Path, null);
+        parent.AgentId = parentAgent.Id;
+        db.AddRange(parentAgent, parent);
+        await db.SaveChangesAsync(Ct);
+
+        var created = await CreateTaskService(db, [workspace.Path]).CreateAsync(
+            new CreateAgentTaskRequest(Goal: "wrapper fallback", WorkingDirectory: workspace.Path),
+            new AgentTaskService.Caller(parent, Guid.NewGuid(), workspace.Path),
+            Ct);
+
+        created.Warning.ShouldNotBeNull();
+        created.Warning.ShouldContain("ANTHROPIC_BASE_URL");
+        var storedEvents = await db.AgentTaskEvents.Where(e => e.AgentTaskId == created.Id).ToListAsync(Ct);
+        storedEvents.ShouldContain(e => e.Type == AgentTaskEventType.Warning && e.Detail!.Contains("ANTHROPIC_BASE_URL"));
+    }
+
+    [Test]
     public async Task BuildLaunchSpec_carries_inherited_env_and_the_override_still_wins()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -942,7 +1049,29 @@ public sealed class LaunchEnvLayersIntegrationTests
     private static AppDbContext NewDb(IsolatedTestSchema schema) =>
         new(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
 
-    private static AgentTaskService CreateTaskService(AppDbContext db, IReadOnlyList<string> allowedRoots) =>
+    private static AgentTask NewParentOrchestrator(string directory, Guid? projectId)
+    {
+        var parent = new AgentTask
+        {
+            Id = Guid.NewGuid(),
+            Title = "parent",
+            Goal = "parent",
+            Kind = AgentTaskKind.Orchestrator,
+            WorkingDirectory = directory,
+            ProjectId = projectId,
+            CreatedAt = DateTime.UtcNow,
+        };
+        parent.RootTaskId = parent.Id;
+        return parent;
+    }
+
+    private static ApiKeyEnvResolver ApiKeys(AppDbContext db) => new(
+        db, new ApiKeyStoreTests.FakeApiKeyProtector(), NullLogger<ApiKeyEnvResolver>.Instance);
+
+    private static AgentTaskService CreateTaskService(
+        AppDbContext db,
+        IReadOnlyList<string> allowedRoots,
+        ApiKeyEnvResolver? apiKeyEnvResolver = null) =>
         new(
             db,
             new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
@@ -950,7 +1079,8 @@ public sealed class LaunchEnvLayersIntegrationTests
             new MockEventBus(),
             new RecordingSessionStopper(),
             TimeProvider.System,
-            NullLogger<AgentTaskService>.Instance);
+            NullLogger<AgentTaskService>.Instance,
+            apiKeyEnvResolver: apiKeyEnvResolver);
 
     private static ServiceProvider BuildDispatcherProvider(string connectionString, bool withApiKeys = false)
     {
