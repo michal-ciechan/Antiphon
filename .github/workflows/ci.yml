@@ -34,3 +34,14 @@ jobs:
         run: npx vitest run
       - name: Test Messaging packages
         run: dotnet run --project tests/Antiphon.Messaging.Tests
+  windows-native-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+      - name: Test Pty host
+        run: dotnet run --project tests/Antiphon.PtyHost.Tests
+      - name: Test session runner
+        run: dotnet run --project tests/Antiphon.SessionRunner.Tests
