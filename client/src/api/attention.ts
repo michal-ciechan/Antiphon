@@ -58,6 +58,11 @@ export type AttentionKind =
    * and no owning card session (CARD-0040). Detection only - nothing un-stalls it automatically.
    */
   | 'CardStalled'
+  /**
+   * Failed before dispatch, and nothing shows the caller has heard (CARD-0231). Counted, unlike
+   * RecentFailure; disappears the moment a note is Sent/Dropped, a status poll, or a drawer read.
+   */
+  | 'FailureUnacknowledged'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =

@@ -30,6 +30,7 @@ const ALL_KINDS: AttentionKind[] = [
   'Overdue',
   'ProgressStalled',
   'CardNeedsDecision',
+  'FailureUnacknowledged',
 ]
 
 function item(overrides: Partial<AttentionItemDto> & { kind: AttentionKind }): AttentionItemDto {
@@ -82,6 +83,7 @@ describe('attentionVisuals', () => {
     // Same severity as ChecksSpent, different group: "suspect" implies an open problem and a task
     // that already failed is not one.
     expect(groupOf(item({ kind: 'RecentFailure', severity: 'Warning' }))).toBe('failures')
+    expect(groupOf(item({ kind: 'FailureUnacknowledged', severity: 'Error' }))).toBe('broken')
   })
 
   it('collapses only the failures group by default', () => {

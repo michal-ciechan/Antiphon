@@ -191,6 +191,26 @@ describe('AttentionPanel', () => {
     })
   })
 
+  it('counts a FailureUnacknowledged row in open', async () => {
+    serve({
+      items: [
+        item({
+          kind: 'FailureUnacknowledged',
+          severity: 'Error',
+          title: 'A dispatch that never started',
+          taskId: 't1',
+        }),
+        item({ kind: 'RecentFailure', severity: 'Warning', title: 'A task that died', taskId: 't2' }),
+      ],
+    })
+
+    renderWithProviders(<AttentionPanel />)
+
+    await screen.findByText('A dispatch that never started')
+    expect(screen.getByText('1 open')).toBeInTheDocument()
+    expect(screen.getByText('Failure unheard')).toBeInTheDocument()
+  })
+
   it('collapses recent failures and keeps them out of the open count', async () => {
     // Failures are context. Counted with the rest they would make a healthy fleet look busy every
     // day, and the badge would stop meaning "somebody has to do something".

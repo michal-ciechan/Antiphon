@@ -124,6 +124,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     icon: TbClockPause,
     hint: 'In Progress with no open task and no live session. Move it, or start something.',
   },
+  FailureUnacknowledged: {
+    label: 'Failure unheard',
+    color: 'danger',
+    icon: TbAlertTriangle,
+    hint: 'Failed before dispatch, and the completion note has not reached the caller.',
+  },
 }
 
 export type AttentionGroupKey = 'now' | 'broken' | 'suspect' | 'failures'

@@ -72,6 +72,24 @@ public class AgentTaskCheckSweepTests
     }
 
     [Test]
+    public async Task a_failed_row_with_a_due_check_is_never_claimed_as_a_check()
+    {
+        // CARD-0231: a never-dispatched failure reuses NextCheckAt, so Failed + due is now a legal
+        // state. The real check sweep must keep filtering to Dispatched/Working — claiming a Failed
+        // row would waste a ramp step and log a check that cannot run.
+        var harness = new Harness();
+        var failed = await harness.SeedDelegateAsync(
+            nextCheckInMinutes: -1, status: AgentTaskStatus.Failed);
+
+        await harness.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
+
+        harness.DrainQueue().ShouldNotContain(failed.Task.Id);
+        var after = await harness.ReloadAsync(failed.Task.Id);
+        after.CheckCount.ShouldBe(0);
+        after.NextCheckAt.ShouldNotBeNull();
+    }
+
+    [Test]
     public async Task the_feature_switch_stops_the_sweep_entirely()
     {
         var harness = new Harness(s => s.CheckEnabled = false);

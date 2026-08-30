@@ -739,6 +739,52 @@ public class AttentionServiceTests
         (await ItemsForAsync(scenario)).ShouldNotContain(i => i.TaskId == task);
     }
 
+    [Test]
+    public async Task a_never_dispatched_failure_still_armed_is_FailureUnacknowledged()
+    {
+        await using var scenario = new Scenario();
+        var parent = await scenario.AddSessionAsync();
+        // Older than RecentFailure's 24h window on purpose: an unacknowledged pre-dispatch
+        // failure must not age out of the counted band just because time passed.
+        var task = await scenario.AddTaskAsync(
+            parent, AgentTaskStatus.Failed, dispatchedMinutesAgo: 60 * 41,
+            completedMinutesAgo: 60 * 40,
+            failureReason: "Dispatch failed before a session existed: not a git repo",
+            neverDispatched: true,
+            nextCheckAt: DateTime.UtcNow.AddMinutes(5),
+            checkCount: 2);
+
+        var items = await ItemsForAsync(scenario);
+        var item = items.Single(i => i.TaskId == task);
+
+        item.Kind.ShouldBe(AttentionKind.FailureUnacknowledged);
+        item.Severity.ShouldBe(AlertSeverity.Error);
+        item.Headline.ShouldContain($"session {parent.ToString("N")[..8]}");
+        item.Headline.ShouldContain("reminder 2/10");
+        item.Evidence.ShouldContain("not a git repo");
+        item.Actions.ShouldBe([AttentionAction.Retry, AttentionAction.OpenDrawer]);
+        items.ShouldNotContain(i => i.TaskId == task && i.Kind == AttentionKind.RecentFailure);
+        AttentionSummaryDto.From(new AttentionDto(DateTime.UtcNow, true, [item])).Open.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task once_disarmed_it_is_a_RecentFailure()
+    {
+        await using var scenario = new Scenario();
+        var parent = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            parent, AgentTaskStatus.Failed, dispatchedMinutesAgo: 20,
+            completedMinutesAgo: 15,
+            failureReason: "Dispatch failed before a session existed: not a git repo",
+            neverDispatched: true,
+            nextCheckAt: null);
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.TaskId == task);
+
+        item.Kind.ShouldBe(AttentionKind.RecentFailure);
+        item.Severity.ShouldBe(AlertSeverity.Warning);
+    }
+
     // ---- 8. SessionDisagreement -------------------------------------------------------------------
 
     [Test]
@@ -1166,7 +1212,8 @@ public class AttentionServiceTests
             int? completedMinutesAgo = null,
             string? failureReason = null,
             decimal costUsd = 0m,
-            string? workingDirectory = null)
+            string? workingDirectory = null,
+            bool neverDispatched = false)
         {
             var id = Guid.NewGuid();
             var dispatched = DateTime.UtcNow.AddMinutes(-dispatchedMinutesAgo);
@@ -1182,17 +1229,17 @@ public class AttentionServiceTests
                 ModelLevel = AgentModelLevel.High,
                 Workspace = WorkspaceMode.Shared,
                 WorkingDirectory = workingDirectory ?? Path.GetTempPath(),
-                AgentSessionId = sessionId,
+                AgentSessionId = neverDispatched ? null : sessionId,
                 Status = status,
                 ReplyTo = AgentTaskReplyTo.Session,
-                ParentSessionId = Guid.NewGuid(),
+                ParentSessionId = neverDispatched ? sessionId : Guid.NewGuid(),
                 ExpectedDurationMinutes = expectedMinutes,
                 CheckCount = checkCount,
                 NextCheckAt = nextCheckAt,
                 FailureReason = failureReason,
                 CostUsd = costUsd,
                 CreatedAt = dispatched,
-                DispatchedAt = dispatched,
+                DispatchedAt = neverDispatched ? null : dispatched,
                 CompletedAt = completedMinutesAgo is { } done ? DateTime.UtcNow.AddMinutes(-done) : null,
             });
             await db.SaveChangesAsync();

@@ -142,7 +142,7 @@ public sealed class AgentTaskDispatcher
     internal bool TranscriptPullArmed => _runtime is not null;
 
     /// <param name="SweepFailures">
-    /// How many of the tick's nine clocks threw. Non-zero means the tick ran DEGRADED — the failed
+    /// How many of the tick's ten clocks threw. Non-zero means the tick ran DEGRADED — the failed
     /// sweep did nothing this time round — and each failure is logged at Error by
     /// <see cref="RunSweepAsync"/> naming which one it was.
     /// </param>
@@ -155,7 +155,7 @@ public sealed class AgentTaskDispatcher
         if (!_settings.Enabled)
             return new TickResult(0, 0, 0, 0, 0);
 
-        // The nine clocks below are INDEPENDENT and each runs isolated (see RunSweepAsync). They
+        // The ten clocks below are INDEPENDENT and each runs isolated (see RunSweepAsync). They
         // used to be five bare awaits, which quietly made every one of them a single point of
         // failure for all the others AND for dispatching: one poisoned session in the settlement
         // sweep would abort the tick before the check sweep and the dispatch loop had run, on every
@@ -206,6 +206,11 @@ public sealed class AgentTaskDispatcher
         // granularity, so a 5 s cadence is two orders of magnitude finer than needed. It CLAIMS AND
         // HANDS OFF only — see RunScheduledChecksAsync for why the tick must never run a check.
         sweepFailures += await RunSweepAsync("scheduled checks", RunScheduledChecksAsync, ct);
+
+        // And with a task that Failed before it was ever dispatched, whose caller has not yet
+        // heard (CARD-0231). Same NextCheckAt ramp as a check, but it only re-sends the failure
+        // note — nothing to probe, no interpreter, no session.
+        sweepFailures += await RunSweepAsync("unacknowledged failure reminders", RemindUnacknowledgedFailuresAsync, ct);
 
         // And with check notes still Pending whose task has since settled (CARD-0074). The
         // interpreter window is closed in RunCheckAsync; this is the queue window — WhenIdle
@@ -1318,6 +1323,8 @@ public sealed class AgentTaskDispatcher
     {
         await FailAsync(task, reason, ct);
         await _tasks.RemoveEphemeralAgentAsync(task, task.AgentId, ct);
+        if (task.DispatchedAt is null)
+            ArmFailureReminder(task, task.CompletedAt ?? UtcNow());
         await _db.SaveChangesAsync(ct);
 
         if (task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is Guid parentSession)
@@ -1515,6 +1522,159 @@ public sealed class AgentTaskDispatcher
         }
 
         return claimed;
+    }
+
+    /// <summary>
+    /// CARD-0231: re-send the pre-dispatch failure note on the check ramp while nothing shows the
+    /// caller has heard. Not a check — no probe, no interpreter, no session. Failed +
+    /// <c>NextCheckAt</c> is now a legal state; <see cref="RunScheduledChecksAsync"/> must keep
+    /// filtering it out.
+    /// </summary>
+    internal async Task<int> RemindUnacknowledgedFailuresAsync(CancellationToken ct)
+    {
+        if (!_settings.CheckEnabled)
+            return 0;
+
+        var now = UtcNow();
+        var due = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.Status == AgentTaskStatus.Failed
+                && t.DispatchedAt == null
+                && t.NextCheckAt != null
+                && t.NextCheckAt <= now
+                && t.ReplyTo == AgentTaskReplyTo.Session
+                && t.ParentSessionId != null
+                && t.Role != AgentTaskRole.Check)
+            .OrderBy(t => t.NextCheckAt)
+            .ToListAsync(ct);
+        if (due.Count == 0)
+            return 0;
+
+        var ids = due.Select(t => t.Id).ToList();
+        var notes = await _db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.Origin == QueuedMessageOrigin.Delegation
+                && m.SourceTaskId != null
+                && ids.Contains(m.SourceTaskId.Value))
+            .Select(m => new { m.SourceTaskId, m.Status, m.DeliveryAttempts })
+            .ToListAsync(ct);
+        var notesByTask = notes
+            .GroupBy(n => n.SourceTaskId!.Value)
+            .ToDictionary(
+                g => g.Key,
+                g => g.Select(n => (n.Status, n.DeliveryAttempts)).ToList());
+
+        var acted = 0;
+        foreach (var task in due)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                if (await RemindOneUnacknowledgedFailureAsync(
+                    task, notesByTask.GetValueOrDefault(task.Id), now, ct))
+                    acted++;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                _logger.LogError(
+                    ex, "Failure reminder on task {ShortId} failed; the sweep continues",
+                    DelegationReportFormatter.Short(task.Id));
+            }
+        }
+
+        return acted;
+    }
+
+    private async Task<bool> RemindOneUnacknowledgedFailureAsync(
+        AgentTask task,
+        IReadOnlyList<(QueuedMessageStatus Status, int DeliveryAttempts)>? notes,
+        DateTime now,
+        CancellationToken ct)
+    {
+        // The batch query projects an anonymous type; normalize here so the arms stay readable.
+        var rows = notes ?? [];
+        var acknowledged = task.LastPolledResultAt is not null
+            || task.ReadAt is not null
+            || rows.Any(n => n.Status is QueuedMessageStatus.Sent or QueuedMessageStatus.Canceled);
+        if (acknowledged)
+        {
+            if (await ClaimCheckAsync(task, nextCheckAt: null, checkCount: task.CheckCount, ct))
+            {
+                _logger.LogInformation(
+                    "Failure reminder on task {ShortId} disarmed — the caller has acknowledged the failure",
+                    DelegationReportFormatter.Short(task.Id));
+                return true;
+            }
+
+            return false;
+        }
+
+        if (!await CallerIsListeningAsync(task, ct))
+        {
+            if (await ClaimCheckAsync(task, nextCheckAt: null, checkCount: task.CheckCount, ct))
+            {
+                _logger.LogInformation(
+                    "Checks on task {ShortId} stopped — its caller session {SessionId} is gone",
+                    DelegationReportFormatter.Short(task.Id), task.ParentSessionId);
+                return true;
+            }
+
+            return false;
+        }
+
+        var inFlight = rows.Any(n =>
+            n.Status == QueuedMessageStatus.Pending && n.DeliveryAttempts < _maxDeliveryAttempts);
+        if (inFlight)
+        {
+            var next = now + CheckSchedule.NextInterval(
+                _settings, task.ExpectedDurationMinutes, Math.Max(1, task.CheckCount + 1));
+            return await ClaimCheckAsync(task, next, task.CheckCount, ct);
+        }
+
+        var checkNumber = task.CheckCount + 1;
+        var budgetSpent = checkNumber >= Math.Max(1, _settings.CheckMaxCount);
+        var nextCheckAt = budgetSpent
+            ? (DateTime?)null
+            : now + CheckSchedule.NextInterval(_settings, task.ExpectedDurationMinutes, checkNumber);
+        if (!await ClaimCheckAsync(task, nextCheckAt, checkNumber, ct))
+            return false;
+
+        var firstNoteState = rows.Count == 0 ? "absent" : "parked";
+        var max = Math.Max(1, _settings.CheckMaxCount);
+        var workspaceNote =
+            $"reminder {checkNumber}/{max} — the first failure note did not reach you";
+        if (budgetSpent)
+            workspaceNote += $"; final reminder — the {max}-reminder budget is spent";
+
+        var reason = task.FailureReason ?? string.Empty;
+        var note = DelegationReportFormatter.BuildCompletionNote(
+            task, _settings, reason, workspaceNote: workspaceNote);
+        try
+        {
+            await _queue.EnqueueAsync(
+                task.ParentSessionId!.Value, note.Body, MessageSendMode.WhenIdle, ct,
+                QueuedMessageOrigin.Delegation, $"task:{task.RootTaskId:N}",
+                task.Id, DelegationNoteDigest.Compute(reason), note.Header);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex, "Could not deliver failure reminder #{CheckNumber} of task {ShortId} to parent session {SessionId}",
+                checkNumber, DelegationReportFormatter.Short(task.Id), task.ParentSessionId);
+            return true;
+        }
+
+        var detail = $"Failure reminder #{checkNumber} queued: first note {firstNoteState}";
+        if (budgetSpent)
+            detail += $"; final reminder — the {max}-reminder budget is spent";
+        _db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = task.Id,
+            Type = AgentTaskEventType.Warning,
+            Detail = detail,
+            At = now,
+        });
+        await _db.SaveChangesAsync(ct);
+        return true;
     }
 
     /// <summary>
@@ -1832,6 +1992,23 @@ public sealed class AgentTaskDispatcher
     /// feeds the stall clock, the delivery watchdog, or any status transition: past its expected
     /// duration a task is not late, it has merely reached the point where someone wanted a look.</para>
     /// </summary>
+    /// <summary>
+    /// CARD-0231: arm the check ramp on a task that Failed before a session existed. The first
+    /// look is the ramp base (5 minutes), not <see cref="AgentTask.ExpectedDurationMinutes"/> —
+    /// that number describes work that never started. Same guards as <see cref="ArmFirstCheck"/>.
+    /// </summary>
+    private void ArmFailureReminder(AgentTask task, DateTime now)
+    {
+        if (!_settings.CheckEnabled || task.ReplyTo != AgentTaskReplyTo.Session)
+            return;
+        if (task.Role == AgentTaskRole.Check)
+            return;
+
+        task.NextCheckAt = now + CheckSchedule.NextInterval(
+            _settings, task.ExpectedDurationMinutes, checkNumber: 1);
+        task.CheckCount = 0;
+    }
+
     private void ArmFirstCheck(AgentTask claimed, DateTime dispatchedAt)
     {
         if (!_settings.CheckEnabled || claimed.ReplyTo != AgentTaskReplyTo.Session)

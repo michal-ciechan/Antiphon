@@ -164,6 +164,17 @@ and cannot write to the delegate at all.
 note still arrives separately, and a check note can never be mistaken for it or settle anything
 (see `.claude/skills/antiphon-delegate/SKILL.md`).
 
+**A task that fails before it is ever dispatched still gets the ramp (CARD-0231).** CARD-0220 already
+sends a one-shot `[task <id> failed]` note through `FailAndNotifyAsync`; that note can sit unsubmitted
+or be lost, and the orchestrator bundle says not to poll. The same `NextCheckAt` / `CheckCount`
+columns now arm on a never-dispatched failure (first look at the 5-minute ramp base, not
+`-ExpectAbout`, because that number describes work that never started) and a sweep re-sends the note
+only while nothing shows the caller has heard — note `Sent`, a human Drop, `delegate.ps1 -Status`, or
+opening the task drawer. It is a reminder, not a check: no probe, no interpreter, no session. While
+the reminder is armed the attention feed lists it as `FailureUnacknowledged` in the **Broken** group
+(counted; not a push, not an alert). The ramp stopping after 10 reminders is not acknowledgement —
+the row stays until something hears.
+
 **Do not infer from silence** as general practice still holds, but the specific cause behind the
 worst observed lags is now found and fixed, not just worked around. It was never a slow pipeline —
 task `817682e9` traced the 90-minutes-late and never-arrived notifications to CARD-0055's root

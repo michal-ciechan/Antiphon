@@ -109,6 +109,15 @@ public enum AttentionKind
     /// an answer now.</para>
     /// </summary>
     CardStalled = 14,
+
+    /// <summary>
+    /// A task that Failed before it was ever dispatched, whose caller has not yet heard (CARD-0231).
+    /// Error, so it lands in the counted "Broken" group rather than the collapsed RecentFailure
+    /// history. The reminder machinery's own state is the predicate: armed while
+    /// <c>DispatchedAt == null &amp;&amp; NextCheckAt != null</c>, gone the moment anything
+    /// acknowledges it. Not subject to RecentFailure's 24-hour window.
+    /// </summary>
+    FailureUnacknowledged = 15,
 }
 
 /// <summary>

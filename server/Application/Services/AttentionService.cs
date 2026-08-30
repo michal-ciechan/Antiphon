@@ -134,13 +134,23 @@ public sealed class AttentionService
         var blocked = await _db.AgentTasks.AsNoTracking()
             .Where(t => t.Status == AgentTaskStatus.Blocked)
             .ToListAsync(ct);
+        // CARD-0231: an unacknowledged pre-dispatch failure is counted until the reminder
+        // disarms, and is NOT subject to RecentFailure's 24h window or its cap of 20.
+        var unacknowledged = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.Status == AgentTaskStatus.Failed
+                && t.DispatchedAt == null
+                && t.NextCheckAt != null)
+            .ToListAsync(ct);
         var failed = await _db.AgentTasks.AsNoTracking()
-            .Where(t => t.Status == AgentTaskStatus.Failed && t.CompletedAt != null && t.CompletedAt >= since)
+            .Where(t => t.Status == AgentTaskStatus.Failed
+                && t.CompletedAt != null
+                && t.CompletedAt >= since
+                && !(t.DispatchedAt == null && t.NextCheckAt != null))
             .OrderByDescending(t => t.CompletedAt)
             .Take(RecentFailureCap)
             .ToListAsync(ct);
 
-        var subjects = open.Concat(blocked).Concat(failed).ToList();
+        var subjects = open.Concat(blocked).Concat(failed).Concat(unacknowledged).ToList();
         var costs = await LoadSubtreeCostsAsync(subjects, ct);
         var checkDigests = await LoadLatestCheckDigestsAsync(subjects, ct);
 
@@ -152,6 +162,7 @@ public sealed class AttentionService
         items.AddRange(openItems);
         items.AddRange(await BuildParkedMessageItemsAsync(ct));
         items.AddRange(await BuildRecentIncidentItemsAsync(since, attachedIncidents, ct));
+        items.AddRange(BuildFailureUnacknowledgedItems(unacknowledged, costs, checkDigests));
         items.AddRange(BuildRecentFailureItems(failed, costs, checkDigests));
 
         // Asked unconditionally, because RunnerConsulted is a claim about whether anybody asked and a
@@ -814,6 +825,35 @@ public sealed class AttentionService
         }
 
         return items;
+    }
+
+    // ---- counted until heard: a never-dispatched failure whose reminder is still armed -----------
+
+    private List<AttentionItemDto> BuildFailureUnacknowledgedItems(
+        IReadOnlyList<AgentTask> unacknowledged,
+        IReadOnlyDictionary<Guid, decimal> costs,
+        IReadOnlyDictionary<Guid, CheckExplanation> checkDigests)
+    {
+        var max = Math.Max(1, _delegation.CheckMaxCount);
+        return unacknowledged.Select(task =>
+        {
+            var session = task.ParentSessionId is Guid parent
+                ? DelegationReportFormatter.Short(parent)
+                : "none";
+            return new AttentionItemDto(
+                AttentionKind.FailureUnacknowledged,
+                AlertSeverity.Error,
+                task.Id,
+                task.AgentSessionId,
+                task.AgentId,
+                null,
+                task.Title,
+                $"Failed before dispatch; no completion note has reached session {session} — reminder {task.CheckCount}/{max}",
+                Evidence(task.FailureReason ?? "No failure reason was recorded.", checkDigests.GetValueOrDefault(task.Id)),
+                task.CompletedAt,
+                costs.GetValueOrDefault(task.Id),
+                [AttentionAction.Retry, AttentionAction.OpenDrawer]);
+        }).ToList();
     }
 
     // ---- the collapsed context group: recent failures --------------------------------------------
