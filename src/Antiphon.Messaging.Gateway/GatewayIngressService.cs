@@ -10,16 +10,39 @@ namespace Antiphon.Messaging.Gateway;
 /// Runs each channel adapter's ingress loop and publishes every normalized <c>ChannelMessage</c>
 /// to the inbound topic (keyed by conversation id for per-chat ordering).
 /// </summary>
-public sealed class GatewayIngressService(
-    IEnumerable<IChannelAdapter> adapters,
-    IProducer<string, string> producer,
-    IOptions<AntiphonGatewayOptions> options,
-    ILogger<GatewayIngressService> logger) : BackgroundService
+public sealed class GatewayIngressService : BackgroundService
 {
-    private readonly AntiphonGatewayOptions _options = options.Value;
+    private readonly IEnumerable<IChannelAdapter> _adapters;
+    private readonly IProducer<string, string> _producer;
+    private readonly AntiphonGatewayOptions _options;
+    private readonly ILogger<GatewayIngressService> _logger;
+    private readonly IInboundReceiptSink[] _sinks;
+
+    public GatewayIngressService(
+        IEnumerable<IChannelAdapter> adapters,
+        IProducer<string, string> producer,
+        IOptions<AntiphonGatewayOptions> options,
+        ILogger<GatewayIngressService> logger)
+        : this(adapters, producer, options, logger, receiptSinks: null)
+    {
+    }
+
+    public GatewayIngressService(
+        IEnumerable<IChannelAdapter> adapters,
+        IProducer<string, string> producer,
+        IOptions<AntiphonGatewayOptions> options,
+        ILogger<GatewayIngressService> logger,
+        IEnumerable<IInboundReceiptSink>? receiptSinks)
+    {
+        _adapters = adapters;
+        _producer = producer;
+        _options = options.Value;
+        _logger = logger;
+        _sinks = receiptSinks?.ToArray() ?? [];
+    }
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
-        Task.WhenAll(adapters.Select(adapter => PumpAsync(adapter, stoppingToken)));
+        Task.WhenAll(_adapters.Select(adapter => PumpAsync(adapter, stoppingToken)));
 
     // The pump must NEVER die silently: an adapter's receive stream ending (or throwing) while the
     // host keeps running means the channel goes deaf with no visible symptom — that's exactly what
@@ -31,7 +54,7 @@ public sealed class GatewayIngressService(
         var backoff = _options.IngressRestartBackoff;
         while (!ct.IsCancellationRequested)
         {
-            logger.LogInformation("[ingress] starting channel {Channel}", adapter.Channel);
+            _logger.LogInformation("[ingress] starting channel {Channel}", adapter.Channel);
             try
             {
                 await foreach (var message in adapter.ReceiveAsync(ct))
@@ -39,21 +62,35 @@ public sealed class GatewayIngressService(
                     try
                     {
                         var value = JsonSerializer.Serialize(message, MessagingJson.Options);
-                        await producer.ProduceAsync(
+                        var delivery = await _producer.ProduceAsync(
                             _options.ResolveInboundTopic(),
                             new Message<string, string> { Key = message.Conversation.Id, Value = value },
                             ct);
-                        logger.LogInformation("[ingress] {Channel} {Conversation} -> {Topic}",
+                        _logger.LogInformation("[ingress] {Channel} {Conversation} -> {Topic}",
                             adapter.Channel, message.Conversation.Id, _options.ResolveInboundTopic());
+                        foreach (var sink in _sinks)
+                        {
+                            try
+                            {
+                                await sink.RecordAsync(
+                                    message, value, delivery.Topic, delivery.Partition.Value, delivery.Offset.Value, ct);
+                            }
+                            catch (Exception sinkEx) when (sinkEx is not OperationCanceledException)
+                            {
+                                _logger.LogWarning(sinkEx,
+                                    "[ingress] receipt sink failed for {Channel} {MessageId}",
+                                    adapter.Channel, message.ChannelMessageId);
+                            }
+                        }
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
-                        logger.LogError(ex, "[ingress] failed to publish {Channel} message", adapter.Channel);
+                        _logger.LogError(ex, "[ingress] failed to publish {Channel} message", adapter.Channel);
                     }
                 }
                 if (ct.IsCancellationRequested)
                     return;
-                logger.LogWarning(
+                _logger.LogWarning(
                     "[ingress] {Channel} receive stream ended unexpectedly; restarting in {Backoff}s",
                     adapter.Channel, backoff.TotalSeconds);
             }
@@ -63,7 +100,7 @@ public sealed class GatewayIngressService(
             }
             catch (Exception ex)
             {
-                logger.LogError(ex,
+                _logger.LogError(ex,
                     "[ingress] {Channel} receive stream faulted; restarting in {Backoff}s",
                     adapter.Channel, backoff.TotalSeconds);
             }

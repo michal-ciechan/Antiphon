@@ -15,6 +15,8 @@ public sealed class ContractSchemaTests
             .ShouldBe(Normalize(ContractSchema.ChannelMessageJson));
         Normalize(File.ReadAllText(Path.Combine(dir, ContractSchema.ChannelReplyFileName)))
             .ShouldBe(Normalize(ContractSchema.ChannelReplyJson));
+        Normalize(File.ReadAllText(Path.Combine(dir, ContractSchema.InboundUnconsumedEventFileName)))
+            .ShouldBe(Normalize(ContractSchema.InboundUnconsumedEventJson));
     }
 
     [Test]

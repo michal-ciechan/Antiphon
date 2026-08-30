@@ -5,7 +5,7 @@ var output = args.Length > 0
     : Path.Combine(FindRepoRoot(), "docs", "messaging", "contract", "v1");
 
 ContractSchema.Write(output);
-Console.WriteLine($"Wrote {ContractSchema.ChannelMessageFileName} and {ContractSchema.ChannelReplyFileName} to {output}");
+Console.WriteLine($"Wrote {ContractSchema.ChannelMessageFileName}, {ContractSchema.ChannelReplyFileName}, and {ContractSchema.InboundUnconsumedEventFileName} to {output}");
 
 static string FindRepoRoot()
 {

@@ -326,6 +326,9 @@ try
     builder.Services.AddScoped<CardWorkTransitionService>();
     builder.Services.AddScoped<ParkedMessageSweepService>();
     builder.Services.AddScoped<AgentSupervisorService>();
+    builder.Services.AddScoped<IAgentIncidentRecorder>(sp => sp.GetRequiredService<AgentSupervisorService>());
+    builder.Services.AddScoped<AppHostWatchdogStateAttentionService>();
+    builder.Services.AddScoped<ChannelIngressIncidentService>();
     builder.Services.AddScoped<DataRetentionService>();
     builder.Services.AddScoped<SessionHealthService>();
     builder.Services.AddScoped<Antiphon.Server.Application.Interfaces.ISessionHealthActions,
@@ -433,7 +436,10 @@ try
     builder.Services.AddScoped<ReviewThreadService>();
     builder.Services.AddSingleton<ReviewReplyDispatcher>();
     if (builder.Configuration.GetValue<bool>($"{ChannelBridgeSettings.SectionName}:Enabled"))
+    {
         builder.Services.AddHostedService<ChannelBridgeService>();
+        builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Messaging.InboundUnconsumedEventConsumer>();
+    }
     builder.Services.AddScoped<AuditService>();
     builder.Services.AddSingleton<AgentTuiRunnerCatalog>();
     builder.Services.AddSingleton<AgentTuiMetrics>();
@@ -485,6 +491,7 @@ try
         Antiphon.Server.Infrastructure.Orchestration.CardWorkTransitionHostedService>();
     builder.Services.AddHostedService<ParkedMessageSweepHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.AgentSupervisorHostedService>();
+    builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.AppHostWatchdogStateHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.SubscriptionUsageMonitorHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.SessionHealthHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.AlertDigestFlushHostedService>();

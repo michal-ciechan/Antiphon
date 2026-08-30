@@ -1,1 +1,25 @@
 #nullable enable
+Antiphon.Messaging.InboundUnconsumedEvent
+Antiphon.Messaging.InboundUnconsumedEvent.Acknowledged.get -> bool
+Antiphon.Messaging.InboundUnconsumedEvent.Acknowledged.init -> void
+Antiphon.Messaging.InboundUnconsumedEvent.AcknowledgementError.get -> string?
+Antiphon.Messaging.InboundUnconsumedEvent.AcknowledgementError.init -> void
+Antiphon.Messaging.InboundUnconsumedEvent.AppHostHealth.get -> string?
+Antiphon.Messaging.InboundUnconsumedEvent.AppHostHealth.init -> void
+Antiphon.Messaging.InboundUnconsumedEvent.ConversationId.get -> string!
+Antiphon.Messaging.InboundUnconsumedEvent.ConversationId.init -> void
+Antiphon.Messaging.InboundUnconsumedEvent.DetectedAt.get -> System.DateTimeOffset
+Antiphon.Messaging.InboundUnconsumedEvent.DetectedAt.init -> void
+Antiphon.Messaging.InboundUnconsumedEvent.FirstSeenAt.get -> System.DateTimeOffset
+Antiphon.Messaging.InboundUnconsumedEvent.FirstSeenAt.init -> void
+Antiphon.Messaging.InboundUnconsumedEvent.Offset.get -> long
+Antiphon.Messaging.InboundUnconsumedEvent.Offset.init -> void
+Antiphon.Messaging.InboundUnconsumedEvent.OriginalMessageId.get -> string!
+Antiphon.Messaging.InboundUnconsumedEvent.OriginalMessageId.init -> void
+Antiphon.Messaging.InboundUnconsumedEvent.Partition.get -> int
+Antiphon.Messaging.InboundUnconsumedEvent.Partition.init -> void
+Antiphon.Messaging.InboundUnconsumedEvent.Provider.get -> string!
+Antiphon.Messaging.InboundUnconsumedEvent.Provider.init -> void
+Antiphon.Messaging.InboundUnconsumedEvent.Topic.get -> string!
+Antiphon.Messaging.InboundUnconsumedEvent.Topic.init -> void
+

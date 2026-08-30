@@ -30,6 +30,7 @@ public sealed class SupervisionSettings
     public ApiErrorRecoverySettings ApiErrorRecovery { get; set; } = new();
     public HerdrCorroborationSettings HerdrCorroboration { get; set; } = new();
     public OrchestratorInvestigationSettings OrchestratorInvestigation { get; set; } = new();
+    public AppHostWatchdogStateSettings AppHostWatchdogState { get; set; } = new();
 }
 
 /// <summary>
@@ -42,6 +43,25 @@ public sealed class OrchestratorInvestigationSettings
 
     /// <summary>How often the supervisor tick piggy-backs the investigation sweep.</summary>
     public int SweepPeriodSeconds { get; set; } = 60;
+}
+
+/// <summary>
+/// CARD-0245 S1: read the independent watchdog-state observer document and raise Critical
+/// attention when the recovery mechanism is Disabled/Missing/Unknown outside maintenance.
+/// Detection only — never re-enables the Scheduled Task and never restarts AppHost.
+/// </summary>
+public sealed class AppHostWatchdogStateSettings
+{
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// Path to <c>logs/apphost-watchdog-state.json</c>. Empty = walk up from the content root
+    /// looking for <c>Antiphon.sln</c>, then that repo's logs file.
+    /// </summary>
+    public string StateDocumentPath { get; set; } = "";
+
+    /// <summary>How often the hosted reader re-reads the observer document.</summary>
+    public int PollSeconds { get; set; } = 30;
 }
 
 /// <summary>

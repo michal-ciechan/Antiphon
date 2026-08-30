@@ -126,6 +126,13 @@ public enum AttentionKind
     /// wrote an <c>OrchestratorInvestigation</c> incident, and nothing here dispatches or kills.
     /// </summary>
     OrchestratorInvestigation = 16,
+
+    /// <summary>
+    /// An inbound channel message the Antiphon consumer group never consumed within the gateway's
+    /// budget (CARD-0245 S2). Critical. The row has no required agent: the event can arrive before
+    /// the restarted bridge has catalogued the channel. Detection only — never a restart.
+    /// </summary>
+    InboundUnconsumed = 17,
 }
 
 /// <summary>

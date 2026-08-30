@@ -28,4 +28,19 @@ public sealed class InboxMessage
     public DateTimeOffset ReceivedAt { get; set; }
     public DateTimeOffset? AnsweredAt { get; set; }
     public string EnvelopeJson { get; set; } = "";
+
+    /// <summary>Kafka topic the envelope was consumed from (CARD-0245 S2).</summary>
+    public string? Topic { get; set; }
+
+    public int? Partition { get; set; }
+
+    public long? Offset { get; set; }
+
+    public DateTimeOffset? AcknowledgedAt { get; set; }
+
+    public DateTimeOffset? OperationalEventPublishedAt { get; set; }
+
+    public DateTimeOffset? NextAckAttemptAt { get; set; }
+
+    public int AckAttemptCount { get; set; }
 }

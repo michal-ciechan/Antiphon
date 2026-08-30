@@ -1,0 +1,65 @@
+{
+  "type": "object",
+  "properties": {
+    "provider": {
+      "type": "string"
+    },
+    "conversationId": {
+      "type": "string"
+    },
+    "originalMessageId": {
+      "type": "string"
+    },
+    "firstSeenAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "topic": {
+      "type": "string"
+    },
+    "partition": {
+      "type": [
+        "string",
+        "integer"
+      ],
+      "pattern": "^-?(?:0|[1-9]\\d*)$"
+    },
+    "offset": {
+      "type": [
+        "string",
+        "integer"
+      ],
+      "pattern": "^-?(?:0|[1-9]\\d*)$"
+    },
+    "detectedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "acknowledged": {
+      "type": "boolean"
+    },
+    "acknowledgementError": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "appHostHealth": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "provider",
+    "conversationId",
+    "originalMessageId",
+    "firstSeenAt",
+    "topic",
+    "partition",
+    "offset",
+    "detectedAt",
+    "acknowledged"
+  ]
+}

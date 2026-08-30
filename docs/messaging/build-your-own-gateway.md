@@ -18,6 +18,7 @@ provider (Telegram, Slack, Discord, stdin, …)
         ▼
  your process  ──produce──►  channels.inbound   (ChannelMessage, key = Conversation.Id)
                ◄─consume──  channels.outbound  (ChannelReply,   key = conversation id)
+               ──produce──►  channels.ops.inbound-unconsumed  (InboundUnconsumedEvent; CARD-0245)
         │
         ▼
      Antiphon server (catalog, agent, CARD-0067 reply dispatch)

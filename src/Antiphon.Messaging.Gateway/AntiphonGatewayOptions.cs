@@ -34,9 +34,32 @@ public sealed class AntiphonGatewayOptions
     /// </summary>
     public string AutoOffsetReset { get; set; } = "Earliest";
 
+    /// <summary>
+    /// Antiphon server's inbound consumer group. Distinct from this gateway's own
+    /// <see cref="ConsumerGroup"/>. Lag is measured against this group (CARD-0245 S2).
+    /// </summary>
+    public string AntiphonConsumerGroup { get; set; } = "antiphon-consumer";
+
+    /// <summary>Additive operational topic for inbound-unconsumed events. Not channels.inbound.</summary>
+    public string InboundUnconsumedTopic { get; set; } = "channels.ops.inbound-unconsumed";
+
+    /// <summary>How old an inbox receipt must be before lag is a proven overdue (default 5 minutes).</summary>
+    public int InboundUnconsumedMinutes { get; set; } = 5;
+
+    /// <summary>How often the inbound-unconsumed monitor runs.</summary>
+    public int InboundUnconsumedPollSeconds { get; set; } = 60;
+
+    /// <summary>AppHost /health URL, diagnostics only — never the lag verdict.</summary>
+    public string AppHostHealthUrl { get; set; } = "http://localhost:17202/health";
+
+    /// <summary>Detection-only monitor. Never restarts AppHost.</summary>
+    public bool InboundUnconsumedMonitorEnabled { get; set; } = true;
+
     public string ResolveInboundTopic() => Resolve(InboundTopic);
 
     public string ResolveOutboundTopic() => Resolve(OutboundTopic);
+
+    public string ResolveInboundUnconsumedTopic() => Resolve(InboundUnconsumedTopic);
 
     private string Resolve(string sharedName) => TopicLayout switch
     {

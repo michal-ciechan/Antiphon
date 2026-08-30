@@ -26,8 +26,11 @@
     -ProbeOnly probes and logs, never restarts (the safe acceptance check).
     -RestartScript overrides which script step 7 invokes; it exists so the refusal
     path can be exercised against a stub without tearing down a live stack.
-    Disable the task to keep the stack down on purpose:
-      Disable-ScheduledTask -TaskName "Antiphon AppHost Watchdog"
+    Leave the stack down on purpose through the supported helper (creates
+    logs/apphost.down-on-purpose, then disables this task):
+      pwsh -File scripts/set-apphost-maintenance.ps1
+    Direct Disable-ScheduledTask still works and is what the independent
+    watchdog-state observer detects as an unintentional disable.
 .NOTES
     Requires scripts/apphost-common.ps1 (dot-sourced) for the shared lock parser.
     Keep this file ASCII-only: it may run under Windows PowerShell 5.1, which reads

@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using Antiphon.Messaging;
 using Shouldly;
 using TUnit.Core;
 
@@ -54,6 +55,39 @@ public sealed class WireContractTests
         var reply = JsonSerializer.Deserialize<ChannelReply>(json, MessagingJson.Options)!;
         reply.Channel.ShouldBe("telegram");
         reply.Text.ShouldBe("hi");
+    }
+
+    [Test]
+    public void Inbound_unconsumed_event_round_trips_required_fields()
+    {
+        var evt = new InboundUnconsumedEvent
+        {
+            Provider = "slack",
+            ConversationId = "C1",
+            OriginalMessageId = "m1",
+            FirstSeenAt = DateTimeOffset.Parse("2026-08-30T04:00:00Z"),
+            Topic = "channels.inbound",
+            Partition = 0,
+            Offset = 10,
+            DetectedAt = DateTimeOffset.Parse("2026-08-30T04:06:00Z"),
+            Acknowledged = true,
+            AppHostHealth = "fail: timeout",
+        };
+        var json = JsonSerializer.Serialize(evt, MessagingJson.Options);
+        var back = JsonSerializer.Deserialize<InboundUnconsumedEvent>(json, MessagingJson.Options)!;
+        back.Provider.ShouldBe("slack");
+        back.Offset.ShouldBe(10);
+        back.Acknowledged.ShouldBeTrue();
+        back.AppHostHealth.ShouldBe("fail: timeout");
+    }
+
+    [Test]
+    public void Unknown_property_on_inbound_unconsumed_event_is_ignored()
+    {
+        const string json = """{"provider":"slack","conversationId":"C1","originalMessageId":"m1","firstSeenAt":"2026-08-30T04:00:00Z","topic":"channels.inbound","partition":0,"offset":10,"detectedAt":"2026-08-30T04:06:00Z","acknowledged":false,"notAField":true}""";
+        var evt = JsonSerializer.Deserialize<InboundUnconsumedEvent>(json, MessagingJson.Options)!;
+        evt.Provider.ShouldBe("slack");
+        evt.Acknowledged.ShouldBeFalse();
     }
 
     [Test]

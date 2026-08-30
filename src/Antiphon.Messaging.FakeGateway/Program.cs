@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using Antiphon.Messaging;
 using Antiphon.Messaging.FakeGateway;
 using Antiphon.Messaging.Gateway;
+using Antiphon.Messaging.Gateway.Testing;
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // Antiphon FAKE messaging gateway (spec: 2026-07-20-always-on-agents-and-alerting.md, Q9).
@@ -44,11 +45,15 @@ builder.Services.AddSingleton<IChannelAdapter>(sp =>
 builder.Services.AddSingleton<IChannelAdapter>(sp =>
     sp.GetRequiredService<FakeChannelHub>().Adapters.Single(a => a.Channel == "slack"));
 
+builder.Services.AddSingleton<InMemoryInboxReceiptStore>();
+builder.Services.AddSingleton<IInboxReceiptStore>(sp => sp.GetRequiredService<InMemoryInboxReceiptStore>());
+builder.Services.AddSingleton<IInboundReceiptSink>(sp => sp.GetRequiredService<InMemoryInboxReceiptStore>());
 builder.Services.AddAntiphonGateway(o =>
 {
     o.BootstrapServers = bootstrap;
     o.InboundTopic = inboundTopic;
     o.OutboundTopic = outboundTopic;
+    o.InboundUnconsumedTopic = builder.Configuration["AntiphonMessaging:InboundUnconsumedTopic"] ?? "channels.ops.inbound-unconsumed";
     o.ConsumerGroup = "antiphon-fake-gateway";
     // Latest: a restart must not replay the outbound topic into /deliveries. Production
     // gateways keep the library default (Earliest) so a new group does not skip replies.
@@ -68,7 +73,8 @@ var build = new
     processStartUtc = Process.GetCurrentProcess().StartTime.ToUniversalTime(),
 };
 
-app.MapGet("/health", () => Results.Ok(new { ok = true, bootstrap, inboundTopic, outboundTopic }));
+var opsTopic = builder.Configuration["AntiphonMessaging:InboundUnconsumedTopic"] ?? "channels.ops.inbound-unconsumed";
+app.MapGet("/health", () => Results.Ok(new { ok = true, bootstrap, inboundTopic, outboundTopic, inboundUnconsumedTopic = opsTopic }));
 app.MapGet("/capabilities", () => Results.Ok(new { build }));
 
 // ── Assertions ───────────────────────────────────────────────────────────────────────────────

@@ -9,6 +9,12 @@ public sealed class AntiphonMessagingOptions
     public string InboundTopic { get; set; } = "channels.inbound";
     public string OutboundTopic { get; set; } = "channels.outbound";
 
+    /// <summary>
+    /// Additive operational topic for inbound-unconsumed events (CARD-0245 S2). Not a
+    /// synthetic ChannelMessage on <see cref="InboundTopic"/>.
+    /// </summary>
+    public string InboundUnconsumedTopic { get; set; } = "channels.ops.inbound-unconsumed";
+
     /// <summary>Consumer group for this app's inbound consumption. MUST be distinct from the bridge's own
     /// group (and any other consumer) so each gets its own copy of the inbound stream.</summary>
     public string ConsumerGroup { get; set; } = "antiphon-consumer";

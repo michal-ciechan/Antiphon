@@ -4,8 +4,9 @@ Package version **1.0.0**. This is the document a gateway author — including a
 package source. Getting started (packages, `IChannelAdapter`, `AddAntiphonGateway`, the EchoGateway
 sample): [`docs/messaging/build-your-own-gateway.md`](../../build-your-own-gateway.md).
 The JSON Schema files next to it (`channel-message.schema.json`,
-`channel-reply.schema.json`) are generated from the same `ChannelMessage` / `ChannelReply`
-types the NuGet packages ship, via `dotnet run --project tools/Antiphon.Messaging.SchemaGen`.
+`channel-reply.schema.json`, `inbound-unconsumed-event.schema.json`) are generated from the
+same `ChannelMessage` / `ChannelReply` / `InboundUnconsumedEvent` types the NuGet packages
+ship, via `dotnet run --project tools/Antiphon.Messaging.SchemaGen`.
 A test fails if the committed schema and a fresh generation diverge.
 
 There is no `schemaVersion` field on the wire. Additive changes stay on these topics;
@@ -17,9 +18,14 @@ a genuinely incompatible v2 would ship on new topic names (`channels.v2.*`).
 |---|---|---|---|
 | `channels.inbound` | gateway → Antiphon | `ChannelMessage` | `Conversation.Id` (per-chat ordering) |
 | `channels.outbound` | Antiphon → gateway | `ChannelReply` | conversation id (`ConversationId`, falling back to `ReplyHandle`) |
+| `channels.ops.inbound-unconsumed` | gateway → Antiphon | `InboundUnconsumedEvent` | conversation id |
 
 Topic layout today is **shared** (one inbound topic and one outbound topic for every
 provider). A per-provider layout is a documented follow-up, not implemented.
+
+`channels.ops.inbound-unconsumed` is additive (CARD-0245). It is **not** a synthetic
+`ChannelMessage` on `channels.inbound`. The value is `InboundUnconsumedEvent`
+(`inbound-unconsumed-event.schema.json`). Inbound and outbound v1 payloads are unchanged.
 
 Maximum message size is **20 MB** (`max.message.bytes` on the topics, matched by producer
 `MessageMaxBytes` and consumer `MaxPartitionFetchBytes` / `FetchMaxBytes`). Anything larger

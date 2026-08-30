@@ -380,4 +380,13 @@ public enum AgentIncidentKind
     /// <c>AttentionKind.OrchestratorInvestigation</c> in the Process group.
     /// </summary>
     OrchestratorInvestigation = 39,
+
+    /// <summary>
+    /// CARD-0245 S1: the Windows AppHost watchdog Scheduled Task is Disabled, missing, or
+    /// unreadable, and <c>logs/apphost.down-on-purpose</c> is not set. Critical, detection only —
+    /// never re-enables the task, never restarts the AppHost. One row per (agent, episode);
+    /// disable → enable → disable is a new episode. Surfaces through the ordinary
+    /// <c>RecentCriticalIncident</c> attention projection.
+    /// </summary>
+    AppHostWatchdogDisabled = 40,
 }

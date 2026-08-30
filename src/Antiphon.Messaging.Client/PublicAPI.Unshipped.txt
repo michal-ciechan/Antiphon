@@ -1,1 +1,4 @@
 #nullable enable
+Antiphon.Messaging.Client.AntiphonMessagingOptions.InboundUnconsumedTopic.get -> string!
+Antiphon.Messaging.Client.AntiphonMessagingOptions.InboundUnconsumedTopic.set -> void
+

@@ -66,7 +66,7 @@ public sealed class InboxConsumerService(
                 }
 
                 if (message is not null)
-                    await PersistAsync(message, result.Message.Value, ct);
+                    await PersistAsync(message, result, ct);
             }
         }
         finally
@@ -75,15 +75,25 @@ public sealed class InboxConsumerService(
         }
     }
 
-    private async Task PersistAsync(ChannelMessage message, string envelopeJson, CancellationToken ct)
+    private async Task PersistAsync(ChannelMessage message, ConsumeResult<string, string> result, CancellationToken ct)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MessagingDbContext>();
+        var envelopeJson = result.Message.Value;
 
-        var exists = await db.Inbox.AnyAsync(
+        var existing = await db.Inbox.FirstOrDefaultAsync(
             x => x.Channel == message.Channel && x.ChannelMessageId == message.ChannelMessageId, ct);
-        if (exists)
+        if (existing is not null)
+        {
+            if (existing.Offset is null)
+            {
+                existing.Topic = result.Topic;
+                existing.Partition = result.Partition.Value;
+                existing.Offset = result.Offset.Value;
+                await db.SaveChangesAsync(ct);
+            }
             return;
+        }
 
         db.Inbox.Add(new InboxMessage
         {
@@ -100,9 +110,13 @@ public sealed class InboxConsumerService(
             Status = InboxStatus.Pending,
             ReceivedAt = message.Timestamp.ToUniversalTime(),
             EnvelopeJson = envelopeJson,
+            Topic = result.Topic,
+            Partition = result.Partition.Value,
+            Offset = result.Offset.Value,
         });
 
         await db.SaveChangesAsync(ct);
-        logger.LogInformation("[inbox] stored {Channel} {MessageId}", message.Channel, message.ChannelMessageId);
+        logger.LogInformation("[inbox] stored {Channel} {MessageId} {Topic}/{Partition}:{Offset}",
+            message.Channel, message.ChannelMessageId, result.Topic, result.Partition.Value, result.Offset.Value);
     }
 }

@@ -161,6 +161,7 @@ public sealed class AttentionService
             open, now, costs, checkDigests, attachedIncidents, includeProgressProbe, ct);
         items.AddRange(openItems);
         items.AddRange(await BuildParkedMessageItemsAsync(ct));
+        items.AddRange(await BuildInboundUnconsumedItemsAsync(since, ct));
         items.AddRange(await BuildRecentIncidentItemsAsync(since, attachedIncidents, ct));
         items.AddRange(BuildFailureUnacknowledgedItems(unacknowledged, costs, checkDigests));
         items.AddRange(await BuildOrchestratorInvestigationItemsAsync(since, ct));
@@ -830,6 +831,52 @@ public sealed class AttentionService
         }
 
         return items;
+    }
+
+    // ---- inbound the AppHost never consumed (CARD-0245 S2) --------------------------------
+
+    private async Task<List<AttentionItemDto>> BuildInboundUnconsumedItemsAsync(
+        DateTime since, CancellationToken ct)
+    {
+        var sinceOffset = new DateTimeOffset(DateTime.SpecifyKind(since, DateTimeKind.Utc));
+        var rows = await _db.ChannelIngressIncidents.AsNoTracking()
+            .Where(i => i.DetectedAt >= sinceOffset)
+            .ToListAsync(ct);
+        if (rows.Count == 0)
+            return [];
+
+        var keys = rows.Select(r => (r.Provider, r.ConversationId)).Distinct().ToList();
+        var channels = await _db.ChatChannels.AsNoTracking()
+            .Where(c => c.Enabled)
+            .Select(c => new { c.Provider, c.ExternalId, c.AgentId, c.Title })
+            .ToListAsync(ct);
+        var bound = channels
+            .Where(c => keys.Any(k => k.Provider == c.Provider && k.ConversationId == c.ExternalId))
+            .GroupBy(c => (c.Provider, c.ExternalId))
+            .ToDictionary(g => g.Key, g => g.First());
+
+        return rows.Select(row =>
+        {
+            bound.TryGetValue((row.Provider, row.ConversationId), out var channel);
+            var title = channel?.Title ?? $"{row.Provider}:{row.ConversationId}";
+            var ack = row.Acknowledged
+                ? "Acknowledged to the chat."
+                : (row.AcknowledgementError ?? "Acknowledgement not yet delivered.");
+            return new AttentionItemDto(
+                AttentionKind.InboundUnconsumed,
+                AlertSeverity.Critical,
+                null,
+                null,
+                channel?.AgentId,
+                null,
+                title,
+                $"Inbound {row.Provider} message unconsumed for {Duration(_timeProvider.GetUtcNow() - row.FirstSeenAt)}; queued at {row.Topic}/{row.Partition}:{row.Offset}.",
+                $"message {row.OriginalMessageId}. first seen {row.FirstSeenAt:o}. {ack}"
+                    + (string.IsNullOrWhiteSpace(row.AppHostHealth) ? "" : $" AppHost health: {row.AppHostHealth}."),
+                row.FirstSeenAt.UtcDateTime,
+                null,
+                channel?.AgentId is Guid ? [AttentionAction.OpenAgent] : Array.Empty<AttentionAction>());
+        }).ToList();
     }
 
     // ---- counted until heard: a never-dispatched failure whose reminder is still armed -----------

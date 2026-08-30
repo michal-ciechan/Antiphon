@@ -52,6 +52,9 @@ if (!string.IsNullOrWhiteSpace(builder.Configuration["Slack:BotToken"]))
 // Ingress + outbound loops live in Antiphon.Messaging.Gateway. Section name "Kafka" keeps the
 // deployed env vars (Kafka__BootstrapServers, Kafka__ConsumerGroup, …) working.
 builder.Services.AddAntiphonGateway(builder.Configuration, "Kafka");
+builder.Services.AddSingleton<EfInboxReceiptStore>();
+builder.Services.AddSingleton<IInboxReceiptStore>(sp => sp.GetRequiredService<EfInboxReceiptStore>());
+builder.Services.AddSingleton<IInboundReceiptSink>(sp => sp.GetRequiredService<EfInboxReceiptStore>());
 builder.Services.AddHostedService<InboxConsumerService>();
 
 var app = builder.Build();

@@ -68,6 +68,11 @@ export type AttentionKind =
    * Process group, Warning, never counted as Broken.
    */
   | 'OrchestratorInvestigation'
+  /**
+   * An inbound channel message the Antiphon consumer group never consumed (CARD-0245).
+   * Critical. Detection only — the gateway already acknowledged the chat if it could.
+   */
+  | 'InboundUnconsumed'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =

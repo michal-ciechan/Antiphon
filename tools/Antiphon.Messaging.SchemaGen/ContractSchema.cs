@@ -13,6 +13,7 @@ public static class ContractSchema
 {
     public const string ChannelMessageFileName = "channel-message.schema.json";
     public const string ChannelReplyFileName = "channel-reply.schema.json";
+    public const string InboundUnconsumedEventFileName = "inbound-unconsumed-event.schema.json";
 
     private static readonly JsonSerializerOptions WriteIndented = new() { WriteIndented = true };
 
@@ -46,6 +47,7 @@ public static class ContractSchema
 
     public static string ChannelMessageJson => Generate(typeof(ChannelMessage));
     public static string ChannelReplyJson => Generate(typeof(ChannelReply));
+    public static string InboundUnconsumedEventJson => Generate(typeof(InboundUnconsumedEvent));
 
     public static string Generate(Type type)
     {
@@ -62,5 +64,6 @@ public static class ContractSchema
         Directory.CreateDirectory(directory);
         File.WriteAllText(Path.Combine(directory, ChannelMessageFileName), ChannelMessageJson);
         File.WriteAllText(Path.Combine(directory, ChannelReplyFileName), ChannelReplyJson);
+        File.WriteAllText(Path.Combine(directory, InboundUnconsumedEventFileName), InboundUnconsumedEventJson);
     }
 }

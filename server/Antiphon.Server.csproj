@@ -49,10 +49,12 @@
     <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
     <PackageReference Include="System.IO.Abstractions" Version="22.1.0" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
+    <PackageReference Include="Confluent.Kafka" Version="2.6.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\src\Antiphon.Agents.Pty\Antiphon.Agents.Pty.csproj" />
+    <ProjectReference Include="..\src\Antiphon.Messaging\Antiphon.Messaging.csproj" />
     <ProjectReference Include="..\src\Antiphon.Messaging.Client\Antiphon.Messaging.Client.csproj" />
     <ProjectReference Include="..\src\Antiphon.SessionRunner.Contracts\Antiphon.SessionRunner.Contracts.csproj" />
   </ItemGroup>

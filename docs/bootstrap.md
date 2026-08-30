@@ -137,22 +137,35 @@ when any `client/src` file is newer than `client/dist/index.html`. Build
 pwsh -File scripts/install-autostart.ps1
 ```
 
-Registers **Antiphon Session Runner** (port 17204) and **Antiphon AppHost**
-(server 17202, client 17203, dashboard 17205, control API 17207). Caveats
-already in the script header / CLAUDE.md:
+Registers **Antiphon Session Runner** (port 17204), **Antiphon AppHost**
+(server 17202, client 17203, dashboard 17205, control API 17207), the
+**Antiphon AppHost Watchdog**, and the independent **Antiphon AppHost
+Watchdog State Observer** (CARD-0245). Caveats already in the script
+header / AGENTS.md:
 
 - Re-running the installer Unregister+Registers, which **terminates a
-  running session-runner**. Use `-AppHostOnly` to refresh the AppHost task
-  without touching a healthy runner.
+  running session-runner**. Use `-AppHostOnly` to refresh AppHost-side
+  tasks (logon AppHost + watchdog + watchdog-state observer) without
+  touching a healthy runner.
+- `-NoWatchdog` skips the restarting watchdog only. The state observer
+  stays registered so a disabled watchdog is still visible. Skip the
+  observer with `-NoWatchdogStateObserver`. `-NoAppHost` skips all
+  AppHost-side tasks including the observer.
 - The installer prefers the version-independent
   `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe` alias. Never hand-register
   a `WindowsApps\Microsoft.PowerShell_<version>_…\pwsh.exe` path.
+- Leave the stack down on purpose with
+  `pwsh -File scripts/set-apphost-maintenance.ps1` (writes
+  `logs/apphost.down-on-purpose`, then disables the watchdog). `-Clear`
+  re-enables then removes the marker. Direct `Disable-ScheduledTask` still
+  works and is what the observer detects as unintentional.
 
 Already registered and you just want them up now:
 
 ```
 Start-ScheduledTask -TaskName "Antiphon Session Runner"
 Start-ScheduledTask -TaskName "Antiphon AppHost"
+Start-ScheduledTask -TaskName "Antiphon AppHost Watchdog State Observer"
 ```
 
 ### 7. Start the Aspire stack

@@ -18,7 +18,7 @@ namespace Antiphon.Server.Application.Services;
 /// number, chosen delay, and absolute next-retry time, and firing tier-escalation incidents
 /// exactly once when the ladder crosses hourly (Warning) and daily (Critical).
 /// </summary>
-public sealed class AgentSupervisorService
+public sealed class AgentSupervisorService : IAgentIncidentRecorder
 {
     private static readonly SessionStatus[] LiveSessionStatuses =
         [SessionStatus.Starting, SessionStatus.Running, SessionStatus.Stopping];

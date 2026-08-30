@@ -19,11 +19,21 @@
                        scripts/restart-apphost.ps1 if both stay down. Skip with
                        -NoWatchdog. Treated as AppHost-side, so -AppHostOnly includes
                        it and never touches a running session-runner.
+      5. Watchdog-state observer - registers a FOURTH per-user Scheduled Task that
+                       samples whether the watchdog task is Disabled/Missing/Unknown
+                       and writes logs/apphost-watchdog-state.json. Independent of
+                       the watchdog: -NoWatchdog does not skip it. Skip with
+                       -NoWatchdogStateObserver. Skip only with -NoAppHost (the
+                       observer is AppHost-side). Detection only; it never restarts
+                       or re-enables anything.
 
     The AppHost task fires 1 minute after logon and waits for Docker Desktop before
     starting; it no-ops if the AppHost is already running, and it adopts the
     already-running Postgres + session-runner. The watchdog is delayed 15 minutes
     after logon so it does not kill that launch window, then repeats every 2 minutes.
+    Leave the stack down on purpose with scripts/set-apphost-maintenance.ps1 (creates
+    logs/apphost.down-on-purpose before disabling the watchdog). Direct
+    Disable-ScheduledTask still works and is what the observer detects.
 .PARAMETER Uninstall
     Remove the Scheduled Tasks this script registered. Leaves the Postgres container
     and its data alone (prints how to remove them if you want to).
@@ -34,17 +44,24 @@
 .PARAMETER NoWatchdog
     Do not register (or, with -Uninstall, do not remove) the AppHost watchdog task.
     The logon AppHost task is still registered unless -NoAppHost is also set.
+    Does NOT skip the watchdog-state observer.
+.PARAMETER NoWatchdogStateObserver
+    Do not register (or, with -Uninstall, do not remove) the watchdog-state
+    observer task. Independent of -NoWatchdog.
 .PARAMETER AppHostOnly
-    Only touch the AppHost-side tasks (logon AppHost + watchdog); leave the
-    session-runner task alone. Use this when the session-runner is already running -
-    re-registering a RUNNING task terminates its live supervisor, which would leave
-    the daemon unsupervised until the next logon.
+    Only touch the AppHost-side tasks (logon AppHost + watchdog + watchdog-state
+    observer); leave the session-runner task alone. Use this when the session-runner
+    is already running - re-registering a RUNNING task terminates its live
+    supervisor, which would leave the daemon unsupervised until the next logon.
 .PARAMETER TaskName
     Session-runner Scheduled Task name. Default: "Antiphon Session Runner".
 .PARAMETER AppHostTaskName
     AppHost Scheduled Task name. Default: "Antiphon AppHost".
 .PARAMETER WatchdogTaskName
     AppHost watchdog Scheduled Task name. Default: "Antiphon AppHost Watchdog".
+.PARAMETER WatchdogStateObserverTaskName
+    Watchdog-state observer Scheduled Task name. Default:
+    "Antiphon AppHost Watchdog State Observer".
 .PARAMETER AppHostDelay
     ISO-8601 duration to delay the AppHost task after logon. Default: PT1M.
 .PARAMETER WatchdogDelay
@@ -61,10 +78,12 @@ param(
     [switch]$Uninstall,
     [switch]$NoAppHost,
     [switch]$NoWatchdog,
+    [switch]$NoWatchdogStateObserver,
     [switch]$AppHostOnly,
     [string]$TaskName = 'Antiphon Session Runner',
     [string]$AppHostTaskName = 'Antiphon AppHost',
     [string]$WatchdogTaskName = 'Antiphon AppHost Watchdog',
+    [string]$WatchdogStateObserverTaskName = 'Antiphon AppHost Watchdog State Observer',
     [string]$AppHostDelay = 'PT1M',
     [string]$WatchdogDelay = 'PT15M'
 )
@@ -85,6 +104,7 @@ if ($Uninstall) {
     if (-not $AppHostOnly) { $toRemove += $TaskName }
     if (-not $NoAppHost)   { $toRemove += $AppHostTaskName }
     if (-not $NoWatchdog -and -not $NoAppHost) { $toRemove += $WatchdogTaskName }
+    if (-not $NoWatchdogStateObserver -and -not $NoAppHost) { $toRemove += $WatchdogStateObserverTaskName }
     foreach ($t in $toRemove) {
         Write-Step "Removing Scheduled Task '$t'..."
         if (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue) {
@@ -103,10 +123,12 @@ if ($Uninstall) {
 # -- Pre-flight --------------------------------------------------------------
 $appHostScript  = Join-Path $PSScriptRoot 'autostart-apphost.ps1'
 $watchdogScript = Join-Path $PSScriptRoot 'watchdog-apphost.ps1'
+$observerScript = Join-Path $PSScriptRoot 'apphost-watchdog-state-observer.ps1'
 if (-not (Test-Path $autostartScript)) { throw "Missing $autostartScript" }
 if (-not (Test-Path $composeFile))     { throw "Missing $composeFile" }
 if (-not $NoAppHost -and -not (Test-Path $appHostScript)) { throw "Missing $appHostScript" }
 if (-not $NoWatchdog -and -not $NoAppHost -and -not (Test-Path $watchdogScript)) { throw "Missing $watchdogScript" }
+if (-not $NoWatchdogStateObserver -and -not $NoAppHost -and -not (Test-Path $observerScript)) { throw "Missing $observerScript" }
 
 # Resolve a PowerShell host for the task action (prefer pwsh 7, fall back to 5.1).
 # Probe the real install dirs first - pwsh may not be on THIS session's PATH.
@@ -315,6 +337,59 @@ if (-not $NoWatchdog -and -not $NoAppHost) {
     Write-Step "Skipping AppHost watchdog task."
 }
 
+# -- 5. Watchdog-state observer Scheduled Task -------------------------------
+# Independent of the watchdog: disabling "Antiphon AppHost Watchdog" must never
+# disable this observer. -NoWatchdog does not skip it; -NoAppHost does.
+# Detection only: writes logs/apphost-watchdog-state.json, never restarts.
+if (-not $NoWatchdogStateObserver -and -not $NoAppHost) {
+    Write-Step "Registering watchdog-state observer Scheduled Task '$WatchdogStateObserverTaskName'..."
+
+    $obsAction = New-ScheduledTaskAction `
+        -Execute $psExe `
+        -Argument "-NonInteractive -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$observerScript`"" `
+        -WorkingDirectory $root
+
+    $obsPrincipal = New-ScheduledTaskPrincipal `
+        -UserId "$env:USERDOMAIN\$env:USERNAME" `
+        -LogonType Interactive `
+        -RunLevel Limited
+
+    $obsSettings = New-ScheduledTaskSettingsSet `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -StartWhenAvailable `
+        -MultipleInstances IgnoreNew `
+        -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+
+    $obsInterval = New-TimeSpan -Minutes 2
+    $obsDuration = New-TimeSpan -Days 3650
+    $obsRepetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval $obsInterval -RepetitionDuration $obsDuration).Repetition
+
+    $obsLogon = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+    $obsLogon.Delay = $WatchdogDelay
+    $obsLogon.Repetition = $obsRepetition
+
+    $obsRepeat = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(2)) `
+        -RepetitionInterval $obsInterval `
+        -RepetitionDuration $obsDuration
+
+    if (Get-ScheduledTask -TaskName $WatchdogStateObserverTaskName -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskName $WatchdogStateObserverTaskName -Confirm:$false
+    }
+
+    Register-ScheduledTask `
+        -TaskName $WatchdogStateObserverTaskName `
+        -Action $obsAction `
+        -Trigger @($obsLogon, $obsRepeat) `
+        -Principal $obsPrincipal `
+        -Settings $obsSettings `
+        -Description 'Samples Antiphon AppHost Watchdog Scheduled Task state every 2 minutes into logs/apphost-watchdog-state.json. Detection only; never restarts or re-enables the watchdog.' | Out-Null
+
+    Write-Ok "Task registered (logon+$WatchdogDelay then every 2 min as $env:USERNAME)."
+} else {
+    Write-Step "Skipping watchdog-state observer task."
+}
+
 # -- Done --------------------------------------------------------------------
 Write-Host ""
 Write-Host "Always-on backend configured:" -ForegroundColor Green
@@ -324,6 +399,9 @@ if (-not $NoAppHost) {
     Write-Note "  AppHost        : Scheduled Task '$AppHostTaskName'  (server :17202, client :17203, dashboard :17205)"
     if (-not $NoWatchdog) {
         Write-Note "  AppHost watchdog: Scheduled Task '$WatchdogTaskName'  (HTTP probe every 2 min -> restart-apphost.ps1)"
+    }
+    if (-not $NoWatchdogStateObserver) {
+        Write-Note "  Watchdog observer: Scheduled Task '$WatchdogStateObserverTaskName'  (state sample every 2 min -> logs/apphost-watchdog-state.json)"
     }
 } else {
     Write-Note "  The rest (server/client/dashboard): run  .\dev-aspire.ps1"
@@ -335,7 +413,12 @@ if (-not $NoAppHost) {
     Write-Note "AppHost auto-start log:                             $root\logs\autostart-apphost.log"
     if (-not $NoWatchdog) {
         Write-Note "Watchdog log:                                       $root\logs\watchdog-apphost.log"
-        Write-Note "Disable the watchdog (leave the stack down):        Disable-ScheduledTask -TaskName `"$WatchdogTaskName`""
+        Write-Note "Leave the stack down on purpose:                    pwsh -File scripts/set-apphost-maintenance.ps1"
+        Write-Note "Leave maintenance (re-enable watchdog):             pwsh -File scripts/set-apphost-maintenance.ps1 -Clear"
+    }
+    if (-not $NoWatchdogStateObserver) {
+        Write-Note "Watchdog-state document:                            $root\logs\apphost-watchdog-state.json"
+        Write-Note "Watchdog-state observer log:                        $root\logs\apphost-watchdog-state-observer.log"
     }
 }
 Write-Note "Remove auto-start later:                            pwsh -File scripts/install-autostart.ps1 -Uninstall"

@@ -1,6 +1,7 @@
 using Confluent.Kafka;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.Messaging.Gateway;
@@ -43,6 +44,11 @@ public static class ServiceCollectionExtensions
         });
         services.AddHostedService<GatewayIngressService>();
         services.AddHostedService<GatewayOutboundService>();
+        services.TryAddSingleton(TimeProvider.System);
+        services.TryAddSingleton<IConsumerGroupOffsetReader, KafkaConsumerGroupOffsetReader>();
+        services.TryAddSingleton<IAppHostHealthProbe, HttpAppHostHealthProbe>();
+        services.TryAddSingleton<IInboundUnconsumedEventPublisher, KafkaInboundUnconsumedEventPublisher>();
+        services.AddHostedService<InboundUnconsumedMonitorService>();
         return services;
     }
 }

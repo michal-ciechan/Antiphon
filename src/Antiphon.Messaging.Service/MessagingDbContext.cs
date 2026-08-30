@@ -15,5 +15,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         inbox.HasIndex(x => new { x.Channel, x.Status });
         inbox.HasIndex(x => x.ReceivedAt);
         inbox.HasIndex(x => new { x.Channel, x.ChannelMessageId }).IsUnique();
+        inbox.Property(x => x.Topic).HasMaxLength(200);
+        inbox.HasIndex(x => new { x.Topic, x.Partition, x.Offset });
     }
 }

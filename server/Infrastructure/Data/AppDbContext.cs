@@ -44,6 +44,7 @@ public class AppDbContext : DbContext
     public DbSet<TokenUsage> TokenUsages => Set<TokenUsage>();
     public DbSet<ArtifactSectionReview> ArtifactSectionReviews => Set<ArtifactSectionReview>();
     public DbSet<ChatChannel> ChatChannels => Set<ChatChannel>();
+    public DbSet<ChannelIngressIncident> ChannelIngressIncidents => Set<ChannelIngressIncident>();
     public DbSet<AgentSupervisionState> AgentSupervisionStates => Set<AgentSupervisionState>();
     public DbSet<AgentIncident> AgentIncidents => Set<AgentIncident>();
     public DbSet<FileReviewState> FileReviewStates => Set<FileReviewState>();
@@ -206,6 +207,22 @@ public class AppDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(c => c.AgentId)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<ChannelIngressIncident>(entity =>
+        {
+            entity.ToTable("ChannelIngressIncidents");
+            entity.HasKey(i => i.Id);
+            entity.Property(i => i.Provider).IsRequired().HasMaxLength(50);
+            entity.Property(i => i.ConversationId).IsRequired().HasMaxLength(200);
+            entity.Property(i => i.OriginalMessageId).IsRequired().HasMaxLength(200);
+            entity.Property(i => i.Topic).IsRequired().HasMaxLength(200);
+            entity.Property(i => i.AcknowledgementError).HasMaxLength(1000);
+            entity.Property(i => i.AppHostHealth).HasMaxLength(200);
+            entity.Property(i => i.CreatedAt).IsRequired();
+            entity.HasIndex(i => i.DetectedAt);
+            entity.HasIndex(i => new { i.Topic, i.Partition, i.Offset }).IsUnique()
+                .HasDatabaseName("IX_ChannelIngressIncidents_Topic_Partition_Offset");
         });
 
         // Enable JSONB column support for flexible config storage

@@ -1,1 +1,79 @@
 #nullable enable
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.AntiphonConsumerGroup.get -> string!
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.AntiphonConsumerGroup.set -> void
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.AppHostHealthUrl.get -> string!
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.AppHostHealthUrl.set -> void
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.InboundUnconsumedMinutes.get -> int
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.InboundUnconsumedMinutes.set -> void
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.InboundUnconsumedMonitorEnabled.get -> bool
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.InboundUnconsumedMonitorEnabled.set -> void
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.InboundUnconsumedPollSeconds.get -> int
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.InboundUnconsumedPollSeconds.set -> void
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.InboundUnconsumedTopic.get -> string!
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.InboundUnconsumedTopic.set -> void
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.ResolveInboundUnconsumedTopic() -> string!
+Antiphon.Messaging.Gateway.ConsumerLag
+Antiphon.Messaging.Gateway.GatewayIngressService.GatewayIngressService(System.Collections.Generic.IEnumerable<Antiphon.Messaging.IChannelAdapter!>! adapters, Confluent.Kafka.IProducer<string!, string!>! producer, Microsoft.Extensions.Options.IOptions<Antiphon.Messaging.Gateway.AntiphonGatewayOptions!>! options, Microsoft.Extensions.Logging.ILogger<Antiphon.Messaging.Gateway.GatewayIngressService!>! logger, System.Collections.Generic.IEnumerable<Antiphon.Messaging.Gateway.IInboundReceiptSink!>? receiptSinks) -> void
+Antiphon.Messaging.Gateway.HttpAppHostHealthProbe
+Antiphon.Messaging.Gateway.HttpAppHostHealthProbe.HttpAppHostHealthProbe(Microsoft.Extensions.Options.IOptions<Antiphon.Messaging.Gateway.AntiphonGatewayOptions!>! options, Microsoft.Extensions.Logging.ILogger<Antiphon.Messaging.Gateway.HttpAppHostHealthProbe!>! logger) -> void
+Antiphon.Messaging.Gateway.HttpAppHostHealthProbe.ProbeAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<string!>!
+Antiphon.Messaging.Gateway.IAppHostHealthProbe
+Antiphon.Messaging.Gateway.IAppHostHealthProbe.ProbeAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<string!>!
+Antiphon.Messaging.Gateway.IConsumerGroupOffsetReader
+Antiphon.Messaging.Gateway.IConsumerGroupOffsetReader.GetCommittedOffsetAsync(string! groupId, string! topic, int partition, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<long?>!
+Antiphon.Messaging.Gateway.IInboxReceiptStore
+Antiphon.Messaging.Gateway.IInboxReceiptStore.GetOverdueAsync(System.DateTimeOffset cutoff, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Antiphon.Messaging.Gateway.InboundReceipt!>!>!
+Antiphon.Messaging.Gateway.IInboxReceiptStore.MarkAcknowledgedAsync(System.Guid id, System.DateTimeOffset at, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+Antiphon.Messaging.Gateway.IInboxReceiptStore.MarkOperationalEventPublishedAsync(System.Guid id, System.DateTimeOffset at, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+Antiphon.Messaging.Gateway.IInboxReceiptStore.ScheduleAckRetryAsync(System.Guid id, System.DateTimeOffset nextAttemptAt, int attemptCount, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+Antiphon.Messaging.Gateway.IInboundReceiptSink
+Antiphon.Messaging.Gateway.IInboundReceiptSink.RecordAsync(Antiphon.Messaging.ChannelMessage! message, string! envelopeJson, string! topic, int partition, long offset, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+Antiphon.Messaging.Gateway.IInboundUnconsumedEventPublisher
+Antiphon.Messaging.Gateway.IInboundUnconsumedEventPublisher.PublishAsync(Antiphon.Messaging.InboundUnconsumedEvent! evt, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+Antiphon.Messaging.Gateway.InboundReceipt
+Antiphon.Messaging.Gateway.InboundReceipt.AckAttemptCount.get -> int
+Antiphon.Messaging.Gateway.InboundReceipt.AckAttemptCount.init -> void
+Antiphon.Messaging.Gateway.InboundReceipt.AcknowledgedAt.get -> System.DateTimeOffset?
+Antiphon.Messaging.Gateway.InboundReceipt.AcknowledgedAt.init -> void
+Antiphon.Messaging.Gateway.InboundReceipt.Channel.get -> string!
+Antiphon.Messaging.Gateway.InboundReceipt.Channel.init -> void
+Antiphon.Messaging.Gateway.InboundReceipt.ChannelMessageId.get -> string!
+Antiphon.Messaging.Gateway.InboundReceipt.ChannelMessageId.init -> void
+Antiphon.Messaging.Gateway.InboundReceipt.ConversationId.get -> string!
+Antiphon.Messaging.Gateway.InboundReceipt.ConversationId.init -> void
+Antiphon.Messaging.Gateway.InboundReceipt.FirstSeenAt.get -> System.DateTimeOffset
+Antiphon.Messaging.Gateway.InboundReceipt.FirstSeenAt.init -> void
+Antiphon.Messaging.Gateway.InboundReceipt.Id.get -> System.Guid
+Antiphon.Messaging.Gateway.InboundReceipt.Id.init -> void
+Antiphon.Messaging.Gateway.InboundReceipt.NextAckAttemptAt.get -> System.DateTimeOffset?
+Antiphon.Messaging.Gateway.InboundReceipt.NextAckAttemptAt.init -> void
+Antiphon.Messaging.Gateway.InboundReceipt.Offset.get -> long
+Antiphon.Messaging.Gateway.InboundReceipt.Offset.init -> void
+Antiphon.Messaging.Gateway.InboundReceipt.OperationalEventPublishedAt.get -> System.DateTimeOffset?
+Antiphon.Messaging.Gateway.InboundReceipt.OperationalEventPublishedAt.init -> void
+Antiphon.Messaging.Gateway.InboundReceipt.Partition.get -> int
+Antiphon.Messaging.Gateway.InboundReceipt.Partition.init -> void
+Antiphon.Messaging.Gateway.InboundReceipt.ReplyHandle.get -> string!
+Antiphon.Messaging.Gateway.InboundReceipt.ReplyHandle.init -> void
+Antiphon.Messaging.Gateway.InboundReceipt.Topic.get -> string!
+Antiphon.Messaging.Gateway.InboundReceipt.Topic.init -> void
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorService
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorService.InboundUnconsumedMonitorService(System.Collections.Generic.IEnumerable<Antiphon.Messaging.Gateway.IInboxReceiptStore!>! stores, Antiphon.Messaging.Gateway.IConsumerGroupOffsetReader! offsets, System.Collections.Generic.IEnumerable<Antiphon.Messaging.IChannelAdapter!>! adapters, Antiphon.Messaging.Gateway.IInboundUnconsumedEventPublisher! publisher, Antiphon.Messaging.Gateway.IAppHostHealthProbe! health, Microsoft.Extensions.Options.IOptions<Antiphon.Messaging.Gateway.AntiphonGatewayOptions!>! options, System.TimeProvider! time, Microsoft.Extensions.Logging.ILogger<Antiphon.Messaging.Gateway.InboundUnconsumedMonitorService!>! logger) -> void
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorService.TickAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<int>!
+Antiphon.Messaging.Gateway.KafkaConsumerGroupOffsetReader
+Antiphon.Messaging.Gateway.KafkaConsumerGroupOffsetReader.GetCommittedOffsetAsync(string! groupId, string! topic, int partition, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<long?>!
+Antiphon.Messaging.Gateway.KafkaConsumerGroupOffsetReader.KafkaConsumerGroupOffsetReader(Microsoft.Extensions.Options.IOptions<Antiphon.Messaging.Gateway.AntiphonGatewayOptions!>! options, Microsoft.Extensions.Logging.ILogger<Antiphon.Messaging.Gateway.KafkaConsumerGroupOffsetReader!>! logger) -> void
+Antiphon.Messaging.Gateway.KafkaInboundUnconsumedEventPublisher
+Antiphon.Messaging.Gateway.KafkaInboundUnconsumedEventPublisher.KafkaInboundUnconsumedEventPublisher(Confluent.Kafka.IProducer<string!, string!>! producer, Microsoft.Extensions.Options.IOptions<Antiphon.Messaging.Gateway.AntiphonGatewayOptions!>! options, Microsoft.Extensions.Logging.ILogger<Antiphon.Messaging.Gateway.KafkaInboundUnconsumedEventPublisher!>! logger) -> void
+Antiphon.Messaging.Gateway.KafkaInboundUnconsumedEventPublisher.PublishAsync(Antiphon.Messaging.InboundUnconsumedEvent! evt, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+Antiphon.Messaging.Gateway.Testing.InMemoryInboxReceiptStore
+Antiphon.Messaging.Gateway.Testing.InMemoryInboxReceiptStore.Add(Antiphon.Messaging.Gateway.InboundReceipt! receipt) -> void
+Antiphon.Messaging.Gateway.Testing.InMemoryInboxReceiptStore.All.get -> System.Collections.Generic.IReadOnlyList<Antiphon.Messaging.Gateway.InboundReceipt!>!
+Antiphon.Messaging.Gateway.Testing.InMemoryInboxReceiptStore.GetOverdueAsync(System.DateTimeOffset cutoff, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Antiphon.Messaging.Gateway.InboundReceipt!>!>!
+Antiphon.Messaging.Gateway.Testing.InMemoryInboxReceiptStore.InMemoryInboxReceiptStore() -> void
+Antiphon.Messaging.Gateway.Testing.InMemoryInboxReceiptStore.MarkAcknowledgedAsync(System.Guid id, System.DateTimeOffset at, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+Antiphon.Messaging.Gateway.Testing.InMemoryInboxReceiptStore.MarkOperationalEventPublishedAsync(System.Guid id, System.DateTimeOffset at, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+Antiphon.Messaging.Gateway.Testing.InMemoryInboxReceiptStore.RecordAsync(Antiphon.Messaging.ChannelMessage! message, string! envelopeJson, string! topic, int partition, long offset, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+Antiphon.Messaging.Gateway.Testing.InMemoryInboxReceiptStore.ScheduleAckRetryAsync(System.Guid id, System.DateTimeOffset nextAttemptAt, int attemptCount, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+const Antiphon.Messaging.Gateway.InboundUnconsumedMonitorService.AcknowledgementText = "[Antiphon] I received this message, but the service is unavailable. It is queued and will be processed when the service returns." -> string!
+static Antiphon.Messaging.Gateway.ConsumerLag.IsUnconsumed(long? committedNextOffset, long recordOffset) -> bool

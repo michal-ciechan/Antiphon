@@ -59,6 +59,18 @@ namespace Antiphon.Messaging.Service.Migrations
                     b.Property<bool>("MentionsMe")
                         .HasColumnType("boolean");
 
+                    b.Property<DateTimeOffset?>("NextAckAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long?>("Offset")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset?>("OperationalEventPublishedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("Partition")
+                        .HasColumnType("integer");
+
                     b.Property<DateTimeOffset>("ReceivedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -74,9 +86,21 @@ namespace Antiphon.Messaging.Service.Migrations
                     b.Property<string>("Text")
                         .HasColumnType("text");
 
+                    b.Property<string>("Topic")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTimeOffset?>("AcknowledgedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("AckAttemptCount")
+                        .HasColumnType("integer");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ReceivedAt");
+
+                    b.HasIndex("Topic", "Partition", "Offset");
 
                     b.HasIndex("Channel", "ChannelMessageId")
                         .IsUnique();

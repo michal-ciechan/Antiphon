@@ -137,6 +137,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     icon: TbSearch,
     hint: 'The orchestrator read source files itself instead of dispatching. Detection only.',
   },
+  InboundUnconsumed: {
+    label: 'Inbound waiting',
+    color: 'danger',
+    icon: TbMailExclamation,
+    hint: 'A chat message was received but the service did not consume it. Detection only.',
+  },
 }
 
 export type AttentionGroupKey = 'now' | 'broken' | 'suspect' | 'failures'
