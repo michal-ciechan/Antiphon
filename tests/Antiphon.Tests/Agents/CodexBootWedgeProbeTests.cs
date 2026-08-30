@@ -179,11 +179,18 @@ public sealed class CodexBootWedgeProbeTests
         var deadline = DateTime.UtcNow + ReadyTimeout;
         long? lastSequence = null;
         DateTime? quietSince = null;
+        var trustAnswered = false;
         while (DateTime.UtcNow < deadline)
         {
             var snapshot = runtime.GetSnapshot(sessionId);
-            if (CodexTrustPromptDetector.IsVisible(snapshot.RawOutput, snapshot.RenderedScreen))
+            // Answer the trust prompt ONCE, as RunnerCodexAdapter does. RawOutput is cumulative, so
+            // the detector stays true after the dialog is gone; re-sending Enter on every poll walked
+            // the Windows sandbox NUX prompt onto its elevated-setup default (CARD-0133 S0).
+            if (!trustAnswered && CodexTrustPromptDetector.IsVisible(snapshot.RawOutput, snapshot.RenderedScreen))
+            {
+                trustAnswered = true;
                 await runtime.SendInputAsync(sessionId, "\r", ct);
+            }
             if (snapshot.LastSequence != lastSequence)
             {
                 lastSequence = snapshot.LastSequence;

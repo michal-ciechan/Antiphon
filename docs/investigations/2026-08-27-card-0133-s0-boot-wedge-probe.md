@@ -2,6 +2,13 @@
 
 **Date:** 2026-08-27. **Status:** blocked before P1/P3/P4 measurement. The real interactive Codex/stub harness still does not reach a rendered composer on this machine.
 
+> **Superseded 2026-08-30** by [2026-08-30-card-0133-s0-harness-diagnosis.md](2026-08-30-card-0133-s0-harness-diagnosis.md):
+> the harness was parked on Codex's Windows-sandbox onboarding dialog (isolated `CODEX_HOME` has no
+> `[windows] sandbox` decision) plus a `codex_apps` 401 from the fixture ChatGPT auth; both are fixed in
+> `RealCliStubEnv.SeedCodexHome`. The PATH-aliases warning below is benign. With the harness healthy, the
+> herdr lane reproduces the wedge deterministically: Codex's `PasteBurst` inserts an Enter that lands
+> within 120 ms of a typed burst as a newline.
+
 ## What was run
 
 The new `CodexBootWedgeProbeTests.P1_plain_ptyhost_production_shape_measures_boot_wedge` was run once with `ANTIPHON_CODEX_HEADED_TESTS=1`, `ANTIPHON_REAL_CLI_STUB_TESTS=1`, and the plain `PtyHost` backend. It uses native `codex.exe` 0.147.0, `PtyBackend=modern`, the production `--no-alt-screen --dangerously-bypass-approvals-and-sandbox` flags, a seeded isolated `CODEX_HOME`, the five `RealCliStubEnv.ForCodex` provider overrides, 120x30 geometry, and a 620-character body.

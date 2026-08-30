@@ -64,6 +64,10 @@ public class CodexHerdrRealCliStubProxyCanaryTests
             "--dangerously-bypass-approvals-and-sandbox",
         };
         args.AddRange(overlay.Args);
+        // CARD-0133 S0 measurement knob only: Codex's PasteBurst turns an Enter within 120 ms of a
+        // typed burst into a newline; this top-level config key switches the heuristic off.
+        if (Environment.GetEnvironmentVariable("ANTIPHON_STUB_CODEX_DISABLE_PASTE_BURST") == "1")
+            args.AddRange(["-c", "disable_paste_burst=true"]);
 
         var herdrClient = new HerdrClient(Options.Create(new HerdrSettings { Enabled = true }));
         await using var runtime = new SessionRunnerRuntime(
@@ -133,12 +137,13 @@ public class CodexHerdrRealCliStubProxyCanaryTests
             await HerdrRealCliCanarySupport.AssertSidecarAndPaneAgentAsync(
                 logs, sessionId, herdrClient, HerdrAgentKinds.Codex, cancellationToken);
 
-            await HerdrRealCliCanarySupport.AcceptCodexTrustIfVisibleAsync(runtime, sessionId, cancellationToken);
+            var trustAnswered = await HerdrRealCliCanarySupport.AcceptCodexTrustIfVisibleAsync(runtime, sessionId, cancellationToken);
             // CARD-0195: MCP boot can sit on the composer and swallow the first prompt. Wait until
             // the banner is gone before typing; still skip (not fail) if the stub never sees it.
-            await WaitUntilCodexComposerLooksIdleAsync(runtime, sessionId, TimeSpan.FromSeconds(30), cancellationToken);
+            await WaitUntilCodexComposerLooksIdleAsync(runtime, sessionId, trustAnswered, TimeSpan.FromSeconds(30), cancellationToken);
 
             var prompt = $"Reply with exactly this token and nothing else is needed: {nonce}";
+            DumpScreen(runtime, sessionId, "before-typing");
             await HerdrRealCliCanarySupport.SendWrappedBodyAsync(runtime, sessionId, prompt, cancellationToken);
 
             var chatHit = await stub.Requests.WaitForAsync(
@@ -148,9 +153,15 @@ public class CodexHerdrRealCliStubProxyCanaryTests
                 TimeSpan.FromSeconds(60));
             if (chatHit is null)
             {
+                DumpScreen(runtime, sessionId, "nonce-miss");
                 throw HerdrRealCliCanarySupport.BootStallSkip(
                     "codex",
-                    "stub never saw the nonce on POST /v1/responses — composer may have swallowed the boot prompt (CARD-0195)");
+                    "stub never saw the nonce on POST /v1/responses. Measured 2026-08-30 (CARD-0133 S0, codex-cli "
+                    + "0.151.0): the body renders in the composer and the Enter is inserted as a newline — Codex's "
+                    + "PasteBurst suppresses Enter for 120 ms after a typed burst, and the production 20 ms gap is inside "
+                    + $"it (this run: gap={HerdrRealCliCanarySupport.EnterGapMs} ms). It passes with "
+                    + "ANTIPHON_STUB_ENTER_GAP_MS=200 or ANTIPHON_STUB_CODEX_DISABLE_PASTE_BURST=1; the default stays at "
+                    + "production shape so this canary keeps detecting the wedge.");
             }
 
             chatHit.Headers.ShouldContainKey("Authorization");
@@ -194,8 +205,28 @@ public class CodexHerdrRealCliStubProxyCanaryTests
             + "CARD-0187 S3 does not build that path.");
     }
 
+    /// <summary>
+    /// CARD-0133 S0: a herdr pane leaves no ANSI log and the temp root is deleted on exit, so the
+    /// only evidence of what Codex showed is the runtime snapshot. Printed, never asserted.
+    /// </summary>
+    private static void DumpScreen(SessionRunnerRuntime runtime, Guid sessionId, string label)
+    {
+        try
+        {
+            var snap = runtime.GetSnapshot(sessionId);
+            var raw = snap.RawOutput ?? "";
+            var tail = raw.Length > 3000 ? raw[^3000..] : raw;
+            Console.WriteLine(
+                $"[codex-herdr screen {label}] seq={snap.LastSequence} rendered=<<<\n{snap.RenderedScreen}\n>>> raw-tail=<<<\n{tail}\n>>>");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[codex-herdr screen {label}] unavailable: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
     private static async Task WaitUntilCodexComposerLooksIdleAsync(
-        SessionRunnerRuntime runtime, Guid sessionId, TimeSpan timeout, CancellationToken ct)
+        SessionRunnerRuntime runtime, Guid sessionId, bool trustAnswered, TimeSpan timeout, CancellationToken ct)
     {
         var deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
@@ -203,11 +234,18 @@ public class CodexHerdrRealCliStubProxyCanaryTests
             var snap = runtime.GetSnapshot(sessionId);
             var text = $"{snap.RawOutput}{snap.RenderedScreen}";
             var mcp = text.Contains("Starting MCP servers", StringComparison.OrdinalIgnoreCase);
-            var trust = CodexTrustPromptDetector.IsVisible(snap.RawOutput, snap.RenderedScreen);
+            // The trust detector reads cumulative RawOutput, so it stays true after the dialog is
+            // answered. Answer once (the caller already tried once too) and then only wait for the
+            // MCP banner — re-sending Enter each poll walked the Windows sandbox NUX prompt onto its
+            // elevated-setup default and disabled the composer (CARD-0133 S0).
+            var trust = !trustAnswered && CodexTrustPromptDetector.IsVisible(snap.RawOutput, snap.RenderedScreen);
             if (!mcp && !trust)
                 return;
             if (trust)
+            {
+                trustAnswered = true;
                 await HerdrRealCliCanarySupport.AcceptCodexTrustIfVisibleAsync(runtime, sessionId, ct);
+            }
             await Task.Delay(500, ct);
         }
     }

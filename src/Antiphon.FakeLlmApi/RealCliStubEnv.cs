@@ -133,6 +133,31 @@ public static class RealCliStubEnv
               "last_refresh": "2026-01-01T00:00:00Z"
             }
             """);
+
+        // CARD-0133 S0 (measured 2026-08-30, codex-cli 0.151.0): an isolated CODEX_HOME carries no
+        // Windows sandbox decision, so the interactive TUI shows the "Set up the Codex agent sandbox"
+        // prompt right after the trust decision (codex-rs/tui/src/lib.rs:
+        // trust_decision_was_made && level == Disabled). Its default choice runs the ELEVATED setup
+        // in-process — "Setting up sandbox... Input disabled until setup completes." — and the
+        // composer never becomes usable. "unelevated" is a decision that needs no setup; the harness
+        // launches with --dangerously-bypass-approvals-and-sandbox anyway. The operator's real
+        // ~/.codex has `[windows] sandbox = "elevated"` with setup already completed, which is why
+        // production sessions never see this.
+        //
+        // features.apps=false keeps the built-in `codex_apps` MCP client off: with the synthetic
+        // ChatGPT auth above it would otherwise call the REAL ChatGPT backend and fail 401
+        // ("Could not parse your authentication token"), printing "MCP startup incomplete" on the
+        // boot screen. The /v1/models refresh the auth exists for is gated on auth mode, not apps.
+        //
+        // Codex edits this file in place when the trust prompt is accepted (adds [projects.*]);
+        // the keys below survive that.
+        File.WriteAllText(Path.Combine(codexHome, "config.toml"), """
+            [windows]
+            sandbox = "unelevated"
+
+            [features]
+            apps = false
+            """);
     }
 
     private static string TrimTrailingSlash(string url)

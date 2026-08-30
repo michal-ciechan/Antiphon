@@ -15,6 +15,10 @@ internal static class HerdrRealCliCanarySupport
     public const int LaunchStallSkipSeconds = 180;
     public const int CodexLaunchStallSkipSeconds = 180;
 
+    /// <summary>Body→Enter gap; `ANTIPHON_STUB_ENTER_GAP_MS` overrides the production 20 ms for a measurement.</summary>
+    public static int EnterGapMs =>
+        int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_STUB_ENTER_GAP_MS"), out var ms) && ms >= 0 ? ms : 20;
+
     public static async Task<T> AwaitOrSkipAsync<T>(Task<T> task, TimeSpan budget, string reason)
     {
         var winner = await Task.WhenAny(task, Task.Delay(budget));
@@ -131,7 +135,14 @@ internal static class HerdrRealCliCanarySupport
         return body;
     }
 
-    public static async Task AcceptCodexTrustIfVisibleAsync(
+    /// <summary>
+    /// Answers the Codex trust prompt if it renders within ~5 s. Returns whether Enter was sent, so a
+    /// caller can answer ONCE: the detector reads cumulative RawOutput and stays true after the
+    /// dialog is gone, and a second Enter lands on whatever follows it — on an isolated CODEX_HOME
+    /// that is the Windows sandbox NUX prompt, whose default runs elevated setup and disables the
+    /// composer (CARD-0133 S0).
+    /// </summary>
+    public static async Task<bool> AcceptCodexTrustIfVisibleAsync(
         SessionRunnerRuntime runtime, Guid sessionId, CancellationToken ct)
     {
         for (var i = 0; i < 20; i++)
@@ -141,11 +152,13 @@ internal static class HerdrRealCliCanarySupport
             {
                 await runtime.SendInputAsync(sessionId, "\r", ct);
                 await Task.Delay(500, ct);
-                return;
+                return true;
             }
 
             await Task.Delay(250, ct);
         }
+
+        return false;
     }
 
     public static async Task SendWrappedBodyAsync(
@@ -154,7 +167,10 @@ internal static class HerdrRealCliCanarySupport
         var normalized = PtyInputEncoding.NormalizeBody(body);
         var payload = PtyInputEncoding.WrapIfMultiline(normalized);
         await runtime.SendInputAsync(sessionId, payload, ct);
-        await Task.Delay(20, ct);
+        // 20 ms mirrors SessionMessageQueueService's body→Enter gap. CARD-0133 S0 measurement knob:
+        // Codex's PasteBurst turns an Enter that lands within 120 ms of a typed burst into a
+        // newline (codex-rs/tui/src/bottom_pane/paste_burst.rs, PASTE_ENTER_SUPPRESS_WINDOW).
+        await Task.Delay(EnterGapMs, ct);
         await runtime.SendInputAsync(sessionId, "\r", ct);
     }
 
