@@ -6,7 +6,36 @@ re-deriving it, and mechanical enough to automate later.
 
 The orchestrator's job is to **decide, verify and record**. The reading, the writing and the running
 are delegated. The orchestrator's context is the scarce resource: spend it on judgement, not on
-archaeology.
+archaeology - and verification is not archaeology's quieter cousin. It is trust, by default.
+
+---
+
+## 0. What the orchestrator may read, and what it must send out
+
+1. **Trust the report.** The default, every time. A settled task's own report - what it changed,
+   what it ran, what passed - is the evidence. Merge on it, close on it, move on. Re-reading a diff
+   or re-running a named test "just to be sure" is not diligence here; it is spending the
+   orchestrator's context on a question the delegate already answered.
+2. **Ask the same delegate.** Real reason for concern - the report is vague, contradicts itself, or
+   skips something the brief asked for - is answered by going back to the agent that did the work,
+   not by reading its diff cold. Reply into the same task asking for the missing detail. It has the
+   context; re-deriving that context from the code is the archaeology this whole doc exists to
+   stop, just moved one stage later.
+3. **Delegate the investigation - rare.** Only when the delegation pipeline itself is broken -
+   unreachable agent, a stuck task, something wrong with the pipeline rather than the work - does
+   direct reading become the answer, and even then it is a `Debug`/`Plan` delegate's job. "This
+   one's quick" is the rationalisation that produced CARD-0246's inline fix (eight reads in ninety
+   seconds, then an Edit, a build, a commit and a deploy, all in the orchestrator's own context) -
+   the exact thing this ladder exists to make rare.
+
+**Also delegated: the mechanics.** Fetch, rebase, merge, push - these move to a delegate too, not a
+Bash call in the orchestrator's own turn. The exact mechanism is being designed separately
+(CARD-0258); until it lands, note the direction here regardless.
+
+Since CARD-0247, a `PreToolUse` hook in this repo nudges at the third consecutive cold source read
+(it never blocks; `ANTIPHON_ORCHESTRATOR=0` silences it for a hacking session), and a server sweep
+records each run as an `OrchestratorInvestigation` Warning on the attention feed. A row there is
+not a fault to fix in the code - it is a habit to fix in the next brief.
 
 ---
 
@@ -230,9 +259,11 @@ Read the commit messages rather than the report — in this repo they carry the 
 
 **Merge order comes off the completion header.** A note whose header carries
 `overlapping-running=<ids>` is telling you that those tasks were still running when this one settled
-and touched the same areas — merge this one first, or expect the rebase (CARD-0063). A `drift=<area>`
-in the same header says the delegate wrote outside what it declared, which is a fact about the diff
-to read before you merge it, never a verdict on the work.
+and touched the same areas — merge this one first, or expect the rebase (CARD-0063).
+
+Merging is a decision made on the report, not an inspection earned by reading. Doubt the report's
+specifics before you doubt its word - and take that doubt back to the delegate first. The moment you
+are reading to understand rather than to relay a question, that is a `Review` delegate's job.
 
 ---
 
