@@ -14,6 +14,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// P7 (2026-08-25): Claude dies with herdr; the live restart shape is R2. R3/R5 are defensive.
 /// </summary>
 [NotInParallel("SessionLiveness")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class HerdrAdoptionSweepTests
 {
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");

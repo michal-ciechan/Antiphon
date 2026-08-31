@@ -14,6 +14,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// P8: herdr itself would have closed the pane and killed whatever was in it — the refusal is ours.
 /// </summary>
 [NotInParallel("SessionLiveness")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class HerdrPaneChildKillTests
 {
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");

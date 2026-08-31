@@ -15,6 +15,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// / allocator-exclusion guards. Server-side R1–R3 / R12 live in Antiphon.Tests.
 /// </summary>
 [NotInParallel("SessionLiveness")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class HerdrAttachTests
 {
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
