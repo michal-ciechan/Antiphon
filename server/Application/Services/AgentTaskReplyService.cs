@@ -1315,6 +1315,12 @@ public sealed class AgentTaskReplyService
     }
 
     /// <summary>
+    /// The TurnEnd ExtractMarkedTurnAsync resolved (CARD-0248). Sequence is the settle-anyway
+    /// identity; CreatedAt is the store time, never the record's backdated Timestamp.
+    /// </summary>
+    private readonly record struct BoundaryFacts(long Sequence, DateTime CreatedAt);
+
+    /// <summary>
     /// What a finished turn was: our task's report, nothing yet, or — the dangerous one — a real
     /// report we cannot attribute because the prompt it answered carries no marker.
     /// </summary>
@@ -1348,6 +1354,12 @@ public sealed class AgentTaskReplyService
     /// every other verdict — retryable classes defer; terminal classes fail. The error text is
     /// never stored as Result.
     /// </param>
+    /// <param name="Boundary">
+    /// The TurnEnd this outcome was extracted from (CARD-0248). Sequence is the settle-anyway
+    /// identity; CreatedAt is the store time (never the record's backdated Timestamp) so the
+    /// delivery gate can require the boundary to post-date the nudge's SentAt. Null on the
+    /// static Nothing / Deferred values, which never reach ClassifyReportAsync.
+    /// </param>
     private readonly record struct TurnOutcome(
         string? Report,
         bool UncorrelatedReport,
@@ -1356,7 +1368,8 @@ public sealed class AgentTaskReplyService
         int NarrationDiscardedChars = 0,
         int AbandonedSubagents = 0,
         ApiErrorStubFacts? ApiErrorStub = null,
-        InterruptedFacts? Interrupted = null)
+        InterruptedFacts? Interrupted = null,
+        BoundaryFacts? Boundary = null)
     {
         public static readonly TurnOutcome Nothing = new(null, false);
         public static readonly TurnOutcome Deferred = new(null, false, DeferredForFinalMessage: true);
@@ -1511,9 +1524,12 @@ public sealed class AgentTaskReplyService
                 // 180 measured — a lone thinking record followed by "API Error: Connection lost
                 // mid-response"). Settle on what there is rather than strand the task, and say so.
                 return joined.Length == 0
-                    ? new TurnOutcome(null, false, FinalMessageMissing: true)
+                    ? new TurnOutcome(
+                        null, false, FinalMessageMissing: true,
+                        Boundary: new BoundaryFacts(end.Sequence, end.CreatedAt))
                     : new TurnOutcome(
-                        joined, false, FinalMessageMissing: true, AbandonedSubagents: abandonedSubagents);
+                        joined, false, FinalMessageMissing: true, AbandonedSubagents: abandonedSubagents,
+                        Boundary: new BoundaryFacts(end.Sequence, end.CreatedAt));
         }
 
         // THE REPORT IS THE FINAL MESSAGE, not a join of everything the delegate happened to say
@@ -1530,12 +1546,15 @@ public sealed class AgentTaskReplyService
             return new TurnOutcome(
                 finalMessage, false,
                 NarrationDiscardedChars: narration.Length,
-                AbandonedSubagents: abandonedSubagents);
+                AbandonedSubagents: abandonedSubagents,
+                Boundary: new BoundaryFacts(end.Sequence, end.CreatedAt));
         }
 
         return joined.Length == 0
             ? TurnOutcome.Nothing
-            : new TurnOutcome(joined, false, AbandonedSubagents: abandonedSubagents);
+            : new TurnOutcome(
+                joined, false, AbandonedSubagents: abandonedSubagents,
+                Boundary: new BoundaryFacts(end.Sequence, end.CreatedAt));
     }
 
     /// <summary>
