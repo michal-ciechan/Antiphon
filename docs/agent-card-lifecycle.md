@@ -89,3 +89,17 @@ Review comments from the card diff include the card identifier, file path, side,
 ## Review Column
 
 The success transition targets the first board column whose `CardStatus` is `Review`, ordered by `ColumnOrder`. If a board has no review column, or if the card has already reached a terminal column, completion does not move the card.
+
+
+<!-- CARD-0254 preserved source begins -->
+
+## CARD-0254 preserved operational detail
+
+### Preserved Gotcha #2
+
+- **A card's decision question lives on its move/reopen revision and the attention feed — never add a column for it, and never route a decision through the alert sinks.**
+
+### Preserved Gotcha #57
+
+- **A card with a bound task moves ITSELF, and a manual move after the evidence is respected** (CARD-0040): `AgentTask.CardId` is resolved once at creation - an explicit `delegate.ps1 -Card CARD-nnnn` (422 if it names no card), else the parent/follow-up/merge task's card, else the FIRST `CARD-nnnn` in the title, never for `Role = Check`. Identifiers are unique per BOARD, so resolution walks caller-boards -> repo-matched project boards -> every board and binds only on uniqueness inside the scope that answers; ambiguity binds nothing and warns. `CardWorkTransitionService` then sweeps every 60 s over durable rows only (never session or transcript liveness): Backlog/Review -> **In Progress** while a bound task is Dispatched/Working/Blocked, Backlog/InProgress -> **Review** when the newest evidence is a `Succeeded` settle and nothing is open, and `Failed`/`Canceled` move nothing. **The edge trigger is the whole safety property**: it acts only when the evidence is NEWER than the card's last Move/Reopen row (`UpdatedAt` with no history), so a human who drags a card back is never overridden, and the sweep is idempotent because its own row becomes the new last word. The actor is `card-transitions`, NOT `system` (that name means the RunAttempt/card-spawn path), and the two paths never collide because the sweep skips every card with `OwnerSessionId != null`. An automated move calls `ApplyColumnMove` directly like `ReopenAsync`, so it cannot spawn; it sets `AutoDispatchHeldAt` on an active landing (CARD-0087) and dequeues on Review (CARD-0001). A card In Progress past `CardTransitions:StaleAfterDays` (7) with nothing open and nothing live becomes a Warning `AttentionKind.CardStalled` row - detection only, nothing un-stalls it (CARD-0153's rule). **Review -> Done is NOT automated** and waits on CARD-0039. Pinned by `AgentTaskCardBindingTests`, `CardWorkTransitionServiceTests`, `AttentionServiceTests`.
+<!-- CARD-0254 preserved source ends -->

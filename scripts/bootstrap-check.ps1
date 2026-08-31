@@ -234,6 +234,20 @@ if ($NoStack) {
 }
 Write-Host ''
 
+# CARD-0254: this must run from a normal shared verification front door, not
+# from an optional local hook.
+$agentContextCheck = Join-Path $repoRoot 'scripts\check-agent-context.ps1'
+if (Test-Path -LiteralPath $agentContextCheck) {
+    & $agentContextCheck
+    if ($LASTEXITCODE -eq 0) {
+        Write-Check 'agent context' 'PASS' 'AGENTS.md byte budget and section report passed'
+    } else {
+        Write-Check 'agent context' 'FAIL' 'AGENTS.md violated its byte budget or could not be read' 'Run pwsh -NoProfile -File scripts/check-agent-context.ps1 and restore the 24,576-byte target.'
+    }
+} else {
+    Write-Check 'agent context' 'FAIL' 'scripts/check-agent-context.ps1 is missing' 'Restore the repository instruction-context verification script.'
+}
+
 # ---------------------------------------------------------------------------
 # 1. Toolchain
 # ---------------------------------------------------------------------------

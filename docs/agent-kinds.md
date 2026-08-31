@@ -366,3 +366,47 @@ See [agent-credentials.md](agent-credentials.md).
 - [orchestration-loop.md](orchestration-loop.md) — picking a tier and a kind when delegating.
 - `docs/adr/0002-modern-conpty-backend.md` — the pseudoconsole these TUIs run in, and the delivery
   ceilings that follow from it.
+
+
+<!-- CARD-0254 preserved source begins -->
+
+## CARD-0254 preserved operational detail
+
+### Preserved Gotcha #13
+
+- **The AppHost no longer names a messaging broker** (CARD-0185): `Antiphon.AppHost/Program.cs` forwards `AntiphonMessaging:BootstrapServers` from its own configuration only when set. Fresh clones stay on `localhost:19092` (the `docker-compose.dev.yml` Redpanda). The live Family Telegram path on this machine is the `aspire-antiphon-apphost` user-secret (`dotnet user-secrets set "AntiphonMessaging:BootstrapServers" "server2:19092" --project Antiphon.AppHost`). Never put the hostname back in `Program.cs`, and never forward it to the fake gateway (a `POST :17208/inbound` on the live broker would be answered through the real bot).
+
+### Preserved Gotcha #55
+
+- **A closed terminal orphans the claude.ai Remote Control session instead of ending it** (CARD-0145, found 2026-08-22): each manual `claude --dangerously-skip-permissions` launch in this repo creates a fresh claude.ai/code session tethered to this machine; closing the terminal instead of `/exit`-ing leaves that session showing "Remote Control disconnected" in the sidebar forever, and several of these pile up under the same auto-title ("Antiphon-Orchestrator") looking like duplicate live orchestrators when only one is ever actually `Running`. Before starting a fresh orchestrator session, check https://claude.ai/code for one already `Running` under this project's title and resume it instead of launching a duplicate; prefer `/exit` over just closing the window. See CARD-0144 for the (still-open) automated cleanup of the disconnected backlog this leaves behind.
+
+### Preserved Gotcha #58
+
+- **A 409 `subscription_quota_low` is a launch refusal, not a footnote on a launch that already happened** (CARD-0136): `AgentControlService.StartAsync` and `AgentTaskService.CreateAsync` check the latest CARD-0143 sample against remaining-%-vs-time-to-reset (defaults 10%/>1 day, 5%/>2 h). No reading, a stale sample, or a reset already in the past always passes — Claude will never have a sample, and `SubscriptionUsageMonitoring.Enabled` ships false so the gate is inert until an operator turns monitoring on. Two ways forward: pick another `agentKind`/agent, or re-send with `ignoreSubscriptionQuota` (`delegate.ps1 -IgnoreSubscriptionQuota`). The dispatcher never refuses; it only records an informational Warning. Internal AlwaysOn/channel/check-interpreter starts pass the flag in code. Never silently reroute.
+
+### Preserved Gotcha #59
+
+- **`/remote-control` is typed only into a kind whose catalog row says Supported** (CARD-0212):
+  `RemoteControlPolicy` refuses an explicit ask with `409 remote_control_refused` at create,
+  PATCH, start and card-spawn, ignores an inherited stale flag at start with a Warning, and
+  `SendRemoteControlCommandsAsync` types nothing on any other kind. The fact lives on
+  `AgentTuiRunnerCatalog.SupportsRemoteControl`; never add a `kind == ClaudeCode` check beside it.
+
+### Preserved Gotcha #66
+
+- **A mechanism is only a redirect once the stub has seen the request** (CARD-0168): never trust an unverified base-URL variable name. The test oracle for every real-CLI stub-proxy canary is stub receipt of a per-run nonce via `RealCliStubEnv.ForClaude`/`ForGrok`/`ForCodex` — never the CLI's own exit code or output, and never a hand-rolled stub env dictionary. **`GROK_XAI_API_BASE_URL` is a false safety** — it redirects only `GET /api-key`; chat still hits real xAI. Canonical Grok chat redirect is `GROK_CLI_CHAT_PROXY_BASE_URL`. Opt-in: `ANTIPHON_REAL_CLI_STUB_TESTS=1` (distinct from `ANTIPHON_HEADED_TESTS` / `ANTIPHON_CODEX_HEADED_TESTS`); category `RealCliStubProxy`. Isolated `CLAUDE_CONFIG_DIR` must be seeded (`RealCliStubClaudeConfig.SeedOnboarding`) or interactive Claude parks on first-run dialogs. B-agent Codex is deferred until CARD-0167 (five `-c` args through `AgentControlService`); A-tier `codex exec` and B-runner `RunnerLaunchRequest` already prove the mechanism. Interactive Grok also `GET /billing`.
+
+### Preserved Gotcha #67
+
+- **Never delete a Codex rollout file by hand — `codex delete --force <uuid>` is the only delete; a hand-deleted file leaves a `threads` row that `codex doctor` reports as stale and the desktop/mobile sidebar still lists.**
+
+### Preserved Gotcha #68
+
+- **Headed and stub-proxy Codex tests must set `CODEX_HOME`; a launch that inherits the user's `~/.codex` writes into the user's Codex Desktop thread list.**
+### CARD-0144 — Remote Control cleanup follow-up
+
+CARD-0144 remains the separate owner for Remote Control cleanup. CARD-0254 files no duplicate:
+closing or resuming a terminal must identify and clean stale remote sessions without terminating a
+live one.
+
+<!-- CARD-0254 preserved source ends -->

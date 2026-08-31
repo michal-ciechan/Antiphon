@@ -342,3 +342,37 @@ workspace/tab ids stay out of the database.
 - `docs/superpowers/plans/2026-08-23-card-0160-*`, `*-0161-*`, `2026-08-24-card-0162-*`,
   `2026-08-24-card-0164-*` — the build slices, with their measurements.
 - `.antiphon/card-0160-probe-results.md` — live probes P1–P6 against a real herdr.
+
+
+<!-- CARD-0254 preserved source begins -->
+
+## CARD-0254 preserved operational detail
+
+### Preserved Gotcha #28
+
+- **An attached herdr pane is never counted, never closed and never pid-killed — Stop detaches.** CARD-0213 binds a standing agent to a pane Antiphon did not launch (`POST /api/agents/{id}/attach-herdr`). The sidecar `Origin` is `attached`. The allocator skips those panes (they are not a slot to `pane.split`), `KillAsync` / `TryKillOrphanedChild` / `KillPendingHerdr` never `pane.close` or kill `ChildPid`, and an attached exit writes no last-pane record. Stop on that agent drops the sidecar and clears metadata; the operator's TUI keeps running.
+
+### Preserved Gotcha #60
+
+- **Herdr agent name is `Agent.Slug` applied at every launch, tab/pane title is `Agent.Name`, and the two are independent** (CARD-0211 / CARD-0225): herdr forgets the agent name when that occupant exits, so the runner re-applies the sanitised slug (`[a-z][a-z0-9_-]{0,31}`) via `agent.rename` after detection. The title the operator sees is `agent.Name` (never the TUI profile `DefinitionName` — one profile serves many agents). A live holder of that slug is never renamed out from under; the new pane is suffixed `-2`… and a Warning names the holder. `agent.list` failure skips the rename (cannot prove the name is free). An agentless session is not renamed and falls back to `DefinitionName` for the title. No schema / sidecar field.
+
+### Preserved Gotcha #61
+
+- **A herdr relaunch after pid loss targets the pane we already had** (CARD-0224): exits that leave the pane standing retire the sidecar to `<SessionLogPath>/herdr/last-pane/<sessionId:N>.json` instead of deleting it. The next launch of that id (supervisor resume, or a `Fresh` fallback via `ReusePaneOfSessionId`) relaunches into an empty PowerShell pane or adopts a live process whose argv names our session id. A foreign occupant **refuses** the launch (`pane_occupied`) — never falls back to the allocator, never steals. `pane.close` success and `PaneLeftOpen` still plain-delete. Codex never carries a session id in argv, so an occupied Codex pane is always refused. Do not put pane ids in the database.
+
+### Preserved Gotcha #62
+
+- **Herdr session backend is opt-in and does not survive a herdr restart** (CARD-0160): `SessionBackend.Herdr` is a separate dimension from `PtyBackend` (never touch `PtyBackendPolicy`). Default is `PtyHost`. Refused at create/PATCH, channel-bind, and launch-time for unmapped kinds — never silently remapped. CARD-0186 lifted the AlwaysOn and channel-bound refusals. CARD-0187 lifted the Kind refusal for Grok and Codex; OpenCode/Raw stay refused; herdr launches type a launch script, never `agent.start`. Pane/workspace/tab ids live in the runner sidecar `<SessionLogPath>/herdr/<sessionId:N>.json`, not DB columns. On runner restart: adopt only when `pane.process_info` still lists our `ChildPid` AND `pane.read` answers; a restored-but-empty pane (herdr restarted underneath) is Exited(`HerdrRestartPresumedDead`) — never false-adopted. Empty tabs are auto-removed by herdr (do not `tab.close`). `SessionRunner:Herdr:Enabled` defaults false; capabilities advertise `"herdr"` only when enabled. Live probes P1–P6 recorded in `.antiphon/card-0160-probe-results.md`.
+
+### Preserved Gotcha #63
+
+- **Herdr delivery uses the same CARD-0055 transcript-confirm verdict; ceilings are per-session; `blocked` only defers** (CARD-0161): `SessionDeliveryProfile` keys ceilings on `AgentSession.SessionBackend` (`DeliveryBackend.HerdrPane` — never a `PtyBackend` value). Herdr envelope measured 86 400 B exact via `pane.send_text` (2026-08-23). Never call `agent.prompt` (S1 false `agent_prompt_stalled`). Literal `agent_status=="blocked"` → `FlushResult.Nothing` (no attempt charged); confirm-loop re-Enter withheld while blocked (CARD-0141). Note **`done` ≠ `idle`** — normal post-turn state is `done`. Single-session GET refreshes herdr `LastSequence` via `pane.get` (otherwise screen-only fallback fails `NoSubmitOutput` deterministically). Event pump is S4 (CARD-0162).
+
+### Preserved Gotcha #64
+
+- **Herdr events are verification triggers, never evidence; disagreement is a Warning row only** (CARD-0162): herdr REPLAYS historical `pane_closed` to every new `events.subscribe` (measured E5), so a pump that trusted the event would re-kill on stale closes at every reconnect — `HerdrEventPumpService` re-runs the §6A bar (`pane.get` + `process_info` vs sidecar `ChildPid`) before any Exited. The measured status wire name is `pane.agent_status_changed` (dotted, CARD-0163 R9, 2026-08-26; legacy underscored schema spelling accepted); S4b pushes `state_labels` only, never `pane.report_agent`. `HerdrStatusDisagreement` (34) is Warning, timeline-only unless channel-bound, 10-minute hysteresis + pull-before-raise; it never kills, retypes, or escalates. Blocked-exit may only nudge `FlushIfIdleAsync` (which re-checks `IsWorkingAsync` and the S3 blocked gate). The status badge is a corroboration hint, never a verdict.
+
+### Preserved Gotcha #65
+
+- **Unobservable-baseline delivery: transcript-first with a wall-clock floor; herdr advance is the runner content-delta counter, never herdr's revision** (CARD-0164): a session with zero `TranscriptEntries` no longer skips CARD-0055's confirm loop for a sequence-only verdict — it polls for the FIRST matching `UserPrompt` past `UtcNow − UnobservableBaselineConfirmClockToleranceSeconds` (CARD-0056's BootConfirmClockTolerance shape; null timestamps never confirm), with `CatchUpTranscriptAsync` pulls interleaved, and only at the deadline falls back to today's screen-advance → `Delivered` / nothing → `NoSubmitOutput`. Herdr's own `pane.revision` stays sticky on 0.8.2 across full turns; `HerdrPaneChild` owns a monotonic content-delta counter folded into `LastSequence` alongside revision. `LateConfirmAttemptedMessagesAsync` covers null-baseline attempts via the same wall-clock floor (closes the WhenIdle double-type). Mode:Now gets a `PostFailureConfirmGraceSeconds` pull-and-recheck before 409 for `NoSubmitOutput`/`NoTranscriptRecord` only (never `NoComposerEvidence`). **Never-weaken:** no fix here may make an actually-failed delivery easier to mark Sent — `PromptSubmissionMatch` identity/completeness stay untouched.
+<!-- CARD-0254 preserved source ends -->
