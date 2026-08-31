@@ -264,9 +264,26 @@ public class AgentTask
 
     /// <summary>
     /// When the one "please send the closing report line" nudge was queued (CARD-0159). Null means
-    /// not yet asked; a second unmarked <c>end_turn</c> after this settles rather than nudging again.
+    /// not yet asked; a second unmarked <c>end_turn</c> after the delivered nudge settles rather
+    /// than nudging again (CARD-0248).
     /// </summary>
     public DateTime? ReportNudgedAt { get; set; }
+
+    /// <summary>
+    /// Transcript Sequence of the TurnEnd boundary the one nudge (CARD-0159) was issued against
+    /// (CARD-0248). Settle-anyway requires the current boundary to be LATER than this one — the
+    /// contract is "asked once and it ended ANOTHER turn unmarked", and before this column the
+    /// same boundary re-entering through the 5 s sweep satisfied it.
+    /// </summary>
+    public long? ReportNudgedSequence { get; set; }
+
+    /// <summary>
+    /// The SessionQueuedMessages row carrying the nudge (CARD-0248). Settle-anyway also requires
+    /// that row's SentAt to be non-null: a WhenIdle nudge can sit queued for many minutes while
+    /// the delegate is genuinely mid-turn, and settling before it is typed answers a question
+    /// that was never asked.
+    /// </summary>
+    public Guid? ReportNudgeMessageId { get; set; }
 
     /// <summary>
     /// HEAD SHA of the task worktree at creation (CARD-0159 S3). The no-merge-target base for
