@@ -86,8 +86,18 @@ function Get-AmServiceDockerfileManifest {
 }
 
 function Test-AmServiceArchive {
+    <#
+      Lists via a bare filename with cwd at the archive's own directory. GNU tar
+      (Git for Windows ships this as the pwsh-resolved `tar` under a Bash-launched
+      shell - `C:\Program Files\Git\usr\bin\tar.exe`) parses a `-f` argument
+      containing a colon as SysV remote-tape syntax (`host:path`), and a Windows
+      drive letter always has one. A bare filename has no colon and is unambiguous
+      to both GNU tar and Windows' own bsdtar (System32\tar.exe).
+    #>
     param([Parameter(Mandatory)][string]$ArchivePath, [Parameter(Mandatory)][object[]]$Manifest)
-    $lines = @(& tar -tzf $ArchivePath 2>&1 | ForEach-Object { $_.ToString().TrimStart('./') }); $code = $LASTEXITCODE
+    $archiveDir = Split-Path -Parent $ArchivePath; $archiveName = Split-Path -Leaf $ArchivePath
+    Push-Location $archiveDir
+    try { $lines = @(& tar -tzf $archiveName 2>&1 | ForEach-Object { $_.ToString().TrimStart('./') }); $code = $LASTEXITCODE } finally { Pop-Location }
     if ($code -ne 0) { throw "Could not list deployment archive (tar exit $code)." }
     foreach ($line in $lines) { if (($line.TrimEnd('/') -split '/') | Where-Object { $_ -eq 'bin' -or $_ -eq 'obj' -or $_ -like 'bin-*' }) { throw "Deployment archive contains forbidden build output: $line" } }
     foreach ($source in $Manifest) { $path = $source.Path.TrimEnd('/'); if (-not ($lines | Where-Object { $_.TrimEnd('/') -eq $path -or $_.StartsWith($path + '/') })) { throw "Deployment archive is missing COPY source '$path' from line $($source.Line)." } }
@@ -95,10 +105,15 @@ function Test-AmServiceArchive {
 }
 
 function New-AmServiceArchive {
+    <# See Test-AmServiceArchive's note: -f is a bare filename (cwd = temp dir, no
+       colon), and -C ContextRoot resolves the source entries instead of Push-Location
+       into the context - the two concerns (archive location, source location) are
+       kept independent so neither needs a colon-bearing path on the tar command line. #>
     param([Parameter(Mandatory)][string]$ContextRoot, [Parameter(Mandatory)][object[]]$Manifest)
-    $path = Join-Path ([IO.Path]::GetTempPath()) ('am-service-src-' + [guid]::NewGuid().ToString('N') + '.tgz')
-    $args = @('-czf', $path, '--exclude=bin', '--exclude=*/bin', '--exclude=obj', '--exclude=*/obj', '--exclude=bin-*', '--exclude=*/bin-*') + @($Manifest | ForEach-Object { $_.Path })
-    Push-Location $ContextRoot
+    $tempDir = [IO.Path]::GetTempPath(); $fileName = 'am-service-src-' + [guid]::NewGuid().ToString('N') + '.tgz'
+    $path = Join-Path $tempDir $fileName
+    $args = @('-czf', $fileName, '--exclude=bin', '--exclude=*/bin', '--exclude=obj', '--exclude=*/obj', '--exclude=bin-*', '--exclude=*/bin-*', '-C', $ContextRoot) + @($Manifest | ForEach-Object { $_.Path })
+    Push-Location $tempDir
     try { & tar @args 2>&1 | Out-Null; $code = $LASTEXITCODE } finally { Pop-Location }
     if ($code -ne 0) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue; throw "Could not create deployment archive (tar exit $code)." }
     try { $entries = Test-AmServiceArchive $path $Manifest } catch { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue; throw }
