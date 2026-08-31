@@ -74,6 +74,23 @@ public sealed class AgentSessionLaunchComposer
                 ]);
             }
 
+            if (isGrok)
+            {
+                extraArgs.AddRange([
+                    GrokLaunchArgs.ReasoningEffortFlag,
+                    GrokLaunchArgs.ReasoningEffortForModel(agent.ModelLevel, agent.ModelId),
+                ]);
+            }
+
+            // Kind-explicit, not `!isGrok && !isCodex`: OpenCode/Raw must not inherit `--effort`.
+            if (isClaudeCode)
+            {
+                extraArgs.AddRange([
+                    ClaudeLaunchArgs.EffortFlag,
+                    ClaudeLaunchArgs.Effort(agent.ModelLevel),
+                ]);
+            }
+
             var composed = InstructionBundleComposer.Compose(
                 attachedKeys,
                 AgentReplyStyles.ComposedKey(agent.ReplyStyle),

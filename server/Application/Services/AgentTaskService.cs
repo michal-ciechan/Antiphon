@@ -1430,6 +1430,11 @@ public sealed class AgentTaskService
     /// Silence here would read as a promise of a larger model that xAI does not currently offer,
     /// and the operator would spend the escalation expecting something the ladder cannot deliver.
     ///
+    /// <para>CARD-0289: once effort is tier-wired, a same-model escalation on Grok (and on Codex's
+    /// Low→Medium luna rung) also buys a deeper reasoning effort. The event names that when the
+    /// kind's tier-wired efforts actually differ; when they are equal the wording is byte-identical
+    /// to the pre-CARD-0289 note. Claude never takes this arm (four distinct aliases).</para>
+    ///
     /// <para>The test is the ALIAS COMPARISON, not the kind (CARD-0084 S4): now that
     /// <see cref="ModelLevelAliases.For"/> answers per kind, "both rungs are the same model" is
     /// exactly what a short ladder looks like, whoever owns it — so a future kind that collapses
@@ -1443,9 +1448,32 @@ public sealed class AgentTaskService
         if (!string.Equals(ModelLevelAliases.For(task.AgentKind, from), alias, StringComparison.Ordinal))
             return string.Empty;
 
+        var fromEffort = TierWiredEffort(task.AgentKind, from);
+        var toEffort = TierWiredEffort(task.AgentKind, to);
+        if (fromEffort is not null
+            && toEffort is not null
+            && !string.Equals(fromEffort, toEffort, StringComparison.Ordinal))
+        {
+            return $" On {task.AgentKind} the {from} and {to} tiers both map to {alias}, so this is a"
+                + $" FRESH CONTEXT at the same model at deeper reasoning effort ({fromEffort} → {toEffort}).";
+        }
+
         return $" On {task.AgentKind} the {from} and {to} tiers both map to {alias}, so this is a"
             + " FRESH CONTEXT at the same model, not a larger one.";
     }
+
+    /// <summary>
+    /// The effort string a kind actually puts on its launch argv, or null when the kind has no
+    /// tier-wired effort (OpenCode/Raw). Kept as a switch over the three independent mappings so a
+    /// future provider can diverge without a shared abstraction (CARD-0289).
+    /// </summary>
+    private static string? TierWiredEffort(AgentKind kind, AgentModelLevel level) => kind switch
+    {
+        AgentKind.Codex => CodexLaunchArgs.ReasoningEffort(level),
+        AgentKind.Grok => GrokLaunchArgs.ReasoningEffort(level),
+        AgentKind.ClaudeCode => ClaudeLaunchArgs.Effort(level),
+        _ => null,
+    };
 
     /// <summary>
     /// One rung up, unless the role policy names a specific target — the ladder is config, so a

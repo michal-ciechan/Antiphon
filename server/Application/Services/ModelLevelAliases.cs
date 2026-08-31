@@ -42,8 +42,9 @@ public static class ModelLevelAliases
     ///
     /// <para>Medium and Low share <c>gpt-5.6-luna</c> — a genuinely short rung, not an oversight,
     /// and it is why <c>AgentTaskService.SameModelEscalationNote</c> — which compares ALIASES, not
-    /// kinds — tells a Low → Medium Codex escalation that it bought a fresh context rather than a
-    /// bigger model. The three rungs above it are all real model changes. <c>gpt-5.4-mini</c>
+    /// kinds — tells a Low → Medium Codex escalation that it bought a fresh context at deeper
+    /// reasoning effort rather than a bigger model (CARD-0289). The three rungs above it are all
+    /// real model changes. <c>gpt-5.4-mini</c>
     /// exists if a cheaper bottom rung is ever wanted; three names were asked for, so Luna covers
     /// both. (Grok's own ladder no longer has rungs to compare against — CARD-0169 collapsed
     /// <see cref="ForGrok"/> to grok-4.6 for every level.)</para>

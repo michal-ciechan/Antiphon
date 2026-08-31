@@ -120,8 +120,12 @@ public class CodexDelegateDispatchTests
         args.IndexOf("--name").ShouldBeGreaterThanOrEqualTo(0);
         args[args.IndexOf("--model") + 1].ShouldBe("sonnet");
         args.ShouldContain("--append-system-prompt");
+        args.ShouldContain(ClaudeLaunchArgs.EffortFlag);
+        args[args.IndexOf(ClaudeLaunchArgs.EffortFlag) + 1]
+            .ShouldBe(ClaudeLaunchArgs.Effort(AgentModelLevel.Medium));
         args.ShouldNotContain("-c", customMessage:
             "Codex's config overrides must never leak onto a Claude command line");
+        args.ShouldNotContain(GrokLaunchArgs.ReasoningEffortFlag);
         args.ShouldNotContain("gpt-5.6-terra");
     }
 
@@ -133,7 +137,11 @@ public class CodexDelegateDispatchTests
 
         args[args.IndexOf("--model") + 1].ShouldBe("grok-4.6");
         args.ShouldContain("--rules");
+        args.ShouldContain(GrokLaunchArgs.ReasoningEffortFlag);
+        args[args.IndexOf(GrokLaunchArgs.ReasoningEffortFlag) + 1]
+            .ShouldBe(GrokLaunchArgs.ReasoningEffort(AgentModelLevel.High));
         args.ShouldNotContain("-c");
+        args.ShouldNotContain(ClaudeLaunchArgs.EffortFlag);
         args.ShouldNotContain("--name");
     }
 
@@ -219,6 +227,7 @@ public class CodexDelegateDispatchTests
         var detail = await LatestEscalationDetailAsync(task.Id);
         detail.ShouldContain("gpt-5.6-luna");
         detail.ShouldContain("FRESH CONTEXT at the same model");
+        detail.ShouldContain("deeper reasoning effort (low → medium)");
         detail.ShouldContain("Codex");
     }
 

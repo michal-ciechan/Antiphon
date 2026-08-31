@@ -54,6 +54,10 @@ public class GrokDelegateDispatchTests
         args.ShouldNotContain("--name", customMessage:
             "--name is Claude-only; grok.exe rejects it and the launch would never start");
         args[args.IndexOf("--model") + 1].ShouldBe("grok-4.6");
+        args.ShouldContain(GrokLaunchArgs.ReasoningEffortFlag);
+        args[args.IndexOf(GrokLaunchArgs.ReasoningEffortFlag) + 1]
+            .ShouldBe(GrokLaunchArgs.ReasoningEffort(AgentModelLevel.High));
+        args.ShouldNotContain(ClaudeLaunchArgs.EffortFlag);
         args.ShouldContain("--rules");
         args.ShouldNotContain("--append-system-prompt", customMessage:
             "Grok's system-prompt channel is --rules; the bundle would be dropped in silence");
@@ -78,11 +82,62 @@ public class GrokDelegateDispatchTests
     }
 
     [Test]
-    public void a_claude_delegates_launch_arguments_are_unchanged_by_this_slice()
+    [Arguments(AgentModelLevel.Frontier, "xhigh")]
+    [Arguments(AgentModelLevel.High, "high")]
+    [Arguments(AgentModelLevel.Medium, "medium")]
+    [Arguments(AgentModelLevel.Low, "low")]
+    public void every_grok_tier_names_its_own_reasoning_effort(AgentModelLevel level, string expectedEffort)
     {
-        // The compatibility promise, pinned as the exact argument SEQUENCE off the default
-        // definition: --name, then --append-system-prompt, then --model LAST. CARD-0182 S2
-        // (8cd20be4, 2026-08-25) made AgentRegistry.Resolve the single --model appender, after the
+        var (dispatcher, _) = CreateHarness();
+        var args = SpecOf(dispatcher, TaskFor(AgentKind.Grok, level)).Args.ToList();
+
+        args[args.IndexOf("--model") + 1].ShouldBe("grok-4.6");
+        args.ShouldContain(GrokLaunchArgs.ReasoningEffortFlag);
+        args[args.IndexOf(GrokLaunchArgs.ReasoningEffortFlag) + 1].ShouldBe(expectedEffort);
+        args.ShouldNotContain(ClaudeLaunchArgs.EffortFlag);
+    }
+
+    [Test]
+    public void a_grok_4_5_frontier_dispatch_clamps_xhigh_to_high()
+    {
+        // The ladder cannot produce this pairing; an explicit ModelId of grok-4.5 under
+        // Frontier can, and the CLI refuses to launch with xhigh (CARD-0289 live probe).
+        var (dispatcher, _) = CreateHarness();
+        var task = TaskFor(AgentKind.Grok, AgentModelLevel.Frontier);
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = $"task-{DelegationReportFormatter.Short(task.Id)}",
+            Slug = $"task-{DelegationReportFormatter.Short(task.Id)}",
+            WorkingDirectory = task.WorkingDirectory,
+            Kind = AgentKind.Grok,
+            ModelId = "grok-4.5",
+            IsPoolDelegate = true,
+        };
+        var session = new AgentSession
+        {
+            Id = Guid.NewGuid(),
+            DefinitionName = "grok",
+            AgentKind = AgentKind.Grok,
+            Status = SessionStatus.Starting,
+            Cwd = task.WorkingDirectory,
+            Cols = 120,
+            Rows = 30,
+        };
+
+        var args = dispatcher.BuildLaunchSpec(task, agent, session).Args.ToList();
+
+        args.ShouldContain(GrokLaunchArgs.ReasoningEffortFlag);
+        args[args.IndexOf(GrokLaunchArgs.ReasoningEffortFlag) + 1].ShouldBe("high");
+    }
+
+    [Test]
+    public void a_claude_delegate_carries_effort_and_keeps_name_model_and_prompt()
+    {
+        // CARD-0289 adds --effort as two argv elements; the rest of the Claude shape is unchanged
+        // and still pinned as the exact argument SEQUENCE off the default definition: --name,
+        // then --effort, then --append-system-prompt, then --model LAST. CARD-0182 S2 (8cd20be4,
+        // 2026-08-25) made AgentRegistry.Resolve the single --model appender, after the
         // dispatcher's extras; the older pin (--model between --name and the prompt) went red that
         // day and was then hidden for a week behind this harness's missing GitWorkspaceService
         // registration (CARD-0297). Every existing delegation is this shape.
@@ -95,14 +150,18 @@ public class GrokDelegateDispatchTests
         spec.DefinitionName.ShouldBe("claude");
         spec.Kind.ShouldBe(AgentKind.ClaudeCode);
         var name = args.IndexOf("--name");
-        var model = args.IndexOf("--model");
-        var prompt = args.IndexOf("--append-system-prompt");
         name.ShouldBeGreaterThanOrEqualTo(0);
         args[name + 1].ShouldBe($"task-{DelegationReportFormatter.Short(task.Id)}");
+        var effort = args.IndexOf(ClaudeLaunchArgs.EffortFlag);
+        var prompt = args.IndexOf("--append-system-prompt");
+        var model = args.IndexOf("--model");
+        args[effort + 1].ShouldBe(ClaudeLaunchArgs.Effort(AgentModelLevel.High));
         args[model + 1].ShouldBe("opus");
-        prompt.ShouldBe(name + 2);
+        effort.ShouldBe(name + 2);
+        prompt.ShouldBe(effort + 2);
         model.ShouldBe(prompt + 2,
             "CARD-0182 D2: --model is appended once, by the registry, after every dispatcher extra");
+        args.ShouldNotContain(GrokLaunchArgs.ReasoningEffortFlag);
         args.ShouldNotContain("--rules");
     }
 
@@ -178,6 +237,9 @@ public class GrokDelegateDispatchTests
         spec.Args.ShouldContain("--always-approve");
         spec.Args.ShouldContain("--no-alt-screen");
         spec.Args.ShouldContain("--rules");
+        spec.Args.ShouldContain(GrokLaunchArgs.ReasoningEffortFlag);
+        spec.Args.ToList()[spec.Args.ToList().IndexOf(GrokLaunchArgs.ReasoningEffortFlag) + 1]
+            .ShouldBe(GrokLaunchArgs.ReasoningEffort(AgentModelLevel.Medium));
         spec.Args.ShouldNotContain("--name");
         spec.Args.ToList()[spec.Args.ToList().IndexOf("--model") + 1].ShouldBe("grok-4.6");
         spec.Cwd.ShouldBe(task.WorkingDirectory);
@@ -392,6 +454,7 @@ public class GrokDelegateDispatchTests
         detail.ShouldNotContain("fable", customMessage: "a Grok task never runs a Claude model");
         detail.ShouldNotContain("opus");
         detail.ShouldContain("FRESH CONTEXT at the same model");
+        detail.ShouldContain("deeper reasoning effort (high → xhigh)");
         detail.ShouldContain("Frontier");
     }
 
@@ -410,6 +473,7 @@ public class GrokDelegateDispatchTests
         var detail = await LatestEscalationDetailAsync(task.Id);
         detail.ShouldContain("grok-4.6 -> grok-4.6");
         detail.ShouldContain("FRESH CONTEXT at the same model");
+        detail.ShouldContain("deeper reasoning effort (medium → xhigh)");
     }
 
     [Test]

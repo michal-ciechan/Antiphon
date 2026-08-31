@@ -99,6 +99,93 @@ public sealed class CardSpawnModelArgumentTests
     }
 
     [Test]
+    public async Task Grok_assigned_card_spawn_carries_the_reasoning_effort_flag()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var tempRoot = AgentControlServiceIntegrationTests.NewTempRoot();
+        try
+        {
+            await using var db = NewDb(schema.ConnectionString);
+            var adapter = new FakeAgentProtocolAdapter();
+            await using var harness = AgentControlServiceIntegrationTests.BuildHarness(
+                tempRoot, [adapter], defaultKind: "Raw", includeLaunchResolver: true,
+                connectionString: schema.ConnectionString);
+            var profile = await SeedProfileAsync(db, AgentKind.Grok, modelArgumentName: "--model");
+            await SeedAssignedCardAsync(db, harness, tempRoot, profile.Id, AgentKind.Grok,
+                AgentModelLevel.High, modelId: null);
+
+            await SpawnOnlyCardAsync(db, harness);
+
+            adapter.StartedArgs.ShouldContain(GrokLaunchArgs.ReasoningEffortFlag);
+            var flag = adapter.StartedArgs.ToList().IndexOf(GrokLaunchArgs.ReasoningEffortFlag);
+            adapter.StartedArgs[flag + 1].ShouldBe(GrokLaunchArgs.ReasoningEffort(AgentModelLevel.High));
+            adapter.StartedArgs.ShouldNotContain(ClaudeLaunchArgs.EffortFlag);
+        }
+        finally
+        {
+            AgentControlServiceIntegrationTests.DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Grok_4_5_frontier_card_spawn_clamps_xhigh_to_high()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var tempRoot = AgentControlServiceIntegrationTests.NewTempRoot();
+        try
+        {
+            await using var db = NewDb(schema.ConnectionString);
+            var adapter = new FakeAgentProtocolAdapter();
+            await using var harness = AgentControlServiceIntegrationTests.BuildHarness(
+                tempRoot, [adapter], defaultKind: "Raw", includeLaunchResolver: true,
+                connectionString: schema.ConnectionString);
+            var profile = await SeedProfileAsync(db, AgentKind.Grok, modelArgumentName: "--model",
+                models: ["grok-4.5"]);
+            await SeedAssignedCardAsync(db, harness, tempRoot, profile.Id, AgentKind.Grok,
+                AgentModelLevel.Frontier, modelId: "grok-4.5");
+
+            await SpawnOnlyCardAsync(db, harness);
+
+            adapter.StartedArgs.ShouldContain(GrokLaunchArgs.ReasoningEffortFlag);
+            var flag = adapter.StartedArgs.ToList().IndexOf(GrokLaunchArgs.ReasoningEffortFlag);
+            adapter.StartedArgs[flag + 1].ShouldBe("high");
+        }
+        finally
+        {
+            AgentControlServiceIntegrationTests.DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Claude_assigned_card_spawn_carries_the_effort_flag()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var tempRoot = AgentControlServiceIntegrationTests.NewTempRoot();
+        try
+        {
+            await using var db = NewDb(schema.ConnectionString);
+            var adapter = new FakeAgentProtocolAdapter();
+            await using var harness = AgentControlServiceIntegrationTests.BuildHarness(
+                tempRoot, [adapter], defaultKind: "Raw", includeLaunchResolver: true,
+                connectionString: schema.ConnectionString);
+            var profile = await SeedProfileAsync(db, AgentKind.ClaudeCode, modelArgumentName: "--model");
+            await SeedAssignedCardAsync(db, harness, tempRoot, profile.Id, AgentKind.ClaudeCode,
+                AgentModelLevel.High, modelId: null);
+
+            await SpawnOnlyCardAsync(db, harness);
+
+            adapter.StartedArgs.ShouldContain(ClaudeLaunchArgs.EffortFlag);
+            var flag = adapter.StartedArgs.ToList().IndexOf(ClaudeLaunchArgs.EffortFlag);
+            adapter.StartedArgs[flag + 1].ShouldBe(ClaudeLaunchArgs.Effort(AgentModelLevel.High));
+            adapter.StartedArgs.ShouldNotContain(GrokLaunchArgs.ReasoningEffortFlag);
+        }
+        finally
+        {
+            AgentControlServiceIntegrationTests.DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task Agentless_card_spawn_has_a_delegation_token_without_agent_composition()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();

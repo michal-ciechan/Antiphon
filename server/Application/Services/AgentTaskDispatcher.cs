@@ -3477,6 +3477,26 @@ public sealed class AgentTaskDispatcher
             ]);
         }
 
+        if (isGrok)
+        {
+            // Explicit, because grok-4.6's own default AND the operator's config.toml are both
+            // `high` — a Low-tier delegate would think at High, a Frontier one would never reach
+            // xhigh (CARD-0289). Two argv elements, counted by the budget guard below.
+            extraArgs.AddRange([
+                GrokLaunchArgs.ReasoningEffortFlag,
+                GrokLaunchArgs.ReasoningEffortForModel(task.ModelLevel, agent.ModelId),
+            ]);
+        }
+
+        // Kind-explicit, not `!isGrok && !isCodex`: OpenCode/Raw must not inherit `--effort`.
+        if (kind == AgentKind.ClaudeCode)
+        {
+            extraArgs.AddRange([
+                ClaudeLaunchArgs.EffortFlag,
+                ClaudeLaunchArgs.Effort(task.ModelLevel),
+            ]);
+        }
+
         // The role's standing instructions, composed from the repo's bundle files at LAUNCH
         // (CARD-0058). Two properties make this the right channel and neither is about size: the
         // system prompt is re-sent on every API call, so the rules survive compaction with no

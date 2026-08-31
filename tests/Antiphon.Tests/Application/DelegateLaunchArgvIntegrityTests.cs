@@ -97,6 +97,7 @@ public class DelegateLaunchArgvIntegrityTests
             AssertRoundTripsOnBothBackends(ExeWithSpace, args, because);
             AssertSessionIdSurvives(ExeWithSpace, args, agentKind, sessionId, because);
             AssertAppendedPromptIsIntact(ExeWithSpace, args, because);
+            AssertEffortIsKindGated(args, agentKind, task.ModelLevel, because);
             checkedCases++;
         }
 
@@ -132,6 +133,7 @@ public class DelegateLaunchArgvIntegrityTests
             AssertRoundTripsOnBothBackends(ExeWithSpace, args, because);
             AssertSessionIdSurvives(ExeWithSpace, args, agentKind, sessionId, because);
             AssertAppendedPromptIsIntact(ExeWithSpace, args, because);
+            AssertEffortIsKindGated(args, agentKind, task.ModelLevel, because);
         }
     }
 
@@ -273,6 +275,40 @@ public class DelegateLaunchArgvIntegrityTests
     }
 
     // ---- assertions ------------------------------------------------------------------------------
+
+    /// <summary>
+    /// CARD-0289: effort flags are kind-gated, not "not Grok and not Codex". OpenCode/Raw must
+    /// never inherit Claude's <c>--effort</c>; Grok uses <c>--reasoning-effort</c>; Codex keeps
+    /// its <c>-c model_reasoning_effort=</c> override.
+    /// </summary>
+    private static void AssertEffortIsKindGated(
+        string[] args, AgentKind agentKind, AgentModelLevel level, string because)
+    {
+        switch (agentKind)
+        {
+            case AgentKind.Grok:
+                args.ShouldContain(GrokLaunchArgs.ReasoningEffortFlag, customMessage: because);
+                args[Array.IndexOf(args, GrokLaunchArgs.ReasoningEffortFlag) + 1]
+                    .ShouldBe(GrokLaunchArgs.ReasoningEffortForModel(level, effectiveModelId: null), because);
+                args.ShouldNotContain(ClaudeLaunchArgs.EffortFlag, customMessage: because);
+                break;
+            case AgentKind.ClaudeCode:
+                args.ShouldContain(ClaudeLaunchArgs.EffortFlag, customMessage: because);
+                args[Array.IndexOf(args, ClaudeLaunchArgs.EffortFlag) + 1]
+                    .ShouldBe(ClaudeLaunchArgs.Effort(level), because);
+                args.ShouldNotContain(GrokLaunchArgs.ReasoningEffortFlag, customMessage: because);
+                break;
+            case AgentKind.Codex:
+                args.ShouldContain(CodexLaunchArgs.ReasoningEffortOverride(level), customMessage: because);
+                args.ShouldNotContain(ClaudeLaunchArgs.EffortFlag, customMessage: because);
+                args.ShouldNotContain(GrokLaunchArgs.ReasoningEffortFlag, customMessage: because);
+                break;
+            default:
+                args.ShouldNotContain(ClaudeLaunchArgs.EffortFlag, customMessage: because);
+                args.ShouldNotContain(GrokLaunchArgs.ReasoningEffortFlag, customMessage: because);
+                break;
+        }
+    }
 
     /// <summary>
     /// Both backends, because they compose differently and CARD-0101 was fixed on only one of them
