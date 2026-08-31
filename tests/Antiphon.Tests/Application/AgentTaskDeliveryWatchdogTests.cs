@@ -751,6 +751,29 @@ public class AgentTaskDeliveryWatchdogTests
     }
 
     [Test]
+    public async Task an_unchanged_boundary_is_not_rehanded_within_the_rehand_interval()
+    {
+        var logs = new List<string>();
+        var (harness, _) = CreateHarness(logs: logs, settings: new DelegationSettings());
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 5);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedSplitTurnTailAsync(sessionId, task.Id, storedMinutesAgo: 3);
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+        var needle = sessionId.ToString();
+        logs.Count(l => l.Contains(needle, StringComparison.OrdinalIgnoreCase)
+                && l.Contains("no text from the turn-ending response", StringComparison.Ordinal))
+            .ShouldBe(1);
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+        logs.Count(l => l.Contains(needle, StringComparison.OrdinalIgnoreCase)
+                && l.Contains("no text from the turn-ending response", StringComparison.Ordinal))
+            .ShouldBe(
+                1,
+                "CARD-0248: an unchanged boundary is not re-handed within ReportSweepRehandSeconds");
+    }
+
+    [Test]
     public async Task a_cancelled_end_is_skipped_by_the_deferred_report_sweep()
     {
         var (harness, _) = CreateHarness();
@@ -1361,7 +1384,8 @@ public class AgentTaskDeliveryWatchdogTests
     private static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper) CreateHarness(
         DelegateBindRefusalRecoverySettings? recoverySettings = null,
         ISessionRunnerClient? runnerClient = null,
-        List<string>? logs = null)
+        List<string>? logs = null,
+        DelegationSettings? settings = null)
     {
         var stopper = new RecordingSessionStopper();
         var services = new ServiceCollection();
@@ -1374,7 +1398,11 @@ public class AgentTaskDeliveryWatchdogTests
         services.AddSingleton(Options.Create(new SupervisionSettings()));
         services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
         // Default settings on purpose: DeliveryFailTimeoutMinutes = 10 is the shipped window.
-        services.AddSingleton(Options.Create(new DelegationSettings()));
+        // CARD-0248: tests that drive multi-step ladders re-hand every tick; the dedicated
+        // watermark test passes a settings object with the shipped ReportSweepRehandSeconds.
+        settings ??= new DelegationSettings { ReportSweepRehandSeconds = 0 };
+        services.AddSingleton(Options.Create(settings));
+        services.AddSingleton<DeferredReportSweepMarks>();
         services.AddOptions<AgentRegistrySettings>();
         services.AddSingleton<AgentRegistry>();
         services.AddSingleton<AgentSessionLaunchQueue>();

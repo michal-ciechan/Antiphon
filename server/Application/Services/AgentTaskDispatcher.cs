@@ -61,6 +61,9 @@ public sealed class AgentTaskDispatcher
     // CARD-0063 S2: the repo's named areas. Optional so every harness that predates the map keeps
     // constructing this; absent, a scope name compares as an opaque label, which is exactly S1.
     private readonly AreaMapLoader? _areas;
+    // CARD-0248: in-memory sweep watermark. Optional so predating harnesses re-hand every tick
+    // (equivalent to ReportSweepRehandSeconds = 0). Production registers the singleton.
+    private readonly DeferredReportSweepMarks? _sweepMarks;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -103,8 +106,10 @@ public sealed class AgentTaskDispatcher
         IOptions<SupervisionSettings>? supervision = null,
         AgentFilesService? files = null,
         SubscriptionQuotaGate? quotaGate = null,
-        AreaMapLoader? areas = null)
+        AreaMapLoader? areas = null,
+        DeferredReportSweepMarks? sweepMarks = null)
     {
+        _sweepMarks = sweepMarks;
         _areas = areas;
         _apiKeyEnvResolver = apiKeyEnvResolver;
         _scopeFactory = scopeFactory;
@@ -1366,6 +1371,14 @@ public sealed class AgentTaskDispatcher
     /// notifying. That one is measured from the session's last transcript entry — a notification
     /// arriving resets it — and it is self-limiting, because the settlement it triggers takes the
     /// task out of Dispatched and out of this scan.</para>
+    ///
+    /// <para>CARD-0248: an UNCHANGED boundary is re-handed at most once per
+    /// <see cref="DelegationSettings.ReportSweepRehandSeconds"/> (default 60). The predicates are
+    /// monotonic, so without that watermark the sweep re-entered settlement every 5 s and ate the
+    /// CARD-0159 nudge. Correctness never depends on the watermark — <c>ClassifyReportAsync</c>'s
+    /// gates make re-entry inert — it only bounds the load. A changed boundary always hands off
+    /// immediately. Settlement itself now requires a later boundary, a delivered nudge, and (for
+    /// text-less turns) the response window; this method just finds candidates.</para>
     /// </summary>
     internal async Task<int> SettleDeferredReportsAsync(CancellationToken ct)
     {
@@ -1393,7 +1406,7 @@ public sealed class AgentTaskDispatcher
             var end = await _db.TranscriptEntries.AsNoTracking()
                 .Where(e => e.AgentSessionId == sessionId && e.Kind == TranscriptKinds.TurnEnd)
                 .OrderByDescending(e => e.Sequence)
-                .Select(e => new { e.ApiCallId, e.CreatedAt, e.Kind, e.StopReason })
+                .Select(e => new { e.Sequence, e.ApiCallId, e.CreatedAt, e.Kind, e.StopReason })
                 .FirstOrDefaultAsync(ct);
             if (end is null)
                 continue; // no boundary at all — nothing has been deferred here
@@ -1403,6 +1416,9 @@ public sealed class AgentTaskDispatcher
             // interrupted turn's narration. Skip both arms; the task stays Working.
             if (!TranscriptKinds.IsReportBoundary(end.Kind, end.StopReason))
                 continue;
+
+            var now = UtcNow();
+            var rehandSeconds = _settings.ReportSweepRehandSeconds;
 
             // (1) The turn-ending response never wrote its own text. No id to wait on, or still
             // inside the grace, means nothing was deferred. CreatedAt, never the record's
@@ -1415,12 +1431,17 @@ public sealed class AgentTaskDispatcher
                         && e.ApiCallId == apiCallId, ct);
                 if (!landed)
                 {
-                    _logger.LogWarning(
-                        "Session {SessionId}: no text from the turn-ending response after {Grace}s — "
-                        + "settling on what the turn produced",
-                        sessionId, _settings.FinalMessageGraceSeconds);
-                    await _replies.OnTurnEndAsync(sessionId, ct);
-                    swept++;
+                    if (_sweepMarks is null
+                        || _sweepMarks.ShouldHandOff(sessionId, end.Sequence, lastEntryAt: null, now, rehandSeconds))
+                    {
+                        _logger.LogWarning(
+                            "Session {SessionId}: no text from the turn-ending response after {Grace}s — "
+                            + "settling on what the turn produced",
+                            sessionId, _settings.FinalMessageGraceSeconds);
+                        await _replies.OnTurnEndAsync(sessionId, ct);
+                        _sweepMarks?.RecordHandOff(sessionId, end.Sequence, lastEntryAt: null, now);
+                        swept++;
+                    }
                     continue;
                 }
             }
@@ -1436,15 +1457,21 @@ public sealed class AgentTaskDispatcher
                 .MaxAsync(e => (DateTime?)e.CreatedAt, ct);
             if (lastEntryAt is DateTime quietSince && quietSince <= subagentCutoff)
             {
-                _logger.LogDebug(
-                    "Session {SessionId}: silent for {Grace}+ minutes — re-checking settlement for "
-                    + "background subagents that never reported",
-                    sessionId, _settings.SubagentGraceMinutes);
-                await _replies.OnTurnEndAsync(sessionId, ct);
-                swept++;
+                if (_sweepMarks is null
+                    || _sweepMarks.ShouldHandOff(sessionId, end.Sequence, quietSince, now, rehandSeconds))
+                {
+                    _logger.LogDebug(
+                        "Session {SessionId}: silent for {Grace}+ minutes — re-checking settlement for "
+                        + "background subagents that never reported",
+                        sessionId, _settings.SubagentGraceMinutes);
+                    await _replies.OnTurnEndAsync(sessionId, ct);
+                    _sweepMarks?.RecordHandOff(sessionId, end.Sequence, quietSince, now);
+                    swept++;
+                }
             }
         }
 
+        _sweepMarks?.Prune(sessions);
         return swept;
     }
 

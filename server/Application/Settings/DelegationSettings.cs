@@ -421,6 +421,16 @@ public sealed class DelegationSettings
     public int ReportNudgeResponseSeconds { get; set; } = 240;
 
     /// <summary>
+    /// Minimum interval between the deferred-report sweep re-handing an UNCHANGED boundary to
+    /// settlement (CARD-0248). The sweep's predicates are monotonic, so without this it re-enters
+    /// settlement every PollIntervalSeconds tick for the life of an affected task — the re-entry
+    /// channel that ate the CARD-0159 nudge. Correctness never depends on this (settlement's own
+    /// gates make re-entry inert); it bounds the query load and closes the class. A changed
+    /// boundary always hands off immediately. &lt;= 0 restores per-tick re-handing (tests).
+    /// </summary>
+    public int ReportSweepRehandSeconds { get; set; } = 60;
+
+    /// <summary>
     /// How long an open task whose session is DEAD (<see cref="AgentTaskLiveness.IsDeadSession"/>)
     /// must keep looking dead before the dispatcher fails it (CARD-0021). Measured from the first
     /// sweep that saw it that way, in memory — a server restart only ever delays the failure.
