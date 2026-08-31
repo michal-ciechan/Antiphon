@@ -28,9 +28,11 @@ archaeology - and verification is not archaeology's quieter cousin. It is trust,
    seconds, then an Edit, a build, a commit and a deploy, all in the orchestrator's own context) -
    the exact thing this ladder exists to make rare.
 
-**Also delegated: the mechanics.** Fetch, rebase, merge, push - these move to a delegate too, not a
-Bash call in the orchestrator's own turn. The exact mechanism is being designed separately
-(CARD-0258); until it lands, note the direction here regardless.
+**Also delegated: the landing mechanics.** For a delegated Worktree task, the orchestrator orders
+the landing with `delegate.ps1 -Land <id>` (optionally `-Verify <filter>`); the server fetches,
+rebases, verifies when required, fast-forwards, pushes, and cleans up. The resulting
+`Landed`/`LandRefused` outcome line is the confirmation. The orchestrator decides the order and
+what a refusal means, but does none of those git operations itself.
 
 Since CARD-0247, a `PreToolUse` hook in this repo nudges at the third consecutive cold source read
 (it never blocks; `ANTIPHON_ORCHESTRATOR=0` silences it for a hacking session), and a server sweep
@@ -246,40 +248,49 @@ curl -s localhost:17202/api/sessions/<sessionId>/transcript
 
 ---
 
-## 5. Verify before merging
+## 5. Order the landings and read the outcome lines
 
-Run the acceptance criterion **yourself**, on master, after merging is too late to be cheap:
+**Landing order comes from the completion header.** A note whose header carries
+`overlapping-running=<ids>` says those tasks were still running when this one settled and touched
+the same areas. Land this branch first, or expect its rebase to replay onto their work
+(CARD-0063).
 
-```bash
-git merge --ff-only feat/card-task-<id>     # never a merge commit
-dotnet run --project tests/<X> --property:OutputPath=bin-v/ -- --treenode-filter "/*/*/<Class>/*"
+For a succeeded Worktree task, make the ordered landing decision with one call:
+
+```powershell
+pwsh -NoProfile -File scripts/delegate.ps1 -Land <id>
+# Add -Verify "<treenode-filter>" when that narrow test is part of the landing decision.
 ```
 
-Read the commit messages rather than the report — in this repo they carry the real outcome.
+The server performs the fetch, rebase, conditional build and optional named test, fast-forward,
+push, worktree removal, and branch deletion. Read the resulting `Landed` or `LandRefused` event
+and its outcome line. `Landed` reports the merged SHA, pushed remote ref, and verification result;
+`LandRefused` leaves the branch and worktree in place and names why.
 
-**Merge order comes off the completion header.** A note whose header carries
-`overlapping-running=<ids>` is telling you that those tasks were still running when this one settled
-and touched the same areas — merge this one first, or expect the rebase (CARD-0063).
+After `-Land`, the orchestrator's own git involvement is **zero**. Do not re-run `git show`,
+`git diff`, `gh run view`, or tests to double-check a `Landed` outcome. This is the same
+trust-the-report rule used for content review, extended to the server-measured land step itself.
+If the outcome raises a real question, dispatch a follow-up or `Review` delegate rather than
+inspecting the branch directly.
 
-Merging is a decision made on the report, not an inspection earned by reading. Doubt the report's
-specifics before you doubt its word - and take that doubt back to the delegate first. The moment you
-are reading to understand rather than to relay a question, that is a `Review` delegate's job.
+A refusal is a judgement call, not a silent gate: dispatch a follow-up to repair it, defer the
+landing, or drop the branch.
 
 ---
 
 ## 6. Deploy
 
-What changed decides what restarts:
+Deploy remains an orchestrator decision: batch and order restarts around the landings. Execute the
+local deploy through one script:
 
-| Changed | Action |
-|---|---|
-| server / API | `pwsh -File scripts/restart-apphost.ps1` (never a second `dev-aspire.ps1`) |
-| client | **`npm run build` in the MAIN checkout** — a worktree build does not transfer, `dist` is gitignored, and the E2E fixture hard-fails on a stale bundle |
-| pty / session-runner | also `pwsh -File scripts/restart-session-runner.ps1` — sessions survive, hosts are re-adopted, and only NEW sessions get the new shadow-copied binaries |
-| DB schema | the AppHost restart applies the migration |
+```powershell
+pwsh -NoProfile -File scripts/deploy-local.ps1
+```
 
-Verify: `/health` on 17202/17203/17204/17205, `GET :17204/capabilities` for the pty backend
-(it states whether it fell back), and compare running-session counts across a runner restart.
+It restarts the AppHost, waits for health, runs the local stack verification without a browser
+smoke, and checks the live EF migration history against `server/Migrations/`. Its final line is
+the deploy result: `DEPLOY VERDICT: ok` or `DEPLOY VERDICT: failed <detail>`. Read that one line;
+do not reconstruct the former multi-command deploy sequence by hand.
 
 ---
 
@@ -324,9 +335,9 @@ Split by what each part actually is:
 
 ## 8. Clean up
 
-```bash
-git worktree remove <path> && git worktree prune && git branch -d <branch>
-```
+For delegated Worktree tasks, worktree removal and branch deletion are the `-Land` operation's own
+job. Do not run them as a manual orchestrator step after a `Landed` outcome. A `LandRefused`
+outcome deliberately keeps both so a follow-up delegate can work from the failure.
 
 ```powershell
 Get-ChildItem C:\src\Antiphon -Recurse -Depth 3 -Directory |
