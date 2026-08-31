@@ -51,10 +51,13 @@ pick a card
        ▼
    opus Code agent, in a worktree, working the plan's slices
        ▼
-   VERIFY ON MASTER YOURSELF (do not take the report's word)
+   TRUST THE REPORT (§0) — ask the same delegate back if there's real concern
        ▼
-   merge --ff-only  ──▶  deploy  ──▶  close the card  ──▶  clean up
+   delegate.ps1 -Land <id>  ──▶  deploy  ──▶  close the card
 ```
+
+Landing (fetch, rebase, verify, fast-forward, push, worktree removal, branch deletion) is the
+`-Land` operation's job, not a manual step — see §5.
 
 A finished Plan or Docs deliverable sitting in a worktree is invisible. Cherry-pick or copy it onto
 master and push as soon as the task reports — do not wait for the task to formally settle. Two
