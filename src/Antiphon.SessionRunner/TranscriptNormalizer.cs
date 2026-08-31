@@ -107,6 +107,7 @@ public static class TranscriptNormalizer
         var apiErrorClass = GetString(root, "error");
         var apiErrorStatus = GetInt(root, "apiErrorStatus");
 
+        var hasToolUse = false;
         if (msg.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
         {
             foreach (var block in content.EnumerateArray())
@@ -127,6 +128,7 @@ public static class TranscriptNormalizer
                             parts.Add(new TranscriptPart(TranscriptKinds.Thinking, uuid, parent, ts, role, thinking, null, null, null, null, null, apiCallId, inTok, outTok, cacheRead, cacheCreate, Model: model));
                         break;
                     case "tool_use":
+                        hasToolUse = true;
                         var input = block.TryGetProperty("input", out var inp)
                             ? Truncate(inp.GetRawText(), MaxToolInputChars)
                             : null;
@@ -139,9 +141,16 @@ public static class TranscriptNormalizer
             }
         }
 
-        // A finished turn: stop_reason present and not "tool_use" (tool_use means the turn continues
-        // after the tool runs). end_turn / stop_sequence / max_tokens all mean the agent is idle.
-        if (!string.IsNullOrEmpty(stopReason) && stopReason != "tool_use")
+        // CARD-0282: claude-fable-5 sometimes stamps stop_reason "end_turn" on the records of a
+        // response that called tools (measured: 22 phantom TurnEnds, 3 sessions, fable only — the
+        // tools all ran and the turns all continued). A record carrying a tool_use block whose
+        // stop_reason claims "end_turn" is not a turn end: its tool result is by construction still
+        // to come. Deliberately scoped to end_turn — a max_tokens truncation mid-tool-call is a
+        // genuinely dead turn (the tool never runs, no result will ever arrive) and suppressing ITS
+        // TurnEnd would strand the session reading "working" forever, the CARD-0041 failure class.
+        if (!string.IsNullOrEmpty(stopReason)
+            && stopReason != "tool_use"
+            && !(hasToolUse && stopReason == "end_turn"))
             parts.Add(new TranscriptPart(
                 TranscriptKinds.TurnEnd, uuid, parent, ts, role, null, null, null, null, null, stopReason,
                 apiCallId, inTok, outTok, cacheRead, cacheCreate,

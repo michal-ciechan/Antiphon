@@ -164,6 +164,15 @@ public class TranscriptNormalizerTests
             .Where(l => !string.IsNullOrWhiteSpace(l))
             .ToArray();
 
+    // CARD-0282: two verbatim lines of one fable response (session ea371170, msg_011CeZ3VPvBbeuz1bhmFqSYi)
+    // stamped stop_reason "end_turn" on every record of a parallel tool batch. Line 0 is the
+    // signature-only thinking sibling (bare TurnEnd residual); line 1 is the ToolSearch tool_use
+    // record (the same-record phantom this card suppresses).
+    private static string[] FableToolUseEndTurnFixtureLines() =>
+        File.ReadLines(Path.Combine(AppContext.BaseDirectory, "Agents", "Fixtures", "fable-tool-use-end-turn.jsonl"))
+            .Where(l => !string.IsNullOrWhiteSpace(l))
+            .ToArray();
+
     /// <summary>
     /// The S1 carriage itself (CARD-0072): a wall stub's top-level error/isApiErrorMessage/
     /// apiErrorStatus — discarded entirely before this change — land on BOTH of the stub's parts.
@@ -460,5 +469,82 @@ public class TranscriptNormalizerTests
         TranscriptNormalizer.Normalize(lines[0]).ShouldBeEmpty("enqueue is not confirmation");
         TranscriptNormalizer.Normalize(lines[2]).ShouldBeEmpty("remove is ambiguous");
         TranscriptNormalizer.Normalize(lines[4]).ShouldBeEmpty("metadata attachments stay excluded");
+    }
+
+    /// <summary>
+    /// CARD-0282 pin: a fable tool_use record wrongly stamped <c>end_turn</c> is not a turn end.
+    /// The tool result is still to come. Exactly one ToolCall part; no TurnEnd.
+    /// </summary>
+    [Test]
+    public void A_tool_use_record_stamped_end_turn_yields_a_ToolCall_and_no_TurnEnd()
+    {
+        var parts = TranscriptNormalizer.Normalize(FableToolUseEndTurnFixtureLines()[1]);
+
+        var call = parts.ShouldHaveSingleItem();
+        call.Kind.ShouldBe(TranscriptKinds.ToolCall);
+        call.ToolName.ShouldBe("ToolSearch");
+        call.ApiCallId.ShouldBe("msg_011CeZ3VPvBbeuz1bhmFqSYi");
+        parts.ShouldNotContain(p => p.Kind == TranscriptKinds.TurnEnd);
+    }
+
+    /// <summary>
+    /// The guard must not over-trigger: a genuine terminal record with no tool_use still emits
+    /// both AssistantText and TurnEnd, sharing the ApiCallId — same as before CARD-0282.
+    /// </summary>
+    [Test]
+    [Arguments("end_turn")]
+    [Arguments("stop_sequence")]
+    public void A_genuine_end_of_turn_record_still_yields_a_TurnEnd(string stopReason)
+    {
+        var line =
+            $$$"""{"type":"assistant","uuid":"u-genuine","message":{"id":"msg_genuine","role":"assistant","stop_reason":"{{{stopReason}}}","content":[{"type":"text","text":"Committed and pushed."}]}}""";
+
+        var parts = TranscriptNormalizer.Normalize(line);
+
+        parts.Count.ShouldBe(2);
+        parts[0].Kind.ShouldBe(TranscriptKinds.AssistantText);
+        parts[1].Kind.ShouldBe(TranscriptKinds.TurnEnd);
+        parts[1].StopReason.ShouldBe(stopReason);
+        parts[0].ApiCallId.ShouldBe("msg_genuine");
+        parts[1].ApiCallId.ShouldBe(parts[0].ApiCallId);
+    }
+
+    /// <summary>
+    /// CARD-0282 scoping: a max_tokens truncation mid-tool-call is a genuinely dead turn (the
+    /// tool input is truncated, the tool never runs, no result will ever arrive). Suppressing
+    /// ITS TurnEnd would strand the session as "working" forever — the CARD-0041 failure class.
+    /// The guard is therefore end_turn-only; this record still yields ToolCall AND TurnEnd.
+    /// </summary>
+    [Test]
+    public void A_max_tokens_truncation_mid_tool_call_still_yields_a_TurnEnd()
+    {
+        const string line =
+            """{"type":"assistant","uuid":"u-trunc","message":{"id":"msg_trunc","role":"assistant","stop_reason":"max_tokens","content":[{"type":"tool_use","id":"toolu_trunc","name":"Bash","input":{"command":"echo truncated"}}]}}""";
+
+        var parts = TranscriptNormalizer.Normalize(line);
+
+        parts.Count.ShouldBe(2);
+        parts[0].Kind.ShouldBe(TranscriptKinds.ToolCall);
+        parts[0].ToolName.ShouldBe("Bash");
+        parts[1].Kind.ShouldBe(TranscriptKinds.TurnEnd);
+        parts[1].StopReason.ShouldBe("max_tokens");
+        parts.ShouldAllBe(p => p.ApiCallId == "msg_trunc");
+    }
+
+    /// <summary>
+    /// Accepted residual of CARD-0282 option A: the signature-only thinking sibling of a
+    /// mis-stamped tool batch still yields a bare TurnEnd. Per-record it is indistinguishable
+    /// from CARD-0046's legitimate split-final shape, so a future option-C (DB-level) fix has
+    /// a measured base and nobody "fixes" it here by accident.
+    /// </summary>
+    [Test]
+    public void The_sibling_thinking_record_of_a_mis_stamped_response_still_yields_a_bare_TurnEnd()
+    {
+        var part = TranscriptNormalizer.Normalize(FableToolUseEndTurnFixtureLines()[0]).ShouldHaveSingleItem();
+
+        part.Kind.ShouldBe(TranscriptKinds.TurnEnd);
+        part.StopReason.ShouldBe("end_turn");
+        part.Text.ShouldBeNull();
+        part.ApiCallId.ShouldBe("msg_011CeZ3VPvBbeuz1bhmFqSYi");
     }
 }
