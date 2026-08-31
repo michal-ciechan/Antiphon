@@ -42,9 +42,10 @@ public sealed class AgentSessionLaunchQueue
     /// </summary>
     public void EnqueueInteractiveSession(
         Guid sessionId, Guid agentId, AgentLaunchSpec spec, string? remoteControlName,
-        bool resume = false, LaunchNotes? notes = null)
+        bool resume = false, LaunchNotes? notes = null, string? initialPrompt = null)
     {
-        var launch = Task.Run(() => LaunchInteractiveSessionAsync(sessionId, agentId, spec, remoteControlName, resume, notes));
+        var launch = Task.Run(() => LaunchInteractiveSessionAsync(
+            sessionId, agentId, spec, remoteControlName, resume, notes, initialPrompt));
         lock (_gate)
             _launches.Add(launch);
 
@@ -89,11 +90,13 @@ public sealed class AgentSessionLaunchQueue
     }
 
     private async Task LaunchInteractiveSessionAsync(
-        Guid sessionId, Guid agentId, AgentLaunchSpec spec, string? remoteControlName, bool resume, LaunchNotes? notes)
+        Guid sessionId, Guid agentId, AgentLaunchSpec spec, string? remoteControlName, bool resume, LaunchNotes? notes,
+        string? initialPrompt)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var service = scope.ServiceProvider.GetRequiredService<AgentSessionService>();
-        await service.LaunchInteractiveAsync(sessionId, agentId, spec, remoteControlName, resume, notes, CancellationToken.None);
+        await service.LaunchInteractiveAsync(
+            sessionId, agentId, spec, remoteControlName, resume, notes, CancellationToken.None, initialPrompt);
     }
 
     private void Enqueue(

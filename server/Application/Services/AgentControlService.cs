@@ -89,8 +89,11 @@ public sealed class AgentControlService
     /// <summary>
     /// Boots the agent's process if it isn't already running. Idempotent: if the agent already
     /// has a live session this is a no-op (it does NOT re-rename / re-enable remote control).
-    /// With a queued/current card it spawns work on that card; with no card it starts a cardless,
-    /// human-driven interactive session in the agent's working directory.
+    /// With a queued/current card it spawns work on that card (card description is the first
+    /// prompt). With no card it starts a cardless, human-driven interactive session in the
+    /// agent's working directory — idle at the composer unless <see cref="StartAgentRequest.Prompt"/>
+    /// is supplied. <see cref="Agent.Details"/> is standing-job metadata (CLAUDE.md) and is never
+    /// typed as that prompt (CARD-0283).
     /// </summary>
     public async Task<AgentDetailDto> StartAsync(Guid agentId, StartAgentRequest request, CancellationToken ct)
     {
@@ -150,10 +153,19 @@ public sealed class AgentControlService
         var card = await ResolveStartCardAsync(agent, ct);
         var launchEnvOverride = AgentLaunchEnv.ValidateOverride(
             request.LaunchEnvOverride, "launchEnvOverride");
+        var initialPrompt = string.IsNullOrWhiteSpace(request.Prompt) ? null : request.Prompt.Trim();
 
         Guid sessionId;
         if (card is not null)
         {
+            if (initialPrompt is not null)
+            {
+                throw new ValidationException(
+                    nameof(request.Prompt),
+                    "prompt is only valid on a cardless start; this agent has queued or current card work. "
+                    + "The card description is delivered as the first prompt.");
+            }
+
             var spawn = await _cardService.SpawnAsync(
                 card.Id,
                 new SpawnCardRequest(
@@ -166,7 +178,7 @@ public sealed class AgentControlService
         else
         {
             sessionId = await StartInteractiveSessionAsync(
-                agent, remoteControlName, request.Fresh, launchEnvOverride, ct);
+                agent, remoteControlName, request.Fresh, launchEnvOverride, initialPrompt, ct);
             agent.CurrentCardId = null;
         }
 
@@ -188,6 +200,7 @@ public sealed class AgentControlService
         string? remoteControlName,
         bool fresh,
         IReadOnlyDictionary<string, string>? launchEnvOverride,
+        string? initialPrompt,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(agent.WorkingDirectory))
@@ -271,7 +284,8 @@ public sealed class AgentControlService
                 await _db.SaveChangesAsync(ct);
 
                 _launchQueue.EnqueueInteractiveSession(
-                    previous.Id, agent.Id, spec, remoteControlName, resume: true, notes: notes);
+                    previous.Id, agent.Id, spec, remoteControlName, resume: true, notes: notes,
+                    initialPrompt: initialPrompt);
                 return previous.Id;
             }
         }
@@ -350,7 +364,20 @@ public sealed class AgentControlService
             }
         }
 
-        _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, spec, remoteControlName, notes: notes);
+        if (initialPrompt is null && !string.IsNullOrWhiteSpace(agent.Details))
+        {
+            // CARD-0283: Details is standing-job metadata (CLAUDE.md), not a first prompt. A caller
+            // that stuffed a task into Details and then started has done the gym-stat-weightsteps
+            // shape — Running with an empty transcript, no error. Say so in the log rather than
+            // silently matching a healthy idle AlwaysOn / UI Start.
+            _logger.LogInformation(
+                "Cardless start of {AgentName} ({AgentId}): Details is not delivered as a prompt. "
+                + "Session {SessionId} stays idle until POST /api/sessions/{{id}}/messages or StartAgentRequest.Prompt",
+                agent.Name, agent.Id, session.Id);
+        }
+
+        _launchQueue.EnqueueInteractiveSession(
+            session.Id, agent.Id, spec, remoteControlName, notes: notes, initialPrompt: initialPrompt);
         return session.Id;
     }
 

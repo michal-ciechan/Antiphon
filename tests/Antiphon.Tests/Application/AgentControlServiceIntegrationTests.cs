@@ -248,6 +248,50 @@ public class AgentControlServiceIntegrationTests
     }
 
     [Test]
+    public async Task Start_with_Prompt_on_a_queued_card_is_422()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            var template = NewWorkflowTemplate(tempRoot);
+            db.Projects.Add(project);
+            db.WorkflowTemplates.Add(template);
+            await db.SaveChangesAsync();
+            var adapter = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(tempRoot, [adapter], defaultKind: "ClaudeCode");
+
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Prompt Card Board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "The card is the work"), CancellationToken.None);
+            var agent = await harness.AgentService.CreateAsync(
+                new CreateAgentRequest(
+                    "Prompt Card Claude",
+                    Path.Combine(tempRoot, "agent-workspace"),
+                    DefaultWorkflowTemplateId: template.Id),
+                CancellationToken.None);
+            await harness.AgentService.AssignCardAsync(
+                agent.Id, new AssignAgentCardRequest(card.Id), CancellationToken.None);
+
+            var ex = await Should.ThrowAsync<ValidationException>(
+                () => harness.Control.StartAsync(
+                    agent.Id,
+                    new StartAgentRequest(Prompt: "this must not override the card"),
+                    CancellationToken.None));
+            ex.StatusCode.ShouldBe(422);
+            ex.Errors[nameof(StartAgentRequest.Prompt)].ShouldNotBeEmpty();
+            adapter.Started.ShouldBeFalse();
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task Start_with_remote_control_on_a_grok_agent_is_refused_and_launches_nothing()
     {
         await using var db = CreateContext();

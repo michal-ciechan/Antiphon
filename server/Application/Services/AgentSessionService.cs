@@ -282,7 +282,9 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     /// Launches a cardless, human-driven interactive session that was pre-created in Starting state.
     /// Unlike <see cref="StartAsync"/> there is no card, worktree, workflow or run attempt: the agent
     /// process is spawned in the session's Cwd and left Running for the user to drive via the web
-    /// terminal. No work prompt is sent (optionally the remote-control commands are, if requested).
+    /// terminal. No work prompt is sent unless <paramref name="initialPrompt"/> is supplied
+    /// (optionally the remote-control commands are, if requested). Agent.Details is standing-job
+    /// metadata and is never used as this body (CARD-0283).
     /// With <paramref name="resume"/> the agent's previous Claude conversation (same session id) is
     /// resumed; if Claude reports the conversation no longer exists, a fresh conversation is started
     /// under the same id so the terminal still opens.
@@ -294,7 +296,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         string? remoteControlName,
         bool resume,
         LaunchNotes? notes,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? initialPrompt = null)
     {
         var session = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct)
             ?? throw new NotFoundException(nameof(AgentSession), sessionId);
@@ -305,7 +308,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             {
                 await LaunchInteractiveProcessAsync(
                     session, agentId, launchSpec, remoteControlName,
-                    resume ? AgentSessionResumeMode.Resume : null, notes, ct);
+                    resume ? AgentSessionResumeMode.Resume : null, notes, initialPrompt, ct);
             }
             catch (ClaudeSessionNotFoundException)
             {
@@ -316,7 +319,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 // not get the restart note, so the fallback keeps the full notes and the process
                 // launcher's resumeMode=null branch selects FreshBody.
                 await LaunchInteractiveProcessAsync(
-                    session, agentId, launchSpec, remoteControlName, resumeMode: null, notes, ct);
+                    session, agentId, launchSpec, remoteControlName, resumeMode: null, notes, initialPrompt, ct);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -355,6 +358,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         string? remoteControlName,
         AgentSessionResumeMode? resumeMode,
         LaunchNotes? notes,
+        string? initialPrompt,
         CancellationToken ct)
     {
         IAgentProtocolAdapter? adapter = null;
@@ -401,6 +405,18 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // commands and the note into one garbled composer.
             if (interruptedTurn && resumeMode == AgentSessionResumeMode.Resume)
                 await EnqueueResumeContinueAsync(session.Id, ct);
+
+            // CARD-0283: optional cardless work body, after notes and the resume-continue so a
+            // channel bootstrap / interrupted-turn continue still go first. WhenIdle: a live idle
+            // session delivers immediately; a note that already started a turn (or a pending
+            // channel row) keeps this Pending until that turn ends. Details is never this body —
+            // callers that want work on start pass StartAgentRequest.Prompt.
+            if (!string.IsNullOrWhiteSpace(initialPrompt))
+            {
+                await _messageQueue.EnqueueAsync(
+                    session.Id, initialPrompt.Trim(), MessageSendMode.WhenIdle, ct,
+                    origin: QueuedMessageOrigin.Ui);
+            }
 
             // Boot is complete — deliver anything queued while the session was Starting. The
             // enqueue path refuses to type into a booting TUI (the write would race the ready

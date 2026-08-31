@@ -232,6 +232,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
         />
         <Textarea
           label="Details"
+          description="Standing job for this agent, written into CLAUDE.md. Not sent as a first prompt on Start."
           autosize
           minRows={3}
           value={details}

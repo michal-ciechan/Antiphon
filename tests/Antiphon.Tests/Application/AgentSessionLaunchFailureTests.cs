@@ -844,6 +844,7 @@ public class AgentSessionLaunchFailureTests
             // CARD-0106 S2: lets a test hand the launch a spec the resolvers never saw, which is
             // exactly the "future forgotten path" the tripwire exists for.
             AgentLaunchSpec? spec = null,
+            string? initialPrompt = null,
             CancellationToken ct = default) =>
             Services.GetRequiredService<AgentSessionService>().LaunchInteractiveAsync(
                 SessionId,
@@ -852,7 +853,8 @@ public class AgentSessionLaunchFailureTests
                 remoteControlName,
                 resume,
                 notes,
-                ct);
+                ct,
+                initialPrompt);
 
         /// <summary>A project/board/card graph for the card-launch path. Returns the card id.</summary>
         public async Task<Guid> CreateCardAsync(string? description = null)

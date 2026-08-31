@@ -16,6 +16,7 @@ public sealed record AgentSummaryDto(
     string Name,
     string Slug,
     string WorkingDirectory,
+    /// <summary>Standing job (CLAUDE.md). Not a start prompt — see <see cref="CreateAgentRequest.Details"/>.</summary>
     string Details,
     Guid? DefaultWorkflowTemplateId,
     string? DefaultWorkflowTemplateName,
@@ -73,6 +74,7 @@ public sealed record AgentDetailDto(
     string Name,
     string Slug,
     string WorkingDirectory,
+    /// <summary>Standing job (CLAUDE.md). Not a start prompt — see <see cref="CreateAgentRequest.Details"/>.</summary>
     string Details,
     Guid? DefaultWorkflowTemplateId,
     string? DefaultWorkflowTemplateName,
@@ -180,6 +182,11 @@ public sealed record AgentQueueCardDto(
 public sealed record CreateAgentRequest(
     string Name,
     string WorkingDirectory,
+    /// <summary>
+    /// Standing job for this agent (CLAUDE.md "## Your job"). Not delivered as a first prompt on
+    /// start. To give a cardless agent work, pass <see cref="StartAgentRequest.Prompt"/> or
+    /// <c>POST /api/sessions/{id}/messages</c>. Card work uses the card description, not this field.
+    /// </summary>
     string? Details = null,
     Guid? DefaultWorkflowTemplateId = null,
     AgentAssignmentPolicy AssignmentPolicy = AgentAssignmentPolicy.AutoPick,
@@ -221,6 +228,10 @@ public sealed record DraftAgentResponse(
 public sealed record UpdateAgentRequest(
     string Name,
     string WorkingDirectory,
+    /// <summary>
+    /// Standing job for this agent (CLAUDE.md "## Your job"). Not delivered as a first prompt on
+    /// start. See <see cref="CreateAgentRequest.Details"/>.
+    /// </summary>
     string? Details,
     Guid? DefaultWorkflowTemplateId,
     AgentAssignmentPolicy AssignmentPolicy,
@@ -285,7 +296,18 @@ public sealed record StartAgentRequest(
     /// resume-recovery rebuilds from the agent's stored <c>launchEnv</c>. ANTIPHON_* names
     /// are refused 422. Does not cascade to child tasks — that is what a project default is for.
     /// </summary>
-    IReadOnlyDictionary<string, string>? LaunchEnvOverride = null);
+    IReadOnlyDictionary<string, string>? LaunchEnvOverride = null,
+    /// <summary>
+    /// Optional first work prompt for a <c>cardless</c> start (CARD-0283). Enqueued WhenIdle after
+    /// boot (after remote-control setup and any launch note) and typed once the composer is idle.
+    /// <see cref="CreateAgentRequest.Details"/> is standing-job metadata and is never used as this
+    /// body. Omit to leave the session idle at the composer — the designed empty-shell path
+    /// (AlwaysOn, channel-bound, UI Start, "task later via POST /api/sessions/{id}/messages").
+    /// 422 when this agent has spawnable card work: the card description is already the prompt.
+    /// Ignored when Start is a no-op because a live session already exists; send a session
+    /// message instead. Running does not mean a prompt was delivered.
+    /// </summary>
+    string? Prompt = null);
 
 /// <summary>CARD-0213: bind a standing Herdr agent to an existing operator pane.</summary>
 public sealed record AttachHerdrPaneRequest(string PaneId);

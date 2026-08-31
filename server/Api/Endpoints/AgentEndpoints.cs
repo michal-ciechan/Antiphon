@@ -119,6 +119,10 @@ public static class AgentEndpoints
             return Results.Ok(await service.GetIncidentsAsync(id, take ?? 50, cancellationToken));
         });
 
+        // Cardless start launches an idle interactive session. Details is standing-job metadata
+        // (CLAUDE.md), not a first prompt — pass StartAgentRequest.Prompt or POST
+        // /api/sessions/{id}/messages to give work. A card on the agent uses SpawnAsync instead,
+        // which types the card description. Running does not mean a prompt was delivered (CARD-0283).
         agents.MapPost("/{id:guid}/start", async (
             Guid id,
             StartAgentRequest request,

@@ -112,6 +112,56 @@ public class AgentSystemPromptLaunchTests
             .ShouldBeFalse();
     }
 
+    // CARD-0283: Details is standing-job metadata (CLAUDE.md "## Your job"), not a first prompt.
+    // The gym-stat-weightsteps incident stuffed a task into Details, started, and got a healthy
+    // Running session with an empty transcript. Empty-shell start is the designed contract.
+    [Test]
+    public async Task Cardless_start_does_not_deliver_Details_as_a_prompt()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: false);
+        await using (var db = CreateContext())
+        {
+            await db.Agents.Where(a => a.Id == h.AgentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.Details, "Plan CARD-0027 on the Gym Stat board"));
+        }
+        await EndSessionAsync(h, SessionStatus.Failed);
+
+        var started = await StartAsync(h, fresh: true);
+
+        var adapter = Factory(h).Created.ShouldHaveSingleItem();
+        adapter.SubmittedBodies.ShouldBeEmpty();
+        await using var verify = CreateContext();
+        (await verify.SessionQueuedMessages
+                .AnyAsync(m => m.AgentSessionId == Guid.Parse(started.PersistentSessionId!)))
+            .ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Cardless_start_with_Prompt_delivers_it_and_not_Details()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: false);
+        const string details = "Standing job written into CLAUDE.md";
+        const string prompt = "Do this task now: plan CARD-0027";
+        await using (var db = CreateContext())
+        {
+            await db.Agents.Where(a => a.Id == h.AgentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.Details, details));
+        }
+        await EndSessionAsync(h, SessionStatus.Failed);
+
+        var started = await StartAsync(h, fresh: true, prompt: prompt);
+
+        var adapter = Factory(h).Created.ShouldHaveSingleItem();
+        adapter.SubmittedBodies.ShouldBe([prompt]);
+        adapter.SubmittedBodies.ShouldNotContain(details);
+        await using var verify = CreateContext();
+        var queued = await verify.SessionQueuedMessages
+            .SingleAsync(m => m.AgentSessionId == Guid.Parse(started.PersistentSessionId!));
+        queued.Body.ShouldBe(prompt);
+        queued.Status.ShouldBe(QueuedMessageStatus.Sent);
+        queued.Origin.ShouldBe(QueuedMessageOrigin.Ui);
+    }
+
     [Test]
     public async Task Interactive_launch_names_the_session_by_agent_name()
     {
@@ -592,13 +642,16 @@ public class AgentSystemPromptLaunchTests
             .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, status));
     }
 
-    private static async Task<AgentDetailDto> StartAsync(BridgeQueueHarness h, bool fresh)
+    private static async Task<AgentDetailDto> StartAsync(
+        BridgeQueueHarness h, bool fresh, string? prompt = null)
     {
         // Fresh scope per start: the harness scope's DbContext tracks stale agent state.
         using var scope = h.Provider.CreateScope();
         var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
         await control.StartAsync(
-            h.AgentId, new StartAgentRequest(RemoteControl: false, Fresh: fresh), CancellationToken.None);
+            h.AgentId,
+            new StartAgentRequest(RemoteControl: false, Fresh: fresh, Prompt: prompt),
+            CancellationToken.None);
         await h.Provider.GetRequiredService<AgentSessionLaunchQueue>()
             .WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
         // Re-read: the background launch may have updated the session/agent after StartAsync returned.

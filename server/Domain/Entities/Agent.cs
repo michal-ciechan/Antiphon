@@ -8,6 +8,12 @@ public class Agent
     public string Name { get; set; } = string.Empty;
     public string Slug { get; set; } = string.Empty;
     public string WorkingDirectory { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Standing job for this agent. Written into workspace CLAUDE.md ("## Your job") at the next
+    /// launch. Not a first prompt: cardless <c>POST /api/agents/{id}/start</c> leaves the process
+    /// idle until <c>StartAgentRequest.Prompt</c> or <c>POST /api/sessions/{id}/messages</c>.
+    /// </summary>
     public string Details { get; set; } = string.Empty;
     public Guid? DefaultWorkflowTemplateId { get; set; }
     public Guid? TuiProfileId { get; set; }

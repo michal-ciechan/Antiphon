@@ -199,6 +199,7 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
         />
         <Textarea
           label="Details"
+          description="Standing job for this agent, written into CLAUDE.md. Not sent as a first prompt on Start — use Add work, the session composer, or StartAgentRequest.prompt."
           value={details}
           onChange={(event) => setDetails(event.currentTarget.value)}
         />

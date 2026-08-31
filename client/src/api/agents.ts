@@ -118,6 +118,7 @@ export interface AgentSummaryDto {
   name: string
   slug: string
   workingDirectory: string
+  /** Standing job (CLAUDE.md). Not sent as a first prompt on start. */
   details: string
   defaultWorkflowTemplateId: string | null
   defaultWorkflowTemplateName: string | null
@@ -278,6 +279,10 @@ export interface InstructionBundleDto {
 export interface CreateAgentRequest {
   name: string
   workingDirectory: string
+  /**
+   * Standing job for this agent, written into CLAUDE.md. Not delivered as a first prompt on
+   * start — pass `StartAgentRequest.prompt` or POST /api/sessions/{id}/messages.
+   */
   details?: string | null
   defaultWorkflowTemplateId?: string | null
   assignmentPolicy?: AgentAssignmentPolicy
@@ -376,6 +381,13 @@ export interface StartAgentRequest {
    * refusal; re-send with this true to launch anyway. No UI wires it in CARD-0136.
    */
   ignoreSubscriptionQuota?: boolean
+  /**
+   * Optional first work prompt for a cardless start. Typed after boot once the composer is idle.
+   * `details` is standing-job metadata (CLAUDE.md) and is never sent as this prompt. Omit to
+   * leave the session idle — send POST /api/sessions/{id}/messages to give work later.
+   * 422 when the agent has spawnable card work (the card description is already the prompt).
+   */
+  prompt?: string | null
 }
 
 export const agentKeys = {
