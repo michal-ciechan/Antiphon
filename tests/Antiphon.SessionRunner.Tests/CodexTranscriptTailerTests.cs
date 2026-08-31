@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Threading.Channels;
 using Antiphon.SessionRunner.Contracts;
@@ -287,13 +288,14 @@ public class CodexTranscriptTailerTests
             hub.Count(SessionRunnerEventNames.SessionTranscriptFault).ShouldBe(0);
 
             input.Append("The first prompt delivered after this session waited for Codex");
+            var elapsedSinceInput = Stopwatch.StartNew();
             tailer.UnboundReason.ShouldBe("locating");
             var fault = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(5));
 
             fault.ShouldNotBeNull();
             var unboundSeconds = fault!.RootElement.GetProperty("UnboundSeconds").GetDouble();
-            unboundSeconds.ShouldBeInRange(0.3, 1.5,
-                "the refusal clock starts when input is delivered, not when the child started");
+            unboundSeconds.ShouldBeInRange(0.3, elapsedSinceInput.Elapsed.TotalSeconds + 0.1,
+                "the refusal clock starts when input is delivered, not when the child started; the upper bound admits only post-input scheduling time");
             tailer.UnboundReason.ShouldBe("missing");
         }
         finally
