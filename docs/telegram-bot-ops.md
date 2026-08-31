@@ -55,44 +55,31 @@ column.
 
 ## Deploying the messaging service (server2)
 
-The `family` gateway on server2 is rebuilt from this repo's messaging projects, not from a published
-image bump alone. **Re-verified end to end on 2026-08-21** (CARD-0107's Slack rollout used exactly
-these steps).
+The `family` gateway on server2 is rebuilt from this repo's messaging source, not from a published
+image bump alone. Its only source-built deploy procedure is:
 
-`Messaging.Pack.props` lives at **`src/Messaging.Pack.props`**, not the repo root, and lands beside
-the projects because the Dockerfile's build context is `build/src` itself:
+```powershell
+# Read-only preflight: validates the Dockerfile-derived archive manifest and the remote Compose build contract.
+pwsh -NoProfile -File scripts/deploy-am-service.ps1
 
-```bash
-# from the repo root — exclude bin/obj or the image build picks up host artifacts
-cd src && tar czf /tmp/msgsrc.tgz --exclude=obj --exclude=bin --exclude='bin-*' \
-  Messaging.Pack.props Antiphon.Messaging Antiphon.Messaging.Gateway \
-  Antiphon.Messaging.Telegram Antiphon.Messaging.Slack Antiphon.Messaging.Service
-scp /tmp/msgsrc.tgz mc@server2:/tmp/
-
-# on server2 — replace the tree rather than overlaying it, so files DELETED or RENAMED upstream
-# (e.g. TelegramIngressService.cs -> ChannelIngressService.cs) don't linger in the build context
-ssh mc@server2 'cd /home/mc/antiphon-messaging \
-  && cp docker-compose.yml docker-compose.yml.bak-$(date +%Y%m%d-%H%M%S) \
-  && mv build/src build/src.bak-$(date +%Y%m%d-%H%M%S) \
-  && mkdir -p build/src && tar xzf /tmp/msgsrc.tgz -C build/src \
-  && docker compose build messaging-service && docker compose up -d messaging-service'
+# Production only after explicit authorization. -Confirm gives the final interactive confirmation.
+pwsh -NoProfile -File scripts/deploy-am-service.ps1 -Deploy -Confirm
 ```
 
-`build` leaves the running container untouched, so the only downtime is the `up -d` recreate
-(~10 s measured). Keep the `build/src.bak-*` and `docker-compose.yml.bak-*` copies until the new
-container is verified — they are the rollback.
+The script derives its archive entries from local
+`src/Antiphon.Messaging.Service/Dockerfile` `COPY` sources. There is intentionally no manually
+maintained project/tar list: a source dependency added to the Dockerfile enters the archive, while
+unsupported `COPY` syntax refuses before upload. It validates the remote Compose build context and
+Dockerfile before every write, replaces rather than overlays `build/src`, and retains the exact
+`build/src.bak-*` path as rollback evidence. Read its final `REMOTE DEPLOY VERDICT` line; do not
+reconstruct SSH, tar, or Compose commands by hand. It never prints Compose environment values,
+tokens, or arbitrary logs.
 
 Kafka topics `channels.inbound` / `channels.outbound` carry `max.message.bytes=20971520`.
 
-**Verify the deploy, don't assume it** — `am-service` carries the live Family and AZ Care
-conversations:
-
-```bash
-ssh mc@server2 'docker logs am-service --since 5m'          # expect one "[ingress] starting channel <name>" per adapter
-ssh mc@server2 'curl -s localhost:18090/api/channels'       # authoritative list of registered adapters
-```
-
-Then prove both directions with real traffic. Send to the **`Antiphon-Family` test group
+The script technically verifies the running container, registered adapters, migration history, and
+a bounded redacted startup-log scan. Then prove both directions with real traffic. Send to the
+**`Antiphon-Family` test group
 (`-5370465377`)**, never the live `Family` group: `dotnet run scripts/tg-send.cs -- --to
 -5370465377 --text "..."` from `C:\src\ClaudeBot` should log `[outbound] sent via telegram -> <id>`,
 and a reply typed back into that group should log `[ingress] telegram -5370465377 -> channels.inbound`.

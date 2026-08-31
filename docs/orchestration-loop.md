@@ -295,6 +295,12 @@ smoke, and checks the live EF migration history against `server/Migrations/`. It
 the deploy result: `DEPLOY VERDICT: ok` or `DEPLOY VERDICT: failed <detail>`. Read that one line;
 do not reconstruct the former multi-command deploy sequence by hand.
 
+For the separately scoped `am-service` remote target, the same rule applies through
+`pwsh -NoProfile -File scripts/deploy-am-service.ps1`. Once a Deploy-role brief explicitly
+authorizes `-Deploy`, that Deploy-role delegate may run this script and report its final
+`REMOTE DEPLOY VERDICT`; it may not reconstruct the SSH/tar/Compose sequence ad hoc. Its default
+run is a read-only preflight, and its human traffic check remains the Antiphon-Family test group.
+
 ---
 
 ## 7. Close the card — orchestrator writes the verdict, haiku executes it
