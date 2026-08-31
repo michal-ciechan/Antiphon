@@ -129,6 +129,14 @@ param(
     [Parameter(ParameterSetName = 'Status', Mandatory = $true)]
     [string]$Status,
 
+    # Explicitly land a succeeded Worktree task through the server's fetch/rebase/verify/push
+    # operation. -Verify is an optional treenode filter; the full suite is deliberately not a gate.
+    [Parameter(ParameterSetName = 'Land', Mandatory = $true)]
+    [string]$Land,
+
+    [Parameter(ParameterSetName = 'Land')]
+    [string]$Verify,
+
     # Print the repo's named areas - what -Scope may name, and the paths each one owns. Reads
     # antiphon.areas.json at the repo root of -Dir (or the current directory).
     [Parameter(ParameterSetName = 'ListAreas', Mandatory = $true)]
@@ -194,6 +202,15 @@ switch ($PSCmdlet.ParameterSetName) {
         Write-Output ("{0}  {1}  {2}/{3}  {4}" -f $s.status, $s.title, $s.kind, $s.role, $s.modelLevel)
         if ($task.result) { Write-Output ''; Write-Output $task.result }
         elseif ($task.failureReason) { Write-Output ''; Write-Output "failed: $($task.failureReason)" }
+        return
+    }
+
+    'Land' {
+        $body = @{}
+        if ($Verify) { $body['verify'] = $Verify }
+        Invoke-Antiphon -Method POST -Path "/api/agent-tasks/$Land/land" -Body $body | Out-Null
+        $suffix = if ($Verify) { " with test filter '$Verify'" } else { '' }
+        Write-Output "Queued land for task $Land$suffix. The outcome will be delivered to the caller session."
         return
     }
 

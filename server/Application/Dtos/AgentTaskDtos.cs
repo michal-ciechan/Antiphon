@@ -231,6 +231,9 @@ public sealed record ScopeOverlapDto(
 
 public sealed record ReplyToAgentTaskRequest(string Message);
 
+/// <summary>Optional narrow test filter for an explicit <c>POST /land</c> verification.</summary>
+public sealed record LandAgentTaskRequest(string? Verify = null);
+
 /// <summary>Manual tier bump. Null takes the next rung up (or the role policy's target).</summary>
 public sealed record EscalateAgentTaskRequest(AgentModelLevel? ModelLevel = null);
 

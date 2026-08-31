@@ -193,6 +193,100 @@ public class DelegationWorktreeTests
 
     // ---- merge-back ------------------------------------------------------------------------
 
+    // ---- explicit land preparation/finalization (CARD-0258 S1) ----------------------------
+
+    [Test]
+    public async Task land_happy_path_rebases_a_moved_base_and_pushes_the_fast_forward()
+    {
+        using var repo = new ScratchGitRepo("antiphon-land-happy");
+        using var remote = new TemporaryDirectory("antiphon-land-remote");
+        await ScratchGitRepo.GitInAsync(remote.Path, "init", "--bare");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("remote", "add", "origin", remote.Path);
+        await repo.GitAsync("push", "-u", "origin", "master");
+
+        var (service, _) = CreateService(repo);
+        var task = NewTask(repo.Path, mergeTarget: null);
+        await service.CreateForTaskAsync(task, CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "land me\n");
+        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "feature.md");
+        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "feature");
+        await repo.CommitFileAsync("README.md", "base advanced\n");
+        await repo.GitAsync("push", "origin", "master");
+
+        var prepared = await service.PrepareLandAsync(task, CancellationToken.None);
+        prepared.Succeeded.ShouldBeTrue();
+        prepared.BaseMoved.ShouldBeTrue();
+        var finalized = await service.FinalizeLandAsync(task, prepared.Target!, CancellationToken.None);
+
+        finalized.Succeeded.ShouldBeTrue(finalized.Detail);
+        (await ScratchGitRepo.GitInAsync(remote.Path, "show", "master:feature.md")).StdOut.ShouldBe("land me\n");
+        Directory.Exists(task.WorktreePath).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task land_conflict_is_reported_and_the_worktree_is_left_for_the_merge_delegate()
+    {
+        using var repo = new ScratchGitRepo("antiphon-land-conflict");
+        using var remote = new TemporaryDirectory("antiphon-land-remote");
+        await ScratchGitRepo.GitInAsync(remote.Path, "init", "--bare");
+        await repo.CommitFileAsync("shared.md", "base\n");
+        await repo.GitAsync("remote", "add", "origin", remote.Path);
+        await repo.GitAsync("push", "-u", "origin", "master");
+
+        var (service, _) = CreateService(repo);
+        var task = NewTask(repo.Path, mergeTarget: null);
+        await service.CreateForTaskAsync(task, CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "shared.md"), "task version\n");
+        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "shared.md");
+        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "task edit");
+        await repo.CommitFileAsync("shared.md", "target version\n");
+        await repo.GitAsync("push", "origin", "master");
+
+        var prepared = await service.PrepareLandAsync(task, CancellationToken.None);
+
+        prepared.Conflicted.ShouldBeTrue();
+        prepared.ConflictFiles.ShouldContain("shared.md");
+        Directory.Exists(task.WorktreePath).ShouldBeTrue("a merge delegate must receive the original worktree");
+        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "status", "--porcelain")).StdOut.Trim().ShouldBeEmpty(
+            "the rebase is aborted before the Merge delegate starts it again");
+    }
+
+    [Test]
+    public async Task land_push_rejection_keeps_the_rebased_branch_and_worktree()
+    {
+        using var repo = new ScratchGitRepo("antiphon-land-push-reject");
+        using var remote = new TemporaryDirectory("antiphon-land-remote");
+        await ScratchGitRepo.GitInAsync(remote.Path, "init", "--bare");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("remote", "add", "origin", remote.Path);
+        await repo.GitAsync("push", "-u", "origin", "master");
+
+        var (service, _) = CreateService(repo);
+        var task = NewTask(repo.Path, mergeTarget: null);
+        await service.CreateForTaskAsync(task, CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "land me\n");
+        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "feature.md");
+        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "feature");
+        var prepared = await service.PrepareLandAsync(task, CancellationToken.None);
+        prepared.Succeeded.ShouldBeTrue();
+
+        using var rival = new TemporaryDirectory("antiphon-land-rival");
+        await ScratchGitRepo.GitInAsync(rival.Path, "clone", remote.Path, ".");
+        await ScratchGitRepo.GitInAsync(rival.Path, "config", "user.email", "test@antiphon.local");
+        await ScratchGitRepo.GitInAsync(rival.Path, "config", "user.name", "Rival");
+        await File.WriteAllTextAsync(Path.Combine(rival.Path, "rival.md"), "remote moved\n");
+        await ScratchGitRepo.GitInAsync(rival.Path, "add", "rival.md");
+        await ScratchGitRepo.GitInAsync(rival.Path, "commit", "-m", "remote advance");
+        await ScratchGitRepo.GitInAsync(rival.Path, "push", "origin", "master");
+
+        var finalized = await service.FinalizeLandAsync(task, prepared.Target!, CancellationToken.None);
+
+        finalized.Succeeded.ShouldBeFalse();
+        finalized.Detail.ShouldContain("push");
+        Directory.Exists(task.WorktreePath).ShouldBeTrue("a push rejection must not clean up recoverable work");
+    }
+
     [Test]
     public async Task a_clean_change_lands_on_the_target_and_the_worktree_is_removed()
     {
@@ -506,6 +600,24 @@ public class DelegationWorktreeTests
             NullLogger<DelegationWorktreeService>.Instance,
             new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance));
         return (service, manager);
+    }
+
+    private sealed class TemporaryDirectory : IDisposable
+    {
+        public string Path { get; } = Directory.CreateTempSubdirectory().FullName;
+
+        public TemporaryDirectory(string prefix)
+        {
+            Directory.Delete(Path);
+            Path = Directory.CreateTempSubdirectory(prefix).FullName;
+        }
+
+        public void Dispose()
+        {
+            try { Directory.Delete(Path, recursive: true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
     }
 
     private static (string Branch, string WorktreePath) ExpectedCoordinates(ScratchGitRepo repo, AgentTask task)

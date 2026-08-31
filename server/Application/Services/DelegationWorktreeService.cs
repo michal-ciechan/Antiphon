@@ -68,6 +68,102 @@ public sealed class DelegationWorktreeService
         AlreadyCleanedUp = 5,
     }
 
+    /// <summary>The rebase half of an explicit land operation.</summary>
+    public sealed record LandPreparation(
+        bool Succeeded,
+        bool Conflicted,
+        bool BaseMoved,
+        string? Target,
+        string? Branch,
+        string? Detail,
+        IReadOnlyList<string> ConflictFiles);
+
+    /// <summary>The fast-forward/push/cleanup half of an explicit land operation.</summary>
+    public sealed record LandFinalization(bool Succeeded, string? Sha, string? Detail);
+
+    /// <summary>
+    /// Fetch and rebase a kept task branch for an explicit land. This deliberately shares the
+    /// conflict/abort shape of <see cref="TryMergeBackAsync"/>, but does not advance or remove
+    /// anything: callers must verify a replay before they make the target visible.
+    /// </summary>
+    public async Task<LandPreparation> PrepareLandAsync(AgentTask task, CancellationToken ct)
+    {
+        if (task.WorktreePath is not { } worktree || task.WorktreeBranch is not { } branch
+            || task.RepoPath is not { } repo)
+            return new(false, false, false, null, null, "The task has no worktree recorded.", []);
+
+        if (!await IsRegisteredWorktreeAsync(repo, worktree, ct))
+            return new(false, false, false, null, branch, "The task worktree is no longer registered.", []);
+
+        var target = task.MergeTargetRef ?? "master";
+        var fetch = await GitAsync(repo, ct, "fetch", "origin");
+        if (!fetch.Ok)
+            return new(false, false, false, target, branch, $"git fetch origin failed: {fetch.StdErr.Trim()}", []);
+
+        // This machine's local target is canonical. A remote advance is a refusal for the caller,
+        // never an implicit merge of somebody else's remote work into an ordered landing.
+        var remoteAhead = await GitAsync(repo, ct, "rev-list", "--count", $"{target}..origin/{target}");
+        if (!remoteAhead.Ok)
+            return new(false, false, false, target, branch,
+                $"Could not compare {target} with origin/{target}: {remoteAhead.StdErr.Trim()}", []);
+        if (remoteAhead.StdOut.Trim() != "0")
+            return new(false, false, false, target, branch,
+                $"origin/{target} moved ahead of local {target}; refresh the target before landing.", []);
+
+        // A target already reachable from HEAD makes `rebase target` a no-op. Verification is only
+        // needed when rebase replayed commits onto a base the task did not previously contain.
+        var targetAlreadyInHead = await GitAsync(worktree, ct, "merge-base", "--is-ancestor", target, "HEAD");
+        var baseMoved = !targetAlreadyInHead.Ok;
+
+        var rebase = await GitAsync(worktree, ct, "rebase", target);
+        if (!rebase.Ok)
+        {
+            var conflicts = await GitAsync(worktree, ct, "diff", "--name-only", "--diff-filter=U");
+            var files = conflicts.StdOut
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToList();
+            await GitAsync(worktree, ct, "rebase", "--abort");
+
+            return files.Count > 0
+                ? new(false, true, baseMoved, target, branch, rebase.StdErr.Trim(), files)
+                : new(false, false, baseMoved, target, branch,
+                    $"Rebase onto {target} failed: {rebase.StdErr.Trim()}", []);
+        }
+
+        return new(true, false, baseMoved, target, branch, null, []);
+    }
+
+    /// <summary>Advance, push, and remove a branch whose explicit land verification passed.</summary>
+    public async Task<LandFinalization> FinalizeLandAsync(AgentTask task, string target, CancellationToken ct)
+    {
+        if (task.WorktreePath is not { } worktree || task.WorktreeBranch is not { } branch
+            || task.RepoPath is not { } repo)
+            return new(false, null, "The task has no worktree recorded.");
+
+        var advanced = await AdvanceTargetAsync(repo, branch, target, ct);
+        if (advanced is { } advanceFailure)
+            return new(false, null, advanceFailure);
+
+        var push = await GitAsync(repo, ct, "push", "origin", target);
+        if (!push.Ok)
+            return new(false, null, $"git push origin {target} rejected: {push.StdErr.Trim()}");
+
+        var sha = await GitAsync(repo, ct, "rev-parse", target);
+        await RemoveQuietlyAsync(repo, worktree, ct);
+        var deleted = await GitAsync(repo, ct, "branch", "-d", branch);
+        if (!deleted.Ok)
+        {
+            // WorktreeManager may already prune the merged branch as part of RemoveAsync. That is
+            // the requested cleanup, not a post-push refusal. A still-present branch is unusual
+            // and is surfaced rather than silently called clean.
+            var exists = await GitAsync(repo, ct, "show-ref", "--verify", "--quiet", $"refs/heads/{branch}");
+            if (exists.Ok)
+                return new(false, sha.StdOut.Trim(), $"Landed and pushed, but could not delete {branch}: {deleted.StdErr.Trim()}");
+        }
+
+        return new(true, sha.StdOut.Trim(), null);
+    }
+
     /// <summary>
     /// Create the task's worktree and record its coordinates on the row. Branches from the merge
     /// target when one is set — the rebase-back is then linear — and from HEAD otherwise. A

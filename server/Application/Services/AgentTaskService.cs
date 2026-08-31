@@ -1045,7 +1045,8 @@ public sealed class AgentTaskService
     /// and reports to the same parent session, working directly in the conflicted worktree.
     /// </summary>
     internal async Task<AgentTask?> CreateMergeTaskAsync(
-        AgentTask conflicted, IReadOnlyList<string> conflictFiles, CancellationToken ct)
+        AgentTask conflicted, IReadOnlyList<string> conflictFiles, CancellationToken ct,
+        string? landingTarget = null)
     {
         var siblings = await _db.AgentTasks.CountAsync(t => t.RootTaskId == conflicted.RootTaskId, ct);
         if (siblings >= _settings.MaxTasksPerRoot || conflicted.Depth + 1 > _settings.MaxDepth)
@@ -1056,11 +1057,13 @@ public sealed class AgentTaskService
             return null;
         }
 
-        if (conflicted.WorktreePath is not { } worktree || conflicted.WorktreeBranch is not { } branch
-            || conflicted.MergeTargetRef is not { } target)
+        if (conflicted.WorktreePath is not { } worktree || conflicted.WorktreeBranch is not { } branch)
         {
             return null;
         }
+        var target = conflicted.MergeTargetRef ?? landingTarget;
+        if (target is null)
+            return null;
 
         var id = Guid.NewGuid();
         var now = UtcNow();
@@ -1087,8 +1090,9 @@ public sealed class AgentTaskService
                 3. Fast-forward the target: git fetch . {branch}:{target} — if git refuses because
                    {target} is checked out elsewhere, run git merge --ff-only {branch} in that
                    checkout instead.
+                4. git push origin {target}; then remove this worktree and delete {branch}.
                 Report which files conflicted and how you resolved each. Do NOT redo or review the
-                task's work — only integrate it.
+                task's work — only integrate and finish landing it.
                 """,
             Kind = AgentTaskKind.Worker,
             Role = AgentTaskRole.Merge,

@@ -271,6 +271,8 @@ try
     builder.Services.AddSingleton<AreaMapLoader>();
     builder.Services.AddScoped<DelegationWorktreeService>();
     builder.Services.AddScoped<AgentTaskService>();
+    builder.Services.AddSingleton<AgentTaskLandQueue>();
+    builder.Services.AddScoped<AgentTaskLandService>();
     // CARD-0140 S3: AgentTuiLaunchResolver is already AddScoped below; the dispatcher's optional
     // constructor parameter picks it up so a pinned standing agent launches from its own profile.
     builder.Services.AddScoped<AgentTaskDispatcher>();
@@ -499,6 +501,7 @@ try
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.DataRetentionHostedService>();
     builder.Services.AddHostedService<OrchestratorTickHostedService>();
     builder.Services.AddHostedService<AgentTaskDispatcherHostedService>();
+    builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Orchestration.AgentTaskLandHostedService>();
     builder.Services.AddHostedService<AgentTaskCheckHostedService>();
     // One-shot: re-prices tasks costed before CARD-0023, so the per-root ceiling stops reading
     // ~10x-inflated history. No-ops once every row carries the current pricing version.

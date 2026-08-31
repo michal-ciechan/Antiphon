@@ -153,6 +153,18 @@ public enum AgentTaskEventType
     /// is either a caller who should declare that area too, or a map missing a path.
     /// </summary>
     ScopeDrift = 19,
+
+    /// <summary>The caller explicitly queued this finished Worktree task for server-side landing.</summary>
+    LandRequested = 20,
+
+    /// <summary>The server rebased, verified, fast-forwarded, pushed, and cleaned up the task branch.</summary>
+    Landed = 21,
+
+    /// <summary>
+    /// A requested land operation stopped safely (for example red verification or a moved remote).
+    /// The task branch and worktree are retained so a follow-up delegate can continue from facts.
+    /// </summary>
+    LandRefused = 22,
 }
 
 /// <summary>

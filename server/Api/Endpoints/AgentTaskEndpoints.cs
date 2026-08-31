@@ -121,6 +121,20 @@ public static class AgentTaskEndpoints
             var taskId = await service.ResolveTaskIdAsync(id, ct);
             return Results.Ok(await replies.RefineAsync(taskId, request.Message, ct));
         });
+
+        // Explicit and ordered: a succeeded Worktree task is left for review until the caller
+        // chooses to land it. The request only queues deterministic git work; it never waits for it.
+        tasks.MapPost("/{id}/land", async (
+            string id,
+            LandAgentTaskRequest? request,
+            AgentTaskService service,
+            AgentTaskLandService lands,
+            CancellationToken ct) =>
+        {
+            var taskId = await service.ResolveTaskIdAsync(id, ct);
+            return Results.Accepted($"/api/agent-tasks/{taskId}",
+                await lands.RequestAsync(taskId, request?.Verify, ct));
+        });
     }
 
     /// <summary>
