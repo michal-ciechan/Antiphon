@@ -166,6 +166,27 @@ describe('AttentionPanel', () => {
     expect(screen.getByText(/still Pending/)).toBeInTheDocument()
   })
 
+  it('draws a CardlessDetailsNoPrompt row with the needs-a-prompt badge', async () => {
+    serve({
+      items: [
+        item({
+          kind: 'CardlessDetailsNoPrompt',
+          severity: 'Warning',
+          title: 'gym-stats',
+          agentId: 'a1',
+          headline: 'Cardless start still idle after 3m because Details was not sent as a prompt.',
+        }),
+      ],
+    })
+
+    renderWithProviders(<AttentionPanel />)
+
+    expect(await screen.findByText('gym-stats')).toBeInTheDocument()
+    expect(screen.getByText('Details needs a prompt')).toBeInTheDocument()
+    expect(screen.getByText(/still idle/)).toBeInTheDocument()
+    expect(screen.getByText(/Details was not sent as a prompt/)).toBeInTheDocument()
+  })
+
   it('shows the evidence, the age and the spend on the row', async () => {
     serve({
       items: [

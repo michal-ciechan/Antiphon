@@ -141,6 +141,17 @@ public enum AttentionKind
     /// SendNow, because bypassing WhenIdle can type into a busy caller composer.
     /// </summary>
     CallerNoteUndelivered = 18,
+
+    /// <summary>
+    /// A current cardless interactive session has been Running past a two-minute grace, its
+    /// owning agent has non-blank Details, and the session has no transcript and no UI-origin
+    /// queued message (CARD-0287). The start left Details as standing metadata and never
+    /// supplied a prompt. Detection only: this row does not type Details, queue a message, or
+    /// auto-fix the start. Only the fresh interactive launch shape qualifies
+    /// (<c>CreatedAt == StartedAt</c> and a non-null composed stamp); a resume or Herdr attach
+    /// of an empty shell must not raise it.
+    /// </summary>
+    CardlessDetailsNoPrompt = 19,
 }
 
 /// <summary>

@@ -50,6 +50,12 @@ public sealed class AttentionService
     private static readonly TimeSpan NeverStartedGrace = TimeSpan.FromMinutes(2);
 
     /// <summary>
+    /// Boot and the <c>WhenIdle</c> launch queue need a moment to persist the UI-origin prompt
+    /// row. Fixed, not a setting: CARD-0287 is a read-time Warning, not a tunable watchdog.
+    /// </summary>
+    private static readonly TimeSpan CardlessDetailsPromptGrace = TimeSpan.FromMinutes(2);
+
+    /// <summary>
     /// The delivery watchdog's own clock, read from delegation settings so this projection and the
     /// sweep cannot disagree about when a brief is overdue for typing (CARD-0117 S5) or when a
     /// caller-session note is overdue for delivery (CARD-0267).
@@ -163,6 +169,7 @@ public sealed class AttentionService
         items.AddRange(openItems);
         items.AddRange(await BuildParkedMessageItemsAsync(ct));
         items.AddRange(await BuildCallerNoteUndeliveredItemsAsync(now, ct));
+        items.AddRange(await BuildCardlessDetailsNoPromptItemsAsync(now, ct));
         items.AddRange(await BuildInboundUnconsumedItemsAsync(since, ct));
         items.AddRange(await BuildRecentIncidentItemsAsync(since, attachedIncidents, ct));
         items.AddRange(BuildFailureUnacknowledgedItems(unacknowledged, costs, checkDigests));
@@ -857,6 +864,105 @@ public sealed class AttentionService
                 message.CreatedAt,
                 null,
                 [AttentionAction.OpenDrawer]));
+        }
+
+        return items;
+    }
+
+    // ---- CARD-0287: cardless Details-only start still idle --------------------------------------
+
+    /// <summary>
+    /// Current cardless interactive sessions that launched without a prompt while Details is
+    /// standing-job metadata. Detection only — nothing here types Details or queues a message.
+    /// The CARD-0283 Information log in <c>AgentControlService</c> remains the launch-time
+    /// forensic; this row is the caller-visible, self-clearing projection of the same fact.
+    /// </summary>
+    private async Task<List<AttentionItemDto>> BuildCardlessDetailsNoPromptItemsAsync(
+        DateTime now, CancellationToken ct)
+    {
+        var items = new List<AttentionItemDto>();
+        var cutoff = now - CardlessDetailsPromptGrace;
+
+        // Fresh interactive launch shape only: StartInteractiveSessionAsync stamps CreatedAt and
+        // StartedAt from one now and always records a composition (empty string is meaningful).
+        // Resume restamps only StartedAt; Herdr attach leaves the composed stamp null.
+        var candidates = await _db.AgentSessions.AsNoTracking()
+            .Where(s => s.Status == SessionStatus.Running
+                && s.CardId == null
+                && s.StartedAt < cutoff
+                && s.CreatedAt == s.StartedAt
+                && s.ComposedBundleStamp != null)
+            .Select(s => new { s.Id, s.StartedAt })
+            .ToListAsync(ct);
+        if (candidates.Count == 0)
+            return items;
+
+        var sessionIds = candidates.Select(s => s.Id).ToList();
+        var keys = sessionIds.Select(id => id.ToString("D")).ToList();
+
+        var standing = await _db.Agents.AsNoTracking()
+            .Where(a => a.PersistentSessionId != null && keys.Contains(a.PersistentSessionId))
+            .Select(a => new { a.Id, a.Name, a.PersistentSessionId, a.Details })
+            .ToListAsync(ct);
+
+        var owners = new Dictionary<Guid, (Guid AgentId, string AgentName, string Details)>();
+        foreach (var agent in standing)
+        {
+            // Whitespace is not a standing job; apply the same semantics as the launch log.
+            if (string.IsNullOrWhiteSpace(agent.Details))
+                continue;
+            if (!Guid.TryParse(agent.PersistentSessionId, out var sessionId))
+                continue;
+            owners.TryAdd(sessionId, (agent.Id, agent.Name, agent.Details));
+        }
+
+        if (owners.Count == 0)
+            return items;
+
+        var ownedIds = owners.Keys.ToList();
+
+        var withTranscript = (await _db.TranscriptEntries.AsNoTracking()
+                .Where(e => ownedIds.Contains(e.AgentSessionId))
+                .Select(e => e.AgentSessionId)
+                .Distinct()
+                .ToListAsync(ct))
+            .ToHashSet();
+
+        var withUiQueue = (await _db.SessionQueuedMessages.AsNoTracking()
+                .Where(m => ownedIds.Contains(m.AgentSessionId)
+                    && m.Origin == QueuedMessageOrigin.Ui)
+                .Select(m => m.AgentSessionId)
+                .Distinct()
+                .ToListAsync(ct))
+            .ToHashSet();
+
+        foreach (var session in candidates)
+        {
+            if (!owners.TryGetValue(session.Id, out var owner))
+                continue;
+            if (withTranscript.Contains(session.Id) || withUiQueue.Contains(session.Id))
+                continue;
+
+            var age = now - session.StartedAt;
+            items.Add(new AttentionItemDto(
+                AttentionKind.CardlessDetailsNoPrompt,
+                AlertSeverity.Warning,
+                null,
+                session.Id,
+                owner.AgentId,
+                null,
+                owner.AgentName,
+                $"Cardless start still idle after {Duration(age)} because Details was not sent as a prompt.",
+                Evidence(
+                    "Current Details: "
+                    + Excerpt(owner.Details)
+                    + ". No transcript entries and no UI start or message queue row. "
+                    + "Details is standing-job metadata, not a first prompt. "
+                    + "Send a session message now, or pass StartAgentRequest.Prompt on a future cardless start.",
+                    check: null),
+                session.StartedAt,
+                null,
+                [AttentionAction.OpenAgent]));
         }
 
         return items;

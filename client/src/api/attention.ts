@@ -78,6 +78,13 @@ export type AttentionKind =
    * (CARD-0267). Detection only — silence is not evidence the delegate is still running.
    */
   | 'CallerNoteUndelivered'
+  /**
+   * A current cardless start is still idle after grace because Details was not sent as a
+   * prompt (CARD-0287). Detection only — Details stays standing metadata; nothing auto-sends
+   * it. Only a fresh interactive launch qualifies; a resume or Herdr-attached empty shell
+   * does not.
+   */
+  | 'CardlessDetailsNoPrompt'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =

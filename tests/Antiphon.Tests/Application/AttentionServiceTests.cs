@@ -461,6 +461,207 @@ public class AttentionServiceTests
         after.ShouldNotContain(i => i.MessageId == canceledId && i.Kind == AttentionKind.CallerNoteUndelivered);
     }
 
+    // ---- CardlessDetailsNoPrompt (CARD-0287) ----------------------------------------------------
+
+    [Test]
+    public async Task a_cardless_details_start_past_grace_with_no_prompt_is_a_warning()
+    {
+        var now = new DateTimeOffset(2026, 8, 31, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        var startedAt = now.UtcDateTime.AddMinutes(-3);
+        await using var scenario = new Scenario();
+        var (session, agent, _) = await scenario.AddCardlessDetailsCaseAsync(startedAt);
+
+        var rows = (await ItemsForAsync(scenario, clock))
+            .Where(i => i.Kind == AttentionKind.CardlessDetailsNoPrompt)
+            .ToList();
+
+        var item = rows.ShouldHaveSingleItem();
+        item.Severity.ShouldBe(AlertSeverity.Warning);
+        item.AgentId.ShouldBe(agent);
+        item.SessionId.ShouldBe(session);
+        item.TaskId.ShouldBeNull();
+        item.MessageId.ShouldBeNull();
+        item.Title.ShouldBe($"attn-{agent:N}"[..16]);
+        item.SinceUtc.ShouldBe(startedAt);
+        item.Actions.ShouldBe([AttentionAction.OpenAgent]);
+        item.Headline.ShouldContain("still idle");
+        item.Headline.ShouldContain("Details was not sent as a prompt");
+        item.Evidence.ShouldContain("Current Details");
+        item.Evidence.ShouldContain("No transcript");
+        item.Evidence.ShouldContain("no UI start or message queue row");
+        item.Evidence.ShouldContain("standing-job metadata");
+        item.Evidence.ShouldContain("StartAgentRequest.Prompt");
+    }
+
+    [Test]
+    public async Task a_cardless_details_start_is_absent_at_the_two_minute_grace_and_present_just_after()
+    {
+        var now = new DateTimeOffset(2026, 8, 31, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        await using var scenario = new Scenario();
+        var atGrace = now.UtcDateTime.AddMinutes(-2);
+        var pastGrace = now.UtcDateTime.AddMinutes(-2).AddSeconds(-1);
+        var (atGraceSession, _, _) = await scenario.AddCardlessDetailsCaseAsync(atGrace);
+        var (pastGraceSession, _, _) = await scenario.AddCardlessDetailsCaseAsync(pastGrace);
+
+        var rows = (await ItemsForAsync(scenario, clock))
+            .Where(i => i.Kind == AttentionKind.CardlessDetailsNoPrompt)
+            .ToList();
+
+        rows.ShouldNotContain(i => i.SessionId == atGraceSession);
+        rows.ShouldContain(i => i.SessionId == pastGraceSession);
+    }
+
+    [Test]
+    public async Task blank_or_whitespace_details_does_not_raise_cardless_details_no_prompt()
+    {
+        var now = new DateTimeOffset(2026, 8, 31, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        var startedAt = now.UtcDateTime.AddMinutes(-3);
+        await using var scenario = new Scenario();
+        var (blankSession, _, _) = await scenario.AddCardlessDetailsCaseAsync(startedAt, details: "");
+        var (whitespaceSession, _, _) = await scenario.AddCardlessDetailsCaseAsync(
+            startedAt.AddSeconds(-5), details: "  \t  ");
+
+        var rows = await ItemsForAsync(scenario, clock);
+        rows.ShouldNotContain(i =>
+            i.Kind == AttentionKind.CardlessDetailsNoPrompt && i.SessionId == blankSession);
+        rows.ShouldNotContain(i =>
+            i.Kind == AttentionKind.CardlessDetailsNoPrompt && i.SessionId == whitespaceSession);
+    }
+
+    [Test]
+    public async Task a_non_current_owner_does_not_raise_cardless_details_no_prompt()
+    {
+        var now = new DateTimeOffset(2026, 8, 31, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        var startedAt = now.UtcDateTime.AddMinutes(-3);
+        await using var scenario = new Scenario();
+        var (session, _, _) = await scenario.AddCardlessDetailsCaseAsync(startedAt, currentOwner: false);
+
+        (await ItemsForAsync(scenario, clock)).ShouldNotContain(
+            i => i.Kind == AttentionKind.CardlessDetailsNoPrompt && i.SessionId == session);
+    }
+
+    [Test]
+    public async Task a_non_running_session_does_not_raise_cardless_details_no_prompt()
+    {
+        var now = new DateTimeOffset(2026, 8, 31, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        var startedAt = now.UtcDateTime.AddMinutes(-3);
+        await using var scenario = new Scenario();
+        var (session, _, _) = await scenario.AddCardlessDetailsCaseAsync(
+            startedAt, status: SessionStatus.Stopped);
+
+        (await ItemsForAsync(scenario, clock)).ShouldNotContain(
+            i => i.Kind == AttentionKind.CardlessDetailsNoPrompt && i.SessionId == session);
+    }
+
+    [Test]
+    public async Task a_card_owned_session_does_not_raise_cardless_details_no_prompt()
+    {
+        var now = new DateTimeOffset(2026, 8, 31, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        var startedAt = now.UtcDateTime.AddMinutes(-3);
+        await using var scenario = new Scenario();
+        var (cardId, _, _) = await scenario.AddInProgressCardAsync(daysAgo: 1);
+        var (session, _, _) = await scenario.AddCardlessDetailsCaseAsync(startedAt, cardId: cardId);
+
+        (await ItemsForAsync(scenario, clock)).ShouldNotContain(
+            i => i.Kind == AttentionKind.CardlessDetailsNoPrompt && i.SessionId == session);
+    }
+
+    [Test]
+    public async Task a_resumed_session_does_not_raise_cardless_details_no_prompt()
+    {
+        var now = new DateTimeOffset(2026, 8, 31, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        var startedAt = now.UtcDateTime.AddMinutes(-3);
+        await using var scenario = new Scenario();
+        var (session, _, _) = await scenario.AddCardlessDetailsCaseAsync(
+            startedAt, createdAt: startedAt.AddHours(-1));
+
+        (await ItemsForAsync(scenario, clock)).ShouldNotContain(
+            i => i.Kind == AttentionKind.CardlessDetailsNoPrompt && i.SessionId == session);
+    }
+
+    [Test]
+    public async Task a_herdr_attached_session_does_not_raise_cardless_details_no_prompt()
+    {
+        var now = new DateTimeOffset(2026, 8, 31, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        var startedAt = now.UtcDateTime.AddMinutes(-3);
+        await using var scenario = new Scenario();
+        var (session, _, _) = await scenario.AddCardlessDetailsCaseAsync(
+            startedAt, composedBundleStamp: null);
+
+        (await ItemsForAsync(scenario, clock)).ShouldNotContain(
+            i => i.Kind == AttentionKind.CardlessDetailsNoPrompt && i.SessionId == session);
+    }
+
+    [Test]
+    public async Task any_transcript_entry_suppresses_cardless_details_no_prompt()
+    {
+        var now = new DateTimeOffset(2026, 8, 31, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        var startedAt = now.UtcDateTime.AddMinutes(-3);
+        await using var scenario = new Scenario();
+        var (session, _, _) = await scenario.AddCardlessDetailsCaseAsync(startedAt);
+        await scenario.AddTranscriptAsync(session, (TranscriptKinds.Thinking, "booting", null));
+
+        (await ItemsForAsync(scenario, clock)).ShouldNotContain(
+            i => i.Kind == AttentionKind.CardlessDetailsNoPrompt && i.SessionId == session);
+    }
+
+    [Test]
+    public async Task a_pending_ui_queue_row_suppresses_cardless_details_no_prompt()
+    {
+        var now = new DateTimeOffset(2026, 8, 31, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        var startedAt = now.UtcDateTime.AddMinutes(-3);
+        await using var scenario = new Scenario();
+        var (session, _, _) = await scenario.AddCardlessDetailsCaseAsync(startedAt);
+        await scenario.AddCallerNoteAsync(
+            session, QueuedMessageOrigin.Ui, QueuedMessageStatus.Pending, createdAt: startedAt);
+
+        (await ItemsForAsync(scenario, clock)).ShouldNotContain(
+            i => i.Kind == AttentionKind.CardlessDetailsNoPrompt && i.SessionId == session);
+    }
+
+    [Test]
+    public async Task a_sent_ui_queue_row_suppresses_cardless_details_no_prompt()
+    {
+        var now = new DateTimeOffset(2026, 8, 31, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        var startedAt = now.UtcDateTime.AddMinutes(-3);
+        await using var scenario = new Scenario();
+        var (session, _, _) = await scenario.AddCardlessDetailsCaseAsync(startedAt);
+        await scenario.AddCallerNoteAsync(
+            session, QueuedMessageOrigin.Ui, QueuedMessageStatus.Sent, createdAt: startedAt);
+
+        (await ItemsForAsync(scenario, clock)).ShouldNotContain(
+            i => i.Kind == AttentionKind.CardlessDetailsNoPrompt && i.SessionId == session);
+    }
+
+    [Test]
+    public async Task cardless_details_no_prompt_disappears_after_a_transcript_arrives()
+    {
+        var now = new DateTimeOffset(2026, 8, 31, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        var startedAt = now.UtcDateTime.AddMinutes(-3);
+        await using var scenario = new Scenario();
+        var (session, _, _) = await scenario.AddCardlessDetailsCaseAsync(startedAt);
+
+        (await ItemsForAsync(scenario, clock)).ShouldContain(
+            i => i.Kind == AttentionKind.CardlessDetailsNoPrompt && i.SessionId == session);
+
+        await scenario.AddTranscriptAsync(session, (TranscriptKinds.UserPrompt, "do the standing job", null));
+
+        (await ItemsForAsync(scenario, clock)).ShouldNotContain(
+            i => i.Kind == AttentionKind.CardlessDetailsNoPrompt && i.SessionId == session);
+    }
+
     [Test]
     public async Task a_dispatched_task_still_inside_the_start_grace_is_not_listed()
     {
@@ -1352,31 +1553,40 @@ public class AttentionServiceTests
         }
 
         public async Task<Guid> AddSessionAsync(
-            SessionStatus status = SessionStatus.Running, int? endedMinutesAgo = null)
+            SessionStatus status = SessionStatus.Running,
+            int? endedMinutesAgo = null,
+            DateTime? createdAt = null,
+            DateTime? startedAt = null,
+            string? composedBundleStamp = null,
+            Guid? cardId = null)
         {
             var id = Guid.NewGuid();
             await using var db = CreateContext();
             db.AgentSessions.Add(new AgentSession
             {
                 Id = id,
+                CardId = cardId,
                 DefinitionName = "attention-test",
                 AgentKind = AgentKind.ClaudeCode,
                 Status = status,
                 Cwd = Path.GetTempPath(),
                 Cols = 120,
                 Rows = 30,
-                CreatedAt = DateTime.UtcNow.AddHours(-1),
-                StartedAt = DateTime.UtcNow.AddHours(-1),
+                CreatedAt = createdAt ?? DateTime.UtcNow.AddHours(-1),
+                StartedAt = startedAt ?? DateTime.UtcNow.AddHours(-1),
                 LastSeenAt = DateTime.UtcNow,
                 EndedAt = endedMinutesAgo is { } ago ? DateTime.UtcNow.AddMinutes(-ago) : null,
                 FailureReason = status == SessionStatus.Failed ? "the process vanished" : null,
+                ComposedBundleStamp = composedBundleStamp,
             });
             await db.SaveChangesAsync();
             _sessions.Add(id);
             return id;
         }
 
-        public async Task<Guid> AddAgentAsync(Guid? persistentSession = null)
+        public async Task<Guid> AddAgentAsync(
+            Guid? persistentSession = null,
+            string details = "Attention projection test agent.")
         {
             var id = Guid.NewGuid();
             var name = $"attn-{id:N}"[..16];
@@ -1387,7 +1597,7 @@ public class AttentionServiceTests
                 Name = name,
                 Slug = name,
                 WorkingDirectory = Path.GetTempPath(),
-                Details = "Attention projection test agent.",
+                Details = details,
                 Status = AgentStatus.Running,
                 ModelLevel = AgentModelLevel.Medium,
                 IsPoolDelegate = true,
@@ -1398,6 +1608,31 @@ public class AttentionServiceTests
             await db.SaveChangesAsync();
             _agents.Add(id);
             return id;
+        }
+
+        /// <summary>
+        /// CARD-0287: a fresh interactive launch (CreatedAt == StartedAt, non-null composed stamp)
+        /// that a current owner can optionally claim. Empty-string stamp is a real composition.
+        /// </summary>
+        public async Task<(Guid SessionId, Guid AgentId, DateTime StartedAt)> AddCardlessDetailsCaseAsync(
+            DateTime startedAt,
+            string details = "Standing job: keep the gym stats current.",
+            SessionStatus status = SessionStatus.Running,
+            DateTime? createdAt = null,
+            string? composedBundleStamp = "",
+            Guid? cardId = null,
+            bool currentOwner = true)
+        {
+            var sessionId = await AddSessionAsync(
+                status,
+                createdAt: createdAt ?? startedAt,
+                startedAt: startedAt,
+                composedBundleStamp: composedBundleStamp,
+                cardId: cardId);
+            var agentId = currentOwner
+                ? await AddAgentAsync(persistentSession: sessionId, details: details)
+                : await AddAgentAsync(details: details);
+            return (sessionId, agentId, startedAt);
         }
 
         public async Task AddChannelAsync(Guid agentId)

@@ -8,6 +8,7 @@ import {
   TbHourglassHigh,
   TbLink,
   TbMailExclamation,
+  TbMessage,
   TbPlayerPlayFilled,
   TbPlugConnectedX,
   TbRepeat,
@@ -148,6 +149,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     color: 'warning',
     icon: TbHourglassHigh,
     hint: 'The caller has not received the note. Silence is not evidence the delegate is still running.',
+  },
+  CardlessDetailsNoPrompt: {
+    label: 'Details needs a prompt',
+    color: 'warning',
+    icon: TbMessage,
+    hint: 'A cardless start is still idle because Details was not sent as a prompt. Send a message; nothing sends Details automatically.',
   },
 }
 
