@@ -181,7 +181,10 @@ public enum AgentTaskReportEvidence
     /// <summary>The report closed with <c>[antiphon-report:id done|blocked|failed]</c>.</summary>
     Marked = 1,
 
-    /// <summary>No closing line; settled after the one nudge (or a dead session skipped the nudge).</summary>
+    /// <summary>
+    /// No closing line; settled after a second unmarked end after the delivered nudge
+    /// (or a dead session skipped the nudge) (CARD-0248).
+    /// </summary>
     UnmarkedAfterNudge = 2,
 
     /// <summary>No closing line; last-two-lines <c>?</c> heuristic (kept from before CARD-0159).</summary>
