@@ -819,25 +819,94 @@ public class AgentTaskServiceIntegrationTests
         task.ModelLevel.ShouldBe(AgentModelLevel.Low, "the running model IS the tier");
         task.Workspace.ShouldBe(WorkspaceMode.Shared);
         task.Ephemeral.ShouldBeFalse("pinned — a requeue must go back to the same agent");
+        created.FollowUpMessage.ShouldBe("follow-up on the live agent");
     }
 
     [Test]
-    public async Task a_follow_up_on_a_retired_agent_is_refused_with_guidance()
+    public async Task a_follow_up_on_a_retired_agent_degrades_to_a_fresh_delegate_with_inherited_context()
     {
         using var workspace = new TempWorkspace();
         var prior = await SeedTaskAsync(
-            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Succeeded);
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Succeeded,
+            result: "Changed the service and committed abc123.");
         await PinTaskAgentAsync(prior.Id, Guid.NewGuid()); // an agent that no longer exists
 
         await using var db = CreateContext();
-        var ex = await Should.ThrowAsync<ConflictException>(
-            () => CreateService(db).CreateAsync(
-                NewRequest("follow up") with { FollowUpOnTask = prior.Id.ToString("D") },
-                ManualCaller(workspace.Path),
-                CancellationToken.None));
+        var storedPrior = await db.AgentTasks.SingleAsync(task => task.Id == prior.Id);
+        storedPrior.Goal = "Implement the settled-task path.";
+        storedPrior.AgentKind = AgentKind.Grok;
+        storedPrior.ModelLevel = AgentModelLevel.Low;
+        storedPrior.RepoPath = workspace.Path;
+        storedPrior.WorktreePath = workspace.Path;
+        storedPrior.WorktreeBranch = "feat/prior-work";
+        var parentSessionId = Guid.NewGuid();
+        await SeedParentSessionAsync(db, parentSessionId, workspace.Path);
+        db.SessionQueuedMessages.Add(new SessionQueuedMessage
+        {
+            Id = Guid.NewGuid(),
+            AgentSessionId = parentSessionId,
+            SourceTaskId = prior.Id,
+            Body = "completion note",
+            NoteHeader = $"[task {DelegationReportFormatter.Short(prior.Id)} done] git=uncommitted:2 · drift=server · overlapping-running=12345678",
+            Status = QueuedMessageStatus.Sent,
+            Sequence = 1,
+            Origin = QueuedMessageOrigin.Delegation,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
 
-        ex.Message.ShouldContain("retired");
-        ex.Message.ShouldContain("delegate normally", customMessage: "refusals must say what to do instead");
+        var created = await CreateService(db).CreateAsync(
+            NewRequest("Follow up from the report.", role: AgentTaskRole.Code) with
+            {
+                FollowUpOnTask = prior.Id.ToString("D"),
+            },
+            ManualCaller(workspace.Path),
+            CancellationToken.None);
+
+        var fresh = await db.AgentTasks.AsNoTracking().SingleAsync(task => task.Id == created.Id);
+        fresh.AgentId.ShouldBeNull("the retired agent must not be revived or pinned");
+        fresh.WorkingDirectory.ShouldBe(workspace.Path, "a degraded follow-up uses normal fresh-dispatch resolution");
+        fresh.Workspace.ShouldBe(WorkspaceMode.Shared);
+        fresh.AgentKind.ShouldBe(AgentKind.ClaudeCode, "the prior session's program does not constrain a fresh delegate");
+        fresh.ModelLevel.ShouldBe(AgentModelLevel.Frontier, "the prior session's tier does not constrain a fresh delegate");
+        fresh.Goal.ShouldStartWith("--- inherited context from settled task");
+        fresh.Goal.ShouldContain("Implement the settled-task path.");
+        fresh.Goal.ShouldContain("Changed the service and committed abc123.");
+        fresh.Goal.ShouldContain("git=uncommitted:2");
+        fresh.Goal.ShouldContain("drift=server");
+        fresh.Goal.ShouldContain("overlapping-running=12345678");
+        fresh.Goal.ShouldContain(workspace.Path);
+        fresh.Goal.ShouldContain("feat/prior-work");
+        fresh.Goal.ShouldContain("Prior card binding:");
+        fresh.Goal.ShouldEndWith("Follow up from the report.");
+        created.FollowUpMessage.ShouldBe("agent retired - fresh delegate with inherited context");
+    }
+
+    [Test]
+    public async Task a_follow_up_on_a_task_that_never_ran_degrades_to_a_fresh_delegate()
+    {
+        using var workspace = new TempWorkspace();
+        var prior = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Failed,
+            result: "The launch failed before a delegate started.");
+
+        await using var db = CreateContext();
+        var created = await CreateService(db).CreateAsync(
+            NewRequest("Try this with a new delegate.", role: AgentTaskRole.Code) with
+            {
+                FollowUpOnTask = DelegationReportFormatter.Short(prior.Id),
+            },
+            ManualCaller(workspace.Path),
+            CancellationToken.None);
+
+        var fresh = await db.AgentTasks.AsNoTracking().SingleAsync(task => task.Id == created.Id);
+        fresh.AgentId.ShouldBeNull();
+        fresh.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+        fresh.ModelLevel.ShouldBe(AgentModelLevel.Frontier);
+        fresh.Goal.ShouldStartWith("--- inherited context from settled task");
+        fresh.Goal.ShouldContain("The launch failed before a delegate started.");
+        fresh.Goal.ShouldContain("[No completion header was recorded.]");
+        created.FollowUpMessage.ShouldBe("agent retired - fresh delegate with inherited context");
     }
 
     // ---- short ids: the id the caller actually has -------------------------------------------

@@ -41,7 +41,9 @@ public sealed record CreateAgentTaskRequest(
     /// <summary>
     /// Follow-up: run this on the SAME agent that ran the given task (full guid or 8-char short
     /// id), keeping its context. The task inherits that agent's directory and tier; it waits in
-    /// the queue while the agent is still busy.
+    /// the queue while the agent is still busy. If that agent has retired (or the prior task never
+    /// ran on one), creation degrades to a fresh delegate with the settled task's context prefixed
+    /// to its goal.
     /// </summary>
     string? FollowUpOnTask = null,
     /// <summary>
@@ -212,7 +214,12 @@ public sealed record AgentTaskCreatedDto(
     /// mis-binding is caught by the caller who can still fix it, not on the board a week later.</summary>
     Guid? CardId = null,
     /// <summary>The bound card's identifier — what <c>delegate.ps1</c> echoes as "bound to CARD-nnnn".</summary>
-    string? CardIdentifier = null);
+    string? CardIdentifier = null,
+    /// <summary>
+    /// How a requested follow-up was dispatched: either on its still-live agent, or as a fresh
+    /// delegate after that agent was unavailable. Null when this was not a follow-up.
+    /// </summary>
+    string? FollowUpMessage = null);
 
 /// <summary>
 /// One running task a newly created task overlaps, and what the dispatcher will do about it.

@@ -111,16 +111,11 @@ public sealed class AgentTaskService
             request.LaunchEnvOverride, "launchEnvOverride");
         var suppliedInheritedLlmEnv = AgentLaunchEnv.ValidateOverride(
             request.InheritedLlmEnv, "inheritedLlmEnv");
-        // Follow-ups and standing-agent pins continue an existing process — snapshotting the
-        // caller's env onto them would record a routing the live process cannot take.
-        var skipInheritedSnapshot = !string.IsNullOrWhiteSpace(request.FollowUpOnTask);
-        if (launchEnvOverride.Count > 0 && skipInheritedSnapshot)
-        {
-            throw new ValidationException(
-                "launchEnvOverride",
-                "A follow-up continues an existing process, so a launch-time env override cannot "
-                + "apply. Drop the override, or PATCH the agent's launchEnv for a durable change.");
-        }
+        // A live follow-up and a standing-agent pin continue an existing process — snapshotting
+        // the caller's env onto them would record a routing the live process cannot take. A
+        // follow-up whose prior agent has retired is deliberately a fresh dispatch, so it keeps
+        // normal launch-env semantics.
+        var skipInheritedSnapshot = false;
 
         // Rejected rather than reinterpreted. 0 does NOT mean "never check" and a negative is not a
         // silent default: opting a single task out of checking is not offered until someone needs
@@ -138,6 +133,8 @@ public sealed class AgentTaskService
         Agent? pinnedStandingAgent = null;
         // CARD-0040: a follow-up continues the earlier task's work, so it continues its card too.
         Guid? followUpCardId = null;
+        string? followUpMessage = null;
+        var liveFollowUp = false;
 
         // Follow-up: run on the SAME agent that ran an earlier task, keeping its context. The
         // task inherits that agent's directory (that is where the context lives) and its TIER —
@@ -147,35 +144,60 @@ public sealed class AgentTaskService
             var priorId = await ResolveTaskIdAsync(request.FollowUpOnTask, ct);
             var prior = await _db.AgentTasks.AsNoTracking().FirstAsync(t => t.Id == priorId, ct);
             followUpCardId = prior.CardId;
-            if (prior.AgentId is not Guid followAgentId)
-                throw new ConflictException(
-                    $"Task {DelegationReportFormatter.Short(priorId)} never ran on an agent — there is nothing to follow up on.");
+            var followAgent = prior.AgentId is Guid followAgentId
+                ? await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == followAgentId, ct)
+                : null;
 
-            var followAgent = await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == followAgentId, ct)
-                ?? throw new ConflictException(
-                    $"The agent that ran task {DelegationReportFormatter.Short(priorId)} has been retired "
-                    + "from the pool — delegate normally instead; the report is still on the task.");
-            subscriptionOwner = followAgent;
-
-            // The agent is already running, as whatever program it was launched as. A follow-up
-            // keeps that context, so the kind is not a choice any more: unset inherits the prior
-            // task's, and an explicit mismatch is refused rather than silently reinterpreted.
-            if (request.AgentKind is { } wantedKind && wantedKind != prior.AgentKind)
+            if (followAgent is null)
             {
-                throw new ConflictException(
-                    $"Task {DelegationReportFormatter.Short(priorId)} ran on {prior.AgentKind}, so a "
-                    + $"follow-up on its agent cannot run on {wantedKind} — that agent's context lives "
-                    + "in the session that is already running. Delegate normally to change kind.");
+                var completionHeader = await CompletionHeaderAsync(prior.Id, ct);
+                var cardIdentifier = prior.CardId is Guid cardId
+                    ? await _db.Cards.AsNoTracking()
+                        .Where(card => card.Id == cardId)
+                        .Select(card => card.Identifier)
+                        .FirstOrDefaultAsync(ct)
+                    : null;
+                request = request with
+                {
+                    Goal = BuildInheritedFollowUpGoal(prior, completionHeader, cardIdentifier, request.Goal),
+                };
+                followUpMessage = "agent retired - fresh delegate with inherited context";
             }
-
-            request = request with
+            else
             {
-                WorkingDirectory = request.WorkingDirectory ?? followAgent.WorkingDirectory,
-                Workspace = WorkspaceMode.Shared,
-                ModelLevel = followAgent.ModelLevel,
-                AgentKind = prior.AgentKind,
-                AgentId = followAgent.Id,
-            };
+                liveFollowUp = true;
+                skipInheritedSnapshot = true;
+                if (launchEnvOverride.Count > 0)
+                {
+                    throw new ValidationException(
+                        "launchEnvOverride",
+                        "A follow-up continues an existing process, so a launch-time env override cannot "
+                        + "apply. Drop the override, or PATCH the agent's launchEnv for a durable change.");
+                }
+
+                subscriptionOwner = followAgent;
+
+                // The agent is already running, as whatever program it was launched as. A follow-up
+                // keeps that context, so the kind is not a choice any more: unset inherits the prior
+                // task's, and an explicit mismatch is refused rather than silently reinterpreted.
+                if (request.AgentKind is { } wantedKind && wantedKind != prior.AgentKind)
+                {
+                    throw new ConflictException(
+                        $"Task {DelegationReportFormatter.Short(priorId)} ran on {prior.AgentKind}, so a "
+                        + $"follow-up on its agent cannot run on {wantedKind} — that agent's context lives "
+                        + "in the session that is already running. Delegate normally to change kind.");
+                }
+
+                request = request with
+                {
+                    WorkingDirectory = request.WorkingDirectory ?? followAgent.WorkingDirectory,
+                    Workspace = WorkspaceMode.Shared,
+                    ModelLevel = followAgent.ModelLevel,
+                    AgentKind = prior.AgentKind,
+                    AgentId = followAgent.Id,
+                };
+                followUpMessage = "follow-up on the live agent";
+            }
         }
 
         // CARD-0140 S1: a bare pin to a STANDING agent settles kind the same way a follow-up
@@ -183,7 +205,7 @@ public sealed class AgentTaskService
         // an explicit mismatch is refused rather than silently reinterpreted. Pool delegates
         // are carved out — FollowUpOnTask already covers "same delegate again", and
         // TryReuseWarmAgentAsync plus ResolveAgentAsync own the kind-mismatch relaunch.
-        if (string.IsNullOrWhiteSpace(request.FollowUpOnTask) && request.AgentId is Guid pinId)
+        if (!liveFollowUp && request.AgentId is Guid pinId)
         {
             var pinned = await _db.Agents.AsNoTracking()
                 .FirstOrDefaultAsync(a => a.Id == pinId, ct);
@@ -431,7 +453,59 @@ public sealed class AgentTaskService
             NoReplyRouting: task.ReplyTo == AgentTaskReplyTo.None,
             ScopeOverlaps: await FindScopeOverlapsAsync(task, ct),
             CardId: binding.CardId,
-            CardIdentifier: binding.Identifier);
+            CardIdentifier: binding.Identifier,
+            FollowUpMessage: followUpMessage);
+    }
+
+    private async Task<string?> CompletionHeaderAsync(Guid taskId, CancellationToken ct) =>
+        await _db.SessionQueuedMessages.AsNoTracking()
+            .Where(message => message.SourceTaskId == taskId && message.NoteHeader != null)
+            .OrderByDescending(message => message.CreatedAt)
+            .Select(message => message.NoteHeader)
+            .FirstOrDefaultAsync(ct);
+
+    private static string BuildInheritedFollowUpGoal(
+        AgentTask prior,
+        string? completionHeader,
+        string? cardIdentifier,
+        string requestedGoal)
+    {
+        var result = string.IsNullOrWhiteSpace(prior.Result)
+            ? "[No result was recorded.]"
+            : prior.Result;
+        var header = string.IsNullOrWhiteSpace(completionHeader)
+            ? "[No completion header was recorded.]"
+            : completionHeader.Trim();
+        var card = prior.CardId is not Guid cardId
+            ? "[No card binding.]"
+            : $"{cardIdentifier ?? "[card no longer exists]"} ({cardId:D})";
+        var worktree = prior.WorktreePath is { Length: > 0 } path && Directory.Exists(path)
+            ? $"{path}\nBranch: {prior.WorktreeBranch ?? "[No branch recorded.]"}"
+            : "[No surviving worktree directory.]";
+
+        return $"""
+            --- inherited context from settled task {DelegationReportFormatter.Short(prior.Id)} ---
+            Prior goal:
+            {prior.Goal.Trim()}
+
+            Prior result:
+            {result}
+
+            Prior completion header:
+            {header}
+
+            Prior worktree:
+            {worktree}
+
+            Prior repository:
+            {prior.RepoPath ?? "[No repository recorded.]"}
+
+            Prior card binding:
+            {card}
+            --- end inherited context ---
+
+            {requestedGoal.Trim()}
+            """;
     }
 
     /// <summary>

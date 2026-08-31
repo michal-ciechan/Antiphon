@@ -301,6 +301,7 @@ switch ($PSCmdlet.ParameterSetName) {
                 $created.shortId, $body.kind.ToLower(), $body.role.ToLower(), $created.modelLevel, $kindNote, $routing, $cardNote)
         # A warning at creation is the caller's one chance to reconsider before the collision.
         if ($created.warning) { Write-Output ("WARNING: {0}" -f $created.warning) }
+        if ($created.followUpMessage) { Write-Output ("FOLLOW-UP: {0}" -f $created.followUpMessage) }
         # And so is this: what the declared -Scope costs, right now, against what is already
         # running. 'serialise' means this task waits; 'warn' means it starts and somebody owes a
         # rebase. Said here because the dispatcher's verdict is 5 seconds and one queue away, and
