@@ -1827,7 +1827,7 @@ public sealed class AgentTaskReplyService
         var sessionLive = task.AgentSessionId is Guid sid && await IsSessionLiveAsync(db, sid, ct);
         if (task.ReportNudgedAt is null && sessionLive)
         {
-            await NudgeForClosingLineAsync(services, db, task, now, ct);
+            await NudgeForClosingLineAsync(services, db, task, turn, now, ct);
             return null;
         }
 
@@ -1860,7 +1860,8 @@ public sealed class AgentTaskReplyService
     }
 
     private async Task NudgeForClosingLineAsync(
-        IServiceProvider services, AppDbContext db, AgentTask task, DateTime now, CancellationToken ct)
+        IServiceProvider services, AppDbContext db, AgentTask task, TurnOutcome turn, DateTime now,
+        CancellationToken ct)
     {
         if (task.AgentSessionId is not Guid sessionId)
             return;
@@ -1873,6 +1874,11 @@ public sealed class AgentTaskReplyService
             + "If it is not finished, continue.";
 
         task.ReportNudgedAt = now;
+        // Record the boundary first, before enqueue: if enqueue throws, the recorded nudge still
+        // prevents a 5 s re-nudge storm. ReportNudgeMessageId stays null in that case, which
+        // settle-anyway reads as "never delivered" (CARD-0248).
+        if (turn.Boundary is { } boundary)
+            task.ReportNudgedSequence = boundary.Sequence;
         task.ConcurrencyToken = Guid.NewGuid();
         db.AgentTaskEvents.Add(NewEvent(
             task.Id, AgentTaskEventType.Warning,
@@ -1882,7 +1888,16 @@ public sealed class AgentTaskReplyService
         await db.SaveChangesAsync(ct);
 
         var queue = services.GetRequiredService<SessionMessageQueueService>();
-        await queue.EnqueueAsync(sessionId, body, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
+        Guid? createdId = null;
+        await queue.EnqueueAsync(
+            sessionId, body, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation,
+            onCreated: id => createdId = id);
+        if (createdId is Guid messageId)
+        {
+            task.ReportNudgeMessageId = messageId;
+            task.ConcurrencyToken = Guid.NewGuid();
+            await db.SaveChangesAsync(ct);
+        }
         _logger.LogInformation(
             "Task {ShortId}: nudged once for the closing report line", shortId);
     }

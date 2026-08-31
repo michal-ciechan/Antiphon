@@ -146,11 +146,17 @@ public sealed class SessionMessageQueueService
     /// </summary>
     private int MaxAttempts => Math.Max(1, _verification.MaxDeliveryAttempts);
 
-    /// <summary>Queue a message ("wait until idle") or deliver it immediately ("send now").</summary>
+    /// <summary>
+    /// Queue a message ("wait until idle") or deliver it immediately ("send now").
+    /// When a WhenIdle row is persisted, <paramref name="onCreated"/> receives its id
+    /// (CARD-0248 — the closing-line nudge records this so settle-anyway can wait on SentAt).
+    /// Mode.Now creates no row and does not invoke it.
+    /// </summary>
     public async Task<SessionQueueDto> EnqueueAsync(
         Guid sessionId, string body, MessageSendMode mode, CancellationToken ct,
         QueuedMessageOrigin origin = QueuedMessageOrigin.Ui, string? conversationKey = null,
-        Guid? sourceTaskId = null, string? contentDigest = null, string? noteHeader = null)
+        Guid? sourceTaskId = null, string? contentDigest = null, string? noteHeader = null,
+        Action<Guid>? onCreated = null)
     {
         var trimmed = (body ?? string.Empty).Trim();
         if (trimmed.Length == 0)
@@ -305,6 +311,7 @@ public sealed class SessionMessageQueueService
             };
             db.SessionQueuedMessages.Add(row);
             await db.SaveChangesAsync(ct);
+            onCreated?.Invoke(row.Id);
 
             // If the agent is already idle (waiting at the prompt), there is no upcoming turn-end to
             // flush on — deliver right away so the message isn't stranded. But NEVER into a session
