@@ -480,9 +480,12 @@ public sealed class AgentTaskReplyService
             AgentTaskStatus.Failed => AgentTaskEventType.Failed,
             _ => AgentTaskEventType.Completed,
         };
-        var eventDetail = task.Status == AgentTaskStatus.Blocked && evidence == AgentTaskReportEvidence.QuestionHeuristic
-            ? "Delegate asked a question."
-            : reported;
+        var eventDetail = task.FailureCode == AgentTaskFailureCode.CompletedWithoutProgress
+            && failureReason is not null
+            ? failureReason
+            : task.Status == AgentTaskStatus.Blocked && evidence == AgentTaskReportEvidence.QuestionHeuristic
+                ? "Delegate asked a question."
+                : reported;
         db.AgentTaskEvents.Add(NewEvent(task.Id, eventType, eventDetail, now));
 
         // A settlement that could not get the final message is LOUD (CARD-0046 slice 3). Succeeded
@@ -534,8 +537,21 @@ public sealed class AgentTaskReplyService
         // A settled delegate is not spent — it is WARM. A Shared task's agent goes into the pool
         // for follow-ups and unrelated work in its directory; only worktree delegates retire on
         // the spot (their directory dies with the merge). Blocked tasks keep everything — the
-        // session is how the conversation continues.
-        if (task.Status == AgentTaskStatus.Succeeded)
+        // session is how the conversation continues. CARD-0286's zero-progress failure keeps the
+        // worktree for inspection and records the incident before release so cascade-delete of
+        // the ephemeral agent cannot erase it (CARD-0085's ownership-safe order).
+        if (task.FailureCode == AgentTaskFailureCode.CompletedWithoutProgress
+            && task.AgentSessionId is Guid noProgressFrom)
+        {
+            await RecordIncidentOnceAsync(
+                services, db, task, noProgressFrom,
+                AgentIncidentKind.DelegateCompletedWithoutProgress,
+                $"Delegate task {DelegationReportFormatter.Short(task.Id)} reported completion without worktree progress",
+                failureReason ?? "The delegate reported completion but Antiphon observed no post-dispatch worktree progress.",
+                ct, AlertSeverity.Error);
+            await ReleaseDelegateAsync(services, db, task, now, ct, killSession: false);
+        }
+        else if (task.Status == AgentTaskStatus.Succeeded)
             await ReleaseDelegateAsync(services, db, task, now, ct);
 
         await db.SaveChangesAsync(ct);
@@ -569,6 +585,12 @@ public sealed class AgentTaskReplyService
         _logger.LogInformation(
             "Task {ShortId} settled as {Status} ({Chars:N0} chars, ${Cost:0.000}, {Evidence})",
             DelegationReportFormatter.Short(task.Id), task.Status, settledBody.Length, task.CostUsd, evidence);
+
+        if (task.FailureCode == AgentTaskFailureCode.CompletedWithoutProgress
+            && failureReason is not null)
+        {
+            callerWarning = callerWarning is null ? failureReason : $"{failureReason}\n\n{callerWarning}";
+        }
 
         await DeliverToParentAsync(
             task, settledBody, ct, workspaceNote, callerWarning, drift, gitHeader);
@@ -796,6 +818,8 @@ public sealed class AgentTaskReplyService
 
         task.Status = AgentTaskStatus.Failed;
         task.FailureReason = reason;
+        if (stub.ErrorStatus == 401)
+            task.FailureCode = AgentTaskFailureCode.AuthenticationRequired;
         task.CompletedAt = now;
         task.ConcurrencyToken = Guid.NewGuid();
         db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Failed, reason, now));
@@ -1464,6 +1488,9 @@ public sealed class AgentTaskReplyService
             var stubText = Join(rows
                 .Where(t => TranscriptKinds.IsApiErrorStub(TranscriptKinds.AssistantText, t.IsApiError))
                 .Select(t => t.Text));
+            // Codex stamps the diagnostic on the TurnEnd itself (no synthetic AssistantText stub).
+            if (stubText.Length == 0 && !string.IsNullOrWhiteSpace(end.Text))
+                stubText = end.Text.Trim();
             return new TurnOutcome(
                 null, false,
                 ApiErrorStub: new ApiErrorStubFacts(
@@ -1793,6 +1820,65 @@ public sealed class AgentTaskReplyService
     }
 
     /// <summary>
+    /// CARD-0286: an explicit <c>done</c> from a Code Worktree task is Succeeded only when the
+    /// isolated worktree has a post-dispatch commit or changed/untracked content. Fail open when
+    /// the probe is missing or git evidence is unavailable — this is a proof of zero work, not a
+    /// reason to punish a failed probe. Shared workspaces and non-Code roles are out of scope.
+    /// </summary>
+    private async Task<(AgentTaskStatus Status, AgentTaskReportEvidence Evidence, string Body, string? FailureReason)?>
+        TryClassifyCompletedWithoutProgressAsync(
+            IServiceProvider services, AgentTask task, string body, CancellationToken ct)
+    {
+        if (task.Role != AgentTaskRole.Code
+            || task.Workspace != WorkspaceMode.Worktree
+            || task.DispatchedAt is not DateTime dispatchedAt
+            || string.IsNullOrWhiteSpace(task.WorktreePath))
+            return null;
+
+        IWorkspaceProgressProbe? probe;
+        try
+        {
+            probe = services.GetService<IWorkspaceProgressProbe>();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex, "Worktree progress probe unavailable for task {ShortId}; failing open",
+                DelegationReportFormatter.Short(task.Id));
+            return null;
+        }
+
+        if (probe is null)
+            return null;
+
+        WorkspaceProgressArm arm;
+        try
+        {
+            arm = await probe.ProbeProgressAsync(
+                task.WorktreePath, dispatchedAt, sharedCheckout: false, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex, "Worktree progress probe failed for task {ShortId} at {Path}; failing open",
+                DelegationReportFormatter.Short(task.Id), task.WorktreePath);
+            return null;
+        }
+
+        if (!arm.Available)
+            return null;
+        if (arm.LastCommitAt is not null || arm.LastFileChangeAt is not null)
+            return null;
+
+        var reason =
+            "The delegate reported completion but Antiphon observed no post-dispatch worktree "
+            + $"progress at {task.WorktreePath}: 0 commits after dispatch and 0 changed or "
+            + "untracked files.";
+        task.FailureCode = AgentTaskFailureCode.CompletedWithoutProgress;
+        return (AgentTaskStatus.Failed, AgentTaskReportEvidence.Marked, body, reason);
+    }
+
+    /// <summary>
     /// CARD-0159 S2 / CARD-0248: a closing verdict line settles immediately; an unmarked live
     /// session is nudged once; a second unmarked end after the delivered nudge (or a dead
     /// session, or a Check role) settles with the evidence class recorded. Returns null when
@@ -1806,7 +1892,11 @@ public sealed class AgentTaskReplyService
             TurnOutcome turn, DateTime now, CancellationToken ct)
     {
         if (verdict == "done")
+        {
+            if (await TryClassifyCompletedWithoutProgressAsync(services, task, body, ct) is { } noProgress)
+                return noProgress;
             return (AgentTaskStatus.Succeeded, AgentTaskReportEvidence.Marked, body, null);
+        }
         if (verdict == "blocked")
             return (AgentTaskStatus.Blocked, AgentTaskReportEvidence.Marked, body, null);
         if (verdict == "failed")
@@ -2025,7 +2115,8 @@ public sealed class AgentTaskReplyService
 
             var header = DelegationGitFacts.FormatHeader(commits.Value, files ?? 0);
             string? warning = null;
-            if (task.Workspace == WorkspaceMode.Worktree
+            if (task.Status == AgentTaskStatus.Succeeded
+                && task.Workspace == WorkspaceMode.Worktree
                 && DelegationGitFacts.IsCodeProducing(task.Role)
                 && commits.Value == 0
                 && !DelegationGitFacts.MentionsNoChanges(report))

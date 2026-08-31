@@ -210,4 +210,17 @@ public enum AgentTaskFailureCode
     /// not know who ended the session.
     /// </summary>
     StoppedBeforeFirstPrompt = 0,
+
+    /// <summary>
+    /// The marked turn was killed by an HTTP 401 API-error stub (CARD-0286). Structural:
+    /// authentication or proxy-key configuration, never a retryable transport glitch.
+    /// </summary>
+    AuthenticationRequired = 1,
+
+    /// <summary>
+    /// A Code-role Worktree task reported <c>done</c> but the isolated worktree had no
+    /// post-dispatch commit and no changed or untracked files (CARD-0286). Objective zero
+    /// progress, not a guess about why the delegate stopped.
+    /// </summary>
+    CompletedWithoutProgress = 2,
 }

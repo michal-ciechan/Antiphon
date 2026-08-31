@@ -310,16 +310,20 @@ public class AgentTaskServiceIntegrationTests
             .ShouldNotContain("-Dir <repo> -Worktree");
     }
 
-    // ---- CARD-0256: StoppedBeforeFirstPrompt repeat guard ----------------------------------
+    // ---- CARD-0256 / CARD-0286: launch-failure repeat guard ----------------------------------
 
     [Test]
-    public async Task a_second_identical_grok_dispatch_is_blocked_without_starting_work()
+    [Arguments(AgentTaskFailureCode.StoppedBeforeFirstPrompt)]
+    [Arguments(AgentTaskFailureCode.AuthenticationRequired)]
+    [Arguments(AgentTaskFailureCode.CompletedWithoutProgress)]
+    public async Task a_second_identical_grok_dispatch_is_blocked_without_starting_work(
+        AgentTaskFailureCode failureCode)
     {
         using var workspace = new TempWorkspace();
-        var goal = $"CARD-0256 grok repeat {Guid.NewGuid():N}";
+        var goal = $"CARD-0286 grok repeat {failureCode} {Guid.NewGuid():N}";
         var parentSessionId = Guid.NewGuid();
         var prior = await SeedFailedEmptyStopAsync(
-            workspace.Path, goal, AgentKind.Grok, parentSessionId);
+            workspace.Path, goal, AgentKind.Grok, parentSessionId, failureCode);
 
         await using var db = CreateContext();
         await SeedParentSessionAsync(db, parentSessionId, workspace.Path);
@@ -333,7 +337,7 @@ public class AgentTaskServiceIntegrationTests
         {
             created.Status.ShouldBe(AgentTaskStatus.Blocked);
             created.Warning.ShouldNotBeNull();
-            created.Warning.ShouldContain("StoppedBeforeFirstPrompt");
+            created.Warning.ShouldContain(failureCode.ToString());
             created.Warning.ShouldContain(DelegationReportFormatter.Short(prior.Id));
 
             await using var verify = CreateContext();
@@ -342,7 +346,7 @@ public class AgentTaskServiceIntegrationTests
             row.AgentSessionId.ShouldBeNull();
             row.WorktreePath.ShouldBeNull();
             row.AgentId.ShouldBeNull();
-            row.FailureReason.ShouldContain("StoppedBeforeFirstPrompt");
+            row.FailureReason.ShouldContain(failureCode.ToString());
             row.FailureReason.ShouldContain("no Grok process or worktree was started");
 
             (await verify.AgentTaskEvents.CountAsync(
@@ -351,7 +355,7 @@ public class AgentTaskServiceIntegrationTests
             (await verify.SessionQueuedMessages.CountAsync(
                     m => m.AgentSessionId == parentSessionId
                          && m.SourceTaskId == created.Id
-                         && m.Body.Contains("StoppedBeforeFirstPrompt")))
+                         && m.Body.Contains(failureCode.ToString())))
                 .ShouldBe(1);
             eventBus.PublishedEvents.ShouldContain(e => e.EventName == "AgentTaskChanged");
 
@@ -373,11 +377,15 @@ public class AgentTaskServiceIntegrationTests
     }
 
     [Test]
-    public async Task an_otherwise_identical_ClaudeCode_dispatch_is_not_blocked()
+    [Arguments(AgentTaskFailureCode.StoppedBeforeFirstPrompt)]
+    [Arguments(AgentTaskFailureCode.AuthenticationRequired)]
+    [Arguments(AgentTaskFailureCode.CompletedWithoutProgress)]
+    public async Task an_otherwise_identical_ClaudeCode_dispatch_is_not_blocked(
+        AgentTaskFailureCode failureCode)
     {
         using var workspace = new TempWorkspace();
-        var goal = $"CARD-0256 claude alternative {Guid.NewGuid():N}";
-        var prior = await SeedFailedEmptyStopAsync(workspace.Path, goal, AgentKind.Grok);
+        var goal = $"CARD-0286 claude alternative {failureCode} {Guid.NewGuid():N}";
+        var prior = await SeedFailedEmptyStopAsync(workspace.Path, goal, AgentKind.Grok, failureCode: failureCode);
 
         await using var db = CreateContext();
         var created = await CreateService(db).CreateAsync(
@@ -399,11 +407,14 @@ public class AgentTaskServiceIntegrationTests
     }
 
     [Test]
-    public async Task retrying_a_StoppedBeforeFirstPrompt_failure_is_blocked()
+    [Arguments(AgentTaskFailureCode.StoppedBeforeFirstPrompt)]
+    [Arguments(AgentTaskFailureCode.AuthenticationRequired)]
+    [Arguments(AgentTaskFailureCode.CompletedWithoutProgress)]
+    public async Task retrying_a_guardable_launch_failure_is_blocked(AgentTaskFailureCode failureCode)
     {
         using var workspace = new TempWorkspace();
-        var goal = $"CARD-0256 retry block {Guid.NewGuid():N}";
-        var prior = await SeedFailedEmptyStopAsync(workspace.Path, goal, AgentKind.Grok);
+        var goal = $"CARD-0286 retry block {failureCode} {Guid.NewGuid():N}";
+        var prior = await SeedFailedEmptyStopAsync(workspace.Path, goal, AgentKind.Grok, failureCode: failureCode);
 
         await using var db = CreateContext();
         var summary = await CreateService(db).RetryAsync(prior.Id, CancellationToken.None);
@@ -415,7 +426,7 @@ public class AgentTaskServiceIntegrationTests
             await using var verify = CreateContext();
             var row = await verify.AgentTasks.SingleAsync(t => t.Id == prior.Id);
             row.Status.ShouldBe(AgentTaskStatus.Blocked);
-            row.FailureReason.ShouldContain("StoppedBeforeFirstPrompt");
+            row.FailureReason.ShouldContain(failureCode.ToString());
             (await verify.AgentTaskEvents.CountAsync(
                     e => e.AgentTaskId == prior.Id && e.Type == AgentTaskEventType.Blocked))
                 .ShouldBe(1);
@@ -1136,7 +1147,8 @@ public class AgentTaskServiceIntegrationTests
         string workingDirectory,
         string goal,
         AgentKind agentKind,
-        Guid? parentSessionId = null)
+        Guid? parentSessionId = null,
+        AgentTaskFailureCode failureCode = AgentTaskFailureCode.StoppedBeforeFirstPrompt)
     {
         var task = await SeedTaskAsync(
             AgentTaskKind.Worker,
@@ -1148,8 +1160,8 @@ public class AgentTaskServiceIntegrationTests
         var row = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
         row.Goal = goal;
         row.AgentKind = agentKind;
-        row.FailureCode = AgentTaskFailureCode.StoppedBeforeFirstPrompt;
-        row.FailureReason = "StoppedBeforeFirstPrompt: Antiphon observed no prompt before the session stopped, and the stop origin was not recorded";
+        row.FailureCode = failureCode;
+        row.FailureReason = $"{failureCode}: prior launch or completion failed";
         row.CompletedAt = DateTime.UtcNow;
         await db.SaveChangesAsync();
         return row;

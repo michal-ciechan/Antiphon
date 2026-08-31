@@ -60,6 +60,26 @@ public class ApiErrorClassifierTests
     }
 
     [Test]
+    public void An_unrecognised_class_with_http_401_needs_a_human()
+    {
+        ApiErrorClassifier
+            .Classify("invalid_request_error", 401, "401 Unauthorized: LiteLLM Virtual Key expected")
+            .ShouldBe(ApiErrorClassification.NeedsHuman);
+        ApiErrorClassifier
+            .Classify(null, 401, "401 Unauthorized: LiteLLM Virtual Key expected")
+            .ShouldBe(ApiErrorClassification.NeedsHuman);
+    }
+
+    [Test]
+    public void Http_400_stays_on_its_existing_unknown_path()
+    {
+        ApiErrorClassifier
+            .Classify("invalid_request_error", 400, "The model is not supported")
+            .ShouldBe(ApiErrorClassification.Unknown);
+        ApiErrorClassifier.Classify(null, 400, null).ShouldBe(ApiErrorClassification.Unknown);
+    }
+
+    [Test]
     public void Model_not_found_needs_a_human()
     {
         ApiErrorClassifier

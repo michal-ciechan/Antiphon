@@ -250,10 +250,59 @@ public class CodexTranscriptNormalizerTests
         ends[0].IsApiError.ShouldBe(true);
         ends[0].ApiErrorStatus.ShouldBe(400);
         ends[0].ApiErrorClass.ShouldBe("invalid_request_error");
+        ends[0].Text.ShouldNotBeNullOrWhiteSpace();
+        ends[0].Text.ShouldContain("model is not supported");
 
         // A healthy turn claims no error at all rather than claiming "no error".
         ends[1].IsApiError.ShouldBeNull();
         await Assert.That(ends[1].ApiErrorStatus).IsNull();
+    }
+
+    [Test]
+    public async Task A_literal_401_task_complete_preserves_status_and_diagnostic_text()
+    {
+        var normalizer = new CodexTranscriptNormalizer();
+        const string line =
+            """{"timestamp":"2026-08-31T12:00:00.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn_401_literal","error":{"message":"401 Unauthorized: LiteLLM Virtual Key expected","codex_error_info":"other"}}}""";
+
+        var part = normalizer.Normalize(line).ShouldHaveSingleItem();
+        part.Kind.ShouldBe(TranscriptKinds.TurnEnd);
+        part.StopReason.ShouldBe("end_turn");
+        part.IsApiError.ShouldBe(true);
+        part.ApiErrorStatus.ShouldBe(401);
+        part.Text.ShouldBe("401 Unauthorized: LiteLLM Virtual Key expected");
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task A_wrapped_401_task_complete_preserves_status_class_and_diagnostic_text()
+    {
+        var normalizer = new CodexTranscriptNormalizer();
+        const string line =
+            """{"timestamp":"2026-08-31T12:00:00.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn_401_wrapped","error":{"message":"{\"type\":\"error\",\"status\":401,\"error\":{\"type\":\"invalid_request_error\",\"message\":\"401 Unauthorized: LiteLLM Virtual Key expected\"}}","codex_error_info":"other"}}}""";
+
+        var part = normalizer.Normalize(line).ShouldHaveSingleItem();
+        part.Kind.ShouldBe(TranscriptKinds.TurnEnd);
+        part.StopReason.ShouldBe("end_turn");
+        part.IsApiError.ShouldBe(true);
+        part.ApiErrorStatus.ShouldBe(401);
+        part.ApiErrorClass.ShouldBe("invalid_request_error");
+        part.Text.ShouldBe("401 Unauthorized: LiteLLM Virtual Key expected");
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task Assistant_text_containing_401_is_not_an_api_error()
+    {
+        var normalizer = new CodexTranscriptNormalizer();
+        const string line =
+            """{"timestamp":"2026-08-31T12:00:00.000Z","type":"event_msg","payload":{"type":"agent_message","message":"401 Unauthorized: LiteLLM Virtual Key expected"}}""";
+
+        var part = normalizer.Normalize(line).ShouldHaveSingleItem();
+        part.Kind.ShouldBe(TranscriptKinds.AssistantText);
+        part.IsApiError.ShouldBeNull();
+        part.ApiErrorStatus.ShouldBeNull();
+        await Task.CompletedTask;
     }
 
     /// <summary>

@@ -396,7 +396,7 @@ public sealed class AgentTaskService
             ExpectedDurationMinutes = expectedMinutes,
         };
 
-        var repeatOf = await FindStoppedBeforeFirstPromptRepeatAsync(
+        var repeatOf = await FindLaunchFailureRepeatAsync(
             task.CardId, task.Goal, task.Kind, task.Role, task.AgentKind, ct);
         if (repeatOf is not null)
         {
@@ -903,7 +903,7 @@ public sealed class AgentTaskService
                 $"Task {DelegationReportFormatter.Short(id)} has not run yet — it is already queued.");
         }
 
-        var repeatOf = await FindStoppedBeforeFirstPromptRepeatAsync(
+        var repeatOf = await FindLaunchFailureRepeatAsync(
             task.CardId, task.Goal, task.Kind, task.Role, task.AgentKind, ct);
         if (repeatOf is not null)
         {
@@ -1433,7 +1433,7 @@ public sealed class AgentTaskService
         return message;
     }
 
-    private async Task<AgentTask?> FindStoppedBeforeFirstPromptRepeatAsync(
+    private async Task<AgentTask?> FindLaunchFailureRepeatAsync(
         Guid? cardId,
         string goal,
         AgentTaskKind kind,
@@ -1445,7 +1445,9 @@ public sealed class AgentTaskService
         var matches = await _db.AgentTasks.AsNoTracking()
             .Where(t =>
                 t.Status == AgentTaskStatus.Failed
-                && t.FailureCode == AgentTaskFailureCode.StoppedBeforeFirstPrompt
+                && (t.FailureCode == AgentTaskFailureCode.StoppedBeforeFirstPrompt
+                    || t.FailureCode == AgentTaskFailureCode.AuthenticationRequired
+                    || t.FailureCode == AgentTaskFailureCode.CompletedWithoutProgress)
                 && t.Kind == kind
                 && t.Role == role
                 && t.AgentKind == agentKind
@@ -1457,8 +1459,8 @@ public sealed class AgentTaskService
 
     private static string RepeatBlockReason(AgentTask prior, AgentKind kind) =>
         $"Repeat of task {DelegationReportFormatter.Short(prior.Id)} "
-        + $"({AgentTaskFailureCode.StoppedBeforeFirstPrompt}) is blocked; no {kind} process or "
-        + "worktree was started. Offer a ClaudeCode delegate or resolve the launch incident.";
+        + $"({prior.FailureCode}) is blocked; no {kind} process or "
+        + "worktree was started.";
 
     private async Task BlockRepeatAsync(AgentTask task, AgentTask prior, CancellationToken ct)
     {
@@ -1474,8 +1476,9 @@ public sealed class AgentTaskService
         await _eventBus.PublishToAllAsync(
             "AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
         _logger.LogWarning(
-            "Task {ShortId} blocked as a StoppedBeforeFirstPrompt repeat of {PriorShortId}",
-            DelegationReportFormatter.Short(task.Id), DelegationReportFormatter.Short(prior.Id));
+            "Task {ShortId} blocked as a launch-failure repeat of {PriorShortId} ({FailureCode})",
+            DelegationReportFormatter.Short(task.Id), DelegationReportFormatter.Short(prior.Id),
+            prior.FailureCode);
     }
 
     private async Task EnqueueBlockedParentNoteAsync(AgentTask task, string reason, CancellationToken ct)

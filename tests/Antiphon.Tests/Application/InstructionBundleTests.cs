@@ -224,6 +224,9 @@ public class InstructionBundleTests
         DelegationReportFormatter.OrchestratorContract.ShouldContain("Delegate everything else");
         DelegationReportFormatter.OrchestratorContract.ShouldContain("-Reply");
         DelegationReportFormatter.OrchestratorContract.ShouldContain("StoppedBeforeFirstPrompt");
+        DelegationReportFormatter.OrchestratorContract.ShouldContain("AuthenticationRequired");
+        DelegationReportFormatter.OrchestratorContract.ShouldContain("CompletedWithoutProgress");
+        DelegationReportFormatter.OrchestratorContract.ShouldContain("Do not paste, log, or repeat credentials");
         DelegationReportFormatter.OrchestratorContract.ShouldContain(
             "If you are channel-bound (Slack/Telegram), the chat does NOT see every turn.");
         DelegationReportFormatter.OrchestratorContract.ShouldContain("re-emit `[[attach:]]` yourself");

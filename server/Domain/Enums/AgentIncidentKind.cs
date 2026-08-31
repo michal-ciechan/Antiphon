@@ -406,4 +406,12 @@ public enum AgentIncidentKind
     /// so <c>OnTurnEndAsync</c> returned with no log line at all.
     /// </summary>
     ChannelAttachmentsDropped = 41,
+
+    /// <summary>
+    /// CARD-0286: a Code-role Worktree task reported completion while its isolated worktree
+    /// had no post-dispatch commit and no changed or untracked files. Error: the task is
+    /// Failed, the worktree is kept for inspection, and the same-kind family is
+    /// repeat-blocked. Never raised from a Herdr <c>done</c> status.
+    /// </summary>
+    DelegateCompletedWithoutProgress = 42,
 }

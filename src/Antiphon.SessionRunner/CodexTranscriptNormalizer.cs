@@ -326,13 +326,13 @@ public sealed class CodexTranscriptNormalizer
 
         _sawUsageThisTurn = false;
 
-        var (isError, errorClass, errorStatus) = ReadError(payload);
+        var (isError, errorClass, errorStatus, diagnostic) = ReadError(payload);
 
         return
         [
             new TranscriptPart(
                 TranscriptKinds.TurnEnd, uuid ?? turnId, null, ts, "assistant",
-                null, null, null, null, null,
+                diagnostic, null, null, null, null,
                 // Synthesized, not verbatim — Codex has no stop_reason. See the class remarks.
                 StopReason: "end_turn",
                 ApiCallId: turnId,
@@ -346,35 +346,62 @@ public sealed class CodexTranscriptNormalizer
     /// A failed turn's <c>error</c> block. Measured shape (an unsupported model on this account):
     /// <c>{"message":"{\"type\":\"error\",\"status\":400,\"error\":{\"type\":\"invalid_request_error\",…}}",
     /// "codex_error_info":"other"}</c> — the useful part is a JSON document inside a string, so it
-    /// is re-parsed for the status and class. When it is not JSON, <c>codex_error_info</c> stands in.
+    /// is re-parsed for the status, class, and human message. When it is not JSON, a literal
+    /// <c>401 Unauthorized: …</c> inside this error object supplies the HTTP status; assistant
+    /// text and reports are never scanned. <c>codex_error_info</c> stands in as the class.
     /// </summary>
-    private static (bool? IsError, string? Class, int? Status) ReadError(JsonElement payload)
+    private static (bool? IsError, string? Class, int? Status, string? Diagnostic) ReadError(JsonElement payload)
     {
         if (!payload.TryGetProperty("error", out var error) || error.ValueKind != JsonValueKind.Object)
-            return (null, null, null);
+            return (null, null, null, null);
 
         var fallbackClass = GetString(error, "codex_error_info");
         var message = GetString(error, "message");
         if (string.IsNullOrWhiteSpace(message))
-            return (true, fallbackClass, null);
+            return (true, fallbackClass, null, null);
 
         try
         {
             using var inner = JsonDocument.Parse(message);
             var root = inner.RootElement;
             if (root.ValueKind != JsonValueKind.Object)
-                return (true, fallbackClass, null);
+                return (true, fallbackClass, null, BoundDiagnostic(message));
 
             var status = GetInt(root, "status");
-            var cls = root.TryGetProperty("error", out var e) && e.ValueKind == JsonValueKind.Object
-                ? GetString(e, "type")
-                : null;
-            return (true, cls ?? fallbackClass, status);
+            string? cls = null;
+            string? human = null;
+            if (root.TryGetProperty("error", out var e) && e.ValueKind == JsonValueKind.Object)
+            {
+                cls = GetString(e, "type");
+                human = GetString(e, "message");
+            }
+
+            return (true, cls ?? fallbackClass, status, BoundDiagnostic(human) ?? BoundDiagnostic(message));
         }
         catch (JsonException)
         {
-            return (true, fallbackClass, null);
+            var trimmed = message.Trim();
+            int? status = trimmed.StartsWith("401 Unauthorized", StringComparison.Ordinal)
+                ? 401
+                : null;
+            return (true, fallbackClass, status, BoundDiagnostic(trimmed));
         }
+    }
+
+    /// <summary>
+    /// CARD-0286: the API-error handler clips at 600 characters; keep the same bound here so a
+    /// Codex TurnEnd never carries a secret-sized payload as diagnostic text.
+    /// </summary>
+    private const int MaxApiErrorDiagnosticChars = 600;
+
+    private static string? BoundDiagnostic(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return null;
+        var trimmed = text.Trim();
+        return trimmed.Length <= MaxApiErrorDiagnosticChars
+            ? trimmed
+            : trimmed[..MaxApiErrorDiagnosticChars] + "…";
     }
 
     // ---------------------------------------------------------------------------------- plumbing

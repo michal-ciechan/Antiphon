@@ -40,6 +40,7 @@ public static class ApiErrorClassifier
         return apiErrorStatus switch
         {
             429 => ApiErrorClassification.Wall,
+            401 => ApiErrorClassification.NeedsHuman,
             >= 500 => ApiErrorClassification.Transient,
             _ => ApiErrorClassification.Unknown,
         };

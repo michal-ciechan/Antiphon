@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -2059,9 +2060,69 @@ public class AgentTaskReplyIntegrationTests
     }
 
     [Test]
-    public async Task a_worktree_code_task_with_no_commits_warns_in_the_header()
+    public async Task a_worktree_code_task_with_no_progress_fails_completed_without_progress()
     {
-        using var repo = new ScratchGitRepo("antiphon-reply-no-commits");
+        using var repo = new ScratchGitRepo("antiphon-reply-no-progress");
+        await repo.CommitFileAsync("README.md", "base\n");
+        var factory = new TestScopeFactory(repo.WorktreeRoot);
+        var parentSessionId = await SeedSessionAsync(repo.Path);
+        var agentId = await SeedAgentAsync(repo.Path, $"wt-noprog-{Guid.NewGuid():N}"[..20]);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(repo.Path, parentSessionId, t =>
+        {
+            t.Workspace = WorkspaceMode.Worktree;
+            t.RepoPath = repo.Path;
+            t.Role = AgentTaskRole.Code;
+            t.AgentId = agentId;
+            t.Ephemeral = true;
+            t.MergeTargetRef = "master";
+        });
+        await CreateWorktreeForAsync(factory, task);
+        await BindAgentSessionAsync(agentId, sessionId);
+        var worktreePath = TaskWorktreePath(task)!;
+
+        const string report = "I read the code. Nothing to implement yet.";
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), report);
+        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Failed);
+        settled.FailureCode.ShouldBe(AgentTaskFailureCode.CompletedWithoutProgress);
+        settled.Result.ShouldBe(report, "the delegate's report is preserved for diagnosis");
+        settled.FailureReason.ShouldContain("no post-dispatch worktree progress");
+        settled.FailureReason.ShouldContain(worktreePath);
+        settled.FailureReason.ShouldContain("0 commits");
+        settled.WorktreePath.ShouldBe(worktreePath);
+        Directory.Exists(worktreePath).ShouldBeTrue("the unmerged worktree is kept for inspection");
+
+        (await verify.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Failed
+                && e.Detail.Contains("no post-dispatch worktree progress")))
+            .ShouldBeTrue();
+        (await verify.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Merged))
+            .ShouldBeFalse("zero-progress completion must not merge");
+        (await verify.AgentTasks.CountAsync(t => t.ParentTaskId == task.Id))
+            .ShouldBe(0, "no replacement delegate");
+
+        var incident = await verify.AgentIncidents.SingleAsync(
+            i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.DelegateCompletedWithoutProgress);
+        incident.Severity.ShouldBe(AlertSeverity.Error);
+        incident.Message.ShouldContain("no post-dispatch worktree progress");
+
+        var note = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == parentSessionId);
+        note.Body.ShouldContain("no post-dispatch worktree progress");
+        note.Body.ShouldContain("[task " + DelegationReportFormatter.Short(task.Id) + " failed]");
+
+        var agent = await verify.Agents.SingleAsync(a => a.Id == agentId);
+        agent.Status.ShouldBe(AgentStatus.Idle, "ownership-safe release; worktree kept for inspection");
+        factory.Stopper.Killed.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task a_worktree_code_task_with_a_post_dispatch_commit_succeeds()
+    {
+        using var repo = new ScratchGitRepo("antiphon-reply-code-commit");
         await repo.CommitFileAsync("README.md", "base\n");
         var factory = new TestScopeFactory(repo.WorktreeRoot);
         var parentSessionId = await SeedSessionAsync(repo.Path);
@@ -2073,20 +2134,87 @@ public class AgentTaskReplyIntegrationTests
             t.MergeTargetRef = null;
         });
         await CreateWorktreeForAsync(factory, task);
+        var worktree = TaskWorktreePath(task)!;
+        await Task.Delay(1100);
+        await File.WriteAllTextAsync(Path.Combine(worktree, "feature.md"), "the work\n");
+        (await ScratchGitRepo.GitInAsync(worktree, "add", "feature.md")).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(worktree, "commit", "-m", "progress")).Ok.ShouldBeTrue();
 
-        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), "I read the code. Nothing to implement yet.");
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), "Wrote feature.md.");
         await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
 
         await using var verify = CreateContext();
         var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
         settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
-        (await verify.AgentTaskEvents.AnyAsync(
-            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning
-                && e.Detail.Contains("produced no commits")))
-            .ShouldBeTrue();
-        var note = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == parentSessionId);
-        note.Body.ShouldContain("git=no changes");
-        note.Body.ShouldContain("Verify before merging");
+        settled.FailureCode.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task a_worktree_code_task_with_a_changed_file_succeeds()
+    {
+        using var repo = new ScratchGitRepo("antiphon-reply-code-dirty");
+        await repo.CommitFileAsync("README.md", "base\n");
+        var factory = new TestScopeFactory(repo.WorktreeRoot);
+        var parentSessionId = await SeedSessionAsync(repo.Path);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(repo.Path, parentSessionId, t =>
+        {
+            t.Workspace = WorkspaceMode.Worktree;
+            t.RepoPath = repo.Path;
+            t.Role = AgentTaskRole.Code;
+            t.MergeTargetRef = null;
+        });
+        await CreateWorktreeForAsync(factory, task);
+        await File.WriteAllTextAsync(Path.Combine(TaskWorktreePath(task)!, "scratch.md"), "uncommitted work\n");
+
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), "Left scratch.md uncommitted.");
+        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.FailureCode.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task unavailable_git_on_a_code_worktree_fails_open()
+    {
+        using var workspace = new TempWorkspace();
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, parentSessionId, t =>
+        {
+            t.Workspace = WorkspaceMode.Worktree;
+            t.Role = AgentTaskRole.Code;
+            t.WorktreePath = Path.Combine(workspace.Path, "missing-worktree");
+        });
+
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), "Done.");
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded, "a failed git probe must not become a task failure");
+        settled.FailureCode.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task a_shared_code_task_is_not_failed_for_zero_worktree_progress()
+    {
+        using var workspace = new TempWorkspace();
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, parentSessionId, t =>
+        {
+            t.Workspace = WorkspaceMode.Shared;
+            t.Role = AgentTaskRole.Code;
+        });
+
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), "Done in the shared checkout.");
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+            .Status.ShouldBe(AgentTaskStatus.Succeeded);
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+            .FailureCode.ShouldBeNull();
     }
 
     [Test]
@@ -2534,6 +2662,85 @@ public class AgentTaskReplyIntegrationTests
         (await verify.AgentIncidents.AnyAsync(
             i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.DelegateReportUncorrelated))
             .ShouldBeFalse("an error string is not a report somebody failed to attribute");
+    }
+
+    [Test]
+    public async Task a_codex_401_fails_as_authentication_required_with_no_resume()
+    {
+        using var workspace = new TempWorkspace();
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var agentId = await SeedAgentAsync(workspace.Path, $"auth-401-{Guid.NewGuid():N}"[..20]);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, parentSessionId, t =>
+            {
+                t.AgentId = agentId;
+                t.Ephemeral = true;
+                t.AgentKind = AgentKind.Codex;
+            });
+        await BindAgentSessionAsync(agentId, sessionId);
+
+        await SeedCodexApiErrorTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.",
+            "401 Unauthorized: LiteLLM Virtual Key expected",
+            "invalid_request_error", 401);
+        var factory = new TestScopeFactory();
+        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureCode.ShouldBe(AgentTaskFailureCode.AuthenticationRequired);
+        failed.Result.ShouldBeNull("the error text is not a report");
+        failed.FailureReason.ShouldContain("NeedsHuman");
+        failed.FailureReason.ShouldContain("HTTP 401");
+        failed.FailureReason.ShouldContain("LiteLLM Virtual Key expected");
+        failed.CompletedAt.ShouldNotBeNull();
+
+        (await verify.ApiErrorRecoveries.CountAsync(
+            r => r.AgentSessionId == sessionId && r.ResolvedAt == null))
+            .ShouldBe(0, "NeedsHuman never schedules a resume");
+        (await verify.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.ApiErrorDeferred))
+            .ShouldBeFalse();
+        (await verify.AgentTasks.CountAsync(t => t.ParentTaskId == task.Id))
+            .ShouldBe(0, "no replacement task");
+        (await verify.AgentTasks.CountAsync(t => t.AgentSessionId == sessionId))
+            .ShouldBe(1, "no replacement session claimed this task's session");
+
+        var incident = await verify.AgentIncidents.SingleAsync(
+            i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.ApiErrorTurnDied);
+        incident.Severity.ShouldBe(AlertSeverity.Critical);
+        incident.Message.ShouldContain("LiteLLM Virtual Key expected");
+
+        var note = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == parentSessionId);
+        note.Body.ShouldContain("LiteLLM Virtual Key expected");
+        note.Body.ShouldContain("HTTP 401");
+
+        (await verify.Agents.SingleAsync(a => a.Id == agentId)).Status.ShouldBe(AgentStatus.Idle);
+        factory.Stopper.Killed.ShouldBeEmpty("a shared delegate is pooled, not killed");
+    }
+
+    /// <summary>
+    /// Codex stamps the diagnostic on the TurnEnd (no synthetic AssistantText stub). CARD-0286
+    /// preserves that text so the API-error handler can name HTTP 401 in the failure.
+    /// </summary>
+    private static async Task SeedCodexApiErrorTurnAsync(
+        Guid sessionId, string prompt, string diagnostic, string apiErrorClass, int apiErrorStatus)
+    {
+        await using var db = CreateContext();
+        var seq = await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == sessionId)
+            .MaxAsync(t => (long?)t.Sequence) ?? 0;
+
+        db.TranscriptEntries.Add(NewEntry(sessionId, ++seq, TranscriptKinds.UserPrompt, prompt));
+
+        var stubEnd = NewEntry(sessionId, ++seq, TranscriptKinds.TurnEnd, diagnostic);
+        stubEnd.StopReason = "end_turn";
+        stubEnd.IsApiError = true;
+        stubEnd.ApiErrorClass = apiErrorClass;
+        stubEnd.ApiErrorStatus = apiErrorStatus;
+        db.TranscriptEntries.Add(stubEnd);
+        await db.SaveChangesAsync();
     }
 
     /// <summary>
@@ -3106,6 +3313,9 @@ public class AgentTaskReplyIntegrationTests
             services.AddSingleton<Antiphon.Server.Application.Interfaces.IDelegateSessionStopper>(Stopper);
             services.AddSingleton<DelegationWorkspaceResolver>();
             services.AddScoped<AgentTaskService>();
+            services.AddScoped<AgentReviewCheckpointService>();
+            services.AddScoped<AgentFilesService>();
+            services.AddScoped<IWorkspaceProgressProbe>(sp => sp.GetRequiredService<AgentFilesService>());
             services.AddSingleton(Options.Create(new GitSettings
             {
                 WorktreeBasePath = worktreeRoot ?? Path.Combine(Path.GetTempPath(), "antiphon-reply-wt"),
