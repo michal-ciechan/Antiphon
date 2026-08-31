@@ -35,6 +35,12 @@ public static class DatabaseSeeder
 
     private static readonly DateTime SeedDate = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
+    // YAML modelName is consumed by AgentExecutor -> LlmClientFactory, which validates against
+    // Llm:Providers.*.Models (server/appsettings.json), not ModelLevelAliases (TUI family aliases).
+    private const string CatalogOpus = "claude-opus-4-6";
+    private const string CatalogSonnet = "claude-sonnet-4-6";
+    private const string CatalogGpt = "gpt-5.2";
+
     public static async Task SeedAsync(AppDbContext db, LlmSettings llmSettings, CancellationToken cancellationToken)
     {
         await SeedDefaultAdminAsync(db, cancellationToken);
@@ -271,18 +277,18 @@ public static class DatabaseSeeder
         var routings = new (Guid Id, string StageName, string ModelName, Guid TemplateId)[]
         {
             // Document Project
-            (RoutingDocAnalyzeId, "analyze-codebase", "claude-opus-4-20250514", BmadDocProjectTemplateId),
-            (RoutingDocFinalizeId, "finalize-documentation", "claude-sonnet-4-20250514", BmadDocProjectTemplateId),
+            (RoutingDocAnalyzeId, "analyze-codebase", CatalogOpus, BmadDocProjectTemplateId),
+            (RoutingDocFinalizeId, "finalize-documentation", CatalogSonnet, BmadDocProjectTemplateId),
             // Full Feature Pipeline
-            (RoutingFullPrdId, "prd", "claude-opus-4-20250514", BmadFullTemplateId),
-            (RoutingFullUxDesignId, "ux-design", "claude-sonnet-4-20250514", BmadFullTemplateId),
-            (RoutingFullArchitectureId, "architecture", "claude-opus-4-20250514", BmadFullTemplateId),
-            (RoutingFullTestDesignId, "test-design", "claude-opus-4-20250514", BmadFullTemplateId),
-            (RoutingFullImplementationId, "implementation", "claude-opus-4-20250514", BmadFullTemplateId),
+            (RoutingFullPrdId, "prd", CatalogOpus, BmadFullTemplateId),
+            (RoutingFullUxDesignId, "ux-design", CatalogSonnet, BmadFullTemplateId),
+            (RoutingFullArchitectureId, "architecture", CatalogOpus, BmadFullTemplateId),
+            (RoutingFullTestDesignId, "test-design", CatalogOpus, BmadFullTemplateId),
+            (RoutingFullImplementationId, "implementation", CatalogOpus, BmadFullTemplateId),
             // Quick Change
-            (RoutingQuickSpecId, "quick-spec", "claude-sonnet-4-20250514", BmadQuickTemplateId),
-            (RoutingQuickImplementId, "implement", "claude-sonnet-4-20250514", BmadQuickTemplateId),
-            (RoutingQuickCodeReviewId, "code-review", "claude-opus-4-20250514", BmadQuickTemplateId),
+            (RoutingQuickSpecId, "quick-spec", CatalogSonnet, BmadQuickTemplateId),
+            (RoutingQuickImplementId, "implement", CatalogSonnet, BmadQuickTemplateId),
+            (RoutingQuickCodeReviewId, "code-review", CatalogOpus, BmadQuickTemplateId),
         };
 
         foreach (var (id, stageName, modelName, templateId) in routings)
@@ -304,13 +310,13 @@ public static class DatabaseSeeder
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    private const string DocProjectYaml = """
+    private static readonly string DocProjectYaml = $"""
         name: Document Project
         description: Analyze codebase and generate project documentation
         stages:
           - name: analyze-codebase
             executorType: ai-agent
-            modelName: gpt-4o
+            modelName: {CatalogGpt}
             gateRequired: true
             systemPrompt: |
               Analyze the existing codebase thoroughly. Document architectural patterns,
@@ -324,7 +330,7 @@ public static class DatabaseSeeder
               comprehensive, well-structured document.
           - name: finalize-documentation
             executorType: ai-agent
-            modelName: gpt-4o
+            modelName: {CatalogGpt}
             gateRequired: false
             systemPrompt: |
               Incorporate the review feedback into the project documentation.
@@ -333,14 +339,14 @@ public static class DatabaseSeeder
               review the documentation for clarity, completeness, and accuracy.
         """;
 
-    private const string BmadFullYaml = """
+    private static readonly string BmadFullYaml = $"""
         name: Full Feature Pipeline
         description: Complete BMAD pipeline for significant features. Select the stages you need.
         selectableStages: true
         stages:
           - name: prd
             executorType: ai-agent
-            modelName: claude-opus-4-20250514
+            modelName: {CatalogOpus}
             gateRequired: true
             systemPrompt: |
               Create a combined Product Brief and Product Requirements Document (PRD).
@@ -350,7 +356,7 @@ public static class DatabaseSeeder
               Surface any uncertainties or open questions in a REVIEWER_TODO section.
           - name: ux-design
             executorType: ai-agent
-            modelName: claude-sonnet-4-20250514
+            modelName: {CatalogSonnet}
             gateRequired: true
             systemPrompt: |
               Create UX design specifications for this feature.
@@ -359,7 +365,7 @@ public static class DatabaseSeeder
               Include responsive design strategy and accessibility considerations.
           - name: architecture
             executorType: ai-agent
-            modelName: claude-opus-4-20250514
+            modelName: {CatalogOpus}
             gateRequired: true
             systemPrompt: |
               Design the technical architecture and solution design for this feature.
@@ -368,7 +374,7 @@ public static class DatabaseSeeder
               Document key architectural decisions and trade-offs.
           - name: test-design
             executorType: ai-agent
-            modelName: claude-opus-4-20250514
+            modelName: {CatalogOpus}
             gateRequired: true
             systemPrompt: |
               Create system-level and feature-level test plans.
@@ -376,7 +382,7 @@ public static class DatabaseSeeder
               and acceptance criteria. Consider both automated and manual testing approaches.
           - name: implementation
             executorType: ai-agent
-            modelName: claude-opus-4-20250514
+            modelName: {CatalogOpus}
             gateRequired: true
             systemPrompt: |
               Break the requirements into epics and user stories with clear acceptance criteria.
@@ -387,13 +393,13 @@ public static class DatabaseSeeder
               Use party mode (multi-perspective analysis) for complex decisions.
         """;
 
-    private const string BmadQuickYaml = """
+    private static readonly string BmadQuickYaml = $"""
         name: Quick Change
         description: Lightweight spec and implementation for small, self-contained changes.
         stages:
           - name: quick-spec
             executorType: ai-agent
-            modelName: claude-sonnet-4-20250514
+            modelName: {CatalogSonnet}
             gateRequired: true
             systemPrompt: |
               Create a lightweight technical specification for this change.
@@ -402,7 +408,7 @@ public static class DatabaseSeeder
               Keep it concise -- this is for small, well-understood changes.
           - name: implement
             executorType: ai-agent
-            modelName: claude-sonnet-4-20250514
+            modelName: {CatalogSonnet}
             gateRequired: false
             systemPrompt: |
               Implement the change described in the quick spec.
@@ -411,7 +417,7 @@ public static class DatabaseSeeder
               Do not stop or give up -- try different approaches if needed.
           - name: code-review
             executorType: ai-agent
-            modelName: claude-opus-4-20250514
+            modelName: {CatalogOpus}
             gateRequired: true
             systemPrompt: |
               Perform an adversarial code review of the implementation.
