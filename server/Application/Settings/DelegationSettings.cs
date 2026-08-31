@@ -412,6 +412,15 @@ public sealed class DelegationSettings
     public int SubagentGraceMinutes { get; set; } = 30;
 
     /// <summary>
+    /// After the closing-line nudge has actually been TYPED (SessionQueuedMessages.SentAt), how
+    /// long settle-anyway waits before accepting a TEXT-LESS post-nudge boundary as the delegate's
+    /// non-answer (CARD-0248). 240 s ≈ the measured maximum prompt→response gap (217 s, see
+    /// ModelWaitDeadlineMinutes) — inside it, the real answer text is very probably still coming.
+    /// A post-nudge boundary WITH final-message text needs no window: the answer is the answer.
+    /// </summary>
+    public int ReportNudgeResponseSeconds { get; set; } = 240;
+
+    /// <summary>
     /// How long an open task whose session is DEAD (<see cref="AgentTaskLiveness.IsDeadSession"/>)
     /// must keep looking dead before the dispatcher fails it (CARD-0021). Measured from the first
     /// sweep that saw it that way, in memory — a server restart only ever delays the failure.

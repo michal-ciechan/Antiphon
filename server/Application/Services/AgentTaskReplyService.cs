@@ -1793,14 +1793,12 @@ public sealed class AgentTaskReplyService
     }
 
     /// <summary>
-    /// A delegate that ends its turn asking something needs an ANSWER, not a retry. Deliberately
-    /// conservative: only a question mark in the last couple of lines counts, so a report that
-    /// merely mentions a question mid-text still reads as finished.
-    /// </summary>
-    /// <summary>
-    /// CARD-0159 S2: a closing verdict line settles immediately; an unmarked live session is
-    /// nudged once; a second unmarked end (or a dead session, or a Check role) settles with the
-    /// evidence class recorded. Returns null when the task was nudged and must NOT settle.
+    /// CARD-0159 S2 / CARD-0248: a closing verdict line settles immediately; an unmarked live
+    /// session is nudged once; a second unmarked end after the delivered nudge (or a dead
+    /// session, or a Check role) settles with the evidence class recorded. Returns null when
+    /// the task was nudged and must NOT settle — including when the same boundary re-enters,
+    /// the nudge has not been typed, or a text-less post-nudge boundary is still inside the
+    /// response window.
     /// </summary>
     private async Task<(AgentTaskStatus Status, AgentTaskReportEvidence Evidence, string Body, string? FailureReason)?>
         ClassifyReportAsync(
@@ -1825,16 +1823,59 @@ public sealed class AgentTaskReplyService
             return (AgentTaskStatus.Succeeded, AgentTaskReportEvidence.Exempt, body, null);
 
         var sessionLive = task.AgentSessionId is Guid sid && await IsSessionLiveAsync(db, sid, ct);
-        if (task.ReportNudgedAt is null && sessionLive)
+        if (sessionLive)
         {
-            await NudgeForClosingLineAsync(services, db, task, turn, now, ct);
-            return null;
+            if (task.ReportNudgedAt is null)
+            {
+                await NudgeForClosingLineAsync(services, db, task, turn, now, ct);
+                return null;
+            }
+
+            // CARD-0248: "asked once and it ended ANOTHER turn unmarked" — enforced literally.
+            // Legacy carve-out: pre-CARD-0248 nudges with both new columns null skip these gates
+            // so in-flight nudges at deploy cannot strand. Decays to dead code later.
+            var isLegacyNudge = task.ReportNudgedSequence is null && task.ReportNudgeMessageId is null;
+            if (!isLegacyNudge)
+            {
+                if (turn.Boundary is not { } boundary)
+                {
+                    _logger.LogWarning(
+                        "Task {ShortId}: settle-anyway reached with no boundary identity — staying Working",
+                        DelegationReportFormatter.Short(task.Id));
+                    return null;
+                }
+
+                var sentAt = await LoadNudgeSentAtAsync(db, task, ct);
+                if (sentAt is not DateTime deliveredAt)
+                    return null; // the ask has not happened yet
+                if (boundary.Sequence <= task.ReportNudgedSequence
+                    || boundary.CreatedAt <= deliveredAt)
+                    return null; // same boundary, or one that predates the ask
+                if (turn.FinalMessageMissing
+                    && now < deliveredAt + TimeSpan.FromSeconds(_settings.ReportNudgeResponseSeconds))
+                    return null; // text-less boundary: give the answer time to land
+            }
         }
 
         var evidence = turn.FinalMessageMissing
             ? AgentTaskReportEvidence.FinalMessageMissing
             : AgentTaskReportEvidence.UnmarkedAfterNudge;
         return (AgentTaskStatus.Succeeded, evidence, body, null);
+    }
+
+    /// <summary>
+    /// SentAt of the queued nudge row, or null when the id was never recorded / the row is gone /
+    /// it has not been typed yet (CARD-0248).
+    /// </summary>
+    private static async Task<DateTime?> LoadNudgeSentAtAsync(
+        AppDbContext db, AgentTask task, CancellationToken ct)
+    {
+        if (task.ReportNudgeMessageId is not Guid messageId)
+            return null;
+        return await db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.Id == messageId)
+            .Select(m => m.SentAt)
+            .FirstOrDefaultAsync(ct);
     }
 
     private static string FirstLine(string text)
@@ -2083,6 +2124,11 @@ public sealed class AgentTaskReplyService
         }
     }
 
+    /// <summary>
+    /// A delegate that ends its turn asking something needs an ANSWER, not a retry. Deliberately
+    /// conservative: only a question mark in the last couple of lines counts, so a report that
+    /// merely mentions a question mid-text still reads as finished.
+    /// </summary>
     internal static bool LooksLikeAQuestion(string report)
     {
         var lines = report.ReplaceLineEndings("\n")
