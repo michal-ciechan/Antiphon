@@ -174,6 +174,28 @@ public class GrokTranscriptTailerTests
     }
 
     [Test]
+    public void Regular_turn_completed_TurnEnd_is_strictly_later_than_its_immediate_activity()
+    {
+        // CARD-0267: Grok emits turn end at a timestamp strictly later than preceding activity,
+        // unlike Claude's same-record pair. A future format change that collapsed this to equal
+        // timestamps would reopen the CARD-0264 equal-timestamp defeat shape.
+        var n = new GrokTranscriptNormalizer();
+        var parts = new List<TranscriptPart>();
+        foreach (var row in new[] { UserChunkRow, AgentChunkRow, ToolCallRow, AgentChunkRow2, TurnCompletedRow })
+            parts.AddRange(n.Normalize(row));
+
+        var endIndex = parts.FindIndex(p => p.Kind == TranscriptKinds.TurnEnd);
+        endIndex.ShouldBeGreaterThan(0);
+        var previous = parts[endIndex - 1];
+        previous.Kind.ShouldBe(TranscriptKinds.AssistantText);
+        parts[endIndex].Timestamp.ShouldNotBeNull();
+        previous.Timestamp.ShouldNotBeNull();
+        parts[endIndex].Timestamp!.Value.ShouldBeGreaterThan(
+            previous.Timestamp!.Value,
+            "TurnEnd timestamp must be strictly later than the preceding AssistantText, not merely >=");
+    }
+
+    [Test]
     public async Task Cancelled_turn_is_a_TurnEnd_and_a_trailing_out_of_order_chunk_still_lands()
     {
         var (dir, path) = TempUpdatesPath();

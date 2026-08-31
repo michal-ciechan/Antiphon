@@ -21,6 +21,11 @@ narration; if a completion note says `report=unmarked`, read it as unverified. W
 asks a question, answer it with -Reply. Taking the work back is the failure mode this exists
 to prevent.
 
+Do not treat the absence of a `[task … done]` note as evidence that the delegate is still
+running: completion and check notes are WhenIdle and can wait behind your turn. When the
+answer matters, read the task row or `delegate.ps1 -Status`; the eventual note is only a
+delayed, possibly report-withheld echo.
+
 If you are channel-bound (Slack/Telegram), the chat does NOT see every turn. Only the turn that
 answers the inbound chat message is delivered — ending your turn settles that conversation. One
 exception: a later turn of yours that was triggered by an Antiphon note (`[task … done]`, a

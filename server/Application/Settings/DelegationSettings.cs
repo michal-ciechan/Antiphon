@@ -327,11 +327,13 @@ public sealed class DelegationSettings
     /// of a body that reached the model while the TUI was busy, and there is no accompanying
     /// <c>user</c> record for the watchdog to fall back on (CARD-0135).</para>
     ///
-    /// <para>This is the DELIVERY clock and nothing else: it only ever asks whether work STARTED. A
-    /// task that started and then ran forever is <see cref="DefaultTimeoutMinutes"/> /
-    /// <c>RolePolicyEntry.TimeoutMinutes</c> and
+    /// <para>This is the shared DELIVERY grace. The first-prompt watchdog still only asks whether
+    /// work STARTED — a task that started and then ran forever is
+    /// <see cref="DefaultTimeoutMinutes"/> / <c>RolePolicyEntry.TimeoutMinutes</c> and
     /// <see cref="ModelWaitDeadlineMinutes"/>/<see cref="LocalExecutionDeadlineMinutes"/>
-    /// (CARD-0020 S2/S3).</para>
+    /// (CARD-0020 S2/S3). The same clock is the age past which a Pending caller-session
+    /// Delegation or Check note is a <c>CallerNoteUndelivered</c> attention row (CARD-0267) —
+    /// detection only, no fail-and-kill.</para>
     /// </summary>
     public int DeliveryFailTimeoutMinutes { get; set; } = 10;
 

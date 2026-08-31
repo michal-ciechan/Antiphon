@@ -146,6 +146,26 @@ describe('AttentionPanel', () => {
     expect(screen.getByText(/Brief still queued Pending/)).toBeInTheDocument()
   })
 
+  it('draws a CallerNoteUndelivered row with the waiting-note badge', async () => {
+    serve({
+      items: [
+        item({
+          kind: 'CallerNoteUndelivered',
+          severity: 'Warning',
+          title: 'Ship the upgrade',
+          taskId: 't1',
+          headline: 'Delegation note still Pending on caller session a1b2c3d4 after 11m.',
+        }),
+      ],
+    })
+
+    renderWithProviders(<AttentionPanel />)
+
+    expect(await screen.findByText('Ship the upgrade')).toBeInTheDocument()
+    expect(screen.getByText('Caller note waiting')).toBeInTheDocument()
+    expect(screen.getByText(/still Pending/)).toBeInTheDocument()
+  })
+
   it('shows the evidence, the age and the spend on the row', async () => {
     serve({
       items: [

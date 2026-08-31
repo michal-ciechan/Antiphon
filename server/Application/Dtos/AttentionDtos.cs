@@ -133,6 +133,14 @@ public enum AttentionKind
     /// the restarted bridge has catalogued the channel. Detection only — never a restart.
     /// </summary>
     InboundUnconsumed = 17,
+
+    /// <summary>
+    /// A caller-session Delegation or Check note still Pending past the shared delivery grace
+    /// (CARD-0267). The task may already be settled; a busy caller simply has not reached a
+    /// WhenIdle delivery point. Detection only — the row does not retry, cancel, kill, or
+    /// SendNow, because bypassing WhenIdle can type into a busy caller composer.
+    /// </summary>
+    CallerNoteUndelivered = 18,
 }
 
 /// <summary>

@@ -143,6 +143,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     icon: TbMailExclamation,
     hint: 'A chat message was received but the service did not consume it. Detection only.',
   },
+  CallerNoteUndelivered: {
+    label: 'Caller note waiting',
+    color: 'warning',
+    icon: TbHourglassHigh,
+    hint: 'The caller has not received the note. Silence is not evidence the delegate is still running.',
+  },
 }
 
 export type AttentionGroupKey = 'now' | 'broken' | 'suspect' | 'failures'

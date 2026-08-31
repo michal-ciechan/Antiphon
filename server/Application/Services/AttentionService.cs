@@ -51,7 +51,8 @@ public sealed class AttentionService
 
     /// <summary>
     /// The delivery watchdog's own clock, read from delegation settings so this projection and the
-    /// sweep cannot disagree about when a brief is overdue for typing (CARD-0117 S5).
+    /// sweep cannot disagree about when a brief is overdue for typing (CARD-0117 S5) or when a
+    /// caller-session note is overdue for delivery (CARD-0267).
     /// </summary>
     private TimeSpan DeliveryFailTimeout =>
         TimeSpan.FromMinutes(Math.Max(0, _delegation.DeliveryFailTimeoutMinutes));
@@ -161,6 +162,7 @@ public sealed class AttentionService
             open, now, costs, checkDigests, attachedIncidents, includeProgressProbe, ct);
         items.AddRange(openItems);
         items.AddRange(await BuildParkedMessageItemsAsync(ct));
+        items.AddRange(await BuildCallerNoteUndeliveredItemsAsync(now, ct));
         items.AddRange(await BuildInboundUnconsumedItemsAsync(since, ct));
         items.AddRange(await BuildRecentIncidentItemsAsync(since, attachedIncidents, ct));
         items.AddRange(BuildFailureUnacknowledgedItems(unacknowledged, costs, checkDigests));
@@ -770,6 +772,91 @@ public sealed class AttentionService
                 message.LastDeliveryStartedAt ?? message.CreatedAt,
                 null,
                 [AttentionAction.SendNow, AttentionAction.CancelMessage]));
+        }
+
+        return items;
+    }
+
+    // ---- CARD-0267: aging undelivered caller-session notes --------------------------------------
+
+    private async Task<List<AttentionItemDto>> BuildCallerNoteUndeliveredItemsAsync(
+        DateTime now, CancellationToken ct)
+    {
+        var items = new List<AttentionItemDto>();
+        var cutoff = now - DeliveryFailTimeout;
+
+        // Narrow Pending-origin lookup: IX_SessionQueuedMessages_OpenChannelCorrelations begins
+        // with Origin, Status. Do not call IsWorkingAsync — the signal is that the note has not
+        // arrived, not a claim about why. Parked notes stay eligible; ParkedMessage is the more
+        // specific delivery-failure diagnosis for the same row.
+        var candidates = await _db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.Status == QueuedMessageStatus.Pending
+                && (m.Origin == QueuedMessageOrigin.Delegation
+                    || m.Origin == QueuedMessageOrigin.Check)
+                && m.CreatedAt < cutoff)
+            .Select(m => new
+            {
+                m.Id, m.AgentSessionId, m.Origin, m.SourceTaskId, m.ConversationKey, m.CreatedAt,
+            })
+            .ToListAsync(ct);
+        if (candidates.Count == 0)
+            return items;
+
+        var messageTaskIds = new Dictionary<Guid, Guid>();
+        foreach (var message in candidates)
+        {
+            if (message.SourceTaskId is Guid sourced)
+            {
+                messageTaskIds[message.Id] = sourced;
+                continue;
+            }
+
+            if (message.Origin == QueuedMessageOrigin.Check
+                && AgentTaskCheckService.TryParseCheckConversationKey(
+                    message.ConversationKey, out var parsed))
+            {
+                messageTaskIds[message.Id] = parsed;
+            }
+        }
+
+        var taskIds = messageTaskIds.Values.Distinct().ToList();
+        if (taskIds.Count == 0)
+            return items;
+
+        var tasks = await _db.AgentTasks.AsNoTracking()
+            .Where(t => taskIds.Contains(t.Id))
+            .Select(t => new { t.Id, t.Title, t.ReplyTo, t.ParentSessionId, t.AgentId })
+            .ToDictionaryAsync(t => t.Id, ct);
+
+        foreach (var message in candidates)
+        {
+            if (!messageTaskIds.TryGetValue(message.Id, out var taskId))
+                continue;
+            if (!tasks.TryGetValue(taskId, out var task))
+                continue;
+            if (task.ReplyTo != AgentTaskReplyTo.Session)
+                continue;
+            if (task.ParentSessionId is not Guid parent || parent != message.AgentSessionId)
+                continue;
+
+            var age = now - message.CreatedAt;
+            var sessionShort = message.AgentSessionId.ToString("N")[..8];
+            items.Add(new AttentionItemDto(
+                AttentionKind.CallerNoteUndelivered,
+                AlertSeverity.Warning,
+                task.Id,
+                message.AgentSessionId,
+                task.AgentId,
+                message.Id,
+                task.Title,
+                $"{message.Origin} note still Pending on caller session {sessionShort} after {Duration(age)}.",
+                Evidence(
+                    "The caller-session note is still Pending past the shared delivery grace. "
+                    + "Detection only: silence is not evidence the delegate is still running.",
+                    check: null),
+                message.CreatedAt,
+                null,
+                [AttentionAction.OpenDrawer]));
         }
 
         return items;

@@ -33,6 +33,7 @@ const ALL_KINDS: AttentionKind[] = [
   'FailureUnacknowledged',
   'OrchestratorInvestigation',
   'InboundUnconsumed',
+  'CallerNoteUndelivered',
 ]
 
 function item(overrides: Partial<AttentionItemDto> & { kind: AttentionKind }): AttentionItemDto {

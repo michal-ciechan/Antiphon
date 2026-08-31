@@ -15,6 +15,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -273,6 +274,191 @@ public class AttentionServiceTests
         await scenario.AddDelegationBriefAsync(session, task, QueuedMessageStatus.Pending);
 
         (await ItemsForAsync(scenario)).ShouldNotContain(i => i.TaskId == task);
+    }
+
+    // ---- CallerNoteUndelivered (CARD-0267) ------------------------------------------------------
+
+    [Test]
+    public async Task a_succeeded_task_delegation_note_past_grace_is_caller_note_undelivered()
+    {
+        await using var scenario = new Scenario();
+        var caller = await scenario.AddSessionAsync();
+        var delegateSession = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            delegateSession, AgentTaskStatus.Succeeded, dispatchedMinutesAgo: 20,
+            completedMinutesAgo: 12, parentSessionId: caller);
+        var (message, createdAt) = await scenario.AddCallerNoteAsync(
+            caller, QueuedMessageOrigin.Delegation, QueuedMessageStatus.Pending,
+            createdMinutesAgo: 11, sourceTaskId: task);
+
+        var item = (await ItemsForAsync(scenario)).Single(
+            i => i.MessageId == message && i.Kind == AttentionKind.CallerNoteUndelivered);
+
+        item.Severity.ShouldBe(AlertSeverity.Warning);
+        item.TaskId.ShouldBe(task);
+        item.SessionId.ShouldBe(caller);
+        item.MessageId.ShouldBe(message);
+        item.SinceUtc!.Value.ShouldBeInRange(createdAt.AddTicks(-10), createdAt.AddTicks(10));
+        item.Actions.ShouldBe([AttentionAction.OpenDrawer]);
+        item.Headline.ShouldContain("Delegation");
+        item.Headline.ShouldContain("Pending");
+        item.Headline.ShouldContain(caller.ToString("N")[..8]);
+    }
+
+    [Test]
+    public async Task a_check_note_recovers_the_task_from_conversation_key()
+    {
+        await using var scenario = new Scenario();
+        var caller = await scenario.AddSessionAsync();
+        var delegateSession = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            delegateSession, AgentTaskStatus.Succeeded, dispatchedMinutesAgo: 20,
+            completedMinutesAgo: 12, parentSessionId: caller);
+        var (message, _) = await scenario.AddCallerNoteAsync(
+            caller, QueuedMessageOrigin.Check, QueuedMessageStatus.Pending,
+            createdMinutesAgo: 11, sourceTaskId: null,
+            conversationKey: AgentTaskCheckService.ConversationKey(task));
+
+        var item = (await ItemsForAsync(scenario)).Single(
+            i => i.MessageId == message && i.Kind == AttentionKind.CallerNoteUndelivered);
+
+        item.TaskId.ShouldBe(task);
+        item.SessionId.ShouldBe(caller);
+        item.Headline.ShouldContain("Check");
+        item.Actions.ShouldBe([AttentionAction.OpenDrawer]);
+    }
+
+    [Test]
+    public async Task a_caller_note_inside_the_delivery_window_is_not_listed()
+    {
+        await using var scenario = new Scenario();
+        var caller = await scenario.AddSessionAsync();
+        var delegateSession = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            delegateSession, AgentTaskStatus.Succeeded, dispatchedMinutesAgo: 20,
+            completedMinutesAgo: 5, parentSessionId: caller);
+        var (message, _) = await scenario.AddCallerNoteAsync(
+            caller, QueuedMessageOrigin.Delegation, QueuedMessageStatus.Pending,
+            createdMinutesAgo: 9, sourceTaskId: task);
+
+        (await ItemsForAsync(scenario)).ShouldNotContain(
+            i => i.MessageId == message && i.Kind == AttentionKind.CallerNoteUndelivered);
+    }
+
+    [Test]
+    public async Task a_caller_note_at_exact_grace_is_not_listed()
+    {
+        var now = new DateTimeOffset(2026, 8, 31, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        await using var scenario = new Scenario();
+        var caller = await scenario.AddSessionAsync();
+        var delegateSession = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            delegateSession, AgentTaskStatus.Succeeded, dispatchedMinutesAgo: 20,
+            completedMinutesAgo: 12, parentSessionId: caller);
+        var (message, _) = await scenario.AddCallerNoteAsync(
+            caller, QueuedMessageOrigin.Delegation, QueuedMessageStatus.Pending,
+            createdAt: now.UtcDateTime.AddMinutes(-10), sourceTaskId: task);
+
+        (await ItemsForAsync(scenario, clock)).ShouldNotContain(
+            i => i.MessageId == message && i.Kind == AttentionKind.CallerNoteUndelivered);
+    }
+
+    [Test]
+    public async Task a_sent_caller_note_is_not_listed()
+    {
+        await using var scenario = new Scenario();
+        var caller = await scenario.AddSessionAsync();
+        var delegateSession = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            delegateSession, AgentTaskStatus.Succeeded, dispatchedMinutesAgo: 20,
+            completedMinutesAgo: 12, parentSessionId: caller);
+        var (message, _) = await scenario.AddCallerNoteAsync(
+            caller, QueuedMessageOrigin.Delegation, QueuedMessageStatus.Sent,
+            createdMinutesAgo: 11, sourceTaskId: task);
+
+        (await ItemsForAsync(scenario)).ShouldNotContain(
+            i => i.MessageId == message && i.Kind == AttentionKind.CallerNoteUndelivered);
+    }
+
+    [Test]
+    public async Task a_canceled_caller_note_is_not_listed()
+    {
+        await using var scenario = new Scenario();
+        var caller = await scenario.AddSessionAsync();
+        var delegateSession = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            delegateSession, AgentTaskStatus.Succeeded, dispatchedMinutesAgo: 20,
+            completedMinutesAgo: 12, parentSessionId: caller);
+        var (message, _) = await scenario.AddCallerNoteAsync(
+            caller, QueuedMessageOrigin.Delegation, QueuedMessageStatus.Canceled,
+            createdMinutesAgo: 11, sourceTaskId: task);
+
+        (await ItemsForAsync(scenario)).ShouldNotContain(
+            i => i.MessageId == message && i.Kind == AttentionKind.CallerNoteUndelivered);
+    }
+
+    [Test]
+    public async Task an_unparseable_check_key_is_not_listed()
+    {
+        await using var scenario = new Scenario();
+        var caller = await scenario.AddSessionAsync();
+        var delegateSession = await scenario.AddSessionAsync();
+        await scenario.AddTaskAsync(
+            delegateSession, AgentTaskStatus.Succeeded, dispatchedMinutesAgo: 20,
+            completedMinutesAgo: 12, parentSessionId: caller);
+        var (message, _) = await scenario.AddCallerNoteAsync(
+            caller, QueuedMessageOrigin.Check, QueuedMessageStatus.Pending,
+            createdMinutesAgo: 11, sourceTaskId: null,
+            conversationKey: "check:not-a-guid");
+
+        (await ItemsForAsync(scenario)).ShouldNotContain(
+            i => i.MessageId == message && i.Kind == AttentionKind.CallerNoteUndelivered);
+    }
+
+    [Test]
+    public async Task a_delegation_note_on_the_delegate_session_is_not_a_caller_note()
+    {
+        await using var scenario = new Scenario();
+        var caller = await scenario.AddSessionAsync();
+        var delegateSession = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            delegateSession, AgentTaskStatus.Succeeded, dispatchedMinutesAgo: 20,
+            completedMinutesAgo: 12, parentSessionId: caller);
+        var (message, _) = await scenario.AddCallerNoteAsync(
+            delegateSession, QueuedMessageOrigin.Delegation, QueuedMessageStatus.Pending,
+            createdMinutesAgo: 11, sourceTaskId: task);
+
+        (await ItemsForAsync(scenario)).ShouldNotContain(
+            i => i.MessageId == message && i.Kind == AttentionKind.CallerNoteUndelivered);
+    }
+
+    [Test]
+    public async Task a_caller_note_row_disappears_once_sent_or_canceled()
+    {
+        await using var scenario = new Scenario();
+        var caller = await scenario.AddSessionAsync();
+        var delegateSession = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            delegateSession, AgentTaskStatus.Succeeded, dispatchedMinutesAgo: 20,
+            completedMinutesAgo: 12, parentSessionId: caller);
+        var (sentId, _) = await scenario.AddCallerNoteAsync(
+            caller, QueuedMessageOrigin.Delegation, QueuedMessageStatus.Pending,
+            createdMinutesAgo: 11, sourceTaskId: task, sequence: 1);
+        var (canceledId, _) = await scenario.AddCallerNoteAsync(
+            caller, QueuedMessageOrigin.Delegation, QueuedMessageStatus.Pending,
+            createdMinutesAgo: 12, sourceTaskId: task, sequence: 2);
+
+        var before = await ItemsForAsync(scenario);
+        before.ShouldContain(i => i.MessageId == sentId && i.Kind == AttentionKind.CallerNoteUndelivered);
+        before.ShouldContain(i => i.MessageId == canceledId && i.Kind == AttentionKind.CallerNoteUndelivered);
+
+        await scenario.SetQueuedMessageStatusAsync(sentId, QueuedMessageStatus.Sent);
+        await scenario.SetQueuedMessageStatusAsync(canceledId, QueuedMessageStatus.Canceled);
+
+        var after = await ItemsForAsync(scenario);
+        after.ShouldNotContain(i => i.MessageId == sentId && i.Kind == AttentionKind.CallerNoteUndelivered);
+        after.ShouldNotContain(i => i.MessageId == canceledId && i.Kind == AttentionKind.CallerNoteUndelivered);
     }
 
     [Test]
@@ -1104,6 +1290,14 @@ public class AttentionServiceTests
         return result.Items.Where(scenario.Owns).ToList();
     }
 
+    /// <summary>The same id-scoped read, with an injected clock (CARD-0267 exact-grace).</summary>
+    private static async Task<List<AttentionItemDto>> ItemsForAsync(Scenario scenario, TimeProvider time)
+    {
+        var result = await BuildService(new FakeRunnerClient(), timeProvider: time)
+            .GetAsync(CancellationToken.None);
+        return result.Items.Where(scenario.Owns).ToList();
+    }
+
     /// <summary>What the runner says when it is running a session — the only status that can differ.</summary>
     private static SessionRunnerSessionDto Running(Guid sessionId, int? pid = 1234, int? hostPid = null) =>
         new(sessionId, pid, DateTime.UtcNow.AddMinutes(-45), "Running", null, AgentExitReason.Unknown,
@@ -1112,9 +1306,10 @@ public class AttentionServiceTests
     private static AttentionService BuildService(
         ISessionRunnerClient runner,
         int staleAfterDays = 7,
-        IWorkspaceProgressProbe? workspaceProgress = null) =>
+        IWorkspaceProgressProbe? workspaceProgress = null,
+        TimeProvider? timeProvider = null) =>
         new(CreateContext(), runner, Options.Create(new SupervisionSettings()),
-            Options.Create(new DelegationSettings()), TimeProvider.System,
+            Options.Create(new DelegationSettings()), timeProvider ?? TimeProvider.System,
             NullLogger<AttentionService>.Instance,
             workspaceProgress: workspaceProgress,
             cardTransitions: Options.Create(new CardWorkTransitionSettings { StaleAfterDays = staleAfterDays }));
@@ -1233,7 +1428,8 @@ public class AttentionServiceTests
             string? failureReason = null,
             decimal costUsd = 0m,
             string? workingDirectory = null,
-            bool neverDispatched = false)
+            bool neverDispatched = false,
+            Guid? parentSessionId = null)
         {
             var id = Guid.NewGuid();
             var dispatched = DateTime.UtcNow.AddMinutes(-dispatchedMinutesAgo);
@@ -1252,7 +1448,7 @@ public class AttentionServiceTests
                 AgentSessionId = neverDispatched ? null : sessionId,
                 Status = status,
                 ReplyTo = AgentTaskReplyTo.Session,
-                ParentSessionId = neverDispatched ? sessionId : Guid.NewGuid(),
+                ParentSessionId = parentSessionId ?? (neverDispatched ? sessionId : Guid.NewGuid()),
                 ExpectedDurationMinutes = expectedMinutes,
                 CheckCount = checkCount,
                 NextCheckAt = nextCheckAt,
@@ -1376,6 +1572,48 @@ public class AttentionServiceTests
             await db.SaveChangesAsync();
             _messages.Add(id);
             return id;
+        }
+
+        public async Task<(Guid Id, DateTime CreatedAt)> AddCallerNoteAsync(
+            Guid sessionId,
+            QueuedMessageOrigin origin,
+            QueuedMessageStatus status,
+            int createdMinutesAgo = 11,
+            DateTime? createdAt = null,
+            Guid? sourceTaskId = null,
+            string? conversationKey = null,
+            long sequence = 1)
+        {
+            var id = Guid.NewGuid();
+            var at = createdAt ?? DateTime.UtcNow.AddMinutes(-createdMinutesAgo);
+            await using var db = CreateContext();
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = id,
+                AgentSessionId = sessionId,
+                Body = "the caller has not heard this yet",
+                Status = status,
+                Sequence = sequence,
+                Origin = origin,
+                SourceTaskId = sourceTaskId,
+                ConversationKey = conversationKey,
+                CreatedAt = at,
+                SentAt = status == QueuedMessageStatus.Sent ? at.AddMinutes(1) : null,
+                CanceledAt = status == QueuedMessageStatus.Canceled ? at.AddMinutes(1) : null,
+            });
+            await db.SaveChangesAsync();
+            _messages.Add(id);
+            return (id, at);
+        }
+
+        public async Task SetQueuedMessageStatusAsync(Guid messageId, QueuedMessageStatus status)
+        {
+            await using var db = CreateContext();
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == messageId);
+            row.Status = status;
+            row.SentAt = status == QueuedMessageStatus.Sent ? DateTime.UtcNow : row.SentAt;
+            row.CanceledAt = status == QueuedMessageStatus.Canceled ? DateTime.UtcNow : row.CanceledAt;
+            await db.SaveChangesAsync();
         }
 
         /// <summary>

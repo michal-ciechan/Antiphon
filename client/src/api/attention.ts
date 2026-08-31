@@ -73,6 +73,11 @@ export type AttentionKind =
    * Critical. Detection only — the gateway already acknowledged the chat if it could.
    */
   | 'InboundUnconsumed'
+  /**
+   * A caller-session Delegation or Check note still Pending past the delivery grace
+   * (CARD-0267). Detection only — silence is not evidence the delegate is still running.
+   */
+  | 'CallerNoteUndelivered'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =

@@ -70,6 +70,42 @@ public class CodexTranscriptNormalizerTests
     }
 
     /// <summary>
+    /// CARD-0267: Codex emits each <c>task_complete</c> TurnEnd at a timestamp strictly later than
+    /// the preceding activity, unlike Claude's same-record pair. A future format change that
+    /// collapsed this to equal timestamps would reopen the CARD-0264 equal-timestamp defeat shape.
+    /// Do not weaken to turn identity or <c>&gt;=</c>.
+    /// </summary>
+    [Test]
+    public async Task Task_complete_TurnEnd_is_strictly_later_than_its_immediate_activity()
+    {
+        foreach (var fixture in new[] { "codex-tui-turn.jsonl", "codex-exec-turn.jsonl" })
+        {
+            var parts = NormalizeFixture(fixture);
+            var seen = 0;
+            for (var i = 0; i < parts.Count; i++)
+            {
+                if (parts[i].Kind != TranscriptKinds.TurnEnd)
+                    continue;
+
+                seen++;
+                i.ShouldBeGreaterThan(0, $"{fixture}: TurnEnd is not the first part");
+                var previous = parts[i - 1];
+                previous.Kind.ShouldNotBe(
+                    TranscriptKinds.TurnEnd, $"{fixture}: TurnEnd must immediately follow activity");
+                parts[i].Timestamp.ShouldNotBeNull($"{fixture}: TurnEnd timestamp");
+                previous.Timestamp.ShouldNotBeNull($"{fixture}: preceding activity timestamp");
+                parts[i].Timestamp!.Value.ShouldBeGreaterThan(
+                    previous.Timestamp!.Value,
+                    $"{fixture}: TurnEnd timestamp must be strictly later than the preceding activity");
+            }
+
+            seen.ShouldBeGreaterThan(0, $"{fixture}: expected at least one task_complete TurnEnd");
+        }
+
+        await Task.CompletedTask;
+    }
+
+    /// <summary>
     /// Codex has no <c>stop_reason</c>. <c>AgentSessionRuntime.IsTurnBoundary</c> keys on the
     /// literal string <c>end_turn</c>, so the normalizer must synthesize it — this is the single
     /// assertion the whole card rests on. Without it there is no turn-end queue flush, no report
