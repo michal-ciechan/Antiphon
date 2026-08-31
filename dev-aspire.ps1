@@ -9,11 +9,23 @@
     - Script exits after dashboard is ready (AppHost continues in background).
 .PARAMETER NoBuild    Skip dotnet restore/build before starting.
 .PARAMETER NoBrowser  Do not open the dashboard in a browser (used by the logon auto-start).
+.PARAMETER AllowWorktree  Intentionally allow a linked worktree to control the shared local stack.
 #>
-param([switch]$NoBuild, [switch]$NoBrowser)
+param([switch]$NoBuild, [switch]$NoBrowser, [switch]$AllowWorktree)
 
 $ErrorActionPreference = 'Stop'
 $root         = $PSScriptRoot
+. (Join-Path $root 'scripts\apphost-common.ps1')
+
+$worktree = Get-AppHostWorktreeClassification -SourceRoot $root
+if (-not $worktree.Verified -or (-not $worktree.IsMainWorktree -and -not $AllowWorktree)) {
+    Format-AppHostWorktreeGuardMessage -Classification $worktree | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
+    exit 3
+}
+if (-not $worktree.IsMainWorktree -and $AllowWorktree) {
+    Format-AppHostWorktreeGuardMessage -Classification $worktree -AllowWorktree | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
+}
+
 $appHostDir   = "$root\Antiphon.AppHost"
 $settingsFile = "$root\server\appsettings.json"
 

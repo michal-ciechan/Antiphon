@@ -23,15 +23,17 @@
 .PARAMETER NoBuild            Pass -NoBuild through to dev-aspire.ps1 (skip restore/npm).
 .PARAMETER TimeoutSec         Seconds to wait for the dashboard + backend health (default 150).
 .PARAMETER LockMaxAgeMinutes  Ignore a lock older than this (default 15, the watchdog's number).
+.PARAMETER AllowWorktree      Intentionally allow a linked worktree to control the shared local stack.
 
 .OUTPUTS
     Exit codes:
       0  restarted, dashboard up and /health 200
       1  failed (build failed, or did not come up within TimeoutSec)
-      3  REFUSED - another restart or launch is in flight; nothing was killed
+      3  REFUSED - a linked/unverifiable worktree root, or another restart or launch is in flight; nothing was killed
       4  Aspire's DCP dependency check timed out (see the printed verdict)
 .EXAMPLE
     pwsh -File scripts/restart-apphost.ps1
+    pwsh -File scripts/restart-apphost.ps1 -AllowWorktree
 .NOTES
     Keep this file ASCII-only: it may run under Windows PowerShell 5.1, which reads
     no-BOM .ps1 as CP1252 and mangles non-ASCII characters into parse errors.
@@ -39,7 +41,8 @@
 param(
     [switch]$NoBuild,
     [int]$TimeoutSec = 150,
-    [int]$LockMaxAgeMinutes = 15
+    [int]$LockMaxAgeMinutes = 15,
+    [switch]$AllowWorktree
 )
 
 $ErrorActionPreference = 'Stop'
@@ -47,6 +50,15 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'apphost-common.ps1')
 
 $root    = Split-Path $PSScriptRoot -Parent      # scripts/ -> repo root
+$worktree = Get-AppHostWorktreeClassification -SourceRoot $root
+if (-not $worktree.Verified -or (-not $worktree.IsMainWorktree -and -not $AllowWorktree)) {
+    Format-AppHostWorktreeGuardMessage -Classification $worktree | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
+    exit 3
+}
+if (-not $worktree.IsMainWorktree -and $AllowWorktree) {
+    Format-AppHostWorktreeGuardMessage -Classification $worktree -AllowWorktree | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
+}
+
 $logDir  = Join-Path $root 'logs'
 $pidFile = Join-Path $logDir 'apphost.pid'
 $urlFile = Join-Path $logDir 'apphost-dashboard-url.txt'
@@ -134,6 +146,7 @@ try {
     Write-Host "  launching dev-aspire.ps1$(if ($NoBuild) { ' -NoBuild' })..." -ForegroundColor DarkGray
     $devArgs = @('-NoLogo', '-File', $devScript)
     if ($NoBuild) { $devArgs += '-NoBuild' }
+    if ($AllowWorktree) { $devArgs += '-AllowWorktree' }
     Start-Process pwsh -ArgumentList $devArgs -WindowStyle Normal
 
     # 6) Wait for the dashboard URL + backend health.

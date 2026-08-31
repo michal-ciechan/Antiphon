@@ -3,7 +3,8 @@
     Restart and verify the local Aspire stack, including its EF migration history.
 
 .DESCRIPTION
-    This is the orchestrator-triggered local deploy action. It deliberately
+    This is the orchestrator-triggered machine-global canonical-stack deploy action,
+    never an isolated linked-worktree validation. It deliberately
     composes restart-apphost.ps1 instead of reproducing its lock, teardown, or
     health-waiting behaviour. Once that restart succeeds, it verifies the full
     dev stack (without a browser smoke) and confirms every source migration is
@@ -18,9 +19,13 @@
 .PARAMETER TimeoutSec
     Pass the AppHost health wait timeout to restart-apphost.ps1.
 
+.PARAMETER AllowWorktree
+    Intentionally allow a linked worktree to control the shared local stack.
+
 .OUTPUTS
     DEPLOY VERDICT: ok
     DEPLOY VERDICT: failed <detail>
+    DEPLOY VERDICT: refused <detail>
 
 .NOTES
     Keep this file ASCII-only: it may run under Windows PowerShell 5.1, which
@@ -28,12 +33,25 @@
 #>
 param(
     [switch]$NoBuild,
-    [int]$TimeoutSec = 150
+    [int]$TimeoutSec = 150,
+    [switch]$AllowWorktree
 )
 
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'apphost-common.ps1')
+
+$worktree = Get-AppHostWorktreeClassification -SourceRoot $repoRoot
+if (-not $worktree.Verified -or (-not $worktree.IsMainWorktree -and -not $AllowWorktree)) {
+    $detail = (Format-AppHostWorktreeGuardMessage -Classification $worktree) -join ' '
+    Write-Output "DEPLOY VERDICT: refused $detail"
+    exit 3
+}
+if (-not $worktree.IsMainWorktree -and $AllowWorktree) {
+    Format-AppHostWorktreeGuardMessage -Classification $worktree -AllowWorktree | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
+}
+
 $restartScript = Join-Path $PSScriptRoot 'restart-apphost.ps1'
 $verifyScript = Join-Path $repoRoot 'verify-dev-stack.ps1'
 $migrationDirectory = Join-Path $repoRoot 'server\Migrations'
@@ -101,6 +119,7 @@ $failure = $null
 try {
     $restartArguments = @('-TimeoutSec', $TimeoutSec)
     if ($NoBuild) { $restartArguments += '-NoBuild' }
+    if ($AllowWorktree) { $restartArguments += '-AllowWorktree' }
     Invoke-ChildPowerShell -ScriptPath $restartScript -Name 'restart-apphost.ps1' -Arguments $restartArguments
 
     # The built client can still be finishing its first post-restart build after
