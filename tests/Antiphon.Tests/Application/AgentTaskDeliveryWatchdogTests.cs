@@ -567,12 +567,10 @@ public class AgentTaskDeliveryWatchdogTests
     }
 
     /// <summary>
-    /// CARD-0046's grace has to have a clock. Settlement defers while the turn-ending response's own
-    /// text is still in flight, and the ordinary resolution is that text's arrival re-triggering
-    /// settlement — but a response that never writes text is real (1 in 180 measured: a lone
-    /// <c>end_turn</c> thinking record, then "API Error: Connection lost mid-response"), and nothing
-    /// would ever come back for it. TickAsync sweeps those, so the task settles instead of sitting
-    /// Dispatched until this watchdog kills it ten minutes later.
+    /// CARD-0046's grace has to have a clock, and CARD-0248's job is to not treat that clock as a
+    /// settle-anyway. The sweep still finds the unmarked FinalMessageMissing turn past the grace
+    /// and nudges it; it then HOLDS until the nudge is answered or provably ignored — the same
+    /// boundary, and an undelivered WhenIdle nudge, can never be the settle-anyway boundary.
     /// </summary>
     [Test]
     public async Task a_deferred_settlement_is_swept_after_the_grace_window()
@@ -591,10 +589,14 @@ public class AgentTaskDeliveryWatchdogTests
         await using (var mid = CreateContext())
         {
             var nudged = await mid.AgentTasks.SingleAsync(t => t.Id == task.Id);
-            nudged.Status.ShouldBe(
-                AgentTaskStatus.Dispatched,
-                "CARD-0159: an unmarked FinalMessageMissing turn is nudged once, not settled");
+            nudged.Status.ShouldBe(AgentTaskStatus.Dispatched);
             nudged.ReportNudgedAt.ShouldNotBeNull();
+            nudged.ReportNudgedSequence.ShouldBe(3);
+            nudged.ReportNudgeMessageId.ShouldNotBeNull();
+            var queued = await mid.SessionQueuedMessages.SingleAsync(
+                m => m.Id == nudged.ReportNudgeMessageId);
+            queued.Origin.ShouldBe(QueuedMessageOrigin.Delegation);
+            queued.SentAt.ShouldBeNull();
         }
 
         (await harness.SettleDeferredReportsAsync(CancellationToken.None))
@@ -603,11 +605,149 @@ public class AgentTaskDeliveryWatchdogTests
         await using var verify = CreateContext();
         var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
         settled.Status.ShouldBe(
-            AgentTaskStatus.Succeeded,
-            "no transcript arrives for a response that never writes text — only the sweep can end this");
-        settled.Result.ShouldBe("I'll start by reading the spec.");
+            AgentTaskStatus.Dispatched,
+            "CARD-0248: the same boundary that was nudged can never be the settle-anyway boundary, "
+            + "and the nudge has not even been delivered");
+        settled.Result.ShouldBeNull();
+        settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Legacy);
+        (await verify.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Completed))
+            .ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task an_undelivered_nudge_never_settles_the_task()
+    {
+        var (harness, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 5);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedSplitTurnTailAsync(sessionId, task.Id, storedMinutesAgo: 3);
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        stored.ReportNudgedAt.ShouldNotBeNull();
+        stored.Result.ShouldBeNull();
+        var queued = await verify.SessionQueuedMessages.SingleAsync(
+            m => m.Id == stored.ReportNudgeMessageId);
+        queued.SentAt.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task a_delivered_nudge_with_the_same_boundary_still_does_not_settle()
+    {
+        var (harness, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 5);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedSplitTurnTailAsync(sessionId, task.Id, storedMinutesAgo: 3);
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+        await MarkNudgeDeliveredAsync(sessionId, DateTime.UtcNow.AddMinutes(-10));
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(
+            AgentTaskStatus.Dispatched,
+            "CARD-0248: a delivered nudge still cannot settle the same boundary it was issued against");
+        stored.Result.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task an_unmarked_reply_after_a_delivered_nudge_settles_unmarked_after_nudge()
+    {
+        var (harness, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 5);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedSplitTurnTailAsync(sessionId, task.Id, storedMinutesAgo: 3);
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+        var sentAt = DateTime.UtcNow.AddMinutes(-10);
+        await MarkNudgeDeliveredAsync(sessionId, sentAt);
+        const string reply = "Here is the report without a closing line.";
+        await SeedPostNudgeTurnAsync(sessionId, reply, sentAt.AddMinutes(1), closingVerdict: false);
+
+        // A with-text turn is the transcript observer's job, not the deferred sweep
+        // (arm 1's predicate is "no AssistantText for the boundary's ApiCallId").
+        await CreateReplyService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.UnmarkedAfterNudge);
+        settled.Result.ShouldBe(reply);
+        settled.Result.ShouldNotBe("I'll start by reading the spec.");
+    }
+
+    [Test]
+    public async Task a_marked_reply_after_a_delivered_nudge_settles_marked()
+    {
+        var (harness, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 5);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedSplitTurnTailAsync(sessionId, task.Id, storedMinutesAgo: 3);
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+        var sentAt = DateTime.UtcNow.AddMinutes(-10);
+        await MarkNudgeDeliveredAsync(sessionId, sentAt);
+        const string reply = "Shipped Fizz. 142 passed, 0 failed.";
+        await SeedPostNudgeTurnAsync(
+            sessionId, reply, sentAt.AddMinutes(1), closingVerdict: true, taskId: task.Id);
+
+        await CreateReplyService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
+        settled.Result.ShouldBe(reply);
+    }
+
+    [Test]
+    public async Task a_textless_boundary_after_a_delivered_nudge_waits_the_response_window()
+    {
+        var (harness, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 5);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedSplitTurnTailAsync(sessionId, task.Id, storedMinutesAgo: 3);
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+
+        // Past FinalMessageGrace (120s) so the sweep will hand off, but still inside
+        // ReportNudgeResponseSeconds (240s). CreatedAt must also post-date SentAt.
+        var sentAt = DateTime.UtcNow.AddMinutes(-3);
+        await MarkNudgeDeliveredAsync(sessionId, sentAt);
+        await SeedPostNudgeTurnAsync(
+            sessionId, assistantText: null, createdAt: DateTime.UtcNow.AddMinutes(-2.5));
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+        await using (var insideWindow = CreateContext())
+        {
+            (await insideWindow.AgentTasks.SingleAsync(t => t.Id == task.Id))
+                .Status.ShouldBe(
+                    AgentTaskStatus.Dispatched,
+                    "a text-less post-nudge boundary inside ReportNudgeResponseSeconds must wait");
+        }
+
+        await using (var db = CreateContext())
+        {
+            var stored = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            var nudge = await db.SessionQueuedMessages.SingleAsync(m => m.Id == stored.ReportNudgeMessageId);
+            nudge.SentAt = DateTime.UtcNow.AddMinutes(-10);
+            await db.SaveChangesAsync();
+        }
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
         settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.FinalMessageMissing);
-        settled.RecoveredAt.ShouldBeNull("ordinary settlement observes the task's own transcript");
+        settled.Result.ShouldBe("I'll start by reading the spec.");
     }
 
     [Test]
@@ -710,8 +850,8 @@ public class AgentTaskDeliveryWatchdogTests
         await using (var mid = CreateContext())
         {
             var nudged = await mid.AgentTasks.SingleAsync(t => t.Id == task.Id);
-            if (nudged.Status == AgentTaskStatus.Dispatched)
-                nudged.ReportNudgedAt.ShouldNotBeNull("unmarked announcement is nudged once");
+            nudged.Status.ShouldBe(AgentTaskStatus.Dispatched);
+            nudged.ReportNudgedAt.ShouldNotBeNull("unmarked announcement is nudged once");
         }
 
         await harness.SettleDeferredReportsAsync(CancellationToken.None);
@@ -719,9 +859,40 @@ public class AgentTaskDeliveryWatchdogTests
         await using var verify = CreateContext();
         var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
         settled.Status.ShouldBe(
-            AgentTaskStatus.Succeeded,
-            "the subagent is never reporting — only the sweep can end this");
-        settled.Result.ShouldContain("Four review agents are running in parallel");
+            AgentTaskStatus.Dispatched,
+            "CARD-0248: settling the fan-out announcement on an unanswered, undelivered nudge "
+            + "is the production bug on the subagent arm");
+        settled.Result.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task an_abandoned_fanout_settles_after_a_delivered_nudge_and_reply()
+    {
+        var (harness, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 40);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedAbandonedSubagentFanOutAsync(sessionId, task.Id, storedMinutesAgo: 35);
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+        // Past SubagentGraceMinutes (30) so extraction does not re-defer, and after SentAt so
+        // the delivery gate passes.
+        var sentAt = DateTime.UtcNow.AddMinutes(-40);
+        await MarkNudgeDeliveredAsync(sessionId, sentAt);
+        const string reply = "Reviewers never returned; here is what I have.";
+        await SeedPostNudgeTurnAsync(sessionId, reply, DateTime.UtcNow.AddMinutes(-32), closingVerdict: false);
+
+        await CreateReplyService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.UnmarkedAfterNudge);
+        settled.Result.ShouldBe(reply);
+        settled.Result.ShouldNotContain("Four review agents are running in parallel");
+        (await verify.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning
+                && e.Detail.Contains("background subagent")))
+            .ShouldBeTrue("AbandonedSubagents is re-derived on the new extraction");
     }
 
     [Test]
@@ -1236,6 +1407,40 @@ public class AgentTaskDeliveryWatchdogTests
         return (provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>(), stopper);
     }
 
+    /// <summary>
+    /// Direct OnTurnEndAsync for post-nudge turns that have their own final-message text — the
+    /// deferred sweep will not re-hand those (arm 1 requires no AssistantText for the boundary).
+    /// </summary>
+    private static AgentTaskReplyService CreateReplyService()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
+        services.AddSingleton<IEventBus, MockEventBus>();
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton(Options.Create(new SupervisionSettings()));
+        services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
+        services.AddSingleton(Options.Create(new DelegationSettings()));
+        services.AddSingleton(Options.Create(new AgentSessionSettings()));
+        services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<SessionMessageQueueService>();
+        services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
+        var provider = services.BuildServiceProvider();
+        return new AgentTaskReplyService(
+            new ReplyScopeFactory(provider),
+            Options.Create(new DelegationSettings()),
+            provider.GetRequiredService<IEventBus>(),
+            TimeProvider.System,
+            NullLogger<AgentTaskReplyService>.Instance);
+    }
+
+    private sealed class ReplyScopeFactory(ServiceProvider provider) : IServiceScopeFactory, IServiceScope
+    {
+        public IServiceScope CreateScope() => this;
+        public IServiceProvider ServiceProvider => provider;
+        public void Dispose() { }
+    }
+
     private static async Task<AgentTask> SeedDispatchedTaskAsync(int dispatchedMinutesAgo, AgentKind kind = AgentKind.ClaudeCode)
     {
         var sessionId = Guid.NewGuid();
@@ -1524,6 +1729,70 @@ public class AgentTaskDeliveryWatchdogTests
         end.ApiCallId = announcementCall;
         db.TranscriptEntries.Add(end);
 
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task MarkNudgeDeliveredAsync(Guid sessionId, DateTime sentAt)
+    {
+        await using var db = CreateContext();
+        var task = await db.AgentTasks.SingleAsync(t => t.AgentSessionId == sessionId);
+        task.ReportNudgeMessageId.ShouldNotBeNull();
+        var msg = await db.SessionQueuedMessages.SingleAsync(m => m.Id == task.ReportNudgeMessageId);
+        msg.SentAt = sentAt;
+        msg.Status = QueuedMessageStatus.Sent;
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// A later turn on the same brief: no new UserPrompt, so ExtractMarkedTurnAsync still
+    /// correlates to the original marker. <paramref name="assistantText"/> null is a bare TurnEnd
+    /// (FinalMessageMissing on the join of earlier narration).
+    /// </summary>
+    private static async Task SeedPostNudgeTurnAsync(
+        Guid sessionId,
+        string? assistantText,
+        DateTime createdAt,
+        bool closingVerdict = false,
+        Guid? taskId = null)
+    {
+        if (closingVerdict && assistantText is not null && taskId is Guid id)
+            assistantText = assistantText.TrimEnd() + "\n" + DelegationReportFormatter.ReportToken(id, "done");
+
+        await using var db = CreateContext();
+        var seq = await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == sessionId)
+            .MaxAsync(t => t.Sequence);
+        var apiCallId = $"msg_{Guid.NewGuid():N}";
+        if (assistantText is not null)
+        {
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = sessionId,
+                Sequence = ++seq,
+                Kind = TranscriptKinds.AssistantText,
+                Uuid = $"post-nudge-{Guid.NewGuid():N}",
+                Role = "assistant",
+                Text = assistantText,
+                ApiCallId = apiCallId,
+                Timestamp = createdAt,
+                CreatedAt = createdAt,
+            });
+        }
+
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(),
+            AgentSessionId = sessionId,
+            Sequence = ++seq,
+            Kind = TranscriptKinds.TurnEnd,
+            Uuid = $"post-nudge-{Guid.NewGuid():N}",
+            Role = "assistant",
+            StopReason = "end_turn",
+            ApiCallId = assistantText is null ? $"msg_{Guid.NewGuid():N}" : apiCallId,
+            Timestamp = createdAt,
+            CreatedAt = createdAt,
+        });
         await db.SaveChangesAsync();
     }
 

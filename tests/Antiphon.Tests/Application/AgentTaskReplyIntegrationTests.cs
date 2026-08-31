@@ -212,6 +212,7 @@ public class AgentTaskReplyIntegrationTests
 
         await SeedTurnAsync(sessionId, marker, "I'll start.", closingVerdict: false);
         await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+        await MarkNudgeDeliveredAsync(task.Id, DateTime.UtcNow.AddSeconds(-1));
 
         const string report = "I think this is done, no closing line though.";
         await SeedTurnAsync(sessionId, marker, report, closingVerdict: false);
@@ -578,46 +579,18 @@ public class AgentTaskReplyIntegrationTests
 
         clock.Advance(TimeSpan.FromSeconds(121));
         await service.OnTurnEndAsync(sessionId, CancellationToken.None);
-        await using (var afterNudge = CreateContext())
-        {
-            var nudged = await afterNudge.AgentTasks.SingleAsync(t => t.Id == task.Id);
-            if (nudged.Status == AgentTaskStatus.Dispatched)
-            {
-                nudged.ReportNudgedAt.ShouldNotBeNull();
-                await service.OnTurnEndAsync(sessionId, CancellationToken.None);
-            }
-        }
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
 
         await using var verify = CreateContext();
-        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
-        settled.Status.ShouldBe(
-            AgentTaskStatus.Succeeded, "past the grace, settling on the preamble beats stranding the task");
-        settled.Result.ShouldBe("I'll start by reading the spec.");
-
-        // Slice 3: Succeeded, but never SILENTLY Succeeded. Three surfaces, because the whole
-        // character of CARD-0046 was that every one of them said the task was fine.
-        var incident = await verify.AgentIncidents.SingleAsync(
-            i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.DelegateFinalMessageMissing);
-        incident.Severity.ShouldBe(AlertSeverity.Warning);
-        incident.Message.ShouldContain(DelegationReportFormatter.Short(task.Id));
-        incident.Message.ShouldContain("31 characters", customMessage: "and what the report was built from");
-
-        var warned = await verify.AgentTaskEvents
-            .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning)
-            .ToListAsync();
-        warned.ShouldContain(e => e.Detail.Contains("never wrote its own text within 120s"));
-        warned.ShouldContain(e => e.Detail.Contains("31 characters"));
-
-        var note = await verify.SessionQueuedMessages
-            .Where(m => m.AgentSessionId == parentSessionId)
-            .SingleAsync();
-        note.Body.ShouldContain(
-            "may be PREAMBLE", customMessage: "the CALLER is the one who must not act on it as a verdict");
-        note.Body.ShouldContain("I'll start by reading the spec.", customMessage: "the text is still forwarded");
-        note.Body.IndexOf("may be PREAMBLE", StringComparison.Ordinal)
-            .ShouldBeLessThan(
-                note.Body.IndexOf("I'll start by reading the spec.", StringComparison.Ordinal),
-            "a caveat read after the report is a caveat read too late");
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(
+            AgentTaskStatus.Dispatched,
+            "CARD-0248: past the grace the same unmarked boundary is nudged, not settled on preamble");
+        stored.ReportNudgedAt.ShouldNotBeNull();
+        stored.Result.ShouldBeNull();
+        (await verify.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Completed))
+            .ShouldBeFalse();
     }
 
     /// <summary>
@@ -690,17 +663,16 @@ public class AgentTaskReplyIntegrationTests
         await service.OnTurnEndAsync(sessionId, CancellationToken.None);
 
         await using var verify = CreateContext();
-        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
-        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
-        settled.Result.ShouldBe(narration);
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(
+            AgentTaskStatus.Dispatched,
+            "CARD-0248: a Codex commentary-only turn past the grace is nudged, not settled on narration");
+        stored.ReportNudgedAt.ShouldNotBeNull();
+        stored.Result.ShouldBeNull();
         (await verify.AgentTaskEvents.AnyAsync(
-            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning)).ShouldBeTrue();
-        (await verify.AgentIncidents.AnyAsync(
-            i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.DelegateFinalMessageMissing))
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning
+                && e.Detail.Contains("closing report line")))
             .ShouldBeTrue();
-
-        var note = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == parentSessionId);
-        note.Body.ShouldContain("may be PREAMBLE");
     }
 
     /// <summary>
@@ -817,16 +789,14 @@ public class AgentTaskReplyIntegrationTests
             sessionId, DelegationReportFormatter.TaskMarker(first.Id),
             narration: "Reading the spec now.", finalMessage: null);
         clock.Advance(TimeSpan.FromSeconds(121));
-        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
-        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+        await SettleTextlessAfterNudgeAsync(service, sessionId, first.Id);
 
         // The warm delegate takes a SECOND task in the same session and does it again.
         var second = await SeedFollowUpTaskAsync(workspace.Path, sessionId, agentId);
         await SeedSplitTurnAsync(
             sessionId, DelegationReportFormatter.TaskMarker(second.Id),
             narration: "Reading the other spec now.", finalMessage: null);
-        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
-        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+        await SettleTextlessAfterNudgeAsync(service, sessionId, second.Id);
 
         await using var verify = CreateContext();
         (await verify.AgentTasks.SingleAsync(t => t.Id == second.Id))
@@ -1321,14 +1291,13 @@ public class AgentTaskReplyIntegrationTests
         await service.OnTurnEndAsync(sessionId, CancellationToken.None);
 
         await using var verify = CreateContext();
-        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
-        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
-        settled.Result.ShouldBe("I'll start by reading the spec.");
-        settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.FinalMessageMissing);
-        (await verify.AgentTaskEvents.AnyAsync(
-            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning
-                && e.Detail.Contains("never wrote its own text")))
-            .ShouldBeTrue();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(
+            AgentTaskStatus.Dispatched,
+            "CARD-0248: an empty last Grok segment past the grace is nudged, not settled on narration");
+        stored.ReportNudgedAt.ShouldNotBeNull();
+        stored.Result.ShouldBeNull();
+        stored.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Legacy);
     }
 
     [Test]
@@ -3055,6 +3024,43 @@ public class AgentTaskReplyIntegrationTests
             sessionId, TranscriptKinds.UserPrompt,
             DelegationReportFormatter.TaskMarker(taskId) + "\n\nImplement slices 2 and 3.",
             dispatchedAt.AddMinutes(3));
+    }
+
+    private static async Task MarkNudgeDeliveredAsync(Guid taskId, DateTime sentAt)
+    {
+        await using var db = CreateContext();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+        task.ReportNudgeMessageId.ShouldNotBeNull();
+        var msg = await db.SessionQueuedMessages.SingleAsync(m => m.Id == task.ReportNudgeMessageId);
+        msg.SentAt = sentAt;
+        msg.Status = QueuedMessageStatus.Sent;
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// CARD-0248: nudge, mark the nudge delivered in the past, then add a later text-less
+    /// TurnEnd so settle-anyway can fire as FinalMessageMissing.
+    /// </summary>
+    private static async Task SettleTextlessAfterNudgeAsync(
+        AgentTaskReplyService service, Guid sessionId, Guid taskId)
+    {
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+        var sentAt = DateTime.UtcNow.AddMinutes(-10);
+        await MarkNudgeDeliveredAsync(taskId, sentAt);
+        await using (var db = CreateContext())
+        {
+            var seq = await db.TranscriptEntries
+                .Where(t => t.AgentSessionId == sessionId)
+                .MaxAsync(t => t.Sequence);
+            var end = NewEntry(sessionId, seq + 1, TranscriptKinds.TurnEnd, null);
+            end.StopReason = TranscriptKinds.StopReasons.EndTurn;
+            end.ApiCallId = $"msg_{Guid.NewGuid():N}";
+            end.CreatedAt = sentAt.AddMinutes(1);
+            db.TranscriptEntries.Add(end);
+            await db.SaveChangesAsync();
+        }
+
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
     }
 
     private static TranscriptEntry NewEntry(Guid sessionId, long sequence, string kind, string? text) => new()
