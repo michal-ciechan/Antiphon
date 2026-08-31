@@ -288,6 +288,34 @@ public class DelegationWorktreeTests
     }
 
     [Test]
+    public async Task land_verify_failure_keeps_the_rebased_worktree_for_a_follow_up()
+    {
+        using var worktree = new TemporaryDirectory("antiphon-land-red");
+
+        var verification = await AgentTaskLandService.VerifyAsync(worktree.Path, null, CancellationToken.None);
+
+        verification.Ok.ShouldBeFalse();
+        verification.Step.ShouldBe("build");
+        Directory.Exists(worktree.Path).ShouldBeTrue("verification itself must never remove the worktree");
+    }
+
+    [Test]
+    public void land_shared_writer_hold_uses_the_same_repo_not_the_worktree_path()
+    {
+        var repo = Path.Combine(Path.GetTempPath(), "antiphon-land-scope");
+        var landing = NewTask(repo, mergeTarget: null);
+        landing.WorkingDirectory = Path.Combine(repo, "trees", "task");
+        var runningShared = new AgentTask
+        {
+            Id = Guid.NewGuid(), RootTaskId = Guid.NewGuid(), Title = "shared writer",
+            Workspace = WorkspaceMode.Shared, Role = AgentTaskRole.Code,
+            RepoPath = repo, WorkingDirectory = repo, Status = AgentTaskStatus.Working,
+        };
+
+        AgentTaskLandService.IsHeldBehindSharedWriter(landing, [runningShared]).ShouldBeTrue();
+    }
+
+    [Test]
     public async Task a_clean_change_lands_on_the_target_and_the_worktree_is_removed()
     {
         using var repo = new ScratchGitRepo();

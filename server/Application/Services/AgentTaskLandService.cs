@@ -125,7 +125,7 @@ public sealed class AgentTaskLandService
 
         var verification = prepared.BaseMoved
             ? await VerifyAsync(task.WorktreePath!, verifyFilter, ct)
-            : Verification.Success("build skipped (base unchanged)");
+            : LandVerification.Success("build skipped (base unchanged)");
         if (!verification.Ok)
         {
             await RefuseAsync(task, $"{verification.Step} failed:\n{verification.Tail}", ct);
@@ -153,13 +153,28 @@ public sealed class AgentTaskLandService
 
     private async Task<AgentTask?> FindSharedWriterAsync(AgentTask task, CancellationToken ct)
     {
-        var key = ScopeResolver.KeyFor(task.RepoPath, task.WorkingDirectory);
         var candidates = await _db.AgentTasks.AsNoTracking()
             .Where(t => t.Id != task.Id && t.Workspace == WorkspaceMode.Shared
                 && t.Role != AgentTaskRole.Check
                 && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working))
             .ToListAsync(ct);
-        return candidates.FirstOrDefault(t => ScopeResolver.KeyFor(t.RepoPath, t.WorkingDirectory) == key);
+        return IsHeldBehindSharedWriter(task, candidates)
+            ? candidates.First(t => t.Id != task.Id && t.Workspace == WorkspaceMode.Shared
+                && t.Role != AgentTaskRole.Check
+                && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
+                && ScopeResolver.KeyFor(t.RepoPath, t.WorkingDirectory)
+                    == ScopeResolver.KeyFor(task.RepoPath, task.WorkingDirectory))
+            : null;
+    }
+
+    /// <summary>Pure form of the Shared-writer rule, kept visible for the lease contract tests.</summary>
+    internal static bool IsHeldBehindSharedWriter(AgentTask landing, IEnumerable<AgentTask> candidates)
+    {
+        var key = ScopeResolver.KeyFor(landing.RepoPath, landing.WorkingDirectory);
+        return candidates.Any(t => t.Id != landing.Id && t.Workspace == WorkspaceMode.Shared
+            && t.Role != AgentTaskRole.Check
+            && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
+            && ScopeResolver.KeyFor(t.RepoPath, t.WorkingDirectory) == key);
     }
 
     private async Task RefuseAsync(AgentTask task, string detail, CancellationToken ct)
@@ -189,20 +204,20 @@ public sealed class AgentTaskLandService
         }
     }
 
-    private static async Task<Verification> VerifyAsync(string worktree, string? filter, CancellationToken ct)
+    internal static async Task<LandVerification> VerifyAsync(string worktree, string? filter, CancellationToken ct)
     {
         try
         {
             var build = await RunProcessAsync(worktree, ct, "dotnet", "build", "--property:OutputPath=bin-land/");
             if (!build.Ok)
-                return Verification.Failure("build", Tail(build));
+                return LandVerification.Failure("build", Tail(build));
             if (string.IsNullOrWhiteSpace(filter))
-                return Verification.Success("build OK");
+                return LandVerification.Success("build OK");
 
             var tests = await RunProcessAsync(worktree, ct, "dotnet", "test", "--property:OutputPath=bin-land/", "--", "--treenode-filter", filter);
             return tests.Ok
-                ? Verification.Success($"build OK, {DescribeTests(tests)}")
-                : Verification.Failure("tests", Tail(tests));
+                ? LandVerification.Success($"build OK, {DescribeTests(tests)}")
+                : LandVerification.Failure("tests", Tail(tests));
         }
         finally
         {
@@ -249,11 +264,12 @@ public sealed class AgentTaskLandService
         new() { Id = Guid.NewGuid(), AgentTaskId = taskId, Type = type, Detail = detail, At = at };
 
     private sealed record ProcessResult(bool Ok, string StdOut, string StdErr);
-    private sealed record Verification(bool Ok, string Step, string Tail, string Description)
-    {
-        public static Verification Success(string description) => new(true, string.Empty, string.Empty, description);
-        public static Verification Failure(string step, string tail) => new(false, step, tail, string.Empty);
-    }
+}
+
+internal sealed record LandVerification(bool Ok, string Step, string Tail, string Description)
+{
+    public static LandVerification Success(string description) => new(true, string.Empty, string.Empty, description);
+    public static LandVerification Failure(string step, string tail) => new(false, step, tail, string.Empty);
 }
 
 public sealed record LandRequestResult(Guid TaskId, string Status);
