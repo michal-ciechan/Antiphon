@@ -39,7 +39,7 @@ AGENTS.md is the universal index and mandatory safety core for this repository. 
 
 ### Tests and builds
 
-- Run TUnit with dotnet run --project tests/<ProjectName>, not dotnet test; run Antiphon.Tests and Antiphon.Agents.Pty.Tests sequentially. Use pwsh -File scripts/test-client.ps1 for Vitest, and rebuild client/dist before E2E.
+- Run TUnit with dotnet run --project tests/<ProjectName>, not dotnet test; run Antiphon.Tests and Antiphon.Agents.Pty.Tests sequentially. Use pwsh -File scripts/test-client.ps1 for Vitest, and rebuild client/dist before E2E. Process-spawning tests, including SessionRunner pty-host and direct-process tests, carry an assembly-local ParallelLimiter<ProcessSpawnLimit> (one limiter per test project, not shared across assemblies).
 - Do not hand-quote arbitrary alternate OutputPath values. Read the testing/build guide for the current isolated-output, headed-test, test-clock, shared-Postgres, and slow-build procedures.
 - A test host that boots real Program must never launch against the production runner. Use the established guard or an isolated runner.
 
