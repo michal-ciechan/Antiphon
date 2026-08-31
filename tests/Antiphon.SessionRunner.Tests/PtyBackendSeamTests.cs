@@ -32,6 +32,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// <c>[NotInParallel]</c> with no group key: they must not run beside anything that spawns a pty.</para>
 /// </summary>
 [NotInParallel]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class PtyBackendSeamTests
 {
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");

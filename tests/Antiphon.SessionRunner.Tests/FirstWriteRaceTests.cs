@@ -14,6 +14,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// delegated task's boot prompt. The write path must WAIT for the host instead.
 /// </summary>
 [NotInParallel("SessionLiveness")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class FirstWriteRaceTests
 {
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");

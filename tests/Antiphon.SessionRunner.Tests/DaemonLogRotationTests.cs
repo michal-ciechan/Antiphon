@@ -14,6 +14,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// These run the real script against a throwaway "service" (a .cmd that stops itself) so the
 /// rotation is exercised end to end rather than grepped for.
 /// </summary>
+[ParallelLimiter<ProcessSpawnLimit>]
 public class DaemonLogRotationTests
 {
     private static readonly TimeSpan SupervisorTimeout = TimeSpan.FromMinutes(2);

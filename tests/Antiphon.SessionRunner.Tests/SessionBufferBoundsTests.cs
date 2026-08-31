@@ -31,6 +31,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// the deadline instead would have kept the cost and hidden the next real regression behind it.
 /// </summary>
 [NotInParallel("SessionLiveness")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class SessionBufferBoundsTests
 {
     private const int Cap = 1024;

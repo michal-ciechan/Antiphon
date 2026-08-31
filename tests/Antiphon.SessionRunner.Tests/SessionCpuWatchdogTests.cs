@@ -16,6 +16,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// fresh sessions are never touched.
 /// </summary>
 [NotInParallel("ClaudeConfigDirEnv")] // mutates the process-wide CLAUDE_CONFIG_DIR variable
+[ParallelLimiter<ProcessSpawnLimit>]
 public class SessionCpuWatchdogTests
 {
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");

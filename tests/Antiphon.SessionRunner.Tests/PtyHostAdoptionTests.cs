@@ -16,6 +16,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// a dying runner process) then adopt from a brand-new runtime B over the same state directories.
 /// </summary>
 [NotInParallel("SessionLiveness")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class PtyHostAdoptionTests
 {
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");

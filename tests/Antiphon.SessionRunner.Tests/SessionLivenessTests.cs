@@ -14,6 +14,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// was never observed, keeping its agent badged Working in the UI with no process behind it.
 /// </summary>
 [NotInParallel("SessionLiveness")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class SessionLivenessTests
 {
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
