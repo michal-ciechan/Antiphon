@@ -19,7 +19,12 @@ public sealed record AgentTaskPipelineStageDto(
     IReadOnlyList<AgentTaskPipelineInFlightDto> InFlight,
     IReadOnlyList<AgentTaskPipelineQueuedDto> Queued,
     IReadOnlyList<AgentTaskPipelineBlockedDto> Blocked,
-    IReadOnlyList<AgentTaskPipelineReadyDto> Ready);
+    IReadOnlyList<AgentTaskPipelineReadyDto> Ready,
+    /// <summary>
+    /// CARD-0305: the stage-wide routing pin for this role, when one is active. Advisory like
+    /// everything else here — reading the pipeline never applies or writes a pin.
+    /// </summary>
+    RoutingPinRefDto? RoutingPin = null);
 
 public sealed record AgentTaskPipelineCardRefDto(Guid Id, string Identifier, string Title);
 
@@ -57,4 +62,9 @@ public sealed record AgentTaskPipelineReadyDto(
     string SourcePlanShortId,
     DateTime ReadySince,
     string DeliverablePath,
-    string? DeliverableRef);
+    string? DeliverableRef,
+    /// <summary>
+    /// CARD-0305: the pin a Code dispatch for this card would resolve through — the card's own
+    /// Code pin when it has one, else the stage-wide Code pin. Null when neither exists.
+    /// </summary>
+    RoutingPinRefDto? RoutingPin = null);

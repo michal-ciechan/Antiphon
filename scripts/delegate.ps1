@@ -105,10 +105,24 @@ param(
     [switch]$IgnoreSubscriptionQuota,
 
     # Bypass the CARD-0309 create-time 409 model_disabled. Queues the task; the dispatcher
-    # still skips it until the hold clears. This is NOT a launch-anyway switch — Start
+    # still skips it until the hold clears. This is NOT a launch-anyway switch - Start
     # never honours it.
     [Parameter(ParameterSetName = 'Create')]
     [switch]$IgnoreModelDisabled,
+
+    # Record this dispatch's Role/Card/Kind/Level as a HUMAN, REQUIRED routing pin (CARD-0305), so
+    # the next create against this card+stage runs the same way without being told again. Refused
+    # without a card: a stage-wide pin changes routing for EVERY card and must be written
+    # deliberately with routing-pin.ps1, never as a side effect of one dispatch.
+    [Parameter(ParameterSetName = 'Create')]
+    [switch]$Pin,
+
+    # Ignore the routing pin for THIS create (CARD-0305). Without it, a request that disagrees with
+    # a Required pin is refused 409 routing_pin_conflict. The pin is left standing - this is
+    # one-shot, not a clear. Distinct from -IgnoreModelDisabled: this one is about which model
+    # SHOULD run the work, that one about whether the model MAY run at all.
+    [Parameter(ParameterSetName = 'Create')]
+    [switch]$IgnoreRoutingPin,
 
     # Overlay env vars on this task's process launch (CARD-0106). ANTIPHON_* names are refused
     # 422. A non-empty overlay excludes the task from warm-pool reuse (reuse launches no
@@ -256,6 +270,16 @@ switch ($PSCmdlet.ParameterSetName) {
             Write-Error 'A -Goal is required. Write it as an outcome, not a procedure.'
             exit 1
         }
+        # -Pin writes a pin for THIS card+stage. With nothing that could bind a card - no -Card, no
+        # CARD-nnnn in the title, and no task token whose own card could be inherited - it would
+        # write a STAGE-WIDE pin that changes routing for every card. That is a deliberate act, so
+        # it goes through routing-pin.ps1 rather than falling out of one dispatch.
+        if ($Pin -and -not $Card -and $Title -notmatch '(?i)\bCARD-[0-9]+\b' `
+                -and [string]::IsNullOrWhiteSpace($env:ANTIPHON_TASK_TOKEN)) {
+            Write-Error ('-Pin without a card would write a stage-wide pin. Pass -Card CARD-nnnn ' `
+                + '(or lead -Title with it), or write the stage pin explicitly with routing-pin.ps1.')
+            exit 1
+        }
         # Same wording as the server's 422 - refused locally so the mistake costs no round trip.
         if ($Agent -and $OnAgent) {
             Write-Error ('Agent and FollowUpOnTask are two different "run it on that agent" idioms - ' `
@@ -288,6 +312,7 @@ switch ($PSCmdlet.ParameterSetName) {
         if ($ExpectAbout -gt 0) { $body['expectedMinutes'] = $ExpectAbout }
         if ($IgnoreSubscriptionQuota) { $body['ignoreSubscriptionQuota'] = $true }
         if ($IgnoreModelDisabled) { $body['ignoreModelDisabled'] = $true }
+        if ($IgnoreRoutingPin) { $body['ignoreRoutingPin'] = $true }
         if ($EnvOverride -and $EnvOverride.Count -gt 0) { $body['launchEnvOverride'] = $EnvOverride }
         if (-not $NoInheritEnv) {
             $inheritedLlmEnv = @{}
@@ -321,6 +346,30 @@ switch ($PSCmdlet.ParameterSetName) {
                 $created.shortId, $body.kind.ToLower(), $body.role.ToLower(), $created.modelLevel, $kindNote, $routing, $cardNote)
         # A warning at creation is the caller's one chance to reconsider before the collision.
         if ($created.warning) { Write-Output ("WARNING: {0}" -f $created.warning) }
+        # -Pin records what this dispatch RESOLVED to, not what was typed: a caller who passed no
+        # -Kind and got Grok from the role policy still means "next time, the same" - and the pin is
+        # what makes that survive the next policy change. Human + Required, because a pin written by
+        # hand is exactly the decision an Auto write must not overwrite.
+        if ($Pin) {
+            if (-not $created.cardId) {
+                Write-Output ('WARNING: -Pin wrote nothing - this task bound no card, and a pin ' `
+                        + 'with no card is a stage-wide rule. Use routing-pin.ps1 if that is what you meant.')
+            }
+            else {
+                $pinBody = @{
+                    card       = $created.cardId
+                    role       = $body.role
+                    provenance = 'Human'
+                    strength   = 'Required'
+                    agentKind  = $created.agentKind
+                    modelLevel = $created.modelLevel
+                    reason     = ("pinned by delegate.ps1 -Pin from task {0}" -f $created.shortId)
+                }
+                $pinned = Invoke-Antiphon -Method PUT -Path '/api/routing-pins' -Body $pinBody
+                Write-Output ("pinned {0} {1} to {2}/{3} (human, required)" -f `
+                        $created.cardIdentifier, $pinned.role, $pinned.agentKind, $pinned.modelLevel)
+            }
+        }
         if ($created.followUpMessage) { Write-Output ("FOLLOW-UP: {0}" -f $created.followUpMessage) }
         # And so is this: what the declared -Scope costs, right now, against what is already
         # running. 'serialise' means this task waits; 'warn' means it starts and somebody owes a

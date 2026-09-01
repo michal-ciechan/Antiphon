@@ -34,6 +34,9 @@ public sealed class AgentTaskService
     private readonly AreaMapLoader? _areas;
     // CARD-0263 S2. Optional so focused harnesses without API-key plumbing retain their setup.
     private readonly ApiKeyEnvResolver? _apiKeyEnvResolver;
+    // CARD-0305. Same optional contract: absent, create resolves routing exactly as it does today
+    // and no pin is ever consulted.
+    private readonly RoutingPinService? _routingPins;
 
     public AgentTaskService(
         AppDbContext db,
@@ -46,7 +49,8 @@ public sealed class AgentTaskService
         SubscriptionQuotaGate? quotaGate = null,
         AreaMapLoader? areas = null,
         ApiKeyEnvResolver? apiKeyEnvResolver = null,
-        ModelAvailability? modelAvailability = null)
+        ModelAvailability? modelAvailability = null,
+        RoutingPinService? routingPins = null)
     {
         _areas = areas;
         _db = db;
@@ -59,6 +63,7 @@ public sealed class AgentTaskService
         _quotaGate = quotaGate;
         _apiKeyEnvResolver = apiKeyEnvResolver;
         _modelAvailability = modelAvailability;
+        _routingPins = routingPins;
     }
 
     /// <summary>
@@ -232,32 +237,6 @@ public sealed class AgentTaskService
             }
         }
 
-        // CARD-0140 S1: a bare pin to a STANDING agent settles kind the same way a follow-up
-        // does. Unset inherits the agent's Kind (which CARD-0138 keeps equal to its profile);
-        // an explicit mismatch is refused rather than silently reinterpreted. Pool delegates
-        // are carved out — FollowUpOnTask already covers "same delegate again", and
-        // TryReuseWarmAgentAsync plus ResolveAgentAsync own the kind-mismatch relaunch.
-        if (!liveFollowUp && request.AgentId is Guid pinId)
-        {
-            var pinned = await _db.Agents.AsNoTracking()
-                .FirstOrDefaultAsync(a => a.Id == pinId, ct);
-            subscriptionOwner = pinned;
-            if (pinned is { IsPoolDelegate: false })
-            {
-                skipInheritedSnapshot = true;
-                pinnedStandingAgent = pinned;
-                if (request.AgentKind is { } wantedKind && wantedKind != pinned.Kind)
-                {
-                    throw new ConflictException(
-                        $"Agent '{pinned.Name}' is {pinned.Kind}, so a task pinned to it cannot run on "
-                        + $"{wantedKind}. Pin it to a {wantedKind} agent, or omit agentKind to inherit "
-                        + $"{pinned.Kind}.");
-                }
-
-                request = request with { AgentKind = pinned.Kind };
-            }
-        }
-
         // THE recursion boundary. A worker's token carries no create scope, so a worker cannot start
         // a fan-out even if it decides it wants to — this is what keeps nesting bounded, not MaxDepth.
         if (!caller.MayDelegate)
@@ -312,9 +291,88 @@ public sealed class AgentTaskService
 
         var (workspace, warning) = ResolveWorkspace(request, caller, resolved);
 
+        // CARD-0040. Resolved BEFORE the row so an explicit -Card that names nothing is a 422 on
+        // creation rather than a task that runs with a binding its caller thinks it has. It is
+        // resolved HERE, ahead of tier/kind, because a CARD-0305 routing pin is keyed on the card
+        // and must decide the routing before the role policy fills anything in. Its warning is
+        // still appended below, in the order it always was.
+        var title = BuildTitle(request);
+        var binding = await AgentTaskCardBinder.BindAsync(
+            _db,
+            request.Card,
+            new AgentTaskCardBinder.Context(
+                request.Role,
+                title,
+                // A parent's card outranks a follow-up's: a child created by an orchestrator that
+                // is itself bound is working the orchestrator's card unless its title says otherwise.
+                parent?.CardId ?? followUpCardId,
+                caller.SessionId,
+                resolved.RepoPath,
+                resolved.WorkingDirectory),
+            ct);
+
+        // CARD-0305: the standing instruction for THIS card+role (else this role's stage-wide
+        // one). It fills what the caller left open and refuses what disagrees with a Required
+        // human pin — before the role policy, the quota gate and the CARD-0309 hold, so the alias
+        // Require sees is the pinned one. A live follow-up is already running as whatever it was
+        // launched as, so its inherited kind/level are the "request" a pin is compared against.
+        var pinDecision = RoutingPinService.Decision.None;
+        if (_routingPins is not null)
+        {
+            pinDecision = await _routingPins.ResolveAsync(
+                binding.CardId,
+                request.Role,
+                new RoutingPinService.Ask(
+                    request.AgentKind, request.ModelLevel, request.AgentId, request.IgnoreRoutingPin),
+                ct);
+            if (pinDecision.Applied)
+            {
+                request = request with
+                {
+                    AgentKind = pinDecision.AgentKind ?? request.AgentKind,
+                    ModelLevel = pinDecision.ModelLevel ?? request.ModelLevel,
+                    // Only when the caller named none: an explicit -Agent has already been
+                    // reconciled against the pin above (or refused).
+                    AgentId = liveFollowUp ? request.AgentId : request.AgentId ?? pinDecision.AgentId,
+                };
+            }
+
+            if (pinDecision.Warning is { } pinWarning)
+                warning = warning is null ? pinWarning : warning + " " + pinWarning;
+        }
+
+        // CARD-0140 S1: a bare pin to a STANDING agent settles kind the same way a follow-up
+        // does. Unset inherits the agent's Kind (which CARD-0138 keeps equal to its profile);
+        // an explicit mismatch is refused rather than silently reinterpreted. Pool delegates
+        // are carved out — FollowUpOnTask already covers "same delegate again", and
+        // TryReuseWarmAgentAsync plus ResolveAgentAsync own the kind-mismatch relaunch.
+        if (!liveFollowUp && request.AgentId is Guid pinId)
+        {
+            var pinned = await _db.Agents.AsNoTracking()
+                .FirstOrDefaultAsync(a => a.Id == pinId, ct);
+            subscriptionOwner = pinned;
+            if (pinned is { IsPoolDelegate: false })
+            {
+                skipInheritedSnapshot = true;
+                pinnedStandingAgent = pinned;
+                if (request.AgentKind is { } wantedKind && wantedKind != pinned.Kind)
+                {
+                    throw new ConflictException(
+                        $"Agent '{pinned.Name}' is {pinned.Kind}, so a task pinned to it cannot run on "
+                        + $"{wantedKind}. Pin it to a {wantedKind} agent, or omit agentKind to inherit "
+                        + $"{pinned.Kind}.");
+                }
+
+                request = request with { AgentKind = pinned.Kind };
+            }
+        }
+
         var id = Guid.NewGuid();
         var level = ResolveLevel(request.Kind, request.Role, request.ModelLevel);
         var agentKind = ResolveAgentKind(request.Kind, request.Role, request.AgentKind);
+        // The stage-wide forbid list bites the alias that was ACTUALLY resolved, so it runs after
+        // the role policy has filled in whatever the request and the pin both left open.
+        _routingPins?.EnforceForbiddenAliases(pinDecision, agentKind, level);
         if (_quotaGate is not null)
         {
             var quotaKey = SubscriptionUsageKey.For(subscriptionOwner, agentKind);
@@ -358,7 +416,25 @@ public sealed class AgentTaskService
             }
             else
             {
-                await _modelAvailability.RequireAsync(agentKind, alias, ct);
+                // CARD-0305 handshake: the pin decided the alias, the hold decides whether it may
+                // run. A held alias that a Required pin named is STILL 409 model_disabled with the
+                // available list — never a silent reroute onto something the pin excludes — but the
+                // sentence says the list does not satisfy the pin, so the operator knows waiting,
+                // ignoreModelDisabled, or REPLACING the pin are the three real options.
+                try
+                {
+                    await _modelAvailability.RequireAsync(agentKind, alias, ct);
+                }
+                catch (ModelDisabledException ex)
+                    when (pinDecision.Applied
+                        && pinDecision.Pin!.Strength == RoutingPinStrength.Required)
+                {
+                    throw ex.WithCoda(
+                        $"this work is pinned to {alias} by {RoutingPinService.Describe(pinDecision.Pin, pinDecision.CardIdentifier)} "
+                        + $"(\"{pinDecision.Pin.Reason}\") — the available list does not satisfy the pin. "
+                        + "Wait for the hold to clear, pass ignoreModelDisabled to queue it anyway, or "
+                        + "replace the pin.");
+                }
             }
         }
 
@@ -371,22 +447,6 @@ public sealed class AgentTaskService
         var now = UtcNow();
         var (token, tokenHash) = NewToken();
 
-        // CARD-0040. Resolved BEFORE the row so an explicit -Card that names nothing is a 422 on
-        // creation rather than a task that runs with a binding its caller thinks it has.
-        var title = BuildTitle(request);
-        var binding = await AgentTaskCardBinder.BindAsync(
-            _db,
-            request.Card,
-            new AgentTaskCardBinder.Context(
-                request.Role,
-                title,
-                // A parent's card outranks a follow-up's: a child created by an orchestrator that
-                // is itself bound is working the orchestrator's card unless its title says otherwise.
-                parent?.CardId ?? followUpCardId,
-                caller.SessionId,
-                resolved.RepoPath,
-                resolved.WorkingDirectory),
-            ct);
         if (binding.Warning is not null)
             warning = warning is null ? binding.Warning : warning + " " + binding.Warning;
 
@@ -483,7 +543,10 @@ public sealed class AgentTaskService
                     ? string.Empty
                     : $" on {agentKind}{(request.AgentKind is null ? " (role policy)" : " (explicit)")}")
                 + ProjectScopeSuffix(projectId)
-                + CardScopeSuffix(binding.Identifier),
+                + CardScopeSuffix(binding.Identifier)
+                // CARD-0305: which standing instruction produced that kind/tier. Without it the
+                // event says "Codex Frontier" and nothing records that a human pinned it there.
+                + (pinDecision.EventNote is { } pinNote ? $" [{pinNote}]" : string.Empty),
             At = now,
         });
         if (repeatOf is not null)

@@ -68,6 +68,10 @@ public sealed class AgentTaskDispatcher
     // CARD-0022. Optional so predating harnesses keep constructing this; absent, no model
     // hold is consulted and queued work dispatches the way it does today.
     private readonly ModelAvailability? _modelAvailability;
+    // CARD-0305. Same optional contract. Only the NotBefore clock is read here: the kind and tier
+    // were snapshotted onto the row at create, and re-resolving a pin at spawn would silently
+    // rewrite work that was already authorised.
+    private readonly RoutingPinService? _routingPins;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -113,8 +117,10 @@ public sealed class AgentTaskDispatcher
         AreaMapLoader? areas = null,
         DeferredReportSweepMarks? sweepMarks = null,
         ModelAvailability? modelAvailability = null,
-        BootWedgeRelaunchState? bootWedgePending = null)
+        BootWedgeRelaunchState? bootWedgePending = null,
+        RoutingPinService? routingPins = null)
     {
+        _routingPins = routingPins;
         _bootWedgePending = bootWedgePending;
         _sweepMarks = sweepMarks;
         _areas = areas;
@@ -162,7 +168,13 @@ public sealed class AgentTaskDispatcher
     public sealed record TickResult(
         int Eligible, int Dispatched, int SkippedConcurrency, int SkippedScope, int Failures,
         int SweepFailures = 0,
-        int SkippedModelAvailability = 0);
+        int SkippedModelAvailability = 0,
+        /// <summary>
+        /// CARD-0305: queued rows whose routing pin is not due yet. A separate counter from
+        /// <see cref="SkippedModelAvailability"/> on purpose — a dated pin and a fleet hold are
+        /// two different clocks and conflating them hides which one the work is waiting on.
+        /// </summary>
+        int SkippedRoutingPin = 0);
 
     public async Task<TickResult> TickAsync(CancellationToken ct)
     {
@@ -309,6 +321,7 @@ public sealed class AgentTaskDispatcher
         var skippedConcurrency = 0;
         var skippedScope = 0;
         var skippedModelAvailability = 0;
+        var skippedRoutingPin = 0;
         var failures = 0;
 
         foreach (var task in queued)
@@ -364,6 +377,39 @@ public sealed class AgentTaskDispatcher
                 }
 
                 continue;
+            }
+
+            // CARD-0305: a DATED pin holds its work until the operator's instant. Create returned
+            // 200 Queued for exactly this — the pin is why the work exists — so the wait belongs
+            // here, ahead of the fleet-hold skip below. Two clocks, two counters, two sentences:
+            // "not before" is this card's, "is held" is CARD-0022/0309's.
+            if (_routingPins is not null && task.Role != AgentTaskRole.Check)
+            {
+                var pin = await _routingPins.FindActiveAsync(task.CardId, task.Role, ct)
+                    ?? await _routingPins.FindActiveAsync(null, task.Role, ct);
+                if (pin?.NotBefore is { } notBefore && notBefore > UtcNow())
+                {
+                    skippedRoutingPin++;
+                    if (everHeld.Add(task.Id))
+                    {
+                        _db.AgentTaskEvents.Add(new AgentTaskEvent
+                        {
+                            Id = Guid.NewGuid(),
+                            AgentTaskId = task.Id,
+                            Type = AgentTaskEventType.Held,
+                            Detail =
+                                $"routing pin not before {notBefore:yyyy-MM-ddTHH:mm:ssZ}; dispatch "
+                                + $"paused ({pin.Reason}).",
+                            At = UtcNow(),
+                        });
+                        await _db.SaveChangesAsync(ct);
+                        _logger.LogInformation(
+                            "Task {ShortId} held: routing pin not before {NotBefore}",
+                            DelegationReportFormatter.Short(task.Id), notBefore);
+                    }
+
+                    continue;
+                }
             }
 
             // CARD-0022: a held model must not spawn. Check-role tasks skip only if the
@@ -460,7 +506,7 @@ public sealed class AgentTaskDispatcher
 
         return new TickResult(
             queued.Count, dispatched, skippedConcurrency, skippedScope, failures, sweepFailures,
-            skippedModelAvailability);
+            skippedModelAvailability, skippedRoutingPin);
     }
 
     /// <summary>

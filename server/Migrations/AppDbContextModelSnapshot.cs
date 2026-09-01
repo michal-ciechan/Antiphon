@@ -2476,6 +2476,75 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("RunAttempts", (string)null);
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.RoutingPin", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("AgentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("AgentKind")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("CardId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ClearedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ForbiddenAliases")
+                        .HasMaxLength(400)
+                        .HasColumnType("character varying(400)");
+
+                    b.Property<int?>("ModelLevel")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("NotAfter")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("NotBefore")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Provenance")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("character varying(400)");
+
+                    b.Property<int>("Role")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("SourceTaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Strength")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Role")
+                        .IsUnique()
+                        .HasDatabaseName("IX_RoutingPins_Role_Stage_Active")
+                        .HasFilter("\"CardId\" IS NULL AND \"ClearedAt\" IS NULL");
+
+                    b.HasIndex("CardId", "Role")
+                        .IsUnique()
+                        .HasDatabaseName("IX_RoutingPins_CardId_Role_Active")
+                        .HasFilter("\"CardId\" IS NOT NULL AND \"ClearedAt\" IS NULL");
+
+                    b.ToTable("RoutingPins", (string)null);
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.SessionQueuedMessage", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3696,6 +3765,16 @@ namespace Antiphon.Server.Migrations
                     b.Navigation("Card");
 
                     b.Navigation("Worktree");
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.RoutingPin", b =>
+                {
+                    b.HasOne("Antiphon.Server.Domain.Entities.Card", "Card")
+                        .WithMany()
+                        .HasForeignKey("CardId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.Navigation("Card");
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.SessionQueuedMessage", b =>
