@@ -2134,6 +2134,57 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("LlmProviders", (string)null);
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.ModelAvailabilityHold", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ClearedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DisabledUntil")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("HitAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ModelAlias")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("RawText")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("character varying(400)");
+
+                    b.Property<int>("Source")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("SourceSessionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("SourceTaskId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Kind", "ModelAlias")
+                        .IsUnique()
+                        .HasDatabaseName("IX_ModelAvailabilityHolds_Kind_ModelAlias_Active")
+                        .HasFilter("\"ClearedAt\" IS NULL");
+
+                    b.ToTable("ModelAvailabilityHolds", (string)null);
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.ModelRouting", b =>
                 {
                     b.Property<Guid>("Id")

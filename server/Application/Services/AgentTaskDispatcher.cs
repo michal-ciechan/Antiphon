@@ -64,6 +64,9 @@ public sealed class AgentTaskDispatcher
     // CARD-0248: in-memory sweep watermark. Optional so predating harnesses re-hand every tick
     // (equivalent to ReportSweepRehandSeconds = 0). Production registers the singleton.
     private readonly DeferredReportSweepMarks? _sweepMarks;
+    // CARD-0022. Optional so predating harnesses keep constructing this; absent, no model
+    // hold is consulted and queued work dispatches the way it does today.
+    private readonly ModelAvailability? _modelAvailability;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -107,10 +110,12 @@ public sealed class AgentTaskDispatcher
         AgentFilesService? files = null,
         SubscriptionQuotaGate? quotaGate = null,
         AreaMapLoader? areas = null,
-        DeferredReportSweepMarks? sweepMarks = null)
+        DeferredReportSweepMarks? sweepMarks = null,
+        ModelAvailability? modelAvailability = null)
     {
         _sweepMarks = sweepMarks;
         _areas = areas;
+        _modelAvailability = modelAvailability;
         _apiKeyEnvResolver = apiKeyEnvResolver;
         _scopeFactory = scopeFactory;
         _launchResolver = launchResolver;
@@ -153,7 +158,8 @@ public sealed class AgentTaskDispatcher
     /// </param>
     public sealed record TickResult(
         int Eligible, int Dispatched, int SkippedConcurrency, int SkippedScope, int Failures,
-        int SweepFailures = 0);
+        int SweepFailures = 0,
+        int SkippedModelAvailability = 0);
 
     public async Task<TickResult> TickAsync(CancellationToken ct)
     {
@@ -292,6 +298,7 @@ public sealed class AgentTaskDispatcher
         var dispatchedAgainstCap = 0;
         var skippedConcurrency = 0;
         var skippedScope = 0;
+        var skippedModelAvailability = 0;
         var failures = 0;
 
         foreach (var task in queued)
@@ -347,6 +354,34 @@ public sealed class AgentTaskDispatcher
                 }
 
                 continue;
+            }
+
+            // CARD-0022: a held model must not spawn. Check-role tasks skip only if the
+            // interpreter's own alias is held — a fable hold does not starve haiku checks.
+            if (_modelAvailability is not null)
+            {
+                var alias = await ResolveDispatchAliasAsync(task, ct);
+                if (await _modelAvailability.IsHeldAsync(task.AgentKind, alias, ct))
+                {
+                    skippedModelAvailability++;
+                    if (everHeld.Add(task.Id))
+                    {
+                        _db.AgentTaskEvents.Add(new AgentTaskEvent
+                        {
+                            Id = Guid.NewGuid(),
+                            AgentTaskId = task.Id,
+                            Type = AgentTaskEventType.Held,
+                            Detail = $"{alias} is held; dispatch paused for that model.",
+                            At = UtcNow(),
+                        });
+                        await _db.SaveChangesAsync(ct);
+                        _logger.LogInformation(
+                            "Task {ShortId} held: model {Alias} is unavailable",
+                            DelegationReportFormatter.Short(task.Id), alias);
+                    }
+
+                    continue;
+                }
             }
 
             // A root that has burned through its budget stops dispatching. Work already in flight is
@@ -414,7 +449,8 @@ public sealed class AgentTaskDispatcher
         }
 
         return new TickResult(
-            queued.Count, dispatched, skippedConcurrency, skippedScope, failures, sweepFailures);
+            queued.Count, dispatched, skippedConcurrency, skippedScope, failures, sweepFailures,
+            skippedModelAvailability);
     }
 
     /// <summary>
@@ -2509,6 +2545,26 @@ public sealed class AgentTaskDispatcher
         }
 
         return extraArgs;
+    }
+
+    /// <summary>
+    /// Canonical alias this queued task would launch. A standing agent's exact
+    /// <see cref="Agent.ModelId"/> wins when it normalizes; otherwise the tier ladder.
+    /// </summary>
+    private async Task<string> ResolveDispatchAliasAsync(AgentTask task, CancellationToken ct)
+    {
+        if (task.AgentId is Guid agentId)
+        {
+            var agent = await _db.Agents.AsNoTracking()
+                .Where(a => a.Id == agentId)
+                .Select(a => new { a.ModelId, a.ModelLevel })
+                .FirstOrDefaultAsync(ct);
+            var fromId = ModelAlias.Normalize(task.AgentKind, agent?.ModelId);
+            if (fromId is not null)
+                return fromId;
+        }
+
+        return ModelLevelAliases.For(task.AgentKind, task.ModelLevel);
     }
 
     private static string ShippedModelDisplay(AgentTask task, Agent agent, DelegateProgram program)

@@ -208,6 +208,16 @@ API and is fully commented in place. The fields that change behaviour most: `rol
 > launch refusal, not a warning attached to a launch that already happened. Retry with
 > `ignoreSubscriptionQuota: true`, or pick another `agentKind`/agent. The dispatcher never refuses;
 > it only records an informational warning.
+>
+> It can also refuse with **409 `model_disabled`** (CARD-0022) when that kind/alias is on an
+> active `ModelAvailabilityHold`. The detail lists remaining aliases (`available: opus, sonnet, …`);
+> the `modelAvailability` problem-details extension carries `kind`, `modelAlias`, `disabledUntil`,
+> `source`, and `available`. There is no override on this card (CARD-0309 may add
+> `ignoreModelDisabled`). `GET /api/model-availability` is the read model.
+
+```
+GET    /api/model-availability               active holds + remaining aliases
+```
 
 ### Runner profiles and credentials
 

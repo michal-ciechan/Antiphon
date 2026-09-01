@@ -53,7 +53,7 @@ namespace Antiphon.FakeClaude;
 ///  * <b>JSONL transcript</b> (opt-in, <c>ANTIPHON_FAKE_TRANSCRIPT_PATH</c>) — <c>user</c> line on
 ///    submit, <c>assistant</c> (+<c>stop_reason:"end_turn"</c>, +<c>message.id</c>) line on turn end,
 ///    in the shapes <c>TranscriptNormalizer</c> parses, so tailer/normalizer tests can run file-driven.
-///  * <b>API-error stub</b> (OPT-IN, <c>ANTIPHON_FAKE_API_ERROR=rate_limit|server_error|authentication_failed</c>)
+///  * <b>API-error stub</b> (OPT-IN, <c>ANTIPHON_FAKE_API_ERROR=rate_limit|rate_limit_model|server_error|authentication_failed</c>)
 ///    — a turn killed by the API itself (usage limit, 529, auth-expired) is written to the JSONL as
 ///    ONE synthetic assistant record: <c>model:"&lt;synthetic&gt;"</c>, top-level <c>error</c> +
 ///    <c>isApiErrorMessage:true</c> (+ numeric <c>apiErrorStatus</c> when the real class carries
@@ -645,11 +645,11 @@ internal static class Program
         _apiTurnCount++;
         if (ApiErrorMode is not null && _apiTurnCount == ApiErrorAfterTurns)
         {
-            var (errorText, status) = ApiErrorShape(ApiErrorMode);
+            var (errorText, status, errorClass) = ApiErrorShape(ApiErrorMode);
             write(errorText + "\r\n");
             write(IdleTitle);
             if (transcriptPath is not null)
-                AppendTranscript(transcriptPath, JsonApiErrorStubLine(ApiErrorMode, status, errorText));
+                AppendTranscript(transcriptPath, JsonApiErrorStubLine(errorClass, status, errorText));
             return;
         }
 
@@ -825,13 +825,27 @@ internal static class Program
     // 22× rate_limit/429 wall stubs, server_error 529 + no-status connection drop, 2× auth. An
     // unknown mode still emits a structurally valid stub (isApiErrorMessage:true, class verbatim,
     // no status) so classifier fall-through paths can be driven end to end.
-    private static (string Text, int? Status) ApiErrorShape(string mode) => mode switch
+    // CARD-0022: rate_limit_model (alias rate_limit=fable) is the 2026-09-01 per-model cap;
+    // default rate_limit stays the session-limit sentence. Both stamp error:"rate_limit".
+    private static (string Text, int? Status, string ErrorClass) ApiErrorShape(string mode)
     {
-        "rate_limit" => ("You've hit your session limit · resets 6:10pm (Europe/London)", 429),
-        "server_error" => ("API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment.", 529),
-        "authentication_failed" => ("Login expired · Please run /login", null),
-        _ => ($"API Error: {mode}", null),
-    };
+        if (mode.Equals("rate_limit_model", StringComparison.OrdinalIgnoreCase)
+            || mode.Equals("rate_limit=fable", StringComparison.OrdinalIgnoreCase))
+        {
+            return (
+                "You've reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model.",
+                429,
+                "rate_limit");
+        }
+
+        return mode switch
+        {
+            "rate_limit" => ("You've hit your session limit · resets 6:10pm (Europe/London)", 429, "rate_limit"),
+            "server_error" => ("API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment.", 529, "server_error"),
+            "authentication_failed" => ("Login expired · Please run /login", null, "authentication_failed"),
+            _ => ($"API Error: {mode}", null, mode),
+        };
+    }
 
     /// <summary>
     /// The ONE synthetic assistant record Claude Code writes when a turn is killed by the API

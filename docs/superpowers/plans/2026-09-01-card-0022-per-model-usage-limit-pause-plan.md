@@ -263,4 +263,5 @@ Forward slash on OutputPath. Sequential with Pty tests. Delete `bin-card0022*` a
 
 - First production proof: one disposable Fable session driven into the cap is **not** required (unaffordable, spec testing stance). Fixtures + the already-captured 2026-09-01 JSONL are the proof. After deploy, the next natural Fable cap should write a hold, 409 the next `delegate.ps1 -Tier Frontier`, and leave Gym Stat / school-revision Sonnet orchestrators running.
 - Live already-held work from today's incident is debris, not a failed fix.
-- CARD-0309 plan, when picked: start from "Shared state" above. Do not design a second table.
+- CARD-0309 plan is already landed (`docs/superpowers/plans/2026-09-01-card-0309-manual-model-availability-hold-plan.md`). Table, reader, 409, dispatcher skip, GET read model, and AutoDetected writer exist; that card adds Manual upsert, optional `ignoreModelDisabled`, UI/`model-availability.ps1`, and `*` kind-wide writes. Outrank (AutoDetected does not shorten Manual `DisabledUntil`) is green in `ModelAvailabilityTests`.
+- S5 headed `/usage` probe is not in this Code pass (opt-in, does not gate).

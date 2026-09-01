@@ -128,11 +128,17 @@ public class ApiErrorRecoveryServiceTests
     }
 
     [Test]
-    public async Task Wall_enters_at_the_30_minute_rung()
+    public async Task Session_limit_stub_schedules_one_resume_at_reset_plus_padding()
     {
         await using var h = await CreateHarnessAsync();
-        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        await h.InsertApiErrorStubAsync();
+        await using (var stamp = CreateContext())
+        {
+            await stamp.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.EffectiveModelId, "fable"));
+        }
+        var now = new DateTimeOffset(2026, 7, 15, 16, 0, 0, TimeSpan.Zero);
+        var time = new FakeTimeProvider(now);
+        await SeedStubAsync(h.SessionId, "rate_limit", 429, UsageLimitWallParser.SessionLimitFixtureText);
 
         await SweepAsync(h, time: time);
 
@@ -140,9 +146,74 @@ public class ApiErrorRecoveryServiceTests
         var row = (await db.ApiErrorRecoveries.Where(r => r.AgentSessionId == h.SessionId).ToListAsync())
             .ShouldHaveSingleItem();
         row.Classification.ShouldBe(ApiErrorClassification.Wall);
-        row.NextAttemptAt.ShouldNotBeNull();
-        (row.NextAttemptAt!.Value - row.DetectedAt)
-            .ShouldBe(TimeSpan.FromMinutes(ApiErrorRetrySchedule.WallEntryRungMinutes));
+        row.ResolvedAt.ShouldBeNull();
+        row.NextAttemptAt.ShouldBe(new DateTime(2026, 7, 15, 17, 12, 0, DateTimeKind.Utc));
+
+        var hold = (await db.ModelAvailabilityHolds
+                .Where(x => x.SourceSessionId == h.SessionId && x.ClearedAt == null)
+                .ToListAsync())
+            .ShouldHaveSingleItem();
+        hold.ModelAlias.ShouldNotBe("<synthetic>");
+        hold.DisabledUntil.ShouldBe(row.NextAttemptAt);
+        hold.Source.ShouldBe(ModelAvailabilitySource.AutoDetected);
+    }
+
+    [Test]
+    public async Task Fable_5_stub_writes_an_open_ended_hold_and_does_not_enqueue()
+    {
+        await using var h = await CreateHarnessAsync();
+        await SeedStubAsync(h.SessionId, "rate_limit", 429, UsageLimitWallParser.FableModelCapIncidentText);
+
+        await SweepAsync(h);
+
+        await using var db = CreateContext();
+        var row = await db.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == h.SessionId);
+        row.Classification.ShouldBe(ApiErrorClassification.Wall);
+        row.ResolvedReason.ShouldBe(ApiErrorRecoveryReasons.WallModelPaused);
+        row.NextAttemptAt.ShouldBeNull();
+
+        var hold = await db.ModelAvailabilityHolds.SingleAsync(
+            x => x.SourceSessionId == h.SessionId && x.ClearedAt == null);
+        hold.ModelAlias.ShouldBe("fable");
+        hold.DisabledUntil.ShouldBeNull();
+        hold.Source.ShouldBe(ModelAvailabilitySource.AutoDetected);
+
+        (await SupervisionMessagesAsync(h.SessionId)).ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Auto_detected_writer_does_not_shorten_a_manual_DisabledUntil()
+    {
+        await using var h = await CreateHarnessAsync();
+        var thursday = new DateTime(2026, 9, 3, 0, 0, 0, DateTimeKind.Utc);
+        await using (var db = CreateContext())
+        {
+            await db.ModelAvailabilityHolds
+                .Where(h => h.Kind == AgentKind.ClaudeCode && h.ModelAlias == "fable" && h.ClearedAt == null)
+                .ExecuteDeleteAsync();
+            db.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
+            {
+                Id = Guid.NewGuid(),
+                Kind = AgentKind.ClaudeCode,
+                ModelAlias = "fable",
+                Source = ModelAvailabilitySource.Manual,
+                DisabledUntil = thursday,
+                HitAt = DateTime.UtcNow.AddHours(-1),
+                Reason = "manual hold",
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await SeedStubAsync(h.SessionId, "rate_limit", 429, UsageLimitWallParser.FableModelCapIncidentText);
+        await SweepAsync(h);
+
+        await using var verify = CreateContext();
+        var hold = await verify.ModelAvailabilityHolds.SingleAsync(
+            x => x.Kind == AgentKind.ClaudeCode && x.ModelAlias == "fable" && x.ClearedAt == null);
+        hold.Source.ShouldBe(ModelAvailabilitySource.Manual);
+        hold.DisabledUntil.ShouldBe(thursday);
+        hold.SourceSessionId.ShouldBe(h.SessionId);
+        await verify.ModelAvailabilityHolds.Where(x => x.Id == hold.Id).ExecuteDeleteAsync();
     }
 
     [Test]
@@ -240,7 +311,7 @@ public class ApiErrorRecoveryServiceTests
     {
         await using var h = await CreateHarnessAsync();
         for (var i = 0; i < 3; i++)
-            await h.InsertApiErrorStubAsync();
+            await SeedStubAsync(h.SessionId, "rate_limit", 429, UsageLimitWallParser.SessionLimitFixtureText);
 
         await SweepAsync(h);
 

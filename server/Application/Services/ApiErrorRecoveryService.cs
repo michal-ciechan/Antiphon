@@ -7,6 +7,7 @@ using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
@@ -313,21 +314,111 @@ public sealed class ApiErrorRecoveryService
         }
 
         if (classification == ApiErrorClassification.Wall)
-        {
-            var wallDeaths = await db.ApiErrorRecoveries.CountAsync(
-                r => r.AgentSessionId == sessionId
-                    && r.Classification == ApiErrorClassification.Wall
-                    && r.ResolvedReason != ApiErrorRecoveryReasons.Superseded, ct);
-            if (ApiErrorRetrySchedule.WallIsParked(wallDeaths + 1, _settings.WallDeathCap))
-            {
-                Resolve(row, now, ApiErrorRecoveryReasons.WallParked);
-                return row;
-            }
-        }
+            return await ApplyWallAsync(db, row, sessionId, errorText, now, ct);
 
         var interval = ApiErrorRetrySchedule.Interval(1, classification);
         row.NextAttemptAt = interval is TimeSpan gap ? now + gap : null;
         return row;
+    }
+
+    /// <summary>
+    /// CARD-0022: two Wall subclasses. SessionLimit gets one resume at reset+2min.
+    /// ModelCap (and unparseable reset) writes a hold with <c>DisabledUntil = null</c> and
+    /// never the 30-minute WallPrompt. Parse-null (no alias at all) keeps
+    /// <see cref="WallUnparsedFailureReason"/> and still does not enter the 30-minute ladder.
+    /// </summary>
+    private async Task<ApiErrorRecovery> ApplyWallAsync(
+        AppDbContext db,
+        ApiErrorRecovery row,
+        Guid sessionId,
+        string? errorText,
+        DateTime now,
+        CancellationToken ct)
+    {
+        var fallback = await ResolveFallbackAliasAsync(db, sessionId, ct);
+        var wall = UsageLimitWallParser.Parse(now, errorText, fallback);
+
+        var wallDeaths = await db.ApiErrorRecoveries.CountAsync(
+            r => r.AgentSessionId == sessionId
+                && r.Classification == ApiErrorClassification.Wall
+                && r.ResolvedReason != ApiErrorRecoveryReasons.Superseded, ct);
+        var parked = ApiErrorRetrySchedule.WallIsParked(wallDeaths + 1, _settings.WallDeathCap);
+
+        if (wall is null)
+        {
+            // No alias at all — better than pausing a guessed model. Do not 30-minute-nudge.
+            Resolve(row, now, parked ? ApiErrorRecoveryReasons.WallParked : WallUnparsedFailureReason);
+            return row;
+        }
+
+        DateTime? disabledUntil = wall.ResetAt is { } reset
+            ? reset + ModelAvailability.SessionLimitResumePadding
+            : null;
+        var availability = new ModelAvailability(db, _time, NullLogger<ModelAvailability>.Instance);
+        var session = await db.AgentSessions.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == sessionId, ct);
+        var kind = session?.AgentKind ?? AgentKind.ClaudeCode;
+        var openTaskId = await db.AgentTasks.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId
+                && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working))
+            .Select(t => (Guid?)t.Id)
+            .FirstOrDefaultAsync(ct);
+
+        await availability.UpsertAutoDetectedAsync(
+            kind,
+            wall.ModelAlias,
+            disabledUntil,
+            UsageLimitWallParser.FormatReason(wall),
+            wall.RawText,
+            sessionId,
+            openTaskId,
+            ct);
+
+        if (parked)
+        {
+            Resolve(row, now, ApiErrorRecoveryReasons.WallParked);
+            return row;
+        }
+
+        if (wall.Kind == UsageLimitWallKind.SessionLimit && disabledUntil is { } until)
+        {
+            row.NextAttemptAt = until;
+            return row;
+        }
+
+        Resolve(row, now, ApiErrorRecoveryReasons.WallModelPaused);
+        return row;
+    }
+
+    private static async Task<string?> ResolveFallbackAliasAsync(
+        AppDbContext db, Guid sessionId, CancellationToken ct)
+    {
+        var session = await db.AgentSessions.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == sessionId, ct);
+        var kind = session?.AgentKind ?? AgentKind.ClaudeCode;
+        var fromSession = ModelAlias.Normalize(kind, session?.EffectiveModelId);
+        if (fromSession is not null)
+            return fromSession;
+
+        var sessionIdText = sessionId.ToString("D");
+        var agent = await db.Agents.AsNoTracking()
+            .Where(a => a.PersistentSessionId == sessionIdText)
+            .Select(a => new { a.ModelId, a.ModelLevel })
+            .FirstOrDefaultAsync(ct);
+        var fromAgent = ModelAlias.Normalize(kind, agent?.ModelId);
+        if (fromAgent is not null)
+            return fromAgent;
+
+        var taskLevel = await db.AgentTasks.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId)
+            .OrderByDescending(t => t.CreatedAt)
+            .Select(t => (AgentModelLevel?)t.ModelLevel)
+            .FirstOrDefaultAsync(ct);
+        if (taskLevel is { } level)
+            return ModelLevelAliases.For(kind, level);
+        if (agent is not null)
+            return ModelLevelAliases.For(kind, agent.ModelLevel);
+        return ModelLevelAliases.For(kind, AgentModelLevel.High);
     }
 
     private static void Resolve(ApiErrorRecovery row, DateTime now, string reason)
@@ -335,6 +426,12 @@ public sealed class ApiErrorRecoveryService
         row.ResolvedAt = now;
         row.ResolvedReason = reason;
         row.NextAttemptAt = null;
+    }
+
+    private static string QuoteError(string? errorText)
+    {
+        var quoted = string.IsNullOrWhiteSpace(errorText) ? "(no error text)" : errorText.Trim();
+        return quoted.Length > 600 ? quoted[..600] + "…" : quoted;
     }
 
     private async Task RaiseAdoptIncidentAsync(
@@ -373,17 +470,33 @@ public sealed class ApiErrorRecoveryService
                 $"Session {row.AgentSessionId} hit {_settings.WallDeathCap} consecutive usage-limit "
                 + "walls; the resume is parked.";
         }
-        else if (row.Classification == ApiErrorClassification.Wall)
+        else if (row.ResolvedReason == ApiErrorRecoveryReasons.WallModelPaused)
+        {
+            severity = AlertSeverity.Warning;
+            failureReason = ApiErrorRecoveryReasons.WallModelPaused;
+            var quoted = QuoteError(errorText);
+            message =
+                $"Session {row.AgentSessionId} hit a per-model usage cap (no reset stated); "
+                + $"dispatch is paused for that model until cleared. {quoted}";
+        }
+        else if (row.Classification == ApiErrorClassification.Wall
+            && row.ResolvedReason == WallUnparsedFailureReason)
         {
             severity = AlertSeverity.Warning;
             failureReason = WallUnparsedFailureReason;
-            var quoted = string.IsNullOrWhiteSpace(errorText) ? "(no error text)" : errorText.Trim();
-            if (quoted.Length > 600)
-                quoted = quoted[..600] + "…";
+            var quoted = QuoteError(errorText);
             message =
-                $"Session {row.AgentSessionId} hit a usage-limit wall whose reset text could not be "
-                + $"parsed; entering the Transient ladder at the {ApiErrorRetrySchedule.WallEntryRungMinutes}-minute "
-                + $"rung. Unparsed text: {quoted}";
+                $"Session {row.AgentSessionId} hit a usage-limit wall whose model could not be "
+                + $"resolved; no hold was written and no 30-minute nudge will fire. Unparsed text: {quoted}";
+        }
+        else if (row.Classification == ApiErrorClassification.Wall)
+        {
+            severity = AlertSeverity.Warning;
+            failureReason = "SessionLimit";
+            var quoted = QuoteError(errorText);
+            message =
+                $"Session {row.AgentSessionId} hit a session-limit wall; one resume is scheduled "
+                + $"at {row.NextAttemptAt:u} and dispatch is paused for that model until then. {quoted}";
         }
         else
         {

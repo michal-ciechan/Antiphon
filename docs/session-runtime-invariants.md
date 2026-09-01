@@ -5,6 +5,10 @@
 
 ## CARD-0254 preserved operational detail
 
+### Preserved Gotcha #76
+
+- **Usage-limit walls pause that model on that kind, not the fleet** (CARD-0022): `ModelAvailabilityHold` is keyed `(Kind, ModelAlias)`. CARD-0072's 30-minute `WallPrompt` is not recovery for a per-model cap (the 2026-09-01 Fable 5 incident died in 1.1 s). `/usage-credits` is not a remaining-quota readout. Session-limit text that names a reset gets one resume at that instant + 2 minutes.
+
 ### Preserved Gotcha #3
 
 - **A parked message whose session has no open task is discarded by a sweep, never retried** (CARD-0091): after `ParkedMessages:MinParkedMinutes` (10 by default), a machine-origin parked row is marked `Canceled` on purpose and leaves attention; Ui/Channel rows, completion notes, and rows on sessions with open tasks stay parked for a human decision. `ParkedMessages:DryRun` logs candidates without writing them.

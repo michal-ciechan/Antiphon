@@ -52,7 +52,7 @@ public static class ProviderContractCatalog
             ContextWindowCeilingSource.Configured),
         UsageLimitSignal: new UsageLimitSignalContract(
             AgentTuiCapabilityState.Supported,
-            "Claude JSONL API-error stubs carry structural error class/status (ApiErrorClassifier: rate_limit/429 is a Wall). Wall stub text states the reset time.",
+            "Claude JSONL API-error stubs carry structural error class/status (ApiErrorClassifier: rate_limit/429 is a Wall). Some stubs state a reset time (session-limit); the per-model cap does not (CARD-0022).",
             UsageLimitSignalForm.StructuralField,
             StatesResetTime: true),
         Compaction: new CompactionContract(

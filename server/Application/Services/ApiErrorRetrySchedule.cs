@@ -18,8 +18,9 @@ public static class ApiErrorRetrySchedule
     public static readonly int[] TransientRungsMinutes = [1, 3, 5, 10, 30, 60];
 
     /// <summary>
-    /// Wall whose reset text is unparseable (every Wall until CARD-0022's parser) enters the
-    /// Transient ladder at this rung (§D3).
+    /// Historical 30-minute WallPrompt rung (CARD-0072). CARD-0022 no longer uses this as the
+    /// default Wall path: SessionLimit resumes at the parsed reset, ModelCap never nudges.
+    /// Kept so a second SessionLimit death on the same recovery row still has a backstop interval.
     /// </summary>
     public const int WallEntryRungMinutes = 30;
 

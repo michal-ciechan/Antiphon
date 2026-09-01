@@ -62,6 +62,7 @@ public class AppDbContext : DbContext
     public DbSet<AgentTuiValidationRun> AgentTuiValidationRuns => Set<AgentTuiValidationRun>();
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
     public DbSet<SubscriptionUsageSample> SubscriptionUsageSamples => Set<SubscriptionUsageSample>();
+    public DbSet<ModelAvailabilityHold> ModelAvailabilityHolds => Set<ModelAvailabilityHold>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -1517,6 +1518,24 @@ public class AppDbContext : DbContext
             entity.HasIndex(s => new { s.Provider, s.SubscriptionKey, s.ObservedAt })
                 .IsDescending(false, false, true)
                 .HasDatabaseName("IX_SubscriptionUsageSamples_Provider_SubscriptionKey_ObservedAt");
+        });
+
+        modelBuilder.Entity<ModelAvailabilityHold>(entity =>
+        {
+            entity.ToTable("ModelAvailabilityHolds");
+            entity.HasKey(h => h.Id);
+            entity.Property(h => h.Kind).IsRequired();
+            entity.Property(h => h.ModelAlias).IsRequired().HasMaxLength(64);
+            entity.Property(h => h.Source).IsRequired();
+            entity.Property(h => h.HitAt).IsRequired();
+            entity.Property(h => h.RawText).HasMaxLength(2000);
+            entity.Property(h => h.Reason).IsRequired().HasMaxLength(400);
+
+            // Active = ClearedAt IS NULL. CARD-0309 writes Manual onto the same unique key.
+            entity.HasIndex(h => new { h.Kind, h.ModelAlias })
+                .IsUnique()
+                .HasFilter("\"ClearedAt\" IS NULL")
+                .HasDatabaseName("IX_ModelAvailabilityHolds_Kind_ModelAlias_Active");
         });
 
     }

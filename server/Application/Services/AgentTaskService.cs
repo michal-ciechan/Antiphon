@@ -28,6 +28,8 @@ public sealed class AgentTaskService
     private readonly ILogger<AgentTaskService> _logger;
     // CARD-0136. Optional so every harness that predates this card keeps constructing this.
     private readonly SubscriptionQuotaGate? _quotaGate;
+    // CARD-0022. Same optional contract: absent, create does not consult model holds.
+    private readonly ModelAvailability? _modelAvailability;
     // CARD-0063 S2. Optional for the same reason; absent, every scope name is an opaque label.
     private readonly AreaMapLoader? _areas;
     // CARD-0263 S2. Optional so focused harnesses without API-key plumbing retain their setup.
@@ -43,7 +45,8 @@ public sealed class AgentTaskService
         ILogger<AgentTaskService> logger,
         SubscriptionQuotaGate? quotaGate = null,
         AreaMapLoader? areas = null,
-        ApiKeyEnvResolver? apiKeyEnvResolver = null)
+        ApiKeyEnvResolver? apiKeyEnvResolver = null,
+        ModelAvailability? modelAvailability = null)
     {
         _areas = areas;
         _db = db;
@@ -55,6 +58,7 @@ public sealed class AgentTaskService
         _logger = logger;
         _quotaGate = quotaGate;
         _apiKeyEnvResolver = apiKeyEnvResolver;
+        _modelAvailability = modelAvailability;
     }
 
     /// <summary>
@@ -325,6 +329,18 @@ public sealed class AgentTaskService
                 var quotaWarning = SubscriptionQuotaPolicy.FormatOverride(quotaOverride);
                 warning = warning is null ? quotaWarning : warning + " " + quotaWarning;
             }
+        }
+
+        if (_modelAvailability is not null)
+        {
+            var alias = ModelLevelAliases.For(agentKind, level);
+            if (pinnedStandingAgent is { ModelId: { Length: > 0 } modelId }
+                && ModelAlias.Normalize(agentKind, modelId) is { } pinned)
+            {
+                alias = pinned;
+            }
+
+            await _modelAvailability.RequireAsync(agentKind, alias, ct);
         }
 
         // A task token always carries the parent task's identity, including null. The work may run

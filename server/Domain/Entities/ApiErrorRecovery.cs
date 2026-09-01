@@ -48,4 +48,10 @@ public static class ApiErrorRecoveryReasons
     public const string NeedsHuman = "NeedsHuman";
     public const string UnknownExhausted = "UnknownExhausted";
     public const string WallParked = "WallParked";
+
+    /// <summary>
+    /// CARD-0022: a per-model cap (or an unparseable Wall with a resolved alias) paused that
+    /// model with <c>DisabledUntil = null</c>. No WallPrompt. The open task Fails via CARD-0071.
+    /// </summary>
+    public const string WallModelPaused = "WallModelPaused";
 }

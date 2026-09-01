@@ -194,6 +194,13 @@ public enum AttentionKind
     /// shipped 22; do not renumber.
     /// </summary>
     UnmarkedWaiting = 23,
+
+    /// <summary>
+    /// A model family is paused (CARD-0022): AutoDetected usage-limit hold, or a later CARD-0309
+    /// Manual hold. Projected from active <c>ModelAvailabilityHold</c> rows — recency is
+    /// lifecycle, no ack. Appended after shipped 23; do not renumber.
+    /// </summary>
+    ModelAvailabilityHold = 24,
 }
 
 /// <summary>
@@ -265,7 +272,9 @@ public sealed record AttentionItemDto(
     decimal? SubtreeCostUsd,
     IReadOnlyList<AttentionAction> Actions,
     Guid? CardId = null,
-    Guid? BoardId = null);
+    Guid? BoardId = null,
+    string? ModelKind = null,
+    string? ModelAlias = null);
 
 /// <param name="RunnerConsulted">
 /// Whether the session runner answered this sweep. False means the runner-derived condition

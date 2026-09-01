@@ -797,6 +797,38 @@ public class AttentionServiceTests
         item.Kind.ShouldBe(AttentionKind.UncorrelatedReport);
     }
 
+    // ---- CARD-0022 S4: ModelAvailabilityHold ----------------------------------------------------
+
+    [Test]
+    public async Task An_active_hold_is_an_error_row_and_clears_when_ClearedAt_is_set()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var holdId = await scenario.AddHoldAsync(
+            AgentKind.ClaudeCode, "fable", sessionId: session,
+            until: DateTime.UtcNow.AddMinutes(30),
+            reason: "session-limit resets 18:10 Europe/London",
+            rawText: UsageLimitWallParser.SessionLimitFixtureText);
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.SessionId == session
+            && i.Kind == AttentionKind.ModelAvailabilityHold);
+        item.Severity.ShouldBe(AlertSeverity.Error);
+        item.Headline.ShouldContain("fable exhausted");
+        item.Headline.ShouldContain("dispatch paused for fable");
+        item.ModelAlias.ShouldBe("fable");
+        item.Evidence.ShouldContain(UsageLimitWallParser.SessionLimitFixtureText);
+
+        await using (var db = CreateContext())
+        {
+            var row = await db.ModelAvailabilityHolds.SingleAsync(h => h.Id == holdId);
+            row.ClearedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        (await ItemsForAsync(scenario))
+            .ShouldNotContain(i => i.Kind == AttentionKind.ModelAvailabilityHold && i.SessionId == session);
+    }
+
     // ---- CARD-0294 S3: UnmarkedWaiting ----------------------------------------------------------
 
     [Test]
@@ -2062,6 +2094,7 @@ public class AttentionServiceTests
         private readonly List<Guid> _cards = [];
         private readonly List<Guid> _boards = [];
         private readonly List<Guid> _projects = [];
+        private readonly List<Guid> _holds = [];
 
         public bool Owns(AttentionItemDto item) =>
             (item.TaskId is { } t && _tasks.Contains(t))
@@ -2767,9 +2800,40 @@ public class AttentionServiceTests
             await db.SaveChangesAsync();
         }
 
+        public async Task<Guid> AddHoldAsync(
+            AgentKind kind,
+            string alias,
+            Guid? sessionId = null,
+            DateTime? until = null,
+            string reason = "session-limit resets 18:10 Europe/London",
+            string? rawText = null)
+        {
+            var id = Guid.NewGuid();
+            await using var db = CreateContext();
+            await db.ModelAvailabilityHolds
+                .Where(h => h.Kind == kind && h.ModelAlias == alias && h.ClearedAt == null)
+                .ExecuteDeleteAsync();
+            db.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
+            {
+                Id = id,
+                Kind = kind,
+                ModelAlias = alias,
+                Source = ModelAvailabilitySource.AutoDetected,
+                DisabledUntil = until,
+                HitAt = DateTime.UtcNow.AddMinutes(-5),
+                Reason = reason,
+                RawText = rawText,
+                SourceSessionId = sessionId,
+            });
+            await db.SaveChangesAsync();
+            _holds.Add(id);
+            return id;
+        }
+
         public async ValueTask DisposeAsync()
         {
             await using var db = CreateContext();
+            await db.ModelAvailabilityHolds.Where(h => _holds.Contains(h.Id)).ExecuteDeleteAsync();
             await db.TranscriptEntries.Where(e => _sessions.Contains(e.AgentSessionId)).ExecuteDeleteAsync();
             await db.SessionQueuedMessages.Where(m => _sessions.Contains(m.AgentSessionId)).ExecuteDeleteAsync();
             await db.AgentTaskEvents.Where(e => _tasks.Contains(e.AgentTaskId)).ExecuteDeleteAsync();

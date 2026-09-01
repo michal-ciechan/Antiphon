@@ -108,6 +108,11 @@ export type AttentionKind =
    * offered until then. Not ReportUnsettled (that kind is marker present, settlement missed).
    */
   | 'UnmarkedWaiting'
+  /**
+   * A model family is paused (CARD-0022): detected usage-limit hold, or a later manual hold.
+   * Error. Dispatch skips queued work; new creates 409 model_disabled.
+   */
+  | 'ModelAvailabilityHold'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =
@@ -132,6 +137,8 @@ export interface AttentionItemDto {
   messageId: string | null
   cardId?: string | null
   boardId?: string | null
+  modelKind?: string | null
+  modelAlias?: string | null
   title: string
   /** One server-computed line naming the condition in this row's own numbers. */
   headline: string

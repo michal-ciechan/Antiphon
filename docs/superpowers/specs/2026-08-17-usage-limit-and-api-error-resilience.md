@@ -221,9 +221,16 @@ deciding about a parked task sees the exposure. Auto-salvage is priced as an ope
 
 ### D7. Fleet-wide pause and visibility — CARD-0022's surface
 
+**Superseded 2026-09-01.** One `UsageLimitState` row pausing the whole fleet is the wrong grain:
+Fable 5 exhausted while Sonnet 5, Haiku 4.5, and every Grok session stayed healthy. CARD-0022
+ships a per-(kind, model-alias) `ModelAvailabilityHold` instead — see
+`docs/superpowers/plans/2026-09-01-card-0022-per-model-usage-limit-pause-plan.md`. S1–S3 and S5a
+below remain the detection/Transient history.
+
 The subscription is **one shared account**: a wall hit by any session is a wall for the fleet.
 New entity `UsageLimitState` (single active row: `HitAt`, `ResetAt`, `RawText`, `SourceSessionId`,
 `ClearedAt`), written on any Wall-class detection, cleared lazily when `now >= ResetAt`.
+**(Struck — do not implement. The hold table is keyed `(Kind, ModelAlias)`.)**
 
 - **Dispatch pause**: `AgentTaskDispatcher` skips dispatching new tasks while a `UsageLimitState`
   is active (new `SkippedUsageLimit` counter beside `SkippedGlobalConcurrency`), resuming

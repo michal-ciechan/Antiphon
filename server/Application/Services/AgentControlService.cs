@@ -43,6 +43,10 @@ public sealed class AgentControlService
     // CARD-0136. Optional so the existing integration harness keeps constructing this
     // unchanged; tests that want the gate wire it explicitly. Production always registers it.
     private readonly SubscriptionQuotaGate? _quotaGate;
+    // CARD-0022. Optional so the existing integration harness keeps constructing this
+    // unchanged; production always registers it. A Fable AlwaysOn restart is refused —
+    // do not silently reroute.
+    private readonly ModelAvailability? _modelAvailability;
     private readonly ISessionRunnerClient? _sessionRunner;
     private readonly HerdrLaunchContextResolver? _herdrContext;
 
@@ -65,7 +69,8 @@ public sealed class AgentControlService
         ApiKeyEnvResolver? apiKeyEnvResolver = null,
         SubscriptionQuotaGate? quotaGate = null,
         ISessionRunnerClient? sessionRunner = null,
-        HerdrLaunchContextResolver? herdrContext = null)
+        HerdrLaunchContextResolver? herdrContext = null,
+        ModelAvailability? modelAvailability = null)
     {
         _db = db;
         _agentService = agentService;
@@ -84,6 +89,7 @@ public sealed class AgentControlService
         _quotaGate = quotaGate;
         _sessionRunner = sessionRunner;
         _herdrContext = herdrContext;
+        _modelAvailability = modelAvailability;
     }
 
     /// <summary>
@@ -120,6 +126,13 @@ public sealed class AgentControlService
                 ct);
             if (overridden is not null)
                 RecordQuotaOverrideIncident(agent, overridden);
+        }
+
+        if (kind is AgentKind startKind && _modelAvailability is not null)
+        {
+            var alias = ModelAlias.Normalize(startKind, agent.ModelId)
+                ?? ModelLevelAliases.For(startKind, agent.ModelLevel);
+            await _modelAvailability.RequireAsync(startKind, alias, ct);
         }
 
         // A launch is the reconcile point for the CLAUDE.md floor (CARD-0059): Claude reads the file

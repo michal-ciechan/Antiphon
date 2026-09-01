@@ -417,6 +417,7 @@ try
     builder.Services.AddSingleton<SubscriptionUsageMonitorService>();
     builder.Services.AddScoped<SubscriptionUsageReader>();
     builder.Services.AddScoped<SubscriptionQuotaGate>();
+    builder.Services.AddScoped<ModelAvailability>();
     // CARD-0072 S5a: durable API-error retry. Singleton for the same reason as compaction —
     // the supervisor hosted service is a singleton and this is the action it calls.
     builder.Services.AddSingleton<ApiErrorRecoveryService>();
@@ -702,6 +703,7 @@ try
     app.MapSessionEndpoints();
     app.MapOrchestratorEndpoints();
     app.MapAgentTaskEndpoints();
+    app.MapModelAvailabilityEndpoints();
     app.MapAttentionEndpoints();
     app.MapDigestEndpoints();
     app.MapDiagnosticsEndpoints();
