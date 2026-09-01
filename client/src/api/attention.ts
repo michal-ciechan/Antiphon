@@ -126,6 +126,8 @@ export type AttentionAction =
   | 'KillSession'
   | 'OpenAgent'
   | 'OpenCard'
+  /** CARD-0309: DELETE /api/model-availability/{kind}/{alias}. */
+  | 'ClearHold'
 
 export interface AttentionItemDto {
   kind: AttentionKind

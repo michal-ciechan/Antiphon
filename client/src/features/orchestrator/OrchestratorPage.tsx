@@ -1,10 +1,11 @@
-import { Badge, Tabs } from '@mantine/core'
+import { Badge, Stack, Tabs } from '@mantine/core'
 import { useSearchParams } from 'react-router'
 import { TbAlertHexagon, TbCards, TbHelpCircle, TbSitemap } from 'react-icons/tb'
 import { useAttention } from '../../api/attention'
 import { AttentionPanel } from '../attention/AttentionPanel'
 import { DecisionsPanel } from '../attention/DecisionsPanel'
 import { DelegationsBoard } from '../delegations/DelegationsBoard'
+import { ModelAvailabilityPanel } from './ModelAvailabilityPanel'
 import { OrchestratorPanel } from './OrchestratorPanel'
 
 const TABS = ['cards', 'delegations', 'attention', 'decisions'] as const
@@ -79,7 +80,10 @@ export function OrchestratorPage() {
         <DelegationsBoard />
       </Tabs.Panel>
       <Tabs.Panel value="attention">
-        <AttentionPanel />
+        <Stack gap="md">
+          <ModelAvailabilityPanel />
+          <AttentionPanel />
+        </Stack>
       </Tabs.Panel>
       <Tabs.Panel value="decisions">
         <DecisionsPanel />

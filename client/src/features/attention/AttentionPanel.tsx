@@ -34,6 +34,7 @@ import {
   type AttentionItemDto,
 } from '../../api/attention'
 import { getApiErrorMessage } from '../../api/client'
+import { useClearModelAvailabilityHold } from '../../api/modelAvailability'
 import { cancelQueuedMessage, sendQueuedMessageNow, stopSession } from '../../api/sessions'
 import { formatCost, formatDuration } from '../delegations/taskVisuals'
 import { BlockedReplyRow } from './BlockedReplyRow'
@@ -306,6 +307,7 @@ const ACTION_LABEL: Record<AttentionAction, string> = {
   KillSession: 'Kill session',
   OpenAgent: 'Open agent',
   OpenCard: 'Open card',
+  ClearHold: 'Clear hold',
 }
 
 /** Verbs that destroy work. Colour is the only warning a one-click button gets. */
@@ -356,6 +358,7 @@ function AttentionRowActions({
     mutationFn: () => cancelQueuedMessage(item.sessionId!, item.messageId!),
   })
   const kill = useMutation({ mutationFn: () => stopSession(item.sessionId!) })
+  const clearHold = useClearModelAvailabilityHold()
 
   const pending =
     retry.isPending ||
@@ -363,7 +366,8 @@ function AttentionRowActions({
     escalate.isPending ||
     sendNow.isPending ||
     dropMessage.isPending ||
-    kill.isPending
+    kill.isPending ||
+    clearHold.isPending
 
   const target = targetOf(item)
   const shortSession = item.sessionId ? item.sessionId.replace(/-/g, '').slice(0, 8) : 'unknown'
@@ -402,6 +406,12 @@ function AttentionRowActions({
         // would have ended somebody mid-sentence. The dialog names the session it would end.
         setKillAsked(true)
         return
+      case 'ClearHold':
+        clearHold.mutate(
+          { kind: item.modelKind!, alias: item.modelAlias! },
+          settle('Hold cleared', 'Could not clear the model hold'),
+        )
+        return
     }
   }
 
@@ -413,6 +423,7 @@ function AttentionRowActions({
     if (action === 'SendNow' || action === 'CancelMessage')
       return item.sessionId !== null && item.messageId !== null
     if (action === 'KillSession') return item.sessionId !== null
+    if (action === 'ClearHold') return Boolean(item.modelKind && item.modelAlias)
     return target !== null
   })
 

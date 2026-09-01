@@ -833,6 +833,8 @@ public class AttentionServiceTests
         item.Headline.ShouldContain("fable exhausted");
         item.Headline.ShouldContain("dispatch paused for fable");
         item.ModelAlias.ShouldBe("fable");
+        item.ModelKind.ShouldBe("ClaudeCode");
+        item.Actions.ShouldBe([AttentionAction.ClearHold]);
         item.Evidence.ShouldContain(UsageLimitWallParser.SessionLimitFixtureText);
 
         await using (var db = CreateContext())
@@ -844,6 +846,35 @@ public class AttentionServiceTests
 
         (await ItemsForAsync(scenario))
             .ShouldNotContain(i => i.Kind == AttentionKind.ModelAvailabilityHold && i.SessionId == session);
+    }
+
+    [Test]
+    public async Task A_manual_hold_row_carries_kind_alias_and_clears_after_DELETE()
+    {
+        await using var scenario = new Scenario();
+        var holdId = await scenario.AddHoldAsync(
+            AgentKind.Grok, "grok-4.6",
+            until: DateTime.UtcNow.AddDays(2),
+            reason: "manual hold",
+            source: ModelAvailabilitySource.Manual);
+
+        var item = (await ItemsForAsync(scenario)).Single(i =>
+            i.Kind == AttentionKind.ModelAvailabilityHold && i.ModelAlias == "grok-4.6");
+        item.ModelKind.ShouldBe("Grok");
+        item.ModelAlias.ShouldBe("grok-4.6");
+        item.Actions.ShouldBe([AttentionAction.ClearHold]);
+        item.Headline.ShouldContain("(manual)");
+        item.Headline.ShouldContain("held until");
+
+        await using (var db = CreateContext())
+        {
+            var row = await db.ModelAvailabilityHolds.SingleAsync(h => h.Id == holdId);
+            row.ClearedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        (await ItemsForAsync(scenario))
+            .ShouldNotContain(i => i.Kind == AttentionKind.ModelAvailabilityHold && i.ModelAlias == "grok-4.6");
     }
 
     // ---- CARD-0294 S3: UnmarkedWaiting ----------------------------------------------------------
@@ -2112,6 +2143,7 @@ public class AttentionServiceTests
         private readonly List<Guid> _boards = [];
         private readonly List<Guid> _projects = [];
         private readonly List<Guid> _holds = [];
+        private readonly HashSet<string> _holdKeys = [];
 
         public bool Owns(AttentionItemDto item) =>
             (item.TaskId is { } t && _tasks.Contains(t))
@@ -2120,7 +2152,11 @@ public class AttentionServiceTests
             || (item.CardId is { } c && _cards.Contains(c))
             // Session-scoped rows (SessionDisagreement) may carry no task, message or agent at all —
             // an unclaimed runner session is by definition owned by nothing the database knows.
-            || (item.TaskId is null && item.MessageId is null && item.SessionId is { } s && _sessions.Contains(s));
+            || (item.TaskId is null && item.MessageId is null && item.SessionId is { } s && _sessions.Contains(s))
+            || (item.Kind == AttentionKind.ModelAvailabilityHold
+                && item.ModelKind is { } mk
+                && item.ModelAlias is { } ma
+                && _holdKeys.Contains($"{mk}/{ma}"));
 
         /// <summary>
         /// A session id this test owns for filtering purposes but deliberately never inserts — the
@@ -2824,7 +2860,8 @@ public class AttentionServiceTests
             Guid? sessionId = null,
             DateTime? until = null,
             string reason = "session-limit resets 18:10 Europe/London",
-            string? rawText = null)
+            string? rawText = null,
+            ModelAvailabilitySource source = ModelAvailabilitySource.AutoDetected)
         {
             var id = Guid.NewGuid();
             await using var db = CreateContext();
@@ -2836,7 +2873,7 @@ public class AttentionServiceTests
                 Id = id,
                 Kind = kind,
                 ModelAlias = alias,
-                Source = ModelAvailabilitySource.AutoDetected,
+                Source = source,
                 DisabledUntil = until,
                 HitAt = DateTime.UtcNow.AddMinutes(-5),
                 Reason = reason,
@@ -2845,6 +2882,7 @@ public class AttentionServiceTests
             });
             await db.SaveChangesAsync();
             _holds.Add(id);
+            _holdKeys.Add($"{kind}/{alias}");
             return id;
         }
 

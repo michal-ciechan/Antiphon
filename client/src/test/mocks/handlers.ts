@@ -9,6 +9,21 @@ export const handlers: HttpHandler[] = [
   // CARD-0212: useRemoteControlSupport always GETs runner-types, including on screens
   // that never previously asked. Empty list = Unknown-as-Unsupported.
   http.get('/api/agent-tui/runner-types', () => HttpResponse.json([])),
+  http.get('/api/model-availability', () =>
+    HttpResponse.json({
+      holds: [],
+      available: [
+        'fable',
+        'opus',
+        'sonnet',
+        'haiku',
+        'grok-4.6',
+        'gpt-5.6-sol',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna',
+      ],
+    }),
+  ),
   // CARD-0255: AgentCreateModal loads the setup catalog for preset chips.
   http.get('/api/projects/setup-catalog', () => HttpResponse.json({
     modelLevels: [],
