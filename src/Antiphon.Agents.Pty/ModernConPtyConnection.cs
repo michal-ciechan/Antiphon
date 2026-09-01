@@ -27,7 +27,9 @@ namespace Antiphon.Agents.Pty;
 /// environment merge, PATH resolution, argument quoting, <c>bInheritHandles=false</c>,
 /// kill-on-close job object, unbuffered <see cref="FileStream"/>s over the pipe handles, teardown
 /// order — so that the ONLY difference between the two backends is which module provides
-/// <c>CreatePseudoConsole</c>. Anything else that differs is a bug in this file.</para>
+/// <c>CreatePseudoConsole</c>. Anything else that differs at spawn is a bug in this file.
+/// <see cref="Kill"/> is the measured exception (CARD-0308): settlement must terminate the
+/// spawn job immediately rather than waiting for <see cref="Dispose"/> to close it.</para>
 ///
 /// <para><b>One thing it must do that the inbox path must not (CARD-0048).</b> The
 /// <c>OpenConsole.exe</c> behind this DLL opens with a DA1 query and <b>freezes the console client
@@ -244,7 +246,36 @@ internal sealed class ModernConPtyConnection : IPtySession
         }
     }
 
-    public void Kill() => _process.Kill();
+    /// <summary>
+    /// Terminates the spawn kill-on-close job, then the top-level process tree.
+    /// Porta only signals the TUI; the job existed so a crashed host would still reap children,
+    /// but Kill is the operator/settlement path and must not wait for <see cref="Dispose"/>.
+    /// The job handle stays open — Dispose still closes it last, matching ConPTY teardown order.
+    /// </summary>
+    public void Kill()
+    {
+        TryTerminateJob();
+        try
+        {
+            _process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
+            // Already exited (including TerminateJobObject winning the race).
+        }
+        catch (Win32Exception)
+        {
+            // Already exited, or the tree snapshot lost a handle.
+        }
+    }
+
+    private void TryTerminateJob()
+    {
+        if (_job.IsInvalid || _job.IsClosed)
+            return;
+
+        _ = TerminateJobObject(_job, 1);
+    }
 
     public void Resize(int cols, int rows)
     {
@@ -708,6 +739,9 @@ internal sealed class ModernConPtyConnection : IPtySession
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool AssignProcessToJobObject(SafeFileHandle hJob, IntPtr hProcess);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool TerminateJobObject(SafeFileHandle hJob, uint uExitCode);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct COORD
