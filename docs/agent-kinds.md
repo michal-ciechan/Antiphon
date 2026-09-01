@@ -238,13 +238,16 @@ the whole session (reads must share write/delete), and is flushed per update.
 
 **Behaviour worth knowing:**
 - First launch into a directory nobody has run Grok in parks on **Do you trust the contents of
-  this directory?** (`y` / `n`). `--always-approve` does not skip it. Nested git worktrees are
-  separate workspaces, so `C:\src\Antiphon` being in `~/.grok/trusted_folders.toml` does not
-  cover `C:\Antiphon\worktrees\card-task-*`. `GrokTrustPromptDetector` answers `y` in
-  `RunnerGrokAdapter.WaitForReadyAsync` after the quiet wait (CARD-0315); Enter is not safe
-  because both options render bold. An **unauthenticated `GROK_HOME` parks on a device-code
-  login that swallows input** — that one is **fail-fast, never auto-answered**, and is global
-  per `GROK_HOME`.
+  this directory?** (`y` / `n`). `--always-approve` is already on the shipped Grok
+  `ArgsTemplate` and does not skip this (it is tool-execution approval, a different gate).
+  There is no `--trust` on `grok` or `grok agent`. Nested git worktrees are separate
+  workspaces: trusting `C:\src\Antiphon` covers `C:\src\Antiphon\server` (same repo), but
+  trusting `C:\Antiphon\worktrees` does **not** cover `C:\Antiphon\worktrees\card-task-*`
+  (`grok inspect --json` `projectTrusted`, measured 1.0.13). Exact-path seed of the worktree
+  itself does. `GrokTrustPromptDetector` answers `y` in `RunnerGrokAdapter.WaitForReadyAsync`
+  after the quiet wait (CARD-0315); Enter is not safe because both options render bold. An
+  **unauthenticated `GROK_HOME` parks on a device-code login that swallows input** — that one
+  is **fail-fast, never auto-answered**, and is global per `GROK_HOME`.
 - No remote control. Refused at create/PATCH/start/card-spawn with `409 remote_control_refused`
   and never typed (`RemoteControlPolicy`, CARD-0212). No claude.ai session entry.
 - Context occupancy is Grok's own numbers: `auto_compact_completed.tokens_after` and single-call
