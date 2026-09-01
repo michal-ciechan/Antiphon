@@ -80,9 +80,12 @@ public class GrokDelegateDispatchTests
     [Test]
     public void a_claude_delegates_launch_arguments_are_unchanged_by_this_slice()
     {
-        // The compatibility promise, pinned as the exact argument SEQUENCE the pre-S3 code built:
-        // --name then --model then --append-system-prompt, in that order, off the default
-        // definition. Every existing delegation is this shape.
+        // The compatibility promise, pinned as the exact argument SEQUENCE off the default
+        // definition: --name, then --append-system-prompt, then --model LAST. CARD-0182 S2
+        // (8cd20be4, 2026-08-25) made AgentRegistry.Resolve the single --model appender, after the
+        // dispatcher's extras; the older pin (--model between --name and the prompt) went red that
+        // day and was then hidden for a week behind this harness's missing GitWorkspaceService
+        // registration (CARD-0297). Every existing delegation is this shape.
         var (dispatcher, _) = CreateHarness();
         var task = TaskFor(AgentKind.ClaudeCode, AgentModelLevel.High);
 
@@ -97,8 +100,9 @@ public class GrokDelegateDispatchTests
         name.ShouldBeGreaterThanOrEqualTo(0);
         args[name + 1].ShouldBe($"task-{DelegationReportFormatter.Short(task.Id)}");
         args[model + 1].ShouldBe("opus");
-        model.ShouldBe(name + 2);
-        prompt.ShouldBe(model + 2);
+        prompt.ShouldBe(name + 2);
+        model.ShouldBe(prompt + 2,
+            "CARD-0182 D2: --model is appended once, by the registry, after every dispatcher extra");
         args.ShouldNotContain("--rules");
     }
 
