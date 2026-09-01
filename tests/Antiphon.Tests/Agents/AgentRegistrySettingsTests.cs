@@ -33,6 +33,7 @@ public class AgentRegistrySettingsTests
             ["Agents:ClaudeReadyQuietPeriodMs"] = "1234",
             ["Agents:CodexReadyQuietPeriodMs"] = "4321",
             ["Agents:CodexDoneQuietPeriodMs"] = "3456",
+            ["Agents:CodexBootStatusMaxWaitMs"] = "10000",
         };
 
         var config = new ConfigurationBuilder().AddInMemoryCollection(dict).Build();
@@ -53,6 +54,7 @@ public class AgentRegistrySettingsTests
             new[] { "--no-alt-screen", "--dangerously-bypass-approvals-and-sandbox" });
         settings.ClaudeReadyQuietPeriodMs.ShouldBe(1234);
         settings.CodexReadyQuietPeriodMs.ShouldBe(4321);
+        settings.CodexBootStatusMaxWaitMs.ShouldBe(10_000);
         settings.CodexDoneQuietPeriodMs.ShouldBe(3456);
     }
 
@@ -375,6 +377,32 @@ public class AgentRegistrySettingsTests
         result.FailureMessage.ShouldContain("ClaudeDoneMaxWaitMs must be positive");
         result.FailureMessage.ShouldContain("CodexReadyQuietPeriodMs must be positive");
         result.FailureMessage.ShouldContain("CodexDoneQuietPeriodMs must be positive");
+    }
+
+    [Test]
+    public void Validator_rejects_negative_codex_boot_status_max_wait()
+    {
+        var result = new AgentRegistrySettingsValidator().Validate(name: null, new AgentRegistrySettings
+        {
+            DefaultDefinition = "claude",
+            Definitions = { ["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "cl.bat" } },
+            CodexBootStatusMaxWaitMs = -1,
+        });
+
+        result.Failed.ShouldBeTrue();
+        result.FailureMessage.ShouldContain("CodexBootStatusMaxWaitMs must be non-negative");
+    }
+
+    [Test]
+    public void Validator_accepts_zero_codex_boot_status_max_wait()
+    {
+        var result = new AgentRegistrySettingsValidator().Validate(name: null, ValidSettings(
+            new AgentDefinition { Kind = "ClaudeCode", Exe = "cl.bat" }));
+        result.Failed.ShouldBeFalse();
+
+        var disabled = ValidSettings(new AgentDefinition { Kind = "ClaudeCode", Exe = "cl.bat" });
+        disabled.CodexBootStatusMaxWaitMs = 0;
+        new AgentRegistrySettingsValidator().Validate(name: null, disabled).Failed.ShouldBeFalse();
     }
 
     private static AgentRegistrySettings ValidSettings(AgentDefinition definition) => new()

@@ -124,14 +124,26 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter
         return _terminal.ResizeAsync(cols, rows, ct);
     }
 
-    public Task<bool> WaitForReadyAsync(CancellationToken ct)
+    public async Task<bool> WaitForReadyAsync(CancellationToken ct)
     {
         EnsureStarted();
-        return _terminal.WaitForQuietAfterVisibleAsync(
+        var quiet = await _terminal.WaitForQuietAfterVisibleAsync(
             TimeSpan.FromMilliseconds(_settings.CodexReadyQuietPeriodMs),
             TimeSpan.FromMilliseconds(_settings.CodexReadyMaxWaitMs),
             ct,
             AcceptTrustPromptIfVisibleAsync);
+        if (!quiet)
+            return false;
+
+        // Lockstep with CodexReadyDetector.WaitAsync / CodexAdapter: quiet+trust, then MCP boot line.
+        await CodexMcpBoot.WaitUntilAbsentAsync(
+            _terminal.SnapshotScreenAsync,
+            CodexMcpBoot.AbsentSettle,
+            TimeSpan.FromMilliseconds(_settings.CodexBootStatusMaxWaitMs),
+            ms => _logger?.LogWarning(
+                "Codex MCP boot line still visible after {Ms}ms; typing anyway", ms),
+            ct);
+        return true;
     }
 
     /// <summary>

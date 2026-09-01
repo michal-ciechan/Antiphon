@@ -45,6 +45,8 @@ public sealed class CodexAdapter : IAgentProtocolAdapter
         {
             QuietPeriod = TimeSpan.FromMilliseconds(settings.CodexReadyQuietPeriodMs),
             MaxWait = TimeSpan.FromMilliseconds(settings.CodexReadyMaxWaitMs),
+            // Lockstep with RunnerCodexAdapter.WaitForReadyAsync: quiet+trust, then MCP boot line.
+            BootStatusMaxWait = TimeSpan.FromMilliseconds(settings.CodexBootStatusMaxWaitMs),
         };
         _doneDetector = new CodexDoneDetector
         {

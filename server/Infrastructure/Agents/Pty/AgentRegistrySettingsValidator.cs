@@ -85,6 +85,8 @@ public sealed class AgentRegistrySettingsValidator : IValidateOptions<AgentRegis
             failures.Add("Agents:CodexReadyQuietPeriodMs must be positive.");
         if (options.CodexReadyMaxWaitMs <= 0)
             failures.Add("Agents:CodexReadyMaxWaitMs must be positive.");
+        if (options.CodexBootStatusMaxWaitMs < 0)
+            failures.Add("Agents:CodexBootStatusMaxWaitMs must be non-negative.");
         if (options.CodexDoneQuietPeriodMs <= 0)
             failures.Add("Agents:CodexDoneQuietPeriodMs must be positive.");
         if (options.CodexDoneMaxWaitMs <= 0)

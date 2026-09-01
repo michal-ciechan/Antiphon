@@ -13,12 +13,101 @@ public sealed class CodexReadyDetector
 {
     public TimeSpan QuietPeriod { get; init; } = TimeSpan.FromSeconds(1);
     public TimeSpan MaxWait { get; init; } = TimeSpan.FromSeconds(60);
+    /// <summary>CARD-0299 S3. Zero disables the MCP-boot wait. Negative is treated as disable.</summary>
+    public TimeSpan BootStatusMaxWait { get; init; } = TimeSpan.FromSeconds(10);
+    public Action<int>? OnBootStatusTimeout { get; init; }
 
-    public Task<bool> WaitAsync(
+    public async Task<bool> WaitAsync(
         PtyAgentRunner runner,
         Func<CancellationToken, Task>? observeStartupAsync = null,
         CancellationToken ct = default)
-        => runner.WaitForQuietAfterVisibleAsync(QuietPeriod, MaxWait, ct, observeStartupAsync);
+    {
+        var quiet = await runner.WaitForQuietAfterVisibleAsync(QuietPeriod, MaxWait, ct, observeStartupAsync);
+        if (!quiet)
+            return false;
+
+        // Lockstep with RunnerCodexAdapter.WaitForReadyAsync: quiet+trust, then MCP boot line.
+        await CodexMcpBoot.WaitUntilAbsentAsync(
+            _ => Task.FromResult(runner.SnapshotScreen()),
+            CodexMcpBoot.AbsentSettle,
+            BootStatusMaxWait,
+            OnBootStatusTimeout,
+            ct);
+        return true;
+    }
+}
+
+/// <summary>
+/// CARD-0195 / CARD-0299 S3: Codex paints <c>Starting MCP servers (1/2): ...</c> /
+/// <c>Booting MCP server: ...</c> while bundled MCP servers start. Typing during that
+/// line is MCP-interrupt / queued-input. Match <c>Starting MCP server</c> so the
+/// <c>(1/2)</c> form hits.
+/// </summary>
+public static class CodexMcpBoot
+{
+    public const string MarkerA = "Starting MCP server";
+    public const string MarkerB = "Booting MCP server";
+    public static readonly TimeSpan AbsentSettle = TimeSpan.FromMilliseconds(500);
+
+    public static bool IsVisible(string? renderedScreen)
+    {
+        if (string.IsNullOrEmpty(renderedScreen))
+            return false;
+
+        return renderedScreen.Contains(MarkerA, StringComparison.Ordinal)
+            || renderedScreen.Contains(MarkerB, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// After quiet+trust. If the boot line is on screen, poll until it has been absent
+    /// <paramref name="settle"/>, bounded by <paramref name="maxWait"/>. Zero/negative
+    /// <paramref name="maxWait"/> disables (return immediately). Never fails ready —
+    /// bound expiry invokes <paramref name="onBoundExpired"/> and proceeds. A screen
+    /// that does not currently show the line returns immediately.
+    /// </summary>
+    public static async Task WaitUntilAbsentAsync(
+        Func<CancellationToken, Task<string>> snapshotAsync,
+        TimeSpan settle,
+        TimeSpan maxWait,
+        Action<int>? onBoundExpired = null,
+        CancellationToken ct = default)
+    {
+        if (maxWait <= TimeSpan.Zero)
+            return;
+
+        var first = await snapshotAsync(ct);
+        if (!IsVisible(first))
+            return;
+
+        var deadline = DateTime.UtcNow + maxWait;
+        DateTime? goneSince = null;
+        var poll = TimeSpan.FromMilliseconds(50);
+        if (settle > TimeSpan.Zero && settle < poll)
+            poll = settle;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            ct.ThrowIfCancellationRequested();
+            var screen = await snapshotAsync(ct);
+            if (IsVisible(screen))
+            {
+                goneSince = null;
+            }
+            else
+            {
+                goneSince ??= DateTime.UtcNow;
+                if (DateTime.UtcNow - goneSince.Value >= settle)
+                    return;
+            }
+
+            var remaining = deadline - DateTime.UtcNow;
+            if (remaining <= TimeSpan.Zero)
+                break;
+            await Task.Delay(remaining < poll ? remaining : poll, ct);
+        }
+
+        onBoundExpired?.Invoke((int)maxWait.TotalMilliseconds);
+    }
 }
 
 /// <summary>
