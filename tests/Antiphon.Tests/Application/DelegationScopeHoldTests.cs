@@ -261,6 +261,28 @@ public class DelegationScopeHoldTests
             .ShouldBe(AgentTaskStatus.Dispatched);
     }
 
+    [Test]
+    public async Task a_role_recommendation_does_not_prevent_a_second_dispatch()
+    {
+        // CARD-0304: RecommendedInFlight is advisory. Two Shared writers in different checkouts
+        // still dispatch when MaxConcurrentTasks allows it, even though each role recommends 1.
+        using var first = new TempWorkspace();
+        using var second = new TempWorkspace();
+        var dispatcher = CreateDispatcher();
+        var (firstAgent, _) = await SeedWarmAgentAsync(first.Path);
+        var (secondAgent, _) = await SeedWarmAgentAsync(second.Path);
+        var a = await SeedQueuedTaskAsync(
+            first.Path, WorkspaceMode.Shared, scope: null, pinnedAgentId: firstAgent, title: "first code");
+        var b = await SeedQueuedTaskAsync(
+            second.Path, WorkspaceMode.Shared, scope: null, pinnedAgentId: secondAgent, title: "second code");
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == a.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
+        (await verify.AgentTasks.SingleAsync(t => t.Id == b.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
+    }
+
     // ---- helpers ---------------------------------------------------------------------------
 
     private static AgentTaskDispatcher CreateDispatcher(bool serialiseSharedWriters = true)
@@ -299,6 +321,8 @@ public class DelegationScopeHoldTests
         }));
         services.AddSingleton<IWorktreeManager, Antiphon.Server.Infrastructure.Git.WorktreeManager>();
         services.AddSingleton<IGitService, Antiphon.Server.Infrastructure.Git.GitService>();
+        // CARD-0230: DelegationWorktreeService requires GitWorkspaceService (same as DelegateBundleLaunchTests).
+        services.AddSingleton<GitWorkspaceService>();
         services.AddScoped<DelegationWorktreeService>();
         services.AddScoped<AgentTaskService>();
         services.AddScoped<AgentTaskDispatcher>();

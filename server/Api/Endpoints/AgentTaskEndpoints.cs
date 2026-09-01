@@ -45,6 +45,12 @@ public static class AgentTaskEndpoints
             AgentTaskService service,
             CancellationToken ct) => Results.Ok(await service.GetListSummaryAsync(ct)));
 
+        // CARD-0304. Declared BEFORE /{id} so "pipeline" is never read as a task id. Read-only
+        // fleet projection; advisory recommendations never refuse dispatch from here.
+        tasks.MapGet("/pipeline", async (
+            AgentTaskPipelineStatusService pipeline,
+            CancellationToken ct) => Results.Ok(await pipeline.GetAsync(ct)));
+
         // The repo's named areas (CARD-0063). Declared BEFORE /{id} so "areas" is never read as a
         // task id. A read-only listing: the caller needs it to write a -Scope, so a missing or
         // stale token must not stop it — a token-less caller passes ?directory= instead.

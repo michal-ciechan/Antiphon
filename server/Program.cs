@@ -126,7 +126,10 @@ try
     builder.Services.AddOptions<OrchestratorSettings>()
         .Bind(builder.Configuration.GetSection("Orchestrator"))
         .ValidateOnStart();
-    builder.Services.Configure<DelegationSettings>(builder.Configuration.GetSection("Delegation"));
+    builder.Services.AddSingleton<IValidateOptions<DelegationSettings>, DelegationSettingsValidator>();
+    builder.Services.AddOptions<DelegationSettings>()
+        .Bind(builder.Configuration.GetSection("Delegation"))
+        .ValidateOnStart();
 
     // The pty backend switch (CARD-0037), read from the SAME config key the session runner uses and
     // exported into this process's environment — the server spawns in-proc ptys of its own
@@ -271,6 +274,7 @@ try
     builder.Services.AddSingleton<AreaMapLoader>();
     builder.Services.AddScoped<DelegationWorktreeService>();
     builder.Services.AddScoped<AgentTaskService>();
+    builder.Services.AddScoped<AgentTaskPipelineStatusService>();
     builder.Services.AddSingleton<AgentTaskLandQueue>();
     builder.Services.AddScoped<AgentTaskLandService>();
     // CARD-0140 S3: AgentTuiLaunchResolver is already AddScoped below; the dispatcher's optional

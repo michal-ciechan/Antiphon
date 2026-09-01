@@ -1455,6 +1455,9 @@ public class AppDbContext : DbContext
             entity.HasIndex(t => t.TokenHash).HasDatabaseName("IX_AgentTasks_TokenHash");
             // CARD-0040: the sweep loads "every card with a bound task" every 60s.
             entity.HasIndex(t => t.CardId).HasDatabaseName("IX_AgentTasks_CardId");
+            // CARD-0304: latest Plan per card and later/open Code suppression for pipeline readiness.
+            entity.HasIndex(t => new { t.CardId, t.Role, t.CreatedAt })
+                .HasDatabaseName("IX_AgentTasks_CardId_Role_CreatedAt");
 
             // Self-reference: deleting a parent must NOT cascade a whole subtree away — the tree is
             // the audit trail. Restrict forces an explicit decision instead.

@@ -78,6 +78,88 @@ public class AgentTaskServiceIntegrationTests
         ((int)level).ShouldBeLessThanOrEqualTo((int)AgentModelLevel.High);
     }
 
+    // ---- CARD-0304 advisory in-flight recommendations --------------------------------------
+
+    [Test]
+    [Arguments(AgentTaskRole.Plan)]
+    [Arguments(AgentTaskRole.Code)]
+    [Arguments(AgentTaskRole.Review)]
+    [Arguments(AgentTaskRole.Debug)]
+    [Arguments(AgentTaskRole.Coverage)]
+    [Arguments(AgentTaskRole.Docs)]
+    [Arguments(AgentTaskRole.Commit)]
+    [Arguments(AgentTaskRole.Test)]
+    [Arguments(AgentTaskRole.Deploy)]
+    [Arguments(AgentTaskRole.Merge)]
+    public void shipped_roles_recommend_one_in_flight(AgentTaskRole role)
+    {
+        var settings = new DelegationSettings();
+        settings.RecommendedInFlightFor(role).ShouldBe(1);
+        settings.MaxConcurrentTasks.ShouldBe(6, "the hard process cap is independent of the recommendation");
+    }
+
+    [Test]
+    public void custom_and_check_have_no_recommendation_unless_configured()
+    {
+        var settings = new DelegationSettings();
+        settings.RolePolicy.ContainsKey(nameof(AgentTaskRole.Custom)).ShouldBeFalse();
+        settings.RolePolicy.ContainsKey(nameof(AgentTaskRole.Check)).ShouldBeFalse();
+        settings.RecommendedInFlightFor(AgentTaskRole.Custom).ShouldBeNull();
+        settings.RecommendedInFlightFor(AgentTaskRole.Check).ShouldBeNull();
+    }
+
+    [Test]
+    public void a_role_policy_override_replaces_the_shipped_recommendation()
+    {
+        var settings = new DelegationSettings();
+        settings.RolePolicy["Code"].RecommendedInFlight = 3;
+        settings.RecommendedInFlightFor(AgentTaskRole.Code).ShouldBe(3);
+
+        settings.RolePolicy["Custom"] = new DelegationSettings.RolePolicyEntry { RecommendedInFlight = null };
+        settings.RecommendedInFlightFor(AgentTaskRole.Custom).ShouldBeNull();
+    }
+
+    [Test]
+    public void adding_a_custom_role_policy_entry_defaults_the_recommendation_to_one()
+    {
+        var settings = new DelegationSettings();
+        settings.RolePolicy["Custom"] = new DelegationSettings.RolePolicyEntry { Level = AgentModelLevel.High };
+        settings.RecommendedInFlightFor(AgentTaskRole.Custom).ShouldBe(1);
+    }
+
+    [Test]
+    [Arguments(0)]
+    [Arguments(-1)]
+    public void recommended_in_flight_rejects_zero_and_negatives(int value)
+    {
+        var settings = new DelegationSettings();
+        settings.RolePolicy["Plan"].RecommendedInFlight = value;
+        var result = new DelegationSettingsValidator().Validate(null, settings);
+        result.Failed.ShouldBeTrue();
+        result.Failures.ShouldContain(f => f.Contains("RecommendedInFlight") && f.Contains("Plan"));
+    }
+
+    [Test]
+    public void recommended_in_flight_accepts_null_and_positive_values()
+    {
+        var settings = new DelegationSettings();
+        settings.RolePolicy["Plan"].RecommendedInFlight = null;
+        settings.RolePolicy["Code"].RecommendedInFlight = 4;
+        new DelegationSettingsValidator().Validate(null, settings).Failed.ShouldBeFalse();
+    }
+
+    [Test]
+    public void recommendation_does_not_change_the_hard_process_cap()
+    {
+        var settings = new DelegationSettings();
+        foreach (var entry in settings.RolePolicy.Values)
+            entry.RecommendedInFlight = 1;
+        settings.MaxConcurrentTasks.ShouldBe(6);
+        settings.MaxConcurrentTasks = 2;
+        settings.RecommendedInFlightFor(AgentTaskRole.Code).ShouldBe(1);
+        settings.MaxConcurrentTasks.ShouldBe(2);
+    }
+
     // ---- the recursion boundary -----------------------------------------------------------
 
     [Test]

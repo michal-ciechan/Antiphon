@@ -263,15 +263,17 @@ public sealed class AgentTaskDispatcher
             })
             .ToListAsync(ct);
         var heldScopes = busyScopes
-            .Select(s => new ScopeHolder(
+            .Select(s => SharedWriterLeaseProjection.Holder.From(
                 s.Id,
                 s.Title,
-                ScopeResolver.KeyFor(s.RepoPath, s.WorkingDirectory),
+                s.RepoPath,
+                s.WorkingDirectory,
+                s.Scope,
+                s.Workspace,
+                s.WorktreeBranch,
                 // Resolved against the HOLDER's own repo map: two tasks only ever compare when
                 // they share a repo, so both sides always read the same antiphon.areas.json.
-                ScopeResolver.Resolve(s.Scope, AreasFor(s.RepoPath)),
-                s.Workspace,
-                s.WorktreeBranch))
+                AreasFor(s.RepoPath)))
             .ToList();
 
         // A hold leaves a trace exactly once. Before CARD-0063 it left none at all: the single
@@ -304,8 +306,7 @@ public sealed class AgentTaskDispatcher
             }
 
             var taskKey = ScopeResolver.KeyFor(task.RepoPath, task.WorkingDirectory);
-            var inLease = ScopeResolver.ParticipatesInLease(task.Workspace)
-                && task.Role != AgentTaskRole.Check;
+            var inLease = SharedWriterLeaseProjection.Participates(task.Workspace, task.Role);
             var taskScope = inLease
                 ? ScopeResolver.Resolve(task.Scope, AreasFor(task.RepoPath))
                 : ResolvedScope.Empty;
@@ -313,23 +314,14 @@ public sealed class AgentTaskDispatcher
             // The pair decides, not the area (2.3). Only Shared-to-Shared waits; a worktree on
             // either side dispatches and the caller is TOLD, because a worktree collision costs a
             // rebase at merge and blocking it throws away the parallelism worktrees exist to give.
-            ScopeOverlap? blocking = null;
-            List<ScopeOverlap>? warned = null;
+            SharedWriterLeaseProjection.Overlap? blocking = null;
+            IReadOnlyList<SharedWriterLeaseProjection.Overlap>? warned = null;
             if (inLease)
             {
-                foreach (var candidate in heldScopes)
-                {
-                    if (candidate.Evaluate(taskKey, task.Workspace, taskScope, _settings.SerialiseSharedWriters)
-                        is not { } overlap)
-                        continue;
-                    if (overlap.Policy == ScopeOverlapPolicy.Serialise)
-                    {
-                        blocking = overlap;
-                        break;
-                    }
-
-                    (warned ??= []).Add(overlap);
-                }
+                var decision = SharedWriterLeaseProjection.Decide(
+                    heldScopes, taskKey, task.Workspace, taskScope, _settings.SerialiseSharedWriters);
+                blocking = decision.Blocking;
+                warned = decision.Warnings.Count == 0 ? null : decision.Warnings;
             }
 
             if (blocking is { } held)
@@ -374,7 +366,7 @@ public sealed class AgentTaskDispatcher
                         dispatchedAgainstCap++;
                     if (inLease)
                     {
-                        heldScopes.Add(new ScopeHolder(
+                        heldScopes.Add(new SharedWriterLeaseProjection.Holder(
                             task.Id, task.Title, taskKey, taskScope, task.Workspace, task.WorktreeBranch));
                     }
 
@@ -3281,73 +3273,6 @@ public sealed class AgentTaskDispatcher
         task.Kind == AgentTaskKind.Orchestrator
         && task.Workspace == WorkspaceMode.Worktree
         && (task.DenyDirectEdits ?? settings.OrchestratorDenyHookEnabled);
-
-    /// <summary>
-    /// A running task's claim on part of a repo, as the tick sees it. Carries the task's identity
-    /// because a hold that leaves no trace is the defect CARD-0063 measured — the event text names
-    /// who is being waited for.
-    /// </summary>
-    private sealed record ScopeHolder(
-        Guid TaskId,
-        string Title,
-        string Key,
-        ResolvedScope Scope,
-        WorkspaceMode Workspace,
-        string? Branch)
-    {
-        public bool Intersects(string key, ResolvedScope scope) =>
-            SameRepo(Key, key) && ScopeResolver.Intersects(Scope, scope);
-
-        /// <summary>
-        /// What this running task costs a queued one - or null when it costs nothing. Two arms:
-        /// declared scopes that intersect, and (D3) two shared writers in one checkout, which is a
-        /// collision regardless of scope because they share a working TREE, not a file list.
-        /// </summary>
-        public ScopeOverlap? Evaluate(
-            string key, WorkspaceMode workspace, ResolvedScope scope, bool serialiseSharedWriters)
-        {
-            if (!SameRepo(Key, key))
-                return null;
-
-            var intersection = ScopeResolver.Intersect(Scope, scope);
-            if (!intersection.Any)
-            {
-                return serialiseSharedWriters
-                    && workspace == WorkspaceMode.Shared
-                    && Workspace == WorkspaceMode.Shared
-                    ? new ScopeOverlap(this, ScopeOverlapPolicy.Serialise, workspace, Areas: null)
-                    : null;
-            }
-
-            var policy = ScopeResolver.PolicyFor(workspace, Workspace, intersection.AllAllow);
-            return policy == ScopeOverlapPolicy.Allow
-                ? null
-                : new ScopeOverlap(this, policy, workspace, intersection.Describe());
-        }
-    }
-
-    /// <summary>One running task's claim on a queued one, and the sentence it earns.</summary>
-    private sealed record ScopeOverlap(
-        ScopeHolder Holder, ScopeOverlapPolicy Policy, WorkspaceMode Queued, string? Areas)
-    {
-        public string Describe(AgentTask task)
-        {
-            var pair = ScopeResolver.DescribePair(Queued, Holder.Workspace);
-            var who = $"running task {DelegationReportFormatter.Short(Holder.TaskId)} \"{Holder.Title}\"";
-            if (Areas is null)
-            {
-                return $"Held: {who} is already writing in this shared checkout ({pair}; "
-                    + "no intersecting scope - two shared writers share one working tree).";
-            }
-
-            if (Policy == ScopeOverlapPolicy.Serialise)
-                return $"Held: '{Areas}' intersects {who} ({pair}).";
-
-            var against = Holder.Branch ?? task.WorktreeBranch ?? "the shared checkout";
-            return $"'{Areas}' intersects {who} ({pair}) - dispatching anyway; "
-                + $"expect a rebase against {against}.";
-        }
-    }
 
     /// <summary>
     /// The repo's declared areas, or an empty map when nothing is registered to read one (a

@@ -1,5 +1,6 @@
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Domain.Enums;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Settings;
 
@@ -290,23 +291,23 @@ public sealed class DelegationSettings
     /// <summary>Role → tier and per-role timeouts. Missing roles fall back to <see cref="DefaultLevel"/>.</summary>
     public Dictionary<string, RolePolicyEntry> RolePolicy { get; set; } = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["Plan"] = new() { Level = AgentModelLevel.Frontier },
-        ["Code"] = new() { Level = AgentModelLevel.Frontier },
-        ["Review"] = new() { Level = AgentModelLevel.Frontier },
+        ["Plan"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
+        ["Code"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
+        ["Review"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
         // EscalateTo stays for the manual ladder (/escalate); EscalateAfterMinutes is deliberately
         // unset — the auto-trigger is disarmed by default (CARD-0158). Same pattern as Test below.
-        ["Debug"] = new() { Level = AgentModelLevel.High, EscalateTo = AgentModelLevel.Frontier },
-        ["Coverage"] = new() { Level = AgentModelLevel.High },
+        ["Debug"] = new() { Level = AgentModelLevel.High, EscalateTo = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
+        ["Coverage"] = new() { Level = AgentModelLevel.High, RecommendedInFlight = 1 },
         // High: this role is the conflict resolver CreateMergeTaskAsync spawns after
         // TryMergeBackAsync already failed. Clean fast-forwards never reach it
         // (in-process git). A verify-merge-deploy is Test/Deploy/Commit, not Merge.
-        ["Merge"] = new() { Level = AgentModelLevel.High },
-        ["Docs"] = new() { Level = AgentModelLevel.Medium },
-        ["Commit"] = new() { Level = AgentModelLevel.Medium },
+        ["Merge"] = new() { Level = AgentModelLevel.High, RecommendedInFlight = 1 },
+        ["Docs"] = new() { Level = AgentModelLevel.Medium, RecommendedInFlight = 1 },
+        ["Commit"] = new() { Level = AgentModelLevel.Medium, RecommendedInFlight = 1 },
         // Low tier is safe for Test/Deploy because these RUN things and report what happened —
         // INTERPRETING a failure is a separate Debug task at High.
-        ["Test"] = new() { Level = AgentModelLevel.Low, EscalateTo = AgentModelLevel.Medium },
-        ["Deploy"] = new() { Level = AgentModelLevel.Low },
+        ["Test"] = new() { Level = AgentModelLevel.Low, EscalateTo = AgentModelLevel.Medium, RecommendedInFlight = 1 },
+        ["Deploy"] = new() { Level = AgentModelLevel.Low, RecommendedInFlight = 1 },
     };
 
     public AgentModelLevel DefaultLevel { get; set; } = AgentModelLevel.High;
@@ -677,7 +678,22 @@ public sealed class DelegationSettings
         /// delegatable fails the task's creation loudly rather than silently running Claude.</para>
         /// </summary>
         public AgentKind? Kind { get; set; }
+
+        /// <summary>
+        /// Advisory in-flight recommendation for this role (CARD-0304). Global, not per-board.
+        /// Null means unbounded. A configured value must be positive. This never refuses task
+        /// creation or changes <see cref="DelegationSettings.MaxConcurrentTasks"/> dispatch —
+        /// the pipeline endpoint only reports whether the current in-flight count is at or over it.
+        /// </summary>
+        public int? RecommendedInFlight { get; set; } = 1;
     }
+
+    /// <summary>
+    /// The configured advisory in-flight recommendation for <paramref name="role"/>, or null when
+    /// that role has no <see cref="RolePolicy"/> entry (shipped <c>Custom</c> / <c>Check</c>).
+    /// </summary>
+    public int? RecommendedInFlightFor(AgentTaskRole role) =>
+        RolePolicy.TryGetValue(role.ToString(), out var entry) ? entry.RecommendedInFlight : null;
 
     /// <summary>
     /// Working-session stall detection (CARD-0153). Detection only: a Warning incident and an
@@ -765,4 +781,29 @@ public sealed class LlmEnvInheritanceSettings
     public List<string> ProxyHostMarkers { get; set; } = ["localhost", "127.0.0.1"];
 
     public bool RequireProjectAtProxy { get; set; } = true;
+}
+
+/// <summary>
+/// Startup check for <see cref="DelegationSettings.RolePolicyEntry.RecommendedInFlight"/>:
+/// null (unbounded) or a positive integer. Zero and negatives fail the host rather than
+/// silently treating a nonsense cap as "no recommendation" (CARD-0304).
+/// </summary>
+public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSettings>
+{
+    public ValidateOptionsResult Validate(string? name, DelegationSettings options)
+    {
+        var failures = new List<string>();
+        foreach (var (role, entry) in options.RolePolicy)
+        {
+            if (entry.RecommendedInFlight is { } value && value <= 0)
+            {
+                failures.Add(
+                    $"Delegation:RolePolicy:{role}:RecommendedInFlight must be a positive integer or null (unbounded).");
+            }
+        }
+
+        return failures.Count == 0
+            ? ValidateOptionsResult.Success
+            : ValidateOptionsResult.Fail(failures);
+    }
 }
