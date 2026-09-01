@@ -16,6 +16,15 @@
 #   pwsh -File scripts/test-client.ps1                 # full suite
 #   pwsh -File scripts/test-client.ps1 BoardPage       # vitest filter args pass through
 #
+# Why this runs vitest through `node <path>\vitest.mjs` and NOT `npx vitest` (CARD-0307): on
+# Windows `npx` resolves to the Node installer's npx.ps1 shim, and when that shim is called from a
+# line inside a script it does not use its bound parameters - it re-parses the SOURCE TEXT of the
+# calling line ($MyInvocation.Statement) and Invoke-Expressions it. The calling line here literally
+# reads `@args`, so the caller's filter never reaches Node and every scoped run silently became the
+# whole suite (measured 2026-09-01: two full-suite runs, 7.5m and 5m, where one file was ~15s).
+# Running the local vitest bin with node.exe hands the splat over as real argv. Do not "simplify"
+# this back to npx / npm exec - npm.ps1 has the same trap; TestClientFilterTests pins it.
+#
 # ASCII-only on purpose - must parse under Windows PowerShell 5.1 too.
 
 $ErrorActionPreference = 'Continue'
@@ -24,10 +33,18 @@ $clientDir = Join-Path $repoRoot 'client'
 $logDir = Join-Path $repoRoot 'logs'
 if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir | Out-Null }
 $logFile = Join-Path $logDir 'client-tests.log'
+$vitest = Join-Path $clientDir 'node_modules\vitest\vitest.mjs'
+
+if (-not (Test-Path $vitest)) {
+    Write-Output "vitest not installed at $vitest; run npm ci in client/"
+    Write-Output ""
+    Write-Output "CLIENT TESTS EXIT CODE: 1  (FAIL - do not report this run as green)"
+    exit 1
+}
 
 Push-Location $clientDir
 try {
-    npx vitest run @args 2>&1 | Tee-Object -FilePath $logFile
+    node $vitest run @args 2>&1 | Tee-Object -FilePath $logFile
     $code = $LASTEXITCODE
 }
 finally {
