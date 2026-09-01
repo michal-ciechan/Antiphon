@@ -156,7 +156,7 @@ public sealed class AttentionService
             .Where(t => t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
             .ToListAsync(ct);
         var blocked = await _db.AgentTasks.AsNoTracking()
-            .Where(t => t.Status == AgentTaskStatus.Blocked)
+            .Where(t => t.Status == AgentTaskStatus.Blocked && t.Role != AgentTaskRole.Check)
             .ToListAsync(ct);
         // CARD-0231: an unacknowledged pre-dispatch failure is counted until the reminder
         // disarms, and is NOT subject to RecentFailure's 24h window or its cap of 20.

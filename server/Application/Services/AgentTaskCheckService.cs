@@ -639,6 +639,46 @@ public sealed class AgentTaskCheckService
     }
 
     /// <summary>
+    /// CARD-0302 S3: a Check-role row that already has a reading must not sit <c>Blocked</c>.
+    /// The interpretation is the deliverable — remap to <c>Succeeded</c> / <c>Exempt</c> and
+    /// leave the standing interpreter session untouched. Empty-Result Blocked Check rows are
+    /// left Blocked (they are not readings). Idempotent: a second pass matches nothing.
+    /// </summary>
+    public static async Task<int> RemapBlockedInterpretationsAsync(
+        AppDbContext db, TimeProvider time, CancellationToken ct)
+    {
+        var rows = await db.AgentTasks
+            .Where(t => t.Role == AgentTaskRole.Check
+                && t.Status == AgentTaskStatus.Blocked
+                && t.Result != null
+                && t.Result != "")
+            .ToListAsync(ct);
+        if (rows.Count == 0)
+            return 0;
+
+        var now = time.GetUtcNow().UtcDateTime;
+        const string detail =
+            "CARD-0302: Check-role interpretation is the deliverable; remapped from Blocked.";
+        foreach (var row in rows)
+        {
+            row.Status = AgentTaskStatus.Succeeded;
+            row.ReportEvidence = AgentTaskReportEvidence.Exempt;
+            row.ConcurrencyToken = Guid.NewGuid();
+            db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(),
+                AgentTaskId = row.Id,
+                Type = AgentTaskEventType.Completed,
+                Detail = detail,
+                At = now,
+            });
+        }
+
+        await db.SaveChangesAsync(ct);
+        return rows.Count;
+    }
+
+    /// <summary>
     /// Withdraw an interpretation nobody will read — but only while it is still Queued. A Dispatched
     /// one has already been typed at the specialist, and cancelling that would stop a session
     /// mid-turn for a note that has already gone out.

@@ -111,6 +111,23 @@ public class AttentionServiceTests
     }
 
     [Test]
+    public async Task a_check_role_blocked_task_is_not_a_blocked_question()
+    {
+        // CARD-0302 S3: even before remap, a Check-role Blocked row is not waiting on a human.
+        // Reply/Cancel would hit the standing interpreter session.
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Blocked, dispatchedMinutesAgo: 20,
+            completedMinutesAgo: 5, role: AgentTaskRole.Check);
+        await scenario.AddTaskEventAsync(task, AgentTaskEventType.Blocked,
+            "LOOKS STUCK — session idle 28m.", minutesAgo: 5);
+
+        (await ItemsForAsync(scenario)).ShouldNotContain(
+            i => i.TaskId == task && i.Kind == AttentionKind.BlockedQuestion);
+    }
+
+    [Test]
     public async Task a_merge_conflict_dates_from_its_conflicted_event_not_from_dispatch()
     {
         // The one transition that does NOT write a Blocked event: a conflicted merge-back sets
@@ -2208,7 +2225,8 @@ public class AttentionServiceTests
             bool neverDispatched = false,
             Guid? parentSessionId = null,
             Guid? agentId = null,
-            DateTime? reportNudgedAt = null)
+            DateTime? reportNudgedAt = null,
+            AgentTaskRole role = AgentTaskRole.Code)
         {
             var id = Guid.NewGuid();
             var dispatched = DateTime.UtcNow.AddMinutes(-dispatchedMinutesAgo);
@@ -2220,7 +2238,7 @@ public class AttentionServiceTests
                 Title = $"attention test {id:N}"[..24],
                 Goal = "the thing under test",
                 Kind = AgentTaskKind.Worker,
-                Role = AgentTaskRole.Code,
+                Role = role,
                 ModelLevel = AgentModelLevel.High,
                 Workspace = WorkspaceMode.Shared,
                 WorkingDirectory = workingDirectory ?? Path.GetTempPath(),
