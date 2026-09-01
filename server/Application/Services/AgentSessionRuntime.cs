@@ -530,11 +530,18 @@ public sealed class AgentSessionRuntime
             return;
         }
 
+        // CARD-0288: catch-up is the settlement path for a report-boundary TurnEnd that only
+        // ever arrived via backfill. The live re-emission then dedups as seen and never flushes.
+        // Settlement is its own try/catch and is NOT gated on AddedTurnBoundary — a previous
+        // partial persist (or a live event that stored the uuid without acting) still has to
+        // settle an open task. FlushQueueOnIdleAsync re-checks IsWorkingAsync itself, so a
+        // mid-turn sync stays a no-op for the queue half; do not add that idle gate here.
+        await TryCatchUpSettlementAsync(sessionId, persisted.AddedTurnBoundary, ct);
+
         // A boundary that arrives via SYNC must trigger the same turn-end actions a live one does.
         // The live path won't cover it: when the synced row lands first, the later live re-emission
         // (if any) dedups as "seen" and never flushes — a TurnEnd missed during a server restart
         // then strands every WhenIdle delivery until the next real turn (live miss 2026-08-08).
-        // FlushQueueOnIdleAsync re-checks IsWorkingAsync itself, so a mid-turn sync stays a no-op.
         if (persisted.AddedTurnBoundary)
             await FlushQueueOnIdleAsync(sessionId, ct);
         else if (persisted.AddedAssistantText)
@@ -545,6 +552,39 @@ public sealed class AgentSessionRuntime
         // path: a compaction is not a report to settle a task against (CARD-0041).
         if (persisted.AddedManualCompactBoundary)
             await FlushQueueAfterManualCompactionAsync(sessionId, ct);
+    }
+
+    /// <summary>
+    /// CARD-0288: if this session still has an open task, hand catch-up to settlement in its own
+    /// try/catch so a throw in channel/review/queue flush cannot skip it. No-op when the reply
+    /// service is unregistered (same as <see cref="FlushQueueOnIdleAsync"/>).
+    /// </summary>
+    private async Task TryCatchUpSettlementAsync(Guid sessionId, bool addedTurnBoundary, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var hasOpenTask = await db.AgentTasks.AnyAsync(
+                t => t.AgentSessionId == sessionId
+                    && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working),
+                ct);
+            if (!hasOpenTask)
+                return;
+
+            var taskReplies = scope.ServiceProvider.GetService<AgentTaskReplyService>();
+            if (taskReplies is null)
+                return;
+
+            _logger.LogInformation(
+                "Catch-up settlement for session {SessionId} (AddedTurnBoundary={AddedTurnBoundary})",
+                sessionId, addedTurnBoundary);
+            await taskReplies.OnTurnEndAsync(sessionId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Catch-up settlement failed for session {SessionId}", sessionId);
+        }
     }
 
     // What one persist call actually changed — LastStoredSeq is the stored (session-monotonic)

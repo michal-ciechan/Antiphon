@@ -166,6 +166,26 @@ describe('AttentionPanel', () => {
     expect(screen.getByText(/still Pending/)).toBeInTheDocument()
   })
 
+  it('draws a ReportUnsettled row with the waiting-report badge', async () => {
+    serve({
+      items: [
+        item({
+          kind: 'ReportUnsettled',
+          severity: 'Warning',
+          title: 'CARD-0286 follow-up',
+          taskId: 't1',
+          headline: 'Finished report is in the transcript; the task is still Dispatched.',
+        }),
+      ],
+    })
+
+    renderWithProviders(<AttentionPanel />)
+
+    expect(await screen.findByText('CARD-0286 follow-up')).toBeInTheDocument()
+    expect(screen.getByText('Report unsettled')).toBeInTheDocument()
+    expect(screen.getByText(/still Dispatched/)).toBeInTheDocument()
+  })
+
   it('draws a CardlessDetailsNoPrompt row with the needs-a-prompt badge', async () => {
     serve({
       items: [

@@ -176,6 +176,15 @@ public enum AttentionKind
     /// refreshing the transcript clock; it does not suppress it.
     /// </summary>
     AgentOutlivedTask = 21,
+
+    /// <summary>
+    /// A Dispatched or Working task whose transcript already carries this task's marked
+    /// closing line, and whose newest TurnEnd is a report boundary (CARD-0288). The live
+    /// observer missed the settle (server-down catch-up is the usual cause); the dispatcher
+    /// re-hands on the next tick. Detection only: nothing here settles, retries, or kills.
+    /// Kill is not the repair — <c>FailDeadSessionTasksAsync</c> tries settlement first.
+    /// </summary>
+    ReportUnsettled = 22,
 }
 
 /// <summary>

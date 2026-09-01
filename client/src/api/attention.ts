@@ -96,6 +96,12 @@ export type AttentionKind =
    * Detection only — stop it, or give it work. Nothing automatic will.
    */
   | 'AgentOutlivedTask'
+  /**
+   * The delegate already wrote the closing report line and the task row never left
+   * Dispatched/Working (CARD-0288). Detection only — settlement should catch this up;
+   * do not kill the session to unblock it.
+   */
+  | 'ReportUnsettled'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =

@@ -51,6 +51,21 @@ public static class DelegationReportFormatter
     /// not a verdict (a sub-orchestrator quoting its own delegate). On a match,
     /// <paramref name="body"/> is the text with that line stripped.
     /// </summary>
+    /// <summary>
+    /// True when <paramref name="text"/> carries this task's closing report token (CARD-0288).
+    /// Identity, not a prose heuristic: the row must mention this task's prefix AND the last
+    /// non-empty line must be a valid verdict for it.
+    /// </summary>
+    public static bool TryFindReportToken(Guid taskId, string? text, out string verdict)
+    {
+        verdict = string.Empty;
+        if (string.IsNullOrEmpty(text))
+            return false;
+        if (text.IndexOf($"[antiphon-report:{Short(taskId)}", StringComparison.OrdinalIgnoreCase) < 0)
+            return false;
+        return TryReadReportVerdict(taskId, text, out verdict, out _);
+    }
+
     public static bool TryReadReportVerdict(
         Guid taskId, string? text, out string verdict, out string body)
     {

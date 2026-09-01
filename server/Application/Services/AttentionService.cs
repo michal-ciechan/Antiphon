@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -477,6 +478,24 @@ public sealed class AttentionService
             .Select(m => new { m.AgentSessionId, m.Body, m.Status, m.CreatedAt })
             .ToListAsync(ct);
 
+        // CARD-0288: newest TurnEnd + assistant rows that carry a report token, scoped to this
+        // open-task session set. Do not table-scan TranscriptEntries.
+        var newestTurnEnds = (await _db.TranscriptEntries.AsNoTracking()
+                .Where(e => sessionIds.Contains(e.AgentSessionId) && e.Kind == TranscriptKinds.TurnEnd)
+                .Select(e => new { e.AgentSessionId, e.Sequence, e.CreatedAt, e.Kind, e.StopReason })
+                .ToListAsync(ct))
+            .GroupBy(e => e.AgentSessionId)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(e => e.Sequence).First());
+        var reportTextsBySession = (await _db.TranscriptEntries.AsNoTracking()
+                .Where(e => sessionIds.Contains(e.AgentSessionId)
+                    && e.Kind == TranscriptKinds.AssistantText
+                    && e.Text != null
+                    && e.Text.Contains("[antiphon-report:"))
+                .Select(e => new { e.AgentSessionId, e.Text })
+                .ToListAsync(ct))
+            .GroupBy(e => e.AgentSessionId)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.Text!).ToList());
+
         foreach (var task in open)
         {
             AgentTaskLiveness.SessionSnapshot? session =
@@ -568,7 +587,47 @@ public sealed class AttentionService
                 continue;
             }
 
-            // 6. UncorrelatedReport — it reported, and the report could not be tied back to the task.
+            // 6. ReportUnsettled — marked closing line already in the transcript, task still open
+            // (CARD-0288). Before UncorrelatedReport: a token for THIS task is the more
+            // explanatory row. No idle gate — the token is the evidence it is not still working.
+            if ((task.Status == AgentTaskStatus.Dispatched || task.Status == AgentTaskStatus.Working)
+                && task.AgentSessionId is Guid reportSession
+                && newestTurnEnds.TryGetValue(reportSession, out var newestEnd)
+                && TranscriptKinds.IsReportBoundary(newestEnd.Kind, newestEnd.StopReason)
+                && reportTextsBySession.TryGetValue(reportSession, out var reportTexts))
+            {
+                string? verdict = null;
+                foreach (var text in reportTexts)
+                {
+                    if (!DelegationReportFormatter.TryFindReportToken(task.Id, text, out var found))
+                        continue;
+                    verdict = found;
+                    break;
+                }
+
+                if (verdict is not null)
+                {
+                    items.Add(new AttentionItemDto(
+                        AttentionKind.ReportUnsettled,
+                        AlertSeverity.Warning,
+                        task.Id,
+                        task.AgentSessionId,
+                        task.AgentId,
+                        null,
+                        task.Title,
+                        $"Finished report is in the transcript; the task is still {task.Status}.",
+                        Evidence(
+                            $"Marked {verdict} at TurnEnd #{newestEnd.Sequence}. Nothing here settles it — "
+                            + "the dispatcher re-hands on the next tick.",
+                            digest),
+                        newestEnd.CreatedAt,
+                        cost,
+                        [AttentionAction.OpenDrawer, AttentionAction.Retry, AttentionAction.Cancel]));
+                    continue;
+                }
+            }
+
+            // 7. UncorrelatedReport — it reported, and the report could not be tied back to the task.
             var orphanReport = uncorrelated
                 .Where(i => UncorrelatedReportEvidence.IsEvidenceFor(task, i.SessionId, i.CreatedAt))
                 .OrderByDescending(i => i.CreatedAt)
@@ -592,7 +651,7 @@ public sealed class AttentionService
                 continue;
             }
 
-            // 7. PastExpectedIdle. THE exclusion lives here: a session that is mid-turn is not
+            // 8. PastExpectedIdle. THE exclusion lives here: a session that is mid-turn is not
             // listed, however far past the estimate it has run. The working verdict is the shared
             // one, and it is asked LAST — only for tasks that already crossed the clock — so the
             // query cost is bounded by the handful of rows that could qualify.
@@ -625,7 +684,7 @@ public sealed class AttentionService
                 }
             }
 
-            // 8. ProgressStalled (CARD-0153) — working, rows still landing, none of them novel.
+            // 9. ProgressStalled (CARD-0153) — working, rows still landing, none of them novel.
             // After PastExpectedIdle (which declines the mid-turn case) and before Overdue, so a
             // working session with a stall verdict gets the more explanatory row.
             // CARD-0216 §4 / CARD-0217 S8: the git probe is skipped until StallMinutes have
@@ -666,7 +725,7 @@ public sealed class AttentionService
                 continue;
             }
 
-            // 9. Overdue — closing on a deadline that will FAIL this task (CARD-0020 S2/S3). It is
+            // 10. Overdue — closing on a deadline that will FAIL this task (CARD-0020 S2/S3). It is
             // asked AFTER PastExpectedIdle because that condition owns the idle case and declines
             // the mid-turn one; the deadline that matters for a working session is the phase clock,
             // and the ceiling covers both. Same shared policy the dispatcher's sweep acts on, so a
@@ -702,7 +761,7 @@ public sealed class AttentionService
                 continue;
             }
 
-            // 10. ChecksSpent — checks ran, the budget is gone, the task is still open.
+            // 11. ChecksSpent — checks ran, the budget is gone, the task is still open.
             if (task.CheckCount > 0 && task.NextCheckAt is null)
             {
                 items.Add(new AttentionItemDto(

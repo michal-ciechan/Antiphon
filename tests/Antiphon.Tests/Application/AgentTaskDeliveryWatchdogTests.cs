@@ -932,6 +932,117 @@ public class AgentTaskDeliveryWatchdogTests
             .Status.ShouldBe(AgentTaskStatus.Dispatched, "the reviewers are still working");
     }
 
+    // ---- CARD-0288 S2: marked report already in the transcript re-hands on the 5 s tick ---------
+
+    [Test]
+    public async Task a_marked_report_already_in_the_transcript_settles_on_the_first_sweep()
+    {
+        var logs = new List<string>();
+        var (harness, _) = CreateHarness(
+            logs: logs,
+            settings: new DelegationSettings { SubagentGraceMinutes = 30, ReportSweepRehandSeconds = 0 });
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 5);
+        await SeedMarkedReportTurnAsync(task.AgentSessionId!.Value, task.Id, storedMinutesAgo: 0);
+
+        (await harness.SettleDeferredReportsAsync(CancellationToken.None))
+            .ShouldBeGreaterThanOrEqualTo(1, "a global sweep count, so other suites' rows may add to it");
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
+        logs.ShouldContain(l =>
+            l.Contains(DelegationReportFormatter.Short(task.Id), StringComparison.Ordinal)
+            && l.Contains("marked report already in transcript", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public async Task arm_0_does_not_steal_an_unmarked_unanswered_subagent_turn()
+    {
+        var (harness, _) = CreateHarness(settings: new DelegationSettings
+        {
+            SubagentGraceMinutes = 30,
+            ReportSweepRehandSeconds = 0,
+        });
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 5);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedAbandonedSubagentFanOutAsync(sessionId, task.Id, storedMinutesAgo: 0);
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+        (await ReadTaskAsync(task.Id)).Status.ShouldBe(
+            AgentTaskStatus.Dispatched, "no token — arm 0 must not fire; arm 2's 30-minute clock has not elapsed");
+
+        await BackdateTranscriptAsync(sessionId, minutesAgo: 35);
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+
+        var after = await ReadTaskAsync(task.Id);
+        after.Status.ShouldBe(
+            AgentTaskStatus.Dispatched,
+            "CARD-0248: arm 2 still nudges an unmarked announcement rather than settling it");
+        after.ReportNudgedAt.ShouldNotBeNull("arm 2 still re-invokes OnTurnEndAsync after 30 minutes");
+    }
+
+    [Test]
+    public async Task arm_0_still_runs_when_the_grace_hatches_are_zeroed()
+    {
+        var (harness, _) = CreateHarness(settings: new DelegationSettings
+        {
+            FinalMessageGraceSeconds = 0,
+            SubagentGraceMinutes = 0,
+            ReportSweepRehandSeconds = 0,
+        });
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 5);
+        await SeedMarkedReportTurnAsync(task.AgentSessionId!.Value, task.Id, storedMinutesAgo: 0);
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+
+        (await ReadTaskAsync(task.Id)).Status.ShouldBe(AgentTaskStatus.Succeeded);
+        (await ReadTaskAsync(task.Id)).ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
+    }
+
+    [Test]
+    public async Task arm_0_does_not_fire_on_an_unmarked_turn_even_with_grace_hatches_zeroed()
+    {
+        var (harness, _) = CreateHarness(settings: new DelegationSettings
+        {
+            FinalMessageGraceSeconds = 0,
+            SubagentGraceMinutes = 0,
+            ReportSweepRehandSeconds = 0,
+        });
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 5);
+        await SeedSplitTurnTailAsync(task.AgentSessionId!.Value, task.Id, storedMinutesAgo: 3);
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+
+        var stored = await ReadTaskAsync(task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        stored.ReportNudgedAt.ShouldBeNull("arm 1 is unarmed; arm 0 needs a token");
+    }
+
+    [Test]
+    public async Task a_second_arm_0_pass_on_an_unchanged_settled_boundary_is_a_noop()
+    {
+        var logs = new List<string>();
+        var (harness, _) = CreateHarness(
+            logs: logs,
+            settings: new DelegationSettings { SubagentGraceMinutes = 30 });
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 5);
+        await SeedMarkedReportTurnAsync(task.AgentSessionId!.Value, task.Id, storedMinutesAgo: 0);
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+        (await ReadTaskAsync(task.Id)).Status.ShouldBe(AgentTaskStatus.Succeeded);
+
+        var needle = DelegationReportFormatter.Short(task.Id);
+        logs.Count(l => l.Contains(needle, StringComparison.Ordinal)
+                && l.Contains("marked report already in transcript", StringComparison.Ordinal))
+            .ShouldBe(1);
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+        logs.Count(l => l.Contains(needle, StringComparison.Ordinal)
+                && l.Contains("marked report already in transcript", StringComparison.Ordinal))
+            .ShouldBe(1, "the task left the open query, so the second pass cannot re-enter");
+    }
+
     // ---- CARD-0085: recover a false-negative delivery-failed --------------------------------
 
     [Test]
@@ -1609,6 +1720,71 @@ public class AgentTaskDeliveryWatchdogTests
             CreatedAt = at,
             StopReason = kind == TranscriptKinds.TurnEnd ? "end_turn" : null,
         });
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task<AgentTask> ReadTaskAsync(Guid taskId)
+    {
+        await using var db = CreateContext();
+        return await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+    }
+
+    private static async Task BackdateTranscriptAsync(Guid sessionId, int minutesAgo)
+    {
+        var at = DateTime.UtcNow.AddMinutes(-minutesAgo);
+        await using var db = CreateContext();
+        await db.TranscriptEntries.Where(e => e.AgentSessionId == sessionId)
+            .ExecuteUpdateAsync(s => s.SetProperty(e => e.CreatedAt, at));
+    }
+
+    /// <summary>
+    /// CARD-0288: a finished marked-done turn whose CreatedAt is the catch-up instant (now).
+    /// Arm 2's 30-minute subagent clock has not elapsed; arm 0 must still settle it.
+    /// </summary>
+    private static async Task SeedMarkedReportTurnAsync(Guid sessionId, Guid taskId, int storedMinutesAgo)
+    {
+        var at = DateTime.UtcNow.AddMinutes(-storedMinutesAgo);
+        var apiCallId = $"msg_{Guid.NewGuid():N}";
+        await using var db = CreateContext();
+        db.TranscriptEntries.AddRange(
+            new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = sessionId,
+                Sequence = 1,
+                Kind = TranscriptKinds.UserPrompt,
+                Uuid = $"marked-{Guid.NewGuid():N}",
+                Role = "user",
+                Text = DelegationReportFormatter.TaskMarker(taskId) + "\n\nDo the thing.",
+                Timestamp = at,
+                CreatedAt = at,
+            },
+            new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = sessionId,
+                Sequence = 2,
+                Kind = TranscriptKinds.AssistantText,
+                Uuid = $"marked-{Guid.NewGuid():N}",
+                Role = "assistant",
+                Text = "Shipped.\n" + DelegationReportFormatter.ReportToken(taskId, "done"),
+                ApiCallId = apiCallId,
+                Timestamp = at,
+                CreatedAt = at,
+            },
+            new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = sessionId,
+                Sequence = 3,
+                Kind = TranscriptKinds.TurnEnd,
+                Uuid = $"marked-{Guid.NewGuid():N}",
+                Role = "assistant",
+                StopReason = TranscriptKinds.StopReasons.EndTurn,
+                ApiCallId = apiCallId,
+                Timestamp = at,
+                CreatedAt = at,
+            });
         await db.SaveChangesAsync();
     }
 

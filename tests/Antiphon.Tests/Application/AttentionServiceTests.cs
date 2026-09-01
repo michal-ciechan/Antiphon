@@ -697,6 +697,106 @@ public class AttentionServiceTests
         mine.ShouldNotContain(i => i.Kind == AttentionKind.RecentCriticalIncident && i.AgentId == agent);
     }
 
+    // ---- CARD-0288 S3: ReportUnsettled ----------------------------------------------------------
+
+    [Test]
+    public async Task a_dispatched_task_with_a_marked_report_in_the_transcript_is_report_unsettled()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var agent = await scenario.AddAgentAsync(persistentSession: session);
+        var task = await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Dispatched, dispatchedMinutesAgo: 8, agentId: agent);
+        await scenario.AddTranscriptAsync(session,
+            (TranscriptKinds.UserPrompt, DelegationReportFormatter.TaskMarker(task) + "\nDo it", null),
+            (TranscriptKinds.AssistantText,
+                "Shipped.\n" + DelegationReportFormatter.ReportToken(task, "done"), null),
+            (TranscriptKinds.TurnEnd, null, null));
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.TaskId == task);
+
+        item.Kind.ShouldBe(AttentionKind.ReportUnsettled);
+        item.Severity.ShouldBe(AlertSeverity.Warning);
+        item.SessionId.ShouldBe(session);
+        item.AgentId.ShouldBe(agent);
+        item.Headline.ShouldBe("Finished report is in the transcript; the task is still Dispatched.");
+        item.Evidence.ShouldContain("Marked done");
+        item.Evidence.ShouldContain("TurnEnd #");
+        item.Evidence.ShouldContain("dispatcher re-hands");
+        item.Actions.ShouldBe(
+            [AttentionAction.OpenDrawer, AttentionAction.Retry, AttentionAction.Cancel]);
+        item.Actions.ShouldNotContain(AttentionAction.KillSession);
+        item.SinceUtc.ShouldNotBeNull();
+    }
+
+    [Test]
+    public async Task report_unsettled_clears_once_the_task_is_no_longer_open()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(session, AgentTaskStatus.Dispatched, dispatchedMinutesAgo: 8);
+        await scenario.AddTranscriptAsync(session,
+            (TranscriptKinds.UserPrompt, DelegationReportFormatter.TaskMarker(task) + "\nDo it", null),
+            (TranscriptKinds.AssistantText,
+                "Shipped.\n" + DelegationReportFormatter.ReportToken(task, "done"), null),
+            (TranscriptKinds.TurnEnd, null, null));
+
+        (await ItemsForAsync(scenario)).ShouldContain(i => i.TaskId == task && i.Kind == AttentionKind.ReportUnsettled);
+
+        await scenario.SetTaskStatusAsync(task, AgentTaskStatus.Succeeded);
+
+        (await ItemsForAsync(scenario))
+            .ShouldNotContain(i => i.TaskId == task && i.Kind == AttentionKind.ReportUnsettled);
+    }
+
+    [Test]
+    public async Task a_dead_session_with_a_marked_report_stays_dead_session_not_report_unsettled()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync(SessionStatus.Failed, endedMinutesAgo: 4);
+        var task = await scenario.AddTaskAsync(session, AgentTaskStatus.Dispatched, dispatchedMinutesAgo: 8);
+        await scenario.AddTranscriptAsync(session,
+            (TranscriptKinds.UserPrompt, DelegationReportFormatter.TaskMarker(task) + "\nDo it", null),
+            (TranscriptKinds.AssistantText,
+                "Shipped.\n" + DelegationReportFormatter.ReportToken(task, "done"), null),
+            (TranscriptKinds.TurnEnd, null, null));
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.TaskId == task);
+        item.Kind.ShouldBe(AttentionKind.DeadSession);
+    }
+
+    [Test]
+    public async Task never_started_is_not_report_unsettled()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(session, AgentTaskStatus.Dispatched, dispatchedMinutesAgo: 6);
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.TaskId == task);
+        item.Kind.ShouldBe(AttentionKind.NeverStarted);
+        (await ItemsForAsync(scenario))
+            .ShouldNotContain(i => i.TaskId == task && i.Kind == AttentionKind.ReportUnsettled);
+    }
+
+    [Test]
+    public async Task an_uncorrelated_incident_without_this_tasks_token_is_not_report_unsettled()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var agent = await scenario.AddAgentAsync();
+        var task = await scenario.AddTaskAsync(session, AgentTaskStatus.Dispatched, dispatchedMinutesAgo: 8);
+        await scenario.AddTranscriptAsync(session,
+            (TranscriptKinds.UserPrompt, "the brief", null),
+            (TranscriptKinds.AssistantText, "a report with no closing line", null),
+            (TranscriptKinds.TurnEnd, null, null));
+        await scenario.AddIncidentAsync(
+            agent, session, AgentIncidentKind.DelegateReportUncorrelated, AlertSeverity.Error,
+            "A delegate reported with no task marker.", minutesAgo: 2);
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.TaskId == task);
+        item.Kind.ShouldBe(AttentionKind.UncorrelatedReport);
+    }
+
     // ---- 6. PastExpectedIdle, and THE exclusion -------------------------------------------------
 
     [Test]
@@ -2537,6 +2637,15 @@ public class AttentionServiceTests
             });
             await db.SaveChangesAsync();
             return at;
+        }
+
+        public async Task SetTaskStatusAsync(Guid taskId, AgentTaskStatus status)
+        {
+            await using var db = CreateContext();
+            await db.AgentTasks.Where(t => t.Id == taskId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(t => t.Status, status)
+                    .SetProperty(t => t.CompletedAt, DateTime.UtcNow));
         }
 
         public async Task AddIncidentAsync(

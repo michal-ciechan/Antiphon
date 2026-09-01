@@ -481,6 +481,22 @@ public class DelegationReportFormatterTests
     }
 
     [Test]
+    public void TryFindReportToken_requires_this_tasks_prefix_and_a_valid_last_line()
+    {
+        var task = NewTask();
+        var marked = "Shipped.\n" + DelegationReportFormatter.ReportToken(task.Id, "done");
+        DelegationReportFormatter.TryFindReportToken(task.Id, marked, out var verdict).ShouldBeTrue();
+        verdict.ShouldBe("done");
+
+        var other = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000000");
+        DelegationReportFormatter.TryFindReportToken(
+            task.Id, "Quoted.\n" + DelegationReportFormatter.ReportToken(other, "done"), out _)
+            .ShouldBeFalse();
+        DelegationReportFormatter.TryFindReportToken(task.Id, "no token here", out _).ShouldBeFalse();
+        DelegationReportFormatter.TryFindReportToken(task.Id, null, out _).ShouldBeFalse();
+    }
+
+    [Test]
     public void TryReadReportVerdict_ignores_a_token_for_a_different_task()
     {
         var task = NewTask();

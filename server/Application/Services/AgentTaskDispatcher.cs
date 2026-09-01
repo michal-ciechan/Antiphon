@@ -972,6 +972,23 @@ public sealed class AgentTaskDispatcher
                 }
             }
 
+            // CARD-0288: a dead session with a sitting marked-done report is Succeeded, not
+            // Failed. Kill is not a settlement path; this is the last chance on the Fail path.
+            // CARD-0085's zero-transcript bind recovery above stays first and unchanged.
+            if (hasTranscript && _replies is not null && task.AgentSessionId is Guid settleSession)
+            {
+                await _replies.OnTurnEndAsync(settleSession, ct);
+                await _db.Entry(task).ReloadAsync(ct);
+                if (task.Status is not AgentTaskStatus.Dispatched and not AgentTaskStatus.Working)
+                {
+                    _logger.LogInformation(
+                        "dead-session reconciler settled task {ShortId} from the transcript rather than failing it",
+                        DelegationReportFormatter.Short(task.Id));
+                    _deadSessions.Forget(task.Id);
+                    continue;
+                }
+            }
+
             var classified = AgentTaskLiveness.ClassifyFailure(task.AgentSessionId, session, hasTranscript);
 
             // The FailNeverStartedAsync tail, minus its KillAsync. Nothing here may be destructive:
@@ -1366,6 +1383,12 @@ public sealed class AgentTaskDispatcher
     /// still missing its own response's text past the grace. Every other running task is left
     /// untouched rather than being re-settled on a cadence.
     ///
+    /// <para>CARD-0288 adds arm 0 ahead of both clocks: a marked <c>[antiphon-report:…]</c> already
+    /// in the transcript re-hands on this tick. It does not wait for
+    /// <see cref="DelegationSettings.SubagentGraceMinutes"/> or
+    /// <see cref="DelegationSettings.FinalMessageGraceSeconds"/>, and it stays armed when those
+    /// hatches are zeroed.</para>
+    ///
     /// <para>Slice 4 adds the second clock, for the same reason: a turn that launched BACKGROUND
     /// subagents defers until their notifications return, and a subagent can die without ever
     /// notifying. That one is measured from the session's last transcript entry — a notification
@@ -1384,19 +1407,23 @@ public sealed class AgentTaskDispatcher
     {
         if (_replies is null)
             return 0;
+        // CARD-0288 arm 0 (marked report already in the transcript) is independent of the two
+        // grace hatches. Tests zero those knobs to isolate other clocks; a sitting [antiphon-report]
+        // must still re-hand on the 5 s tick.
         var finalMessageArmed = _settings.FinalMessageGraceSeconds > 0;
         var subagentsArmed = _settings.SubagentGraceMinutes > 0;
-        if (!finalMessageArmed && !subagentsArmed)
-            return 0;
 
         var cutoff = UtcNow() - TimeSpan.FromSeconds(_settings.FinalMessageGraceSeconds);
         var subagentCutoff = UtcNow() - TimeSpan.FromMinutes(_settings.SubagentGraceMinutes);
-        var sessions = await _db.AgentTasks.AsNoTracking()
+        var openTasks = await _db.AgentTasks.AsNoTracking()
             .Where(t => (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
                 && t.AgentSessionId != null)
-            .Select(t => t.AgentSessionId!.Value)
-            .Distinct()
+            .Select(t => new { t.Id, SessionId = t.AgentSessionId!.Value })
             .ToListAsync(ct);
+        var sessions = openTasks.Select(t => t.SessionId).Distinct().ToList();
+        var tasksBySession = openTasks
+            .GroupBy(t => t.SessionId)
+            .ToDictionary(g => g.Key, g => g.ToList());
 
         var swept = 0;
         foreach (var sessionId in sessions)
@@ -1419,6 +1446,49 @@ public sealed class AgentTaskDispatcher
 
             var now = UtcNow();
             var rehandSeconds = _settings.ReportSweepRehandSeconds;
+
+            // (0) CARD-0288: a marked closing line is already in the transcript. The live observer
+            // missed the settle (server-down catch-up is the usual cause). Re-hand on this tick,
+            // not after SubagentGraceMinutes. Identity, not a prose heuristic.
+            if (tasksBySession.TryGetValue(sessionId, out var sessionTasks))
+            {
+                var markedTexts = await _db.TranscriptEntries.AsNoTracking()
+                    .Where(e => e.AgentSessionId == sessionId
+                        && e.Kind == TranscriptKinds.AssistantText
+                        && e.Text != null
+                        && e.Text.Contains("[antiphon-report:"))
+                    .Select(e => e.Text!)
+                    .ToListAsync(ct);
+                Guid? markedTaskId = null;
+                foreach (var candidate in sessionTasks)
+                {
+                    foreach (var text in markedTexts)
+                    {
+                        if (!DelegationReportFormatter.TryFindReportToken(candidate.Id, text, out _))
+                            continue;
+                        markedTaskId = candidate.Id;
+                        break;
+                    }
+                    if (markedTaskId is not null)
+                        break;
+                }
+
+                if (markedTaskId is Guid tid)
+                {
+                    if (_sweepMarks is null
+                        || _sweepMarks.ShouldHandOff(sessionId, end.Sequence, lastEntryAt: null, now, rehandSeconds))
+                    {
+                        _logger.LogWarning(
+                            "Task {ShortId}: marked report already in transcript at boundary {Sequence} — "
+                            + "re-invoking settlement",
+                            DelegationReportFormatter.Short(tid), end.Sequence);
+                        await _replies.OnTurnEndAsync(sessionId, ct);
+                        _sweepMarks?.RecordHandOff(sessionId, end.Sequence, lastEntryAt: null, now);
+                        swept++;
+                    }
+                    continue;
+                }
+            }
 
             // (1) The turn-ending response never wrote its own text. No id to wait on, or still
             // inside the grace, means nothing was deferred. CreatedAt, never the record's

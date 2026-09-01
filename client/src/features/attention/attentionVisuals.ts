@@ -169,6 +169,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     icon: TbUserOff,
     hint: 'A standing agent finished (or lost) its one job and nothing retired it. Stop it, or give it work — nothing automatic will.',
   },
+  ReportUnsettled: {
+    label: 'Report unsettled',
+    color: 'warning',
+    icon: TbClockExclamation,
+    hint: 'The delegate already wrote the closing report line; the task row never left Dispatched. Settlement should catch this up; do not kill the session to unblock it.',
+  },
 }
 
 export type AttentionGroupKey = 'now' | 'broken' | 'suspect' | 'failures'

@@ -313,6 +313,61 @@ public class AgentTaskDeadSessionReconciliationTests
             .ShouldBeTrue("the standing specialist is not a pool delegate and must stay");
     }
 
+    // ---- CARD-0288 S4: dead-session Fail must not overwrite a sitting report ---------------------
+
+    [Test]
+    public async Task a_stopped_session_with_a_marked_done_report_succeeds_instead_of_failing()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(AgentTaskStatus.Dispatched, SessionStatus.Stopped);
+        await scenario.AddMarkedReportAsync(task.SessionId, task.Id);
+        var harness = scenario.Harness(task.SessionId);
+
+        await scenario.PastGraceAsync(harness);
+
+        var settled = await scenario.ReadTaskAsync(task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
+        harness.Runner.Killed.ShouldBeEmpty(
+            "the sweep never kills through the runner; settlement may retire an already-stopped pool delegate");
+
+        var notes = await scenario.ParentNoteBodiesAsync();
+        notes.ShouldContain(b => b.Contains("Shipped the work", StringComparison.Ordinal));
+        notes.ShouldNotContain(b => b.Contains("StoppedBeforeFirstPrompt", StringComparison.Ordinal));
+        notes.ShouldNotContain(b => b.Contains("dead-session", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Test]
+    public async Task a_stopped_session_with_transcript_but_no_report_still_fails()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(
+            AgentTaskStatus.Dispatched, SessionStatus.Stopped, failureReason: "the pty-host exited (code 1)");
+        await scenario.AddTranscriptNoiseAsync(task.SessionId);
+        var harness = scenario.Harness(task.SessionId);
+
+        await scenario.PastGraceAsync(harness);
+
+        var failed = await scenario.ReadTaskAsync(task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureReason.ShouldNotBeNull();
+        harness.Stopper.Killed.ShouldBeEmpty("THE SWEEP NEVER KILLS");
+    }
+
+    [Test]
+    public async Task a_session_the_runner_still_serves_does_not_attempt_settlement()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(AgentTaskStatus.Dispatched, SessionStatus.Failed);
+        await scenario.AddMarkedReportAsync(task.SessionId, task.Id);
+        var harness = scenario.Harness();
+
+        await scenario.PastGraceAsync(harness);
+
+        (await scenario.ReadTaskAsync(task.Id)).Status.ShouldBe(
+            AgentTaskStatus.Dispatched, "a live process outranks a dead row, and settlement is not attempted");
+    }
+
     // ---- CARD-0085: same recovery gate on the dead-session sweep ---------------------------------
 
     [Test]
@@ -624,6 +679,72 @@ public class AgentTaskDeadSessionReconciliationTests
             return new SeededTask(taskId, sessionId, agentId);
         }
 
+        public async Task AddMarkedReportAsync(Guid sessionId, Guid taskId)
+        {
+            var at = DateTime.UtcNow.AddMinutes(-1);
+            var apiCallId = $"msg_{Guid.NewGuid():N}";
+            await using var db = CreateContext();
+            db.TranscriptEntries.AddRange(
+                new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(),
+                    AgentSessionId = sessionId,
+                    Sequence = 1,
+                    Kind = TranscriptKinds.UserPrompt,
+                    Uuid = $"dead-marked-{Guid.NewGuid():N}",
+                    Role = "user",
+                    Text = DelegationReportFormatter.TaskMarker(taskId) + "\n\nDo the thing.",
+                    Timestamp = at,
+                    CreatedAt = at,
+                },
+                new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(),
+                    AgentSessionId = sessionId,
+                    Sequence = 2,
+                    Kind = TranscriptKinds.AssistantText,
+                    Uuid = $"dead-marked-{Guid.NewGuid():N}",
+                    Role = "assistant",
+                    Text = "Shipped the work.\n" + DelegationReportFormatter.ReportToken(taskId, "done"),
+                    ApiCallId = apiCallId,
+                    Timestamp = at,
+                    CreatedAt = at,
+                },
+                new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(),
+                    AgentSessionId = sessionId,
+                    Sequence = 3,
+                    Kind = TranscriptKinds.TurnEnd,
+                    Uuid = $"dead-marked-{Guid.NewGuid():N}",
+                    Role = "assistant",
+                    StopReason = TranscriptKinds.StopReasons.EndTurn,
+                    ApiCallId = apiCallId,
+                    Timestamp = at,
+                    CreatedAt = at,
+                });
+            await db.SaveChangesAsync();
+        }
+
+        public async Task AddTranscriptNoiseAsync(Guid sessionId)
+        {
+            var at = DateTime.UtcNow.AddMinutes(-1);
+            await using var db = CreateContext();
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = sessionId,
+                Sequence = 1,
+                Kind = TranscriptKinds.UserPrompt,
+                Uuid = $"dead-noise-{Guid.NewGuid():N}",
+                Role = "user",
+                Text = "a human typed here",
+                Timestamp = at,
+                CreatedAt = at,
+            });
+            await db.SaveChangesAsync();
+        }
+
         public async Task DeleteSessionRowAsync(Guid sessionId)
         {
             await using var db = CreateContext();
@@ -703,6 +824,7 @@ public class AgentTaskDeadSessionReconciliationTests
         public async ValueTask DisposeAsync()
         {
             await using var db = CreateContext();
+            await db.TranscriptEntries.Where(e => _sessions.Contains(e.AgentSessionId)).ExecuteDeleteAsync();
             await db.AgentTaskEvents.Where(e => _tasks.Contains(e.AgentTaskId)).ExecuteDeleteAsync();
             await db.AgentIncidents.Where(i => i.AgentId != null && _agents.Contains(i.AgentId.Value)).ExecuteDeleteAsync();
             await db.AgentTasks.Where(t => _tasks.Contains(t.Id)).ExecuteDeleteAsync();
