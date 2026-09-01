@@ -36,6 +36,12 @@ function serve(items: AttentionItemDto[]) {
         items,
       }),
     ),
+    http.get('/api/model-availability', () =>
+      HttpResponse.json({
+        holds: [],
+        available: ['fable', 'opus', 'sonnet', 'haiku', 'grok-4.6'],
+      }),
+    ),
     http.get('/api/agent-tasks', () => {
       agentTaskRequests += 1
       return HttpResponse.json([])

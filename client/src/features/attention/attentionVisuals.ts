@@ -185,7 +185,7 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     label: 'Model held',
     color: 'danger',
     icon: TbClockPause,
-    hint: 'This model is paused — queued work skips it and new creates 409. Wait for the reset, or pick an available alias.',
+    hint: 'This model is paused — queued work skips it and new creates 409 model_disabled. Clear the hold, wait until it expires, or pick an available alias.',
   },
 }
 
@@ -283,5 +283,5 @@ export function ageSeconds(item: AttentionItemDto, now: number = Date.now()): nu
  * headline, which counts elapsed time and would remount the row every fifteen seconds.
  */
 export function keyOf(item: AttentionItemDto): string {
-  return [item.kind, item.cardId, item.taskId, item.sessionId, item.messageId, item.agentId, item.sinceUtc].join('|')
+  return [item.kind, item.cardId, item.taskId, item.sessionId, item.messageId, item.agentId, item.modelKind, item.modelAlias, item.sinceUtc].join('|')
 }

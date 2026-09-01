@@ -1405,8 +1405,15 @@ public sealed class AttentionService
         foreach (var hold in holds)
         {
             var alias = hold.ModelAlias;
+            var name = alias == ModelAlias.KindWide ? hold.Kind.ToString() : alias;
             string headline;
-            if (hold.DisabledUntil is { } until)
+            if (hold.Source == ModelAvailabilitySource.Manual)
+            {
+                headline = hold.DisabledUntil is { } manualUntil
+                    ? $"{name} held until {manualUntil:yyyy-MM-ddTHH:mm:ssZ} (manual); dispatch paused for {name}"
+                    : $"{name} held (manual, until cleared); dispatch paused for {name}; available: {availableSentence}";
+            }
+            else if (hold.DisabledUntil is { } until)
             {
                 var remaining = until - now;
                 var zone = ExtractZone(hold.Reason) ?? "UTC";
@@ -1462,7 +1469,7 @@ public sealed class AttentionService
                 string.Join("\n", evidenceBits),
                 hold.HitAt,
                 null,
-                [],
+                [AttentionAction.ClearHold],
                 ModelKind: hold.Kind.ToString(),
                 ModelAlias: alias));
         }

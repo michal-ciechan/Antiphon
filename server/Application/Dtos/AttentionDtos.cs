@@ -239,6 +239,12 @@ public enum AttentionAction
 
     /// <summary>Open the card that is waiting on a decision.</summary>
     OpenCard = 9,
+
+    /// <summary>
+    /// CARD-0309: <c>DELETE /api/model-availability/{kind}/{alias}</c>. Only on
+    /// <see cref="AttentionKind.ModelAvailabilityHold"/> rows that carry kind+alias.
+    /// </summary>
+    ClearHold = 10,
 }
 
 /// <summary>
