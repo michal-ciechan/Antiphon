@@ -33,6 +33,9 @@ const BoardPage = lazy(() =>
 const OrchestratorPage = lazy(() =>
   import('./features/orchestrator/OrchestratorPage').then((m) => ({ default: m.OrchestratorPage })),
 )
+const AttentionPage = lazy(() =>
+  import('./features/attention/AttentionPage').then((m) => ({ default: m.AttentionPage })),
+)
 const AgentsPage = lazy(() =>
   import('./features/agents/AgentsPage').then((m) => ({ default: m.AgentsPage })),
 )
@@ -176,6 +179,16 @@ export default function App() {
                     <ErrorBoundary fallbackTitle="Orchestrator error">
                       <SuspenseBoundary variant="page">
                         <OrchestratorPage />
+                      </SuspenseBoundary>
+                    </ErrorBoundary>
+                  }
+                />
+                <Route
+                  path="attention"
+                  element={
+                    <ErrorBoundary fallbackTitle="Attention error">
+                      <SuspenseBoundary variant="page">
+                        <AttentionPage />
                       </SuspenseBoundary>
                     </ErrorBoundary>
                   }

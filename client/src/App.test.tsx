@@ -53,6 +53,9 @@ vi.mock('./features/thread/CardThreadPage', () => ({
 vi.mock('./features/orchestrator/OrchestratorPage', () => ({
   OrchestratorPage: () => <div>Orchestrator page ready</div>,
 }))
+vi.mock('./features/attention/AttentionPage', () => ({
+  AttentionPage: () => <div>Attention page ready</div>,
+}))
 vi.mock('./features/settings/SettingsPage', () => ({
   SettingsPage: () => <div>Settings page ready</div>,
 }))
@@ -69,6 +72,7 @@ const ROUTES: Array<{ path: string; content: string }> = [
   { path: '/plans', content: 'Plans page ready' },
   { path: '/thread/card-1', content: 'Thread page ready' },
   { path: '/orchestrator', content: 'Orchestrator page ready' },
+  { path: '/attention', content: 'Attention page ready' },
   { path: '/settings', content: 'Settings page ready' },
 ]
 
