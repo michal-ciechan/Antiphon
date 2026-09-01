@@ -47,6 +47,7 @@ public class AgentSystemPromptLaunchTests
         flagIndex.ShouldBeGreaterThanOrEqualTo(0, $"launch args must carry the flag; args were [{string.Join(", ", args)}]");
         args[flagIndex + 1].ShouldBe(RenderedForHarnessAgent);
         args.ShouldContain("--session-id");
+        args.ShouldContain("--settings");
 
         // The bootstrap is delivered exactly once, verified, and leaves no pending rows.
         adapter.SubmittedBodies.ShouldBe([ChannelPreamble.BootstrapBody]);
@@ -89,6 +90,7 @@ public class AgentSystemPromptLaunchTests
         var adapter = Factory(h).Created.ShouldHaveSingleItem();
         adapter.StartedArgs.ShouldContain("--resume");
         adapter.StartedArgs.ShouldContain("--append-system-prompt");
+        adapter.StartedArgs.ShouldContain("--settings");
         adapter.SubmittedBodies.ShouldBe([ChannelPreamble.RestartResumeBody],
             "a successful resume gets the restart note, NOT the bootstrap");
     }
@@ -103,6 +105,7 @@ public class AgentSystemPromptLaunchTests
 
         var adapter = Factory(h).Created.ShouldHaveSingleItem();
         adapter.StartedArgs.ShouldNotContain("--append-system-prompt");
+        adapter.StartedArgs.ShouldContain("--settings");
         // Every ClaudeCode session is still named by the agent, preamble or not.
         AssertNamed(adapter.StartedArgs, "BridgeQueue");
         adapter.SubmittedBodies.ShouldBeEmpty();

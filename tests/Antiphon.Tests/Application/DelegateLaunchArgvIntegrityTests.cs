@@ -391,9 +391,10 @@ public class DelegateLaunchArgvIntegrityTests
         [.. InstructionBundles.Attachable.Select(b => b.Key)];
 
     /// <summary>
-    /// The REAL production composition, both halves: the dispatcher composes the bundles, then
-    /// <see cref="AgentSessionService.BuildSessionIdentityArgs"/> appends the session identity. A
-    /// test that stopped at the first half would be verifying a command line nothing ever builds.
+    /// The REAL production composition: the dispatcher composes the bundles, then
+    /// <see cref="AgentSessionService.BuildSessionIdentityArgs"/> appends the session identity,
+    /// then <see cref="ClaudeRemoteControlLaunchArgs.ApplyOff"/> (CARD-0306). A test that
+    /// stopped at the first half would be verifying a command line nothing ever builds.
     /// </summary>
     private static string[] ComposeLaunchArgs(
         AgentTaskDispatcher dispatcher,
@@ -422,9 +423,10 @@ public class DelegateLaunchArgvIntegrityTests
         };
 
         var args = dispatcher.BuildLaunchSpec(task, agent, session, attached).Args;
-        return AgentSessionService.UsesSessionIdentityArgs(agentKind)
-            ? [.. AgentSessionService.BuildSessionIdentityArgs(args, sessionId, resumeMode: null)]
-            : [.. args];
+        IReadOnlyList<string> withIdentity = AgentSessionService.UsesSessionIdentityArgs(agentKind)
+            ? AgentSessionService.BuildSessionIdentityArgs(args, sessionId, resumeMode: null)
+            : args;
+        return [.. ClaudeRemoteControlLaunchArgs.ApplyOff(agentKind, withIdentity)];
     }
 
     /// <summary>
@@ -514,6 +516,7 @@ public class DelegateLaunchArgvIntegrityTests
         }));
         services.AddSingleton<IWorktreeManager, Antiphon.Server.Infrastructure.Git.WorktreeManager>();
         services.AddSingleton<IGitService, Antiphon.Server.Infrastructure.Git.GitService>();
+        services.AddSingleton<GitWorkspaceService>();
         services.AddScoped<DelegationWorktreeService>();
         services.AddScoped<AgentTaskService>();
         services.AddScoped<AgentTaskDispatcher>();

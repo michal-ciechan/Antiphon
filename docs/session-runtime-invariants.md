@@ -105,3 +105,7 @@
 ### Gotcha #57
 
 - **`/remote-control` is not idempotent — a live bridge opens a blocking management menu, and enqueue is not a prompt** (CARD-0292): on resume, skip the launch-preamble send when `IRcBridgeProbe.Probe(childPid).Armed` (Claude's own `bridgeSessionId`); if the Disconnect / Esc-to-continue menu is on screen anyway, one Esc dismisses it (preamble unarmed/catch paths and the health-watch dead-bridge re-arm). `queue-operation` JSONL now persists as inert `QueueEnqueue`/`QueueDequeue`/`QueueRemove` housekeeping — still never confirmation (CARD-0132 S2.2). A live idle session whose latest enqueue has no later conversion raises `QueuedInputNeverConverted` (43) + `AttentionKind.QueuedInputStuck`, detection only. Non-retroactive: a session already wedged on the menu needs an operator Esc or a restart.
+
+### Gotcha #76
+
+- **Antiphon's `remoteControlEnabled` flag and `/remote-control` preamble do not decide whether claude.ai lists a session** (CARD-0306): Claude Code auto-connects when `remoteControlAtStartup` is unset (org default `true` on this machine). Antiphon forces `false` on every `AgentKind.ClaudeCode` launch via `--settings <file>` in `BuildRuntimeLaunchSpecAsync` — including pool delegates with `remoteControlName: null`. The preamble is then a real opt-in. Do not put this overlay in `AgentSessionLaunchComposer` (pool delegates never call it). Do not write `~/.claude/settings.json`. Live pool sessions already bridged retire with `PoolIdleRetireMinutes`; they are not disconnected by this overlay.
