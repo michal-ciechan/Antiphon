@@ -64,6 +64,103 @@ public class AgentServiceIntegrationTests
     }
 
     [Test]
+    public async Task CreateAsync_orchestrator_preset_fills_always_on_remote_control_bundles_prompt_and_workflow()
+    {
+        await using var db = CreateContext();
+        await SeededWorkflowTemplates.EnsureFullFeaturePipelineAsync(db);
+        var eventBus = new MockEventBus();
+        var service = CreateService(db, eventBus);
+        var created = await service.CreateAsync(
+            new CreateAgentRequest(
+                UniqueAgentName("CARD-0255 Orchestrator"),
+                "D:/src/card-0255-orch",
+                Preset: AgentPresets.Orchestrator),
+            CancellationToken.None);
+
+        created.AlwaysOn.ShouldBeTrue();
+        created.RemoteControlEnabled.ShouldBeTrue();
+        created.AttachedBundleKeys.ShouldBe([InstructionBundles.Orchestrator, InstructionBundles.BoardApi]);
+        created.SystemPromptAppend.ShouldNotBeNullOrWhiteSpace();
+        created.SystemPromptAppend.ShouldNotContain("{project}");
+        created.SystemPromptAppend.ShouldNotContain("{board}");
+        created.SystemPromptAppend.ShouldNotContain("{directory}");
+        created.DefaultWorkflowTemplateId.ShouldBe(AgentPresets.FullFeaturePipelineTemplateId);
+        created.Status.ShouldBe(AgentStatus.Idle);
+        eventBus.PublishedEvents.Count(e => e.EventName == "AgentChanged").ShouldBe(1);
+    }
+
+    [Test]
+    public async Task CreateAsync_without_a_preset_stays_bare()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db, new MockEventBus());
+        var created = await service.CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("Bare Create"), "D:/src/bare-create"),
+            CancellationToken.None);
+
+        created.AlwaysOn.ShouldBeFalse();
+        created.RemoteControlEnabled.ShouldBeFalse();
+        created.AttachedBundleKeys.ShouldBe([]);
+        created.SystemPromptAppend.ShouldBeNull();
+        created.DefaultWorkflowTemplateId.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task CreateAsync_explicit_empty_bundles_and_always_on_false_override_the_orchestrator_preset()
+    {
+        await using var db = CreateContext();
+        await SeededWorkflowTemplates.EnsureFullFeaturePipelineAsync(db);
+        var service = CreateService(db, new MockEventBus());
+        var created = await service.CreateAsync(
+            new CreateAgentRequest(
+                UniqueAgentName("Override Orchestrator"),
+                "D:/src/override-orch",
+                Preset: AgentPresets.Orchestrator,
+                AlwaysOn: false,
+                BundleKeys: []),
+            CancellationToken.None);
+
+        created.AlwaysOn.ShouldBeFalse();
+        created.RemoteControlEnabled.ShouldBeTrue();
+        created.AttachedBundleKeys.ShouldBe([]);
+        created.DefaultWorkflowTemplateId.ShouldBe(AgentPresets.FullFeaturePipelineTemplateId);
+    }
+
+    [Test]
+    public async Task UpdateAsync_after_orchestrator_preset_create_does_not_restore_cleared_prompt_or_bundles()
+    {
+        await using var db = CreateContext();
+        await SeededWorkflowTemplates.EnsureFullFeaturePipelineAsync(db);
+        var service = CreateService(db, new MockEventBus());
+        var created = await service.CreateAsync(
+            new CreateAgentRequest(
+                UniqueAgentName("Patch After Preset"),
+                "D:/src/patch-after-preset",
+                Preset: AgentPresets.Orchestrator),
+            CancellationToken.None);
+        created.AttachedBundleKeys.ShouldNotBeEmpty();
+        created.SystemPromptAppend.ShouldNotBeNull();
+
+        var updated = await service.UpdateAsync(
+            created.Id,
+            new UpdateAgentRequest(
+                created.Name,
+                created.WorkingDirectory,
+                created.Details,
+                created.DefaultWorkflowTemplateId,
+                created.AssignmentPolicy,
+                SystemPromptAppend: "",
+                BundleKeys: []),
+            CancellationToken.None);
+
+        updated.SystemPromptAppend.ShouldBeNull();
+        updated.AttachedBundleKeys.ShouldBe([]);
+        updated.AlwaysOn.ShouldBeTrue();
+        updated.RemoteControlEnabled.ShouldBeTrue();
+        updated.DefaultWorkflowTemplateId.ShouldBe(AgentPresets.FullFeaturePipelineTemplateId);
+    }
+
+    [Test]
     public async Task CreateAsync_unknown_bundle_key_is_422()
     {
         await using var db = CreateContext();

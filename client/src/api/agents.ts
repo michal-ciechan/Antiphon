@@ -295,9 +295,11 @@ export interface CreateAgentRequest {
   replyStyle?: AgentReplyStyle
   /** Omit = PtyHost (CARD-0160). */
   sessionBackend?: SessionBackend
-  /** Supervised from birth: auto-started at boot, auto-restarted on crash. */
-  alwaysOn?: boolean
-  remoteControlEnabled?: boolean
+  /** Supervised from birth: auto-started at boot, auto-restarted on crash. Omit = preset or false. */
+  alwaysOn?: boolean | null
+  remoteControlEnabled?: boolean | null
+  /** CARD-0255. Omit/null = bare create. Applied at create only; never stored. */
+  preset?: string | null
   /** Null / omit = use the installation ContextCompactionSettings value. */
   autoCompactEnabled?: boolean | null
   autoCompactIdleMinutes?: number | null

@@ -19,14 +19,15 @@ public class AgentCreateSupervisionTests
     [Test]
     public void a_create_request_defaults_supervision_flags_off_and_can_ask_for_them()
     {
-        // Older callers omit the properties; the record defaults match the entity defaults.
+        // CARD-0255: omit vs explicit-false is distinguishable so a preset can fill the flags.
+        // CreateAsync still persists false when both the request and the preset leave them unset.
         var omitted = new CreateAgentRequest("A", "C:\\tmp");
-        omitted.AlwaysOn.ShouldBeFalse();
-        omitted.RemoteControlEnabled.ShouldBeFalse();
+        omitted.AlwaysOn.ShouldBeNull();
+        omitted.RemoteControlEnabled.ShouldBeNull();
 
         var asked = new CreateAgentRequest("A", "C:\\tmp", AlwaysOn: true, RemoteControlEnabled: true);
-        asked.AlwaysOn.ShouldBeTrue();
-        asked.RemoteControlEnabled.ShouldBeTrue();
+        asked.AlwaysOn.ShouldBe(true);
+        asked.RemoteControlEnabled.ShouldBe(true);
 
         // CARD-0210 added BoardId; CARD-0032 added SystemPromptAppend and BundleKeys so a
         // standing orchestrator is born with its contract. They default to null / omitted.

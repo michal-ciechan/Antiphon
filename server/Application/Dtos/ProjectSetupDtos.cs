@@ -85,7 +85,10 @@ public sealed record AgentPresetDto(
     AgentReplyStyle ReplyStyle,
     IReadOnlyList<string> BundleKeys,
     string? SystemPromptTemplate,
-    string NamePattern);
+    string NamePattern,
+    // CARD-0255. Trailing so existing `new(...)` sites compile. Create-time starting point only.
+    bool RemoteControlEnabled = false,
+    Guid? DefaultWorkflowTemplateId = null);
 
 public sealed record DelegationSummaryDto(
     IReadOnlyList<string> AllowedRoots,

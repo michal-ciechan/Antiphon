@@ -1,6 +1,7 @@
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data.Seeding;
 using Shouldly;
 using TUnit.Core;
 
@@ -28,6 +29,19 @@ public class InstructionBundleTests
         InstructionBundles.Attachable.Select(b => b.Key).ShouldNotContain("Presets.orchestrator-prompt");
         InstructionBundles.All.Keys.ShouldNotContain("Presets.orchestrator-prompt");
         AgentPresets.Find("orchestrator")!.SystemPromptTemplate.ShouldBe(text);
+    }
+
+    [Test]
+    public void the_orchestrator_preset_enables_remote_control_and_the_full_feature_pipeline()
+    {
+        var orchestrator = AgentPresets.Find(AgentPresets.Orchestrator)!;
+        orchestrator.RemoteControlEnabled.ShouldBeTrue();
+        orchestrator.DefaultWorkflowTemplateId.ShouldBe(AgentPresets.FullFeaturePipelineTemplateId);
+        orchestrator.DefaultWorkflowTemplateId.ShouldBe(DatabaseSeeder.BmadFullTemplateId);
+
+        var worker = AgentPresets.Find(AgentPresets.Worker)!;
+        worker.RemoteControlEnabled.ShouldBeFalse();
+        worker.DefaultWorkflowTemplateId.ShouldBeNull();
     }
 
     [Test]

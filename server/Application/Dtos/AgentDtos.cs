@@ -202,10 +202,10 @@ public sealed record CreateAgentRequest(
     AgentReplyStyle ReplyStyle = AgentReplyStyle.Normal,
     // CARD-0160. Null = PtyHost (the only lane that existed before this field).
     SessionBackend? SessionBackend = null,
-    // CARD-0008: supervision is part of the agent's identity, not an afterthought — an agent
-    // meant to be always-on must never exist unsupervised between a create and a PATCH.
-    bool AlwaysOn = false,
-    bool RemoteControlEnabled = false,
+    // CARD-0008 / CARD-0255: omit vs explicit-false must be distinguishable so a preset can
+    // supply AlwaysOn/RemoteControlEnabled. Null = unset (preset or hard default false).
+    bool? AlwaysOn = null,
+    bool? RemoteControlEnabled = null,
     // CARD-0082 S2. Null = use the global ContextCompactionSettings value.
     bool? AutoCompactEnabled = null,
     int? AutoCompactIdleMinutes = null,
@@ -214,7 +214,9 @@ public sealed record CreateAgentRequest(
     Guid? BoardId = null,
     // CARD-0032. Null = none. Applied the same way UpdateAsync applies them.
     IReadOnlyList<string>? BundleKeys = null,
-    string? SystemPromptAppend = null);
+    string? SystemPromptAppend = null,
+    // CARD-0255. Null = bare create. Applied only here; never stored, never re-asserted on PATCH.
+    string? Preset = null);
 
 public sealed record DraftAgentRequest(string Description);
 

@@ -1,5 +1,6 @@
 import {
   Button,
+  Chip,
   Divider,
   Group,
   Input,
@@ -8,6 +9,7 @@ import {
   Select,
   Stack,
   Switch,
+  Text,
   TextInput,
   Textarea,
 } from '@mantine/core'
@@ -17,6 +19,7 @@ import { TbSparkles } from 'react-icons/tb'
 import type { AgentAssignmentPolicy, AgentModelLevel, AgentReplyStyle } from '../../api/agents'
 import { useCreateAgent, useDraftAgent, useInstructionBundles } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
+import { useSetupCatalog, type AgentPresetDto } from '../../api/projectSetup'
 import { DirectoryAutocomplete } from './DirectoryAutocomplete'
 import { AgentTuiSelection } from './AgentTuiSelection'
 import { useRemoteControlSupport } from './useRemoteControlSupport'
@@ -55,7 +58,10 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
   const [boardId, setBoardId] = useState<string | null>(null)
   const [bundleKeys, setBundleKeys] = useState<string[]>([])
   const [systemPromptAppend, setSystemPromptAppend] = useState('')
+  const [presetKey, setPresetKey] = useState<string | null>('orchestrator')
   const [creationError, setCreationError] = useState<string | null>(null)
+  const catalog = useSetupCatalog(opened)
+  const [filledKey, setFilledKey] = useState<string | null>(null)
   const { data: profiles } = useAgentTuiProfiles()
   const defaultProfileId = profiles?.find((profile) => profile.isDefault)?.id ?? null
   const rc = useRemoteControlSupport({ tuiProfileId: tuiProfileId ?? defaultProfileId })
@@ -87,8 +93,25 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
     setBoardId(null)
     setBundleKeys([])
     setSystemPromptAppend('')
+    setPresetKey('orchestrator')
+    setFilledKey(null)
     setCreationError(null)
     draftAgent.reset()
+  }
+
+  const selectPreset = (preset: AgentPresetDto) => {
+    setPresetKey(preset.key)
+    setAlwaysOn(preset.alwaysOn)
+    setModelLevel(preset.modelLevel)
+    setReplyStyle(preset.replyStyle)
+    setBundleKeys([...preset.bundleKeys])
+    setRemoteControlEnabled(preset.remoteControlEnabled)
+    setFilledKey(preset.key)
+  }
+
+  const selectedPreset = catalog.data?.presets.find((preset) => preset.key === presetKey) ?? null
+  if (opened && selectedPreset && filledKey !== selectedPreset.key) {
+    selectPreset(selectedPreset)
   }
 
   // A missing directory may only be submitted when the user opts to create it.
@@ -119,11 +142,13 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
         modelId,
         modelLevel,
         replyStyle,
-        alwaysOn,
         remoteControlEnabled: rc.supported && remoteControlEnabled,
         boardId: boardId ?? undefined,
-        bundleKeys,
         systemPromptAppend: systemPromptAppend.trim() || null,
+        preset: presetKey,
+        ...(filledKey
+          ? { alwaysOn, bundleKeys }
+          : {}),
       },
       {
         onSuccess: () => {
@@ -185,6 +210,23 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
           </Button>
         </Group>
         <Divider label="or enter details manually" labelPosition="center" />
+        <Text size="sm" fw={500}>Preset</Text>
+        <Chip.Group
+          value={presetKey}
+          onChange={(key) => {
+            const preset = catalog.data?.presets.find((candidate) => candidate.key === key)
+            if (preset) selectPreset(preset)
+          }}
+        >
+          <Group>
+            {(catalog.data?.presets ?? []).map((preset) => (
+              <Chip key={preset.key} value={preset.key}>{preset.label}</Chip>
+            ))}
+          </Group>
+        </Chip.Group>
+        {catalog.data?.presets.find((preset) => preset.key === presetKey)?.defaultWorkflowTemplateId && (
+          <Text size="sm" c="dimmed">Default workflow is set from this preset and stays editable after create.</Text>
+        )}
         <TextInput
           label="Name"
           value={name}
