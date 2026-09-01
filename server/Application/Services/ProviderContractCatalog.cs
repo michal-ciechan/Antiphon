@@ -126,9 +126,9 @@ public static class ProviderContractCatalog
             CompactionMarking.Marked),
         BlockingStartupModal: new BlockingStartupModalContract(
             AgentTuiCapabilityState.Supported,
-            "An unauthenticated GROK_HOME parks on a device-code login that swallows input (measured 1.0.5). Fail-fast — do not auto-answer. Scope is global (per GROK_HOME), not per-cwd. A fresh cwd with existing auth does not block.",
-            BlockingStartupModalKind.FailFast,
-            BlockingStartupModalScope.Global),
+            "First launch into an unseen cwd parks on 'Do you trust the contents of this directory?' (y/n). GrokTrustPromptDetector auto-answers y (CARD-0315); the decision is per-cwd in ~/.grok/trusted_folders.toml. Nested git worktrees are separate workspaces, so every fresh -Worktree path hits this. Separately, an unauthenticated GROK_HOME parks on a device-code login that swallows input (measured 1.0.5) — fail-fast, never auto-answered, global per GROK_HOME.",
+            BlockingStartupModalKind.AutoAnswerable,
+            BlockingStartupModalScope.Cwd),
         SubscriptionUsagePoll: new SubscriptionUsagePollContract(
             AgentTuiCapabilityState.Degraded,
             "Command `/usage` is measured (CARD-0136) but tab navigation to the `Usage limit` tab and the progress-bar percentage polarity are unmeasured. Weaker guarantee: the sweep holds Grok behind IncludeDegradedProviders until S5 settles both. Overlay-opening (CARD-0137).",

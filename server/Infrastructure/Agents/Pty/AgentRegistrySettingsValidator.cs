@@ -95,6 +95,8 @@ public sealed class AgentRegistrySettingsValidator : IValidateOptions<AgentRegis
             failures.Add("Agents:GrokReadyQuietPeriodMs must be positive.");
         if (options.GrokReadyMaxWaitMs <= 0)
             failures.Add("Agents:GrokReadyMaxWaitMs must be positive.");
+        if (options.GrokTrustPromptSettleMs < 0)
+            failures.Add("Agents:GrokTrustPromptSettleMs must be non-negative.");
         if (options.GrokDoneQuietPeriodMs <= 0)
             failures.Add("Agents:GrokDoneQuietPeriodMs must be positive.");
         if (options.GrokDoneMaxWaitMs <= 0)

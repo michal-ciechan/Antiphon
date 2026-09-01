@@ -153,6 +153,14 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter
         if (!quiet)
             return false;
 
+        // Quiet is not usable. A first launch into a cwd Grok has never seen parks on
+        // "Do you trust the contents of this directory?" and makes no further output, so the
+        // wait above calls it ready and the brief is typed into the dialog (CARD-0315, three
+        // live -Worktree launches 2026-09-01). Answered AFTER quiet so the modal has finished
+        // rendering; y, not Enter — both options render bold.
+        if (!await ClearStartupTrustPromptAsync(ct))
+            return false;
+
         var remaining = TimeSpan.FromMilliseconds(_settings.GrokReadyMinTotalWaitMs)
             - (DateTime.UtcNow - _terminal.StartedAt);
         if (remaining > TimeSpan.Zero)
@@ -316,5 +324,39 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter
     {
         if (!_started)
             throw new InvalidOperationException("RunnerGrokAdapter not started.");
+    }
+
+    private async Task<bool> ClearStartupTrustPromptAsync(CancellationToken ct)
+    {
+        var raw = await _terminal.SnapshotTextAsync(ct);
+        var screen = await _terminal.SnapshotScreenAsync(ct);
+        if (!GrokTrustPromptDetector.IsVisible(raw, screen))
+            return true;
+
+        await _terminal.WriteAsync(GrokTrustPromptDetector.AffirmativeKey, ct);
+
+        var settleMs = Math.Max(0, _settings.GrokTrustPromptSettleMs);
+        if (settleMs == 0)
+            return true;
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(settleMs);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (!GrokTrustPromptDetector.IsVisibleOnScreen(await _terminal.SnapshotScreenAsync(ct)))
+            {
+                _logger?.LogInformation(
+                    "Session {SessionId} opened on Grok's directory-trust dialog for an unseen working directory and it was answered; the session is usable.",
+                    _terminal.SessionId);
+                return true;
+            }
+
+            try { await Task.Delay(50, ct); }
+            catch (OperationCanceledException) { return false; }
+        }
+
+        _logger?.LogError(
+            "Session {SessionId} is still blocked on Grok's directory-trust dialog after answering it. Nothing can be delivered to this session.",
+            _terminal.SessionId);
+        return false;
     }
 }

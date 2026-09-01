@@ -237,9 +237,14 @@ file is created lazily at the first submit (~1.1 s after Enter), is held open wi
 the whole session (reads must share write/delete), and is flushed per update.
 
 **Behaviour worth knowing:**
-- An **unauthenticated `GROK_HOME` parks on a device-code login that swallows input.** Scope is
-  global (per `GROK_HOME`), not per-cwd, so a fresh working directory with existing auth is fine.
-  This one is **fail-fast — never auto-answered.**
+- First launch into a directory nobody has run Grok in parks on **Do you trust the contents of
+  this directory?** (`y` / `n`). `--always-approve` does not skip it. Nested git worktrees are
+  separate workspaces, so `C:\src\Antiphon` being in `~/.grok/trusted_folders.toml` does not
+  cover `C:\Antiphon\worktrees\card-task-*`. `GrokTrustPromptDetector` answers `y` in
+  `RunnerGrokAdapter.WaitForReadyAsync` after the quiet wait (CARD-0315); Enter is not safe
+  because both options render bold. An **unauthenticated `GROK_HOME` parks on a device-code
+  login that swallows input** — that one is **fail-fast, never auto-answered**, and is global
+  per `GROK_HOME`.
 - No remote control. Refused at create/PATCH/start/card-spawn with `409 remote_control_refused`
   and never typed (`RemoteControlPolicy`, CARD-0212). No claude.ai session entry.
 - Context occupancy is Grok's own numbers: `auto_compact_completed.tokens_after` and single-call
