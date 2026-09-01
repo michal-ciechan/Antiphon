@@ -8,22 +8,25 @@
 
     One fire does, in order:
       1. Bail if a launch or restart is in flight (logs/apphost.launch.lock or
-         logs/apphost.restart.lock under 15 min old with a live holder, or the
-         "Antiphon AppHost" logon task currently Running).
+         logs/apphost.restart.lock with a stamp younger than 15 min, even if
+         the holder PID has exited, or the "Antiphon AppHost" logon task
+         currently Running).
       2. GET /health on 17202 (expect 200) and GET / on 17203 (expect 2xx/3xx).
          On a restart-worthy failure (connection-refused / stack down), re-probe
          twice more at IntervalSeconds (15) spacing. Restart only if all three
          rounds look down. HttpClient timeout on /health while client=200 is
          NOT a failed round (CARD-0310: loaded or coming-up, not a corpse).
       3. If docker info fails, log and exit without counting against the flap budget.
-      4. Cooldown: skip if a restart was stamped under CooldownMinutes (10) ago.
+      4. Cooldown: skip if a restart was stamped under CooldownMinutes (15,
+         same as LockMaxAgeMinutes) ago.
       5. Flap cap: skip and ERROR if MaxRestartsPerWindow (3) restarts sit inside
          the last 60 minutes.
       6. Re-check the locks (CARD-0075: step 1 ran up to ~60s of probing ago, and
          a restart that started inside that window must not be raced).
-      7. Invoke restart-apphost.ps1, then stamp logs/apphost-watchdog.state -
-         UNLESS it exits 3 (refused, nothing killed), which spends no flap budget
-         and so must not be stamped.
+      7. Invoke restart-apphost.ps1, log its last ~40 stdout/stderr lines and
+         named exit (0=healthy, 1=timeout/build, 3=refused, 4=DCP timeout),
+         then stamp logs/apphost-watchdog.state - UNLESS it exits 3 (refused,
+         nothing killed), which spends no flap budget and so must not be stamped.
 
     -ProbeOnly probes and logs, never restarts (the safe acceptance check).
     -RestartScript overrides which script step 7 invokes; it exists so the refusal
@@ -41,10 +44,10 @@
 [CmdletBinding()]
 param(
     [switch]$ProbeOnly,
-    [int]$CooldownMinutes = 10,
+    [int]$CooldownMinutes,
     [int]$MaxRestartsPerWindow = 3,
     [int]$IntervalSeconds = 15,
-    [int]$LockMaxAgeMinutes = 15,
+    [int]$LockMaxAgeMinutes,
     [int]$ProbeTimeoutSec = 5,
     [string]$HealthUrl = 'http://localhost:17202/health',
     [string]$ClientUrl = 'http://localhost:17203/',
@@ -54,6 +57,12 @@ param(
 $ErrorActionPreference = 'Continue'
 
 . (Join-Path $PSScriptRoot 'apphost-common.ps1')
+if (-not $PSBoundParameters.ContainsKey('CooldownMinutes')) {
+    $CooldownMinutes = $AppHostLockMaxAgeMinutes
+}
+if (-not $PSBoundParameters.ContainsKey('LockMaxAgeMinutes')) {
+    $LockMaxAgeMinutes = $AppHostLockMaxAgeMinutes
+}
 
 $root     = Split-Path $PSScriptRoot -Parent
 $logDir   = Join-Path $root 'logs'
@@ -270,14 +279,17 @@ Write-Log 'WARN' "restarting AppHost via $restartScript"
 $psExe = $null
 try { $psExe = (Get-Process -Id $PID).Path } catch { }
 if (-not $psExe) { $psExe = 'pwsh' }
-& $psExe -NoLogo -NonInteractive -File $restartScript
-$restartExit = $LASTEXITCODE
+$captured = Invoke-AppHostRestartCaptured -PowerShellExe $psExe -RestartScript $RestartScript
+$restartExit = $captured.ExitCode
+foreach ($line in @($captured.Tail)) {
+    Write-Log 'INFO' ("restart-apphost: {0}" -f $line)
+}
 
 # Exit 3 = refused, nothing was killed. Stamping it would burn flap-cooldown
 # budget on a restart that never happened, so the next real failure would be
 # skipped by the cooldown.
 if ($restartExit -eq 3) {
-    Write-Log 'INFO' "restart-apphost.ps1 REFUSED (exit 3, nothing killed) - not stamping a restart"
+    Write-Log 'INFO' ("restart-apphost.ps1 REFUSED ({0}, nothing killed) - not stamping a restart" -f $captured.ExitName)
     exit 0
 }
 
@@ -290,6 +302,6 @@ foreach ($stampText in @($state.restartsUtc)) {
 $restartTimes += [datetime]::UtcNow.ToString('o')
 $state.restartsUtc = @($restartTimes)
 Write-WatchdogState $state
-Write-Log 'INFO' "restart-apphost.ps1 exited $restartExit; stamped restart in $stateFile"
+Write-Log 'INFO' ("restart-apphost.ps1 exited {0}; stamped restart in {1}" -f $captured.ExitName, $stateFile)
 
 exit 0
