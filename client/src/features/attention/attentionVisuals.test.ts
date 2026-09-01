@@ -5,8 +5,11 @@ import {
   ATTENTION_VISUALS,
   ageSeconds,
   groupOf,
+  homeBucketCounts,
+  homeBucketOf,
   keyOf,
   targetOf,
+  type HomeAttentionBucket,
 } from './attentionVisuals'
 
 /**
@@ -30,6 +33,7 @@ const ALL_KINDS: AttentionKind[] = [
   'Overdue',
   'ProgressStalled',
   'CardNeedsDecision',
+  'CardStalled',
   'FailureUnacknowledged',
   'OrchestratorInvestigation',
   'InboundUnconsumed',
@@ -141,5 +145,53 @@ describe('attentionVisuals', () => {
     })
     const deliveryFailures = { ...bindFailures, sinceUtc: '2026-08-17T04:11:00Z' }
     expect(keyOf(bindFailures)).not.toBe(keyOf(deliveryFailures))
+  })
+
+  it('maps every visual kind onto exactly one home bucket', () => {
+    const buckets = new Set<HomeAttentionBucket>(['blocked', 'broken', 'review', 'hidden'])
+    for (const kind of Object.keys(ATTENTION_VISUALS) as AttentionKind[]) {
+      expect(buckets.has(homeBucketOf(item({ kind }))), kind).toBe(true)
+    }
+  })
+
+  it('puts known kinds in the home buckets and hides RecentFailure', () => {
+    expect(homeBucketOf(item({ kind: 'BlockedQuestion', severity: 'Critical' }))).toBe('blocked')
+    expect(homeBucketOf(item({ kind: 'CardNeedsDecision', severity: 'Critical' }))).toBe('blocked')
+    expect(homeBucketOf(item({ kind: 'InboundUnconsumed', severity: 'Critical' }))).toBe('blocked')
+    expect(homeBucketOf(item({ kind: 'ParkedMessage', severity: 'Error' }))).toBe('broken')
+    expect(homeBucketOf(item({ kind: 'DeadSession', severity: 'Error' }))).toBe('broken')
+    expect(homeBucketOf(item({ kind: 'NeverStarted', severity: 'Error' }))).toBe('broken')
+    expect(homeBucketOf(item({ kind: 'UncorrelatedReport', severity: 'Error' }))).toBe('broken')
+    expect(homeBucketOf(item({ kind: 'SessionDisagreement', severity: 'Error' }))).toBe('broken')
+    expect(homeBucketOf(item({ kind: 'RecentCriticalIncident', severity: 'Error' }))).toBe('broken')
+    expect(homeBucketOf(item({ kind: 'FailureUnacknowledged', severity: 'Error' }))).toBe('broken')
+    expect(homeBucketOf(item({ kind: 'ModelAvailabilityHold', severity: 'Error' }))).toBe('broken')
+    expect(homeBucketOf(item({ kind: 'BriefUndelivered', severity: 'Error' }))).toBe('broken')
+    expect(homeBucketOf(item({ kind: 'BriefUndelivered', severity: 'Warning' }))).toBe('review')
+    expect(homeBucketOf(item({ kind: 'PastExpectedIdle', severity: 'Warning' }))).toBe('review')
+    expect(homeBucketOf(item({ kind: 'ChecksSpent', severity: 'Warning' }))).toBe('review')
+    expect(homeBucketOf(item({ kind: 'Overdue', severity: 'Warning' }))).toBe('review')
+    expect(homeBucketOf(item({ kind: 'ProgressStalled', severity: 'Warning' }))).toBe('review')
+    expect(homeBucketOf(item({ kind: 'CardStalled', severity: 'Warning' }))).toBe('review')
+    expect(homeBucketOf(item({ kind: 'OrchestratorInvestigation', severity: 'Warning' }))).toBe('review')
+    expect(homeBucketOf(item({ kind: 'CallerNoteUndelivered', severity: 'Warning' }))).toBe('review')
+    expect(homeBucketOf(item({ kind: 'CardlessDetailsNoPrompt', severity: 'Warning' }))).toBe('review')
+    expect(homeBucketOf(item({ kind: 'QueuedInputStuck', severity: 'Warning' }))).toBe('review')
+    expect(homeBucketOf(item({ kind: 'AgentOutlivedTask', severity: 'Warning' }))).toBe('review')
+    expect(homeBucketOf(item({ kind: 'ReportUnsettled', severity: 'Warning' }))).toBe('review')
+    expect(homeBucketOf(item({ kind: 'UnmarkedWaiting', severity: 'Warning' }))).toBe('review')
+    expect(homeBucketOf(item({ kind: 'RecentFailure', severity: 'Warning' }))).toBe('hidden')
+  })
+
+  it('counts the three home buckets and ignores RecentFailure', () => {
+    expect(
+      homeBucketCounts([
+        item({ kind: 'BlockedQuestion', severity: 'Critical' }),
+        item({ kind: 'DeadSession', severity: 'Error' }),
+        item({ kind: 'ChecksSpent', severity: 'Warning' }),
+        item({ kind: 'RecentFailure', severity: 'Warning' }),
+        item({ kind: 'ParkedMessage', severity: 'Error' }),
+      ]),
+    ).toEqual({ blocked: 1, broken: 2, review: 1 })
   })
 })

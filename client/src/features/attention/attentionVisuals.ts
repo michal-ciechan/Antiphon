@@ -238,6 +238,41 @@ export function groupOf(item: AttentionItemDto): AttentionGroupKey {
   return severityGroup(item.severity)
 }
 
+/**
+ * The Home glance's three chips. Same four groups as the panel — `failures` is history, so it
+ * stays off the landing screen the way `NeedsAttentionBadge` already excluded `RecentFailure`.
+ * New kinds fall in through `groupOf`; this is not a second taxonomy.
+ */
+export type HomeAttentionBucket = 'blocked' | 'broken' | 'review' | 'hidden'
+
+export function homeBucketOf(item: AttentionItemDto): HomeAttentionBucket {
+  const group = groupOf(item)
+  switch (group) {
+    case 'now':
+      return 'blocked'
+    case 'broken':
+      return 'broken'
+    case 'suspect':
+      return 'review'
+    case 'failures':
+      return 'hidden'
+  }
+}
+
+export function homeBucketCounts(items: AttentionItemDto[]): {
+  blocked: number
+  broken: number
+  review: number
+} {
+  const counts = { blocked: 0, broken: 0, review: 0 }
+  for (const item of items) {
+    const bucket = homeBucketOf(item)
+    if (bucket === 'hidden') continue
+    counts[bucket] += 1
+  }
+  return counts
+}
+
 function severityGroup(severity: AlertSeverity): AttentionGroupKey {
   if (severity === 'Critical') return 'now'
   if (severity === 'Error') return 'broken'
