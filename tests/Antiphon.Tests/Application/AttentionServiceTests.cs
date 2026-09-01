@@ -797,6 +797,104 @@ public class AttentionServiceTests
         item.Kind.ShouldBe(AttentionKind.UncorrelatedReport);
     }
 
+    // ---- CARD-0294 S3: UnmarkedWaiting ----------------------------------------------------------
+
+    [Test]
+    public async Task a_nudged_idle_task_with_no_token_is_unmarked_waiting()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var agent = await scenario.AddAgentAsync(persistentSession: session);
+        var nudgedAt = DateTime.UtcNow.AddMinutes(-2);
+        var task = await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Dispatched, dispatchedMinutesAgo: 8, agentId: agent,
+            reportNudgedAt: nudgedAt);
+        await scenario.AddTranscriptAsync(session,
+            (TranscriptKinds.UserPrompt, DelegationReportFormatter.TaskMarker(task) + "\nDo it", null),
+            (TranscriptKinds.AssistantText,
+                "Please approve this design and I'll begin the recorded TDD cycles.", null),
+            (TranscriptKinds.TurnEnd, null, null));
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.TaskId == task);
+
+        item.Kind.ShouldBe(AttentionKind.UnmarkedWaiting);
+        item.Severity.ShouldBe(AlertSeverity.Warning);
+        item.Headline.ShouldBe("Ended a turn with no closing line; asked once, still idle.");
+        item.Evidence.ShouldContain("Nudged");
+        item.Evidence.ShouldContain("S1 will Block at 5m");
+        item.Evidence.ShouldContain("Herdr");
+        item.Actions.ShouldBe(
+            [AttentionAction.OpenDrawer, AttentionAction.Retry, AttentionAction.Cancel]);
+        item.Actions.ShouldNotContain(AttentionAction.Reply);
+        item.SinceUtc.ShouldNotBeNull();
+        item.SinceUtc!.Value.ShouldBeInRange(nudgedAt.AddSeconds(-2), nudgedAt.AddSeconds(2));
+        AttentionSummaryDto.From(new AttentionDto(DateTime.UtcNow, true, [item])).Open.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task unmarked_waiting_clears_to_blocked_question_once_the_task_blocks()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Dispatched, dispatchedMinutesAgo: 8,
+            reportNudgedAt: DateTime.UtcNow.AddMinutes(-6));
+        await scenario.AddTranscriptAsync(session,
+            (TranscriptKinds.UserPrompt, DelegationReportFormatter.TaskMarker(task) + "\nDo it", null),
+            (TranscriptKinds.AssistantText, "Please approve this design.", null),
+            (TranscriptKinds.TurnEnd, null, null));
+
+        (await ItemsForAsync(scenario)).ShouldContain(
+            i => i.TaskId == task && i.Kind == AttentionKind.UnmarkedWaiting);
+
+        await scenario.SetTaskStatusAsync(task, AgentTaskStatus.Blocked);
+        await scenario.AddTaskEventAsync(task, AgentTaskEventType.Blocked,
+            "Turn ended without `[antiphon-report:…]`; asked once and the session stayed idle.",
+            minutesAgo: 0);
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.TaskId == task);
+        item.Kind.ShouldBe(AttentionKind.BlockedQuestion);
+        (await ItemsForAsync(scenario))
+            .ShouldNotContain(i => i.TaskId == task && i.Kind == AttentionKind.UnmarkedWaiting);
+    }
+
+    [Test]
+    public async Task a_mid_turn_nudged_task_is_not_unmarked_waiting()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Working, dispatchedMinutesAgo: 8,
+            reportNudgedAt: DateTime.UtcNow.AddMinutes(-6));
+        await scenario.AddTranscriptAsync(session,
+            (TranscriptKinds.UserPrompt, DelegationReportFormatter.TaskMarker(task) + "\nDo it", null),
+            (TranscriptKinds.AssistantText, "I'll start.", null),
+            (TranscriptKinds.TurnEnd, null, null),
+            (TranscriptKinds.ToolCall, null, "Read"));
+
+        (await ItemsForAsync(scenario)).ShouldNotContain(
+            i => i.TaskId == task && i.Kind == AttentionKind.UnmarkedWaiting);
+    }
+
+    [Test]
+    public async Task a_dead_session_wins_over_unmarked_waiting()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync(SessionStatus.Failed, endedMinutesAgo: 4);
+        var task = await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Dispatched, dispatchedMinutesAgo: 8,
+            reportNudgedAt: DateTime.UtcNow.AddMinutes(-6));
+        await scenario.AddTranscriptAsync(session,
+            (TranscriptKinds.UserPrompt, DelegationReportFormatter.TaskMarker(task) + "\nDo it", null),
+            (TranscriptKinds.AssistantText, "Please approve this design.", null),
+            (TranscriptKinds.TurnEnd, null, null));
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.TaskId == task);
+        item.Kind.ShouldBe(AttentionKind.DeadSession);
+        (await ItemsForAsync(scenario))
+            .ShouldNotContain(i => i.TaskId == task && i.Kind == AttentionKind.UnmarkedWaiting);
+    }
+
     // ---- 6. PastExpectedIdle, and THE exclusion -------------------------------------------------
 
     [Test]
@@ -2109,7 +2207,8 @@ public class AttentionServiceTests
             string? workingDirectory = null,
             bool neverDispatched = false,
             Guid? parentSessionId = null,
-            Guid? agentId = null)
+            Guid? agentId = null,
+            DateTime? reportNudgedAt = null)
         {
             var id = Guid.NewGuid();
             var dispatched = DateTime.UtcNow.AddMinutes(-dispatchedMinutesAgo);
@@ -2138,6 +2237,7 @@ public class AttentionServiceTests
                 CreatedAt = dispatched,
                 DispatchedAt = neverDispatched ? null : dispatched,
                 CompletedAt = completedMinutesAgo is { } done ? DateTime.UtcNow.AddMinutes(-done) : null,
+                ReportNudgedAt = reportNudgedAt,
             });
             await db.SaveChangesAsync();
             _tasks.Add(id);

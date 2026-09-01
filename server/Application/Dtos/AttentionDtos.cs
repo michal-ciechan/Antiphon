@@ -185,6 +185,15 @@ public enum AttentionKind
     /// Kill is not the repair — <c>FailDeadSessionTasksAsync</c> tries settlement first.
     /// </summary>
     ReportUnsettled = 22,
+
+    /// <summary>
+    /// Dispatched or Working, the closing-line nudge was issued, the session is idle, and
+    /// no report token for this task is in the transcript (CARD-0294). Detection only —
+    /// not <see cref="ReportUnsettled"/> (that kind is "marker present, settlement missed").
+    /// Once the sweep Blocks, <see cref="BlockedQuestion"/> takes over. Appended after
+    /// shipped 22; do not renumber.
+    /// </summary>
+    UnmarkedWaiting = 23,
 }
 
 /// <summary>

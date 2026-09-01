@@ -175,6 +175,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     icon: TbClockExclamation,
     hint: 'The delegate already wrote the closing report line; the task row never left Dispatched. Settlement should catch this up; do not kill the session to unblock it.',
   },
+  UnmarkedWaiting: {
+    label: 'Waiting unmarked',
+    color: 'warning',
+    icon: TbHourglassHigh,
+    hint: 'The delegate ended a turn without done/blocked/failed and is idle. It will Block if it stays that way; do not read Herdr done as finished.',
+  },
 }
 
 export type AttentionGroupKey = 'now' | 'broken' | 'suspect' | 'failures'

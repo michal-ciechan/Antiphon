@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -1025,6 +1026,39 @@ public class DelegationQuestionDetectionTests
     public void an_empty_report_is_not_a_question()
     {
         AgentTaskReplyService.LooksLikeAQuestion("").ShouldBeFalse();
+    }
+
+    [Test]
+    public void the_incident_approval_sentence_is_not_a_question()
+    {
+        // CARD-0294: the Codex wait that sat idle 8 hours. LooksLikeAQuestion stays the
+        // trailing-`?` gate; this sentence is the exhibit that an approval wait is a statement.
+        AgentTaskReplyService.LooksLikeAQuestion(
+            "Please approve this design and I'll begin the recorded TDD cycles.")
+            .ShouldBeFalse();
+    }
+}
+
+[Category("Unit")]
+public class UnmarkedWaitingContractTests
+{
+    [Test]
+    public void unmarked_waiting_evidence_is_appended_as_six()
+    {
+        ((int)AgentTaskReportEvidence.UnmarkedWaiting).ShouldBe(6);
+    }
+
+    [Test]
+    public void unmarked_waiting_attention_kind_is_appended_after_report_unsettled()
+    {
+        ((int)AttentionKind.ReportUnsettled).ShouldBe(22);
+        ((int)AttentionKind.UnmarkedWaiting).ShouldBe(23);
+    }
+
+    [Test]
+    public void unmarked_waiting_minutes_default_is_five()
+    {
+        new DelegationSettings().UnmarkedWaitingMinutes.ShouldBe(5);
     }
 }
 

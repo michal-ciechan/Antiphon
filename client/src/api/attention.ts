@@ -102,6 +102,12 @@ export type AttentionKind =
    * do not kill the session to unblock it.
    */
   | 'ReportUnsettled'
+  /**
+   * The delegate ended a turn without done/blocked/failed, was asked once, and is still
+   * idle (CARD-0294). Detection only — it will Block if it stays that way; Reply is not
+   * offered until then. Not ReportUnsettled (that kind is marker present, settlement missed).
+   */
+  | 'UnmarkedWaiting'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =

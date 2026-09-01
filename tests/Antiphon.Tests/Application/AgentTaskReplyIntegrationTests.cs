@@ -179,6 +179,82 @@ public class AgentTaskReplyIntegrationTests
     }
 
     [Test]
+    public async Task the_first_unmarked_end_notifies_the_parent_as_well_as_nudging_the_child()
+    {
+        using var workspace = new TempWorkspace();
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, parentSessionId);
+        const string narration = "Please approve this design and I'll begin the recorded TDD cycles.";
+        var shortId = DelegationReportFormatter.Short(task.Id);
+
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id), narration, closingVerdict: false);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        stored.ReportNudgedAt.ShouldNotBeNull();
+
+        var childNudge = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == sessionId);
+        childNudge.Origin.ShouldBe(QueuedMessageOrigin.Delegation);
+        childNudge.Body.ShouldContain("Your turn ended without the closing report line");
+
+        var parentNote = await verify.SessionQueuedMessages.SingleAsync(
+            m => m.AgentSessionId == parentSessionId);
+        parentNote.Origin.ShouldBe(QueuedMessageOrigin.Delegation);
+        parentNote.SourceTaskId.ShouldBe(task.Id);
+        parentNote.ConversationKey.ShouldBe($"task-wait:{task.Id:N}");
+        parentNote.ConversationKey.ShouldNotBe($"task:{task.RootTaskId:N}");
+        parentNote.Body.ShouldContain($"[task {shortId} waiting]");
+        parentNote.Body.ShouldNotContain($"[task {shortId} done]");
+        parentNote.Status.ShouldBe(QueuedMessageStatus.Pending);
+    }
+
+    [Test]
+    public async Task block_unmarked_waiting_then_answer_resumes_the_same_session()
+    {
+        using var workspace = new TempWorkspace();
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, parentSessionId);
+        const string narration = "Please approve this design and I'll begin the recorded TDD cycles.";
+
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id), narration, closingVerdict: false);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        await using (var db = CreateContext())
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            row.ReportNudgedAt = DateTime.UtcNow.AddMinutes(-6);
+            await db.SaveChangesAsync();
+        }
+
+        await CreateService().BlockUnmarkedWaitingAsync(sessionId, CancellationToken.None);
+
+        await using (var blockedDb = CreateContext())
+        {
+            var blocked = await blockedDb.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            blocked.Status.ShouldBe(AgentTaskStatus.Blocked);
+            blocked.ReportEvidence.ShouldBe(AgentTaskReportEvidence.UnmarkedWaiting);
+            blocked.Result.ShouldBe(narration);
+            blocked.AgentSessionId.ShouldBe(sessionId);
+            (await blockedDb.AgentSessions.SingleAsync(s => s.Id == sessionId))
+                .Status.ShouldBe(SessionStatus.Running);
+        }
+
+        await CreateService().AnswerAsync(task.Id, "continue", CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+            .Status.ShouldBe(AgentTaskStatus.Working);
+        var marker = DelegationReportFormatter.TaskMarker(task.Id);
+        var reply = (await verify.SessionQueuedMessages
+                .Where(m => m.AgentSessionId == sessionId && m.Status == QueuedMessageStatus.Pending)
+                .ToListAsync())
+            .Single(m => m.Body.Contains(marker) && m.Body.Contains("\n\ncontinue"));
+    }
+
+    [Test]
     public async Task the_nudged_delegates_marked_reply_settles_with_marked_evidence()
     {
         using var workspace = new TempWorkspace();

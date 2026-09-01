@@ -434,6 +434,17 @@ public sealed class DelegationSettings
     public int ReportSweepRehandSeconds { get; set; } = 60;
 
     /// <summary>
+    /// After the one closing-line nudge is recorded (<c>ReportNudgedAt</c>, enqueue time, not
+    /// <c>SentAt</c>), how long the session may stay idle on that same unmarked boundary
+    /// before the sweep Blocks the task as <c>UnmarkedWaiting</c> (CARD-0294). Default 5
+    /// minutes — under <c>PastExpectedIdle</c>'s 30-minute floor, over a legitimate "about
+    /// to type the marker" pause. Distinct from <see cref="ReportNudgeResponseSeconds"/>
+    /// (text-less post-nudge boundary). <c>&lt;= 0</c> disarms the Blocked sweep; the
+    /// attention row can still show.
+    /// </summary>
+    public int UnmarkedWaitingMinutes { get; set; } = 5;
+
+    /// <summary>
     /// How long an open task whose session is DEAD (<see cref="AgentTaskLiveness.IsDeadSession"/>)
     /// must keep looking dead before the dispatcher fails it (CARD-0021). Measured from the first
     /// sweep that saw it that way, in memory — a server restart only ever delays the failure.
