@@ -50,6 +50,9 @@
     <PackageReference Include="System.IO.Abstractions" Version="22.1.0" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
     <PackageReference Include="Confluent.Kafka" Version="2.6.0" />
+    <PackageReference Include="Hangfire.AspNetCore" Version="1.8.25" />
+    <PackageReference Include="Hangfire.InMemory" Version="1.0.0" />
+    <PackageReference Include="System.Management" Version="9.*" />
   </ItemGroup>
 
   <ItemGroup>

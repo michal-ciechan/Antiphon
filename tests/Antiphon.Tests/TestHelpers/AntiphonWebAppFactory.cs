@@ -64,6 +64,12 @@ public class AntiphonWebAppFactory : WebApplicationFactory<Program>
     /// </summary>
     public RefusingSessionRunnerClient SessionRunner { get; } = new();
 
+    /// <summary>
+    /// CARD-0298: factory hosts must not WMI-scan the machine. The Hangfire worker is already
+    /// disabled; this replacement makes a census invocation a loud exception if a test re-arms it.
+    /// </summary>
+    public RefusingZombieProcessCensus ZombieCensus { get; } = new();
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         Directory.CreateDirectory(_workspacePath);
@@ -99,6 +105,7 @@ public class AntiphonWebAppFactory : WebApplicationFactory<Program>
                 ["SessionRunner:Enabled"] = "false",
                 ["Delegation:CheckInterpreterEnabled"] = "false",
                 ["Delegation:CheckInterpreterWorkingDirectory"] = Path.Combine(_workspacePath, "check-interpreter"),
+                ["Hangfire:ServerEnabled"] = "false",
             });
         });
 
@@ -111,6 +118,9 @@ public class AntiphonWebAppFactory : WebApplicationFactory<Program>
             // process on any runner, whatever the configuration says.
             services.RemoveAll<ISessionRunnerClient>();
             services.AddSingleton<ISessionRunnerClient>(SessionRunner);
+
+            services.RemoveAll<IZombieProcessCensus>();
+            services.AddSingleton<IZombieProcessCensus>(ZombieCensus);
 
             // Point EF at the shared testcontainer regardless of how the app wired it.
             var descriptor = services.SingleOrDefault(

@@ -1,4 +1,7 @@
 using System.Text.Json.Serialization;
+using Hangfire;
+using Hangfire.Dashboard;
+using Hangfire.InMemory;
 using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -150,6 +153,14 @@ try
     }
     builder.Services.Configure<WatchdogSettings>(builder.Configuration.GetSection("Watchdog"));
     builder.Services.Configure<SessionReconciliationSettings>(builder.Configuration.GetSection("SessionReconciliation"));
+    builder.Services.AddSingleton<IValidateOptions<HangfireSettings>, HangfireSettingsValidator>();
+    builder.Services.AddOptions<HangfireSettings>()
+        .Bind(builder.Configuration.GetSection("Hangfire"))
+        .ValidateOnStart();
+    builder.Services.AddSingleton<IValidateOptions<ZombieCensusSettings>, ZombieCensusSettingsValidator>();
+    builder.Services.AddOptions<ZombieCensusSettings>()
+        .Bind(builder.Configuration.GetSection("ZombieCensus"))
+        .ValidateOnStart();
     // CARD-0040: cards move themselves from the delegated work bound to them.
     builder.Services.Configure<CardWorkTransitionSettings>(builder.Configuration.GetSection("CardTransitions"));
     builder.Services.Configure<ParkedMessageSweepSettings>(builder.Configuration.GetSection("ParkedMessages"));
@@ -331,6 +342,9 @@ try
     builder.Services.AddScoped<SessionReconciliationService>();
     builder.Services.AddScoped<CardWorkTransitionService>();
     builder.Services.AddScoped<ParkedMessageSweepService>();
+    builder.Services.AddSingleton<IZombieProcessCensus, WindowsZombieProcessCensus>();
+    builder.Services.AddScoped<ZombieCensusService>();
+    builder.Services.AddScoped<ZombieCensusJob>();
     builder.Services.AddScoped<AgentSupervisorService>();
     builder.Services.AddScoped<IAgentIncidentRecorder>(sp => sp.GetRequiredService<AgentSupervisorService>());
     builder.Services.AddScoped<AppHostWatchdogStateAttentionService>();
@@ -518,6 +532,17 @@ try
     builder.Services.AddHostedService<WorkflowFileWatcherHostedService>();
     builder.Services.AddHostedService<SessionRunnerEventPump>();
 
+    // CARD-0298: Hangfire storage is always registered (dashboard + job serialization). The worker
+    // is the dangerous bit — it must not WMI-scan or call the runner from a test Program boot.
+    var hangfireSettings = builder.Configuration.GetSection("Hangfire").Get<HangfireSettings>()
+        ?? new HangfireSettings();
+    builder.Services.AddHangfire(config =>
+        config.UseInMemoryStorage(HangfireConfiguration.CreateStorageOptions(hangfireSettings)));
+    if (hangfireSettings.ServerEnabled)
+    {
+        builder.Services.AddHangfireServer(options => options.WorkerCount = 1);
+    }
+
     // HttpClient for provider connectivity testing
     builder.Services.AddHttpClient();
 
@@ -642,6 +667,11 @@ try
             .EnsureAgentBoardsAsync(CancellationToken.None);
         if (backfilled > 0)
             Log.Information("Backfilled default boards for {Count} agent(s)", backfilled);
+
+        var hangfire = scope.ServiceProvider.GetRequiredService<IOptions<HangfireSettings>>().Value;
+        var census = scope.ServiceProvider.GetRequiredService<IOptions<ZombieCensusSettings>>().Value;
+        if (hangfire.ServerEnabled && census.Enabled)
+            HangfireConfiguration.AddOrUpdateCensusJob(census);
     }
 
     // Health check endpoint (replaces simple /api/health from Story 1.1)
@@ -678,6 +708,11 @@ try
 
     // SignalR hub
     app.MapHub<AntiphonHub>("/hubs/antiphon");
+
+    app.MapHangfireDashboard("/hangfire", new DashboardOptions
+    {
+        Authorization = [new LocalRequestsOnlyAuthorizationFilter()]
+    });
 
     // SPA fallback for production (serves React build from wwwroot)
     app.UseStaticFiles();

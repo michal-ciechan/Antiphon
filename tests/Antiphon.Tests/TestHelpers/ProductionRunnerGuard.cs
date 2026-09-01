@@ -48,6 +48,7 @@ public class ProductionRunnerGuard
 
     public const string BaseUrlEnvVar = "SessionRunner__BaseUrl";
     public const string CheckInterpreterEnvVar = "Delegation__CheckInterpreterEnabled";
+    public const string HangfireServerEnabledEnvVar = "Hangfire__ServerEnabled";
 
     /// <summary>What this process inherited, kept so the log can name it.</summary>
     public static string? InheritedBaseUrl { get; private set; }
@@ -58,11 +59,15 @@ public class ProductionRunnerGuard
         InheritedBaseUrl = Environment.GetEnvironmentVariable(BaseUrlEnvVar);
         Environment.SetEnvironmentVariable(BaseUrlEnvVar, DeadRunnerBaseUrl);
         Environment.SetEnvironmentVariable(CheckInterpreterEnvVar, "false");
+        Environment.SetEnvironmentVariable(HangfireServerEnabledEnvVar, "false");
         Console.WriteLine(
             $"[CARD-0204] {BaseUrlEnvVar}={DeadRunnerBaseUrl} and {CheckInterpreterEnvVar}=false for "
             + "every Program boot in this assembly (inherited "
             + $"{BaseUrlEnvVar}='{InheritedBaseUrl ?? "<unset>"}') - test hosts never launch on the "
             + "production session-runner.");
+        Console.WriteLine(
+            $"[CARD-0298] {HangfireServerEnabledEnvVar}=false for every Program boot in this assembly "
+            + "- test hosts never start a Hangfire worker (no WMI census, no production-runner list).");
     }
 }
 
@@ -81,8 +86,18 @@ public sealed class RefusingSessionRunnerClient : ISessionRunnerClient
         get { lock (_launchAttempts) return _launchAttempts.ToList(); }
     }
 
-    public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
+    private int _listCalls;
+
+    public int ListCalls
+    {
+        get { lock (_launchAttempts) return _listCalls; }
+    }
+
+    public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct)
+    {
+        lock (_launchAttempts) _listCalls++;
+        return Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
+    }
 
     public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
     {
@@ -133,6 +148,25 @@ public sealed class RefusingSessionRunnerClient : ISessionRunnerClient
         "CARD-0204: AntiphonWebAppFactory hosts have no session-runner; this host never started a session.";
 }
 
+/// <summary>
+/// CARD-0298: factory hosts must not enumerate Win32_Process. A call is a loud exception so a
+/// test that re-enables the Hangfire worker cannot silently WMI-scan the developer machine.
+/// </summary>
+public sealed class RefusingZombieProcessCensus : IZombieProcessCensus
+{
+    private int _calls;
+
+    public int Calls => _calls;
+
+    public Task<IReadOnlyList<ZombieOsProcess>> SnapshotAsync(CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref _calls);
+        throw new InvalidOperationException(
+            "CARD-0298: a test host tried to run the OS zombie census. AntiphonWebAppFactory "
+            + "hosts never enumerate Win32_Process or call the production session-runner.");
+    }
+}
+
 public class ProductionRunnerGuardTests
 {
     /// <summary>The pin on the assembly guard: it has run before any test, and the port it chose is dead.</summary>
@@ -145,6 +179,9 @@ public class ProductionRunnerGuardTests
                 + $"(this process inherited '{ProductionRunnerGuard.InheritedBaseUrl ?? "<unset>"}')");
         Environment.GetEnvironmentVariable(ProductionRunnerGuard.CheckInterpreterEnvVar)
             .ShouldBe("false");
+        Environment.GetEnvironmentVariable(ProductionRunnerGuard.HangfireServerEnabledEnvVar)
+            .ShouldBe("false",
+                "CARD-0298: AddHangfireServer must not run in a Program boot in this assembly");
 
         var uri = new Uri(ProductionRunnerGuard.DeadRunnerBaseUrl);
         using var socket = new TcpClient();
