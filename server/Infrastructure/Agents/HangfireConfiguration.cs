@@ -10,9 +10,9 @@ internal static class HangfireConfiguration
     public static InMemoryStorageOptions CreateStorageOptions(HangfireSettings settings) =>
         new() { MaxExpirationTime = TimeSpan.FromDays(settings.HistoryRetentionDays) };
 
-    public static void AddOrUpdateCensusJob(ZombieCensusSettings settings)
+    public static void AddOrUpdateCensusJob(IRecurringJobManager manager, ZombieCensusSettings settings)
     {
-        RecurringJob.AddOrUpdate<ZombieCensusJob>(
+        manager.AddOrUpdate<ZombieCensusJob>(
             settings.RecurringJobId,
             job => job.ExecuteAsync(CancellationToken.None),
             settings.Cron,

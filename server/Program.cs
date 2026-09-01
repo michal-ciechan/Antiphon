@@ -671,7 +671,10 @@ try
         var hangfire = scope.ServiceProvider.GetRequiredService<IOptions<HangfireSettings>>().Value;
         var census = scope.ServiceProvider.GetRequiredService<IOptions<ZombieCensusSettings>>().Value;
         if (hangfire.ServerEnabled && census.Enabled)
-            HangfireConfiguration.AddOrUpdateCensusJob(census);
+        {
+            var recurringJobManager = scope.ServiceProvider.GetRequiredService<IRecurringJobManager>();
+            HangfireConfiguration.AddOrUpdateCensusJob(recurringJobManager, census);
+        }
     }
 
     // Health check endpoint (replaces simple /api/health from Story 1.1)
