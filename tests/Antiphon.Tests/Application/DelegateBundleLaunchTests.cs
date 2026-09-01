@@ -271,16 +271,10 @@ public class DelegateBundleLaunchTests
         services.AddSingleton<SessionMessageQueueService>();
         services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
         services.AddSingleton<DelegationWorkspaceResolver>();
-        services.AddSingleton(Options.Create(new GitSettings
+        services.AddDelegationWorktreeGraph(new GitSettings
         {
             WorktreeBasePath = Path.Combine(Path.GetTempPath(), "antiphon-bundle-wt"),
-        }));
-        services.AddSingleton<IWorktreeManager, Antiphon.Server.Infrastructure.Git.WorktreeManager>();
-        services.AddSingleton<IGitService, Antiphon.Server.Infrastructure.Git.GitService>();
-        // CARD-0230: DelegationWorktreeService now takes GitWorkspaceService (c4d7e0d). Pre-existing
-        // red on this harness; CARD-0247 S2 needs CreateHarness to resolve so BuildEnv is pin-able.
-        services.AddSingleton<GitWorkspaceService>();
-        services.AddScoped<DelegationWorktreeService>();
+        });
         services.AddScoped<AgentTaskService>();
         services.AddScoped<AgentTaskDispatcher>();
 

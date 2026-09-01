@@ -4,7 +4,6 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
-using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -338,18 +337,11 @@ public class AgentTaskDispatchFailureTests
         services.AddSingleton<SessionMessageQueueService>();
         services.AddSingleton<IDelegateSessionStopper>(stopper);
         services.AddSingleton<DelegationWorkspaceResolver>();
-        services.AddSingleton(Options.Create(new GitSettings
+        services.AddDelegationWorktreeGraph(new GitSettings
         {
             WorktreeBasePath = Directory.CreateTempSubdirectory("antiphon-0220-wt").FullName,
             WorktreeAddTimeoutSeconds = worktreeAddTimeoutSeconds,
-        }));
-        services.AddSingleton<IWorktreeManager, WorktreeManager>();
-        services.AddSingleton<IGitService, GitService>();
-        // CARD-0230: SettleAsync's deliverable-pointer resolution needs this since c4d7e0d; every
-        // harness that builds its own ServiceCollection has to register it or GetRequiredService
-        // throws during DelegationWorktreeService construction.
-        services.AddSingleton<GitWorkspaceService>();
-        services.AddScoped<DelegationWorktreeService>();
+        });
         services.AddScoped<AgentTaskService>();
         services.AddScoped<AgentTaskDispatcher>();
 

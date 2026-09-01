@@ -1725,21 +1725,18 @@ public class AgentTaskDeliveryWatchdogTests
         if (runnerClient is not null)
             services.AddSingleton<ISessionRunnerClient>(runnerClient);
         services.AddSingleton<DelegationWorkspaceResolver>();
-        services.AddSingleton(Options.Create(new GitSettings
+        services.AddDelegationWorktreeGraph(new GitSettings
         {
             WorktreeBasePath = Path.Combine(Path.GetTempPath(), "antiphon-delivery-wt"),
-        }));
-        services.AddSingleton<IWorktreeManager, Antiphon.Server.Infrastructure.Git.WorktreeManager>();
-        services.AddSingleton<IGitService, Antiphon.Server.Infrastructure.Git.GitService>();
-        services.AddScoped<DelegationWorktreeService>();
+        });
         services.AddScoped<AgentTaskService>();
         // CARD-0046: the dispatcher's deferred-settlement sweep calls into the reply service, so it
         // has to be a real one here (it is optional in the constructor — an unregistered one simply
         // leaves the sweep unarmed, which every other harness relies on).
         services.AddSingleton<AgentTaskReplyService>();
         // CARD-0085: the bind-refusal recovery gate. Predating tests still Fail when neither arm
-        // finds evidence (TempPath is not a repo and the title has no CARD-NNNN).
-        services.AddSingleton<GitWorkspaceService>();
+        // finds evidence (TempPath is not a repo and the title has no CARD-NNNN). Its
+        // GitWorkspaceService comes from AddDelegationWorktreeGraph above.
         services.AddSingleton(Options.Create(recoverySettings ?? new DelegateBindRefusalRecoverySettings()));
         services.AddSingleton<DelegateBindRefusalRecovery>();
         services.AddScoped<AgentTaskDispatcher>();

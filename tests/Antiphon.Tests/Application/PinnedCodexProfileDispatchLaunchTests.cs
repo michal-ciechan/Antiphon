@@ -123,12 +123,12 @@ public class PinnedCodexProfileDispatchLaunchTests
                 services.AddSingleton<AgentTuiRunnerCatalog>();
                 services.AddScoped<AgentTuiLaunchResolver>();
                 services.AddSingleton<DelegationWorkspaceResolver>();
-                services.AddSingleton(Options.Create(new GitSettings
+                // BridgeQueueHarness already holds GitWorkspaceService and its NoWorktreeManager; the
+                // helper's TryAdd keeps both and fills in the rest of the graph (CARD-0297).
+                services.AddDelegationWorktreeGraph(new GitSettings
                 {
                     WorktreeBasePath = Path.Combine(Path.GetTempPath(), "antiphon-t10-wt"),
-                }));
-                services.AddSingleton<IGitService, Antiphon.Server.Infrastructure.Git.GitService>();
-                services.AddScoped<DelegationWorktreeService>();
+                });
                 services.AddScoped<AgentTaskService>();
                 services.AddScoped<IDelegateSessionStopper>(sp =>
                     sp.GetRequiredService<AgentSessionService>());

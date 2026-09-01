@@ -1183,15 +1183,10 @@ public sealed class LaunchEnvLayersIntegrationTests
         services.AddSingleton<SessionMessageQueueService>();
         services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
         services.AddSingleton<DelegationWorkspaceResolver>();
-        services.AddSingleton(Options.Create(new GitSettings
+        services.AddDelegationWorktreeGraph(new GitSettings
         {
             WorktreeBasePath = Path.Combine(Path.GetTempPath(), "antiphon-env-wt"),
-        }));
-        services.AddSingleton<IWorktreeManager, Antiphon.Server.Infrastructure.Git.WorktreeManager>();
-        services.AddSingleton<IGitService, Antiphon.Server.Infrastructure.Git.GitService>();
-        // CARD-0230: DelegationWorktreeService now takes GitWorkspaceService (c4d7e0d).
-        services.AddSingleton<GitWorkspaceService>();
-        services.AddScoped<DelegationWorktreeService>();
+        });
         services.AddScoped<AgentTaskService>();
         if (withApiKeys)
         {

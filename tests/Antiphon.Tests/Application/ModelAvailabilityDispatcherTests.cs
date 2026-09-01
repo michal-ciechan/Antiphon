@@ -141,14 +141,10 @@ public class ModelAvailabilityDispatcherTests
         services.AddSingleton<SessionMessageQueueService>();
         services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
         services.AddSingleton<DelegationWorkspaceResolver>();
-        services.AddSingleton(Options.Create(new GitSettings
+        services.AddDelegationWorktreeGraph(new GitSettings
         {
             WorktreeBasePath = Path.Combine(Path.GetTempPath(), "antiphon-model-hold-wt"),
-        }));
-        services.AddSingleton<IWorktreeManager, Antiphon.Server.Infrastructure.Git.WorktreeManager>();
-        services.AddSingleton<IGitService, Antiphon.Server.Infrastructure.Git.GitService>();
-        services.AddSingleton<GitWorkspaceService>();
-        services.AddScoped<DelegationWorktreeService>();
+        });
         services.AddScoped<AgentTaskService>();
         services.AddScoped<ModelAvailability>();
         services.AddScoped<AgentTaskDispatcher>();

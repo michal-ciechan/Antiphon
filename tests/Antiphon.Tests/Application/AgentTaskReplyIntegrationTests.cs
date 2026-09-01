@@ -3494,7 +3494,6 @@ public class AgentTaskReplyIntegrationTests
             services.AddLogging();
             services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
             services.AddSingleton<Antiphon.Server.Application.Interfaces.IEventBus, MockEventBus>();
-            services.AddSingleton<GitWorkspaceService>();
             services.AddSingleton(Options.Create(new SupervisionSettings()));
             services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
             services.AddSingleton(Options.Create(new DelegationSettings()));
@@ -3510,17 +3509,12 @@ public class AgentTaskReplyIntegrationTests
             services.AddScoped<AgentReviewCheckpointService>();
             services.AddScoped<AgentFilesService>();
             services.AddScoped<IWorkspaceProgressProbe>(sp => sp.GetRequiredService<AgentFilesService>());
-            services.AddSingleton(Options.Create(new GitSettings
+            services.AddDelegationWorktreeGraph(new GitSettings
             {
                 WorktreeBasePath = worktreeRoot ?? Path.Combine(Path.GetTempPath(), "antiphon-reply-wt"),
                 WorktreeStaleAfterDays = 7,
                 WorktreeJanitorIntervalHours = 24,
-            }));
-            services.AddSingleton<Antiphon.Server.Application.Interfaces.IWorktreeManager,
-                Antiphon.Server.Infrastructure.Git.WorktreeManager>();
-            services.AddSingleton<Antiphon.Server.Application.Interfaces.IGitService,
-                Antiphon.Server.Infrastructure.Git.GitService>();
-            services.AddScoped<DelegationWorktreeService>();
+            });
             _provider = services.BuildServiceProvider();
         }
 
