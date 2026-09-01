@@ -773,6 +773,208 @@ public class AgentTaskDeliveryWatchdogTests
                 "CARD-0248: an unchanged boundary is not re-handed within ReportSweepRehandSeconds");
     }
 
+    // ---- CARD-0294: Block unmarked idle-after-nudge --------------------------------------------
+
+    [Test]
+    public async Task an_unmarked_idle_after_the_waiting_clock_blocks_unmarked_waiting()
+    {
+        var (harness, stopper) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 8);
+        var sessionId = task.AgentSessionId!.Value;
+        var parentSessionId = await SeedRunningSessionAsync();
+        await AttachParentAsync(task.Id, parentSessionId);
+        await MarkWorktreeAsync(task.Id, Path.Combine(Path.GetTempPath(), "wt-" + task.Id.ToString("N")[..8]));
+        const string body = "Please approve this design and I'll begin the recorded TDD cycles.";
+        await SeedUnmarkedCompleteTurnAsync(sessionId, task.Id, body, storedMinutesAgo: 6);
+        var nudgeId = await SeedPendingNudgeAsync(sessionId, task.Id);
+        await MarkNudgedWaitingAsync(task.Id, DateTime.UtcNow.AddMinutes(-6), sequence: 3, nudgeId);
+
+        (await harness.SettleDeferredReportsAsync(CancellationToken.None))
+            .ShouldBeGreaterThanOrEqualTo(1);
+
+        await using var verify = CreateContext();
+        var blocked = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        blocked.Status.ShouldBe(AgentTaskStatus.Blocked);
+        blocked.ReportEvidence.ShouldBe(AgentTaskReportEvidence.UnmarkedWaiting);
+        blocked.Result.ShouldBe(body);
+        blocked.AgentSessionId.ShouldBe(sessionId);
+        blocked.WorktreePath.ShouldNotBeNull();
+        (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId))
+            .Status.ShouldBe(SessionStatus.Running);
+        stopper.Killed.ShouldNotContain(sessionId);
+
+        (await verify.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task.Id
+                && e.Type == AgentTaskEventType.Blocked
+                && e.Detail.Contains("asked once and the session stayed idle")))
+            .ShouldBeTrue();
+        (await verify.SessionQueuedMessages.AnyAsync(
+            m => m.Id == nudgeId && m.Status == QueuedMessageStatus.Pending))
+            .ShouldBeFalse("the pending closing-line nudge must be canceled");
+
+        var parentNote = await verify.SessionQueuedMessages.SingleAsync(
+            m => m.AgentSessionId == parentSessionId && m.SourceTaskId == task.Id);
+        parentNote.Origin.ShouldBe(QueuedMessageOrigin.Delegation);
+        parentNote.Body.ShouldContain($"[task {DelegationReportFormatter.Short(task.Id)} blocked]");
+        parentNote.Body.ShouldContain("report=unmarked");
+    }
+
+    [Test]
+    public async Task the_waiting_clock_blocks_at_five_minutes_and_not_before()
+    {
+        var (harness, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 8);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedUnmarkedCompleteTurnAsync(
+            sessionId, task.Id,
+            "Please approve this design and I'll begin the recorded TDD cycles.",
+            storedMinutesAgo: 6);
+        await MarkNudgedWaitingAsync(task.Id, DateTime.UtcNow.AddMinutes(-5).AddSeconds(1), sequence: 3);
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+        (await ReadTaskAsync(task.Id)).Status.ShouldBe(
+            AgentTaskStatus.Dispatched, "T+4m59s is still inside the waiting clock");
+
+        await using (var db = CreateContext())
+        {
+            var stored = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            stored.ReportNudgedAt = DateTime.UtcNow.AddMinutes(-5);
+            await db.SaveChangesAsync();
+        }
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+        var blocked = await ReadTaskAsync(task.Id);
+        blocked.Status.ShouldBe(AgentTaskStatus.Blocked);
+        blocked.ReportEvidence.ShouldBe(AgentTaskReportEvidence.UnmarkedWaiting);
+    }
+
+    [Test]
+    public async Task unmarked_waiting_minutes_zero_never_blocks()
+    {
+        var (harness, _) = CreateHarness(settings: new DelegationSettings
+        {
+            ReportSweepRehandSeconds = 0,
+            UnmarkedWaitingMinutes = 0,
+        });
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 8);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedUnmarkedCompleteTurnAsync(
+            sessionId, task.Id, "Waiting on approval.", storedMinutesAgo: 10);
+        await MarkNudgedWaitingAsync(task.Id, DateTime.UtcNow.AddMinutes(-10), sequence: 3);
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+        (await ReadTaskAsync(task.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
+        (await ReadTaskAsync(task.Id)).ReportEvidence.ShouldBe(AgentTaskReportEvidence.Legacy);
+    }
+
+    [Test]
+    public async Task a_mid_turn_session_is_not_blocked_as_unmarked_waiting()
+    {
+        var (harness, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 8);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedUnmarkedCompleteTurnAsync(
+            sessionId, task.Id, "I'll keep going.", storedMinutesAgo: 10);
+        await MarkNudgedWaitingAsync(task.Id, DateTime.UtcNow.AddMinutes(-10), sequence: 3);
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.ToolCall, null, DateTime.UtcNow.AddMinutes(-1),
+            toolName: "Read");
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+        (await ReadTaskAsync(task.Id)).Status.ShouldBe(
+            AgentTaskStatus.Dispatched, "IsWorkingAsync true is never waiting");
+    }
+
+    [Test]
+    public async Task a_later_unmarked_boundary_still_settles_unmarked_after_nudge_not_this_arm()
+    {
+        var (harness, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 5);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedSplitTurnTailAsync(sessionId, task.Id, storedMinutesAgo: 3);
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+        var sentAt = DateTime.UtcNow.AddMinutes(-10);
+        await MarkNudgeDeliveredAsync(sessionId, sentAt);
+        await using (var db = CreateContext())
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            row.ReportNudgedAt = sentAt;
+            await db.SaveChangesAsync();
+        }
+
+        const string reply = "Here is the report without a closing line.";
+        await SeedPostNudgeTurnAsync(sessionId, reply, sentAt.AddMinutes(1), closingVerdict: false);
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+        (await ReadTaskAsync(task.Id)).Status.ShouldBe(
+            AgentTaskStatus.Dispatched,
+            "S1 must not steal a later unmarked boundary from CARD-0248 settle-anyway");
+
+        await CreateReplyService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        var settled = await ReadTaskAsync(task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.UnmarkedAfterNudge);
+        settled.Result.ShouldBe(reply);
+    }
+
+    [Test]
+    public async Task a_marked_token_before_the_clock_takes_the_marked_path_not_unmarked_waiting()
+    {
+        var (harness, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 8);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedMarkedReportTurnAsync(sessionId, task.Id, storedMinutesAgo: 6);
+        await MarkNudgedWaitingAsync(task.Id, DateTime.UtcNow.AddMinutes(-6), sequence: 3);
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+        var settled = await ReadTaskAsync(task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
+    }
+
+    [Test]
+    public async Task a_check_role_is_never_blocked_as_unmarked_waiting()
+    {
+        var (harness, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 8);
+        await using (var db = CreateContext())
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            row.Role = AgentTaskRole.Check;
+            await db.SaveChangesAsync();
+        }
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedUnmarkedCompleteTurnAsync(
+            sessionId, task.Id, "LOOKS FINE — last tool 2m ago.", storedMinutesAgo: 10);
+        await MarkNudgedWaitingAsync(task.Id, DateTime.UtcNow.AddMinutes(-10), sequence: 3);
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+        var stored = await ReadTaskAsync(task.Id);
+        stored.Status.ShouldNotBe(AgentTaskStatus.Blocked);
+        stored.ReportEvidence.ShouldNotBe(AgentTaskReportEvidence.UnmarkedWaiting);
+    }
+
+    [Test]
+    public async Task herdr_done_chrome_does_not_settle_or_block_before_the_waiting_clock()
+    {
+        // CARD-0294 S2: Herdr agent_status=done is post-turn chrome, never a task terminal.
+        // This harness does not register HerdrStatusCorroborationService; the clock is the gate.
+        var (harness, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 8);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedUnmarkedCompleteTurnAsync(
+            sessionId, task.Id,
+            "Please approve this design and I'll begin the recorded TDD cycles.",
+            storedMinutesAgo: 3);
+        await MarkNudgedWaitingAsync(task.Id, DateTime.UtcNow.AddMinutes(-3), sequence: 3);
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+        var stored = await ReadTaskAsync(task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        stored.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Legacy);
+    }
+
     [Test]
     public async Task a_cancelled_end_is_skipped_by_the_deferred_report_sweep()
     {
@@ -1700,7 +1902,7 @@ public class AgentTaskDeliveryWatchdogTests
     }
 
     private static async Task SeedEntryAsync(
-        Guid sessionId, string kind, string? text, DateTime? timestamp)
+        Guid sessionId, string kind, string? text, DateTime? timestamp, string? toolName = null)
     {
         await using var db = CreateContext();
         var seq = await db.TranscriptEntries
@@ -1716,10 +1918,131 @@ public class AgentTaskDeliveryWatchdogTests
             Uuid = $"delivery-{Guid.NewGuid():N}",
             Role = kind == TranscriptKinds.UserPrompt ? "user" : "assistant",
             Text = text,
+            ToolName = toolName,
             Timestamp = timestamp,
             CreatedAt = at,
             StopReason = kind == TranscriptKinds.TurnEnd ? "end_turn" : null,
         });
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedUnmarkedCompleteTurnAsync(
+        Guid sessionId, Guid taskId, string assistantText, int storedMinutesAgo)
+    {
+        var at = DateTime.UtcNow.AddMinutes(-storedMinutesAgo);
+        var apiCallId = $"msg_{Guid.NewGuid():N}";
+        await using var db = CreateContext();
+        db.TranscriptEntries.AddRange(
+            new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = sessionId,
+                Sequence = 1,
+                Kind = TranscriptKinds.UserPrompt,
+                Uuid = $"unmarked-{Guid.NewGuid():N}",
+                Role = "user",
+                Text = DelegationReportFormatter.TaskMarker(taskId) + "\n\nDo the thing.",
+                Timestamp = at,
+                CreatedAt = at,
+            },
+            new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = sessionId,
+                Sequence = 2,
+                Kind = TranscriptKinds.AssistantText,
+                Uuid = $"unmarked-{Guid.NewGuid():N}",
+                Role = "assistant",
+                Text = assistantText,
+                ApiCallId = apiCallId,
+                Timestamp = at,
+                CreatedAt = at,
+            },
+            new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = sessionId,
+                Sequence = 3,
+                Kind = TranscriptKinds.TurnEnd,
+                Uuid = $"unmarked-{Guid.NewGuid():N}",
+                Role = "assistant",
+                StopReason = TranscriptKinds.StopReasons.EndTurn,
+                ApiCallId = apiCallId,
+                Timestamp = at,
+                CreatedAt = at,
+            });
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task MarkNudgedWaitingAsync(
+        Guid taskId, DateTime nudgedAt, long sequence, Guid? nudgeMessageId = null)
+    {
+        await using var db = CreateContext();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+        task.ReportNudgedAt = nudgedAt;
+        task.ReportNudgedSequence = sequence;
+        if (nudgeMessageId is Guid id)
+            task.ReportNudgeMessageId = id;
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task<Guid> SeedPendingNudgeAsync(Guid sessionId, Guid taskId)
+    {
+        var id = Guid.NewGuid();
+        await using var db = CreateContext();
+        db.SessionQueuedMessages.Add(new SessionQueuedMessage
+        {
+            Id = id,
+            AgentSessionId = sessionId,
+            Body = DelegationReportFormatter.TaskMarker(taskId)
+                + " Your turn ended without the closing report line.",
+            Status = QueuedMessageStatus.Pending,
+            Sequence = 1,
+            Origin = QueuedMessageOrigin.Delegation,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+        return id;
+    }
+
+    private static async Task<Guid> SeedRunningSessionAsync()
+    {
+        var sessionId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        await using var db = CreateContext();
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = sessionId,
+            DefinitionName = "fake",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Running,
+            Cwd = Path.GetTempPath(),
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = now,
+            StartedAt = now,
+            LastSeenAt = now,
+        });
+        await db.SaveChangesAsync();
+        return sessionId;
+    }
+
+    private static async Task AttachParentAsync(Guid taskId, Guid parentSessionId)
+    {
+        await using var db = CreateContext();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+        task.ParentSessionId = parentSessionId;
+        task.ReplyTo = AgentTaskReplyTo.Session;
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task MarkWorktreeAsync(Guid taskId, string path)
+    {
+        await using var db = CreateContext();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+        task.Workspace = WorkspaceMode.Worktree;
+        task.WorktreePath = path;
+        task.WorktreeBranch = "feat/card-0294";
         await db.SaveChangesAsync();
     }
 

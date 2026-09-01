@@ -195,6 +195,14 @@ public enum AgentTaskReportEvidence
 
     /// <summary><see cref="AgentTaskRole.Check"/> — the nudge is skipped; the check interpreter has its own format.</summary>
     Exempt = 5,
+
+    /// <summary>
+    /// No closing line; the one nudge was issued; the session stayed idle on that same
+    /// boundary past <c>UnmarkedWaitingMinutes</c> (CARD-0294). Distinct from
+    /// <see cref="QuestionHeuristic"/> (trailing <c>?</c>) and <see cref="UnmarkedAfterNudge"/>
+    /// (a later unmarked end settled Succeeded).
+    /// </summary>
+    UnmarkedWaiting = 6,
 }
 
 /// <summary>

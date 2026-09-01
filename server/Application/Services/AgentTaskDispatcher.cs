@@ -1410,7 +1410,14 @@ public sealed class AgentTaskDispatcher
         var openTasks = await _db.AgentTasks.AsNoTracking()
             .Where(t => (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
                 && t.AgentSessionId != null)
-            .Select(t => new { t.Id, SessionId = t.AgentSessionId!.Value })
+            .Select(t => new
+            {
+                t.Id,
+                SessionId = t.AgentSessionId!.Value,
+                t.Role,
+                t.ReportNudgedAt,
+                t.ReportNudgedSequence,
+            })
             .ToListAsync(ct);
         var sessions = openTasks.Select(t => t.SessionId).Distinct().ToList();
         var tasksBySession = openTasks
@@ -1506,6 +1513,43 @@ public sealed class AgentTaskDispatcher
                     }
                     continue;
                 }
+            }
+
+            // (S1) CARD-0294: nudged, still idle on that same unmarked boundary past the
+            // waiting clock. Independent of the two grace hatches (tests zero those knobs).
+            // Do not call OnTurnEndAsync — same-boundary would no-op, a later boundary
+            // would settle-anyway Succeeded.
+            if (_settings.UnmarkedWaitingMinutes > 0
+                && tasksBySession.TryGetValue(sessionId, out var waitingTasks))
+            {
+                var blockedWaiting = false;
+                foreach (var candidate in waitingTasks)
+                {
+                    if (candidate.Role == AgentTaskRole.Check)
+                        continue;
+                    if (candidate.ReportNudgedAt is not DateTime nudgedAt)
+                        continue;
+                    if (now - nudgedAt < TimeSpan.FromMinutes(_settings.UnmarkedWaitingMinutes))
+                        continue;
+                    if (candidate.ReportNudgedSequence is not long nudgedSeq
+                        || end.Sequence != nudgedSeq)
+                        continue;
+                    if (await SessionMessageQueueService.IsWorkingAsync(_db, sessionId, ct))
+                        continue;
+
+                    _logger.LogWarning(
+                        "Task {ShortId}: unmarked idle past {Minutes}m after the closing-line nudge "
+                        + "at boundary {Sequence} — blocking as UnmarkedWaiting",
+                        DelegationReportFormatter.Short(candidate.Id),
+                        _settings.UnmarkedWaitingMinutes,
+                        end.Sequence);
+                    await _replies.BlockUnmarkedWaitingAsync(sessionId, ct);
+                    swept++;
+                    blockedWaiting = true;
+                    break;
+                }
+                if (blockedWaiting)
+                    continue;
             }
 
             // (2) Background subagents that never notified. Silence on the WHOLE session is the

@@ -2099,6 +2099,131 @@ public sealed class AgentTaskReplyService
         }
         _logger.LogInformation(
             "Task {ShortId}: nudged once for the closing report line", shortId);
+
+        await EnqueueParentWaitingNoteAsync(services, task, shortId, ct);
+    }
+
+    /// <summary>
+    /// CARD-0294 S3: the parent hears the wait at the first child-nudge (T+0), not only when
+    /// the sweep Blocks five minutes later. Distinct ConversationKey so a wait-signal cannot
+    /// batch into a sibling's completion note.
+    /// </summary>
+    private async Task EnqueueParentWaitingNoteAsync(
+        IServiceProvider services, AgentTask task, string shortId, CancellationToken ct)
+    {
+        if (task.ReplyTo != AgentTaskReplyTo.Session || task.ParentSessionId is not Guid parentSession)
+            return;
+
+        var done = DelegationReportFormatter.ReportToken(task.Id, "done");
+        var body =
+            $"[task {shortId} waiting] Child ended a turn without the closing report line; asked once for "
+            + $"`{done}` (or `blocked` / `failed`). Session is idle. Reply after it Blocks, or Refine now.";
+        try
+        {
+            var queue = services.GetRequiredService<SessionMessageQueueService>();
+            await queue.EnqueueAsync(
+                parentSession, body, MessageSendMode.WhenIdle, ct,
+                QueuedMessageOrigin.Delegation, $"task-wait:{task.Id:N}",
+                task.Id);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex, "Could not deliver task {ShortId} waiting note to parent session {SessionId}",
+                shortId, parentSession);
+        }
+    }
+
+    /// <summary>
+    /// CARD-0294 S1: the one closing-line nudge was issued and the session stayed idle on that
+    /// same unmarked boundary past <see cref="DelegationSettings.UnmarkedWaitingMinutes"/>.
+    /// Blocks; does not Succeed. Does not go through <see cref="OnTurnEndAsync"/> — that
+    /// method's same-boundary gate would no-op or, on a later boundary, settle-anyway.
+    /// </summary>
+    public async Task BlockUnmarkedWaitingAsync(Guid sessionId, CancellationToken ct)
+    {
+        if (_settings.UnmarkedWaitingMinutes <= 0)
+            return;
+
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var services = scope.ServiceProvider;
+        var db = services.GetRequiredService<AppDbContext>();
+
+        var task = await db.AgentTasks.FirstOrDefaultAsync(
+            t => t.AgentSessionId == sessionId
+                && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working),
+            ct);
+        if (task is null || task.Role == AgentTaskRole.Check)
+            return;
+        if (task.ReportNudgedAt is not DateTime nudgedAt)
+            return;
+
+        var now = UtcNow();
+        if (now - nudgedAt < TimeSpan.FromMinutes(_settings.UnmarkedWaitingMinutes))
+            return;
+        if (await SessionMessageQueueService.IsWorkingAsync(db, sessionId, ct))
+            return;
+
+        var tokenTexts = await db.TranscriptEntries.AsNoTracking()
+            .Where(e => e.AgentSessionId == sessionId
+                && e.Kind == TranscriptKinds.AssistantText
+                && e.Text != null
+                && e.Text.Contains("[antiphon-report:"))
+            .Select(e => e.Text!)
+            .ToListAsync(ct);
+        if (tokenTexts.Any(text => DelegationReportFormatter.TryFindReportToken(task.Id, text, out _)))
+            return;
+
+        var turn = await ExtractMarkedTurnAsync(db, sessionId, task, ct);
+        if (turn.Interrupted is not null
+            || turn.ApiErrorStub is not null
+            || turn.DeferredForFinalMessage
+            || turn.UncorrelatedReport)
+            return;
+        if (turn.Report is null && turn.Boundary is null)
+            return;
+        if (task.ReportNudgedSequence is long nudgedSeq
+            && turn.Boundary is { } boundary
+            && boundary.Sequence != nudgedSeq)
+            return;
+
+        var body = turn.Report ?? string.Empty;
+        var shortId = DelegationReportFormatter.Short(task.Id);
+        task.Status = AgentTaskStatus.Blocked;
+        task.ReportEvidence = AgentTaskReportEvidence.UnmarkedWaiting;
+        task.Result = body;
+        task.CompletedAt = now;
+        task.ConcurrencyToken = Guid.NewGuid();
+        db.AgentTaskEvents.Add(NewEvent(
+            task.Id, AgentTaskEventType.Blocked,
+            "Turn ended without `[antiphon-report:…]`; asked once and the session stayed idle. Waiting on a human.",
+            now));
+        await db.SaveChangesAsync(ct);
+
+        if (task.ReportNudgeMessageId is Guid nudgeId)
+        {
+            try
+            {
+                var queue = services.GetRequiredService<SessionMessageQueueService>();
+                await queue.CancelAsync(sessionId, nudgeId, ct);
+            }
+            catch (Exception ex) when (ex is NotFoundException or ConflictException)
+            {
+                _logger.LogDebug(
+                    ex, "Task {ShortId}: closing-line nudge {MessageId} was already gone at Block",
+                    shortId, nudgeId);
+            }
+        }
+
+        var (gitHeader, _) = await TryDescribeGitAsync(services, db, task, body, now, ct);
+        await db.SaveChangesAsync(ct);
+
+        _logger.LogInformation(
+            "Task {ShortId} blocked as UnmarkedWaiting after {Minutes}m idle past the closing-line nudge",
+            shortId, _settings.UnmarkedWaitingMinutes);
+
+        await DeliverToParentAsync(task, body, ct, git: gitHeader);
+        await PublishAsync(task, ct);
     }
 
     private static string DescribeReported(
@@ -2127,7 +2252,8 @@ public sealed class AgentTaskReplyService
         AgentTaskReportEvidence.Marked => "marked",
         AgentTaskReportEvidence.UnmarkedAfterNudge
             or AgentTaskReportEvidence.QuestionHeuristic
-            or AgentTaskReportEvidence.FinalMessageMissing => "unmarked",
+            or AgentTaskReportEvidence.FinalMessageMissing
+            or AgentTaskReportEvidence.UnmarkedWaiting => "unmarked",
         AgentTaskReportEvidence.Exempt => "exempt",
         _ => null,
     };

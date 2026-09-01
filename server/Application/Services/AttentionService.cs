@@ -627,7 +627,54 @@ public sealed class AttentionService
                 }
             }
 
-            // 7. UncorrelatedReport — it reported, and the report could not be tied back to the task.
+            // 7. UnmarkedWaiting — nudged, idle, no report token (CARD-0294). After
+            // ReportUnsettled: a token for THIS task is the more explanatory row. No git
+            // gate. Mid-turn is not waiting.
+            if ((task.Status == AgentTaskStatus.Dispatched || task.Status == AgentTaskStatus.Working)
+                && task.ReportNudgedAt is DateTime waitingSince
+                && task.AgentSessionId is Guid waitingSession)
+            {
+                var hasToken = false;
+                if (reportTextsBySession.TryGetValue(waitingSession, out var waitingTexts))
+                {
+                    foreach (var text in waitingTexts)
+                    {
+                        if (!DelegationReportFormatter.TryFindReportToken(task.Id, text, out _))
+                            continue;
+                        hasToken = true;
+                        break;
+                    }
+                }
+
+                if (!hasToken
+                    && !await SessionMessageQueueService.IsWorkingAsync(_db, waitingSession, ct))
+                {
+                    var waitAge = now - waitingSince;
+                    var blockAfter = Math.Max(0, _delegation.UnmarkedWaitingMinutes);
+                    var blockHint = blockAfter > 0
+                        ? $"S1 will Block at {blockAfter}m idle if they stay that way."
+                        : "The Blocked sweep is disarmed (UnmarkedWaitingMinutes <= 0).";
+                    items.Add(new AttentionItemDto(
+                        AttentionKind.UnmarkedWaiting,
+                        AlertSeverity.Warning,
+                        task.Id,
+                        task.AgentSessionId,
+                        task.AgentId,
+                        null,
+                        task.Title,
+                        "Ended a turn with no closing line; asked once, still idle.",
+                        Evidence(
+                            $"Nudged {Duration(waitAge)} ago. {blockHint} "
+                            + "Do not read Herdr done as finished.",
+                            digest),
+                        waitingSince,
+                        cost,
+                        [AttentionAction.OpenDrawer, AttentionAction.Retry, AttentionAction.Cancel]));
+                    continue;
+                }
+            }
+
+            // 8. UncorrelatedReport — it reported, and the report could not be tied back to the task.
             var orphanReport = uncorrelated
                 .Where(i => UncorrelatedReportEvidence.IsEvidenceFor(task, i.SessionId, i.CreatedAt))
                 .OrderByDescending(i => i.CreatedAt)
@@ -651,7 +698,7 @@ public sealed class AttentionService
                 continue;
             }
 
-            // 8. PastExpectedIdle. THE exclusion lives here: a session that is mid-turn is not
+            // 9. PastExpectedIdle. THE exclusion lives here: a session that is mid-turn is not
             // listed, however far past the estimate it has run. The working verdict is the shared
             // one, and it is asked LAST — only for tasks that already crossed the clock — so the
             // query cost is bounded by the handful of rows that could qualify.
