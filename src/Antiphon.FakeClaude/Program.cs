@@ -119,6 +119,7 @@ internal static class Program
 
     private static int Main(string[] args)
     {
+        // Unknown flags (including CARD-0306's --settings <path>) are ignored; they are not a prompt.
         var banner = GetArg(args, "--banner") ?? "Fake Claude ready";
         var debugInput = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_DEBUG_INPUT") == "1";
         var burstGapMs = int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_FAKE_BURST_MS"), out var g) ? g : 12;

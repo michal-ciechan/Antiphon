@@ -88,7 +88,12 @@ A session's command line is built in layers, and no single file holds the whole 
    only for kinds whose `SessionResume` contract is `Supported`. Any pre-existing
    `--session-id` / `-s` / `--resume` / `-r` / `--continue` / `-c` in the profile args is stripped
    first, then exactly one of `--session-id <guid>` / `--resume <guid>` / `--continue` is added.
-5. **Environment** — merged and resolved separately; see
+5. **Claude remote-control overlay** — `ClaudeRemoteControlLaunchArgs.ApplyOff` appends
+   `--settings <file>` with `remoteControlAtStartup: false` for `AgentKind.ClaudeCode` only,
+   at `AgentSessionService.BuildRuntimeLaunchSpecAsync` (the one funnel that actually starts
+   the process). Antiphon then types `/remote-control` only when `remoteControlName` is set.
+   Operator-launched `claude` in a terminal is untouched.
+6. **Environment** — merged and resolved separately; see
    [agent-credentials.md](agent-credentials.md).
 
 The tracked definitions in `server/appsettings.json` today:
@@ -378,7 +383,7 @@ See [agent-credentials.md](agent-credentials.md).
 
 ### Preserved Gotcha #55
 
-- **A closed terminal orphans the claude.ai Remote Control session instead of ending it** (CARD-0145, found 2026-08-22): each manual `claude --dangerously-skip-permissions` launch in this repo creates a fresh claude.ai/code session tethered to this machine; closing the terminal instead of `/exit`-ing leaves that session showing "Remote Control disconnected" in the sidebar forever, and several of these pile up under the same auto-title ("Antiphon-Orchestrator") looking like duplicate live orchestrators when only one is ever actually `Running`. Before starting a fresh orchestrator session, check https://claude.ai/code for one already `Running` under this project's title and resume it instead of launching a duplicate; prefer `/exit` over just closing the window. See CARD-0144 for the (still-open) automated cleanup of the disconnected backlog this leaves behind.
+- **Orphaned claude.ai rows are Claude Code auto-connect, not Antiphon typing `/remote-control`** (CARD-0145, rewritten CARD-0306): a plain `claude --dangerously-skip-permissions` launch creates a claude.ai session because the CLI's unset `remoteControlAtStartup` follows the org default (`true` here). Antiphon's pool delegates used to inherit that default even with `remoteControlName: null`. Antiphon now forces `remoteControlAtStartup: false` on its own Claude launches via `--settings` (CARD-0306); **manual** operator launches are untouched, so the operator advice still holds — `/exit` rather than closing the window, and do not duplicate a Running orchestrator on claude.ai. CARD-0144 remains the cleanup owner for disconnected backlog.
 
 ### Preserved Gotcha #58
 
@@ -403,6 +408,11 @@ See [agent-credentials.md](agent-credentials.md).
 ### Preserved Gotcha #68
 
 - **Headed and stub-proxy Codex tests must set `CODEX_HOME`; a launch that inherits the user's `~/.codex` writes into the user's Codex Desktop thread list.**
+
+### Gotcha #76
+
+- **Antiphon's `remoteControlEnabled` / `/remote-control` preamble do not control whether claude.ai lists a session** (CARD-0306): the CLI auto-connects unless `remoteControlAtStartup` is false. Antiphon forces that false on its own launches via `--settings <file>` at `BuildRuntimeLaunchSpecAsync`; a pool delegate with `remoteControlName: null` must not appear on claude.ai. `/remote-control` remains the opt-in for seats that set a name. Do not write `~/.claude/settings.json` and do not set `disableRemoteControl` (that refuses the opt-in). CARD-0292's menu Esc stays the backstop if a CLI upgrade ignores `--settings`.
+
 ### CARD-0144 — Remote Control cleanup follow-up
 
 CARD-0144 remains the separate owner for Remote Control cleanup. CARD-0254 files no duplicate:

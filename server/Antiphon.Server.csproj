@@ -26,6 +26,14 @@
     <!-- CARD-0032: preset prompt templates. Not attachable bundles — InstructionBundles skips the
          Presets. prefix so they cannot ride an agent's composition by accident. -->
     <EmbeddedResource Include="Bundles\Presets\*.md" />
+    <!-- CARD-0306: per-launch remoteControlAtStartup:false overlay. Path, never inline JSON.
+         Update, not Include: the SDK already globs this as Content. TargetPath flattens it
+         next to the assembly so ApplyOff can resolve AppContext.BaseDirectory + filename. -->
+    <Content Update="Runtime\claude-remote-control-off.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <TargetPath>claude-remote-control-off.json</TargetPath>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>
