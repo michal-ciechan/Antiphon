@@ -82,7 +82,19 @@ public sealed record CreateAgentTaskRequest(
     /// <c>CARD-nnnn</c> in the title. An EXPLICIT value that resolves to no card is a 422 — a
     /// binding the caller asked for and silently did not get is worse than none.
     /// </summary>
-    string? Card = null);
+    string? Card = null,
+    /// <summary>
+    /// Run this task ON an existing STANDING agent (CARD-0291), referenced the way a caller types
+    /// it: a guid, an exact slug, or a case-insensitive exact name. Neither name nor slug is unique
+    /// in the schema, so a reference that binds nothing or more than one agent is a 422 naming the
+    /// candidates — an explicit value that silently binds the wrong thing is worse than a refusal
+    /// (same argument as <see cref="Card"/>). A pool delegate is refused too (that population is
+    /// <see cref="FollowUpOnTask"/>'s job), as is a disagreeing <see cref="AgentId"/> or combining
+    /// with <see cref="FollowUpOnTask"/>. The resolved id feeds the CARD-0140 pin path unchanged:
+    /// kind is inherited, the task queues while the agent is busy, and the caller gets the normal
+    /// completion note when it settles.
+    /// </summary>
+    string? Agent = null);
 
 public sealed record AgentTaskSummaryDto(
     Guid Id,

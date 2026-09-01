@@ -71,6 +71,7 @@ A sub-orchestrator defaults to `Plan` and never runs below opus.
 |---|---|
 | `-Orchestrator` | make it a sub-orchestrator instead of a worker |
 | `-OnAgent <taskId>` | follow-up on the SAME agent that ran that task — it keeps its context. Use the short id from its report |
+| `-Agent <name>` | run this task on an existing standing agent by name, slug, or guid. The task queues while that agent is busy; you get the normal `[task … done]` note when it settles. Ambiguous or unknown references are refused 422, and so are pool delegates (that's `-OnAgent`'s job). Combined with `-OnAgent` is refused |
 | `-Level <tier>` | override the role's tier — `Frontier`/`High`/`Medium`/`Low`. Say why in `-Goal` |
 | `-Dir <path>` | run somewhere else — another repo, another checkout. Defaults to yours |
 | `-Worktree` | isolate a worker in a fresh git worktree, merged back when it finishes |
@@ -163,6 +164,32 @@ pwsh -NoProfile -File scripts/delegate.ps1 -OnAgent 7f3a2b91 -Goal "now add the 
 Unrelated new work needs nothing special — the pool handles it: an idle warm agent in the same
 directory is reused automatically (compacted first, focused on the new task), and a fresh one is
 spawned only when none fits.
+
+## Named standing children
+
+A named agent is an **identity**, not a unit of work. Create it once (`POST /api/agents`), then
+dispatch every piece of work to it as a task:
+
+```powershell
+pwsh -NoProfile -File scripts/delegate.ps1 -Agent gym-stat-dupmachine-plan -Role Plan -Card CARD-0029 -Goal "design the duplicate-machine detection pass"
+```
+
+Why the task, and never a raw session message: work handed to a child over
+`POST /api/sessions/{id}/messages` **reports to nobody** — no `[task … done]` note, no check ramp,
+no card movement (CARD-0291). The pinned task queues while the agent is busy, delivers into its
+live session, and settles with the normal report; message a child's session directly only to steer
+work you already dispatched.
+
+Two pinned same-directory tasks are Shared writers and therefore serialised — the documented
+collision default, not a bug. For a standing child whose value is its cwd and context, sequential
+Shared dispatch is usually what you want; buy real parallelism explicitly:
+
+```powershell
+pwsh -NoProfile -File scripts/delegate.ps1 -Agent gym-stat-setupmockups -Role Code -Worktree -Goal "build the setup mockups"
+```
+
+noting that a `-Worktree` task pinned to a standing agent runs in the worktree, not the agent's own
+directory.
 
 ## Check-ins while it runs
 

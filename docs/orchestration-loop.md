@@ -154,8 +154,11 @@ channel-bound agent, the check interpreter, or a human-facing named worker that 
 card. Pass an existing `BoardId` (the project's real board). A unique `workingDirectory` that is not
 a real checkout is how 21 extra `gym-stat-*` projects appeared.
 
-Work you need to hear finish is a task; pinning a task onto an existing named standing agent is
-CARD-0291 and is not available from `delegate.ps1` yet. Until then, use the pool / `-OnAgent`.
+Work you need to hear finish is a task; creating an agent gives you an identity, not a report.
+Pin a task onto an existing named standing agent with `delegate.ps1 -Agent <name|slug|guid>`
+(CARD-0291): it queues while that agent is busy, delivers into the live session, and settles with
+the normal `[task … done]` note. A raw session message to a child is for steering work you already
+dispatched, never for handing over work — no completion note will ever arrive for it.
 
 ---
 

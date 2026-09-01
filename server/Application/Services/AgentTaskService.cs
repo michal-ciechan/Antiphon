@@ -136,6 +136,34 @@ public sealed class AgentTaskService
         string? followUpMessage = null;
         var liveFollowUp = false;
 
+        // CARD-0291: a standing agent named by -Agent resolves HERE, before the CARD-0140 pin
+        // block, so that path receives a plain AgentId and nothing downstream changes. Refusals
+        // over silent reinterpretation throughout: this field exists because work handed to a
+        // named child over raw session messages reports to nobody.
+        if (!string.IsNullOrWhiteSpace(request.Agent))
+        {
+            if (!string.IsNullOrWhiteSpace(request.FollowUpOnTask))
+            {
+                throw new ValidationException(
+                    nameof(request.Agent),
+                    "Agent and FollowUpOnTask are two different \"run it on that agent\" idioms — "
+                    + "a follow-up already pins to the agent that ran the prior task. Use one or "
+                    + "the other.");
+            }
+
+            var resolvedAgent = await ResolveStandingAgentAsync(request.Agent, ct);
+            if (request.AgentId is Guid explicitPinId && explicitPinId != resolvedAgent.Id)
+            {
+                throw new ValidationException(
+                    nameof(request.Agent),
+                    $"Agent '{request.Agent}' resolves to '{resolvedAgent.Name}' "
+                    + $"({resolvedAgent.Id}), but agentId names {explicitPinId}. Drop one of them "
+                    + "or make them agree.");
+            }
+
+            request = request with { AgentId = resolvedAgent.Id };
+        }
+
         // Follow-up: run on the SAME agent that ran an earlier task, keeping its context. The
         // task inherits that agent's directory (that is where the context lives) and its TIER —
         // the model is already running; a role policy cannot change it mid-session.
@@ -1109,6 +1137,64 @@ public sealed class AgentTaskService
             _ => throw new ConflictException(
                 $"Short id '{prefix}' matches more than one task — use the full id."),
         };
+    }
+
+    /// <summary>
+    /// CARD-0291: resolve a caller-typed standing-agent reference — a guid, an exact slug, or a
+    /// case-insensitive exact name, tried in that order. Neither Name nor Slug carries a unique
+    /// index (<c>AppDbContext</c>), so an ambiguous reference is refused naming the candidates and
+    /// their guids rather than silently picking one. Pool delegates are refused as a class: the
+    /// dispatcher-spawned ephemeral population is all <see cref="Agent.IsPoolDelegate"/>, and
+    /// "same delegate again" is <see cref="CreateAgentTaskRequest.FollowUpOnTask"/>'s job.
+    /// </summary>
+    private async Task<Agent> ResolveStandingAgentAsync(string reference, CancellationToken ct)
+    {
+        var value = reference.Trim();
+        List<Agent> matches;
+        if (Guid.TryParse(value, out var id))
+        {
+            matches = await _db.Agents.AsNoTracking().Where(a => a.Id == id).ToListAsync(ct);
+        }
+        else
+        {
+            matches = await _db.Agents.AsNoTracking().Where(a => a.Slug == value).ToListAsync(ct);
+            if (matches.Count == 0)
+            {
+                var lowered = value.ToLowerInvariant();
+                matches = await _db.Agents.AsNoTracking()
+                    .Where(a => a.Name.ToLower() == lowered)
+                    .ToListAsync(ct);
+            }
+        }
+
+        if (matches.Count == 0)
+        {
+            throw new ValidationException(
+                nameof(CreateAgentTaskRequest.Agent),
+                $"No agent matches '{value}' (tried guid, exact slug, then case-insensitive "
+                + "name). Check the agent's name, or pass its guid.");
+        }
+
+        if (matches.Count > 1)
+        {
+            var candidates = string.Join(
+                ", ", matches.Select(a => $"'{a.Name}' (slug '{a.Slug}', {a.Id})"));
+            throw new ValidationException(
+                nameof(CreateAgentTaskRequest.Agent),
+                $"'{value}' is ambiguous — it matches {matches.Count} agents: {candidates}. "
+                + "Pass the guid of the one you mean.");
+        }
+
+        var agent = matches[0];
+        if (agent.IsPoolDelegate)
+        {
+            throw new ValidationException(
+                nameof(CreateAgentTaskRequest.Agent),
+                $"'{agent.Name}' is a pool delegate, not a standing agent. For a follow-up on "
+                + "the delegate that ran an earlier task, use followUpOnTask (-OnAgent <taskId>).");
+        }
+
+        return agent;
     }
 
     /// <summary>

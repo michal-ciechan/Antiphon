@@ -57,6 +57,12 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [string]$OnAgent,
 
+    # Run this task on an existing STANDING agent by name, slug, or guid (CARD-0291). The task
+    # queues while that agent is busy; you get the normal [task ... done] note when it settles.
+    # Ambiguous or unknown references are refused, as are pool delegates (that is -OnAgent's job).
+    [Parameter(ParameterSetName = 'Create')]
+    [string]$Agent,
+
     # Isolate in a fresh git worktree, merged back when it finishes. Workers default to running
     # right in the directory; a sub-orchestrator gets a worktree by default already.
     [Parameter(ParameterSetName = 'Create')]
@@ -244,6 +250,12 @@ switch ($PSCmdlet.ParameterSetName) {
             Write-Error 'A -Goal is required. Write it as an outcome, not a procedure.'
             exit 1
         }
+        # Same wording as the server's 422 - refused locally so the mistake costs no round trip.
+        if ($Agent -and $OnAgent) {
+            Write-Error ('Agent and FollowUpOnTask are two different "run it on that agent" idioms - ' `
+                + 'a follow-up already pins to the agent that ran the prior task. Use -Agent or -OnAgent, not both.')
+            exit 1
+        }
 
         $body = @{
             goal = $Goal
@@ -257,6 +269,7 @@ switch ($PSCmdlet.ParameterSetName) {
         elseif ($Shared) { $body['workspace'] = 'Shared' }
         if ($AllowDirectEdits) { $body['denyDirectEdits'] = $false }
         if ($OnAgent) { $body['followUpOnTask'] = $OnAgent }
+        if ($Agent) { $body['agent'] = $Agent }
         if ($Title) { $body['title'] = $Title }
         if ($Level) { $body['modelLevel'] = $Level }
         # Sent only when chosen - an omitted -Kind leaves the decision to the role policy, which

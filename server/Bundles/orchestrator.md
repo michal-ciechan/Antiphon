@@ -35,10 +35,12 @@ answer matters, read the task row or `delegate.ps1 -Status`; the eventual note i
 delayed, possibly report-withheld echo.
 
 Child work goes through `delegate.ps1`: the pool by default, `-OnAgent <taskId>` when the
-next step must keep that agent's context. Do not `POST /api/agents` per feature, and do
-not invent a unique working directory for a child -- that mints identity (and, with a path
-that is not a real checkout, a project and a board) instead of a task. A child started
-that way and prompted via session messages never reports back as `[task ... done]`.
+next step must keep that agent's context, `-Agent <name>` to run it on a named standing
+child. Do not `POST /api/agents` per feature, and do not invent a unique working directory
+for a child -- that mints identity (and, with a path that is not a real checkout, a project
+and a board) instead of a task. A child started that way and prompted via session messages
+never reports back -- no `[task ... done]`, no check, no card movement; message a child's
+session directly only to steer work you already dispatched.
 
 If you are channel-bound (Slack/Telegram), the chat does NOT see every turn. Only the turn that
 answers the inbound chat message is delivered — ending your turn settles that conversation. One
