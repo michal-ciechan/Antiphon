@@ -128,6 +128,26 @@ public class BlockedTaskNotifierTests
         }
     }
 
+    [Test]
+    public async Task A_check_role_blocked_task_is_not_pinged()
+    {
+        await using var h = await Harness.CreateAsync();
+        try
+        {
+            await h.SeedChannelAsync();
+            var task = await h.SeedBlockedAsync("LOOKS STUCK — session idle 28m.", AgentTaskRole.Check);
+
+            await h.Notifier.SweepAsync(CancellationToken.None);
+
+            PingsFor(h, task).ShouldBeEmpty();
+            (await h.NotifiedAsync(task)).ShouldBeEmpty();
+        }
+        finally
+        {
+            await h.CleanupAsync();
+        }
+    }
+
     private static IReadOnlyList<ChannelReply> PingsFor(Harness h, Guid taskId)
     {
         var shortId = taskId.ToString("N")[..8];
@@ -199,7 +219,7 @@ public class BlockedTaskNotifierTests
             return channel;
         }
 
-        public async Task<Guid> SeedBlockedAsync(string question)
+        public async Task<Guid> SeedBlockedAsync(string question, AgentTaskRole role = AgentTaskRole.Code)
         {
             var now = Clock.GetUtcNow().UtcDateTime;
             var id = Guid.NewGuid();
@@ -210,7 +230,7 @@ public class BlockedTaskNotifierTests
                 Title = $"blocked-{id:N}"[..20],
                 Goal = "needs an answer",
                 Kind = AgentTaskKind.Worker,
-                Role = AgentTaskRole.Code,
+                Role = role,
                 ModelLevel = AgentModelLevel.High,
                 Workspace = WorkspaceMode.Shared,
                 WorkingDirectory = Path.GetTempPath(),

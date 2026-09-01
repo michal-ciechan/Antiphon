@@ -147,7 +147,7 @@ public sealed class AgentTaskDispatcher
     internal bool TranscriptPullArmed => _runtime is not null;
 
     /// <param name="SweepFailures">
-    /// How many of the tick's ten clocks threw. Non-zero means the tick ran DEGRADED — the failed
+    /// How many of the tick's clocks threw. Non-zero means the tick ran DEGRADED — the failed
     /// sweep did nothing this time round — and each failure is logged at Error by
     /// <see cref="RunSweepAsync"/> naming which one it was.
     /// </param>
@@ -160,13 +160,20 @@ public sealed class AgentTaskDispatcher
         if (!_settings.Enabled)
             return new TickResult(0, 0, 0, 0, 0);
 
-        // The ten clocks below are INDEPENDENT and each runs isolated (see RunSweepAsync). They
+        // The clocks below are INDEPENDENT and each runs isolated (see RunSweepAsync). They
         // used to be five bare awaits, which quietly made every one of them a single point of
         // failure for all the others AND for dispatching: one poisoned session in the settlement
         // sweep would abort the tick before the check sweep and the dispatch loop had run, on every
         // tick, and the only trace was one "Delegation dispatch tick failed" line that named
         // neither which clock had died nor what had stopped as a result.
         var sweepFailures = 0;
+
+        // CARD-0302: Check-role Blocked rows with a reading are stale evidence, not questions.
+        // Remap them before anything else so the attention feed and notifier see Succeeded.
+        sweepFailures += await RunSweepAsync(
+            "remap blocked check interpretations",
+            ct2 => AgentTaskCheckService.RemapBlockedInterpretationsAsync(_db, _timeProvider, ct2),
+            ct);
 
         // Before dispatching new work, deal with running work that has gone quiet — IF any role
         // still carries both EscalateTo and EscalateAfterMinutes. Shipped defaults disarm the
