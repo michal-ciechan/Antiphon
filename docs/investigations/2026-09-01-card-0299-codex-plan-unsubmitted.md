@@ -1,5 +1,7 @@
 # CARD-0299 — Codex Plan brief typed, Enter never submitted, Failed at 10 minutes with 0 tokens
 
+**Status:** plan landed — `docs/superpowers/plans/2026-09-01-card-0299-codex-plan-unsubmitted-fix-plan.md`. Do not re-open the mechanism.
+
 **Date:** 2026-09-01. **Card:** CARD-0299. **Incident task:** `4ea068fa` (CARD-0288 Plan, Codex Frontier).
 **Session:** `41959e81-9fdf-4c00-a31b-fc1facc8c4ea`. **Status:** mechanism pinned from live rows + logs;
 not re-dispatched (four later Codex Plan dispatches the same day succeeded).
