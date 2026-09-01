@@ -12,13 +12,18 @@
         logs/apphost.launch.lock   - written by dev-aspire.ps1 while it launches
         logs/apphost.restart.lock  - written by restart-apphost.ps1 while it
                                      tears the stack down and waits for health
-    A lock is IGNORED (stale) when the recorded pid is gone or the stamp is older
-    than LockMaxAgeMinutes (15, the watchdog's number - there is one, not two).
+    A lock is IGNORED (stale) when the stamp is older than LockMaxAgeMinutes
+    (15, one number shared with the watchdog cooldown). A dead holder with a
+    stamp still inside that window is in-flight: the writer exited and the
+    child it spawned may still be launching (CARD-0310 / gotcha 12).
 .NOTES
     Keep this file ASCII-only: it may run under Windows PowerShell 5.1, which
     reads no-BOM .ps1 as CP1252 and mangles non-ASCII characters into parse
     errors.
 #>
+
+# CARD-0310: one number for lock freshness, leftover-lock keep, and watchdog cooldown.
+$AppHostLockMaxAgeMinutes = 15
 
 function ConvertTo-UtcStamp {
     <#
@@ -265,14 +270,15 @@ function Get-AppHostLock {
 
 function Test-AppHostLockActive {
     <#
-      Returns $null when the lock may be ignored (absent, holder dead, or older
-      than MaxAgeMinutes), otherwise a human-readable reason naming the holder.
-      The reason string is the operator-facing message on a refusal, so it has to
-      carry the pid and the age.
+      Returns $null when the lock may be ignored (absent, or stamp older than
+      MaxAgeMinutes). A dead holder with a fresh stamp is still in-flight
+      (CARD-0310): restart-apphost.ps1 can exit TimeoutSec while the spawned
+      dev-aspire.ps1 is still coming up. The reason string is the operator-facing
+      message on a refusal, so it has to carry the pid and the age.
     #>
     param(
         [Parameter(Mandatory = $true)][string]$Path,
-        [int]$MaxAgeMinutes = 15,
+        [int]$MaxAgeMinutes = $AppHostLockMaxAgeMinutes,
         [string]$Label,
         [datetime]$NowUtc = [datetime]::UtcNow
     )
@@ -281,15 +287,16 @@ function Test-AppHostLockActive {
     $lock = Get-AppHostLock -Path $Path -NowUtc $NowUtc
     if (-not $lock.Exists) { return $null }
 
-    if ($lock.ProcessId -and -not $lock.HolderAlive) {
-        return $null   # holder is gone; the file is litter
-    }
     if ($null -ne $lock.AgeMinutes -and $lock.AgeMinutes -ge $MaxAgeMinutes) {
         return $null   # older than any real launch/restart; treat as abandoned
     }
 
     $stamp = Format-AppHostLockStamp $lock
     $age = Format-AppHostLockAge $lock
+    if ($lock.ProcessId -and -not $lock.HolderAlive) {
+        return ("{0} stamp {1} is {2}; holder PID {3} exited; child may still be launching ({4})" -f `
+            $Label, $stamp, $age, $lock.ProcessId, $Path)
+    }
     if ($lock.ProcessId) {
         return ("{0} held by PID {1} (stamp {2}, {3}; {4})" -f $Label, $lock.ProcessId, $stamp, $age, $Path)
     }
@@ -306,7 +313,7 @@ function New-AppHostLock {
     #>
     param(
         [Parameter(Mandatory = $true)][string]$Path,
-        [int]$MaxAgeMinutes = 15,
+        [int]$MaxAgeMinutes = $AppHostLockMaxAgeMinutes,
         [string]$Label
     )
     if (-not $Label) { $Label = Split-Path -Leaf $Path }
@@ -362,10 +369,21 @@ function New-AppHostLock {
 }
 
 function Remove-AppHostLock {
-    param($Lock)
+    <#
+      Closes the exclusive stream. -KeepFile leaves the stamp on disk so a
+      subsequent Test-AppHostLockActive still sees an in-flight restart after
+      this process has exited (TimeoutSec / DCP timeout; CARD-0310).
+    #>
+    param(
+        $Lock,
+        [switch]$KeepFile
+    )
     if (-not $Lock -or -not $Lock.Acquired) { return }
     if ($Lock.Stream) { try { $Lock.Stream.Dispose() } catch { } }
-    try { Remove-Item -LiteralPath $Lock.Path -Force -ErrorAction SilentlyContinue } catch { }
+    $Lock.Stream = $null
+    if (-not $KeepFile) {
+        try { Remove-Item -LiteralPath $Lock.Path -Force -ErrorAction SilentlyContinue } catch { }
+    }
 }
 
 function Invoke-BoundedCommand {

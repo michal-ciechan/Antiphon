@@ -9,6 +9,10 @@
     off UTC. Default [datetime]::Parse of a Z-suffix stamp converts to local;
     subtracting that from UtcNow is the undercount this card exists to stop.
 
+    CARD-0310: a dead holder with a stamp younger than LockMaxAgeMinutes is still
+    in-flight (T8), a 20-min-old dead stamp is litter (T9), and New-AppHostLock
+    refuses a dead-but-fresh leftover rather than stealing it (T10).
+
     Never touches logs/apphost.*.lock. ASCII-only (pwsh 7 and Windows PowerShell 5.1).
 #>
 $ErrorActionPreference = 'Continue'
@@ -151,13 +155,67 @@ try {
         $lock75.ProcessId, $lock75.HolderAlive, $path75
     Assert-True ($fmt -match [regex]::Escape($iso75)) 'T7 stale log line includes raw stamp' $fmt
     Assert-True ($fmt -match '75\.0 min old') 'T7 stale log line includes computed age' $fmt
+
+    # --- CARD-0310: dead holder + fresh stamp is in-flight, not litter ---
+    $deadPid = 999999
+    if (Test-ProcessAlive $deadPid) {
+        $probe = Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList '/c exit' -PassThru -WindowStyle Hidden
+        $deadPid = $probe.Id
+        try { Wait-Process -Id $deadPid -Timeout 5 } catch { }
+        Start-Sleep -Milliseconds 200
+    }
+    Assert-True (-not (Test-ProcessAlive $deadPid)) 'T8/T9/T10 have a dead PID to stamp' ("pid=$deadPid still alive")
+
+    $isoDead5 = $nowUtc.AddMinutes(-5).ToString('o')
+    $pathDead5 = Write-LockFile -Dir $testDir -StampText $isoDead5 -ProcessId $deadPid
+    $heldDead5 = Test-AppHostLockActive -Path $pathDead5 -MaxAgeMinutes 15 -Label 'restart lock' -NowUtc $nowUtc
+    Assert-True ($null -ne $heldDead5) 'T8 5-min-old lock with dead PID is active (not litter)' 'held was null'
+    Assert-True ($heldDead5 -match 'exited') 'T8 dead-fresh reason says the holder exited' $heldDead5
+    Assert-True ($heldDead5 -match 'child may still be launching') 'T8 dead-fresh reason names the still-launching child' $heldDead5
+    Assert-True ($heldDead5 -match [regex]::Escape($isoDead5)) 'T8 dead-fresh reason includes the raw stored stamp' $heldDead5
+    Assert-True ($heldDead5 -match '5\.0 min old') 'T8 dead-fresh reason includes computed age' $heldDead5
+
+    $isoDead20 = $nowUtc.AddMinutes(-20).ToString('o')
+    $pathDead20 = Write-LockFile -Dir $testDir -StampText $isoDead20 -ProcessId $deadPid
+    $heldDead20 = Test-AppHostLockActive -Path $pathDead20 -MaxAgeMinutes 15 -Label 'restart lock' -NowUtc $nowUtc
+    Assert-True ($null -eq $heldDead20) 'T9 20-min-old lock with dead PID is litter' ("held=$heldDead20")
+
+    $stealDir = Join-Path $testDir 'steal'
+    New-Item -ItemType Directory -Force $stealDir | Out-Null
+    $stealPath = Write-LockFile -Dir $stealDir -StampText $isoDead5 -ProcessId $deadPid
+    $stolen = New-AppHostLock -Path $stealPath -MaxAgeMinutes 15 -Label 'restart lock'
+    try {
+        Assert-True (-not $stolen.Acquired) 'T10 New-AppHostLock refuses a 5-min-old dead-PID leftover' 'Acquired was true (stole the leftover)'
+        Assert-True ($stolen.Reason -match 'exited') 'T10 refusal reason says the holder exited' $stolen.Reason
+        Assert-True (Test-Path -LiteralPath $stealPath) 'T10 leftover lock file was not deleted' $stealPath
+    } finally {
+        if ($stolen.Acquired) { Remove-AppHostLock $stolen }
+    }
+
+    # T3 still names a live holder, not the exited-child wording
+    Assert-True ($held5 -match 'held by PID') 'T3 live+5 min still uses live-holder wording' $held5
+    Assert-True ($held5 -notmatch 'exited') 'T3 live+5 min does not say the holder exited' $held5
+
+    $keepDir = Join-Path $testDir 'keep'
+    New-Item -ItemType Directory -Force $keepDir | Out-Null
+    $keepPath = Join-Path $keepDir 'apphost.restart.lock'
+    $keepLock = New-AppHostLock -Path $keepPath -MaxAgeMinutes 15 -Label 'restart lock'
+    try {
+        Assert-True $keepLock.Acquired 'T-keep New-AppHostLock acquired' $keepLock.Reason
+        Remove-AppHostLock $keepLock -KeepFile
+        Assert-True (Test-Path -LiteralPath $keepPath) 'T-keep -KeepFile leaves the lock file on disk' $keepPath
+        $keptHeld = Test-AppHostLockActive -Path $keepPath -MaxAgeMinutes 15 -Label 'restart lock'
+        Assert-True ($null -ne $keptHeld) 'T-keep leftover after -KeepFile is still active' 'held was null'
+    } finally {
+        Remove-Item -LiteralPath $keepPath -Force -ErrorAction SilentlyContinue
+    }
 }
 finally {
     Remove-Item -LiteralPath $testDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host ''
-Write-Host ('CARD-0152 lock-age: {0} passed, {1} failed' -f $script:passed, $script:failed)
+Write-Host ('CARD-0152/0310 lock-age: {0} passed, {1} failed' -f $script:passed, $script:failed)
 if ($script:failed -gt 0) {
     foreach ($line in $script:failures) { Write-Host ("  " + $line) }
     Write-Host 'APPHOST LOCK AGE TESTS EXIT CODE: 1  (FAIL - do not report this run as green)'

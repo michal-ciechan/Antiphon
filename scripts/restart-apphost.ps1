@@ -20,6 +20,11 @@
     to be distinguishable from a failure - an indistinguishable failure is what
     produces the retry that kills a DCP mid-startup.
 
+    CARD-0310: TimeoutSec (exit 1, child may still be launching) and DCP timeout
+    (exit 4) leave apphost.restart.lock on disk for LockMaxAgeMinutes. A dead
+    holder with a fresh stamp is still in-flight. Exit 0 and BuildFailed remove
+    the lock; BuildFailed also Stop-Process the spawned dev-aspire.ps1.
+
 .PARAMETER NoBuild            Pass -NoBuild through to dev-aspire.ps1 (skip restore/npm).
 .PARAMETER TimeoutSec         Seconds to wait for the dashboard + backend health (default 150).
 .PARAMETER LockMaxAgeMinutes  Ignore a lock older than this (default 15, the watchdog's number).
@@ -41,13 +46,16 @@
 param(
     [switch]$NoBuild,
     [int]$TimeoutSec = 150,
-    [int]$LockMaxAgeMinutes = 15,
+    [int]$LockMaxAgeMinutes,
     [switch]$AllowWorktree
 )
 
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'apphost-common.ps1')
+if (-not $PSBoundParameters.ContainsKey('LockMaxAgeMinutes')) {
+    $LockMaxAgeMinutes = $AppHostLockMaxAgeMinutes
+}
 
 $root    = Split-Path $PSScriptRoot -Parent      # scripts/ -> repo root
 $worktree = Get-AppHostWorktreeClassification -SourceRoot $root
@@ -110,6 +118,12 @@ if (-not $lock.Acquired) {
     exit 3
 }
 
+# CARD-0310: keep the stamp on disk after this process exits when the spawned
+# child may still be launching. Set true after Start-Process; cleared on a
+# healthy exit 0 and on BuildFailed (which also kills the child).
+$keepRestartLock = $false
+$devProcess = $null
+
 try {
 
     # Guard: which PID owns the session-runner port, so we never kill it.
@@ -147,7 +161,8 @@ try {
     $devArgs = @('-NoLogo', '-File', $devScript)
     if ($NoBuild) { $devArgs += '-NoBuild' }
     if ($AllowWorktree) { $devArgs += '-AllowWorktree' }
-    Start-Process pwsh -ArgumentList $devArgs -WindowStyle Normal
+    $devProcess = Start-Process pwsh -ArgumentList $devArgs -WindowStyle Normal -PassThru
+    $keepRestartLock = $true
 
     # 6) Wait for the dashboard URL + backend health.
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
@@ -161,12 +176,20 @@ try {
         }
         $verdict = Get-AppHostLogVerdict -LogPath $logFile
         if ($verdict.Kind -eq 'BuildFailed') {
+            $keepRestartLock = $false
+            if ($devProcess) {
+                try { $devProcess.Refresh() } catch { }
+                if (-not $devProcess.HasExited) {
+                    Stop-Process -Id $devProcess.Id -Force -ErrorAction SilentlyContinue
+                }
+            }
             Write-Host "AppHost build FAILED - check: Get-Content '$logFile' -Tail 40" -ForegroundColor Red
             exit 1
         }
         if ($verdict.Kind -eq 'DcpDependencyTimeout') {
             # The exception names podman because podman is the only probe that had
             # returned when the deadline hit. Say what docker actually reported.
+            # Keep the restart lock: the spawned child may still be in flight.
             Show-DcpTimeoutVerdict -LogPath $logFile -Evidence $verdict.Evidence -PodmanNoise $verdict.PodmanNoise `
                 -LaunchLock $launchLock -RestartLock $restartLock -WatchdogLog $watchdogLog
             exit 4
@@ -180,22 +203,26 @@ try {
     }
 
     if ($dashUrl -and $backendOk) {
+        $keepRestartLock = $false
         Write-Host "AppHost restarted - dashboard $dashUrl, backend healthy." -ForegroundColor Green
         exit 0
     } elseif ($dashUrl) {
         Write-Host "Dashboard up ($dashUrl) but backend health not confirmed in ${TimeoutSec}s." -ForegroundColor Yellow
+        Write-Host "  Leaving $restartLock so a watchdog fire treats this as still in flight." -ForegroundColor DarkGray
         exit 1
     } else {
         Write-Host "AppHost did not come up within ${TimeoutSec}s - check '$logFile'." -ForegroundColor Red
         Write-Host "  NOTE: the dev-aspire.ps1 this script spawned may STILL be launching (its own" -ForegroundColor DarkGray
         Write-Host "  budget is longer than ${TimeoutSec}s). Do not re-run blind - re-running kills a" -ForegroundColor DarkGray
         Write-Host "  DCP that is still coming up (CARD-0075). Check $launchLock first." -ForegroundColor DarkGray
+        Write-Host "  Leaving $restartLock for LockMaxAgeMinutes; delete it to force a retry." -ForegroundColor DarkGray
         exit 1
     }
 
 } finally {
     # Released even on a terminating error: $ErrorActionPreference is Stop, so a
     # trailing Remove-Item would be skipped (the same reasoning dev-aspire.ps1:21
-    # already records for the launch lock).
-    Remove-AppHostLock $lock
+    # already records for the launch lock). TimeoutSec / exit 4 keep the file
+    # (CARD-0310); the stream is always closed so the stamp is readable.
+    Remove-AppHostLock $lock -KeepFile:$keepRestartLock
 }
