@@ -367,7 +367,9 @@ Split by what each part actually is:
   addressing, the limits endpoint, and file-backed text are documented in its own header comment,
   which is canonical; see also the AGENTS.md synopsis. `server/Bundles/board-api.md` (attached to an
   agent that works the board directly) still documents the raw API for callers that can't shell out
-  to the CLI — fix a wrong rule there, not here.
+  to the CLI — fix a wrong rule there, not here. Everything *around* the card — which agents exist,
+  what they are running, a board's columns, a live session's transcript — is
+  [ops-http.md](ops-http.md); read it rather than grepping the endpoint files for a route.
 - Findings that outlive the card go in `docs/investigations/`. Agent scratch output lands in
   `.antiphon/`, which is **gitignored** — an 11 KB proven root-cause writeup was nearly lost that way.
 

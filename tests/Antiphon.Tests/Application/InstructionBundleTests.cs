@@ -244,6 +244,9 @@ public class InstructionBundleTests
         DelegationReportFormatter.OrchestratorContract.ShouldContain(
             "If you are channel-bound (Slack/Telegram), the chat does NOT see every turn.");
         DelegationReportFormatter.OrchestratorContract.ShouldContain("re-emit `[[attach:]]` yourself");
+        // CARD-0296: the pointer at the read-oriented HTTP surface. Without it an orchestrator
+        // greps MapGet for routes that do not exist and reads the 404s as a broken server.
+        DelegationReportFormatter.OrchestratorContract.ShouldContain("docs/ops-http.md");
     }
 
     [Test]

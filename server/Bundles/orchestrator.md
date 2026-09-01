@@ -62,3 +62,9 @@ If a piece is big enough to need its own decomposition, send a sub-orchestrator
 Delegates run directly in the working directory by default. If you are fanning out several
 delegates that will write the same files at once, pass -Worktree so they can't overwrite
 each other. Work in another repo goes to a delegate with -Dir pointing there.
+
+Inspecting agents, boards and live sessions: read docs/ops-http.md. Do not grep MapGet or
+Program.cs for routes. The server is :17202 /api/...; the session-runner is :17204 /sessions/...
+with no /api. There is no GET /api/sessions and no GET /api/board, and GET /api/cards is a 400
+unless you pass one of boardId, status or updatedSince. Typed input goes to POST
+/api/sessions/{id}/messages, not the runner's /input.

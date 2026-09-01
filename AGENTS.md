@@ -10,6 +10,7 @@ AGENTS.md is the universal index and mandatory safety core for this repository. 
 | Telegram/channel formatting and gateway settings | [docs/telegram.md](docs/telegram.md) |
 | Cards, delegates, landing, scopes, and tracker orchestration | [docs/orchestration-loop.md](docs/orchestration-loop.md) |
 | Card state versus session state and decision questions | [docs/agent-card-lifecycle.md](docs/agent-card-lifecycle.md) |
+| Inspecting agents, boards, and live sessions over HTTP | [docs/ops-http.md](docs/ops-http.md); full route map [docs/antiphon-api.md](docs/antiphon-api.md) |
 | Workflow tracker configuration | [docs/workflow-tracker-block.md](docs/workflow-tracker-block.md) |
 | Agent kinds, provider settings, remote control, and Codex test isolation | [docs/agent-kinds.md](docs/agent-kinds.md), [docs/ai-agent-tui-configuration.md](docs/ai-agent-tui-configuration.md) |
 | Secrets, keys, and configuration custody | [docs/agent-credentials.md](docs/agent-credentials.md) |
@@ -27,6 +28,7 @@ AGENTS.md is the universal index and mandatory safety core for this repository. 
 - Under Aspire, 17203 serves the built bundle. Wait for its watcher to rebuild (client-mode.ps1 -Status) before treating a browser observation as current; use client-mode.ps1 -Mode dev only when HMR is required.
 - For a new local stack, follow [docs/bootstrap.md](docs/bootstrap.md). Use only docker compose -f docker-compose.dev.yml up -d; do not delete antiphon_pgdata unless the database is deliberately being recreated.
 - Use scripts/card.ps1 for board work. Give long card text through -DescriptionFile or -ReasonFile; its default fresh concurrency-token read is the normal write path. A move starts no agent unless -Spawn is supplied.
+- To list or inspect agents, boards and live sessions, read [docs/ops-http.md](docs/ops-http.md) instead of grepping MapGet. The server is 17202 /api/...; the runner is 17204 /sessions/... with no /api. There is no GET /api/sessions and no /api/board, and GET /api/cards needs one of boardId, status, or updatedSince.
 
 ## Immediate safety triggers
 
