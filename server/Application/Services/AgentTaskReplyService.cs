@@ -1959,6 +1959,12 @@ public sealed class AgentTaskReplyService
             IServiceProvider services, AppDbContext db, AgentTask task, string body, string verdict,
             TurnOutcome turn, DateTime now, CancellationToken ct)
     {
+        // CARD-0302: a Check reading is the deliverable. Classify the role before the generic
+        // blocked/question arms so LOOKS STUCK + a `blocked` token (or a trailing `?`) cannot
+        // mark the interpreter's own row Blocked. Do not parse LOOKS STUCK as English.
+        if (task.Role == AgentTaskRole.Check)
+            return ClassifyCheckReport(body, verdict);
+
         if (verdict == "done")
         {
             if (await TryClassifyCompletedWithoutProgressAsync(services, task, body, ct) is { } noProgress)
@@ -1976,9 +1982,6 @@ public sealed class AgentTaskReplyService
 
         if (LooksLikeAQuestion(body))
             return (AgentTaskStatus.Blocked, AgentTaskReportEvidence.QuestionHeuristic, body, null);
-
-        if (task.Role == AgentTaskRole.Check)
-            return (AgentTaskStatus.Succeeded, AgentTaskReportEvidence.Exempt, body, null);
 
         var sessionLive = task.AgentSessionId is Guid sid && await IsSessionLiveAsync(db, sid, ct);
         if (sessionLive)
@@ -2019,6 +2022,28 @@ public sealed class AgentTaskReplyService
             ? AgentTaskReportEvidence.FinalMessageMissing
             : AgentTaskReportEvidence.UnmarkedAfterNudge;
         return (AgentTaskStatus.Succeeded, evidence, body, null);
+    }
+
+    /// <summary>
+    /// CARD-0302: Check-role status is "did the interpreter finish a reading", never "what did it
+    /// think of the delegate." <c>failed</c> is the interpreter saying it could not produce one.
+    /// A <c>blocked</c> token is the wrong vocabulary (Exempt, not Marked) so surfaces that print
+    /// <c>report=</c> do not claim a successful use of the generic contract.
+    /// </summary>
+    private static (AgentTaskStatus Status, AgentTaskReportEvidence Evidence, string Body, string? FailureReason)
+        ClassifyCheckReport(string body, string verdict)
+    {
+        if (verdict == "failed")
+        {
+            var reason = FirstLine(body);
+            return (AgentTaskStatus.Failed, AgentTaskReportEvidence.Marked, body,
+                string.IsNullOrWhiteSpace(reason) ? "Delegate reported failed." : reason);
+        }
+
+        if (verdict == "done")
+            return (AgentTaskStatus.Succeeded, AgentTaskReportEvidence.Marked, body, null);
+
+        return (AgentTaskStatus.Succeeded, AgentTaskReportEvidence.Exempt, body, null);
     }
 
     /// <summary>
