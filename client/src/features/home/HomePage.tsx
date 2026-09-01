@@ -16,7 +16,6 @@ import {
 import { useDisclosure, useLocalStorage, useMediaQuery } from '@mantine/hooks'
 import { useMemo } from 'react'
 import {
-  TbAlertHexagon,
   TbBook2,
   TbChevronDown,
   TbFolder,
@@ -28,11 +27,11 @@ import {
 import { Link, useSearchParams } from 'react-router'
 import { useAgentList } from '../../api/agents'
 import { useAgentTasks } from '../../api/agentTasks'
-import { useAttention } from '../../api/attention'
 import { useWorkspaceGitInfos, useWorkspaceWorktrees } from '../../api/filesystem'
 import { DelegateModal } from '../delegations/DelegateModal'
 import { FilesReviewPanel, type FilesPanelHeights } from '../agents/FilesReviewPanel'
 import { SessionTranscriptPanel } from '../agents/SessionTranscriptPanel'
+import { AttentionGlance } from '../attention/AttentionGlance'
 import { AgentRail } from './AgentRail'
 import { MobileHomePage } from './MobileHomePage'
 import { ReportBugButton } from '../diagnostics/ReportBugButton'
@@ -173,7 +172,7 @@ function DesktopHomePage() {
           {projectView && (
             <ToReadBadge dirKeys={[projectView.key, ...projectView.workspaces.map((w) => w.key)]} />
           )}
-          <NeedsAttentionBadge />
+          <AttentionGlance />
           {project && (
             <Anchor component={Link} to={`/plans?path=${encodeURIComponent(project.path)}`} size="sm" c="dimmed">
               Plans
@@ -328,41 +327,6 @@ function DesktopHomePage() {
         </Paper>
       </Group>
     </Box>
-  )
-}
-
-/**
- * The one home-screen change CARD-0035 makes (slice 6): a count of what is stuck, linking to the
- * diagnostic tab.
- *
- * <p><b>It renders nothing at zero, and that is the feature.</b> A permanent "Needs attention: 0"
- * chip is a control an operator stops seeing within a week, and the badge only works if its presence
- * alone means something. So a quiet fleet gets a header with nothing extra in it — the reassurance
- * lives on the tab itself, where there is room to say why it is empty.</p>
- *
- * <p>Settled failures are excluded, matching the tab badge and the panel header: they are context
- * carried for 24h, and counting them would make every ordinary day look like a bad one.</p>
- */
-function NeedsAttentionBadge() {
-  const attention = useAttention()
-  const openCount = (attention.data?.items ?? []).filter(
-    (item) => item.kind !== 'RecentFailure',
-  ).length
-
-  if (openCount === 0) return null
-
-  return (
-    <Anchor component={Link} to="/orchestrator?tab=attention" underline="never">
-      <Badge
-        size="sm"
-        variant="light"
-        color="danger"
-        leftSection={<TbAlertHexagon size={12} />}
-        style={{ textTransform: 'none' }}
-      >
-        Needs attention ({openCount})
-      </Badge>
-    </Anchor>
   )
 }
 
