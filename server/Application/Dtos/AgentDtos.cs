@@ -294,6 +294,12 @@ public sealed record StartAgentRequest(
     /// </summary>
     bool IgnoreSubscriptionQuota = false,
     /// <summary>
+    /// Accepted on the wire so a caller who copies the create flag does not get a 400.
+    /// Start never honours it (CARD-0309): a start is a launch, and there is no
+    /// spawn-into-a-held-model switch. AlwaysOn Fable stays down.
+    /// </summary>
+    bool IgnoreModelDisabled = false,
+    /// <summary>
     /// Overlay on this launch only (CARD-0106). Not persisted; an AlwaysOn restart or
     /// resume-recovery rebuilds from the agent's stored <c>launchEnv</c>. ANTIPHON_* names
     /// are refused 422. Does not cascade to child tasks — that is what a project default is for.

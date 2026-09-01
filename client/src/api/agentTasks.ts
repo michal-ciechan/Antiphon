@@ -194,6 +194,11 @@ export interface CreateAgentTaskRequest {
    * refusal; re-send with this true to queue anyway.
    */
   ignoreSubscriptionQuota?: boolean
+  /**
+   * Bypass the model-availability create 409. Queues the task; dispatch still waits
+   * for the hold to clear. Start never honours this flag.
+   */
+  ignoreModelDisabled?: boolean
 }
 
 export interface AgentTaskCreatedDto {

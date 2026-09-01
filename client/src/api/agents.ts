@@ -384,6 +384,11 @@ export interface StartAgentRequest {
    */
   ignoreSubscriptionQuota?: boolean
   /**
+   * Accepted on the wire so a copied create flag is not a 400. Start never honours
+   * it — a start is a launch (CARD-0309).
+   */
+  ignoreModelDisabled?: boolean
+  /**
    * Optional first work prompt for a cardless start. Typed after boot once the composer is idle.
    * `details` is standing-job metadata (CLAUDE.md) and is never sent as this prompt. Omit to
    * leave the session idle — send POST /api/sessions/{id}/messages to give work later.

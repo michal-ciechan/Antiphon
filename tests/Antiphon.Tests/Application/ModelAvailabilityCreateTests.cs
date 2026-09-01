@@ -117,6 +117,68 @@ public class ModelAvailabilityCreateTests
     }
 
     [Test]
+    public async Task Create_with_IgnoreModelDisabled_queues_with_a_warning_and_does_not_409()
+    {
+        var holdId = Guid.NewGuid();
+        using var workspace = new TempWorkspace();
+        await using var db = CreateContext();
+        await SeedHoldAsync(db, holdId, "fable", DateTime.UtcNow.AddHours(1), manual: true);
+        Guid createdId = Guid.Empty;
+        try
+        {
+            var created = await CreateService(db).CreateAsync(
+                new CreateAgentTaskRequest(
+                    "park until Thursday",
+                    Role: AgentTaskRole.Plan,
+                    IgnoreModelDisabled: true),
+                new AgentTaskService.Caller(null, null, workspace.Path),
+                CancellationToken.None);
+            createdId = created.Id;
+            created.Status.ShouldBe(AgentTaskStatus.Queued);
+            created.Warning.ShouldNotBeNull();
+            created.Warning.ShouldContain("ignoreModelDisabled");
+            created.Warning.ShouldContain("fable is held until");
+
+            await using var verify = CreateContext();
+            (await verify.AgentTasks.SingleAsync(t => t.Id == createdId)).Status
+                .ShouldBe(AgentTaskStatus.Queued);
+            var events = await verify.AgentTaskEvents.Where(e => e.AgentTaskId == createdId).ToListAsync();
+            events.ShouldContain(e => e.Type == AgentTaskEventType.Warning && e.Detail.Contains("ignoreModelDisabled"));
+        }
+        finally
+        {
+            if (createdId != Guid.Empty)
+            {
+                await db.AgentTaskEvents.Where(e => e.AgentTaskId == createdId).ExecuteDeleteAsync();
+                await db.AgentTasks.Where(t => t.Id == createdId).ExecuteDeleteAsync();
+            }
+            await db.ModelAvailabilityHolds.Where(h => h.Id == holdId).ExecuteDeleteAsync();
+        }
+    }
+
+    [Test]
+    public async Task Create_without_IgnoreModelDisabled_is_still_409_while_held()
+    {
+        var holdId = Guid.NewGuid();
+        using var workspace = new TempWorkspace();
+        await using var db = CreateContext();
+        await SeedHoldAsync(db, holdId, "fable", DateTime.UtcNow.AddHours(1), manual: true);
+        try
+        {
+            var ex = await Should.ThrowAsync<ModelDisabledException>(() =>
+                CreateService(db).CreateAsync(
+                    new CreateAgentTaskRequest("plan the work", Role: AgentTaskRole.Plan),
+                    new AgentTaskService.Caller(null, null, workspace.Path),
+                    CancellationToken.None));
+            ex.Code.ShouldBe("model_disabled");
+        }
+        finally
+        {
+            await db.ModelAvailabilityHolds.Where(h => h.Id == holdId).ExecuteDeleteAsync();
+        }
+    }
+
+    [Test]
     public async Task Open_ended_hold_sentence_names_the_per_model_cap()
     {
         var holdId = Guid.NewGuid();
@@ -134,7 +196,8 @@ public class ModelAvailabilityCreateTests
         }
     }
 
-    private static async Task SeedHoldAsync(AppDbContext db, Guid id, string alias, DateTime? until)
+    private static async Task SeedHoldAsync(
+        AppDbContext db, Guid id, string alias, DateTime? until, bool manual = false)
     {
         await db.ModelAvailabilityHolds
             .Where(h => h.Kind == AgentKind.ClaudeCode && h.ModelAlias == alias && h.ClearedAt == null)
@@ -144,12 +207,14 @@ public class ModelAvailabilityCreateTests
             Id = id,
             Kind = AgentKind.ClaudeCode,
             ModelAlias = alias,
-            Source = ModelAvailabilitySource.AutoDetected,
+            Source = manual ? ModelAvailabilitySource.Manual : ModelAvailabilitySource.AutoDetected,
             DisabledUntil = until,
             HitAt = DateTime.UtcNow,
-            Reason = until is null
-                ? "Fable 5 per-model cap (no reset stated)"
-                : "session-limit resets 18:10 Europe/London",
+            Reason = manual
+                ? "manual hold"
+                : until is null
+                    ? "Fable 5 per-model cap (no reset stated)"
+                    : "session-limit resets 18:10 Europe/London",
         });
         await db.SaveChangesAsync();
     }

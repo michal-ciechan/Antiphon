@@ -60,6 +60,12 @@ public sealed record CreateAgentTaskRequest(
     /// </summary>
     bool IgnoreSubscriptionQuota = false,
     /// <summary>
+    /// Bypass the CARD-0309 create-time 409 <c>model_disabled</c>. Default false. True
+    /// queues the task anyway; the dispatcher still skips it until the hold clears.
+    /// Start never honours this flag — there is no spawn-into-a-held-model switch.
+    /// </summary>
+    bool IgnoreModelDisabled = false,
+    /// <summary>
     /// Overlay applied when this task's process is launched (CARD-0106). Persisted on the
     /// task row so async dispatch and a task-session relaunch re-apply it. ANTIPHON_* names
     /// are refused 422. A non-empty overlay excludes the task from warm-pool reuse (reuse

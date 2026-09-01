@@ -104,6 +104,12 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [switch]$IgnoreSubscriptionQuota,
 
+    # Bypass the CARD-0309 create-time 409 model_disabled. Queues the task; the dispatcher
+    # still skips it until the hold clears. This is NOT a launch-anyway switch — Start
+    # never honours it.
+    [Parameter(ParameterSetName = 'Create')]
+    [switch]$IgnoreModelDisabled,
+
     # Overlay env vars on this task's process launch (CARD-0106). ANTIPHON_* names are refused
     # 422. A non-empty overlay excludes the task from warm-pool reuse (reuse launches no
     # process, so the overlay could never apply). Combined with -OnAgent is refused 422.
@@ -281,6 +287,7 @@ switch ($PSCmdlet.ParameterSetName) {
         # Omitted (0 - an unbound [int] is 0, not $null) leaves the server's default expectation.
         if ($ExpectAbout -gt 0) { $body['expectedMinutes'] = $ExpectAbout }
         if ($IgnoreSubscriptionQuota) { $body['ignoreSubscriptionQuota'] = $true }
+        if ($IgnoreModelDisabled) { $body['ignoreModelDisabled'] = $true }
         if ($EnvOverride -and $EnvOverride.Count -gt 0) { $body['launchEnvOverride'] = $EnvOverride }
         if (-not $NoInheritEnv) {
             $inheritedLlmEnv = @{}

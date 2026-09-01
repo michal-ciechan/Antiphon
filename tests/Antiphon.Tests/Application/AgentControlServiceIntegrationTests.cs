@@ -1350,6 +1350,12 @@ public class AgentControlServiceIntegrationTests
                 () => harness.Control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None));
             ex.Code.ShouldBe("model_disabled");
             adapter.Started.ShouldBeFalse();
+
+            var still = await Should.ThrowAsync<ModelDisabledException>(
+                () => harness.Control.StartAsync(
+                    agent.Id, new StartAgentRequest(IgnoreModelDisabled: true), CancellationToken.None));
+            still.Code.ShouldBe("model_disabled");
+            adapter.Started.ShouldBeFalse();
         }
         finally
         {
