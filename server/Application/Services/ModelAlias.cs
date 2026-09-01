@@ -38,6 +38,30 @@ public static class ModelAlias
     ];
 
     /// <summary>
+    /// PUT/DELETE alias vocabulary (CARD-0309): a known <see cref="DelegatableAliases"/> value
+    /// or <see cref="KindWide"/>, case-insensitive. Unknown text (including TUI names like
+    /// <c>claude-fable-5</c>) returns null so the operator must use the canonical list.
+    /// </summary>
+    public static string? CanonicalHoldAlias(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        var trimmed = raw.Trim();
+        if (trimmed == KindWide)
+            return KindWide;
+
+        var lower = trimmed.ToLowerInvariant();
+        foreach (var (_, alias) in DelegatableAliases)
+        {
+            if (lower == alias)
+                return alias;
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Map TUI / launch text onto a canonical alias. Unknown text returns null so the caller
     /// can fall back to the session's launch alias rather than pausing a guessed model.
     /// </summary>

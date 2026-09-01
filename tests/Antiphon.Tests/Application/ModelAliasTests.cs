@@ -43,4 +43,26 @@ public class ModelAliasTests
     {
         ModelAlias.Normalize(AgentKind.ClaudeCode, raw).ShouldBeNull();
     }
+
+    [Test]
+    [Arguments("fable", "fable")]
+    [Arguments("Fable", "fable")]
+    [Arguments("HAIKU", "haiku")]
+    [Arguments("grok-4.6", "grok-4.6")]
+    [Arguments("*", "*")]
+    public void CanonicalHoldAlias_accepts_known_aliases_and_star(string raw, string expected)
+    {
+        ModelAlias.CanonicalHoldAlias(raw).ShouldBe(expected);
+    }
+
+    [Test]
+    [Arguments("claude-fable-5")]
+    [Arguments("Fable 5")]
+    [Arguments("bogus")]
+    [Arguments("")]
+    [Arguments(null)]
+    public void CanonicalHoldAlias_rejects_tui_names_and_unknown_text(string? raw)
+    {
+        ModelAlias.CanonicalHoldAlias(raw).ShouldBeNull();
+    }
 }

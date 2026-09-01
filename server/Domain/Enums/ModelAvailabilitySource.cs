@@ -9,6 +9,6 @@ public enum ModelAvailabilitySource
     /// <summary>CARD-0022: a parsed usage-limit Wall stub.</summary>
     AutoDetected = 0,
 
-    /// <summary>CARD-0309: an operator PUT. This card never writes 1.</summary>
+    /// <summary>CARD-0309: an operator PUT. Outranks AutoDetected on the same key.</summary>
     Manual = 1,
 }
