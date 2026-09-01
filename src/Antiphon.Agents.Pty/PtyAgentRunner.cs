@@ -366,6 +366,7 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         if (_conn is null) return true;
         SetExitReason(PtyExitReason.KilledByRequest);
         _conn.Kill();
+        _jobObject?.TryTerminate();
         var done = await Task.WhenAny(_exitTcs.Task, Task.Delay(timeout));
         return done == _exitTcs.Task;
     }

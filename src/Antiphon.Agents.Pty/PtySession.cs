@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Diagnostics;
 using Porta.Pty;
 
 namespace Antiphon.Agents.Pty;
@@ -49,7 +51,20 @@ internal sealed class PortaPtySession : IPtySession
 
     public void Resize(int cols, int rows) => _connection.Resize(cols, rows);
 
-    public void Kill() => _connection.Kill();
+    public void Kill()
+    {
+        // We do not own Porta's kill-on-close job handle, so tree-kill the pid we do have.
+        // Production modern does not depend on this; tests and inbox fallback still do (CARD-0308).
+        try
+        {
+            using var process = Process.GetProcessById(_connection.Pid);
+            process.Kill(entireProcessTree: true);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or Win32Exception)
+        {
+            try { _connection.Kill(); } catch { /* already gone */ }
+        }
+    }
 
     public void Dispose() => _connection.Dispose();
 }

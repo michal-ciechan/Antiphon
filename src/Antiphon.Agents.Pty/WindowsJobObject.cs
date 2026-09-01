@@ -224,7 +224,7 @@ internal sealed class WindowsJobObject : IDisposable
         }
     }
 
-    private void TryTerminate()
+    internal void TryTerminate()
     {
         if (!OperatingSystem.IsWindows() || _jobHandle.IsInvalid || _jobHandle.IsClosed)
             return;

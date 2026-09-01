@@ -19,6 +19,7 @@ public class ProcessSpawnLimitTests
         Type[] types =
         [
             typeof(PtyAgentRunnerTests),
+            typeof(PtyKillProcessTreeTests),
             typeof(FakeClaudeContractTests),
             typeof(FakeGrokContractTests),
             typeof(ClaudeSubmitContractTests),
