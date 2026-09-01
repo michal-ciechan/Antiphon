@@ -386,6 +386,54 @@ function Remove-AppHostLock {
     }
 }
 
+function Test-AppHostProbeErrorIsConnectionRefused {
+    param([string]$ErrorText)
+    if ([string]::IsNullOrWhiteSpace($ErrorText)) { return $false }
+    return [bool]($ErrorText -match '(?i)actively refused|Unable to connect|connection.*refused|No connection could be made')
+}
+
+function Test-AppHostProbeErrorIsTimeout {
+    param([string]$ErrorText)
+    if ([string]::IsNullOrWhiteSpace($ErrorText)) { return $false }
+    if (Test-AppHostProbeErrorIsConnectionRefused $ErrorText) { return $false }
+    return [bool]($ErrorText -match '(?i)timeout|timed out|canceled|cancelled')
+}
+
+function Get-AppHostProbeClassification {
+    <#
+      Pure classifier over one probe round. CARD-0310: HttpClient timeout on
+      /health while the client answered 2xx/3xx is a loaded or coming-up stack,
+      not a corpse. Connection-refused on health (or both endpoints) is down.
+    #>
+    param(
+        [bool]$HealthOk,
+        [string]$HealthError,
+        $HealthCode,
+        [bool]$ClientOk,
+        [string]$ClientError,
+        $ClientCode
+    )
+
+    $healthBit = if ($HealthOk) { "health=$HealthCode" } else {
+        if ($HealthCode) { "health=$HealthCode" } else { "health=FAIL $HealthError" }
+    }
+    $clientBit = if ($ClientOk) { "client=$ClientCode" } else {
+        if ($ClientCode) { "client=$ClientCode" } else { "client=FAIL $ClientError" }
+    }
+    $summary = "$healthBit $clientBit"
+
+    if ($HealthOk -and $ClientOk) {
+        return [pscustomobject]@{ Kind = 'Up'; RestartWorthy = $false; Summary = $summary }
+    }
+
+    $healthTimeout = (-not $HealthOk) -and (Test-AppHostProbeErrorIsTimeout $HealthError)
+    if ($ClientOk -and $healthTimeout) {
+        return [pscustomobject]@{ Kind = 'Slow'; RestartWorthy = $false; Summary = $summary }
+    }
+
+    return [pscustomobject]@{ Kind = 'Down'; RestartWorthy = $true; Summary = $summary }
+}
+
 function Invoke-BoundedCommand {
     <#
       Runs a scriptblock in a background job with a hard deadline. Used for the
