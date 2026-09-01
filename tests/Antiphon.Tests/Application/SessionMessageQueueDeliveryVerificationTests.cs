@@ -825,6 +825,98 @@ public class SessionMessageQueueDeliveryVerificationTests
     }
 
     [Test]
+    public async Task ModeNow_question_tool_ToolResult_confirms_without_a_second_enter()
+    {
+        await using var h = await ObservableHarnessAsync();
+        const string body = "Proceed as planned (Recommended)";
+        h.Adapter.OnSubmitted = async submitted =>
+        {
+            await h.InsertTranscriptEntryAsync(
+                TranscriptKinds.ToolResult,
+                $"{GrokQuestionTool.CompletedAnswerPrefix} \"q\"=\"{submitted}\". You can now continue.",
+                toolName: GrokQuestionTool.AskUserQuestionName,
+                toolUseId: "call-question-now");
+        };
+
+        var dto = await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.Now, CancellationToken.None);
+        dto.LastDelivery.ShouldNotBeNull();
+        dto.LastDelivery!.ConfirmedBy.ShouldBe(DeliveryConfirmedBy.Transcript);
+        h.Adapter.Inputs.ShouldBe([body, "\r"]);
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == h.SessionId))
+            .ShouldBe(0, "Mode:Now stays row-less; S2 is what makes the popup answer return 200");
+        (await IncidentsOfAsync(db, h.AgentId)).ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Question_tool_ToolResult_confirms_delivery_without_a_second_enter()
+    {
+        await using var h = await ObservableHarnessAsync();
+        const string body = "Proceed as planned (Recommended)";
+        h.Adapter.OnSubmitted = async submitted =>
+        {
+            await h.InsertTranscriptEntryAsync(
+                TranscriptKinds.ToolResult,
+                $"{GrokQuestionTool.CompletedAnswerPrefix} \"q\"=\"{submitted}\". You can now continue.",
+                toolName: GrokQuestionTool.AskUserQuestionName,
+                toolUseId: "call-question-1");
+        };
+
+        await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBe([body, "\r"],
+            "the completed ask_user_question ToolResult is the confirmation; no Enter re-press");
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Sent);
+        (await IncidentsOfAsync(db, h.AgentId)).ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Read_file_ToolResult_does_not_confirm_delivery()
+    {
+        await using var h = await ObservableHarnessAsync(alwaysOn: false);
+        const string body = "Proceed as planned (Recommended)";
+        var floor = await h.CurrentTranscriptMaxSequenceAsync();
+        await h.SeedPendingMessageAsync(body, deliveryAttempts: 1, baselineSequence: floor);
+        await h.InsertTranscriptEntryAsync(
+            TranscriptKinds.ToolResult,
+            $"file contents that happen to mention {body}",
+            toolName: "read_file",
+            toolUseId: "call-read-1");
+        h.Adapter.ThrowOnSend = new InvalidOperationException("redelivery must not run for this pin");
+
+        await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBeEmpty();
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldNotBe(QueuedMessageStatus.Sent,
+                "Claude/read_file ToolResult must not confirm — CARD-0241 does not widen to every ToolResult");
+    }
+
+    [Test]
+    public async Task Claude_ToolResult_without_question_wrapper_does_not_confirm()
+    {
+        await using var h = await ObservableHarnessAsync(alwaysOn: false);
+        const string body = "Proceed as planned (Recommended)";
+        var floor = await h.CurrentTranscriptMaxSequenceAsync();
+        await h.SeedPendingMessageAsync(body, deliveryAttempts: 1, baselineSequence: floor);
+        await h.InsertTranscriptEntryAsync(
+            TranscriptKinds.ToolResult,
+            body,
+            toolName: null,
+            toolUseId: "toolu_bash");
+        h.Adapter.ThrowOnSend = new InvalidOperationException("redelivery must not run for this pin");
+
+        await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldNotBe(QueuedMessageStatus.Sent);
+    }
+
+    [Test]
     public async Task Queued_user_prompt_late_confirm_never_types_the_body_twice()
     {
         await using var h = await ObservableHarnessAsync(alwaysOn: false);

@@ -173,8 +173,8 @@ public sealed class ProviderContractCatalogTests
         grok.LocalCommands.Commands["/usage"].OpensOverlay.ShouldBeTrue();
         grok.LocalCommands.Commands["/usage"].WritesUserPrompt.ShouldBeFalse();
         grok.LocalCommands.Forbidden.ContainsKey("/usage").ShouldBeFalse();
-        grok.TerminalOverlay.DetectFragments.ShouldContain("c copy session ID");
-        grok.TerminalOverlay.DetectFragments.ShouldNotContain("Weekly limit");
+        grok.TerminalOverlay.DetectFragments.ShouldBe(["c copy session ID"],
+            "CARD-0241: the question popup is a dedicated matcher, not a DetectFragments Esc target");
     }
 
     [Test]

@@ -350,6 +350,160 @@ public sealed class SessionMessageQueueService
         return dto;
     }
 
+    /// <summary>
+    /// CARD-0241: persist a Delegation (or other) queue row, then type immediately even while the
+    /// session is working. Mode:Now stays row-less; this is the overlay-answer path so a later
+    /// 409 can late-confirm against the stored baseline. Throws the same
+    /// <see cref="ConflictException"/>s Mode:Now does when verification fails.
+    /// </summary>
+    public async Task<SessionQueueDto> EnqueueDeliveringNowAsync(
+        Guid sessionId, string body, CancellationToken ct,
+        QueuedMessageOrigin origin = QueuedMessageOrigin.Ui)
+    {
+        var trimmed = (body ?? string.Empty).Trim();
+        if (trimmed.Length == 0)
+            throw new ValidationException(nameof(body), "Message must not be empty.");
+
+        var kind = await RequireSessionKindAsync(sessionId, ct);
+        if (TryGetForbiddenReason(kind, trimmed, out var forbiddenReason))
+            throw new ValidationException(nameof(body), forbiddenReason);
+
+        if (!_runtime.ListLiveSessions().Contains(sessionId))
+            throw new ConflictException($"Agent session '{sessionId}' is not live; cannot send now.");
+        if (!await IsAcceptingInputAsync(sessionId, ct))
+        {
+            throw new ConflictException(
+                $"Agent session '{sessionId}' is still starting; its terminal is not ready for input yet.");
+        }
+
+        await using (var preScope = _scopeFactory.CreateAsyncScope())
+        {
+            var preDb = preScope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var nowCeilings = await CeilingsForSessionAsync(preDb, sessionId, ct);
+            if (nowCeilings.Backend == DeliveryBackend.HerdrPane
+                && _runtime.TryGetLiveMetadata(sessionId, out var nowMeta)
+                && string.Equals(nowMeta.AgentStatus, "blocked", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ConflictException(
+                    $"Agent session '{sessionId}' is blocked in herdr (permission/approval UI); try again when idle.");
+            }
+
+            if (_runtime.TryGetLiveMetadata(sessionId, out var pendingMeta)
+                && string.Equals(pendingMeta.Pending, HerdrPendingReasons.Unreachable, StringComparison.Ordinal))
+            {
+                throw new ConflictException(
+                    $"Agent session '{sessionId}' cannot accept input because herdr is unreachable; try again when it is back.");
+            }
+        }
+
+        var nowLock = GetLock(sessionId);
+        await nowLock.WaitAsync(ct);
+        DeliveryOutcome outcome;
+        SessionQueuedMessage row;
+        TranscriptBaseline nowBaseline;
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var now = UtcNow();
+            var nextSequence = (await db.SessionQueuedMessages
+                .Where(m => m.AgentSessionId == sessionId)
+                .MaxAsync(m => (long?)m.Sequence, ct) ?? 0) + 1;
+
+            row = new SessionQueuedMessage
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = sessionId,
+                Body = trimmed,
+                Status = QueuedMessageStatus.Pending,
+                Sequence = nextSequence,
+                CreatedAt = now,
+                Origin = origin,
+            };
+            db.SessionQueuedMessages.Add(row);
+            await db.SaveChangesAsync(ct);
+
+            var nowBody = await SpillQueueBodyAsync(
+                sessionId, trimmed, row.Id.ToString("D"),
+                origin == QueuedMessageOrigin.Channel
+                    ? TypedBodySpill.TryReadChannelEnvelope(trimmed)
+                    : null,
+                db, ct);
+            if (!ReferenceEquals(nowBody, trimmed) && nowBody != trimmed)
+                row.Body = nowBody;
+
+            nowBaseline = _verification.TranscriptConfirmEnabled
+                ? await CaptureTranscriptBaselineAsync(db, sessionId, ct)
+                : default;
+            row.Status = QueuedMessageStatus.Sent;
+            row.SentAt = now;
+            row.DeliveryAttempts = 1;
+            row.LastDeliveryStartedAt = now;
+            row.LastDeliveryBaselineSequence = nowBaseline.Observable ? nowBaseline.MaxSequence : null;
+            await db.SaveChangesAsync(ct);
+
+            outcome = await DeliverAsync(sessionId, nowBody, ct, nowBaseline);
+            if (outcome.Verdict == DeliveryVerdict.ForbiddenBody)
+            {
+                await RevertRunAsync(db, [row]);
+                await HandleForbiddenBodyAsync(sessionId, [row.Id], nowBody, outcome.RecordText, ct);
+                throw new ValidationException(
+                    nameof(body),
+                    outcome.RecordText ?? "This body is forbidden for this agent kind.");
+            }
+
+            if (outcome.Verdict == DeliveryVerdict.Truncated)
+            {
+                await HandleTruncationAsync(sessionId, [row.Id], nowBody, outcome.RecordText, ct);
+                throw new ConflictException(
+                    "Message delivery reached the transcript truncated "
+                    + $"({Describe(outcome.Verdict)}). See the agent's incidents.");
+            }
+
+            if (outcome.Verdict == DeliveryVerdict.BackendUnreachable)
+            {
+                row.Status = QueuedMessageStatus.Pending;
+                row.SentAt = null;
+                row.DeliveryAttempts = 0;
+                row.LastDeliveryStartedAt = null;
+                row.LastDeliveryBaselineSequence = null;
+                await db.SaveChangesAsync(ct);
+                throw new ConflictException(
+                    $"Agent session '{sessionId}' cannot accept input because herdr is unreachable; try again when it is back.");
+            }
+
+            if (outcome.Verdict != DeliveryVerdict.Delivered)
+            {
+                await HandleDeliveryFailureAsync(sessionId, [row.Id], outcome.Verdict, ct);
+                await using var verifyScope = _scopeFactory.CreateAsyncScope();
+                var verifyDb = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var persisted = await verifyDb.SessionQueuedMessages
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(m => m.Id == row.Id, ct);
+                if (persisted?.Status == QueuedMessageStatus.Sent)
+                {
+                    _logger.LogInformation(
+                        "Overlay Now delivery to session {SessionId} grace-confirmed after a {Verdict} verdict",
+                        sessionId, outcome.Verdict);
+                    return (await GetQueueAsync(sessionId, ct)) with
+                    {
+                        LastDelivery = ToReceipt(DeliveryOutcome.Confirmed(DeliveryConfirmedBy.Transcript)),
+                    };
+                }
+
+                throw new ConflictException(
+                    "Message delivery could not be verified — the terminal did not accept it "
+                    + $"({Describe(outcome.Verdict)}). See the agent's incidents.");
+            }
+        }
+        finally
+        {
+            nowLock.Release();
+        }
+
+        return (await GetQueueAsync(sessionId, ct)) with { LastDelivery = ToReceipt(outcome) };
+    }
+
     /// <summary>Pending messages for the session, plus whether the agent is currently working.</summary>
     public async Task<SessionQueueDto> GetQueueAsync(Guid sessionId, CancellationToken ct)
     {
@@ -1592,14 +1746,25 @@ public sealed class SessionMessageQueueService
         var overlayDismissed = false;
         if (verify && kind is { } overlayKind)
         {
-            var overlay = ProviderContractCatalog.For(overlayKind).TerminalOverlay;
-            if (overlay.DetectFragments.Count > 0
-                && overlay.DetectFragments.Any(f =>
-                    ComposerDeliveryEvidence.FragmentIsVisible(before.RenderedScreen, f)))
+            // CARD-0241 S4: the question popup's body is the answer. Do not Esc — DetectFragments
+            // for Grok stays /usage-only so S6 cannot dismiss a live question.
+            if (GrokQuestionPopup.IsPresent(before.RenderedScreen))
             {
-                overlayDismissed = await TryDismissOverlayAsync(sessionId, overlayKind, ct);
-                if (overlayDismissed && _runtime.TryGetLiveSnapshot(sessionId, out var afterDismiss))
-                    before = afterDismiss;
+                _logger.LogDebug(
+                    "Question popup present on session {SessionId}; withholding Esc so the typed body is the answer",
+                    sessionId);
+            }
+            else
+            {
+                var overlay = ProviderContractCatalog.For(overlayKind).TerminalOverlay;
+                if (overlay.DetectFragments.Count > 0
+                    && overlay.DetectFragments.Any(f =>
+                        ComposerDeliveryEvidence.FragmentIsVisible(before.RenderedScreen, f)))
+                {
+                    overlayDismissed = await TryDismissOverlayAsync(sessionId, overlayKind, ct);
+                    if (overlayDismissed && _runtime.TryGetLiveSnapshot(sessionId, out var afterDismiss))
+                        before = afterDismiss;
+                }
             }
         }
 
@@ -1888,7 +2053,11 @@ public sealed class SessionMessageQueueService
             .AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId
                 && (t.Kind == TranscriptKinds.UserPrompt
-                    || t.Kind == TranscriptKinds.QueuedUserPrompt)
+                    || t.Kind == TranscriptKinds.QueuedUserPrompt
+                    || (t.Kind == TranscriptKinds.ToolResult
+                        && (t.ToolName == GrokQuestionTool.AskUserQuestionName
+                            || (t.Text != null
+                                && t.Text.StartsWith(GrokQuestionTool.CompletedAnswerPrefix)))))
                 && t.Timestamp != null
                 && t.Timestamp >= confirmFrom)
             .OrderBy(t => t.Sequence)
@@ -2028,7 +2197,14 @@ public sealed class SessionMessageQueueService
             .AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId
                 && (t.Kind == TranscriptKinds.UserPrompt
-                    || t.Kind == TranscriptKinds.QueuedUserPrompt)
+                    || t.Kind == TranscriptKinds.QueuedUserPrompt
+                    // CARD-0241: a completed ask_user_question update is a ToolResult whose
+                    // text contains the typed option. CARD-0292's QueueEnqueue/Dequeue/Remove
+                    // stay excluded — opposite policy, do not copy.
+                    || (t.Kind == TranscriptKinds.ToolResult
+                        && (t.ToolName == GrokQuestionTool.AskUserQuestionName
+                            || (t.Text != null
+                                && t.Text.StartsWith(GrokQuestionTool.CompletedAnswerPrefix)))))
                 && t.Sequence > baselineSequence)
             .OrderBy(t => t.Sequence)
             .Select(t => t.Text)
@@ -2787,6 +2963,15 @@ public sealed class SessionMessageQueueService
         }
 
         await _runtime.CatchUpTranscriptAsync(sessionId, ct);
+        if (_runtime.TryGetLiveSnapshot(sessionId, out var popupSnap)
+            && GrokQuestionPopup.IsPresent(popupSnap.RenderedScreen))
+        {
+            _logger.LogInformation(
+                "Overlay dismiss withheld for session {SessionId}: Grok question popup is present (answer, do not Esc)",
+                sessionId);
+            return false;
+        }
+
         await using (var scope = _scopeFactory.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();

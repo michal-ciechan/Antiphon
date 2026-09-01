@@ -22,9 +22,13 @@ namespace Antiphon.SessionRunner;
 /// — file order is not eventId order; an interrupted turn was measured writing a trailing chunk
 /// after its cancelled turn_completed — is emitted immediately with its own (earlier) timestamp,
 /// which is exactly what the server/client working rules' timestamp override exists to rank.</item>
-/// <item><c>tool_call</c> → <c>ToolCall</c> (title, rawInput, toolCallId), emitted immediately —
-/// the mid-turn activity signal. <c>tool_call_update</c> is skipped: it is a rendering update
-/// (status/locations), not a result payload.</item>
+/// <item><c>tool_call</c> → <c>ToolCall</c> (prefer <c>_meta["x.ai/tool"].name</c> over
+/// title, then rawInput, toolCallId), emitted immediately — the mid-turn activity signal.
+/// Non-completed <c>tool_call_update</c> is still skipped (rendering). A <c>status=completed</c>
+/// update of a question-tool (<c>name == ask_user_question</c> or <c>kind == ask_user</c>,
+/// joined by <c>toolCallId</c> because the completed row has empty title / no <c>_meta</c>)
+/// becomes one <c>ToolResult</c> (CARD-0241). Completed updates of other tools stay skipped
+/// so command output does not flood the transcript.</item>
 /// <item><c>turn_completed</c> → <c>TurnEnd</c> carrying <c>stop_reason</c> verbatim
 /// (<c>end_turn</c>; <c>cancelled</c> for Esc — explicitly marked, so none of Claude's
 /// interrupt/compaction marker predicates are needed for Grok) and the usage block when present
@@ -48,8 +52,10 @@ namespace Antiphon.SessionRunner;
 public sealed class GrokTranscriptNormalizer
 {
     private const int MaxToolInputChars = 10_000;
+    private const int MaxToolResultChars = 4_000;
     private const string TruncationMarker = "…[truncated]";
     private const int CompletedPromptIdsKept = 64;
+    private const int ToolCallMetaKept = 64;
 
     private sealed class PendingTurn
     {
@@ -69,6 +75,12 @@ public sealed class GrokTranscriptNormalizer
     private readonly Dictionary<string, string?> _lastSegmentId = new(StringComparer.Ordinal);
     private readonly Queue<string> _completedOrder = new();
     private readonly HashSet<string> _completedPromptIds = new(StringComparer.Ordinal);
+    // CARD-0241: opening tool_call (and updates that still carry _meta["x.ai/tool"]) so a
+    // completed update with empty title / no meta can still be recognized as a question-tool.
+    private readonly Dictionary<string, ToolCallMeta> _toolCalls = new(StringComparer.Ordinal);
+    private readonly Queue<string> _toolCallOrder = new();
+
+    private readonly record struct ToolCallMeta(string? Name, string? Kind);
 
     public IReadOnlyList<TranscriptPart> Normalize(string jsonLine)
     {
@@ -101,6 +113,7 @@ public sealed class GrokTranscriptNormalizer
                 "agent_message_chunk" => AccumulateOrEmit(update, uuid, ts, promptId, thought: false),
                 "agent_thought_chunk" => AccumulateOrEmit(update, uuid, ts, promptId, thought: true),
                 "tool_call" => FromToolCall(update, uuid, ts, promptId),
+                "tool_call_update" => FromToolCallUpdate(update, uuid, ts),
                 "turn_completed" => FromTurnCompleted(update, uuid, ts),
                 "auto_compact_completed" => FromAutoCompactCompleted(update, uuid, ts),
                 _ => [],
@@ -184,13 +197,118 @@ public sealed class GrokTranscriptNormalizer
         var parts = new List<TranscriptPart>();
         CloseCurrentSegment(parts, promptId);
 
+        var (metaName, metaKind) = GetXaiTool(update);
+        var toolCallId = GetString(update, "toolCallId");
+        var toolName = metaName ?? GetString(update, "title");
+        if (toolCallId is not null)
+            RememberToolCall(toolCallId, toolName, metaKind);
+
         var input = update.TryGetProperty("rawInput", out var raw)
             ? Truncate(raw.GetRawText(), MaxToolInputChars)
             : null;
         parts.Add(new TranscriptPart(
             TranscriptKinds.ToolCall, uuid, null, ts, "assistant",
-            null, GetString(update, "title"), input, GetString(update, "toolCallId"), null, null));
+            null, toolName, input, toolCallId, null, null));
         return parts;
+    }
+
+    /// <summary>
+    /// CARD-0241: skip rendering updates; ingest a <c>status=completed</c> update only when
+    /// the opening call (joined by <c>toolCallId</c>) is a question-tool. The completed row
+    /// has empty title and no <c>_meta</c> — the map is the only way to recognize it.
+    /// </summary>
+    private List<TranscriptPart> FromToolCallUpdate(JsonElement update, string? uuid, DateTimeOffset? ts)
+    {
+        var toolCallId = GetString(update, "toolCallId");
+        var (metaName, metaKind) = GetXaiTool(update);
+        if (toolCallId is not null && (metaName is not null || metaKind is not null))
+            RememberToolCall(toolCallId, metaName, metaKind);
+
+        var status = GetString(update, "status");
+        if (!string.Equals(status, "completed", StringComparison.OrdinalIgnoreCase)
+            || toolCallId is null
+            || !_toolCalls.TryGetValue(toolCallId, out var meta)
+            || !GrokQuestionTool.IsQuestionTool(meta.Name, meta.Kind))
+        {
+            return [];
+        }
+
+        var text = Truncate(GetCompletedToolResultText(update), MaxToolResultChars);
+        if (string.IsNullOrWhiteSpace(text))
+            return [];
+
+        return
+        [
+            new TranscriptPart(
+                TranscriptKinds.ToolResult, uuid, null, ts, "user",
+                text, meta.Name ?? GrokQuestionTool.AskUserQuestionName, null, toolCallId, false, null),
+        ];
+    }
+
+    private void RememberToolCall(string toolCallId, string? name, string? kind)
+    {
+        if (_toolCalls.TryGetValue(toolCallId, out var existing))
+        {
+            _toolCalls[toolCallId] = new ToolCallMeta(name ?? existing.Name, kind ?? existing.Kind);
+            return;
+        }
+
+        _toolCalls[toolCallId] = new ToolCallMeta(name, kind);
+        _toolCallOrder.Enqueue(toolCallId);
+        while (_toolCallOrder.Count > ToolCallMetaKept)
+        {
+            var evicted = _toolCallOrder.Dequeue();
+            _toolCalls.Remove(evicted);
+        }
+    }
+
+    private static (string? Name, string? Kind) GetXaiTool(JsonElement update)
+    {
+        if (!update.TryGetProperty("_meta", out var meta) || meta.ValueKind != JsonValueKind.Object)
+            return (null, null);
+        if (!meta.TryGetProperty(GrokQuestionTool.XaiToolMetaKey, out var tool)
+            || tool.ValueKind != JsonValueKind.Object)
+        {
+            return (null, null);
+        }
+
+        return (GetString(tool, "name"), GetString(tool, "kind"));
+    }
+
+    /// <summary>
+    /// Measured completed-update payload (incident line 91):
+    /// <c>content: [{ type: "content", content: { type: "text", text: "User has answered…" } }]</c>.
+    /// </summary>
+    private static string? GetCompletedToolResultText(JsonElement update)
+    {
+        if (!update.TryGetProperty("content", out var content))
+            return null;
+
+        if (content.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in content.EnumerateArray())
+            {
+                var text = TextFromContentNode(item);
+                if (!string.IsNullOrEmpty(text))
+                    return text;
+            }
+
+            return null;
+        }
+
+        return TextFromContentNode(content);
+    }
+
+    private static string? TextFromContentNode(JsonElement node)
+    {
+        if (node.ValueKind != JsonValueKind.Object)
+            return null;
+        var direct = GetString(node, "text");
+        if (!string.IsNullOrEmpty(direct))
+            return direct;
+        return node.TryGetProperty("content", out var inner) && inner.ValueKind == JsonValueKind.Object
+            ? GetString(inner, "text")
+            : null;
     }
 
     private List<TranscriptPart> FromTurnCompleted(JsonElement update, string? uuid, DateTimeOffset? ts)

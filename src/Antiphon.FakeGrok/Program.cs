@@ -31,6 +31,11 @@ namespace Antiphon.FakeGrok;
 ///  * updates.jsonl per turn: user_message_chunk + agent_message_chunk (method
 ///    <c>session/update</c>) and turn_completed with stop_reason (method
 ///    <c>_x.ai/session/update</c>), flushed line-by-line as they happen
+///  * Opt-in <c>ANTIPHON_FAKE_QUESTION_TOOL=1</c> (CARD-0241): first submit opens
+///    <c>ask_user_question</c> (the three measured JSONL shapes) and holds the turn working;
+///    a submit while open writes the completed update (not a user chunk); Esc does not complete
+///    the tool. <c>ANTIPHON_FAKE_SUBMIT_WHILE_WORKING=cancel</c> still cancels a later
+///    submit-while-working.
 /// </summary>
 internal static class Program
 {
@@ -43,6 +48,9 @@ internal static class Program
     private static readonly byte[] PasteStartBytes = Encoding.ASCII.GetBytes("\x1b[200~");
     private static bool _turnInFlight;
     private static string? _inFlightPromptId;
+    private static bool _questionOpen;
+    private static string? _questionToolCallId;
+    private static string? _questionText;
 
     /// <summary>
     /// CARD-0159 S0: a prompt received while a turn is in flight emits
@@ -54,6 +62,18 @@ internal static class Program
         string.Equals(
             Environment.GetEnvironmentVariable("ANTIPHON_FAKE_SUBMIT_WHILE_WORKING"),
             "cancel",
+            StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// CARD-0241 S5: first submit opens <c>ask_user_question</c> (the three measured JSONL
+    /// shapes; turn stays working). A submit while open writes the completed update, not a
+    /// <c>user_message_chunk</c>. Esc does not complete the tool. The CARD-0159 S0 knob still
+    /// cancels a submit-while-working that is not an answer to the open question.
+    /// </summary>
+    private static bool QuestionToolEnabled =>
+        string.Equals(
+            Environment.GetEnvironmentVariable("ANTIPHON_FAKE_QUESTION_TOOL"),
+            "1",
             StringComparison.OrdinalIgnoreCase);
 
     private static int Main(string[] args)
@@ -213,7 +233,20 @@ internal static class Program
                 bursts.Add(current.ToArray());
 
             foreach (var burst in bursts)
+            {
+                var burstText = Encoding.UTF8.GetString(burst);
+                // CARD-0241: Esc is not the answer path. A lone Esc while the question is open
+                // must not complete the tool and must not submit.
+                if (_questionOpen
+                    && burstText.Length > 0
+                    && burstText.All(c => c == '\x1b'))
+                {
+                    Write("QUESTION-ESC-IGNORED\r\n");
+                    continue;
+                }
+
                 ProcessBurst(burst);
+            }
         }
 
         return 0;
@@ -318,6 +351,31 @@ internal static class Program
         write("\r\n");
         var escaped = text.Replace("\n", "\\n");
         write($"SUBMITTED:{escaped}\r\n");
+
+        if (QuestionToolEnabled && _questionOpen)
+        {
+            // Measured: the overlay answer is a completed tool_call_update, not a user_message_chunk.
+            AppendQuestionCompleted(sessionDir, sessionId, text);
+            _questionOpen = false;
+            _questionToolCallId = null;
+            _questionText = null;
+            write("QUESTION-ANSWERED\r\n");
+            // Same turn stays in flight; a later submit-while-working still cancels (S0).
+            return;
+        }
+
+        if (QuestionToolEnabled && !_questionOpen)
+        {
+            var echoQ = escaped.Length > 60 ? escaped[..60] : escaped;
+            _inFlightPromptId = AppendPartialTurn(sessionDir, sessionId, text, $"FAKE response to: {echoQ}");
+            _questionToolCallId = $"call-{Guid.NewGuid():D}-25";
+            _questionText = "Any preference before I start?";
+            AppendQuestionOpening(sessionDir, sessionId, _questionToolCallId, _questionText);
+            _questionOpen = true;
+            _turnInFlight = true;
+            write("QUESTION-OPEN\r\n");
+            return;
+        }
 
         // Measured 1.0.5 (GrokCanaryTests): a typed /compact writes compaction_checkpoint +
         // auto_compact_completed and NO turn_completed / user_message_chunk (CARD-0157).
@@ -491,6 +549,134 @@ internal static class Program
         }
 
         return promptId;
+    }
+
+    /// <summary>
+    /// Incident lines 86/87 shape: opening <c>tool_call</c> titled ask_user_question with
+    /// <c>_meta["x.ai/tool"]</c>, then a rendering <c>tool_call_update</c> that is not completed.
+    /// </summary>
+    private static void AppendQuestionOpening(
+        string sessionDir, string sessionId, string toolCallId, string question)
+    {
+        try
+        {
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var updates = Path.Combine(sessionDir, "updates.jsonl");
+            object XaiTool() => new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["x.ai/tool"] = new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["version"] = 1,
+                    ["name"] = "ask_user_question",
+                    ["kind"] = "ask_user",
+                    ["namespace"] = "grok_build",
+                    ["label"] = "Ask User",
+                    ["read_only"] = true,
+                },
+            };
+            object Meta() => new { eventId = $"{sessionId}-{++_eventCounter}", agentTimestampMs = nowMs };
+            AppendShared(updates, JsonSerializer.Serialize(new
+            {
+                timestamp = now,
+                method = "session/update",
+                @params = new
+                {
+                    sessionId,
+                    update = new
+                    {
+                        sessionUpdate = "tool_call",
+                        toolCallId,
+                        title = "ask_user_question",
+                        rawInput = new
+                        {
+                            questions = new[]
+                            {
+                                new
+                                {
+                                    question,
+                                    options = new[]
+                                    {
+                                        new { label = "Proceed as planned (Recommended)", description = "Go ahead." },
+                                        new { label = "Hold - I have a change", description = "Wait." },
+                                    },
+                                },
+                            },
+                        },
+                        _meta = XaiTool(),
+                    },
+                    _meta = Meta(),
+                },
+            }));
+            AppendShared(updates, JsonSerializer.Serialize(new
+            {
+                timestamp = now,
+                method = "session/update",
+                @params = new
+                {
+                    sessionId,
+                    update = new
+                    {
+                        sessionUpdate = "tool_call_update",
+                        toolCallId,
+                        kind = "other",
+                        title = "Ask: " + question,
+                        locations = Array.Empty<object>(),
+                        _meta = XaiTool(),
+                    },
+                    _meta = Meta(),
+                },
+            }));
+        }
+        catch
+        {
+            // Session files are test plumbing; a write failure must not kill the TUI contract.
+        }
+    }
+
+    /// <summary>
+    /// Incident line 91 shape: completed update, empty title, no <c>_meta["x.ai/tool"]</c>,
+    /// <c>content[0].content.text</c> wrapping the typed answer.
+    /// </summary>
+    private static void AppendQuestionCompleted(string sessionDir, string sessionId, string answer)
+    {
+        try
+        {
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var updates = Path.Combine(sessionDir, "updates.jsonl");
+            var wrapper =
+                $"User has answered your questions: \"{_questionText ?? "question"}\"=\"{answer}\". "
+                + "You can now continue with the user's answers in mind.";
+            AppendShared(updates, JsonSerializer.Serialize(new
+            {
+                timestamp = now,
+                method = "session/update",
+                @params = new
+                {
+                    sessionId,
+                    update = new
+                    {
+                        sessionUpdate = "tool_call_update",
+                        toolCallId = _questionToolCallId,
+                        status = "completed",
+                        content = new object[]
+                        {
+                            new
+                            {
+                                type = "content",
+                                content = new { type = "text", text = wrapper },
+                            },
+                        },
+                    },
+                    _meta = new { eventId = $"{sessionId}-{++_eventCounter}", agentTimestampMs = nowMs },
+                },
+            }));
+        }
+        catch
+        {
+            // Session files are test plumbing; a write failure must not kill the TUI contract.
+        }
     }
 
     private static void AppendTurnCompleted(

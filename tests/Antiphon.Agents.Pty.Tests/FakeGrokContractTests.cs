@@ -360,6 +360,97 @@ public class FakeGrokContractTests
     }
 
     [Test]
+    public async Task Question_tool_submit_while_open_writes_completed_update_and_no_user_chunk()
+    {
+        SkipIfUnavailable();
+        var home = Path.Combine(Path.GetTempPath(), $"fakegrok-home-{Guid.NewGuid():N}");
+        var cwd = Path.Combine(Path.GetTempPath(), $"fakegrok-cwd-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(cwd);
+        var sessionId = Guid.NewGuid().ToString("D");
+        try
+        {
+            await using var runner = await LaunchReadyFakeAsync(
+                env: new Dictionary<string, string>
+                {
+                    ["GROK_HOME"] = home,
+                    ["ANTIPHON_FAKE_QUESTION_TOOL"] = "1",
+                },
+                args: ["--cwd", cwd, "--session-id", sessionId]);
+
+            await runner.WriteAsync("brief that opens a question\r");
+            (await runner.WaitForOutputAsync(
+                s => s.Contains("QUESTION-OPEN"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue();
+
+            await runner.WriteAsync("Proceed as planned (Recommended)\r");
+            (await runner.WaitForOutputAsync(
+                s => s.Contains("QUESTION-ANSWERED"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue();
+
+            var sessionDir = Path.Combine(home, "sessions", Uri.EscapeDataString(Path.GetFullPath(cwd)), sessionId);
+            var updatesPath = Path.Combine(sessionDir, "updates.jsonl");
+            var text = await WaitForUpdatesAsync(
+                updatesPath,
+                "\"title\":\"ask_user_question\"",
+                "\"status\":\"completed\"",
+                "User has answered your questions:",
+                "Proceed as planned (Recommended)");
+
+            var completedAt = text.IndexOf("\"status\":\"completed\"", StringComparison.Ordinal);
+            completedAt.ShouldBeGreaterThan(0);
+            var afterCompleted = text[completedAt..];
+            afterCompleted.ShouldNotContain("user_message_chunk");
+            afterCompleted.ShouldContain("User has answered your questions:");
+        }
+        finally
+        {
+            try { Directory.Delete(home, true); } catch { /* best effort */ }
+            try { Directory.Delete(cwd, true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
+    public async Task Question_tool_Esc_does_not_complete_the_tool()
+    {
+        SkipIfUnavailable();
+        var home = Path.Combine(Path.GetTempPath(), $"fakegrok-home-{Guid.NewGuid():N}");
+        var cwd = Path.Combine(Path.GetTempPath(), $"fakegrok-cwd-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(cwd);
+        var sessionId = Guid.NewGuid().ToString("D");
+        try
+        {
+            await using var runner = await LaunchReadyFakeAsync(
+                env: new Dictionary<string, string>
+                {
+                    ["GROK_HOME"] = home,
+                    ["ANTIPHON_FAKE_QUESTION_TOOL"] = "1",
+                },
+                args: ["--cwd", cwd, "--session-id", sessionId]);
+
+            await runner.WriteAsync("brief that opens a question\r");
+            (await runner.WaitForOutputAsync(
+                s => s.Contains("QUESTION-OPEN"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue();
+
+            await runner.WriteAsync("\u001b");
+            (await runner.WaitForOutputAsync(
+                s => s.Contains("QUESTION-ESC-IGNORED"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue();
+
+            var sessionDir = Path.Combine(home, "sessions", Uri.EscapeDataString(Path.GetFullPath(cwd)), sessionId);
+            var updatesPath = Path.Combine(sessionDir, "updates.jsonl");
+            var text = await WaitForUpdatesAsync(updatesPath, "\"title\":\"ask_user_question\"");
+            text.ShouldNotContain("\"status\":\"completed\"");
+            text.ShouldNotContain("QUESTION-ANSWERED");
+        }
+        finally
+        {
+            try { Directory.Delete(home, true); } catch { /* best effort */ }
+            try { Directory.Delete(cwd, true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
     public async Task Resume_of_a_missing_session_exits_nonzero()
     {
         SkipIfUnavailable();

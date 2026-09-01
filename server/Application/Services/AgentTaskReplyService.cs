@@ -228,7 +228,12 @@ public sealed class AgentTaskReplyService
         }
     }
 
-    /// <summary>Answer a Blocked delegate's question and let it resume.</summary>
+    /// <summary>
+    /// Answer a delegate. Blocked stays WhenIdle + task marker (the next turn). Dispatched/Working
+    /// with an open question-tool on the session is the CARD-0241 overlay path: Now semantics, no
+    /// marker (same turn as the brief), a persisted queue row so a 409 can late-confirm. Anything
+    /// else is a 409 naming Refine vs Reply-on-Blocked vs Reply-on-open-question.
+    /// </summary>
     public async Task<AgentTaskSummaryDto> AnswerAsync(Guid taskId, string message, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(message))
@@ -240,24 +245,87 @@ public sealed class AgentTaskReplyService
 
         var task = await db.AgentTasks.FirstOrDefaultAsync(t => t.Id == taskId, ct)
             ?? throw new NotFoundException(nameof(AgentTask), taskId);
-        if (task.Status != AgentTaskStatus.Blocked)
-            throw new ConflictException($"Task {DelegationReportFormatter.Short(taskId)} is not waiting for an answer.");
-        if (task.AgentSessionId is not Guid sessionId)
-            throw new ConflictException("The delegate's session is no longer available.");
 
-        var now = UtcNow();
-        task.Status = AgentTaskStatus.Working;
-        task.ConcurrencyToken = Guid.NewGuid();
-        db.AgentTaskEvents.Add(NewEvent(taskId, AgentTaskEventType.Replied, "Caller answered the delegate's question.", now));
-        await db.SaveChangesAsync(ct);
+        if (task.Status == AgentTaskStatus.Blocked)
+        {
+            if (task.AgentSessionId is not Guid blockedSessionId)
+                throw new ConflictException("The delegate's session is no longer available.");
 
-        // The marker rides the answer so the delegate's NEXT turn correlates back to this task.
-        var body = $"{DelegationReportFormatter.TaskMarker(taskId)}\n\n{message.Trim()}";
-        await queue.EnqueueAsync(sessionId, body, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
+            var now = UtcNow();
+            task.Status = AgentTaskStatus.Working;
+            task.ConcurrencyToken = Guid.NewGuid();
+            db.AgentTaskEvents.Add(NewEvent(taskId, AgentTaskEventType.Replied, "Caller answered the delegate's question.", now));
+            await db.SaveChangesAsync(ct);
 
-        await PublishAsync(task, ct);
-        var family = await db.AgentTasks.AsNoTracking().Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);
-        return await scope.ServiceProvider.GetRequiredService<AgentTaskService>().GetSummaryAsync(task, family);
+            // The marker rides the answer so the delegate's NEXT turn correlates back to this task.
+            var blockedBody = $"{DelegationReportFormatter.TaskMarker(taskId)}\n\n{message.Trim()}";
+            await queue.EnqueueAsync(blockedSessionId, blockedBody, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
+
+            await PublishAsync(task, ct);
+            var blockedFamily = await db.AgentTasks.AsNoTracking().Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);
+            return await scope.ServiceProvider.GetRequiredService<AgentTaskService>().GetSummaryAsync(task, blockedFamily);
+        }
+
+        if (task.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
+        {
+            if (task.AgentSessionId is not Guid sessionId)
+                throw new ConflictException("The delegate's session is no longer available.");
+
+            var runtime = scope.ServiceProvider.GetRequiredService<AgentSessionRuntime>();
+            await runtime.CatchUpTranscriptAsync(sessionId, ct);
+            if (!await HasOpenQuestionToolAsync(db, sessionId, ct))
+            {
+                throw new ConflictException(
+                    $"Task {DelegationReportFormatter.Short(taskId)} is not waiting for an answer. "
+                    + "Refine a running task (WhenIdle) to steer it between turns; "
+                    + "reply while Blocked to answer a question; "
+                    + "or reply while an ask_user_question popup is open to answer in-turn.");
+            }
+
+            db.AgentTaskEvents.Add(NewEvent(
+                taskId, AgentTaskEventType.Replied,
+                "Caller answered an in-turn question-tool popup.", UtcNow()));
+            await db.SaveChangesAsync(ct);
+
+            // Same turn as the brief: type the answer only. Prefixing the task marker would fail
+            // option matching and appear inside the completed ToolResult, not as a UserPrompt.
+            await queue.EnqueueDeliveringNowAsync(
+                sessionId, message.Trim(), ct, QueuedMessageOrigin.Delegation);
+
+            await PublishAsync(task, ct);
+            var family = await db.AgentTasks.AsNoTracking().Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);
+            return await scope.ServiceProvider.GetRequiredService<AgentTaskService>().GetSummaryAsync(task, family);
+        }
+
+        throw new ConflictException($"Task {DelegationReportFormatter.Short(taskId)} is not waiting for an answer.");
+    }
+
+    /// <summary>
+    /// Transcript-grounded: the newest question-tool <c>ToolCall</c> has no later <c>ToolResult</c>
+    /// for that <c>ToolUseId</c>. Screen guesses are not evidence.
+    /// </summary>
+    internal static async Task<bool> HasOpenQuestionToolAsync(
+        AppDbContext db, Guid sessionId, CancellationToken ct)
+    {
+        var calls = await db.TranscriptEntries
+            .AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.ToolCall)
+            .OrderByDescending(t => t.Sequence)
+            .Select(t => new { t.Sequence, t.ToolName, t.ToolUseId })
+            .ToListAsync(ct);
+
+        var open = calls.FirstOrDefault(c => GrokQuestionTool.IsQuestionToolName(c.ToolName));
+        if (open is null)
+            return false;
+        if (string.IsNullOrEmpty(open.ToolUseId))
+            return true;
+
+        return !await db.TranscriptEntries
+            .AsNoTracking()
+            .AnyAsync(t => t.AgentSessionId == sessionId
+                && t.Kind == TranscriptKinds.ToolResult
+                && t.ToolUseId == open.ToolUseId
+                && t.Sequence > open.Sequence, ct);
     }
 
     /// <summary>

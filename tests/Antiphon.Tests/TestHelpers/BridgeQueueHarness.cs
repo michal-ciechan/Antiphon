@@ -268,14 +268,16 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         DateTime? timestamp = null,
         bool? isApiError = null,
         string? apiErrorClass = null,
-        int? apiErrorStatus = null) =>
+        int? apiErrorStatus = null,
+        string? toolName = null,
+        string? toolUseId = null) =>
         InsertEntryAsync(sessionId ?? SessionId, kind, text, stopReason, timestamp,
-            isApiError, apiErrorClass, apiErrorStatus);
+            isApiError, apiErrorClass, apiErrorStatus, toolName, toolUseId);
 
     internal static async Task<long> InsertEntryAsync(
         Guid sessionId, string kind, string? text = null, string? stopReason = null,
         DateTime? timestamp = null, bool? isApiError = null, string? apiErrorClass = null,
-        int? apiErrorStatus = null)
+        int? apiErrorStatus = null, string? toolName = null, string? toolUseId = null)
     {
         await using var db = CreateContext();
         var seq = ((await db.TranscriptEntries
@@ -293,6 +295,8 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             IsApiError = isApiError,
             ApiErrorClass = apiErrorClass,
             ApiErrorStatus = apiErrorStatus,
+            ToolName = toolName,
+            ToolUseId = toolUseId,
             CreatedAt = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();

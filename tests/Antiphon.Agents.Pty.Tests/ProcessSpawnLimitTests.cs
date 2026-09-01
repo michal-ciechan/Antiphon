@@ -41,6 +41,7 @@ public class ProcessSpawnLimitTests
             typeof(ClaudeSignalCanaryTests),
             typeof(GrokCanaryTests),
             typeof(GrokSubmitWhileWorkingCanaryTests),
+            typeof(GrokQuestionPopupCanaryTests),
             typeof(ClaudePasteLossCanaryTests),
             typeof(FakeVsRealClipParityTests),
             typeof(ClaudeLocalCommandCanaryTests),

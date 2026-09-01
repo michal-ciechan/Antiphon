@@ -42,6 +42,21 @@ public class GrokTranscriptTailerTests
     private const string ToolCallUpdateRow =
         """{"timestamp":1786999681,"method":"session/update","params":{"sessionId":"01a01178-bfe3-7493-b326-1785d2ebf7db","update":{"sessionUpdate":"tool_call_update","toolCallId":"call-bb331df7-4505-47df-822e-d2e29fd0a19c-0","kind":"read","title":"Read `C:\\src\\Antiphon\\docs\\project-context.md`","locations":[{"path":"C:\\src\\Antiphon\\docs\\project-context.md"}],"rawInput":{"variant":"ReadFile","target_file":"C:\\src\\Antiphon\\docs\\project-context.md","limit":150},"_meta":{"x.ai/tool":{"version":1,"name":"read_file","kind":"read","namespace":"grok_build","label":"Read","read_only":true,"input":{"path":"C:\\src\\Antiphon\\docs\\project-context.md","limit":150}}}},"_meta":{"totalTokens":40754,"eventId":"01a01178-bfe3-7493-b326-1785d2ebf7db-87","agentTimestampMs":1786999681651,"promptId":"fb469fb0-6940-476a-bc78-fdf757090144","streamStartMs":1786999674711,"turnStartMs":1786999655767,"updateType":"ToolCallUpdate","updateParams":{"toolCallId":"call-bb331df7-4505-47df-822e-d2e29fd0a19c-0","status":null}}}}""";
 
+    // CARD-0241: incident session 53a16758 lines 86 / 87 / 91, verbatim (not the 818 KB file).
+    private const string AskUserQuestionToolCallRow =
+        """{"timestamp":1787507827,"method":"session/update","params":{"sessionId":"53a16758-ab46-4f19-b955-3dc705680206","update":{"sessionUpdate":"tool_call","toolCallId":"call-1a938f13-b2cd-422d-940c-a3f9d273d2de-25","title":"ask_user_question","rawInput":{"questions":[{"question":"CARD-0158 build is clear from the plan. Proceeding with S1 (disarm Debug EscalateAfterMinutes) + S2 (historical fixture pin tests). Any preference before I start?","options":[{"label":"Proceed as planned (Recommended)","description":"Implement S1+S2 exactly as the plan writes; rebase/merge/restart/close yourself."},{"label":"Hold - I have a change","description":"Wait; I will clarify scope before you edit."}]}]},"_meta":{"x.ai/tool":{"version":1,"name":"ask_user_question","kind":"ask_user","namespace":"grok_build","label":"Ask User","read_only":true}}},"_meta":{"totalTokens":83185,"eventId":"53a16758-ab46-4f19-b955-3dc705680206-380","agentTimestampMs":1787507827170,"promptId":"08600b09-c208-4059-b5dc-c4042f2133db","streamStartMs":1787507816149,"turnStartMs":1787507754053,"updateType":"ToolCall","updateParams":{"toolCallId":"call-1a938f13-b2cd-422d-940c-a3f9d273d2de-25","title":"ask_user_question","kind":"Other","status":"Pending"}}}}""";
+
+    private const string AskUserQuestionRenderingUpdateRow =
+        """{"timestamp":1787507827,"method":"session/update","params":{"sessionId":"53a16758-ab46-4f19-b955-3dc705680206","update":{"sessionUpdate":"tool_call_update","toolCallId":"call-1a938f13-b2cd-422d-940c-a3f9d273d2de-25","kind":"other","title":"Ask: CARD-0158 build is clear from the plan. Proceeding with S1 (disarm Debug EscalateAfterMinutes) + S2 (historical fixture pin tests). Any preference before I start?","locations":[],"rawInput":{"variant":"AskUserQuestion","questions":[{"question":"CARD-0158 build is clear from the plan. Proceeding with S1 (disarm Debug EscalateAfterMinutes) + S2 (historical fixture pin tests). Any preference before I start?","options":[{"label":"Proceed as planned (Recommended)","description":"Implement S1+S2 exactly as the plan writes; rebase/merge/restart/close yourself."},{"label":"Hold - I have a change","description":"Wait; I will clarify scope before you edit."}],"multiSelect":null}]},"_meta":{"x.ai/tool":{"version":1,"name":"ask_user_question","kind":"ask_user","namespace":"grok_build","label":"Ask User","read_only":true}}},"_meta":{"totalTokens":83185,"eventId":"53a16758-ab46-4f19-b955-3dc705680206-381","agentTimestampMs":1787507827170,"promptId":"08600b09-c208-4059-b5dc-c4042f2133db","streamStartMs":1787507816149,"turnStartMs":1787507754053,"updateType":"ToolCallUpdate","updateParams":{"toolCallId":"call-1a938f13-b2cd-422d-940c-a3f9d273d2de-25","status":null}}}}""";
+
+    private const string AskUserQuestionCompletedUpdateRow =
+        """{"timestamp":1787509580,"method":"session/update","params":{"sessionId":"53a16758-ab46-4f19-b955-3dc705680206","update":{"sessionUpdate":"tool_call_update","toolCallId":"call-1a938f13-b2cd-422d-940c-a3f9d273d2de-25","status":"completed","content":[{"type":"content","content":{"type":"text","text":"User has answered your questions: \"CARD-0158 build is clear from the plan. Proceeding with S1 (disarm Debug EscalateAfterMinutes) + S2 (historical fixture pin tests). Any preference before I start?\"=\"Proceed as planned (Recommended)\". You can now continue with the user's answers in mind."}}],"rawOutput":{"type":"AskUserQuestion","UserAnswered":{"message":"User has answered your questions: \"CARD-0158 build is clear from the plan. Proceeding with S1 (disarm Debug EscalateAfterMinutes) + S2 (historical fixture pin tests). Any preference before I start?\"=\"Proceed as planned (Recommended)\". You can now continue with the user's answers in mind."}}},"_meta":{"totalTokens":87307,"eventId":"53a16758-ab46-4f19-b955-3dc705680206-385","agentTimestampMs":1787509579151,"promptId":"08600b09-c208-4059-b5dc-c4042f2133db","streamStartMs":1787507816149,"turnStartMs":1787507754053,"updateType":"ToolCallUpdate","updateParams":{"toolCallId":"call-1a938f13-b2cd-422d-940c-a3f9d273d2de-25","status":"Completed"}}}}""";
+
+    // Measured completed-update shape of a non-question tool (incident lines 88–90): status=completed,
+    // different toolCallId, file-body content. Must NOT become a ToolResult.
+    private const string ReadFileCompletedUpdateRow =
+        """{"timestamp":1786999682,"method":"session/update","params":{"sessionId":"01a01178-bfe3-7493-b326-1785d2ebf7db","update":{"sessionUpdate":"tool_call_update","toolCallId":"call-bb331df7-4505-47df-822e-d2e29fd0a19c-0","status":"completed","content":[{"type":"content","content":{"type":"text","text":"# project-context.md\nAntiphon agent context"}}]}},"_meta":{"eventId":"01a01178-bfe3-7493-b326-1785d2ebf7db-90","agentTimestampMs":1786999682651,"promptId":"fb469fb0-6940-476a-bc78-fdf757090144"}}""";
+
     private const string SessionRecapRow =
         """{"timestamp":1787002204,"method":"_x.ai/session/update","params":{"sessionId":"01a01178-bfe3-7493-b326-1785d2ebf7db","update":{"sessionUpdate":"session_recap","summary":"We added Grok as a first-class Antiphon TUI (`AgentKind.Grok`, `RunnerGrokAdapter`, FakeGrok tests) and pushed `5754e02` to master.","auto":true},"_meta":{"eventId":"01a01178-bfe3-7493-b326-1785d2ebf7db-5518","agentTimestampMs":1787002204891}}}""";
 
@@ -136,6 +151,58 @@ public class GrokTranscriptTailerTests
             await tailer.DisposeAsync();
             BestEffortDelete(dir);
         }
+    }
+
+    [Test]
+    public void Incident_ask_user_question_opening_is_a_ToolCall_named_ask_user_question()
+    {
+        var n = new GrokTranscriptNormalizer();
+        var parts = n.Normalize(AskUserQuestionToolCallRow);
+        var call = parts.ShouldHaveSingleItem();
+        call.Kind.ShouldBe(TranscriptKinds.ToolCall);
+        call.ToolName.ShouldBe(GrokQuestionTool.AskUserQuestionName);
+        call.ToolUseId.ShouldBe("call-1a938f13-b2cd-422d-940c-a3f9d273d2de-25");
+    }
+
+    [Test]
+    public void Incident_ask_user_question_rendering_update_emits_nothing()
+    {
+        var n = new GrokTranscriptNormalizer();
+        n.Normalize(AskUserQuestionToolCallRow);
+        n.Normalize(AskUserQuestionRenderingUpdateRow).ShouldBeEmpty();
+    }
+
+    [Test]
+    public void Incident_completed_question_update_is_a_ToolResult_containing_the_option_label()
+    {
+        var n = new GrokTranscriptNormalizer();
+        n.Normalize(AskUserQuestionToolCallRow);
+        n.Normalize(AskUserQuestionRenderingUpdateRow);
+        var parts = n.Normalize(AskUserQuestionCompletedUpdateRow);
+        var result = parts.ShouldHaveSingleItem();
+        result.Kind.ShouldBe(TranscriptKinds.ToolResult);
+        result.ToolName.ShouldBe(GrokQuestionTool.AskUserQuestionName);
+        result.ToolUseId.ShouldBe("call-1a938f13-b2cd-422d-940c-a3f9d273d2de-25");
+        var text = result.Text.ShouldNotBeNull();
+        text.ShouldContain("Proceed as planned (Recommended)");
+        text.ShouldStartWith(GrokQuestionTool.CompletedAnswerPrefix);
+    }
+
+    [Test]
+    public void Completed_read_file_update_is_not_a_ToolResult()
+    {
+        var n = new GrokTranscriptNormalizer();
+        n.Normalize(ToolCallRow);
+        n.Normalize(ReadFileCompletedUpdateRow).ShouldBeEmpty();
+    }
+
+    [Test]
+    public void Completed_question_update_without_an_opening_call_is_skipped()
+    {
+        // The completed row has empty title / no _meta; without the map it cannot be recognized.
+        new GrokTranscriptNormalizer()
+            .Normalize(AskUserQuestionCompletedUpdateRow)
+            .ShouldBeEmpty();
     }
 
     [Test]
