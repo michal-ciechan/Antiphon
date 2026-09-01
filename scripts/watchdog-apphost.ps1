@@ -11,8 +11,10 @@
          logs/apphost.restart.lock under 15 min old with a live holder, or the
          "Antiphon AppHost" logon task currently Running).
       2. GET /health on 17202 (expect 200) and GET / on 17203 (expect 2xx/3xx).
-         On any failure, re-probe twice more at IntervalSeconds (15) spacing.
-         Restart only if all three rounds fail.
+         On a restart-worthy failure (connection-refused / stack down), re-probe
+         twice more at IntervalSeconds (15) spacing. Restart only if all three
+         rounds look down. HttpClient timeout on /health while client=200 is
+         NOT a failed round (CARD-0310: loaded or coming-up, not a corpse).
       3. If docker info fails, log and exit without counting against the flap budget.
       4. Cooldown: skip if a restart was stamped under CooldownMinutes (10) ago.
       5. Flap cap: skip and ERROR if MaxRestartsPerWindow (3) restarts sit inside
@@ -129,14 +131,15 @@ function Test-Round {
     $health = Test-HttpOk $HealthUrl @(200)
     $clientCodes = 200, 201, 202, 203, 204, 301, 302, 303, 307, 308
     $client = Test-HttpOk $ClientUrl $clientCodes
-    $ok = $health.Ok -and $client.Ok
-    $healthBit = if ($health.Ok) { "health=$($health.Code)" } else {
-        if ($health.Code) { "health=$($health.Code)" } else { "health=FAIL $($health.Error)" }
+    $class = Get-AppHostProbeClassification `
+        -HealthOk $health.Ok -HealthError $health.Error -HealthCode $health.Code `
+        -ClientOk $client.Ok -ClientError $client.Error -ClientCode $client.Code
+    return [pscustomobject]@{
+        Ok            = ($class.Kind -eq 'Up')
+        RestartWorthy = $class.RestartWorthy
+        Kind          = $class.Kind
+        Summary       = $class.Summary
     }
-    $clientBit = if ($client.Ok) { "client=$($client.Code)" } else {
-        if ($client.Code) { "client=$($client.Code)" } else { "client=FAIL $($client.Error)" }
-    }
-    return [pscustomobject]@{ Ok = $ok; Summary = "$healthBit $clientBit" }
 }
 
 function Test-LaunchInFlight {
@@ -173,7 +176,7 @@ if ($inFlight) {
 
 
 $roundsNeeded = 3
-$failedRounds = 0
+$downRounds = 0
 $lastSummary = ''
 for ($i = 1; $i -le $roundsNeeded; $i++) {
     $round = Test-Round
@@ -193,11 +196,23 @@ for ($i = 1; $i -le $roundsNeeded; $i++) {
         }
         exit 0
     }
-    $failedRounds++
+    if (-not $round.RestartWorthy) {
+        Write-Log 'WARN' "health slow, client up - not counting as down ($lastSummary)"
+        if ($i -lt $roundsNeeded) {
+            Start-Sleep -Seconds $IntervalSeconds
+        }
+        continue
+    }
+    $downRounds++
     Write-Log 'WARN' "probe round $i/$roundsNeeded failed: $lastSummary"
     if ($i -lt $roundsNeeded) {
         Start-Sleep -Seconds $IntervalSeconds
     }
+}
+
+if ($downRounds -lt $roundsNeeded) {
+    Write-Log 'WARN' "health slow, client up - not counting as down ($lastSummary)"
+    exit 0
 }
 
 Write-Log 'WARN' "all $roundsNeeded probe rounds failed ($lastSummary)"
