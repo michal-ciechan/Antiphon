@@ -40,6 +40,14 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     /// </summary>
     public IReadOnlyList<string> ComposerFramesAfterEvidence { get; set; } = [];
     public int ComposerFrameDelayMs { get; set; } = 10;
+    /// <summary>
+    /// CARD-0299: after a submitting Enter, the next N <see cref="SnapshotRenderedScreen"/>
+    /// calls omit the composer (empty / ghost frame) and then return to echoing
+    /// <c>_composer</c>. Combined with <see cref="SwallowSubmits"/> the body stays held;
+    /// a single empty snapshot must not latch emptied-composer.
+    /// </summary>
+    public int EmptyComposerSnapshotsAfterEnter { get; set; }
+    private int _emptyComposerSnapshotsRemaining;
     private readonly StringBuilder _composer = new();
 
     /// <summary>
@@ -253,6 +261,9 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
 
         if (input == "\r")
         {
+            if (EmptyComposerSnapshotsAfterEnter > 0)
+                _emptyComposerSnapshotsRemaining = EmptyComposerSnapshotsAfterEnter;
+
             // Ordered so the two can compose: StaleSubmitBody claims the FIRST Enter (the measured
             // 15c9150e shape), SwallowSubmits then eats the re-presses behind it.
             if (StaleSubmitBody is { } stale && !_staleSubmitUsed)
@@ -364,6 +375,12 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
             return RemoteControlMenuScreenText;
 
         var screen = RenderedScreenOverride ?? _rawOutput.ToString();
+        if (_emptyComposerSnapshotsRemaining > 0)
+        {
+            _emptyComposerSnapshotsRemaining--;
+            return screen;
+        }
+
         return _composer.Length > 0 ? screen + "\n> " + _composer : screen;
     }
 

@@ -39,6 +39,19 @@ public class SubmitEvidenceTests
     }
 
     [Test]
+    public void Codex_one_shot_IsPositive_is_true_on_empty_after_body()
+    {
+        // Documents the hole the queue must not latch (CARD-0299): a single empty snapshot
+        // looks positive. WaitForTranscriptConfirmAsync requires PostEvidenceSettleMs of
+        // consecutive emptied frames and re-checks HeadFragmentIsVisible at the deadline.
+        SubmitEvidence.IsPositive(
+            SubmitEvidenceKind.Codex,
+            $"› {Body}",
+            "",
+            Body).ShouldBeTrue();
+    }
+
+    [Test]
     public void Standard_kind_has_no_screen_only_positive_predicate()
     {
         SubmitEvidence.IsPositive(

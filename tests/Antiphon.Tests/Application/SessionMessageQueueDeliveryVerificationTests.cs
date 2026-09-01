@@ -625,6 +625,33 @@ public class SessionMessageQueueDeliveryVerificationTests
     }
 
     [Test]
+    public async Task Codex_unobservable_transient_empty_frame_does_not_latch_emptied_composer()
+    {
+        // CARD-0299: echo the body, one empty/ghost snapshot, then the body again. Today's
+        // hole latched emptied-composer on that single poll, suppressed re-Enter, and
+        // certified Sent after 1 Enter. Must send 3 Enters and return NoSubmitOutput.
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await SetKindAsync(h.SessionId, AgentKind.Codex);
+        h.Adapter.SwallowSubmits = 99;
+        h.Adapter.SubmitAck = "";
+        h.Adapter.EmptyComposerSnapshotsAfterEnter = 1;
+
+        var ex = await Should.ThrowAsync<ConflictException>(() => h.Queue.EnqueueAsync(
+            h.SessionId, "codex body that flickers empty then returns", MessageSendMode.Now,
+            CancellationToken.None));
+
+        h.Adapter.Inputs.ShouldBe([
+            "codex body that flickers empty then returns", "\r", "\r", "\r"],
+            "a single empty/ghost snapshot must not latch emptied-composer and suppress re-Enter");
+        ex.Message.ShouldContain("submitting Enter produced no output");
+
+        await using var db = CreateContext();
+        (await db.AgentIncidents.AnyAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryUnverified))
+            .ShouldBeFalse("must not Sent / DeliveryUnverified on a transient empty frame");
+    }
+
+    [Test]
     public async Task Codex_unobservable_working_indicator_confirms_by_screen()
     {
         await using var h = await CreateHarnessAsync(alwaysOn: true);

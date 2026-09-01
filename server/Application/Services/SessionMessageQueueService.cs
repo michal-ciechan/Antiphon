@@ -1881,6 +1881,10 @@ public sealed class SessionMessageQueueService
         var entersSent = 1; // the caller's submitting Enter
         var sawSequenceAdvance = false;
         var sawPositiveSubmit = false;
+        var workingLatched = false;
+        DateTime? emptiedSince = null;
+        var emptiedSettle = TimeSpan.FromMilliseconds(
+            Math.Clamp(_verification.PostEvidenceSettleMs, 0, 3_000));
         // CARD-0164: pull cadence for the unobservable branch — CatchUpTranscriptAsync, never
         // SyncTranscriptAsync (turn-boundary flush re-enters the queue under the caller's lock).
         var pullEvery = TimeSpan.FromMilliseconds(Math.Max(1000, _verification.PollIntervalMs));
@@ -1926,28 +1930,63 @@ public sealed class SessionMessageQueueService
                 sawSequenceAdvance = true;
             }
 
-            if (!sawPositiveSubmit)
+            if (kind == AgentKind.Codex)
             {
-                if (kind == AgentKind.Codex)
+                if (_runtime.TryGetLiveSnapshot(sessionId, out var snapshot))
                 {
-                    if (_runtime.TryGetLiveSnapshot(sessionId, out var snapshot))
+                    var screenNow = snapshot.RenderedScreen;
+                    if (CodexWorkingIndicator.IsVisible(screenNow))
                     {
-                        sawPositiveSubmit = SubmitEvidence.IsPositive(
-                            SubmitEvidenceKind.Codex, screenBeforeSubmit, snapshot.RenderedScreen, body);
+                        workingLatched = true;
+                        sawPositiveSubmit = true;
+                    }
+                    else if (!workingLatched)
+                    {
+                        // CARD-0299: do not latch emptied-composer on a single poll. A mid-redraw
+                        // empty/ghost/MCP-spinner frame used to suppress every re-Enter and take
+                        // degraded Sent at 30s while the durable last frame still held the body.
+                        if (SubmitEvidence.IsEmptiedComposer(screenBeforeSubmit, screenNow, body))
+                        {
+                            emptiedSince ??= UtcNow();
+                            sawPositiveSubmit = UtcNow() - emptiedSince.Value >= emptiedSettle;
+                        }
+                        else
+                        {
+                            emptiedSince = null;
+                            sawPositiveSubmit = false;
+                        }
                     }
                 }
-                else
-                {
-                    // Claude and Grok retain the existing advance-based screen fallback. The
-                    // baseline is now settled before Enter, so their proof is strictly stronger.
-                    sawPositiveSubmit = sawSequenceAdvance;
-                }
+            }
+            else if (!sawPositiveSubmit)
+            {
+                // Claude and Grok retain the existing advance-based screen fallback. The
+                // baseline is now settled before Enter, so their proof is strictly stronger.
+                sawPositiveSubmit = sawSequenceAdvance;
             }
 
             if (UtcNow() >= deadline)
             {
                 if (!observable)
                 {
+                    // CARD-0299: the durable last frame is the deadline's ground truth. A
+                    // transient empty snapshot must not have certified Sent if the body is
+                    // still standing in the composer. Working-indicator stays immediate
+                    // positive — do not unlatch it when the body is also still echoed.
+                    if (kind == AgentKind.Codex
+                        && !workingLatched
+                        && _runtime.TryGetLiveSnapshot(sessionId, out var deadlineSnap)
+                        && ComposerDeliveryEvidence.HeadFragmentIsVisible(
+                            deadlineSnap.RenderedScreen, body))
+                    {
+                        _logger.LogWarning(
+                            "Delivery verification failed for session {SessionId}: submit Enter produced no "
+                            + "output within {Timeout}s after {Enters} Enter(s); the body is still visible "
+                            + "in the composer (unobservable baseline)",
+                            sessionId, _verification.TranscriptConfirmTimeoutSeconds, entersSent);
+                        return DeliveryOutcome.Of(DeliveryVerdict.NoSubmitOutput);
+                    }
+
                     // NoTranscriptRecord is deliberately NOT produced here: its post-verdict grace
                     // would re-pull what this loop already pulled, and its meaning presupposes a
                     // bound transcript the session may not have.
