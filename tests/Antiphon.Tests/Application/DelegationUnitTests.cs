@@ -535,6 +535,45 @@ public class DelegationReportFormatterTests
     }
 
     [Test]
+    public void a_check_role_brief_asks_for_done_and_never_offers_blocked()
+    {
+        // CARD-0302 S2: the generic done|blocked|failed paragraph taught the interpreter to
+        // close LOOKS STUCK with `blocked`, which then Blocked the Check row itself.
+        var task = NewTask();
+        task.Role = AgentTaskRole.Check;
+
+        var brief = DelegationReportFormatter.BuildBrief(task, Settings);
+        brief.ShouldContain(DelegationReportFormatter.ReportToken(task.Id, "done"));
+        brief.ShouldContain(DelegationReportFormatter.ReportToken(task.Id, "failed"));
+        brief.ShouldNotContain(DelegationReportFormatter.ReportToken(task.Id, "blocked"));
+        brief.ShouldNotContain("if you need a decision or an answer to continue");
+        brief.ShouldContain("this interpretation is finished");
+    }
+
+    [Test]
+    public void a_worker_brief_still_offers_all_three_verdict_tokens()
+    {
+        var task = NewTask();
+        var brief = DelegationReportFormatter.BuildBrief(task, Settings);
+        brief.ShouldContain(DelegationReportFormatter.ReportToken(task.Id, "done"));
+        brief.ShouldContain(DelegationReportFormatter.ReportToken(task.Id, "blocked"));
+        brief.ShouldContain(DelegationReportFormatter.ReportToken(task.Id, "failed"));
+        brief.ShouldContain("if you need a decision or an answer to continue");
+    }
+
+    [Test]
+    public void a_check_role_pointer_does_not_reintroduce_the_blocked_token()
+    {
+        var task = NewTask();
+        task.Role = AgentTaskRole.Check;
+        var pointer = DelegationReportFormatter.BuildBriefPointer(
+            task, Settings, spillPath: null, fullLength: 5_203);
+        pointer.ShouldContain(DelegationReportFormatter.ReportToken(task.Id, "done"));
+        pointer.ShouldNotContain(DelegationReportFormatter.ReportToken(task.Id, "blocked"));
+        pointer.ShouldContain("Never emit a `blocked` report token");
+    }
+
+    [Test]
     public void a_completion_note_header_carries_report_and_git()
     {
         var note = DelegationReportFormatter.BuildCompletionNote(

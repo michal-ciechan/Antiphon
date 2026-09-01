@@ -117,6 +117,8 @@ public class AgentTaskCheckInterpreterTests
         row.Goal.ShouldContain("TASK ", customMessage: "the bundle is the brief");
         row.Goal.ShouldNotContain("[antiphon-task:", customMessage:
             "no live marker of anyone else's task may ride into the specialist's session");
+        row.Goal.ShouldContain(CheckInterpretation.OutputFormatReminder);
+        row.Goal.ShouldContain("never `blocked`");
     }
 
     // ---- CARD-0035 slice 5: the reading is STORED, not just delivered ---------------------------
@@ -166,6 +168,34 @@ public class AgentTaskCheckInterpreterTests
             .ShouldBeLessThan(
                 check.Detail.IndexOf(AgentTaskCheckService.DigestHeading, StringComparison.Ordinal),
                 "the judgement reads first; the counters are what you check it against");
+    }
+
+    [Test]
+    public async Task a_looks_stuck_reading_still_round_trips_through_the_checked_task_event()
+    {
+        // CARD-0302: LOOKS STUCK is evidence on the checked task, never the Check row's Status.
+        using var h = new Harness();
+        var specialist = await h.EnsureSpecialistAsync();
+        var seed = await h.SeedDelegateAsync();
+        await h.SeedDelegateTranscriptAsync(seed.DelegateSessionId, seed.Task.Id);
+        await h.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
+
+        var run = Task.Run(() => h.Checks.RunCheckAsync(seed.Task.Id, CancellationToken.None));
+        var interpretation = await h.WaitForInterpretationAsync(specialist.Id);
+        await h.SettleInterpretationAsync(
+            interpretation.Id,
+            result: "LOOKS STUCK — last tool 28m ago and the session is idle at the prompt.",
+            costUsd: 0.002m);
+        await h.PumpClockAsync(run);
+        await run;
+
+        await using var verify = CreateContext();
+        var check = (await verify.AgentTaskEvents
+            .Where(e => e.AgentTaskId == seed.Task.Id && e.Type == AgentTaskEventType.Check)
+            .ToListAsync()).ShouldHaveSingleItem();
+        var reading = AgentTaskCheckService.TryReadInterpretation(check.Detail);
+        reading.ShouldNotBeNull();
+        reading!.ShouldContain("LOOKS STUCK — last tool 28m ago");
     }
 
     /// <summary>

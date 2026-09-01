@@ -182,8 +182,12 @@ public static class DelegationReportFormatter
             sb.AppendLine(SharedWriteCommitLine).AppendLine();
         }
 
-        sb.Append(ReportingContract(
-            task.Id, task.Kind, replyInlineMaxChars ?? settings.ReplyInlineMaxChars));
+        var inlineMax = replyInlineMaxChars ?? settings.ReplyInlineMaxChars;
+        // CARD-0302: Check briefs must not offer `blocked` as this Check task's status. The
+        // generic done|blocked|failed paragraph is the wrong vocabulary for an interpretation.
+        sb.Append(task.Role == AgentTaskRole.Check
+            ? CheckReportingContract(task.Id, inlineMax)
+            : ReportingContract(task.Id, task.Kind, inlineMax));
         return sb.ToString();
     }
 
@@ -272,6 +276,36 @@ public static class DelegationReportFormatter
             is complete, `{ReportToken(taskId, "blocked")}` if you need a decision or an answer to continue,
             `{ReportToken(taskId, "failed")}` if you could not do it. Nothing after it. Without that line the
             harness cannot tell your report from a status update and will ask you once.
+
+            {TaskMarker(taskId)}
+            """;
+    }
+
+    /// <summary>
+    /// CARD-0302 contract v3: a Check-role closer. <c>done</c> means this interpretation is
+    /// finished (including LOOKS STUCK); <c>failed</c> only if there is no reading. Never
+    /// <c>blocked</c> — that token would settle the Check row itself as waiting on a human.
+    /// </summary>
+    public static string CheckReportingContract(Guid taskId, int inlineMaxChars)
+    {
+        return $"""
+            --- how to report back ---
+            Your final message is the entire reading the caller receives. Nothing else from this
+            session is forwarded.
+
+            Lead with a verdict word (DOING / PRODUCED / LOOKS STUCK / SETTLED / AMBIGUOUS) and
+            why, from the bundle only. 3-5 lines. No preamble, no sign-off.
+
+            If your report would run past {inlineMaxChars:N0} characters, write the full detail to
+            .antiphon/task-{Short(taskId)}.md and make your final message a summary that points
+            at that path.
+
+            End your final message with one line, on its own: `{ReportToken(taskId, "done")}` when
+            you produced a verdict word. That token means this interpretation is finished, not that
+            the checked task is complete. End with `{ReportToken(taskId, "failed")}` only if you
+            could not produce a reading. Never emit a `blocked` report token. LOOKS STUCK / "needs
+            a human" is the reading, filed on the checked task. This Check task does not ask the
+            operator a question. Nothing after the closing line.
 
             {TaskMarker(taskId)}
             """;
@@ -479,11 +513,25 @@ public static class DelegationReportFormatter
         // failure it exists to prevent. The complete contract is in the spilled brief the delegate
         // is told to read first, so repeating it here buys nothing and risks the whole message.
         // The closing marker stays, because correlation must survive even if the head is lost.
-        sb.AppendLine("""
-            --- how to report back ---
-            The full reporting contract is in the brief above — read it there.
-            Your final message is the entire report the caller receives.
-            """).AppendLine();
+        // CARD-0302: Check still must not see a `blocked` token on the pointer path.
+        if (task.Role == AgentTaskRole.Check)
+        {
+            sb.AppendLine($"""
+                --- how to report back ---
+                The Check reporting contract is in the brief above — read it there.
+                Close with `{ReportToken(task.Id, "done")}` after a verdict word. That token
+                finishes this interpretation, not the checked task. Use `{ReportToken(task.Id, "failed")}`
+                only if there is no reading. Never emit a `blocked` report token.
+                """).AppendLine();
+        }
+        else
+        {
+            sb.AppendLine("""
+                --- how to report back ---
+                The full reporting contract is in the brief above — read it there.
+                Your final message is the entire report the caller receives.
+                """).AppendLine();
+        }
 
         sb.Append(TaskMarker(task.Id));
         return joins ? FlattenForJoiningComposer(sb.ToString()) : sb.ToString();
