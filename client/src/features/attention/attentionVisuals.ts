@@ -14,6 +14,7 @@ import {
   TbRepeat,
   TbSearch,
   TbSkull,
+  TbUserOff,
   TbX,
 } from 'react-icons/tb'
 import type { AlertSeverity } from '../../api/agents'
@@ -161,6 +162,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     color: 'warning',
     icon: TbMailExclamation,
     hint: 'Input was accepted by the TUI and never became a prompt — usually a blocking modal. Detection only; Esc or restart clears it.',
+  },
+  AgentOutlivedTask: {
+    label: 'Outlived its task',
+    color: 'warning',
+    icon: TbUserOff,
+    hint: 'A standing agent finished (or lost) its one job and nothing retired it. Stop it, or give it work — nothing automatic will.',
   },
 }
 

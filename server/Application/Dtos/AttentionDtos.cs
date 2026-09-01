@@ -162,6 +162,20 @@ public enum AttentionKind
     /// message sits eaten. Detection only: nothing is killed, typed, or Esc'd from here.
     /// </summary>
     QueuedInputStuck = 20,
+
+    /// <summary>
+    /// A standing agent outlived the work it was created for (CARD-0239). Two arms, one
+    /// exclusion set: not AlwaysOn, not a pool delegate, not channel-bound, no open task
+    /// (Queued included), and not a project-root worker on a board that still has cards.
+    /// Arm 1 is a live Running session that is idle at the prompt with the newest transcript
+    /// older than 8 h. Arm 2 is a leftover identity — Idle/Stopped/Failed/Disconnected, a
+    /// worktree cwd or the sole agent on a same-named zero-card board, untouched for 2 days.
+    /// Detection only: nothing here stops, kills, retires, or archives an agent. Zero
+    /// transcript rows are not this kind (<see cref="CardlessDetailsNoPrompt"/> /
+    /// <see cref="NeverStarted"/> own that shape). Idle auto-compaction can delay arm 1 by
+    /// refreshing the transcript clock; it does not suppress it.
+    /// </summary>
+    AgentOutlivedTask = 21,
 }
 
 /// <summary>

@@ -853,6 +853,284 @@ public class AttentionServiceTests
             .ShouldNotContain(i => i.SessionId == session && i.Kind == AttentionKind.QueuedInputStuck);
     }
 
+    // ---- CARD-0239: AgentOutlivedTask -----------------------------------------------------------
+
+    [Test]
+    public async Task a_running_idle_agent_with_a_nine_hour_old_transcript_and_no_task_is_outlived()
+    {
+        var now = new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        await using var scenario = new Scenario();
+        var (agent, session, newest) = await scenario.SeedLiveIdleAsync(now.UtcDateTime, TimeSpan.FromHours(9));
+
+        var item = (await ItemsForAsync(scenario, clock))
+            .Single(i => i.AgentId == agent && i.Kind == AttentionKind.AgentOutlivedTask);
+
+        item.Severity.ShouldBe(AlertSeverity.Warning);
+        item.SessionId.ShouldBe(session);
+        item.TaskId.ShouldBeNull();
+        item.Actions.ShouldBe([AttentionAction.OpenAgent]);
+        item.SinceUtc.ShouldBe(newest);
+        item.Headline.ShouldContain("Standing agent idle");
+        item.Headline.ShouldContain("with no task");
+        item.Evidence.ShouldContain("No open task, not AlwaysOn, not channel-bound");
+        item.Evidence.ShouldContain("Nothing will stop it automatically");
+    }
+
+    [Test]
+    public async Task a_running_agent_mid_turn_is_not_outlived()
+    {
+        var now = new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        await using var scenario = new Scenario();
+        var (agent, _, _) = await scenario.SeedLiveIdleAsync(
+            now.UtcDateTime, TimeSpan.FromHours(9), midTurn: true);
+
+        (await ItemsForAsync(scenario, clock))
+            .ShouldNotContain(i => i.AgentId == agent && i.Kind == AttentionKind.AgentOutlivedTask);
+    }
+
+    [Test]
+    public async Task a_running_agent_with_a_one_hour_old_transcript_is_not_outlived()
+    {
+        var now = new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        await using var scenario = new Scenario();
+        var (agent, _, _) = await scenario.SeedLiveIdleAsync(now.UtcDateTime, TimeSpan.FromHours(1));
+
+        (await ItemsForAsync(scenario, clock))
+            .ShouldNotContain(i => i.AgentId == agent && i.Kind == AttentionKind.AgentOutlivedTask);
+    }
+
+    [Test]
+    public async Task a_running_idle_agent_with_a_queued_task_is_not_outlived()
+    {
+        var now = new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        await using var scenario = new Scenario();
+        var (agent, session, _) = await scenario.SeedLiveIdleAsync(now.UtcDateTime, TimeSpan.FromHours(9));
+        await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Queued, dispatchedMinutesAgo: 5, neverDispatched: true, agentId: agent);
+
+        (await ItemsForAsync(scenario, clock))
+            .ShouldNotContain(i => i.AgentId == agent && i.Kind == AttentionKind.AgentOutlivedTask);
+    }
+
+    [Test]
+    public async Task a_running_agent_with_zero_transcript_rows_is_not_outlived()
+    {
+        var now = new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        await using var scenario = new Scenario();
+        var (agent, _, _) = await scenario.SeedLiveIdleAsync(
+            now.UtcDateTime, TimeSpan.FromHours(9), withTranscript: false);
+
+        (await ItemsForAsync(scenario, clock))
+            .ShouldNotContain(i => i.AgentId == agent && i.Kind == AttentionKind.AgentOutlivedTask);
+    }
+
+    [Test]
+    public async Task a_stopped_worktree_agent_untouched_for_three_days_is_a_leftover()
+    {
+        var now = new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        await using var scenario = new Scenario();
+        var cwd = Scenario.WorktreeCwd("task-x");
+        var agent = await scenario.AddAgentAsync(
+            isPoolDelegate: false,
+            status: AgentStatus.Stopped,
+            workingDirectory: cwd,
+            createdAt: now.UtcDateTime.AddDays(-3),
+            updatedAt: now.UtcDateTime.AddDays(-3));
+
+        var item = (await ItemsForAsync(scenario, clock))
+            .Single(i => i.AgentId == agent && i.Kind == AttentionKind.AgentOutlivedTask);
+
+        item.Severity.ShouldBe(AlertSeverity.Warning);
+        item.SessionId.ShouldBeNull();
+        item.Actions.ShouldBe([AttentionAction.OpenAgent]);
+        item.SinceUtc.ShouldBe(now.UtcDateTime.AddDays(-3));
+        item.Headline.ShouldContain("Left-over one-off agent");
+        item.Headline.ShouldContain("Stopped");
+        item.Evidence.ShouldContain("worktree path");
+        item.Evidence.ShouldContain(cwd);
+    }
+
+    [Test]
+    public async Task a_sole_agent_on_a_same_named_empty_board_idle_three_days_is_a_leftover()
+    {
+        var now = new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        await using var scenario = new Scenario();
+        var agentName = $"oneoff-{Guid.NewGuid():N}"[..16];
+        var cwd = Scenario.UniqueCwd(agentName);
+        var (_, boardId, _) = await scenario.AddBoardAsync(agentName, localRepositoryPath: Scenario.UniqueCwd());
+        var agent = await scenario.AddAgentAsync(
+            isPoolDelegate: false,
+            status: AgentStatus.Idle,
+            workingDirectory: cwd,
+            boardId: boardId,
+            name: agentName,
+            createdAt: now.UtcDateTime.AddDays(-3),
+            updatedAt: now.UtcDateTime.AddDays(-3));
+
+        var item = (await ItemsForAsync(scenario, clock))
+            .Single(i => i.AgentId == agent && i.Kind == AttentionKind.AgentOutlivedTask);
+
+        item.SessionId.ShouldBeNull();
+        item.Evidence.ShouldContain("sole agent on empty board");
+        item.Evidence.ShouldContain(agentName);
+        item.Headline.ShouldContain("Idle");
+    }
+
+    [Test]
+    public async Task a_sole_agent_on_a_named_board_that_holds_a_card_is_not_outlived()
+    {
+        var now = new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        await using var scenario = new Scenario();
+        var agentName = $"oneoff-{Guid.NewGuid():N}"[..16];
+        var cwd = Scenario.UniqueCwd(agentName);
+        var (_, boardId, columnId) = await scenario.AddBoardAsync(agentName, localRepositoryPath: Scenario.UniqueCwd());
+        await scenario.AddCardOnBoardAsync(boardId, columnId);
+        var agent = await scenario.AddAgentAsync(
+            isPoolDelegate: false,
+            status: AgentStatus.Idle,
+            workingDirectory: cwd,
+            boardId: boardId,
+            name: agentName,
+            createdAt: now.UtcDateTime.AddDays(-3),
+            updatedAt: now.UtcDateTime.AddDays(-3));
+
+        (await ItemsForAsync(scenario, clock))
+            .ShouldNotContain(i => i.AgentId == agent && i.Kind == AttentionKind.AgentOutlivedTask);
+    }
+
+    [Test]
+    public async Task a_second_agent_sharing_the_empty_board_is_not_outlived()
+    {
+        var now = new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        await using var scenario = new Scenario();
+        var agentName = $"oneoff-{Guid.NewGuid():N}"[..16];
+        var cwd = Scenario.UniqueCwd(agentName);
+        var (_, boardId, _) = await scenario.AddBoardAsync(agentName, localRepositoryPath: Scenario.UniqueCwd());
+        var agent = await scenario.AddAgentAsync(
+            isPoolDelegate: false,
+            status: AgentStatus.Idle,
+            workingDirectory: cwd,
+            boardId: boardId,
+            name: agentName,
+            createdAt: now.UtcDateTime.AddDays(-3),
+            updatedAt: now.UtcDateTime.AddDays(-3));
+        await scenario.AddAgentAsync(
+            isPoolDelegate: false,
+            status: AgentStatus.Idle,
+            workingDirectory: Scenario.UniqueCwd(),
+            boardId: boardId,
+            name: $"{agentName}-b",
+            createdAt: now.UtcDateTime.AddDays(-3),
+            updatedAt: now.UtcDateTime.AddDays(-3));
+
+        (await ItemsForAsync(scenario, clock))
+            .ShouldNotContain(i => i.AgentId == agent && i.Kind == AttentionKind.AgentOutlivedTask);
+    }
+
+    [Test]
+    public async Task a_sole_agent_on_an_unrelated_named_empty_board_is_not_outlived()
+    {
+        var now = new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        await using var scenario = new Scenario();
+        var agentName = $"alice-{Guid.NewGuid():N}"[..16];
+        var cwd = Scenario.UniqueCwd($"cwd-{Guid.NewGuid():N}"[..12]);
+        var (_, boardId, _) = await scenario.AddBoardAsync(
+            $"unrelated-{Guid.NewGuid():N}"[..18], localRepositoryPath: Scenario.UniqueCwd());
+        var agent = await scenario.AddAgentAsync(
+            isPoolDelegate: false,
+            status: AgentStatus.Idle,
+            workingDirectory: cwd,
+            boardId: boardId,
+            name: agentName,
+            createdAt: now.UtcDateTime.AddDays(-3),
+            updatedAt: now.UtcDateTime.AddDays(-3));
+
+        (await ItemsForAsync(scenario, clock))
+            .ShouldNotContain(i => i.AgentId == agent && i.Kind == AttentionKind.AgentOutlivedTask);
+    }
+
+    [Test]
+    public async Task a_leftover_shape_touched_one_day_ago_is_not_outlived()
+    {
+        var now = new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        await using var scenario = new Scenario();
+        var agent = await scenario.AddAgentAsync(
+            isPoolDelegate: false,
+            status: AgentStatus.Stopped,
+            workingDirectory: Scenario.WorktreeCwd(),
+            createdAt: now.UtcDateTime.AddDays(-3),
+            updatedAt: now.UtcDateTime.AddDays(-1));
+
+        (await ItemsForAsync(scenario, clock))
+            .ShouldNotContain(i => i.AgentId == agent && i.Kind == AttentionKind.AgentOutlivedTask);
+    }
+
+    [Test]
+    public async Task an_always_on_live_idle_agent_is_not_outlived()
+    {
+        var now = new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        await using var scenario = new Scenario();
+        var (agent, _, _) = await scenario.SeedLiveIdleAsync(
+            now.UtcDateTime, TimeSpan.FromHours(9), alwaysOn: true);
+
+        (await ItemsForAsync(scenario, clock))
+            .ShouldNotContain(i => i.AgentId == agent && i.Kind == AttentionKind.AgentOutlivedTask);
+    }
+
+    [Test]
+    public async Task a_channel_bound_live_idle_agent_is_not_outlived()
+    {
+        var now = new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        await using var scenario = new Scenario();
+        var (agent, _, _) = await scenario.SeedLiveIdleAsync(now.UtcDateTime, TimeSpan.FromHours(9));
+        await scenario.AddChannelAsync(agent);
+
+        (await ItemsForAsync(scenario, clock))
+            .ShouldNotContain(i => i.AgentId == agent && i.Kind == AttentionKind.AgentOutlivedTask);
+    }
+
+    [Test]
+    public async Task a_pool_delegate_live_idle_agent_is_not_outlived()
+    {
+        var now = new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        await using var scenario = new Scenario();
+        var (agent, _, _) = await scenario.SeedLiveIdleAsync(
+            now.UtcDateTime, TimeSpan.FromHours(9), isPoolDelegate: true);
+
+        (await ItemsForAsync(scenario, clock))
+            .ShouldNotContain(i => i.AgentId == agent && i.Kind == AttentionKind.AgentOutlivedTask);
+    }
+
+    [Test]
+    public async Task a_project_root_worker_on_a_live_card_board_is_not_outlived()
+    {
+        var now = new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        await using var scenario = new Scenario();
+        var cwd = Scenario.UniqueCwd();
+        var (_, boardId, columnId) = await scenario.AddBoardAsync("Antiphon", localRepositoryPath: cwd);
+        await scenario.AddCardOnBoardAsync(boardId, columnId);
+        var (agent, _, _) = await scenario.SeedLiveIdleAsync(
+            now.UtcDateTime, TimeSpan.FromHours(9), workingDirectory: cwd);
+
+        (await ItemsForAsync(scenario, clock))
+            .ShouldNotContain(i => i.AgentId == agent && i.Kind == AttentionKind.AgentOutlivedTask);
+    }
+
     [Test]
     public async Task a_task_dispatched_under_stall_minutes_does_not_run_the_workspace_probe()
     {
@@ -1641,24 +1919,35 @@ public class AttentionServiceTests
 
         public async Task<Guid> AddAgentAsync(
             Guid? persistentSession = null,
-            string details = "Attention projection test agent.")
+            string details = "Attention projection test agent.",
+            bool isPoolDelegate = true,
+            bool alwaysOn = false,
+            AgentStatus status = AgentStatus.Running,
+            string? workingDirectory = null,
+            Guid? boardId = null,
+            string? name = null,
+            DateTime? createdAt = null,
+            DateTime? updatedAt = null)
         {
             var id = Guid.NewGuid();
-            var name = $"attn-{id:N}"[..16];
+            var agentName = name ?? $"attn-{id:N}"[..16];
+            var at = createdAt ?? DateTime.UtcNow;
             await using var db = CreateContext();
             db.Agents.Add(new Agent
             {
                 Id = id,
-                Name = name,
-                Slug = name,
-                WorkingDirectory = Path.GetTempPath(),
+                Name = agentName,
+                Slug = $"attn-{id:N}"[..16],
+                WorkingDirectory = workingDirectory ?? Path.GetTempPath(),
                 Details = details,
-                Status = AgentStatus.Running,
+                Status = status,
                 ModelLevel = AgentModelLevel.Medium,
-                IsPoolDelegate = true,
+                AlwaysOn = alwaysOn,
+                IsPoolDelegate = isPoolDelegate,
                 PersistentSessionId = persistentSession?.ToString("D"),
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow,
+                BoardId = boardId,
+                CreatedAt = at,
+                UpdatedAt = updatedAt ?? at,
             });
             await db.SaveChangesAsync();
             _agents.Add(id);
@@ -1719,7 +2008,8 @@ public class AttentionServiceTests
             decimal costUsd = 0m,
             string? workingDirectory = null,
             bool neverDispatched = false,
-            Guid? parentSessionId = null)
+            Guid? parentSessionId = null,
+            Guid? agentId = null)
         {
             var id = Guid.NewGuid();
             var dispatched = DateTime.UtcNow.AddMinutes(-dispatchedMinutesAgo);
@@ -1735,6 +2025,7 @@ public class AttentionServiceTests
                 ModelLevel = AgentModelLevel.High,
                 Workspace = WorkspaceMode.Shared,
                 WorkingDirectory = workingDirectory ?? Path.GetTempPath(),
+                AgentId = agentId,
                 AgentSessionId = neverDispatched ? null : sessionId,
                 Status = status,
                 ReplyTo = AgentTaskReplyTo.Session,
@@ -1824,6 +2115,144 @@ public class AttentionServiceTests
                 });
             }
             await db.SaveChangesAsync();
+        }
+
+        public async Task AddTranscriptAtAsync(
+            Guid sessionId, DateTime at, params (string Kind, string? Text, string? Tool)[] entries)
+        {
+            await using var db = CreateContext();
+            var seq = (await db.TranscriptEntries
+                .Where(e => e.AgentSessionId == sessionId)
+                .MaxAsync(e => (long?)e.Sequence)) ?? 0;
+            foreach (var (kind, text, tool) in entries)
+            {
+                seq++;
+                db.TranscriptEntries.Add(new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(),
+                    AgentSessionId = sessionId,
+                    Sequence = seq,
+                    Kind = kind,
+                    Uuid = $"attn-{Guid.NewGuid():N}",
+                    Text = text,
+                    ToolName = tool,
+                    StopReason = kind == TranscriptKinds.TurnEnd ? "end_turn" : null,
+                    Timestamp = at,
+                    CreatedAt = at,
+                });
+            }
+            await db.SaveChangesAsync();
+        }
+
+        public static string UniqueCwd(string? leaf = null) =>
+            Path.Combine(Path.GetTempPath(), "outlived", leaf ?? Guid.NewGuid().ToString("N"));
+
+        public static string WorktreeCwd(string? leaf = null) =>
+            Path.Combine(Path.GetTempPath(), ".worktrees", leaf ?? Guid.NewGuid().ToString("N"));
+
+        public async Task<(Guid AgentId, Guid SessionId, DateTime LastTranscriptAt)> SeedLiveIdleAsync(
+            DateTime now,
+            TimeSpan idleFor,
+            bool alwaysOn = false,
+            bool isPoolDelegate = false,
+            bool withTranscript = true,
+            bool midTurn = false,
+            string? workingDirectory = null,
+            string? name = null)
+        {
+            var sessionId = await AddSessionAsync();
+            var cwd = workingDirectory ?? UniqueCwd();
+            var agentId = await AddAgentAsync(
+                persistentSession: sessionId,
+                isPoolDelegate: isPoolDelegate,
+                alwaysOn: alwaysOn,
+                status: AgentStatus.Running,
+                workingDirectory: cwd,
+                name: name,
+                createdAt: now.AddDays(-4),
+                updatedAt: now - idleFor);
+            var lastAt = now - idleFor;
+            if (withTranscript)
+            {
+                if (midTurn)
+                {
+                    await AddTranscriptAtAsync(sessionId, lastAt, (TranscriptKinds.UserPrompt, "still going", null));
+                }
+                else
+                {
+                    await AddTranscriptAtAsync(
+                        sessionId,
+                        lastAt,
+                        (TranscriptKinds.UserPrompt, "do the thing", null),
+                        (TranscriptKinds.TurnEnd, null, null));
+                }
+            }
+
+            return (agentId, sessionId, lastAt);
+        }
+
+        public async Task<(Guid ProjectId, Guid BoardId, Guid BacklogColumnId)> AddBoardAsync(
+            string name, string? localRepositoryPath = null)
+        {
+            var now = DateTime.UtcNow;
+            var projectId = Guid.NewGuid();
+            var boardId = Guid.NewGuid();
+            var backlogId = Guid.NewGuid();
+            await using var db = CreateContext();
+            db.Projects.Add(new Project
+            {
+                Id = projectId,
+                Name = $"outlived-project-{projectId:N}"[..30],
+                GitRepositoryUrl = "https://example.test/outlived.git",
+                LocalRepositoryPath = localRepositoryPath ?? UniqueCwd($"proj-{projectId:N}"),
+                BaseBranch = "main",
+                CreatedAt = now,
+                UpdatedAt = now,
+            });
+            db.Boards.Add(new Board
+            {
+                Id = boardId,
+                ProjectId = projectId,
+                Name = name,
+                CreatedAt = now,
+                UpdatedAt = now,
+            });
+            db.BoardColumns.Add(new BoardColumn
+            {
+                Id = backlogId,
+                BoardId = boardId,
+                StateKey = "backlog",
+                Name = "Backlog",
+                ColumnOrder = 0,
+                CardStatus = CardStatus.Backlog,
+                CreatedAt = now,
+                UpdatedAt = now,
+            });
+            await db.SaveChangesAsync();
+            _projects.Add(projectId);
+            _boards.Add(boardId);
+            return (projectId, boardId, backlogId);
+        }
+
+        public async Task<Guid> AddCardOnBoardAsync(Guid boardId, Guid columnId)
+        {
+            var now = DateTime.UtcNow;
+            var cardId = Guid.NewGuid();
+            await using var db = CreateContext();
+            db.Cards.Add(new Card
+            {
+                Id = cardId,
+                BoardId = boardId,
+                BoardColumnId = columnId,
+                Identifier = $"OUTL-{cardId:N}"[..16],
+                Title = "A live card on this board",
+                Status = CardStatus.Backlog,
+                CreatedAt = now,
+                UpdatedAt = now,
+            });
+            await db.SaveChangesAsync();
+            _cards.Add(cardId);
+            return cardId;
         }
 
         public async Task AddDelegationBriefAsync(Guid sessionId, Guid taskId, QueuedMessageStatus status)

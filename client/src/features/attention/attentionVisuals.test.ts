@@ -36,6 +36,7 @@ const ALL_KINDS: AttentionKind[] = [
   'CallerNoteUndelivered',
   'CardlessDetailsNoPrompt',
   'QueuedInputStuck',
+  'AgentOutlivedTask',
 ]
 
 function item(overrides: Partial<AttentionItemDto> & { kind: AttentionKind }): AttentionItemDto {

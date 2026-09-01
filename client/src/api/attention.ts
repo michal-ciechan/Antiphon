@@ -91,6 +91,11 @@ export type AttentionKind =
    * restart clears the modal.
    */
   | 'QueuedInputStuck'
+  /**
+   * A standing agent finished (or lost) its one job and nothing retired it (CARD-0239).
+   * Detection only — stop it, or give it work. Nothing automatic will.
+   */
+  | 'AgentOutlivedTask'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =

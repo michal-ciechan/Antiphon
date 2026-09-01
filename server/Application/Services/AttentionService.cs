@@ -56,6 +56,22 @@ public sealed class AttentionService
     private static readonly TimeSpan CardlessDetailsPromptGrace = TimeSpan.FromMinutes(2);
 
     /// <summary>
+    /// How long a live non-AlwaysOn agent may sit idle with no open task before it is a leftover
+    /// (CARD-0239 arm 1). Matches <c>ContextCompactionSettings.IdleMinutes</c>'s default (480 = 8 h)
+    /// as justification only — not read live, so dropping compaction's idle window cannot flood
+    /// this projection. Idle auto-compaction can refresh the transcript clock (delay, not
+    /// suppression): it fires only at ≥ 50 % fullness with a 24 h cooldown.
+    /// </summary>
+    private static readonly TimeSpan AgentLiveIdleThreshold = TimeSpan.FromHours(8);
+
+    /// <summary>
+    /// How long a leftover one-off identity (worktree cwd, or sole agent on a same-named
+    /// zero-card board) may sit untouched before it is flagged (CARD-0239 arm 2). A PATCH
+    /// resets the clock: a touched row is a watched row.
+    /// </summary>
+    private static readonly TimeSpan AgentLeftoverThreshold = TimeSpan.FromDays(2);
+
+    /// <summary>
     /// The delivery watchdog's own clock, read from delegation settings so this projection and the
     /// sweep cannot disagree about when a brief is overdue for typing (CARD-0117 S5) or when a
     /// caller-session note is overdue for delivery (CARD-0267).
@@ -175,6 +191,7 @@ public sealed class AttentionService
         items.AddRange(BuildFailureUnacknowledgedItems(unacknowledged, costs, checkDigests));
         items.AddRange(await BuildOrchestratorInvestigationItemsAsync(since, ct));
         items.AddRange(await BuildQueuedInputStuckItemsAsync(since, ct));
+        items.AddRange(await BuildAgentOutlivedTaskItemsAsync(now, ct));
         items.AddRange(BuildRecentFailureItems(failed, costs, checkDigests));
 
         // Asked unconditionally, because RunnerConsulted is a claim about whether anybody asked and a
@@ -1236,6 +1253,251 @@ public sealed class AttentionService
         }
 
         return items;
+    }
+
+    // ---- CARD-0239: standing agent that outlived its task ---------------------------------------
+
+    /// <summary>
+    /// Warning-only, self-clearing projection of a non-AlwaysOn agent that finished (or lost)
+    /// its one job and nothing retired it. Detection only — nothing here stops an agent.
+    /// </summary>
+    private async Task<List<AttentionItemDto>> BuildAgentOutlivedTaskItemsAsync(
+        DateTime now, CancellationToken ct)
+    {
+        var candidates = await _db.Agents.AsNoTracking()
+            .Where(a => !a.AlwaysOn
+                && !a.IsPoolDelegate
+                && (a.Status == AgentStatus.Running
+                    || a.Status == AgentStatus.Idle
+                    || a.Status == AgentStatus.Stopped
+                    || a.Status == AgentStatus.Failed
+                    || a.Status == AgentStatus.Disconnected)
+                && !_db.AgentTasks.Any(t => t.AgentId == a.Id
+                    && (t.Status == AgentTaskStatus.Queued
+                        || t.Status == AgentTaskStatus.Dispatched
+                        || t.Status == AgentTaskStatus.Working
+                        || t.Status == AgentTaskStatus.Blocked))
+                && !_db.ChatChannels.Any(ch => ch.AgentId == a.Id))
+            .Select(a => new
+            {
+                a.Id,
+                a.Name,
+                a.Status,
+                a.WorkingDirectory,
+                a.BoardId,
+                a.PersistentSessionId,
+                a.CreatedAt,
+                a.UpdatedAt,
+            })
+            .ToListAsync(ct);
+        if (candidates.Count == 0)
+            return [];
+
+        var projects = await _db.Projects.AsNoTracking()
+            .Select(p => new { p.Id, p.LocalRepositoryPath })
+            .ToListAsync(ct);
+        var liveCardProjectIds = (await _db.Cards.AsNoTracking()
+                .Where(c => c.ArchivedAt == null)
+                .Select(c => c.Board.ProjectId)
+                .Distinct()
+                .ToListAsync(ct))
+            .ToHashSet();
+        var liveCardProjectPaths = projects
+            .Where(p => liveCardProjectIds.Contains(p.Id) && !string.IsNullOrWhiteSpace(p.LocalRepositoryPath))
+            .Select(p => p.LocalRepositoryPath!)
+            .ToList();
+
+        candidates = candidates
+            .Where(a => liveCardProjectPaths.TrueForAll(path => !AgentService.PathsMatch(a.WorkingDirectory, path)))
+            .ToList();
+        if (candidates.Count == 0)
+            return [];
+
+        var items = new List<AttentionItemDto>();
+
+        // Arm 1 — live idle. Unparseable / missing / not-Running sessions skip silently:
+        // DeadSession and SessionDisagreement own latch-vs-reality drift.
+        var liveIdle = candidates.Where(a => a.Status == AgentStatus.Running).ToList();
+        var parsedSessions = new List<(Guid AgentId, string AgentName, string WorkingDirectory,
+            AgentStatus Status, Guid SessionId)>();
+        foreach (var agent in liveIdle)
+        {
+            if (!Guid.TryParse(agent.PersistentSessionId, out var sessionId))
+                continue;
+            parsedSessions.Add((agent.Id, agent.Name, agent.WorkingDirectory, agent.Status, sessionId));
+        }
+
+        if (parsedSessions.Count > 0)
+        {
+            var sessionIds = parsedSessions.Select(s => s.SessionId).Distinct().ToList();
+            var runningSessions = (await _db.AgentSessions.AsNoTracking()
+                    .Where(s => sessionIds.Contains(s.Id) && s.Status == SessionStatus.Running)
+                    .Select(s => s.Id)
+                    .ToListAsync(ct))
+                .ToHashSet();
+            var live = parsedSessions.Where(s => runningSessions.Contains(s.SessionId)).ToList();
+            var liveIds = live.Select(s => s.SessionId).Distinct().ToList();
+            var working = liveIds.Count == 0
+                ? new Dictionary<Guid, bool>()
+                : (await SessionMessageQueueService.IsWorkingBatchAsync(_db, liveIds, ct))
+                    .ToDictionary(kv => kv.Key, kv => kv.Value);
+
+            var idle = live.Where(s => !working.GetValueOrDefault(s.SessionId)).ToList();
+            var idleIds = idle.Select(s => s.SessionId).Distinct().ToList();
+            var newestBySession = idleIds.Count == 0
+                ? new Dictionary<Guid, DateTime>()
+                : (await _db.TranscriptEntries.AsNoTracking()
+                        .Where(e => idleIds.Contains(e.AgentSessionId))
+                        .GroupBy(e => e.AgentSessionId)
+                        .Select(g => new { SessionId = g.Key, Newest = g.Max(e => e.Timestamp ?? e.CreatedAt) })
+                        .ToListAsync(ct))
+                    .ToDictionary(x => x.SessionId, x => x.Newest);
+
+            var idleCutoff = now - AgentLiveIdleThreshold;
+            foreach (var agent in idle)
+            {
+                // Zero transcript rows is CardlessDetailsNoPrompt / NeverStarted territory.
+                if (!newestBySession.TryGetValue(agent.SessionId, out var newest))
+                    continue;
+                if (newest > idleCutoff)
+                    continue;
+
+                var age = now - newest;
+                items.Add(new AttentionItemDto(
+                    AttentionKind.AgentOutlivedTask,
+                    AlertSeverity.Warning,
+                    null,
+                    agent.SessionId,
+                    agent.AgentId,
+                    null,
+                    agent.AgentName,
+                    $"Standing agent idle {Duration(age)} with no task.",
+                    Evidence(
+                        $"Status {agent.Status}, cwd {agent.WorkingDirectory}. "
+                        + $"Last transcript {newest:u}. No open task, not AlwaysOn, not channel-bound. "
+                        + "Nothing will stop it automatically; stop the agent once its work is "
+                        + "confirmed done, or give it a task.",
+                        check: null),
+                    newest,
+                    null,
+                    [AttentionAction.OpenAgent]));
+            }
+        }
+
+        // Arm 2 — leftover identity. The status latch IS the "no live session" fact;
+        // SessionDisagreement owns drift.
+        var leftoverCutoff = now - AgentLeftoverThreshold;
+        var leftover = candidates
+            .Where(a => (a.Status is AgentStatus.Idle or AgentStatus.Stopped
+                    or AgentStatus.Failed or AgentStatus.Disconnected)
+                && a.UpdatedAt <= leftoverCutoff)
+            .ToList();
+
+        if (leftover.Count > 0)
+        {
+            var boardIds = leftover
+                .Where(a => a.BoardId is not null)
+                .Select(a => a.BoardId!.Value)
+                .Distinct()
+                .ToList();
+            var boards = boardIds.Count == 0
+                ? new Dictionary<Guid, string>()
+                : await _db.Boards.AsNoTracking()
+                    .Where(b => boardIds.Contains(b.Id))
+                    .ToDictionaryAsync(b => b.Id, b => b.Name, ct);
+            var boardsWithCards = boardIds.Count == 0
+                ? new HashSet<Guid>()
+                : (await _db.Cards.AsNoTracking()
+                        .Where(c => boardIds.Contains(c.BoardId) && c.ArchivedAt == null)
+                        .Select(c => c.BoardId)
+                        .Distinct()
+                        .ToListAsync(ct))
+                    .ToHashSet();
+            var agentsOnBoard = boardIds.Count == 0
+                ? new Dictionary<Guid, int>()
+                : (await _db.Agents.AsNoTracking()
+                        .Where(a => a.BoardId != null && boardIds.Contains(a.BoardId.Value))
+                        .GroupBy(a => a.BoardId!.Value)
+                        .Select(g => new { BoardId = g.Key, Count = g.Count() })
+                        .ToListAsync(ct))
+                    .ToDictionary(x => x.BoardId, x => x.Count);
+
+            foreach (var agent in leftover)
+            {
+                var worktree = IsWorktreeCwd(agent.WorkingDirectory);
+                string? boardShape = null;
+                if (agent.BoardId is Guid boardId
+                    && boards.TryGetValue(boardId, out var boardName)
+                    && !boardsWithCards.Contains(boardId)
+                    && agentsOnBoard.GetValueOrDefault(boardId) == 1
+                    && BoardNameMatchesOneOff(boardName, agent.Name, agent.WorkingDirectory))
+                {
+                    boardShape = boardName;
+                }
+
+                if (!worktree && boardShape is null)
+                    continue;
+
+                var age = now - agent.UpdatedAt;
+                var days = Math.Max(1, (int)age.TotalDays);
+                var shape = worktree
+                    ? $"worktree path '{agent.WorkingDirectory}'"
+                    : $"sole agent on empty board '{boardShape}'";
+                items.Add(new AttentionItemDto(
+                    AttentionKind.AgentOutlivedTask,
+                    AlertSeverity.Warning,
+                    null,
+                    null,
+                    agent.Id,
+                    null,
+                    agent.Name,
+                    $"Left-over one-off agent: {agent.Status} for {days} days with no task and no cards.",
+                    Evidence(
+                        $"Matched {shape}. No open task, not AlwaysOn, not channel-bound. "
+                        + "Nothing will stop it automatically; delete it once its work is confirmed "
+                        + "done, or keep it if it is still wanted.",
+                        check: null),
+                    agent.UpdatedAt,
+                    null,
+                    [AttentionAction.OpenAgent]));
+            }
+        }
+
+        return items;
+    }
+
+    private static bool IsWorktreeCwd(string? workingDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(workingDirectory))
+            return false;
+        var normalized = DelegationWorkspaceResolver.NormalizeSeparators(workingDirectory);
+        var parts = normalized.Split(
+            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            StringSplitOptions.RemoveEmptyEntries);
+        return parts.Any(p => p.Equals(".worktrees", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Minted one-off boards are named <c>DeriveProjectName(cwd, agentName)</c>, then
+    /// <c>UniqueBoardNameAsync</c> may suffix <c> (2)</c>, <c> (3)</c>, … . StartsWith covers
+    /// the suffix; the space-then-paren check stops "foo" matching "foobar".
+    /// </summary>
+    private static bool BoardNameMatchesOneOff(string boardName, string agentName, string workingDirectory)
+    {
+        var derived = AgentService.DeriveProjectName(workingDirectory, agentName);
+        return NameMatchesMintedBoard(boardName, derived) || NameMatchesMintedBoard(boardName, agentName);
+    }
+
+    private static bool NameMatchesMintedBoard(string boardName, string expected)
+    {
+        if (string.IsNullOrWhiteSpace(expected))
+            return false;
+        if (string.Equals(boardName, expected, StringComparison.OrdinalIgnoreCase))
+            return true;
+        return boardName.StartsWith(expected, StringComparison.OrdinalIgnoreCase)
+            && boardName.Length > expected.Length
+            && boardName[expected.Length] == ' '
+            && boardName.AsSpan(expected.Length).Contains('(');
     }
 
     // ---- the collapsed context group: recent failures --------------------------------------------
