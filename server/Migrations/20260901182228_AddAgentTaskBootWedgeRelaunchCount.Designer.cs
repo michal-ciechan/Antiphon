@@ -3,6 +3,7 @@ using System;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Antiphon.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260901182228_AddAgentTaskBootWedgeRelaunchCount")]
+    partial class AddAgentTaskBootWedgeRelaunchCount
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -2137,57 +2140,6 @@ namespace Antiphon.Server.Migrations
                         .IsUnique();
 
                     b.ToTable("LlmProviders", (string)null);
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.ModelAvailabilityHold", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("ClearedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("DisabledUntil")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime>("HitAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("Kind")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("ModelAlias")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("RawText")
-                        .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)");
-
-                    b.Property<string>("Reason")
-                        .IsRequired()
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<int>("Source")
-                        .HasColumnType("integer");
-
-                    b.Property<Guid?>("SourceSessionId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("SourceTaskId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Kind", "ModelAlias")
-                        .IsUnique()
-                        .HasDatabaseName("IX_ModelAvailabilityHolds_Kind_ModelAlias_Active")
-                        .HasFilter("\"ClearedAt\" IS NULL");
-
-                    b.ToTable("ModelAvailabilityHolds", (string)null);
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.ModelRouting", b =>

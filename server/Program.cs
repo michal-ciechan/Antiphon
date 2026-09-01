@@ -373,6 +373,8 @@ try
     // Same reason, for the dead-session sweep's grace clock: AgentTaskDispatcher is scoped, so a
     // per-tick map would restart the window every 5s and never fire (CARD-0021).
     builder.Services.AddSingleton<DeadSessionFirstSeenState>();
+    // CARD-0299 S2: skip FailDeadSessionTasksAsync while a boot-wedge relaunch is in flight.
+    builder.Services.AddSingleton<BootWedgeRelaunchState>();
     // CARD-0248: the deferred-report sweep's re-hand watermark. Same reason as the dead-session
     // clock — AgentTaskDispatcher is scoped, so an instance map would never suppress a tick.
     builder.Services.AddSingleton<DeferredReportSweepMarks>();

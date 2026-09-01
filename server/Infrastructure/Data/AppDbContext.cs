@@ -1448,6 +1448,8 @@ public class AppDbContext : DbContext
             // CARD-0248. Null on every existing row (legacy nudge, no boundary recorded).
             entity.Property(t => t.ReportNudgedSequence).IsRequired(false);
             entity.Property(t => t.ReportNudgeMessageId).IsRequired(false);
+            // CARD-0299 S2. Zero on every pre-existing row.
+            entity.Property(t => t.BootWedgeRelaunchCount).IsRequired().HasDefaultValue(0);
 
             entity.HasIndex(t => new { t.RootTaskId, t.CreatedAt }).HasDatabaseName("IX_AgentTasks_RootTaskId_CreatedAt");
             entity.HasIndex(t => t.Status).HasDatabaseName("IX_AgentTasks_Status");

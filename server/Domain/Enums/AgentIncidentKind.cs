@@ -439,4 +439,13 @@ public enum AgentIncidentKind
     /// enqueue is a new one. No migration: an int on the existing column.</para>
     /// </summary>
     QueuedInputNeverConverted = 43,
+
+    /// <summary>
+    /// CARD-0299 S2: a cold Codex delegate's first delivery returned <c>NoSubmitOutput</c>
+    /// (null baseline, origin Delegation, attempts 1). The TUI stopped painting with the
+    /// brief still in the composer. Warning, never Critical (the delegate is not
+    /// channel-bound). Deduped per session. The session is killed and the task is
+    /// relaunched once; a second wedge Fails the task.
+    /// </summary>
+    BootWedged = 44,
 }

@@ -293,6 +293,13 @@ public class AgentTask
     /// </summary>
     public string? WorktreeBaseSha { get; set; }
 
+    /// <summary>
+    /// CARD-0299 S2. How many times a cold Codex first-delivery <c>NoSubmitOutput</c> has
+    /// already killed-and-relaunched this task. Default 0. Compared to
+    /// <c>DelegationSettings.BootWedgeRelaunchLimit</c> (1).
+    /// </summary>
+    public int BootWedgeRelaunchCount { get; set; }
+
     public Card? Card { get; set; }
     public AgentTask? ParentTask { get; set; }
     public ICollection<AgentTask> Children { get; set; } = new List<AgentTask>();

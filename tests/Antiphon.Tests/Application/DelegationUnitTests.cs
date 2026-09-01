@@ -1102,6 +1102,24 @@ public class UnmarkedWaitingContractTests
     }
 }
 
+[Category("Unit")]
+public class BootWedgeContractTests
+{
+    [Test]
+    public void boot_wedged_is_appended_after_queued_input_never_converted()
+    {
+        ((int)AgentIncidentKind.QueuedInputNeverConverted).ShouldBe(43);
+        ((int)AgentIncidentKind.BootWedged).ShouldBe(44);
+        ((int)AttentionKind.UnmarkedWaiting).ShouldBe(23);
+    }
+
+    [Test]
+    public void boot_wedge_relaunch_limit_defaults_to_one()
+    {
+        new DelegationSettings().BootWedgeRelaunchLimit.ShouldBe(1);
+    }
+}
+
 /// <summary>
 /// The tier ladder — the cost decision the whole design turns on — and the four-counter pricing
 /// that CARD-0023 fixed. The per-root ceiling gates DISPATCH on these numbers, so a rate edit that

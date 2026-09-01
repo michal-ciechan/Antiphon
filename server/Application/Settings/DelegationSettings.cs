@@ -445,6 +445,13 @@ public sealed class DelegationSettings
     public int UnmarkedWaitingMinutes { get; set; } = 5;
 
     /// <summary>
+    /// CARD-0299 S2. How many times a cold Codex delegate whose first delivery returned
+    /// <c>NoSubmitOutput</c> may be killed and relaunched. Default 1. A second wedge
+    /// Fails the task immediately instead of waiting out the 10-minute watchdog.
+    /// </summary>
+    public int BootWedgeRelaunchLimit { get; set; } = 1;
+
+    /// <summary>
     /// How long an open task whose session is DEAD (<see cref="AgentTaskLiveness.IsDeadSession"/>)
     /// must keep looking dead before the dispatcher fails it (CARD-0021). Measured from the first
     /// sweep that saw it that way, in memory — a server restart only ever delays the failure.

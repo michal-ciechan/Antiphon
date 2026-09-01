@@ -39,6 +39,7 @@ public sealed class AgentTaskDispatcher
     private readonly AgentTaskCheckQueue? _checkQueue;
     private readonly ISessionRunnerClient? _runnerClient;
     private readonly DeadSessionFirstSeenState? _deadSessions;
+    private readonly BootWedgeRelaunchState? _bootWedgePending;
     private readonly DelegateBindRefusalRecovery? _bindRefusalRecovery;
     private readonly AgentSessionRuntime? _runtime;
     // CARD-0106 S2. Optional like everything else here; absent, a delegate whose agent env carries a
@@ -111,8 +112,10 @@ public sealed class AgentTaskDispatcher
         SubscriptionQuotaGate? quotaGate = null,
         AreaMapLoader? areas = null,
         DeferredReportSweepMarks? sweepMarks = null,
-        ModelAvailability? modelAvailability = null)
+        ModelAvailability? modelAvailability = null,
+        BootWedgeRelaunchState? bootWedgePending = null)
     {
+        _bootWedgePending = bootWedgePending;
         _sweepMarks = sweepMarks;
         _areas = areas;
         _modelAvailability = modelAvailability;
@@ -936,6 +939,11 @@ public sealed class AgentTaskDispatcher
         var dead = new List<(AgentTask Task, AgentTaskLiveness.SessionSnapshot? Session)>();
         foreach (var task in open)
         {
+            // CARD-0299 S2: the old session is Stopping while RelaunchWedgedAsync attaches a
+            // fresh one. Skip this tick so we do not Fail a task that is being relaunched.
+            if (_bootWedgePending is not null && _bootWedgePending.IsPending(task.Id))
+                continue;
+
             AgentTaskLiveness.SessionSnapshot? session =
                 task.AgentSessionId is Guid sid && sessionById.TryGetValue(sid, out var row) ? row : null;
 
@@ -2158,6 +2166,162 @@ public sealed class AgentTaskDispatcher
             DelegationReportFormatter.Short(claimed.Id), claimed.Kind, claimed.Role,
             shippedModel, session.Id, claimed.WorkingDirectory);
         return true;
+    }
+
+    internal const string BootWedgeFailedReason =
+        "boot prompt could not be delivered; TUI stopped reading after the brief rendered, twice; "
+        + "relaunched once and wedged again.";
+
+    /// <summary>
+    /// CARD-0299 S2. Spawn a fresh session for the same agent, re-enqueue the brief, restamp
+    /// DispatchedAt so the 10-minute watchdog measures the relaunch. Does not Fail the task
+    /// and does not delete the pool agent.
+    /// </summary>
+    internal async Task RelaunchWedgedAsync(Guid taskId, Guid oldSessionId, CancellationToken ct)
+    {
+        var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.Id == taskId, ct);
+        if (task is null)
+            return;
+
+        if (task.AgentId is not Guid agentId)
+        {
+            _logger.LogWarning(
+                "Task {ShortId}: boot-wedge relaunch skipped — no agent on the task",
+                DelegationReportFormatter.Short(task.Id));
+            return;
+        }
+
+        var agent = await _db.Agents.FirstOrDefaultAsync(a => a.Id == agentId, ct);
+        if (agent is null)
+        {
+            _logger.LogWarning(
+                "Task {ShortId}: boot-wedge relaunch skipped — agent {AgentId} is gone",
+                DelegationReportFormatter.Short(task.Id), agentId);
+            return;
+        }
+
+        var now = UtcNow();
+        DelegateProgram? program = null;
+        try
+        {
+            program = await ResolveDelegateProgramAsync(task, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex, "Task {ShortId}: boot-wedge relaunch could not resolve a launch program; "
+                + "the new session is still attached so the brief can be re-queued",
+                DelegationReportFormatter.Short(task.Id));
+        }
+
+        var cwd = task.WorktreePath ?? task.WorkingDirectory;
+        var session = new AgentSession
+        {
+            Id = Guid.NewGuid(),
+            CardId = null,
+            WorktreeId = null,
+            DefinitionName = program?.DefinitionName ?? "codex",
+            AgentKind = program?.Kind ?? task.AgentKind,
+            SessionBackend = agent.SessionBackend,
+            Status = SessionStatus.Starting,
+            Cwd = cwd,
+            Cols = _settings.DefaultCols,
+            Rows = _settings.DefaultRows,
+            CreatedAt = now,
+            StartedAt = now,
+            LastSeenAt = now,
+        };
+        _db.AgentSessions.Add(session);
+
+        task.AgentSessionId = session.Id;
+        task.DispatchedAt = now;
+        task.BootWedgeRelaunchCount++;
+        task.ConcurrencyToken = Guid.NewGuid();
+        agent.PersistentSessionId = session.Id.ToString("D");
+        agent.Status = AgentStatus.Running;
+        agent.UpdatedAt = now;
+
+        var limit = Math.Max(1, _settings.BootWedgeRelaunchLimit);
+        _db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = task.Id,
+            Type = AgentTaskEventType.Warning,
+            Detail = $"boot-wedge relaunch {task.BootWedgeRelaunchCount}/{limit}",
+            At = now,
+        });
+
+        await _db.SaveChangesAsync(ct);
+
+        if (program is { } resolved)
+        {
+            try
+            {
+                var attachedBundleKeys = await AgentBundleAttachments.LoadAsync(_db, agent.Id, _logger, ct);
+                var spec = await BuildLaunchSpecAsync(task, agent, session, resolved, attachedBundleKeys, ct);
+                if (resolved.ProfileId is null && _apiKeyEnvResolver is not null)
+                {
+                    var projectId = task.ProjectId
+                        ?? await _apiKeyEnvResolver.ResolveProjectIdAsync(agent.BoardId, ct);
+                    spec = await _apiKeyEnvResolver.ResolveSpecAsync(
+                        spec,
+                        projectId,
+                        $"task {DelegationReportFormatter.Short(task.Id)} boot-wedge relaunch on agent '{agent.Name}'",
+                        ct);
+                }
+
+                _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, spec, remoteControlName: null, notes: null);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(
+                    ex, "Task {ShortId}: boot-wedge relaunch could not start session {SessionId}",
+                    DelegationReportFormatter.Short(task.Id), session.Id);
+            }
+        }
+
+        var brief = FitBriefForTyping(task, _settings, _ptyProfile?.Ceilings, _logger, session.AgentKind);
+        try
+        {
+            await _queue.EnqueueAsync(
+                session.Id, brief, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex, "Task {ShortId}: boot-wedge relaunch brief is queued but could not be delivered yet",
+                DelegationReportFormatter.Short(task.Id));
+        }
+
+        await _eventBus.PublishToAllAsync(
+            "AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
+        _logger.LogWarning(
+            "Task {ShortId}: boot-wedge relaunch {Count}/{Limit} onto session {SessionId} (old {OldSessionId})",
+            DelegationReportFormatter.Short(task.Id), task.BootWedgeRelaunchCount, limit,
+            session.Id, oldSessionId);
+    }
+
+    /// <summary>
+    /// CARD-0299 S2 at the relaunch limit: Fail the task now (~40 s after dispatch on a double
+    /// wedge) instead of waiting out the 10-minute watchdog.
+    /// </summary>
+    internal async Task FailWedgedAtLimitAsync(Guid taskId, Guid sessionId, CancellationToken ct)
+    {
+        var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.Id == taskId, ct);
+        if (task is null)
+            return;
+
+        await FailAndNotifyAsync(task, BootWedgeFailedReason, "boot-wedge", ct);
+        try
+        {
+            await _sessions.KillAsync(sessionId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex, "Could not stop boot-wedged session {SessionId} for task {ShortId}",
+                sessionId, DelegationReportFormatter.Short(task.Id));
+        }
     }
 
     /// <summary>

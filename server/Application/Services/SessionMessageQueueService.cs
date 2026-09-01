@@ -2627,6 +2627,14 @@ public sealed class SessionMessageQueueService
                 messages = messages
                     .Where(m => !lateConfirmed.Contains(m.Id) && !lateTruncated.Contains(m.Id))
                     .ToList();
+
+                if (verdict == DeliveryVerdict.NoSubmitOutput
+                    && await TryHandleCodexBootWedgeAsync(sessionId, messages, agent, db, scope, ct))
+                {
+                    await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
+                    return;
+                }
+
                 var reverting = messages.Where(m => m.Status == QueuedMessageStatus.Sent).ToList();
                 foreach (var message in reverting)
                 {
@@ -2811,6 +2819,91 @@ public sealed class SessionMessageQueueService
         {
             _logger.LogError(ex, "Failed to handle delivery verification failure for session {SessionId}", sessionId);
         }
+    }
+
+    /// <summary>
+    /// CARD-0299 S2: a cold Codex delegate's first delivery returned NoSubmitOutput. Cancel the
+    /// queue row (CARD-0117: Pending on a dead session is a stranded retry), kill, and relaunch
+    /// once. Returns true when the conjunction matched and this method owned the failure.
+    /// Mode:Now has no row and never reaches here.
+    /// </summary>
+    private async Task<bool> TryHandleCodexBootWedgeAsync(
+        Guid sessionId,
+        List<SessionQueuedMessage> messages,
+        Agent? agent,
+        AppDbContext db,
+        IServiceScope scope,
+        CancellationToken ct)
+    {
+        if (messages.Count == 0
+            || messages.Any(m => m.Origin != QueuedMessageOrigin.Delegation
+                || m.DeliveryAttempts != 1
+                || m.LastDeliveryBaselineSequence is not null))
+            return false;
+
+        var session = await db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct);
+        if (session is not { AgentKind: AgentKind.Codex, Status: SessionStatus.Running })
+            return false;
+
+        var task = await db.AgentTasks
+            .Where(t => t.AgentSessionId == sessionId && t.Status == AgentTaskStatus.Dispatched)
+            .OrderByDescending(t => t.DispatchedAt)
+            .FirstOrDefaultAsync(ct);
+        if (task is null)
+            return false;
+
+        var dispatcher = scope.ServiceProvider.GetService<AgentTaskDispatcher>();
+        if (dispatcher is null)
+            return false;
+
+        var pending = scope.ServiceProvider.GetService<BootWedgeRelaunchState>();
+        pending?.Mark(task.Id);
+
+        var now = UtcNow();
+        foreach (var message in messages)
+        {
+            message.Status = QueuedMessageStatus.Canceled;
+            message.CanceledAt = now;
+        }
+
+        var screen = _runtime.TryGetLiveSnapshot(sessionId, out var snap) ? snap.RenderedScreen : "";
+        var mcpVisible = CodexMcpBoot.IsVisible(screen);
+        var already = await db.AgentIncidents.AnyAsync(
+            i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.BootWedged, ct);
+        if (agent is not null && !already)
+        {
+            var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
+            var detail = "TUI stopped painting; brief still in composer"
+                + (mcpVisible ? "; MCP boot line still visible" : "")
+                + ".";
+            await supervisor.RecordIncidentAsync(
+                agent.Id, sessionId, AgentIncidentKind.BootWedged, AlertSeverity.Warning,
+                detail, ct: ct);
+        }
+
+        await db.SaveChangesAsync(ct);
+
+        var sessions = scope.ServiceProvider.GetRequiredService<AgentSessionService>();
+        try
+        {
+            await sessions.KillAsync(sessionId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not kill boot-wedged session {SessionId}", sessionId);
+        }
+
+        var limit = Math.Max(0, _delegationSettings.BootWedgeRelaunchLimit);
+        if (task.BootWedgeRelaunchCount >= limit)
+        {
+            await dispatcher.FailWedgedAtLimitAsync(task.Id, sessionId, ct);
+            pending?.Forget(task.Id);
+            return true;
+        }
+
+        await dispatcher.RelaunchWedgedAsync(task.Id, sessionId, ct);
+        pending?.Forget(task.Id);
+        return true;
     }
 
     // Internal so the agent list/detail can surface the SAME working signal on agent cards —

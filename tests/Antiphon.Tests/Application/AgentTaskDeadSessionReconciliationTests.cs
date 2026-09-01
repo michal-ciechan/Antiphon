@@ -262,6 +262,21 @@ public class AgentTaskDeadSessionReconciliationTests
         (await scenario.ReadTaskAsync(task.Id)).Status.ShouldBe(AgentTaskStatus.Failed);
     }
 
+    [Test]
+    public async Task a_relaunch_pending_task_is_skipped_by_the_dead_session_sweep()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(AgentTaskStatus.Dispatched, SessionStatus.Stopped);
+        var harness = scenario.Harness(task.SessionId);
+        harness.BootWedge.Mark(task.Id);
+
+        await scenario.PastGraceAsync(harness);
+
+        (await scenario.ReadTaskAsync(task.Id)).Status.ShouldBe(
+            AgentTaskStatus.Dispatched,
+            "CARD-0299 S2: FailDeadSessionTasksAsync must not Fail a task while boot-wedge relaunch is in flight");
+    }
+
     // ---- 9-10: what the sweep must never touch ---------------------------------------------------
 
     [Test]
@@ -507,6 +522,7 @@ public class AgentTaskDeadSessionReconciliationTests
         FakeRunnerClient Runner,
         RecordingSessionStopper Stopper,
         DeadSessionFirstSeenState FirstSeen,
+        BootWedgeRelaunchState BootWedge,
         FakeTimeProvider Clock);
 
     /// <summary>
@@ -531,6 +547,7 @@ public class AgentTaskDeadSessionReconciliationTests
             foreach (var id in gone)
                 runner.Gone.Add(id);
             var firstSeen = new DeadSessionFirstSeenState();
+            var bootWedge = new BootWedgeRelaunchState();
             var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
 
             var services = new ServiceCollection();
@@ -559,6 +576,7 @@ public class AgentTaskDeadSessionReconciliationTests
             services.AddScoped<AgentTaskService>();
             services.AddSingleton<ISessionRunnerClient>(runner);
             services.AddSingleton(firstSeen);
+            services.AddSingleton(bootWedge);
             // CARD-0085: same recovery gate as the delivery watchdog. Empty projects root so Arm B
             // cannot scan the machine's real ~/.claude/projects during these fleet-global sweeps.
             services.AddSingleton<AgentTaskReplyService>();
@@ -573,7 +591,7 @@ public class AgentTaskDeadSessionReconciliationTests
             var provider = services.BuildServiceProvider();
             return new Harness(
                 provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>(),
-                runner, stopper, firstSeen, clock);
+                runner, stopper, firstSeen, bootWedge, clock);
         }
 
         /// <summary>Two sweeps with the grace elapsed between them: observe, wait, act.</summary>
