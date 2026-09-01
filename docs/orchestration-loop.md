@@ -140,6 +140,23 @@ Never launch the `claude` CLI directly, and never a `launch-remote` script. When
 token (`0`, `1`, `99`) is a **400** — the wire is the member name, not the enum ordinal (CARD-0007).
 Frontier maps to fable (Claude) by default, or `grok-4.6` when `Kind=Grok` is passed.
 
+### Reuse first
+
+**Default: `delegate.ps1`.** Unrelated new work needs nothing special — the warm pool reuses an idle
+agent in the same directory (compacted first) and spawns a fresh ephemeral delegate only when none
+fits. Sequential follow-up that must keep context: `-OnAgent <taskId>` (already on the script and in
+the skill). Parallelism on one model: let the pool spawn another, or pass `-Worktree`. That *is* the
+"2–3 reusable workers per directory+model+tier, scale only for real parallelism" policy, implemented
+by the pool rather than by named rows.
+
+`POST /api/agents` is for a **standing identity**, not a unit of work: an orchestrator seat, a
+channel-bound agent, the check interpreter, or a human-facing named worker that should outlive a
+card. Pass an existing `BoardId` (the project's real board). A unique `workingDirectory` that is not
+a real checkout is how 21 extra `gym-stat-*` projects appeared.
+
+Work you need to hear finish is a task; pinning a task onto an existing named standing agent is
+CARD-0291 and is not available from `delegate.ps1` yet. Until then, use the pool / `-OnAgent`.
+
 ---
 
 ## 3. Writing a brief
