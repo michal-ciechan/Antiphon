@@ -1,7 +1,7 @@
 # CARD-0304 — Advisory stage WIP limits and a pipeline-status read model
 
-**Date:** 2026-09-01  
-**Card:** CARD-0304 — Configurable recommended per-stage WIP limits + a pipeline status endpoint  
+**Date:** 2026-09-01
+**Card:** CARD-0304 — Configurable recommended per-stage WIP limits + a pipeline status endpoint
 **Outcome:** add global, role-based *recommendations* and one read-only aggregation endpoint. Do not add a task status, dispatch gate, board/project setting, workflow tracker behaviour, or client UI in this card.
 
 ## Decision
