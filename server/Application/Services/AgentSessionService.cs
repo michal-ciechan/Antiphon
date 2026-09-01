@@ -1,4 +1,4 @@
-﻿using Antiphon.Agents.Pty;
+using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -40,6 +40,9 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     private readonly DeliveryVerificationSettings _verification;
     private readonly DelegationSettings _delegationSettings;
     private readonly PtyDeliveryProfile? _ptyProfile;
+    // CARD-0292 S1: optional the way _ptyProfile is — production DI supplies the singleton probe;
+    // a hand-built harness without one simply never skips the /remote-control send.
+    private readonly IRcBridgeProbe? _rcProbe;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AgentSessionService> _logger;
 
@@ -57,7 +60,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         TimeProvider timeProvider,
         ILogger<AgentSessionService> logger,
         IOptions<DelegationSettings>? delegationSettings = null,
-        PtyDeliveryProfile? ptyProfile = null)
+        PtyDeliveryProfile? ptyProfile = null,
+        IRcBridgeProbe? rcProbe = null)
     {
         _db = db;
         _worktreeManager = worktreeManager;
@@ -73,6 +77,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         _logger = logger;
         _delegationSettings = delegationSettings?.Value ?? new DelegationSettings();
         _ptyProfile = ptyProfile;
+        _rcProbe = rcProbe;
     }
 
     /// <summary>
@@ -195,7 +200,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // — that prompt is the session's whole purpose. Pass the card's assigned agent so an
             // RcDegraded Warning has something to hang on; card spawn with no assigned agent still
             // degrades (log only), matching the unclaimed-session path.
-            await SendRemoteControlCommandsAsync(adapter, request.RemoteControlName, session, card.AssignedAgentId, ct);
+            await SendRemoteControlCommandsAsync(
+                adapter, request.RemoteControlName, session, card.AssignedAgentId, resumeMode: null, ct);
 
             await SendBootPromptWithRetryAsync(adapter, prompt, session.Id, ct);
             var firstDeltaReceived = await adapter.WaitForFirstPromptOutputAsync(
@@ -391,7 +397,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // Interactive: no work prompt — the human drives the agent via the terminal. We only push
             // the agent into remote-control mode if asked, so it can also be monitored from elsewhere.
             // Best-effort: this session has no purpose that a monitoring command's failure invalidates.
-            await SendRemoteControlCommandsAsync(adapter, remoteControlName, session, agentId, ct);
+            await SendRemoteControlCommandsAsync(adapter, remoteControlName, session, agentId, resumeMode, ct);
 
             // Channel-facing agents get a launch note: bootstrap on a fresh conversation (including
             // the resume-not-found fallback, which re-enters here with resumeMode=null), the cheaper
@@ -1312,11 +1318,20 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     // now means all three typings showed no composer evidence AND no transcript record confirms
     // the command ran, OR the outer budget expired while they were still trying. Degrading is
     // what is left after retrying and after asking ground truth.
+    //
+    // CARD-0292: /remote-control is NOT idempotent — on a session whose bridge is already live it
+    // opens a blocking management menu (Disconnect / Show QR / Continue) that swallows every
+    // subsequent input into the TUI's own queue. Two guards, deliberately independent: on a
+    // resume-mode relaunch the bridge probe skips the send entirely when Claude's own state file
+    // already records an armed bridge (S1), and if the menu appears anyway it is recognized on the
+    // rendered screen and dismissed with one Esc — the key the menu itself documents as "continue"
+    // and a measured no-op on an idle empty composer (S2, ProviderContractCatalog).
     private async Task SendRemoteControlCommandsAsync(
         IAgentProtocolAdapter adapter,
         string? remoteControlName,
         AgentSession session,
         Guid? agentId,
+        AgentSessionResumeMode? resumeMode,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(remoteControlName))
@@ -1343,36 +1358,72 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
         try
         {
-            // Baseline BEFORE arming: a resumed TUI can redraw a previous run's "remote-control is
-            // active" line, which must not satisfy the wait.
-            stage = "baseline";
-            var baseline = (await adapter.SnapshotRawOutputAsync(rcCt)).Length;
-
-            stage = "remote-control-submit";
-            await SendBootPromptWithRetryAsync(adapter, "/remote-control", sessionId, rcCt);
-
-            stage = "first-output-wait";
-            await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, rcCt);
-
-            stage = "armed-marker-wait";
-            if (!await WaitForRemoteControlArmedAsync(adapter, baseline, rcCt, ct))
+            // CARD-0292 S1: on a resume, Claude re-establishes the bridge by itself — the ground
+            // truth is bridgeSessionId in its own per-process state file, written by the bridge.
+            // Armed observed → the send is skipped entirely (typing /remote-control here is what
+            // opens the menu wedge) and the rename proceeds, which works because the bridge is
+            // armed. Window expiry falls through to today's send (a never-bridged resume
+            // legitimately never arms; S2 catches the late-arm race). Fresh launches never probe.
+            var bridgeAlreadyArmed = false;
+            if (resumeMode is AgentSessionResumeMode.Resume or AgentSessionResumeMode.Continue)
             {
-                _logger.LogWarning(
-                    "Remote-control setup unarmed for session {SessionId} at stage {Stage}",
-                    sessionId, stage);
-                await RaiseRemoteControlDegradedAsync(
-                    sessionId,
-                    agentId,
-                    $"Remote control did not report itself armed within {_settings.RemoteControlArmTimeoutMs}ms "
-                    + $"(setup budget {setupTimeoutMs}ms, stage {stage}). "
-                    + "The session is running; it may not be reachable from claude.ai. /rename was skipped "
-                    + "because Claude only syncs a title while the bridge is armed.",
-                    "RemoteControlNotArmed",
-                    ct);
-                return;
+                stage = "resume-bridge-probe";
+                bridgeAlreadyArmed = await WaitForResumeBridgeArmedAsync(adapter, sessionId, rcCt);
             }
 
-            _logger.LogInformation("Remote-control armed for session {SessionId}", sessionId);
+            if (!bridgeAlreadyArmed)
+            {
+                // Baseline BEFORE arming: a resumed TUI can redraw a previous run's "remote-control is
+                // active" line, which must not satisfy the wait.
+                stage = "baseline";
+                var baseline = (await adapter.SnapshotRawOutputAsync(rcCt)).Length;
+
+                stage = "remote-control-submit";
+                await SendBootPromptWithRetryAsync(adapter, "/remote-control", sessionId, rcCt);
+
+                stage = "first-output-wait";
+                await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, rcCt);
+
+                stage = "armed-marker-wait";
+                if (!await WaitForRemoteControlArmedAsync(adapter, baseline, rcCt, ct))
+                {
+                    // CARD-0292 S2: no armed marker with the management menu on screen IS the armed
+                    // case — the menu only renders for a session whose bridge is already live (it
+                    // shows the session's claude.ai URL), and degrade-and-return used to leave it
+                    // standing, which was the wedge. One screen-verified Esc clears it; the rename
+                    // then proceeds because the bridge is armed (CARD-0240's ordering rule is
+                    // satisfied without the marker).
+                    stage = "menu-dismiss";
+                    if (await TryDismissRemoteControlMenuAsync(adapter, rcCt))
+                    {
+                        _logger.LogInformation(
+                            "Remote-control management menu dismissed for session {SessionId}: the "
+                            + "bridge was already live, so the unarmed wait was the menu blocking "
+                            + "the screen",
+                            sessionId);
+                    }
+                    else
+                    {
+                        _logger.LogWarning(
+                            "Remote-control setup unarmed for session {SessionId} at stage {Stage}",
+                            sessionId, stage);
+                        await RaiseRemoteControlDegradedAsync(
+                            sessionId,
+                            agentId,
+                            $"Remote control did not report itself armed within {_settings.RemoteControlArmTimeoutMs}ms "
+                            + $"(setup budget {setupTimeoutMs}ms, stage {stage}). "
+                            + "The session is running; it may not be reachable from claude.ai. /rename was skipped "
+                            + "because Claude only syncs a title while the bridge is armed.",
+                            "RemoteControlNotArmed",
+                            ct);
+                        return;
+                    }
+                }
+                else
+                {
+                    _logger.LogInformation("Remote-control armed for session {SessionId}", sessionId);
+                }
+            }
 
             stage = "rename-submit";
             await SendBootPromptWithRetryAsync(adapter, $"/rename {remoteControlName.Trim()}", sessionId, rcCt);
@@ -1394,14 +1445,38 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             _logger.LogWarning(ex,
                 "Remote-control setup {Outcome} for session {SessionId} at stage {Stage}",
                 outcome, sessionId, stage);
+
+            // CARD-0292 S2: the retry-exhausted shape can be an attempt typed into an open
+            // management menu — a modal produces exactly the "no composer evidence" this catch
+            // sees. Clear the wedge before returning: still degrade (the composer state after
+            // failed retries is unknown, so /rename stays skipped), but never leave the menu
+            // standing. Own small budget because rcCt may already be spent; best-effort in every
+            // direction — nothing here may fail the launch.
+            var menuDismissed = false;
+            try
+            {
+                using var dismissCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                dismissCts.CancelAfter(RemoteControlMenuDismissBudget);
+                menuDismissed = await TryDismissRemoteControlMenuAsync(adapter, dismissCts.Token);
+            }
+            catch (Exception dismissEx)
+            {
+                _logger.LogDebug(dismissEx,
+                    "Remote-control menu dismiss attempt failed for session {SessionId}", sessionId);
+            }
+
+            var menuNote = menuDismissed
+                ? " The remote-control management menu was standing on screen (the bridge is already "
+                  + "live); it was dismissed with Esc so the session is not wedged."
+                : "";
             await RaiseRemoteControlDegradedAsync(
                 sessionId,
                 agentId,
                 timedOut
-                    ? $"Remote control setup timed out after {setupTimeoutMs}ms at stage {stage}: {ex.Message} "
+                    ? $"Remote control setup timed out after {setupTimeoutMs}ms at stage {stage}: {ex.Message}{menuNote} "
                       + "The session is running and usable, but it is not reachable from claude.ai. "
                       + "A monitoring command's delivery must never fail a healthy session (CARD-0056), so the launch continued."
-                    : $"Remote control could not be set up at stage {stage}: {ex.Message} The session is running and usable, but it "
+                    : $"Remote control could not be set up at stage {stage}: {ex.Message}{menuNote} The session is running and usable, but it "
                       + "is not reachable from claude.ai. A monitoring command's delivery must never fail a healthy session "
                       + "(CARD-0056), so the launch continued.",
                 reason,
@@ -1487,14 +1562,119 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         }
     }
 
+    // CARD-0292 S2: settle after an Esc before re-snapshotting (same order as the queue's overlay
+    // dismiss), and the whole in-catch dismiss attempt gets its own small budget because the RC
+    // setup budget may already be spent when the catch runs.
+    private static readonly TimeSpan RemoteControlMenuSettleDelay = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan RemoteControlMenuDismissBudget = TimeSpan.FromSeconds(3);
+
     /// <summary>
-    /// Records the degraded remote control as an <see cref="AgentIncidentKind.RcDegraded"/> incident
-    /// (Warning, alert included — incidents are the supervisor's alerts 1:1). Best-effort in every
-    /// direction: it runs in a scope of its own because <see cref="AgentSupervisorService"/> reaches
-    /// back into this service through <see cref="AgentControlService"/>, and a failure to RECORD a
-    /// degradation must never do what the degradation itself is no longer allowed to do — fail the
-    /// launch. An incident needs an owning agent; a session nothing claims gets the log line only.
+    /// CARD-0292 S1: polls <see cref="IRcBridgeProbe"/> for the claude child's own armed flag
+    /// after ready on a resume-mode relaunch. True = the bridge is live and /remote-control must
+    /// NOT be typed (it would open the management menu). False covers every other outcome — no
+    /// probe registered, no pid, window expired unarmed, or a probe failure — and degrades to the
+    /// ordinary send path; nothing here may fail the launch (CARD-0056 posture). The pid is the
+    /// claude.exe child (<c>adapter.Pid</c> carries the runner's child pid, not HostPid), the
+    /// process that writes <c>~/.claude/sessions/&lt;pid&gt;.json</c>.
     /// </summary>
+    private async Task<bool> WaitForResumeBridgeArmedAsync(
+        IAgentProtocolAdapter adapter, Guid sessionId, CancellationToken rcCt)
+    {
+        if (_rcProbe is null)
+            return false;
+        if (adapter.Pid is not int childPid)
+        {
+            _logger.LogDebug(
+                "Resume bridge probe skipped for session {SessionId}: adapter reports no pid", sessionId);
+            return false;
+        }
+
+        var deadline = DateTime.UtcNow
+            + TimeSpan.FromMilliseconds(Math.Max(1, _settings.RemoteControlResumeProbeTimeoutMs));
+        while (true)
+        {
+            try
+            {
+                if (_rcProbe.Probe(childPid).Armed)
+                {
+                    _logger.LogInformation(
+                        "Resume bridge already armed for session {SessionId} (pid {Pid}); skipping "
+                        + "/remote-control and proceeding to the rename",
+                        sessionId, childPid);
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex,
+                    "Resume bridge probe failed for session {SessionId}; falling through to the "
+                    + "/remote-control send", sessionId);
+                return false;
+            }
+
+            var remaining = deadline - DateTime.UtcNow;
+            if (remaining <= TimeSpan.Zero || rcCt.IsCancellationRequested)
+                return false;
+
+            try
+            {
+                var delay = remaining < RemoteControlArmedPollInterval
+                    ? remaining
+                    : RemoteControlArmedPollInterval;
+                await Task.Delay(delay, rcCt);
+            }
+            catch (OperationCanceledException)
+            {
+                return false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// CARD-0292 S2: if the rendered screen shows the /remote-control management menu, send one
+    /// Esc (retrying once), and report whether the menu is verifiably gone. Never Enter — Enter
+    /// selects the highlighted row and Esc can never select "Disconnect". Snapshot failures read
+    /// as "not dismissed": claiming a dismissal without seeing the menu gone would type /rename
+    /// into an unknown screen.
+    /// </summary>
+    private async Task<bool> TryDismissRemoteControlMenuAsync(
+        IAgentProtocolAdapter adapter, CancellationToken ct)
+    {
+        string screen;
+        try
+        {
+            screen = adapter.SnapshotRenderedScreen();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Rendered-screen snapshot unavailable during remote-control menu check");
+            return false;
+        }
+
+        if (!RemoteControlMenuScreen.IsPresent(screen))
+            return false;
+
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            await adapter.SendInputAsync("\u001b", ct);
+            await Task.Delay(RemoteControlMenuSettleDelay, ct);
+            try
+            {
+                screen = adapter.SnapshotRenderedScreen();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Rendered-screen snapshot unavailable after remote-control menu Esc");
+                return false;
+            }
+
+            if (!RemoteControlMenuScreen.IsPresent(screen))
+                return true;
+        }
+
+        return false;
+    }
+
     /// <summary>
     /// CARD-0186 S2: KillAsync refused pane.close because a foreign process was in the pane; our
     /// child is gone and the pane needs tidying. Warning, never Critical.
@@ -1539,6 +1719,14 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         }
     }
 
+    /// <summary>
+    /// Records the degraded remote control as an <see cref="AgentIncidentKind.RcDegraded"/> incident
+    /// (Warning, alert included — incidents are the supervisor's alerts 1:1). Best-effort in every
+    /// direction: it runs in a scope of its own because <see cref="AgentSupervisorService"/> reaches
+    /// back into this service through <see cref="AgentControlService"/>, and a failure to RECORD a
+    /// degradation must never do what the degradation itself is no longer allowed to do — fail the
+    /// launch. An incident needs an owning agent; a session nothing claims gets the log line only.
+    /// </summary>
     private async Task RaiseRemoteControlDegradedAsync(
         Guid sessionId, Guid? agentId, string message, string failureReason, CancellationToken ct)
     {

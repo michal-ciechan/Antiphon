@@ -31,6 +31,30 @@ public sealed class SupervisionSettings
     public HerdrCorroborationSettings HerdrCorroboration { get; set; } = new();
     public OrchestratorInvestigationSettings OrchestratorInvestigation { get; set; } = new();
     public AppHostWatchdogStateSettings AppHostWatchdogState { get; set; } = new();
+    public QueuedInputWatchSettings QueuedInputWatch { get; set; } = new();
+}
+
+/// <summary>
+/// CARD-0292 S4: the swallowed-input watchdog — a per-minute sweep for a live session whose
+/// latest <c>QueueEnqueue</c> transcript row has no later conversion while the session reads
+/// idle. Detection only: an incident + attention row, never a kill, keystroke, or Esc.
+/// </summary>
+public sealed class QueuedInputWatchSettings
+{
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// How old the unconverted enqueue must be before the incident fires. A mid-turn session
+    /// legitimately holds queued input for the length of the turn (the working gate covers that);
+    /// this covers slow drains around a turn boundary.
+    /// </summary>
+    public int StuckMinutes { get; set; } = 3;
+
+    /// <summary>
+    /// Re-raise the incident as Error (Critical when the agent is channel-bound) once the same
+    /// episode has been stuck this long — the <c>TaskProgressStalled</c> ladder shape.
+    /// </summary>
+    public int EscalateToErrorAfterMinutes { get; set; } = 15;
 }
 
 /// <summary>

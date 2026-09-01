@@ -118,6 +118,11 @@ export function isWorking(entries: TranscriptEntryDto[]): boolean {
       e.kind !== 'TurnTitle' &&
       e.kind !== 'CompactBoundary' &&
       e.kind !== 'QueuedUserPrompt' &&
+      // The queue-operation housekeeping rows (CARD-0292 S3): same enqueue-time timestamp trap
+      // as QueuedUserPrompt, and an enqueue can be a wedged modal swallowing input.
+      e.kind !== 'QueueEnqueue' &&
+      e.kind !== 'QueueDequeue' &&
+      e.kind !== 'QueueRemove' &&
       !isCompactionContinuation(e) &&
       !isLocalCommandRecord(e)
     ) {

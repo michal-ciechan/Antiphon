@@ -1783,4 +1783,74 @@ public class FakeClaudeContractTests
 
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }
+
+    // ---- CARD-0292: /remote-control management menu queues submits; Esc drains ----------------
+
+    [Test]
+    public async Task Rc_menu_mode_renders_the_management_menu_without_the_armed_marker()
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchReadyFakeAsync(
+            env: new Dictionary<string, string> { ["ANTIPHON_FAKE_RC_MENU"] = "1" },
+            alsoAwaitBanner: "RCMENU:");
+
+        await EchoGatedSubmit.SendAsync(runner, "/remote-control");
+        (await runner.WaitForOutputAsync(s => s.Contains("RCMENU:open"), TimeSpan.FromSeconds(5)))
+            .ShouldBeTrue("submitting /remote-control must open the menu. Screen:\n" + runner.SnapshotText());
+
+        var screen = runner.SnapshotScreen();
+        screen.ShouldContain("Disconnect this session");
+        screen.ShouldContain("Esc to continue");
+        screen.ShouldNotContain("remote-control is active");
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Test]
+    public async Task Rc_menu_mode_queues_submit_without_a_user_record_and_Esc_drains()
+    {
+        SkipIfUnavailable();
+        var path = Path.Combine(Path.GetTempPath(), $"fakeclaude-rcmenu-{Guid.NewGuid():N}.jsonl");
+        try
+        {
+            await using var runner = await LaunchReadyFakeAsync(
+                env: new Dictionary<string, string>
+                {
+                    ["ANTIPHON_FAKE_RC_MENU"] = "1",
+                    ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = path,
+                },
+                alsoAwaitBanner: "RCMENU:");
+
+            await EchoGatedSubmit.SendAsync(runner, "/remote-control");
+            (await runner.WaitForOutputAsync(s => s.Contains("RCMENU:open"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue();
+
+            const string body = "Hi from the wedge";
+            await EchoGatedSubmit.SendAsync(runner, body);
+            (await runner.WaitForOutputAsync(s => s.Contains("RCMENU:enqueued="), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue("a submit while the menu stands must enqueue. Screen:\n" + runner.SnapshotText());
+
+            var whileOpen = await WaitForTranscriptLinesAsync(path, 1);
+            whileOpen.Length.ShouldBe(1);
+            whileOpen[0].ShouldContain("\"type\":\"queue-operation\"");
+            whileOpen[0].ShouldContain("\"operation\":\"enqueue\"");
+            whileOpen[0].ShouldContain(body);
+            whileOpen[0].ShouldNotContain("\"type\":\"user\"");
+
+            await runner.WriteAsync("\u001b");
+            (await runner.WaitForOutputAsync(s => s.Contains("RCMENU:closed"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue("one Esc clears the menu");
+
+            var drained = await WaitForTranscriptLinesAsync(path, 3);
+            drained.Length.ShouldBeGreaterThanOrEqualTo(3);
+            drained[1].ShouldContain("\"operation\":\"dequeue\"");
+            drained[2].ShouldContain("\"type\":\"user\"");
+            drained[2].ShouldContain(body);
+
+            await runner.KillAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            try { File.Delete(path); File.Delete(path + ".timing"); } catch { }
+        }
+    }
 }

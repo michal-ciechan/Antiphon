@@ -85,6 +85,12 @@ export type AttentionKind =
    * does not.
    */
   | 'CardlessDetailsNoPrompt'
+  /**
+   * A live session's latest composer-queue enqueue never became a prompt while the session reads
+   * idle (CARD-0292) — input eaten by a blocking TUI modal. Detection only; an operator Esc or a
+   * restart clears the modal.
+   */
+  | 'QueuedInputStuck'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =

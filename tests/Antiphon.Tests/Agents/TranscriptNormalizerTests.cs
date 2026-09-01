@@ -451,8 +451,10 @@ public class TranscriptNormalizerTests
     }
 
     // CARD-0132: only the attachment proves Claude drained the body into the conversation. The
-    // queue-operation records remain excluded: enqueue proves only that the composer accepted it,
-    // while remove is ambiguous between delivery and discard.
+    // queue-operation records are present as HOUSEKEEPING (CARD-0292 S3) — visible so the
+    // swallowed-input watchdog can see an enqueue that never converted — but excluded from
+    // activity and never confirmation: enqueue proves only that the composer accepted it, while
+    // remove is ambiguous between delivery and discard.
     [Test]
     public void Queued_command_attachment_normalizes_to_a_distinct_queued_user_prompt()
     {
@@ -466,9 +468,45 @@ public class TranscriptNormalizerTests
         queued.Timestamp.ShouldBe(DateTimeOffset.Parse("2026-08-21T17:58:06.291Z"));
         queued.Role.ShouldBe("user");
 
-        TranscriptNormalizer.Normalize(lines[0]).ShouldBeEmpty("enqueue is not confirmation");
-        TranscriptNormalizer.Normalize(lines[2]).ShouldBeEmpty("remove is ambiguous");
+        var enqueue = TranscriptNormalizer.Normalize(lines[0])
+            .ShouldHaveSingleItem("enqueue is housekeeping now, not invisible");
+        enqueue.Kind.ShouldBe(TranscriptKinds.QueueEnqueue);
+        var remove = TranscriptNormalizer.Normalize(lines[2]).ShouldHaveSingleItem();
+        remove.Kind.ShouldBe(TranscriptKinds.QueueRemove);
         TranscriptNormalizer.Normalize(lines[4]).ShouldBeEmpty("metadata attachments stay excluded");
+    }
+
+    /// <summary>
+    /// CARD-0292 S3: queue-operation records normalize to inert housekeeping rows. The wire shape
+    /// (measured; fixture queued-command.jsonl and the incident session 70eb4c2d) carries no uuid
+    /// — the sequence-dedupe arm handles persistence — and the timestamp is the operation's own
+    /// (for enqueue, composer-accept time). CARD-0132 S2.2's rule stands: none of these is proof
+    /// of submit; they exist so the non-proof is visible.
+    /// </summary>
+    [Test]
+    [Arguments("enqueue", TranscriptKinds.QueueEnqueue)]
+    [Arguments("dequeue", TranscriptKinds.QueueDequeue)]
+    [Arguments("remove", TranscriptKinds.QueueRemove)]
+    public void Queue_operation_records_normalize_to_housekeeping_kinds(string operation, string expectedKind)
+    {
+        var line =
+            $$"""{"type":"queue-operation","operation":"{{operation}}","content":"Hi","timestamp":"2026-09-01T08:01:33.000Z"}""";
+
+        var part = TranscriptNormalizer.Normalize(line).ShouldHaveSingleItem();
+
+        part.Kind.ShouldBe(expectedKind);
+        part.Text.ShouldBe("Hi");
+        part.Uuid.ShouldBeNull("the wire records carry no uuid");
+        part.Timestamp.ShouldBe(DateTimeOffset.Parse("2026-09-01T08:01:33.000Z"));
+        part.Role.ShouldBeNull();
+    }
+
+    [Test]
+    public void An_unknown_queue_operation_yields_nothing()
+    {
+        TranscriptNormalizer.Normalize(
+                """{"type":"queue-operation","operation":"defrag","content":"x"}""")
+            .ShouldBeEmpty("only the measured operations are modelled");
     }
 
     /// <summary>

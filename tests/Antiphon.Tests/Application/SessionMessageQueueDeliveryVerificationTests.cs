@@ -242,6 +242,20 @@ public class SessionMessageQueueDeliveryVerificationTests
     }
 
     [Test]
+    public async Task Queue_operation_rows_are_inert_for_the_server_working_rule()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.QueueEnqueue, "Hi", timestamp: DateTime.UtcNow.AddMinutes(1));
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.QueueDequeue, "Hi", timestamp: DateTime.UtcNow.AddMinutes(1));
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.QueueRemove, "Hi", timestamp: DateTime.UtcNow.AddMinutes(1));
+
+        await using var db = CreateContext();
+        (await SessionMessageQueueService.IsWorkingAsync(db, h.SessionId, CancellationToken.None))
+            .ShouldBeFalse("queue-operation housekeeping is not turn activity");
+    }
+
+    [Test]
     public async Task Queued_user_prompt_is_a_turn_prompt_for_settlement_and_the_delivery_watchdog()
     {
         // CARD-0132 S2.4 kept QueuedUserPrompt inert here (this test used to assert TurnPrompts
@@ -788,6 +802,26 @@ public class SessionMessageQueueDeliveryVerificationTests
         await using var db = CreateContext();
         (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
             .Status.ShouldBe(QueuedMessageStatus.Sent);
+    }
+
+    [Test]
+    public async Task Queue_enqueue_does_not_confirm_delivery()
+    {
+        await using var h = await ObservableHarnessAsync(alwaysOn: false);
+        const string body = "a body the TUI queued because a modal was standing";
+        var floor = await h.CurrentTranscriptMaxSequenceAsync();
+        await h.SeedPendingMessageAsync(body, deliveryAttempts: 1, baselineSequence: floor);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.QueueEnqueue, body);
+        // If late-confirm treated the enqueue as proof, it would mark Sent with zero writes.
+        // Block redelivery so a later successful submit cannot masquerade as that confirm.
+        h.Adapter.ThrowOnSend = new InvalidOperationException("redelivery must not run for this pin");
+
+        await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBeEmpty();
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldNotBe(QueuedMessageStatus.Sent, "CARD-0132 S2.2: enqueue is still not proof of submit");
     }
 
     [Test]

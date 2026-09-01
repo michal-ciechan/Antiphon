@@ -2644,6 +2644,12 @@ public sealed class SessionMessageQueueService
                 // preceding file-order records. It confirms delivery only; treating it as activity
                 // could make the timestamp override report a busy session idle.
                 && t.Kind != TranscriptKinds.QueuedUserPrompt
+                // The queue-operation housekeeping rows (CARD-0292 S3) share the same timestamp
+                // trap — enqueue time predates file-order predecessors — and prove nothing about
+                // work: an enqueue can be a wedged modal swallowing input.
+                && t.Kind != TranscriptKinds.QueueEnqueue
+                && t.Kind != TranscriptKinds.QueueDequeue
+                && t.Kind != TranscriptKinds.QueueRemove
                 // Local slash-command records (/model, /status …) are housekeeping with NO
                 // TurnEnd — counting them as activity stranded WhenIdle deliveries (2026-07-31).
                 && !(t.Kind == TranscriptKinds.UserPrompt

@@ -18,7 +18,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     private TaskCompletionSource _firstPromptOutput = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Task<int> Exited => _exit.Task;
-    public int? Pid => 1234;
+    public int? Pid { get; set; } = 1234;
     public AgentExitReason ExitReason { get; set; } = AgentExitReason.Unknown;
     public int ExitCode { get; set; }
     public string? AuditDirectory => null;
@@ -50,6 +50,25 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     public bool OverlayOpen { get; set; }
     public string OverlayScreen { get; set; } =
         "Weekly limit (SuperGrok)\nc copy session ID  |  Esc close";
+
+    /// <summary>
+    /// CARD-0292 S2: the /remote-control management menu. Snapshot shows
+    /// <see cref="RemoteControlMenuScreenText"/> while open; a bare Esc closes it.
+    /// </summary>
+    public bool RemoteControlMenuOpen { get; set; }
+    public const string RemoteControlMenuScreenText =
+        """
+          Remote Control
+
+          This session is available in the Claude mobile app and at
+          https://claude.ai/code/session_011D79CHh3qcgGNB3mXGgdPz.
+
+            Disconnect this session
+            Show QR code  Scan with your phone to open this session
+          > Continue
+
+          Enter to select . Esc to continue
+        """;
 
     // ---- CARD-0055: what happens to a submitted prompt AFTER the Enter --------------------------
     //
@@ -224,6 +243,8 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
                 OverlayOpen = false;
                 Emit("\n");
             }
+            if (RemoteControlMenuOpen)
+                RemoteControlMenuOpen = false;
             return;
         }
 
@@ -338,6 +359,9 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
 
         if (OverlayOpen)
             return OverlayScreen;
+
+        if (RemoteControlMenuOpen)
+            return RemoteControlMenuScreenText;
 
         var screen = RenderedScreenOverride ?? _rawOutput.ToString();
         return _composer.Length > 0 ? screen + "\n> " + _composer : screen;

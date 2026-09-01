@@ -156,6 +156,67 @@ public class SessionHealthTests
     }
 
     [Test]
+    public async Task Dead_bridge_re_arm_settle_pass_dismisses_a_standing_menu()
+    {
+        var tempRoot = NewTempRoot();
+        try
+        {
+            await using var harness = BuildHarness(tempRoot);
+            var (agent, sessionId) = await CreateSupervisedRunningAgentAsync(harness, tempRoot);
+            harness.Runner.Sessions = [RunnerDto(sessionId, pid: 4242, lastSeq: 10)];
+            harness.Probe.Connections = 0;
+
+            (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(0);
+            (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(1);
+            harness.Actions.EnqueuedWhenIdle.ShouldContain(x => x.SessionId == sessionId && x.Text == "/remote-control");
+
+            harness.Actions.MenuPresent = true;
+            (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(1);
+            harness.Actions.MenuDismissChecks.ShouldContain(sessionId);
+            harness.Actions.RawInputs.ShouldContain(x => x.SessionId == sessionId && x.Input == "\u001b");
+            harness.Actions.MenuPresent.ShouldBeFalse();
+
+            await using var verify = CreateContext();
+            var trail = await verify.AgentIncidents
+                .Where(i => i.AgentId == agent.Id && i.Kind == AgentIncidentKind.RcReArmed)
+                .OrderBy(i => i.CreatedAt)
+                .Select(i => i.Message)
+                .ToListAsync();
+            trail.ShouldContain(m => m.Contains("management menu"));
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Dead_bridge_re_arm_settle_pass_with_no_menu_costs_one_check()
+    {
+        var tempRoot = NewTempRoot();
+        try
+        {
+            await using var harness = BuildHarness(tempRoot);
+            var (_, sessionId) = await CreateSupervisedRunningAgentAsync(harness, tempRoot);
+            harness.Runner.Sessions = [RunnerDto(sessionId, pid: 4242, lastSeq: 10)];
+            harness.Probe.Connections = 0;
+
+            (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(0);
+            (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(1);
+
+            harness.Actions.MenuPresent = false;
+            var actions = await harness.Health().TickAsync(CancellationToken.None);
+            harness.Actions.MenuDismissChecks.ShouldContain(sessionId);
+            harness.Actions.RawInputs.ShouldBeEmpty("no menu → no Esc");
+            actions.ShouldBe(0, "a clean reconnect is not an action; the check cost one snapshot");
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task Connections_do_not_excuse_a_missing_bridge()
     {
         var tempRoot = NewTempRoot();
@@ -490,6 +551,10 @@ public class SessionHealthTests
         public List<(Guid SessionId, string Input)> RawInputs { get; } = [];
         public string ScreenText { get; set; } = "screen";
 
+        /// <summary>CARD-0292 S5: every post-settle menu check, and whether a menu stood.</summary>
+        public List<Guid> MenuDismissChecks { get; } = [];
+        public bool MenuPresent { get; set; }
+
         public Task EnqueueWhenIdleAsync(Guid sessionId, string text, CancellationToken ct)
         {
             EnqueuedWhenIdle.Add((sessionId, text));
@@ -509,6 +574,16 @@ public class SessionHealthTests
         {
             RawInputs.Add((sessionId, input));
             return Task.CompletedTask;
+        }
+
+        public Task<bool> TryDismissRemoteControlMenuAsync(Guid sessionId, CancellationToken ct)
+        {
+            MenuDismissChecks.Add(sessionId);
+            if (!MenuPresent)
+                return Task.FromResult(false);
+            MenuPresent = false;
+            RawInputs.Add((sessionId, "\u001b"));
+            return Task.FromResult(true);
         }
     }
 

@@ -79,6 +79,7 @@ public static class TranscriptNormalizer
                 "attachment" => FromAttachment(root),
                 "ai-title" => FromTitle(root),
                 "system" => FromSystem(root),
+                "queue-operation" => FromQueueOperation(root),
                 _ => [],
             };
         }
@@ -256,6 +257,38 @@ public static class TranscriptNormalizer
                 GetTimestamp(root),
                 null,
                 trigger is null ? "Context compacted" : $"Context compacted ({trigger})",
+                null, null, null, null, null),
+        ];
+    }
+
+    // CARD-0292 S3: the TUI's composer-queue operations, persisted as inert housekeeping rows so
+    // the swallowed-input watchdog can see an enqueue that never converted (session 70eb4c2d: a
+    // blocking /remote-control menu turned every input into an enqueue that never became a user
+    // record, and nothing server-side could see it). CARD-0132 S2.2's rule stands: enqueue is
+    // still not proof of submit — these rows confirm nothing and count as neither activity nor a
+    // turn end. No uuid on the wire records (sequence-dedupe handles persistence); the timestamp
+    // is the operation's own, which for enqueue is composer-accept time.
+    private static List<TranscriptPart> FromQueueOperation(JsonElement root)
+    {
+        var kind = GetString(root, "operation") switch
+        {
+            "enqueue" => TranscriptKinds.QueueEnqueue,
+            "dequeue" => TranscriptKinds.QueueDequeue,
+            "remove" => TranscriptKinds.QueueRemove,
+            _ => null,
+        };
+        if (kind is null)
+            return [];
+
+        return
+        [
+            new TranscriptPart(
+                kind,
+                GetString(root, "uuid"),
+                GetString(root, "parentUuid"),
+                GetTimestamp(root),
+                null,
+                GetString(root, "content"),
                 null, null, null, null, null),
         ];
     }

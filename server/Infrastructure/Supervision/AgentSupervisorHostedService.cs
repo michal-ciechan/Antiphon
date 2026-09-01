@@ -8,8 +8,8 @@ namespace Antiphon.Server.Infrastructure.Supervision;
 /// Drives <see cref="AgentSupervisorService"/> on a fixed tick (same shape as the reconciliation
 /// and orchestrator hosted services), plus a slow incident-retention pass every 6 hours, the
 /// channel-reply correlation sweep every minute, the idle auto-compact sweep every minute,
-/// the API-error recovery sweep every minute, and the orchestrator-investigation detection
-/// sweep every minute (CARD-0247).
+/// the API-error recovery sweep every minute, the orchestrator-investigation detection
+/// sweep every minute (CARD-0247), and the swallowed-input watchdog every minute (CARD-0292).
 /// </summary>
 public sealed class AgentSupervisorHostedService : BackgroundService
 {
@@ -29,12 +29,20 @@ public sealed class AgentSupervisorHostedService : BackgroundService
     /// </summary>
     private static readonly TimeSpan ContextCompactionSweepPeriod = TimeSpan.FromMinutes(1);
 
+    /// <summary>
+    /// CARD-0292 S4: how often the swallowed-input sweep runs. Input eaten by a blocking modal
+    /// arrives via sources that never end a turn (RC bridge, operator terminal), so only a global
+    /// clock can notice it — the ChannelReplyLost precedent.
+    /// </summary>
+    private static readonly TimeSpan QueuedInputSweepPeriod = TimeSpan.FromMinutes(1);
+
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ChannelReplyDispatcher _channelReplies;
     private readonly ContextCompactionService _compaction;
     private readonly ApiErrorRecoveryService _apiErrorRecovery;
     private readonly HerdrStatusCorroborationService _herdrCorroboration;
     private readonly OrchestratorInvestigationSweepService _investigation;
+    private readonly QueuedInputWatchdogService _queuedInput;
     private readonly SupervisionSettings _settings;
     private readonly ILogger<AgentSupervisorHostedService> _logger;
     private DateTime _lastPruneUtc = DateTime.MinValue;
@@ -43,6 +51,7 @@ public sealed class AgentSupervisorHostedService : BackgroundService
     private DateTime _lastApiErrorRecoverySweepUtc = DateTime.MinValue;
     private DateTime _lastHerdrCorroborationSweepUtc = DateTime.MinValue;
     private DateTime _lastInvestigationSweepUtc = DateTime.MinValue;
+    private DateTime _lastQueuedInputSweepUtc = DateTime.MinValue;
 
     public AgentSupervisorHostedService(
         IServiceScopeFactory scopeFactory,
@@ -51,6 +60,7 @@ public sealed class AgentSupervisorHostedService : BackgroundService
         ApiErrorRecoveryService apiErrorRecovery,
         HerdrStatusCorroborationService herdrCorroboration,
         OrchestratorInvestigationSweepService investigation,
+        QueuedInputWatchdogService queuedInput,
         IOptions<SupervisionSettings> settings,
         ILogger<AgentSupervisorHostedService> logger)
     {
@@ -60,6 +70,7 @@ public sealed class AgentSupervisorHostedService : BackgroundService
         _apiErrorRecovery = apiErrorRecovery;
         _herdrCorroboration = herdrCorroboration;
         _investigation = investigation;
+        _queuedInput = queuedInput;
         _settings = settings.Value;
         _logger = logger;
     }
@@ -155,6 +166,19 @@ public sealed class AgentSupervisorHostedService : BackgroundService
                             _logger.LogInformation(
                                 "Raised {Count} OrchestratorInvestigation incident(s) (detection only)",
                                 investigations);
+                        }
+                    }
+
+                    if (_settings.QueuedInputWatch.Enabled
+                        && DateTime.UtcNow - _lastQueuedInputSweepUtc >= QueuedInputSweepPeriod)
+                    {
+                        _lastQueuedInputSweepUtc = DateTime.UtcNow;
+                        var stuck = await _queuedInput.SweepAsync(stoppingToken);
+                        if (stuck > 0)
+                        {
+                            _logger.LogWarning(
+                                "Raised {Count} QueuedInputNeverConverted incident(s) (detection only)",
+                                stuck);
                         }
                     }
                 }

@@ -174,6 +174,7 @@ public sealed class AttentionService
         items.AddRange(await BuildRecentIncidentItemsAsync(since, attachedIncidents, ct));
         items.AddRange(BuildFailureUnacknowledgedItems(unacknowledged, costs, checkDigests));
         items.AddRange(await BuildOrchestratorInvestigationItemsAsync(since, ct));
+        items.AddRange(await BuildQueuedInputStuckItemsAsync(since, ct));
         items.AddRange(BuildRecentFailureItems(failed, costs, checkDigests));
 
         // Asked unconditionally, because RunnerConsulted is a claim about whether anybody asked and a
@@ -1149,6 +1150,92 @@ public sealed class AttentionService
                 null,
                 actions);
         }).ToList();
+    }
+
+    // ---- CARD-0292: queued input that never converted --------------------------------------------
+
+    /// <summary>
+    /// Projects <see cref="AttentionKind.QueuedInputStuck"/> from open
+    /// <see cref="AgentIncidentKind.QueuedInputNeverConverted"/> incidents, so the row appears in
+    /// the feed at Warning — not only via the recent-critical sweep when channel-bound. "Open" is
+    /// re-verified at read time with the sweep's own closure predicate (any conversion or drain
+    /// past the episode's enqueue closes it) plus a live-session check, so the row exists because
+    /// the condition holds now — the ProgressStalled discipline.
+    /// </summary>
+    private async Task<List<AttentionItemDto>> BuildQueuedInputStuckItemsAsync(
+        DateTime since, CancellationToken ct)
+    {
+        var rows = await _db.AgentIncidents.AsNoTracking()
+            .Where(i => i.Kind == AgentIncidentKind.QueuedInputNeverConverted
+                && i.CreatedAt >= since
+                && i.SessionId != null)
+            .Select(i => new { i.AgentId, i.SessionId, i.Severity, i.Message, i.CreatedAt, i.FailureReason })
+            .ToListAsync(ct);
+        if (rows.Count == 0)
+            return [];
+
+        // One row per episode — the ladder re-raises the same episode at a higher severity, and
+        // the feed wants the latest word, not the history.
+        var episodes = rows
+            .GroupBy(r => (r.SessionId!.Value, r.FailureReason))
+            .Select(g => g.OrderByDescending(r => r.CreatedAt).First())
+            .ToList();
+
+        var sessionIds = episodes.Select(e => e.SessionId!.Value).Distinct().ToList();
+        var liveSessions = (await _db.AgentSessions.AsNoTracking()
+                .Where(s => sessionIds.Contains(s.Id)
+                    && (s.Status == SessionStatus.Starting
+                        || s.Status == SessionStatus.Running
+                        || s.Status == SessionStatus.Stopping))
+                .Select(s => s.Id)
+                .ToListAsync(ct))
+            .ToHashSet();
+
+        var agentIds = episodes.Where(r => r.AgentId is not null).Select(r => r.AgentId!.Value).Distinct().ToList();
+        var agentNames = agentIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await _db.Agents.AsNoTracking()
+                .Where(a => agentIds.Contains(a.Id))
+                .Select(a => new { a.Id, a.Name })
+                .ToDictionaryAsync(a => a.Id, a => a.Name, ct);
+
+        var items = new List<AttentionItemDto>();
+        foreach (var episode in episodes)
+        {
+            var sessionId = episode.SessionId!.Value;
+            if (!liveSessions.Contains(sessionId))
+                continue;
+            if (!QueuedInputWatchdogService.TryParseEpisodeKey(episode.FailureReason, out var enqueueSeq))
+                continue;
+            if (await QueuedInputWatchdogService.IsEpisodeClosedAsync(_db, sessionId, enqueueSeq, ct))
+                continue;
+
+            var shortSession = DelegationReportFormatter.Short(sessionId);
+            var title = episode.AgentId is Guid agentId && agentNames.TryGetValue(agentId, out var name)
+                ? name
+                : $"Session {shortSession}";
+            var actions = episode.AgentId is null
+                ? new[] { AttentionAction.OpenDrawer }
+                : new[] { AttentionAction.OpenAgent, AttentionAction.OpenDrawer };
+            items.Add(new AttentionItemDto(
+                AttentionKind.QueuedInputStuck,
+                episode.Severity,
+                null,
+                sessionId,
+                episode.AgentId,
+                null,
+                title,
+                episode.Message,
+                Excerpt(
+                    "Input was accepted by the TUI and never became a prompt — the swallowed-input "
+                    + "shape a blocking modal produces. Detection only: nothing is killed or typed. "
+                    + (episode.FailureReason ?? "")),
+                episode.CreatedAt,
+                null,
+                actions));
+        }
+
+        return items;
     }
 
     // ---- the collapsed context group: recent failures --------------------------------------------

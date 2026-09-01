@@ -289,6 +289,22 @@ public static class TranscriptKinds
     /// </summary>
     public const string QueuedUserPrompt = "QueuedUserPrompt";
 
+    /// <summary>
+    /// CARD-0292 S3: the TUI's own composer-queue operations (<c>queue-operation</c> JSONL
+    /// records), persisted as INERT housekeeping rows. <see cref="QueueEnqueue"/> = the composer
+    /// accepted input it could not submit (a busy turn, or a blocking modal); <see cref="QueueDequeue"/>
+    /// = the queue drained an item into the conversation; <see cref="QueueRemove"/> = the item was
+    /// dropped (ambiguous between delivery and discard — CARD-0132). CARD-0132 S2.2's rule stands
+    /// unchanged: an enqueue is never proof of submit and none of these confirms a delivery; the
+    /// rows exist so the swallowed-input watchdog can see an enqueue that never converted. Every
+    /// working/idle implementation and the prompt span exclude them (their timestamp is the
+    /// enqueue time, which can predate file-order predecessors, same trap as
+    /// <see cref="QueuedUserPrompt"/>).
+    /// </summary>
+    public const string QueueEnqueue = "QueueEnqueue";
+    public const string QueueDequeue = "QueueDequeue";
+    public const string QueueRemove = "QueueRemove";
+
     public const string AssistantText = "AssistantText";
     public const string Thinking = "Thinking";
     public const string ToolCall = "ToolCall";

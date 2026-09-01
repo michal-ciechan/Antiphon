@@ -140,6 +140,24 @@ public class TranscriptPromptSpanTests
         span.TurnPrompts[1].Kind.ShouldBe(TranscriptKinds.QueuedUserPrompt);
     }
 
+    [Test]
+    public async Task queue_operation_rows_are_invisible_to_the_prompt_span()
+    {
+        // CARD-0292 S3: enqueue is still not a prompt. The span is UserPrompt + QueuedUserPrompt
+        // only — ChannelReplyDispatcher owning-prompt / window-cap reads the same two kinds.
+        var (sessionId, dispatchedAt) = await SeedSessionAsync();
+        var at = dispatchedAt.AddMinutes(1);
+        await SeedEntryAsync(sessionId, TranscriptKinds.QueueEnqueue, "Hi", 1, at);
+        await SeedEntryAsync(sessionId, TranscriptKinds.QueueDequeue, "Hi", 2, at);
+        await SeedEntryAsync(sessionId, TranscriptKinds.QueueRemove, "Hi", 3, at);
+
+        await using var db = CreateContext();
+        var span = await TranscriptPromptSpan.LoadAsync(db, sessionId, dispatchedAt, CancellationToken.None);
+        span.TurnPrompts.ShouldBeEmpty();
+        (await TranscriptPromptSpan.HasTurnPromptSinceAsync(db, sessionId, dispatchedAt, CancellationToken.None))
+            .ShouldBeFalse();
+    }
+
     private static async Task<(Guid SessionId, DateTime DispatchedAt)> SeedSessionAsync(
         DateTime? dispatchedAt = null)
     {

@@ -107,6 +107,22 @@ public class TranscriptWorkingStateTests
         ]).ShouldBeTrue("queued_command confirms delivery only; it is never a new turn");
     }
 
+    [Test]
+    public void Queue_operation_rows_after_a_turn_end_stay_idle()
+    {
+        // CARD-0292 S3 inertness: the queue-operation housekeeping kinds are neither activity nor
+        // an end — the wedge these rows exist to expose READS idle, and reading it as working
+        // would hide it from the swallowed-input watchdog (and mislead the CPU watchdog).
+        TranscriptWorkingState.IsProvenIdle(
+        [
+            Evt(1, TranscriptKinds.UserPrompt, "do the thing"),
+            Evt(2, TranscriptKinds.TurnEnd, stopReason: "end_turn"),
+            Evt(3, TranscriptKinds.QueueEnqueue, "Hi"),
+            Evt(4, TranscriptKinds.QueueDequeue, "Hi"),
+            Evt(5, TranscriptKinds.QueueRemove, "Hi"),
+        ]).ShouldBeTrue("queue operations are housekeeping; enqueue is not proof of anything moving");
+    }
+
     // ---- CARD-0041, in FILE order (which is what this judgement always sees) ------------------
     // The tailer's mirror follows the JSONL: raw typed prompt, boundary, continuation, wrapper,
     // stdout. There is no timestamp override here — deliberately, since file order is truthful —

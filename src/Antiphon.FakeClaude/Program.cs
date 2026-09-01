@@ -74,6 +74,13 @@ namespace Antiphon.FakeClaude;
 ///    buffered pastes when it woke, in order, minutes late). This is the state every output-side
 ///    readiness signal calls "ready": no output, no modal, a painted composer — and every byte
 ///    written into it looks lost until it isn't. Default OFF.
+///  * <b>Remote-control menu</b> (OPT-IN, <c>ANTIPHON_FAKE_RC_MENU=1</c>) — a submitted
+///    <c>/remote-control</c> renders the MANAGEMENT MENU shape (Disconnect / Show QR / Continue,
+///    "Esc to continue") with no <c>remote-control is active</c> line, the modal the real TUI
+///    opens when the bridge is already live (CARD-0292). While it stands, submitted input is
+///    accepted into the TUI's own queue — a <c>queue-operation</c> <c>enqueue</c> JSONL record and
+///    NO <c>user</c> record; a bare Esc clears the menu and drains the queue (enqueue → dequeue →
+///    user). Distinct from Overlay: the menu QUEUES submits, an overlay DISCARDS bytes.
 ///  * <b>Overlay</b> (OPT-IN, <c>ANTIPHON_FAKE_OVERLAY_ON_COMMAND=/usage</c>) — after this command
 ///    is submitted, render a panel and DISCARD every typed byte until a bare Esc restores the
 ///    composer. Default OFF. Deaf-start <em>buffers</em> input and processes it late; an overlay
@@ -140,6 +147,13 @@ internal static class Program
         // settled session — which is exactly the lie the input probe exists to catch.
         var overlayOnCommand = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_OVERLAY_ON_COMMAND");
         if (string.IsNullOrWhiteSpace(overlayOnCommand)) overlayOnCommand = null;
+        // OPT-IN (CARD-0292): /remote-control opens the MANAGEMENT MENU — what the real TUI does
+        // when the command lands on a session whose bridge is already live. No "remote-control is
+        // active" line. While the menu stands, submitted input is ACCEPTED into the TUI's own
+        // queue (a queue-operation enqueue JSONL record, no user record — unlike an overlay,
+        // which discards); Esc clears the menu and drains the queue (enqueue → dequeue → user).
+        // Mirrors the measured incident shapes from session 70eb4c2d.
+        var rcMenuEnabled = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_RC_MENU") == "1";
         var deafStartMs = int.TryParse(
             Environment.GetEnvironmentVariable("ANTIPHON_FAKE_DEAF_START_MS"), out var ds) && ds > 0 ? ds : 0;
         TryEnableRawConsole();
@@ -165,6 +179,7 @@ internal static class Program
         if (placeholder is not null) Write(placeholder.Describe() + "\r\n");
         if (swallow is not null) Write(swallow.Describe() + "\r\n");
         if (overlayOnCommand is not null) Write($"OVERLAY:command={overlayOnCommand}\r\n");
+        if (rcMenuEnabled) Write("RCMENU:enabled\r\n");
         if (deafStartMs > 0) Write($"DEAFSTART:ms={deafStartMs}\r\n");
         if (debugInput)
         {
@@ -232,6 +247,8 @@ internal static class Program
 
         var composer = new StringBuilder();
         var overlayActive = false;
+        var rcMenuActive = false;
+        var rcQueue = new List<string>();
         var turnCount = 0;
         // Inside a bracketed paste whose closing 201~ hasn't arrived yet (paste split across reads).
         var inPaste = false;
@@ -294,6 +311,20 @@ internal static class Program
             // Ctrl-C (ETX, 3) / Ctrl-D (EOT, 4) — exit cleanly, like a real CLI.
             if (Array.IndexOf(burst, (byte)3) >= 0 || Array.IndexOf(burst, (byte)4) >= 0)
                 return false;
+
+            // CARD-0292: a bare Esc closes the standing /remote-control management menu ("Esc to
+            // continue" — the key the menu itself documents) and DRAINS the queue it swallowed:
+            // per queued body, a queue-operation dequeue record then a real user record, the
+            // measured enqueue → dequeue → user shape. Typed input while the menu stands is
+            // handled below, in the lone-Enter branch — the menu queues submits, it does not
+            // discard bytes the way an overlay does.
+            if (rcMenuActive && burst.Length == 1 && burst[0] == 0x1b)
+            {
+                rcMenuActive = false;
+                Write("RCMENU:closed\r\n");
+                DrainRcMenuQueue();
+                return true;
+            }
 
             // CARD-0137: an open overlay consumes and discards every typed byte. Bare Esc (a
             // single 0x1b, not a CSI) restores the composer. Deaf-start BUFFERS; overlay DROPS.
@@ -397,6 +428,41 @@ internal static class Program
 
                 composer.Clear();
 
+                // CARD-0292: input submitted while the management menu stands is ACCEPTED into
+                // the TUI's own queue — an enqueue JSONL record and NO user record. Every
+                // delivery layer sees success (the pty took the write, the transcript grew);
+                // that silence is what the swallowed-input watchdog exists to see.
+                if (rcMenuActive)
+                {
+                    rcQueue.Add(text);
+                    if (transcriptPath is not null)
+                        AppendTranscript(transcriptPath, JsonQueueOperationLine("enqueue", text));
+                    Write($"RCMENU:enqueued={rcQueue.Count}\r\n");
+                    return true;
+                }
+
+                if (rcMenuEnabled && text == "/remote-control")
+                {
+                    // The menu shape from the incident's runner snapshot: heading, action rows,
+                    // footer — and deliberately NO "remote-control is active" line and no turn-end
+                    // signal. The modal blocks until Enter or Esc; nobody is at a keyboard.
+                    rcMenuActive = true;
+                    Write("\r\n");
+                    Write($"SUBMITTED:{text}\r\n");
+                    Write("RCMENU:open\r\n");
+                    Write("  Remote Control\r\n");
+                    Write("\r\n");
+                    Write("  This session is available in the Claude mobile app and at\r\n");
+                    Write("  https://claude.ai/code/session_FAKE0000000000000000000000.\r\n");
+                    Write("\r\n");
+                    Write("    Disconnect this session\r\n");
+                    Write("    Show QR code  Scan with your phone to open this session\r\n");
+                    Write("  > Continue\r\n");
+                    Write("\r\n");
+                    Write("  Enter to select . Esc to continue\r\n");
+                    return true;
+                }
+
                 if (overlayOnCommand is not null
                     && text.StartsWith(overlayOnCommand, StringComparison.OrdinalIgnoreCase))
                 {
@@ -486,6 +552,39 @@ internal static class Program
             composer.Append(composerText);
             Write(composerText.Replace("\n", "\r\n"));
             return true;
+        }
+
+        // CARD-0292: closing the menu drains what it swallowed — per body a dequeue record then a
+        // real user record (the measured shape), then one ordinary response turn so the session
+        // reads idle again. An empty queue just returns to the prompt.
+        void DrainRcMenuQueue()
+        {
+            if (rcQueue.Count == 0)
+            {
+                Write(IdleTitle);
+                return;
+            }
+
+            string last = "";
+            foreach (var body in rcQueue)
+            {
+                if (transcriptPath is not null)
+                {
+                    AppendTranscript(transcriptPath, JsonQueueOperationLine("dequeue", body));
+                    AppendTranscript(transcriptPath, JsonUserLine(body));
+                }
+                Write($"SUBMITTED:{body.Replace("\n", "\\n")}\r\n");
+                last = body;
+            }
+            rcQueue.Clear();
+
+            var echo = last.Replace("\n", "\\n");
+            if (echo.Length > 60) echo = echo[..60];
+            Write($"FAKE response to: {echo}\r\n");
+            Write("Crunched for 1s\r\n");
+            Write(IdleTitle);
+            if (transcriptPath is not null)
+                AppendTranscript(transcriptPath, JsonAssistantLine(echo, NewApiCallId()));
         }
     }
 
@@ -645,6 +744,17 @@ internal static class Program
         uuid = Guid.NewGuid().ToString(),
         timestamp = DateTime.UtcNow.ToString("o"),
         message = new { role = "user", content = text },
+    });
+
+    // The measured queue-operation shape (fixture tests/Antiphon.Tests/Agents/Fixtures/
+    // queued-command.jsonl, and the CARD-0292 incident records): NO uuid, the operation, the
+    // full content, and a timestamp that for enqueue is composer-accept time.
+    private static string JsonQueueOperationLine(string operation, string content) => JsonSerializer.Serialize(new
+    {
+        type = "queue-operation",
+        operation,
+        content,
+        timestamp = DateTime.UtcNow.ToString("o"),
     });
 
     // Real Claude writes message.model on every assistant record (CARD-0082). The synthetic

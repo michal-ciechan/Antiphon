@@ -798,6 +798,61 @@ public class AttentionServiceTests
         item.Headline.ShouldContain("1 refinement waiting");
     }
 
+    // ---- CARD-0292: QueuedInputStuck ------------------------------------------------------------
+
+    [Test]
+    public async Task An_open_kind_43_incident_on_a_live_session_is_queued_input_stuck()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var agent = await scenario.AddAgentAsync(persistentSession: session);
+        await scenario.AddTranscriptAsync(session, (TranscriptKinds.QueueEnqueue, "Hi", null));
+        await scenario.AddIncidentAsync(
+            agent, session, AgentIncidentKind.QueuedInputNeverConverted, AlertSeverity.Warning,
+            "Input was accepted into the TUI's own composer queue and never became a prompt.",
+            minutesAgo: 5, failureReason: QueuedInputWatchdogService.EpisodeKey(1));
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.SessionId == session
+            && i.Kind == AttentionKind.QueuedInputStuck);
+
+        item.Severity.ShouldBe(AlertSeverity.Warning);
+        item.AgentId.ShouldBe(agent);
+        item.Actions.ShouldBe([AttentionAction.OpenAgent, AttentionAction.OpenDrawer]);
+    }
+
+    [Test]
+    public async Task A_closed_enqueue_episode_is_not_queued_input_stuck()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var agent = await scenario.AddAgentAsync(persistentSession: session);
+        await scenario.AddTranscriptAsync(
+            session,
+            (TranscriptKinds.QueueEnqueue, "Hi", null),
+            (TranscriptKinds.UserPrompt, "Hi", null));
+        await scenario.AddIncidentAsync(
+            agent, session, AgentIncidentKind.QueuedInputNeverConverted, AlertSeverity.Warning,
+            "stale", minutesAgo: 5, failureReason: QueuedInputWatchdogService.EpisodeKey(1));
+
+        (await ItemsForAsync(scenario))
+            .ShouldNotContain(i => i.SessionId == session && i.Kind == AttentionKind.QueuedInputStuck);
+    }
+
+    [Test]
+    public async Task A_kind_43_incident_on_a_dead_session_is_not_queued_input_stuck()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync(SessionStatus.Failed, endedMinutesAgo: 10);
+        var agent = await scenario.AddAgentAsync(persistentSession: session);
+        await scenario.AddTranscriptAsync(session, (TranscriptKinds.QueueEnqueue, "Hi", null));
+        await scenario.AddIncidentAsync(
+            agent, session, AgentIncidentKind.QueuedInputNeverConverted, AlertSeverity.Warning,
+            "stale", minutesAgo: 5, failureReason: QueuedInputWatchdogService.EpisodeKey(1));
+
+        (await ItemsForAsync(scenario))
+            .ShouldNotContain(i => i.SessionId == session && i.Kind == AttentionKind.QueuedInputStuck);
+    }
+
     [Test]
     public async Task a_task_dispatched_under_stall_minutes_does_not_run_the_workspace_probe()
     {
@@ -2057,7 +2112,7 @@ public class AttentionServiceTests
 
         public async Task AddIncidentAsync(
             Guid agentId, Guid? sessionId, AgentIncidentKind kind, AlertSeverity severity,
-            string message, int minutesAgo)
+            string message, int minutesAgo, string? failureReason = null)
         {
             await using var db = CreateContext();
             db.AgentIncidents.Add(new AgentIncident
@@ -2068,6 +2123,7 @@ public class AttentionServiceTests
                 Kind = kind,
                 Severity = severity,
                 Message = message,
+                FailureReason = failureReason,
                 CreatedAt = DateTime.UtcNow.AddMinutes(-minutesAgo),
             });
             await db.SaveChangesAsync();

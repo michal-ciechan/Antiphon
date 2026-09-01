@@ -28,6 +28,8 @@ public sealed class AgentSessionSettingsValidator : IValidateOptions<AgentSessio
             failures.Add("AgentSessions:MemoryLimitMb must not be negative.");
         if (options.RemoteControlSetupTimeoutMs <= 0)
             failures.Add("AgentSessions:RemoteControlSetupTimeoutMs must be positive.");
+        if (options.RemoteControlResumeProbeTimeoutMs <= 0)
+            failures.Add("AgentSessions:RemoteControlResumeProbeTimeoutMs must be positive.");
 
         return failures.Count == 0
             ? ValidateOptionsResult.Success

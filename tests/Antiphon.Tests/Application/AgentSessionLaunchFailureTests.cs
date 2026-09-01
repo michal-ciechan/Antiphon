@@ -410,6 +410,148 @@ public class AgentSessionLaunchFailureTests
             .ShouldBe(0);
     }
 
+    // ---- CARD-0292 S1/S2: skip /remote-control on a live bridge; Esc a standing menu ----------
+
+    [Test]
+    public async Task Resume_with_an_already_armed_bridge_skips_remote_control_and_still_renames()
+    {
+        var adapter = new FakeAgentProtocolAdapter { PromptOutput = "remote-control is active" };
+        var probe = new CountingRcProbe { Armed = true };
+        await using var fixture = await LaunchFixture.CreateAsync(
+            adapter, s => s.AddSingleton<IRcBridgeProbe>(probe));
+
+        await fixture.LaunchInteractiveAsync(remoteControlName: "Antiphon-Orchestrator", resume: true);
+
+        probe.Calls.ShouldBeGreaterThan(0, "a resume must poll the child pid's own state file");
+        probe.LastPid.ShouldBe(adapter.Pid);
+        adapter.Prompts.ShouldBe(["/rename Antiphon-Orchestrator"]);
+        adapter.Prompts.ShouldNotContain("/remote-control");
+
+        await using var db = LaunchFixture.CreateContext();
+        (await db.AgentIncidents.CountAsync(
+            i => i.AgentId == fixture.AgentId && i.Kind == AgentIncidentKind.RcDegraded))
+            .ShouldBe(0);
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        session.Status.ShouldBe(SessionStatus.Running);
+    }
+
+    [Test]
+    public async Task Resume_unarmed_falls_through_and_sends_remote_control_as_today()
+    {
+        var adapter = new FakeAgentProtocolAdapter { PromptOutput = "remote-control is active" };
+        var probe = new CountingRcProbe { Armed = false };
+        await using var fixture = await LaunchFixture.CreateAsync(
+            adapter, s => s.AddSingleton<IRcBridgeProbe>(probe));
+
+        await fixture.LaunchInteractiveAsync(remoteControlName: "Antiphon-Orchestrator", resume: true);
+
+        probe.Calls.ShouldBeGreaterThan(0);
+        adapter.Prompts.ShouldBe(["/remote-control", "/rename Antiphon-Orchestrator"]);
+    }
+
+    [Test]
+    public async Task Fresh_launch_never_probes_the_bridge()
+    {
+        var adapter = new FakeAgentProtocolAdapter { PromptOutput = "remote-control is active" };
+        var probe = new CountingRcProbe { Armed = true };
+        await using var fixture = await LaunchFixture.CreateAsync(
+            adapter, s => s.AddSingleton<IRcBridgeProbe>(probe));
+
+        await fixture.LaunchInteractiveAsync(remoteControlName: "Antiphon-Orchestrator");
+
+        probe.Calls.ShouldBe(0, "a fresh launch (resumeMode null) must not skip the send");
+        adapter.Prompts.ShouldBe(["/remote-control", "/rename Antiphon-Orchestrator"]);
+    }
+
+    [Test]
+    public async Task Resume_probe_throw_degrades_to_the_send_path_and_the_launch_survives()
+    {
+        var adapter = new FakeAgentProtocolAdapter { PromptOutput = "remote-control is active" };
+        await using var fixture = await LaunchFixture.CreateAsync(
+            adapter, s => s.AddSingleton<IRcBridgeProbe>(new ThrowingRcProbe()));
+
+        await fixture.LaunchInteractiveAsync(remoteControlName: "Antiphon-Orchestrator", resume: true);
+
+        adapter.Prompts.ShouldBe(["/remote-control", "/rename Antiphon-Orchestrator"]);
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        session.Status.ShouldBe(SessionStatus.Running);
+    }
+
+    [Test]
+    public async Task Unarmed_branch_with_the_management_menu_on_screen_escapes_and_renames_without_degrading()
+    {
+        var adapter = new FakeAgentProtocolAdapter
+        {
+            PromptOutput = "some output, but never the marker",
+            RemoteControlMenuOpen = true,
+        };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+
+        await fixture.LaunchInteractiveAsync(remoteControlName: "Antiphon-Orchestrator");
+
+        adapter.Prompts.ShouldBe(["/remote-control", "/rename Antiphon-Orchestrator"]);
+        adapter.Inputs.ShouldContain("\u001b");
+        adapter.RemoteControlMenuOpen.ShouldBeFalse();
+
+        await using var db = LaunchFixture.CreateContext();
+        (await db.AgentIncidents.CountAsync(
+            i => i.AgentId == fixture.AgentId && i.Kind == AgentIncidentKind.RcDegraded))
+            .ShouldBe(0, "the menu is positive evidence the bridge is armed — not a degradation");
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        session.Status.ShouldBe(SessionStatus.Running);
+    }
+
+    [Test]
+    public async Task Catch_path_with_the_management_menu_escapes_names_it_and_skips_rename()
+    {
+        var adapter = new FakeAgentProtocolAdapter
+        {
+            RemoteControlMenuOpen = true,
+            PromptFailure = prompt => prompt.StartsWith("/remote-control", StringComparison.Ordinal)
+                ? new PromptDeliveryException("No composer evidence appeared for the typed body.")
+                : null,
+        };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+
+        await fixture.LaunchInteractiveAsync(remoteControlName: "Antiphon-Orchestrator");
+
+        adapter.Prompts.ShouldBe(
+            ["/remote-control", "/remote-control", "/remote-control"],
+            "slice 3 retypes the verified submit before giving up");
+        adapter.Prompts.ShouldNotContain(p => p.StartsWith("/rename", StringComparison.Ordinal));
+        adapter.Inputs.ShouldContain("\u001b");
+        adapter.RemoteControlMenuOpen.ShouldBeFalse();
+
+        await using var db = LaunchFixture.CreateContext();
+        var incident = await db.AgentIncidents.SingleAsync(
+            i => i.AgentId == fixture.AgentId && i.Kind == AgentIncidentKind.RcDegraded);
+        incident.FailureReason.ShouldBe("RemoteControlNotDelivered");
+        incident.Message.ShouldContain("management menu");
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        session.Status.ShouldBe(SessionStatus.Running);
+    }
+
+    private sealed class CountingRcProbe : IRcBridgeProbe
+    {
+        public bool Armed { get; set; }
+        public int Calls { get; private set; }
+        public int? LastPid { get; private set; }
+
+        public RcProbeResult Probe(int pid)
+        {
+            Calls++;
+            LastPid = pid;
+            return new RcProbeResult(Armed, BridgeConnections: Armed ? 2 : 0, StateFileFound: true);
+        }
+    }
+
+    private sealed class ThrowingRcProbe : IRcBridgeProbe
+    {
+        public RcProbeResult Probe(int pid) =>
+            throw new InvalidOperationException("bridge probe exploded");
+    }
+
     /// <summary>
     /// The line slice 2 must not cross: the card WORK prompt is the session's purpose, so its
     /// delivery failure still fails the launch — now with the process killed on the way out.
@@ -787,6 +929,9 @@ public class AgentSessionLaunchFailureTests
                         FirstDeltaTimeoutMs = 200,
                         KillGraceMs = 100,
                         RemoteControlArmTimeoutMs = 300,
+                        // CARD-0292 S1: resume-bridge poll. Keep this well under the arm wait so
+                        // an unarmed resume falls through without a 5s production window.
+                        RemoteControlResumeProbeTimeoutMs = 50,
                         // Outer budget must still fit the production 3s first-output wait plus
                         // the compressed arm wait; 800ms was clipping late-confirm tests that
                         // emit no PromptOutput and therefore sit in WaitForFirstPromptOutputAsync.

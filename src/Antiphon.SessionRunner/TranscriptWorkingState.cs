@@ -56,6 +56,11 @@ public static class TranscriptWorkingState
                 // queued_command carries the time it entered the composer, not its file-order
                 // position. It confirms delivery only and must not create a turn boundary.
                 || entry.Kind == TranscriptKinds.QueuedUserPrompt
+                // The queue-operation housekeeping rows (CARD-0292 S3): same enqueue-time
+                // timestamp trap, and an enqueue can be a wedged modal swallowing input.
+                || entry.Kind == TranscriptKinds.QueueEnqueue
+                || entry.Kind == TranscriptKinds.QueueDequeue
+                || entry.Kind == TranscriptKinds.QueueRemove
                 || TranscriptKinds.IsCompactionContinuationPrompt(entry.Kind, entry.Text)
                 || TranscriptKinds.IsLocalCommandRecord(entry.Kind, entry.Text))
             {

@@ -414,4 +414,29 @@ public enum AgentIncidentKind
     /// repeat-blocked. Never raised from a Herdr <c>done</c> status.
     /// </summary>
     DelegateCompletedWithoutProgress = 42,
+
+    /// <summary>
+    /// CARD-0292 S4: a live session's LATEST <see cref="SessionRunner.Contracts.TranscriptKinds.QueueEnqueue"/>
+    /// row has no later conversion or drain activity (no <c>UserPrompt</c>, <c>QueuedUserPrompt</c>,
+    /// <c>QueueDequeue</c> or <c>QueueRemove</c> above it), the session reads idle, and the enqueue
+    /// is older than <c>SupervisionSettings.QueuedInputWatch.StuckMinutes</c> — input was accepted
+    /// into the TUI's own composer queue and never became a prompt, the shape a blocking modal
+    /// (the /remote-control management menu) produces for EVERY input source, including the RC
+    /// bridge and operator terminals that have no delivery-verification layer at all.
+    ///
+    /// <para>Live miss 2026-09-01 (this card): session 70eb4c2d wedged on the menu at launch;
+    /// two user messages sat as enqueue records for five hours while runner status, transcript
+    /// bind, queue and context surface all read healthy. This is the missing "explicitly failed
+    /// to convert" counterpart to "transcript-confirmed UserPrompt evidence is the delivery
+    /// verdict" (Gotcha #50).</para>
+    ///
+    /// <para><b>Detection only</b> (CARD-0153's rule, verbatim): never kills, never types, never
+    /// Escs — the sweep's evidence is rows and rows cannot see the screen; the one screen-verified
+    /// Esc this card allows lives in the launch preamble and the health watch. Warning at the
+    /// threshold; re-raised Error after <c>EscalateToErrorAfterMinutes</c> (Critical at that step
+    /// when the agent is channel-bound — the CARD-0055/0067 severity rule). Deduped per
+    /// (session, enqueue sequence) episode; any later conversion closes the episode and a new
+    /// enqueue is a new one. No migration: an int on the existing column.</para>
+    /// </summary>
+    QueuedInputNeverConverted = 43,
 }

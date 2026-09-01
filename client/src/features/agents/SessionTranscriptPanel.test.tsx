@@ -126,6 +126,17 @@ describe('isWorking', () => {
     ).toBe(false)
   })
 
+  it('ignores queue-operation housekeeping rows for working state', () => {
+    expect(
+      isWorking([
+        entry(1, 'TurnEnd', null, { timestamp: at(10) }),
+        entry(2, 'QueueEnqueue', 'Hi', { timestamp: at(20) }),
+        entry(3, 'QueueDequeue', 'Hi', { timestamp: at(21) }),
+        entry(4, 'QueueRemove', 'Hi', { timestamp: at(22) }),
+      ]),
+    ).toBe(false)
+  })
+
   // Live miss 2026-07-29: an interrupted turn (Esc / rejected tool call) writes the
   // "[Request interrupted..." USER marker and no TurnEnd — the marker is the turn's end. Counting
   // it as activity showed a phantom permanently-working agent and stranded WhenIdle deliveries.

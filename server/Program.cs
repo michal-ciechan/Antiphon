@@ -406,6 +406,8 @@ try
     builder.Services.AddSingleton<HerdrStatusCorroborationService>();
     // CARD-0247 S3: orchestrator investigation detection (Warning-only; never kills/retypes).
     builder.Services.AddSingleton<OrchestratorInvestigationSweepService>();
+    // CARD-0292 S4: swallowed-input watchdog (detection only; never kills/types/Escs).
+    builder.Services.AddSingleton<QueuedInputWatchdogService>();
     // Compaction recovery (incident + workspace re-read note); dispatched lazily from the runtime
     // on CompactBoundary transcript entries.
     builder.Services.AddSingleton<CompactionRecoveryService>();

@@ -34,6 +34,15 @@ public sealed class SessionHealthStateStore
         public int ReArmAttempts;
         public DateTime? ReArmSettleUntilUtc;
         public bool DegradedAlerted;
+
+        /// <summary>
+        /// CARD-0292 S5: set by the DEAD-BRIDGE re-arm only — it types /remote-control into a TUI
+        /// that believes it is bridged, which can open the management menu instead of re-arming.
+        /// The first pass after the settle window checks the screen and Escs a standing menu
+        /// before probing again. The never-armed arm does not set this: with no bridgeSessionId
+        /// there is nothing to open a menu about.
+        /// </summary>
+        public bool PendingMenuCheck;
     }
 
     public ConcurrentDictionary<Guid, Entry> Sessions { get; } = new();
@@ -172,6 +181,31 @@ public sealed class SessionHealthService
         if (entry.ReArmSettleUntilUtc is { } settle && now < settle)
             return false;
 
+        // CARD-0292 S5: the dead-bridge arm's in-place /remote-control repair types the command
+        // into a TUI that believes it is bridged — the exact shape that opens the management menu
+        // instead of re-arming (the launch-preamble incident, latent here). After the settle
+        // window, before probing again, look once: a standing menu is dismissed with one
+        // screen-verified Esc (idle-guarded inside the action) and recorded on the RcReArmed
+        // trail. If /remote-control on an armed-but-dead bridge reconnects cleanly instead, there
+        // is no menu and this costs one snapshot.
+        if (entry.PendingMenuCheck)
+        {
+            entry.PendingMenuCheck = false;
+            if (await _actions.TryDismissRemoteControlMenuAsync(session.Id, ct))
+            {
+                await RecordAsync(agent.Id, session.Id, AgentIncidentKind.RcReArmed, AlertSeverity.Warning,
+                    "The in-place /remote-control re-arm opened the management menu (the bridge was "
+                    + "already live as far as the TUI is concerned); dismissed it with Esc so the "
+                    + "session is not wedged.",
+                    ct);
+                _logger.LogWarning(
+                    "Agent {AgentName}: re-arm opened the remote-control management menu on session "
+                    + "{SessionId}; dismissed",
+                    agent.Name, session.Id);
+                return true;
+            }
+        }
+
         var probe = _probe.Probe(childPid);
 
         // ── Never armed ────────────────────────────────────────────────────────────────────
@@ -238,6 +272,9 @@ public sealed class SessionHealthService
             entry.ReArmAttempts++;
             entry.ConsecutiveZeroConnProbes = 0;
             entry.ReArmSettleUntilUtc = now.AddMinutes(_settings.RcWatch.ReArmSettleMinutes);
+            // CARD-0292 S5: this arm types /remote-control at a TUI that believes it is bridged —
+            // check for the management menu once the settle window ends.
+            entry.PendingMenuCheck = true;
             await _actions.EnqueueWhenIdleAsync(session.Id, "/remote-control", ct);
             await RecordAsync(agent.Id, session.Id, AgentIncidentKind.RcReArmed, AlertSeverity.Warning,
                 $"Remote-control bridge dead for {_settings.RcWatch.ConsecutiveFailedProbesBeforeAction} probes; "

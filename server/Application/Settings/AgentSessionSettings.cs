@@ -35,6 +35,18 @@ public sealed class AgentSessionSettings
     public int RemoteControlSetupTimeoutMs { get; set; } = 60_000;
 
     /// <summary>
+    /// CARD-0292 S1: on a resume-mode relaunch, how long the preamble polls
+    /// <c>IRcBridgeProbe</c> for an already-armed bridge before falling through to today's
+    /// <c>/remote-control</c> send. Claude re-establishes the bridge itself on resume; the ground
+    /// truth is <c>bridgeSessionId</c> in its own per-process state file, so an armed observation
+    /// skips the send entirely (the menu wedge cannot happen) and goes straight to <c>/rename</c>.
+    /// Expiring unarmed is not an error — a resume of a never-bridged session legitimately never
+    /// arms, and the S2 menu guard converts the late-arm race into one Esc. Inner bound inside
+    /// <see cref="RemoteControlSetupTimeoutMs"/>.
+    /// </summary>
+    public int RemoteControlResumeProbeTimeoutMs { get; set; } = 5_000;
+
+    /// <summary>
     /// When a session is relaunched with --resume and its persisted transcript shows the previous
     /// turn was cut off mid-flight (process died before its TurnEnd), automatically queue
     /// <see cref="ResumeContinuePrompt"/> so the interrupted work picks itself back up instead of

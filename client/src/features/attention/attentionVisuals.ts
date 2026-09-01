@@ -156,6 +156,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     icon: TbMessage,
     hint: 'A cardless start is still idle because Details was not sent as a prompt. Send a message; nothing sends Details automatically.',
   },
+  QueuedInputStuck: {
+    label: 'Input swallowed',
+    color: 'warning',
+    icon: TbMailExclamation,
+    hint: 'Input was accepted by the TUI and never became a prompt — usually a blocking modal. Detection only; Esc or restart clears it.',
+  },
 }
 
 export type AttentionGroupKey = 'now' | 'broken' | 'suspect' | 'failures'

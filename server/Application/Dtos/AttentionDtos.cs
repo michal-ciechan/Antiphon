@@ -152,6 +152,16 @@ public enum AttentionKind
     /// of an empty shell must not raise it.
     /// </summary>
     CardlessDetailsNoPrompt = 19,
+
+    /// <summary>
+    /// A live session is holding queued-but-unconverted input: its latest <c>QueueEnqueue</c>
+    /// transcript row has no later conversion while the session reads idle (CARD-0292, projected
+    /// from an open <c>AgentIncidentKind.QueuedInputNeverConverted</c> incident and re-verified at
+    /// read time, so the row exists because the condition holds now). The usual cause is a
+    /// blocking TUI modal that swallowed the input — every health signal reads healthy while a
+    /// message sits eaten. Detection only: nothing is killed, typed, or Esc'd from here.
+    /// </summary>
+    QueuedInputStuck = 20,
 }
 
 /// <summary>
