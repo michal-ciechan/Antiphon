@@ -434,6 +434,69 @@ function Get-AppHostProbeClassification {
     return [pscustomobject]@{ Kind = 'Down'; RestartWorthy = $true; Summary = $summary }
 }
 
+function Format-AppHostRestartExitName {
+    <#
+      Watchdog log label for restart-apphost.ps1's exit code. CARD-0310: the
+      log must name the code, not just "exited N".
+    #>
+    param([int]$ExitCode)
+    switch ($ExitCode) {
+        0 { return '0=healthy' }
+        1 { return '1=timeout/build' }
+        3 { return '3=refused (already unstamped)' }
+        4 { return '4=DCP dependency timeout' }
+        default { return "$ExitCode" }
+    }
+}
+
+function Invoke-AppHostRestartCaptured {
+    <#
+      Runs restart-apphost.ps1 (or a -RestartScript stub) as a child and
+      returns the exit code plus the last TailLines of stdout/stderr, so
+      Show-DcpTimeoutVerdict text lands in logs/watchdog-apphost.log.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$PowerShellExe,
+        [Parameter(Mandatory = $true)][string]$RestartScript,
+        [int]$TailLines = 40
+    )
+    $tag = [guid]::NewGuid().ToString('N')
+    $outFile = Join-Path $env:TEMP ("apphost-restart-capture-$tag.out")
+    $errFile = Join-Path $env:TEMP ("apphost-restart-capture-$tag.err")
+    try {
+        try {
+            $p = Start-Process -FilePath $PowerShellExe `
+                -ArgumentList @('-NoLogo', '-NonInteractive', '-File', $RestartScript) `
+                -Wait -PassThru -NoNewWindow `
+                -RedirectStandardOutput $outFile `
+                -RedirectStandardError $errFile
+        } catch {
+            return [pscustomobject]@{
+                ExitCode = -1
+                ExitName = '-1'
+                Tail     = @($_.Exception.Message)
+            }
+        }
+        $lines = @()
+        if (Test-Path -LiteralPath $outFile) {
+            $lines += @(Get-Content -LiteralPath $outFile -ErrorAction SilentlyContinue)
+        }
+        if (Test-Path -LiteralPath $errFile) {
+            $lines += @(Get-Content -LiteralPath $errFile -ErrorAction SilentlyContinue)
+        }
+        $tail = @($lines | Where-Object { $null -ne $_ -and "$_".Trim() -ne '' } | Select-Object -Last $TailLines)
+        $code = 0
+        if ($p -and $null -ne $p.ExitCode) { $code = [int]$p.ExitCode }
+        return [pscustomobject]@{
+            ExitCode = $code
+            ExitName = Format-AppHostRestartExitName $code
+            Tail     = $tail
+        }
+    } finally {
+        Remove-Item -LiteralPath $outFile, $errFile -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Invoke-BoundedCommand {
     <#
       Runs a scriptblock in a background job with a hard deadline. Used for the
