@@ -218,6 +218,15 @@ and cannot write to the delegate at all.
 note still arrives separately, and a check note can never be mistaken for it or settle anything
 (see `.claude/skills/antiphon-delegate/SKILL.md`).
 
+**A Check-role task settles Succeeded when it has produced a reading (CARD-0302).** `LOOKS STUCK` /
+`BLOCKED` in that reading is evidence on the **checked** task (its Check event / parent `[check …]`
+note), never the Check row's own `Status`. The interpreter's job is the reading; finishing it is
+`done`, not a question for the operator. Reply or Cancel on a Check row is unsafe — those verbs
+enqueue into or kill the standing `antiphon-check-interpreter` session. Empty or `failed`
+interpretations stay degraded (no reading on the checked task). Do not parse LOOKS STUCK as a
+classifier input; PastExpectedIdle / ChecksSpent / DeadSession already surface actually-stuck
+delegates and already attach the latest interpretation as evidence.
+
 **A task that fails before it is ever dispatched still gets the ramp (CARD-0231).** CARD-0220 already
 sends a one-shot `[task <id> failed]` note through `FailAndNotifyAsync`; that note can sit unsubmitted
 or be lost, and the orchestrator bundle says not to poll. The same `NextCheckAt` / `CheckCount`
