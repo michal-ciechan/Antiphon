@@ -33,7 +33,7 @@ public class ModelAvailabilityDispatcherTests
             workspace.Path, pinnedAgentId: fableAgent, level: AgentModelLevel.Frontier, title: "fable plan");
         var sonnet = await SeedQueuedTaskAsync(
             workspace.Path, pinnedAgentId: sonnetAgent, level: AgentModelLevel.Medium, title: "sonnet docs");
-        await SeedHoldAsync(holdId, "fable", until: DateTime.UtcNow.AddHours(1));
+        await SeedHoldAsync(holdId, "fable", until: DateTime.UtcNow.AddHours(1), manual: false);
 
         try
         {
@@ -49,6 +49,37 @@ public class ModelAvailabilityDispatcherTests
                 .Where(e => e.AgentTaskId == fable.Id && e.Type == AgentTaskEventType.Held)
                 .ToListAsync();
             held.ShouldContain(e => e.Detail.Contains("fable"));
+        }
+        finally
+        {
+            await CleanupAsync(holdId, fable.Id, sonnet.Id, fableAgent, sonnetAgent);
+        }
+    }
+
+    [Test]
+    public async Task A_manual_fable_hold_skips_queued_fable_and_dispatches_sonnet()
+    {
+        using var workspace = new TempWorkspace();
+        var holdId = Guid.NewGuid();
+        var dispatcher = CreateDispatcher();
+        var (fableAgent, _) = await SeedWarmAgentAsync(workspace.Path);
+        var (sonnetAgent, _) = await SeedWarmAgentAsync(workspace.Path);
+        var fable = await SeedQueuedTaskAsync(
+            workspace.Path, pinnedAgentId: fableAgent, level: AgentModelLevel.Frontier, title: "manual fable");
+        var sonnet = await SeedQueuedTaskAsync(
+            workspace.Path, pinnedAgentId: sonnetAgent, level: AgentModelLevel.Medium, title: "manual sonnet");
+        await SeedHoldAsync(holdId, "fable", until: DateTime.UtcNow.AddHours(1), manual: true);
+
+        try
+        {
+            var result = await dispatcher.TickAsync(CancellationToken.None);
+
+            result.SkippedModelAvailability.ShouldBeGreaterThanOrEqualTo(1);
+            await using var verify = CreateContext();
+            (await verify.AgentTasks.SingleAsync(t => t.Id == fable.Id)).Status
+                .ShouldBe(AgentTaskStatus.Queued);
+            (await verify.AgentTasks.SingleAsync(t => t.Id == sonnet.Id)).Status
+                .ShouldBe(AgentTaskStatus.Dispatched);
         }
         finally
         {
@@ -126,7 +157,7 @@ public class ModelAvailabilityDispatcherTests
         return provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
     }
 
-    private static async Task SeedHoldAsync(Guid id, string alias, DateTime? until)
+    private static async Task SeedHoldAsync(Guid id, string alias, DateTime? until, bool manual = false)
     {
         await using var db = CreateContext();
         await db.ModelAvailabilityHolds
@@ -137,10 +168,12 @@ public class ModelAvailabilityDispatcherTests
             Id = id,
             Kind = AgentKind.ClaudeCode,
             ModelAlias = alias,
-            Source = ModelAvailabilitySource.AutoDetected,
+            Source = manual ? ModelAvailabilitySource.Manual : ModelAvailabilitySource.AutoDetected,
             DisabledUntil = until,
             HitAt = DateTime.UtcNow,
-            Reason = until is null ? "Fable 5 per-model cap (no reset stated)" : "session-limit resets 18:10 Europe/London",
+            Reason = manual
+                ? "manual hold"
+                : until is null ? "Fable 5 per-model cap (no reset stated)" : "session-limit resets 18:10 Europe/London",
         });
         await db.SaveChangesAsync();
     }

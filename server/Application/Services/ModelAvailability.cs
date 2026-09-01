@@ -9,16 +9,17 @@ using Microsoft.Extensions.Logging;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// Reader (and AutoDetected writer) for <see cref="ModelAvailabilityHold"/> (CARD-0022).
-/// Held if an active row exists for <c>(kind, alias)</c> OR <c>(kind, *)</c> AND
+/// Reader, AutoDetected writer (CARD-0022), and Manual writer (CARD-0309) for
+/// <see cref="ModelAvailabilityHold"/>. Held if an active row exists for
+/// <c>(kind, alias)</c> OR <c>(kind, *)</c> AND
 /// (<see cref="ModelAvailabilityHold.DisabledUntil"/> is null OR <c>now &lt; DisabledUntil</c>).
 /// Auto-resume is by construction: a sweep (and lazy check on read) sets
 /// <see cref="ModelAvailabilityHold.ClearedAt"/> when <c>DisabledUntil &lt;= now</c>.
 ///
-/// <para>CARD-0309 outrank (implemented here so a later Manual writer layers on cleanly):
-/// one active row per key. A Manual row outranks AutoDetected — AutoDetected may refresh
-/// evidence (<c>RawText</c>/<c>HitAt</c>/<c>SourceSessionId</c>/<c>SourceTaskId</c>/<c>Reason</c>)
-/// but must not shorten <c>DisabledUntil</c> or demote <c>Source</c> back to AutoDetected.</para>
+/// <para>Outrank: one active row per key. A Manual row outranks AutoDetected — AutoDetected may
+/// refresh evidence (<c>RawText</c>/<c>HitAt</c>/<c>SourceSessionId</c>/<c>SourceTaskId</c>/<c>Reason</c>)
+/// but must not shorten <c>DisabledUntil</c> or demote <c>Source</c> back to AutoDetected.
+/// Manual PUT converts an AutoDetected row in place.</para>
 /// </summary>
 public sealed class ModelAvailability
 {
@@ -48,8 +49,9 @@ public sealed class ModelAvailability
 
     /// <summary>
     /// Create/start door. Throws <see cref="ModelDisabledException"/> when the resolved alias
-    /// (or the kind-wide <c>*</c>) is held. No override flag on this card — CARD-0309 may add
-    /// <c>ignoreModelDisabled</c>. Never silently reroute.
+    /// (or the kind-wide <c>*</c>) is held. Create may skip this when
+    /// <c>ignoreModelDisabled</c> is set (queue, do not spawn). Start never skips. Never
+    /// silently reroute.
     /// </summary>
     public async Task RequireAsync(AgentKind kind, string alias, CancellationToken ct)
     {
@@ -173,6 +175,140 @@ public sealed class ModelAvailability
 
         await _db.SaveChangesAsync(ct);
         return existing;
+    }
+
+    /// <summary>
+    /// The live hold that <see cref="IsHeldAsync"/> / <see cref="RequireAsync"/> consult, or
+    /// null. Used by create-with-<c>ignoreModelDisabled</c> to write the queue-until-clear
+    /// warning without throwing.
+    /// </summary>
+    public Task<ModelAvailabilityHold?> GetActiveHoldAsync(
+        AgentKind kind, string alias, CancellationToken ct) =>
+        FindActiveAsync(kind, alias, UtcNow(), ct);
+
+    /// <summary>
+    /// CARD-0309 Manual writer. Upserts the active row for <c>(kind, alias)</c> with
+    /// <see cref="ModelAvailabilitySource.Manual"/>. Converts an AutoDetected row in place
+    /// (same <c>Id</c>). Kind-wide alias is <c>*</c>. A past <paramref name="disabledUntil"/>
+    /// is 422. Unknown / non-delegatable kind or unknown alias is 422.
+    /// </summary>
+    public async Task<ModelAvailabilityHoldDto> UpsertManualAsync(
+        string kind,
+        string alias,
+        DateTimeOffset? disabledUntil,
+        string? reason,
+        CancellationToken ct)
+    {
+        var parsedKind = ParseHoldKind(kind);
+        var canonical = ParseHoldAlias(alias);
+        var now = UtcNow();
+        DateTime? untilUtc = null;
+        if (disabledUntil is { } until)
+        {
+            untilUtc = until.UtcDateTime;
+            if (untilUtc <= now)
+            {
+                throw new ValidationException(
+                    "disabledUntil",
+                    $"disabledUntil {untilUtc:yyyy-MM-ddTHH:mm:ssZ} is in the past; use a future UTC instant or omit it for an open-ended hold.");
+            }
+        }
+
+        var existing = await _db.ModelAvailabilityHolds
+            .FirstOrDefaultAsync(
+                h => h.Kind == parsedKind && h.ModelAlias == canonical && h.ClearedAt == null, ct);
+
+        var cappedReason = Cap(string.IsNullOrWhiteSpace(reason) ? "manual hold" : reason, ReasonCap)
+            ?? "manual hold";
+
+        if (existing is null)
+        {
+            var row = new ModelAvailabilityHold
+            {
+                Id = Guid.NewGuid(),
+                Kind = parsedKind,
+                ModelAlias = canonical,
+                Source = ModelAvailabilitySource.Manual,
+                DisabledUntil = untilUtc,
+                HitAt = now,
+                RawText = null,
+                SourceSessionId = null,
+                SourceTaskId = null,
+                Reason = cappedReason,
+            };
+            _db.ModelAvailabilityHolds.Add(row);
+            await _db.SaveChangesAsync(ct);
+            _logger.LogInformation(
+                "Manual hold {Kind}/{Alias} until {Until} ({Reason})",
+                parsedKind, canonical, (object?)untilUtc ?? "(until cleared)", row.Reason);
+            return ToDto(row);
+        }
+
+        // Convert AutoDetected in place: one active row per key. Operator until wins, including null.
+        existing.Source = ModelAvailabilitySource.Manual;
+        existing.DisabledUntil = untilUtc;
+        existing.HitAt = now;
+        existing.RawText = null;
+        existing.SourceSessionId = null;
+        existing.SourceTaskId = null;
+        existing.Reason = cappedReason;
+        await _db.SaveChangesAsync(ct);
+        _logger.LogInformation(
+            "Manual hold {Kind}/{Alias} until {Until} ({Reason}) — converted in place",
+            parsedKind, canonical, (object?)untilUtc ?? "(until cleared)", existing.Reason);
+        return ToDto(existing);
+    }
+
+    /// <summary>
+    /// CARD-0309: set <c>ClearedAt = now</c> on the active row (any Source). Idempotent — already
+    /// clear is a no-op. Does not delete the row.
+    /// </summary>
+    public async Task ClearAsync(string kind, string alias, CancellationToken ct)
+    {
+        var parsedKind = ParseHoldKind(kind);
+        var canonical = ParseHoldAlias(alias);
+        var existing = await _db.ModelAvailabilityHolds
+            .FirstOrDefaultAsync(
+                h => h.Kind == parsedKind && h.ModelAlias == canonical && h.ClearedAt == null, ct);
+        if (existing is null)
+            return;
+
+        existing.ClearedAt = UtcNow();
+        await _db.SaveChangesAsync(ct);
+        _logger.LogInformation("Cleared hold {Kind}/{Alias}", parsedKind, canonical);
+    }
+
+    private static AgentKind ParseHoldKind(string kind)
+    {
+        if (string.IsNullOrWhiteSpace(kind)
+            || !Enum.TryParse<AgentKind>(kind, ignoreCase: true, out var parsed)
+            || !Enum.GetNames<AgentKind>().Any(n => n.Equals(kind.Trim(), StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new ValidationException("kind", $"Unknown kind '{kind}'.");
+        }
+
+        if (!AgentTaskService.DelegatableKinds.Contains(parsed))
+        {
+            throw new ValidationException(
+                "kind",
+                $"{parsed} is not a delegatable kind. Holds apply to {string.Join(", ", AgentTaskService.DelegatableKinds)}.");
+        }
+
+        return parsed;
+    }
+
+    private static string ParseHoldAlias(string alias)
+    {
+        var canonical = ModelAlias.CanonicalHoldAlias(alias);
+        if (canonical is null)
+        {
+            var known = string.Join(", ", ModelAlias.DelegatableAliases.Select(a => a.Alias).Distinct());
+            throw new ValidationException(
+                "alias",
+                $"Unknown alias '{alias}'. Use a ModelLevelAliases value ({known}) or '*'.");
+        }
+
+        return canonical;
     }
 
     private async Task<ModelAvailabilityHold?> FindActiveAsync(

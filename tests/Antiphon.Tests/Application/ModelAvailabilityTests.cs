@@ -158,6 +158,81 @@ public class ModelAvailabilityTests
     }
 
     [Test]
+    public async Task Auto_detected_does_not_fill_an_open_ended_manual_DisabledUntil()
+    {
+        var id = Guid.NewGuid();
+        await using var db = CreateContext();
+        try
+        {
+            await ReplaceHoldAsync(db, new ModelAvailabilityHold
+            {
+                Id = id,
+                Kind = AgentKind.ClaudeCode,
+                ModelAlias = "fable",
+                Source = ModelAvailabilitySource.Manual,
+                DisabledUntil = null,
+                HitAt = DateTime.UtcNow.AddHours(-2),
+                Reason = "manual hold",
+            });
+
+            var written = await Service(db).UpsertAutoDetectedAsync(
+                AgentKind.ClaudeCode,
+                "fable",
+                disabledUntil: DateTime.UtcNow.AddHours(1),
+                reason: "session-limit resets 18:10 Europe/London",
+                rawText: UsageLimitWallParser.SessionLimitFixtureText,
+                sourceSessionId: Guid.NewGuid(),
+                sourceTaskId: null,
+                CancellationToken.None);
+
+            written.Id.ShouldBe(id);
+            written.Source.ShouldBe(ModelAvailabilitySource.Manual);
+            written.DisabledUntil.ShouldBeNull();
+        }
+        finally
+        {
+            await db.ModelAvailabilityHolds.Where(h => h.Id == id).ExecuteDeleteAsync();
+        }
+    }
+
+    [Test]
+    public async Task Manual_put_converts_an_active_auto_detected_row_in_place()
+    {
+        var id = Guid.NewGuid();
+        var until = DateTime.UtcNow.AddDays(3);
+        var thursday = new DateTime(until.Year, until.Month, until.Day, 0, 0, 0, DateTimeKind.Utc);
+        await using var db = CreateContext();
+        try
+        {
+            await ReplaceHoldAsync(db, Hold(id, "fable", DateTime.UtcNow.AddMinutes(10)));
+
+            var dto = await Service(db).UpsertManualAsync(
+                "ClaudeCode",
+                "fable",
+                new DateTimeOffset(thursday, TimeSpan.Zero),
+                "fable weekly cap; Plan on grok until Thursday",
+                CancellationToken.None);
+
+            dto.Id.ShouldBe(id);
+            dto.Source.ShouldBe(ModelAvailabilitySource.Manual);
+            dto.DisabledUntil.ShouldBe(thursday);
+            dto.RawText.ShouldBeNull();
+            dto.SourceSessionId.ShouldBeNull();
+            dto.Reason.ShouldContain("weekly cap");
+
+            await using var verify = CreateContext();
+            var row = await verify.ModelAvailabilityHolds.SingleAsync(h => h.Id == id);
+            row.Source.ShouldBe(ModelAvailabilitySource.Manual);
+            row.DisabledUntil.ShouldBe(thursday);
+            row.ClearedAt.ShouldBeNull();
+        }
+        finally
+        {
+            await db.ModelAvailabilityHolds.Where(h => h.Id == id).ExecuteDeleteAsync();
+        }
+    }
+
+    [Test]
     public async Task ListAvailable_omits_held_aliases_and_keeps_the_rest()
     {
         var id = Guid.NewGuid();

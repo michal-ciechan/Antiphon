@@ -1093,6 +1093,8 @@ public class UnmarkedWaitingContractTests
         ((int)AttentionKind.ReportUnsettled).ShouldBe(22);
         ((int)AttentionKind.UnmarkedWaiting).ShouldBe(23);
         ((int)AttentionKind.ModelAvailabilityHold).ShouldBe(24);
+        Enum.GetValues<AttentionKind>().Max(v => (int)v).ShouldBe(24,
+            "CARD-0309 must append, not take 24; live end was ModelAvailabilityHold=24");
     }
 
     [Test]
