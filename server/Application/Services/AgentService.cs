@@ -353,7 +353,11 @@ public sealed class AgentService
     {
         ValidateAgentRequest(request.Name, request.WorkingDirectory);
         ValidateAutoCompactOverrides(request.AutoCompactIdleMinutes, request.AutoCompactContextPercent);
-        await EnsureWorkflowTemplateExistsAsync(request.DefaultWorkflowTemplateId, ct);
+        if (!string.IsNullOrWhiteSpace(request.Preset) && AgentPresets.Find(request.Preset) is null)
+            throw new ValidationException("preset", $"Unknown agent preset '{request.Preset}'.");
+        await EnsureWorkflowTemplateExistsAsync(
+            request.DefaultWorkflowTemplateId ?? AgentPresets.Find(request.Preset)?.DefaultWorkflowTemplateId,
+            ct);
         await EnsureBoardExistsAsync(request.BoardId, ct);
 
         // CARD-0160 / CARD-0187: refuse Herdr×unsupported-Kind before the row exists. Channel-bind
@@ -382,6 +386,7 @@ public sealed class AgentService
             // An explicit board wins. Otherwise inherit the project's only board, refuse to guess
             // among several, or create the first project board for a previously unknown directory.
             Board board;
+            Project project;
             var boardCreated = false;
             if (request.BoardId is { } requestedBoardId)
             {
@@ -389,18 +394,19 @@ public sealed class AgentService
                     .Include(b => b.Project)
                     .FirstOrDefaultAsync(b => b.Id == requestedBoardId, ct)
                     ?? throw new NotFoundException(nameof(Board), requestedBoardId);
+                project = board.Project;
 
-                if (!PathsMatch(board.Project.LocalRepositoryPath, workingDirectory))
+                if (!PathsMatch(project.LocalRepositoryPath, workingDirectory))
                 {
                     _logger.LogInformation(
                         "Agent {AgentName} uses board {BoardId} from project path {ProjectPath} while working in {WorkingDirectory}",
-                        agentName, board.Id, board.Project.LocalRepositoryPath, workingDirectory);
+                        agentName, board.Id, project.LocalRepositoryPath, workingDirectory);
                 }
             }
             else
             {
-                var project = await FindProjectForWorkingDirectoryAsync(workingDirectory, ct);
-                if (project is null)
+                var resolved = await FindProjectForWorkingDirectoryAsync(workingDirectory, ct);
+                if (resolved is null)
                 {
                     project = await CreateProjectForWorkingDirectoryAsync(workingDirectory, agentName, now, ct);
                     board = BuildAgentBoard(
@@ -412,7 +418,9 @@ public sealed class AgentService
                 }
                 else
                 {
+                    project = resolved;
                     var candidates = await _db.Boards
+                        .Include(b => b.Project)
                         .Where(b => b.ProjectId == project.Id)
                         .OrderBy(b => b.Name)
                         .ToListAsync(ct);
@@ -436,6 +444,20 @@ public sealed class AgentService
                 }
             }
 
+            var applied = AgentPresets.Apply(
+                request.Preset,
+                request.ModelLevel,
+                request.ReplyStyle,
+                request.AlwaysOn,
+                request.RemoteControlEnabled,
+                request.BundleKeys,
+                request.SystemPromptAppend,
+                request.DefaultWorkflowTemplateId,
+                project.Name,
+                board.Name,
+                project.GitRepositoryUrl,
+                workingDirectory);
+
             var agent = new Agent
             {
                 Id = Guid.NewGuid(),
@@ -443,14 +465,14 @@ public sealed class AgentService
                 Slug = await UniqueSlugAsync(Slugify(request.Name), excludeAgentId: null, ct),
                 WorkingDirectory = workingDirectory,
                 Details = request.Details?.Trim() ?? string.Empty,
-                DefaultWorkflowTemplateId = request.DefaultWorkflowTemplateId,
+                DefaultWorkflowTemplateId = applied.DefaultWorkflowTemplateId,
                 AssignmentPolicy = request.AssignmentPolicy,
                 Status = AgentStatus.Idle,
-                ModelLevel = request.ModelLevel ?? AgentModelLevel.High,
-                ReplyStyle = request.ReplyStyle,
+                ModelLevel = applied.ModelLevel,
+                ReplyStyle = applied.ReplyStyle,
                 SessionBackend = request.SessionBackend ?? SessionBackend.PtyHost,
-                AlwaysOn = request.AlwaysOn,
-                RemoteControlEnabled = request.RemoteControlEnabled,
+                AlwaysOn = applied.AlwaysOn,
+                RemoteControlEnabled = applied.RemoteControlEnabled,
                 AutoCompactEnabled = request.AutoCompactEnabled,
                 AutoCompactIdleMinutes = request.AutoCompactIdleMinutes,
                 AutoCompactContextPercent = request.AutoCompactContextPercent,
@@ -458,7 +480,7 @@ public sealed class AgentService
                 CreatedAt = now,
                 UpdatedAt = now
             };
-            if (request.SystemPromptAppend is { } createAppend)
+            if (applied.SystemPromptAppend is { } createAppend)
             {
                 ApiKeyPlaceholderInPromptGuard(createAppend);
                 agent.SystemPromptAppend = string.IsNullOrWhiteSpace(createAppend) ? null : createAppend;
@@ -473,7 +495,7 @@ public sealed class AgentService
             ValidateSessionBackendPairing(agent.SessionBackend, agent.Kind);
             RemoteControlPolicy.Require(agent.Kind, agent.RemoteControlEnabled, $"agent '{agent.Name}'");
             _db.Agents.Add(agent);
-            if (request.BundleKeys is { } createBundles)
+            if (applied.BundleKeys is { } createBundles)
                 await AgentBundleAttachments.SetAsync(_db, agent, createBundles, now, ct);
 
             try

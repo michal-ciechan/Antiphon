@@ -77,7 +77,7 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
   const [baseBranch, setBaseBranch] = useState('master')
   const [boardName, setBoardName] = useState('')
   const [boardNameEdited, setBoardNameEdited] = useState(false)
-  const [presetKey, setPresetKey] = useState<string | null>(null)
+  const [presetKey, setPresetKey] = useState<string | null>('orchestrator')
   const [agentName, setAgentName] = useState('')
   const [systemPromptAppend, setSystemPromptAppend] = useState('')
   const [tuiProfileId, setTuiProfileId] = useState<string | null>(null)
@@ -113,12 +113,19 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
     [projects.data, directory],
   )
 
+  const [filledKey, setFilledKey] = useState<string | null>(null)
   const selectPreset = (preset: AgentPresetDto) => {
     setPresetKey(preset.key)
     setAlwaysOn(preset.alwaysOn)
     setModelLevel(preset.modelLevel)
     setReplyStyle(preset.replyStyle)
-    setBundleKeys(preset.bundleKeys)
+    setBundleKeys([...preset.bundleKeys])
+    setRemoteControlEnabled(preset.remoteControlEnabled)
+    setFilledKey(preset.key)
+  }
+
+  if (selectedPreset && filledKey !== selectedPreset.key) {
+    selectPreset(selectedPreset)
   }
 
   const next = () => {
@@ -273,6 +280,9 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
                       <Group>{(catalog.data?.presets ?? []).map((preset) => <Chip key={preset.key} value={preset.key}>{preset.label}</Chip>)}</Group>
                     </Chip.Group>
                     {fieldErrors['agent.preset'] && <Text c="red" size="sm">{fieldErrors['agent.preset']}</Text>}
+                    {selectedPreset?.defaultWorkflowTemplateId && (
+                      <Text size="sm" c="dimmed">Default workflow is set from this preset and stays editable after create.</Text>
+                    )}
                     {catalog.data?.profiles.length === 0 ? (
                       <Alert color="yellow">
                         No enabled AI Agent TUI profiles. <Anchor component={Link} to="/settings?tab=agent-tui">Set one up in AI Agent TUI settings</Anchor>.

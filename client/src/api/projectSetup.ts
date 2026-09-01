@@ -59,6 +59,8 @@ export interface AgentPresetDto {
   bundleKeys: string[]
   systemPromptTemplate: string | null
   namePattern: string
+  remoteControlEnabled: boolean
+  defaultWorkflowTemplateId: string | null
 }
 
 export interface DelegationSummaryDto {

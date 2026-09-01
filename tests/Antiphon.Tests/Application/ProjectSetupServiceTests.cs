@@ -116,6 +116,7 @@ public class ProjectSetupServiceTests
         {
             Directory.CreateDirectory(directory);
             await using var db = CreateContext();
+            await SeededWorkflowTemplates.EnsureFullFeaturePipelineAsync(db);
             var result = await CreateService(db).SetupAsync(
                 new ProjectSetupRequest(
                     directory,
@@ -125,10 +126,12 @@ public class ProjectSetupServiceTests
                 CancellationToken.None);
 
             result.Agent!.AlwaysOn.ShouldBeTrue();
+            result.Agent.RemoteControlEnabled.ShouldBeTrue();
             result.Agent.ReplyStyle.ShouldBe(AgentReplyStyle.Normal);
             result.Agent.AttachedBundleKeys.ShouldBe([InstructionBundles.Orchestrator, InstructionBundles.BoardApi]);
             result.Agent.SystemPromptAppend.ShouldContain("The Board");
             result.Agent.SystemPromptAppend.ShouldContain(directory);
+            result.Agent.DefaultWorkflowTemplateId.ShouldBe(AgentPresets.FullFeaturePipelineTemplateId);
         }
         finally
         {
@@ -144,6 +147,7 @@ public class ProjectSetupServiceTests
         {
             Directory.CreateDirectory(directory);
             await using var db = CreateContext();
+            await SeededWorkflowTemplates.EnsureFullFeaturePipelineAsync(db);
             var result = await CreateService(db).SetupAsync(
                 new ProjectSetupRequest(
                     directory,

@@ -589,13 +589,12 @@ describe('AgentsPage', () => {
         tuiProfileId: 'tui-profile-1',
         modelId: null,
         modelLevel: 'High',
-        // CARD-0060: create carries a style, and Normal is what an untouched picker means.
         replyStyle: 'Normal',
-        // CARD-0008: supervision flags ride create; untouched switches stay off.
-        alwaysOn: false,
-        remoteControlEnabled: false,
-        bundleKeys: [],
+        alwaysOn: true,
+        remoteControlEnabled: true,
+        bundleKeys: ['orchestrator', 'board-api'],
         systemPromptAppend: null,
+        preset: 'orchestrator',
       }),
     )
   })
@@ -619,11 +618,9 @@ describe('AgentsPage', () => {
 
     const alwaysOn = await screen.findByRole('switch', { name: /Always on/i })
     const remoteControl = screen.getByRole('switch', { name: /Remote control/i })
-    expect(alwaysOn).not.toBeChecked()
-    expect(remoteControl).not.toBeChecked()
+    await waitFor(() => expect(alwaysOn).toBeChecked())
+    expect(remoteControl).toBeChecked()
 
-    await userEvent.click(alwaysOn)
-    await userEvent.click(remoteControl)
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
 
     await waitFor(() =>
@@ -639,8 +636,9 @@ describe('AgentsPage', () => {
         replyStyle: 'Normal',
         alwaysOn: true,
         remoteControlEnabled: true,
-        bundleKeys: [],
+        bundleKeys: ['orchestrator', 'board-api'],
         systemPromptAppend: null,
+        preset: 'orchestrator',
       }),
     )
   })
@@ -706,13 +704,12 @@ describe('AgentsPage', () => {
         tuiProfileId: 'tui-profile-1',
         modelId: null,
         modelLevel: 'High',
-        // CARD-0060: create carries a style, and Normal is what an untouched picker means.
         replyStyle: 'Normal',
-        // CARD-0008: draft path does not guess these; they stay off until toggled.
-        alwaysOn: false,
-        remoteControlEnabled: false,
-        bundleKeys: [],
+        alwaysOn: true,
+        remoteControlEnabled: true,
+        bundleKeys: ['orchestrator', 'board-api'],
         systemPromptAppend: null,
+        preset: 'orchestrator',
       }),
     )
   })

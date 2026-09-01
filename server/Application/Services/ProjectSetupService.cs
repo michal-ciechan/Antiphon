@@ -302,12 +302,6 @@ public sealed class ProjectSetupService
                 if (!string.IsNullOrWhiteSpace(setupAgent.Preset) && preset is null)
                     throw new ValidationException("agent.preset", $"Unknown agent preset '{setupAgent.Preset}'.");
 
-                var prompt = setupAgent.SystemPromptAppend ?? AgentPresets.RenderTemplate(
-                    preset?.SystemPromptTemplate,
-                    project.Name,
-                    board.Name,
-                    project.GitRepositoryUrl,
-                    directory);
                 agent = await agentService.CreateAsync(
                     new CreateAgentRequest(
                         Name: string.IsNullOrWhiteSpace(setupAgent.Name)
@@ -315,15 +309,16 @@ public sealed class ProjectSetupService
                             : setupAgent.Name.Trim(),
                         WorkingDirectory: directory,
                         CreateWorkingDirectory: false,
-                        ModelLevel: setupAgent.ModelLevel ?? preset?.ModelLevel ?? AgentModelLevel.High,
+                        ModelLevel: setupAgent.ModelLevel,
                         TuiProfileId: setupAgent.TuiProfileId,
                         ModelId: setupAgent.ModelId,
-                        ReplyStyle: setupAgent.ReplyStyle ?? preset?.ReplyStyle ?? AgentReplyStyle.Normal,
-                        AlwaysOn: setupAgent.AlwaysOn ?? preset?.AlwaysOn ?? false,
-                        RemoteControlEnabled: setupAgent.RemoteControlEnabled ?? false,
+                        ReplyStyle: setupAgent.ReplyStyle ?? AgentReplyStyle.Normal,
+                        AlwaysOn: setupAgent.AlwaysOn,
+                        RemoteControlEnabled: setupAgent.RemoteControlEnabled,
                         BoardId: board.Id,
-                        BundleKeys: setupAgent.BundleKeys ?? preset?.BundleKeys,
-                        SystemPromptAppend: prompt),
+                        BundleKeys: setupAgent.BundleKeys,
+                        SystemPromptAppend: setupAgent.SystemPromptAppend,
+                        Preset: setupAgent.Preset),
                     ct);
             }
 

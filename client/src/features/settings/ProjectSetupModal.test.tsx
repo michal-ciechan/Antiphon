@@ -12,17 +12,34 @@ const catalog: ProjectSetupCatalogDto = {
   replyStyles: [],
   bundles: [{ key: 'delegate-basics', version: '1', stamp: 'stamp', summary: 'Standing rules', chars: 12 }],
   profiles: [],
-  presets: [{
-    key: 'worker',
-    label: 'Worker',
-    description: 'A worker',
-    alwaysOn: false,
-    modelLevel: 'High',
-    replyStyle: 'Normal',
-    bundleKeys: ['delegate-basics'],
-    systemPromptTemplate: 'Work in {directory} for {project} on {board}; {repoUrl}',
-    namePattern: '{project} Worker',
-  }],
+  presets: [
+    {
+      key: 'orchestrator',
+      label: 'Standing orchestrator',
+      description: 'Watches the board',
+      alwaysOn: true,
+      modelLevel: 'High',
+      replyStyle: 'Normal',
+      bundleKeys: ['orchestrator', 'board-api'],
+      systemPromptTemplate: 'Watch {project} on {board} at {directory}',
+      namePattern: '{project} Orchestrator',
+      remoteControlEnabled: true,
+      defaultWorkflowTemplateId: 'b0000000-0000-0000-0000-000000000001',
+    },
+    {
+      key: 'worker',
+      label: 'Worker',
+      description: 'A worker',
+      alwaysOn: false,
+      modelLevel: 'High',
+      replyStyle: 'Normal',
+      bundleKeys: ['delegate-basics'],
+      systemPromptTemplate: 'Work in {directory} for {project} on {board}; {repoUrl}',
+      namePattern: '{project} Worker',
+      remoteControlEnabled: false,
+      defaultWorkflowTemplateId: null,
+    },
+  ],
   delegation: {
     allowedRoots: ['C:\\src'],
     allowedRootsIsEmpty: false,
@@ -112,5 +129,81 @@ describe('ProjectSetupModal', () => {
 
     expect((await screen.findAllByText('Directory does not exist.')).length).toBeGreaterThan(0)
     expect(screen.getByRole('textbox', { name: 'Project directory' })).toBeInTheDocument()
+  })
+
+  it('defaults the first-agent chip to Standing orchestrator and submits preset plus remote control', async () => {
+    let submitted: ProjectSetupRequest | null = null
+    seed((request) => {
+      submitted = request
+      return HttpResponse.json({
+        project: { id: 'project-1', name: 'starter', localRepositoryPath: directory },
+        board: { id: 'board-1', projectId: 'project-1', projectName: 'starter', name: 'starter' },
+        agent: { id: 'agent-1', name: 'starter Orchestrator' },
+        readiness,
+        notes: [],
+      })
+    })
+    server.use(
+      http.get('/api/agent-tui/profiles', () => HttpResponse.json([{
+        id: 'tui-claude',
+        displayName: 'Claude',
+        kind: 'ClaudeCode',
+        isEnabled: true,
+        isDefault: true,
+        source: 'User',
+        sourceDefinitionName: null,
+        revisionId: 'rev-claude',
+        revision: 1,
+        revisionDetails: {
+          id: 'rev-claude',
+          revision: 1,
+          executable: 'claude',
+          arguments: [],
+          discoveryArguments: [],
+          versionArguments: [],
+          workingDirectory: null,
+          authenticationMode: 'WrapperManaged',
+          nonSecretEnvironment: {},
+          secretEnvironmentNames: [],
+          modelArgumentName: '--model',
+          guidance: '',
+          createdAt: '2026-05-18T09:00:00Z',
+        },
+        commandPreview: { executable: 'claude', arguments: [], workingDirectory: null },
+        secretEnvironment: [],
+        models: [],
+        capabilities: [{ name: 'remoteControl', state: 'Supported', reason: 'supported' }],
+        validationSummary: {
+          status: 'Succeeded',
+          profileRevisionId: 'rev-claude',
+          isCurrentRevision: true,
+          runnerVersion: null,
+          probedAt: '2026-05-18T09:00:00Z',
+        },
+        createdAt: '2026-05-18T09:00:00Z',
+        updatedAt: '2026-05-18T09:00:00Z',
+      }])),
+      http.get('/api/agent-tui/profiles/:id/models', () => HttpResponse.json([])),
+    )
+
+    renderWithProviders(<ProjectSetupModal opened onClose={() => undefined} />)
+    await userEvent.type(await screen.findByRole('textbox', { name: 'Project directory' }), directory)
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+
+    expect(await screen.findByText('Standing orchestrator')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('switch', { name: /Remote control/i })).toBeChecked())
+
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Create project' }))
+
+    await waitFor(() => expect(submitted).not.toBeNull())
+    expect(submitted!.agent).toMatchObject({
+      preset: 'orchestrator',
+      remoteControlEnabled: true,
+      alwaysOn: true,
+      bundleKeys: ['orchestrator', 'board-api'],
+    })
   })
 })
