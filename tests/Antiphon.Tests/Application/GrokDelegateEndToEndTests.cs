@@ -474,10 +474,6 @@ public class GrokDelegateEndToEndTests
         }));
         services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
         services.AddSingleton(Options.Create(delegation));
-        services.AddSingleton(Options.Create(new GitSettings
-        {
-            WorktreeBasePath = Path.Combine(Path.GetTempPath(), $"antiphon-e2e-wt-{Guid.NewGuid():N}"),
-        }));
         services.AddOptions<AgentRegistrySettings>().Configure(s =>
         {
             s.DefaultDefinition = "claude";
@@ -509,13 +505,13 @@ public class GrokDelegateEndToEndTests
         services.AddSingleton<AgentTaskReplyService>();
         services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
         services.AddSingleton<DelegationWorkspaceResolver>();
-        services.AddSingleton<IWorktreeManager, Antiphon.Server.Infrastructure.Git.WorktreeManager>();
-        services.AddSingleton<IGitService, Antiphon.Server.Infrastructure.Git.GitService>();
         // Settlement resolves the report's deliverable pointer through GitWorkspaceService since
-        // c4d7e0d (2026-08-26); without this registration SettleAsync throws before SaveChanges and
-        // the task stays Dispatched forever (CARD-0230).
-        services.AddSingleton<GitWorkspaceService>();
-        services.AddScoped<DelegationWorktreeService>();
+        // c4d7e0d (2026-08-26); without it SettleAsync throws before SaveChanges and the task stays
+        // Dispatched forever (CARD-0230). The helper is the one registration (CARD-0297).
+        services.AddDelegationWorktreeGraph(new GitSettings
+        {
+            WorktreeBasePath = Path.Combine(Path.GetTempPath(), $"antiphon-e2e-wt-{Guid.NewGuid():N}"),
+        });
         services.AddScoped<AgentTaskService>();
         services.AddScoped<AgentSessionService>();
         services.AddScoped<AgentTaskDispatcher>();

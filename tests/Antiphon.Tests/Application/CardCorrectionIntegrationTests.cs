@@ -1735,7 +1735,7 @@ public class CardCorrectionIntegrationTests
             new Antiphon.Server.Infrastructure.FileSystem.FileSystemDirectoryWriter(
                 new System.IO.Abstractions.FileSystem()));
         services.AddScoped<BoardService>();
-        services.AddSingleton<GitWorkspaceService>();
+        services.AddGitWorkspaceService();
         services.AddScoped<AgentReviewCheckpointService>();
         services.AddScoped<CardService>();
         services.AddLogging();

@@ -549,20 +549,16 @@ public class AgentTaskDeadSessionReconciliationTests
             services.AddSingleton<SessionMessageQueueService>();
             services.AddSingleton<IDelegateSessionStopper>(stopper);
             services.AddSingleton<DelegationWorkspaceResolver>();
-            services.AddSingleton(Options.Create(new GitSettings
+            services.AddDelegationWorktreeGraph(new GitSettings
             {
                 WorktreeBasePath = Path.Combine(Path.GetTempPath(), "antiphon-deadsession-wt"),
-            }));
-            services.AddSingleton<IWorktreeManager, Antiphon.Server.Infrastructure.Git.WorktreeManager>();
-            services.AddSingleton<IGitService, Antiphon.Server.Infrastructure.Git.GitService>();
-            services.AddScoped<DelegationWorktreeService>();
+            });
             services.AddScoped<AgentTaskService>();
             services.AddSingleton<ISessionRunnerClient>(runner);
             services.AddSingleton(firstSeen);
             // CARD-0085: same recovery gate as the delivery watchdog. Empty projects root so Arm B
             // cannot scan the machine's real ~/.claude/projects during these fleet-global sweeps.
             services.AddSingleton<AgentTaskReplyService>();
-            services.AddSingleton<GitWorkspaceService>();
             services.AddSingleton(Options.Create(new DelegateBindRefusalRecoverySettings
             {
                 ClaudeProjectsRoot = Path.Combine(Path.GetTempPath(), "antiphon-deadsession-no-jsonl"),

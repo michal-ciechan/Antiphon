@@ -87,7 +87,7 @@ public class ProjectReadinessBatchTests
         services.AddMemoryCache();
         gate = new GitProcessGate(8);
         services.AddSingleton(gate);
-        services.AddSingleton<GitWorkspaceService>();
+        services.AddGitWorkspaceService();
         services.AddSingleton<ProjectReadinessCache>();
         services.AddScoped<DelegationWorkspaceResolver>();
         services.AddScoped<ProjectSetupService>();

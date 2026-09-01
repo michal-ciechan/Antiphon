@@ -448,15 +448,11 @@ public class AgentTaskStandingAgentDispatchTests
         services.AddSingleton<SessionMessageQueueService>();
         services.AddSingleton<IDelegateSessionStopper>(new RecordingSessionStopper());
         services.AddSingleton<DelegationWorkspaceResolver>();
-        services.AddSingleton(Options.Create(new GitSettings
+        services.AddDelegationWorktreeGraph(new GitSettings
         {
             WorktreeBasePath = worktreeBasePath
                 ?? Path.Combine(Path.GetTempPath(), "antiphon-standing-wt"),
-        }));
-        services.AddSingleton<IWorktreeManager, Antiphon.Server.Infrastructure.Git.WorktreeManager>();
-        services.AddSingleton<IGitService, Antiphon.Server.Infrastructure.Git.GitService>();
-        services.AddSingleton<GitWorkspaceService>();
-        services.AddScoped<DelegationWorktreeService>();
+        });
         services.AddScoped<AgentTaskService>();
         // The settlement half of the end-to-end test: registered so the runtime's turn-end flush
         // can resolve it exactly as the server does.

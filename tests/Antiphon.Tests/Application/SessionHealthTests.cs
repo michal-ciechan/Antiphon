@@ -433,7 +433,7 @@ public class SessionHealthTests
         services.AddScoped<BoardService>();
         // CardService now depends on AgentReviewCheckpointService (files-review checkpoints);
         // register it and its GitWorkspaceService dep alongside, as ReviewLoopTests does.
-        services.AddSingleton<GitWorkspaceService>();
+        services.AddGitWorkspaceService();
         services.AddScoped<AgentReviewCheckpointService>();
         services.AddScoped<CardService>();
         // OrchestratorService depends on AgentSessionLaunchComposer since 1b1b667 (2026-08-26);

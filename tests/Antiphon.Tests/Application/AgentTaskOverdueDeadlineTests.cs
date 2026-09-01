@@ -4,7 +4,6 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
-using Antiphon.Server.Infrastructure.Git;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -297,18 +296,15 @@ public class AgentTaskOverdueDeadlineTests
         services.AddSingleton<SessionMessageQueueService>();
         services.AddSingleton<IDelegateSessionStopper>(stopper);
         services.AddSingleton<DelegationWorkspaceResolver>();
-        services.AddSingleton(Options.Create(new GitSettings
+        services.AddDelegationWorktreeGraph(new GitSettings
         {
             WorktreeBasePath = Path.Combine(Path.GetTempPath(), "antiphon-overdue-wt"),
-        }));
-        services.AddSingleton<IWorktreeManager, WorktreeManager>();
-        services.AddSingleton<IGitService, GitService>();
-        services.AddScoped<DelegationWorktreeService>();
+        });
         services.AddScoped<AgentTaskService>();
         services.AddSingleton<AgentTaskReplyService>();
         // CARD-0085's recovery gate, armed exactly as the delivery watchdog's suite arms it: with
-        // no repo and no CARD-NNNN in the title it finds nothing and the Failed stands.
-        services.AddSingleton<GitWorkspaceService>();
+        // no repo and no CARD-NNNN in the title it finds nothing and the Failed stands. Its
+        // GitWorkspaceService comes from AddDelegationWorktreeGraph above.
         services.AddSingleton(Options.Create(new DelegateBindRefusalRecoverySettings()));
         services.AddSingleton<DelegateBindRefusalRecovery>();
         services.AddScoped<AgentTaskDispatcher>();

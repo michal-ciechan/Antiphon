@@ -468,7 +468,7 @@ public class AgentAttachHerdrTests
         services.AddScoped<AgentControlService>();
         services.AddScoped<IAlertService, AlertService>();
         services.AddScoped<IAlertRouter, NullAlertRouter>();
-        services.AddSingleton<GitWorkspaceService>();
+        services.AddGitWorkspaceService();
         services.AddScoped<AgentReviewCheckpointService>();
         services.AddScoped<CardService>();
         services.AddScoped<BoardService>();

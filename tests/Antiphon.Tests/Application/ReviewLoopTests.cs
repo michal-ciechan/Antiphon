@@ -635,7 +635,7 @@ public class ReviewLoopTests
         services.AddSingleton<IOptions<AgentSessionSettings>>(Options.Create(new AgentSessionSettings()));
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionMessageQueueService>();
-        services.AddSingleton<GitWorkspaceService>();
+        services.AddGitWorkspaceService();
         services.AddScoped<AgentReviewCheckpointService>();
         services.AddScoped<AgentFilesService>();
         services.AddSingleton<ReviewReplyDispatcher>();

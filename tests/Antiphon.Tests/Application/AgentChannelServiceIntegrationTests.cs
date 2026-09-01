@@ -306,7 +306,7 @@ public class AgentChannelServiceIntegrationTests
         services.AddScoped<OrchestratorService>();
         // CardService now depends on AgentReviewCheckpointService (files-review checkpoints);
         // register it and its GitWorkspaceService dep alongside, as ReviewLoopTests does.
-        services.AddSingleton<GitWorkspaceService>();
+        services.AddGitWorkspaceService();
         services.AddScoped<AgentReviewCheckpointService>();
         services.AddScoped<CardService>();
         services.AddLogging();
