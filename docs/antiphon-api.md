@@ -202,22 +202,29 @@ GET    /api/agent-tasks/areas?directory=     the repo's named areas (antiphon.ar
 API and is fully commented in place. The fields that change behaviour most: `role`, `kind`
 (`Worker` / `Orchestrator`), `modelLevel`, `agentKind` (ClaudeCode / Grok / Codex — see
 [agent-kinds.md](agent-kinds.md)), `workspace`, `workingDirectory`, `scope`, `followUpOnTask`,
-`expectedMinutes`, `envOverride`, `ignoreSubscriptionQuota`.
+`expectedMinutes`, `envOverride`, `ignoreSubscriptionQuota`, `ignoreModelDisabled`.
 
 > `POST /api/agent-tasks` can refuse with **409 `subscription_quota_low`** (CARD-0136). That is a
 > launch refusal, not a warning attached to a launch that already happened. Retry with
 > `ignoreSubscriptionQuota: true`, or pick another `agentKind`/agent. The dispatcher never refuses;
 > it only records an informational warning.
 >
-> It can also refuse with **409 `model_disabled`** (CARD-0022) when that kind/alias is on an
-> active `ModelAvailabilityHold`. The detail lists remaining aliases (`available: opus, sonnet, …`);
-> the `modelAvailability` problem-details extension carries `kind`, `modelAlias`, `disabledUntil`,
-> `source`, and `available`. There is no override on this card (CARD-0309 may add
-> `ignoreModelDisabled`). `GET /api/model-availability` is the read model.
+> It can also refuse with **409 `model_disabled`** (CARD-0022 / CARD-0309) when that kind/alias is
+> on an active `ModelAvailabilityHold`. The detail lists remaining aliases (`available: opus,
+> sonnet, …`); the `modelAvailability` problem-details extension carries `kind`, `modelAlias`,
+> `disabledUntil`, `source`, and `available`. `ignoreModelDisabled: true` on **create only** queues
+> the task; the dispatcher still skips it until the hold clears. Start never honours the flag.
 
 ```
-GET    /api/model-availability               active holds + remaining aliases
+GET    /api/model-availability                         active holds + remaining aliases
+PUT    /api/model-availability/{kind}/{alias}          Manual hold (Source=Manual). alias may be *
+DELETE /api/model-availability/{kind}/{alias}          clear (204 if already clear)
 ```
+
+`kind` is the enum member name (`ClaudeCode`, `Grok`, `Codex`). `alias` is a `ModelLevelAliases`
+value or `*` (kind-wide, OR'd with per-alias rows). PUT body: `{ disabledUntil?: utc, reason?:
+string }`. Omitted `disabledUntil` is open-ended. Past UTC is 422. Script:
+`scripts/model-availability.ps1 get|hold|clear`.
 
 ### Runner profiles and credentials
 

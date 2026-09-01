@@ -139,6 +139,8 @@ Never launch the `claude` CLI directly, and never a `launch-remote` script. When
 `modelLevel`, send it as the string `"Frontier"` (or `"High"` / `"Medium"` / `"Low"`). A numeric
 token (`0`, `1`, `99`) is a **400** — the wire is the member name, not the enum ordinal (CARD-0007).
 Frontier maps to fable (Claude) by default, or `grok-4.6` when `Kind=Grok` is passed.
+If `delegate.ps1` 409s `model_disabled`, pick an alias from `available` or wait until
+`disabledUntil`; do not retry the same kind/tier.
 
 ### Reuse first
 
