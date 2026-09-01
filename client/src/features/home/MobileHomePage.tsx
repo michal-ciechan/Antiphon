@@ -1,7 +1,5 @@
 import {
-  Badge,
   Box,
-  Button,
   Divider,
   Group,
   Paper,
@@ -9,26 +7,24 @@ import {
   Text,
   UnstyledButton,
 } from '@mantine/core'
-import { notifications } from '@mantine/notifications'
-import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query'
+import { useQueries } from '@tanstack/react-query'
 import { Fragment, useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router'
+import { Link } from 'react-router'
 import {
   agentTaskKeys,
   useAgentTasks,
   type AgentTaskDetailDto,
   type AgentTaskSummaryDto,
 } from '../../api/agentTasks'
-import { attentionKeys, useAttention, type AttentionItemDto } from '../../api/attention'
-import { apiGet, getApiErrorMessage } from '../../api/client'
+import { useAttention } from '../../api/attention'
+import { apiGet } from '../../api/client'
 import { useCards } from '../../api/boards'
 import { usePlanCatalog } from '../../api/plans'
-import { cancelQueuedMessage, sendQueuedMessageNow } from '../../api/sessions'
 import { displayIdentifier } from '../../shared/cardIdentifier'
 import { CardSkeleton, InlineSkeleton } from '../../shared/SkeletonLayouts'
-import { BlockedReplyRow } from '../attention/BlockedReplyRow'
-import { ATTENTION_VISUALS, ageSeconds, keyOf, targetOf } from '../attention/attentionVisuals'
-import { formatCost, formatDuration } from '../delegations/taskVisuals'
+import { AttentionGlance } from '../attention/AttentionGlance'
+import { homeBucketCounts } from '../attention/attentionVisuals'
+import { formatCost } from '../delegations/taskVisuals'
 import {
   computeAwayDelta,
   firstSentence,
@@ -44,32 +40,22 @@ import { citationHead, formatClockTime, workLineTarget } from './workLineFormat'
  * The phone home: three bands in fixed order (spec `2026-08-17-mobile-thread-and-plan-surfacing.md`
  * §D3 — the CARD-0031 urgency order collapsed to a phone's attention budget).
  *
- * <p><b>Calm is a designed state, not an empty state.</b> Band 1 ("Needs you") is absent entirely
- * when nothing needs a human — no empty-state scaffolding for the band that should usually not
- * exist — and its place is taken by a card that says when the system will next have something to
- * say. That next-check time is what makes quiet feel supervised rather than dead: the operator
- * knows whether to wait or to chase.</p>
+ * <p><b>Calm is a designed state, not an empty state.</b> Band 1 is absent entirely when nothing
+ * needs a human — no empty-state scaffolding for the band that should usually not exist — and its
+ * place is taken by a card that says when the system will next have something to say. That
+ * next-check time is what makes quiet feel supervised rather than dead: the operator knows
+ * whether to wait or to chase.</p>
  *
- * <p>Nothing here decides that something is stuck — band 1 renders exactly the rows
- * `/api/attention` sent at Critical/Error (the CARD-0035 non-widening rule), with the answer
- * affordance inline: a blocked question opens straight onto `BlockedReplyRow`, the same component
- * and the same `POST …/reply` the desktop panel uses.</p>
+ * <p>Band 1 is the three-badge glance (CARD-0300), not the expandable rows. Reply stays on
+ * `/attention` — one extra tap on a phone, accepted so Home stays a glance. Counts come from
+ * `groupOf` over the same feed; nothing here decides that something is stuck.</p>
  */
 export function MobileHomePage() {
   const attention = useAttention()
   const tasks = useAgentTasks()
 
-  const needsYou = useMemo(
-    () =>
-      (attention.data?.items ?? []).filter(
-        (item) =>
-          // Critical/Error only — the phone gets the "needs a person" cut, not the diagnostic
-          // list; Warning-band rows and settled-failure context stay on the desktop tab.
-          (item.severity === 'Critical' || item.severity === 'Error') &&
-          item.kind !== 'RecentFailure',
-      ),
-    [attention.data],
-  )
+  const glanceCounts = homeBucketCounts(attention.data?.items ?? [])
+  const hasGlance = glanceCounts.blocked + glanceCounts.broken + glanceCounts.review > 0
 
   const inMotion = useMemo(
     () => (tasks.data ?? []).filter(isActiveTask).sort(byWatchOrder),
@@ -115,10 +101,12 @@ export function MobileHomePage() {
         <Text size="sm" c="dimmed" px={4} data-testid="needs-you-error">
           Couldn&apos;t load what needs you — retrying.
         </Text>
-      ) : needsYou.length === 0 ? (
+      ) : !hasGlance ? (
         <CalmCard tasks={inMotion} />
       ) : (
-        <NeedsYouBand items={needsYou} />
+        <Box mt="xs">
+          <AttentionGlance />
+        </Box>
       )}
       {tasks.isPending ? (
         <BandLoading title="In motion" rows={2} testId="in-motion-skeleton" />
@@ -219,130 +207,6 @@ function CalmCard({ tasks }: { tasks: AgentTaskSummaryDto[] }) {
       <Text size="xs" c="dimmed">
         {forecast}
       </Text>
-    </Paper>
-  )
-}
-
-function NeedsYouBand({ items }: { items: AttentionItemDto[] }) {
-  return (
-    <>
-      <BandTitle color="var(--mantine-color-danger-5)">Needs you · {items.length}</BandTitle>
-      <Stack gap="xs">
-        {items.map((item) => (
-          <NeedsYouRow key={keyOf(item)} item={item} />
-        ))}
-      </Stack>
-    </>
-  )
-}
-
-/**
- * One stuck row at phone altitude: the badge, the server's headline, and the fix inline. A
- * blocked question opens directly onto the reply box — the CARD-0033 ask; on a phone the tap that
- * would merely reveal the box is a tap the answer loses. Parked messages carry their two queue
- * verbs. Every other condition navigates to the surface that explains it (the task drawer or the
- * agent page) — the phone shows THAT it is stuck; diagnosis has more room elsewhere.
- */
-function NeedsYouRow({ item }: { item: AttentionItemDto }) {
-  const visual = ATTENTION_VISUALS[item.kind]
-  const navigate = useNavigate()
-  const queryClient = useQueryClient()
-  const target = targetOf(item)
-  const canAnswer = item.actions.includes('Reply') && item.taskId !== null
-  const [answering, setAnswering] = useState(canAnswer)
-
-  const settle = (success: string, failure: string) => ({
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: attentionKeys.all })
-      notifications.show({ color: 'green', message: success })
-    },
-    onError: (error: unknown) =>
-      notifications.show({ color: 'red', message: getApiErrorMessage(error, failure) }),
-  })
-
-  const sendNow = useMutation({
-    mutationFn: () => sendQueuedMessageNow(item.sessionId!, item.messageId!),
-  })
-  const dropMessage = useMutation({
-    mutationFn: () => cancelQueuedMessage(item.sessionId!, item.messageId!),
-  })
-  const hasQueueVerbs =
-    item.actions.some((action) => action === 'SendNow' || action === 'CancelMessage') &&
-    item.sessionId !== null &&
-    item.messageId !== null
-
-  const seconds = ageSeconds(item)
-  const age = seconds === null ? null : formatDuration(seconds)
-
-  const body = (
-    <Stack gap={4}>
-      <Group gap={6} wrap="nowrap">
-        <Badge size="xs" color={visual.color} variant="filled" style={{ flexShrink: 0 }}>
-          {visual.label}
-        </Badge>
-        <Text size="xs" c="dimmed" truncate>
-          {item.title}
-          {age ? ` · ${age}` : ''}
-        </Text>
-      </Group>
-      <Text size="sm">{item.headline}</Text>
-      {item.evidence && (
-        <Text size="xs" c="dimmed" lineClamp={2} style={{ whiteSpace: 'pre-wrap' }}>
-          {item.evidence}
-        </Text>
-      )}
-    </Stack>
-  )
-
-  return (
-    <Paper withBorder radius="md" p="sm" data-testid={`needs-you-${item.kind}`}>
-      <Stack gap={8}>
-        {/* Body-only click target — verbs beside it, never inside it (nested buttons swallow). */}
-        {target ? (
-          <UnstyledButton onClick={() => navigate(target)} w="100%" aria-label={`Open ${item.title}`}>
-            {body}
-          </UnstyledButton>
-        ) : (
-          body
-        )}
-        {answering && item.taskId && (
-          <BlockedReplyRow taskId={item.taskId} onDone={() => setAnswering(false)} />
-        )}
-        {canAnswer && !answering && (
-          <Group justify="flex-end">
-            <Button size="compact-xs" onClick={() => setAnswering(true)}>
-              Answer it
-            </Button>
-          </Group>
-        )}
-        {hasQueueVerbs && (
-          <Group justify="flex-end" gap="xs">
-            <Button
-              size="compact-xs"
-              variant="default"
-              disabled={sendNow.isPending || dropMessage.isPending}
-              onClick={() =>
-                dropMessage.mutate(
-                  undefined,
-                  settle('Message dropped', 'Could not drop the message'),
-                )
-              }
-            >
-              Drop message
-            </Button>
-            <Button
-              size="compact-xs"
-              color="warning"
-              disabled={sendNow.isPending || dropMessage.isPending}
-              onClick={() =>
-                sendNow.mutate(undefined, settle('Message sent', 'Could not send the message'))
-              }
-            >
-              Send now
-            </Button>
-          </Group>
-        )}
-      </Stack>
     </Paper>
   )
 }

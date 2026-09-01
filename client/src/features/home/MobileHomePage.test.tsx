@@ -1,13 +1,11 @@
 import { HttpResponse, http } from 'msw'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import type { AttentionItemDto } from '../../api/attention'
-import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
+import { renderWithProviders, screen, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { AWAY_LAST_SEEN_KEY } from './awayDelta'
 import { MobileHomePage } from './MobileHomePage'
 import { formatClockTime } from './workLineFormat'
-
-vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
 
 beforeEach(() => window.localStorage.clear())
 
@@ -230,35 +228,27 @@ describe('MobileHomePage', () => {
     expect(screen.getByText('checks spent · $1.12')).toBeInTheDocument()
   })
 
-  it('a blocked question tops the screen with the reply box already open, and the answer posts', async () => {
+  it('a blocked question is a Blocked glance linking to /attention, not the headline or reply box', async () => {
     seed({ attention: [attentionItem({})], tasks: [task({})] })
-    const replies: unknown[] = []
-    server.use(
-      http.post('/api/agent-tasks/t1/reply', async ({ request }) => {
-        replies.push(await request.json())
-        return HttpResponse.json(task({ id: 't1', status: 'Working' }))
-      }),
-    )
     renderWithProviders(<MobileHomePage />)
 
-    expect(await screen.findByText('Needs you · 1')).toBeInTheDocument()
+    const glance = await screen.findByTestId('attention-glance')
+    expect(glance).toHaveTextContent('Blocked 1')
+    expect(glance).toHaveAttribute('href', '/attention')
     expect(screen.queryByTestId('calm-state')).not.toBeInTheDocument()
-    // Band 1 leads, band 2 follows.
+    expect(screen.queryByText(/Needs you ·/)).not.toBeInTheDocument()
+    expect(screen.queryByText('Your call: cap re-adoptions at 3 per uptime?')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Answer the delegate')).not.toBeInTheDocument()
     const text = screen.getByTestId('mobile-home').textContent ?? ''
-    expect(text.indexOf('Needs you')).toBeLessThan(text.indexOf('In motion'))
-
-    // The reply box is open in place — no tap spent revealing it (CARD-0033's ask, §D3).
-    const box = screen.getByLabelText('Answer the delegate')
-    await userEvent.type(box, 'cap at 3')
-    await userEvent.click(screen.getByRole('button', { name: /Send answer/ }))
-    await waitFor(() => expect(replies).toEqual([{ message: 'cap at 3' }]))
+    expect(text.indexOf('Blocked 1')).toBeLessThan(text.indexOf('In motion'))
   })
 
-  it('a parked message carries its two queue verbs, and Send now hits the queue endpoint', async () => {
+  it('a parked message is a Broken glance, not the queue verbs', async () => {
     seed({
       attention: [
         attentionItem({
           kind: 'ParkedMessage',
+          severity: 'Error',
           taskId: null,
           sessionId: 's1',
           messageId: 'm1',
@@ -269,18 +259,14 @@ describe('MobileHomePage', () => {
         }),
       ],
     })
-    let sent = 0
-    server.use(
-      http.post('/api/sessions/s1/messages/m1/send-now', () => {
-        sent += 1
-        return HttpResponse.json({})
-      }),
-    )
     renderWithProviders(<MobileHomePage />)
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Send now' }))
-    await waitFor(() => expect(sent).toBe(1))
-    expect(screen.getByRole('button', { name: 'Drop message' })).toBeInTheDocument()
+    const glance = await screen.findByTestId('attention-glance')
+    expect(glance).toHaveTextContent('Broken 1')
+    expect(glance).toHaveAttribute('href', '/attention')
+    expect(screen.queryByRole('button', { name: 'Send now' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Drop message' })).not.toBeInTheDocument()
+    expect(screen.queryByText('3 delivery attempts spent.')).not.toBeInTheDocument()
   })
 
   it('the away band leads with what finished, quoting the report’s own first line', async () => {
@@ -412,7 +398,7 @@ describe('MobileHomePage', () => {
     })
   })
 
-  it('warning-severity rows stay on the desktop diagnostic tab — the phone gets Critical/Error only', async () => {
+  it('warning-severity rows land on the Review glance rather than the stacked papers', async () => {
     seed({
       attention: [
         attentionItem({ kind: 'ChecksSpent', severity: 'Warning', title: 'Sweep the logs' }),
@@ -420,7 +406,22 @@ describe('MobileHomePage', () => {
     })
     renderWithProviders(<MobileHomePage />)
 
-    expect(await screen.findByTestId('calm-state')).toBeInTheDocument()
+    const glance = await screen.findByTestId('attention-glance')
+    expect(glance).toHaveTextContent('Review 1')
+    expect(glance).not.toHaveTextContent('Blocked')
+    expect(screen.queryByTestId('calm-state')).not.toBeInTheDocument()
     expect(screen.queryByText(/Needs you ·/)).not.toBeInTheDocument()
+  })
+
+  it('hides RecentFailure from the glance so a settled-failure day still reads as calm', async () => {
+    seed({
+      attention: [
+        attentionItem({ kind: 'RecentFailure', severity: 'Warning', title: 'Died' }),
+      ],
+    })
+    renderWithProviders(<MobileHomePage />)
+
+    expect(await screen.findByTestId('calm-state')).toBeInTheDocument()
+    expect(screen.queryByTestId('attention-glance')).not.toBeInTheDocument()
   })
 })

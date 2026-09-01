@@ -416,9 +416,7 @@ describe('HomePage', () => {
     ).toBeInTheDocument()
   })
 
-  it('carries a Needs attention badge to the diagnostic tab when something is stuck', async () => {
-    // The landing screen is where an operator actually lives, and CARD-0002's rail is unbuilt — so
-    // until it lands this badge is the only route from "I am working" to "something needs me".
+  it('carries glance badges to /attention when something is stuck', async () => {
     seed({
       attention: [
         attentionItem({}),
@@ -427,12 +425,16 @@ describe('HomePage', () => {
     })
     renderWithProviders(<HomePage />)
 
-    const badge = await screen.findByText('Needs attention (2)')
-    expect(badge.closest('a')).toHaveAttribute('href', '/orchestrator?tab=attention')
+    const glance = await screen.findByTestId('attention-glance')
+    expect(glance).toHaveAttribute('href', '/attention')
+    expect(glance).toHaveTextContent('Blocked 1')
+    expect(glance).toHaveTextContent('Broken 1')
+    expect(glance).not.toHaveTextContent('Review')
+    expect(screen.queryByText(/Needs attention/)).not.toBeInTheDocument()
   })
 
-  it('shows no attention badge on a quiet fleet, and counts settled failures as quiet', async () => {
-    // A permanent "0" chip is a control nobody sees after a week; the badge only means something if
+  it('shows no attention glance on a quiet fleet, and counts settled failures as quiet', async () => {
+    // A permanent "0" chip is a control nobody sees after a week; the glance only means something if
     // its PRESENCE does. Failures are 24h context, not something anybody has to act on.
     seed({
       attention: [
@@ -442,7 +444,7 @@ describe('HomePage', () => {
     renderWithProviders(<HomePage />)
 
     await waitFor(() => expect(screen.getByTestId('project-switcher')).toBeInTheDocument())
-    await waitFor(() => expect(screen.queryByText(/Needs attention/)).not.toBeInTheDocument())
+    expect(screen.queryByTestId('attention-glance')).not.toBeInTheDocument()
   })
 
   it('below 48em the home surface is the three bands, not the desktop rail squeezed narrow', async () => {
