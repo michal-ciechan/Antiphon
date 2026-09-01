@@ -52,11 +52,19 @@ The spawn deliberately mirrors `Porta.Pty.Windows.PtyProvider` step for step: en
 (empty value = unset), `GetAppOnPath` PATH resolution including the WoW64 Sysnative swap, argument
 quoting, `bInheritHandles=false`, **`STARTF_USESTDHANDLES` with all three handles NULL**,
 kill-on-close job object, unbuffered `FileStream`s over the pipe handles, and the documented teardown
-order. Anything that differs beyond which module provides `CreatePseudoConsole` is a bug in that
-file. The `STARTF_USESTDHANDLES` line in particular is load-bearing and was measured, not copied:
+order. Anything that differs **at spawn** beyond which module provides `CreatePseudoConsole` is a
+bug in that file. The `STARTF_USESTDHANDLES` line in particular is load-bearing and was measured, not copied:
 without it the child loses the pseudoconsole attach to the parent's own std handles whenever the
 parent's stdio is redirected — which is every daemon and every test host here — and comes up on the
 parent's pipes with `isTTY` false while the pty sits empty.
+
+**Kill is the measured exception (CARD-0308).** Spawn still creates the kill-on-close job before
+`CreateProcess`, and `Dispose` still closes that handle last (pseudoconsole → pipes → process/thread
+handles → job). `Kill()` itself must not wait for Dispose: it `TerminateJobObject`s the spawn job,
+then `Process.Kill(entireProcessTree: true)` as belt-and-braces, and leaves the job handle open.
+Porta's Kill only signals the TUI; `PortaPtySession` tree-kills the pid we can see because we do not
+own that job handle. Inbox tests and fallback still need that. CARD-0221's three-state release rule
+(killed, pooled warm, or owned) is unchanged.
 
 ### 2. One switch, process-wide, inherited — the runner and the pty-hosts move together
 
