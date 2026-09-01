@@ -226,6 +226,30 @@ public sealed class DelegateScriptKindTests
             .ShouldBeFalse("the flag is sent only when chosen, matching -Kind / -ExpectAbout");
     }
 
+    [Test]
+    public async Task IgnoreModelDisabled_sends_ignoreModelDisabled_true()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(
+            server, "-Role", "Test", "-Goal", "queue anyway", "-IgnoreModelDisabled");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.GetProperty("ignoreModelDisabled").GetBoolean().ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task an_omitted_IgnoreModelDisabled_sends_no_ignoreModelDisabled_at_all()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(server, "-Role", "Test", "-Goal", "run the suite");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.TryGetProperty("ignoreModelDisabled", out _)
+            .ShouldBeFalse("the flag is sent only when chosen, matching -IgnoreSubscriptionQuota");
+    }
+
     // ---- harness -------------------------------------------------------------------------------
 
     // The script runner itself lives in DelegateScriptRunner so S6's end-to-end test invokes

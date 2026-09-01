@@ -340,7 +340,26 @@ public sealed class AgentTaskService
                 alias = pinned;
             }
 
-            await _modelAvailability.RequireAsync(agentKind, alias, ct);
+            if (request.IgnoreModelDisabled)
+            {
+                var hold = await _modelAvailability.GetActiveHoldAsync(agentKind, alias, ct);
+                if (hold is not null)
+                {
+                    var name = hold.ModelAlias == ModelAlias.KindWide
+                        ? hold.Kind.ToString()
+                        : hold.ModelAlias;
+                    var untilBit = hold.DisabledUntil is { } until
+                        ? $"until {until:yyyy-MM-ddTHH:mm:ssZ}"
+                        : "(no re-enable time)";
+                    var holdWarning =
+                        $"{name} is held {untilBit}; queued, will dispatch when the hold clears (ignoreModelDisabled).";
+                    warning = warning is null ? holdWarning : warning + " " + holdWarning;
+                }
+            }
+            else
+            {
+                await _modelAvailability.RequireAsync(agentKind, alias, ct);
+            }
         }
 
         // A task token always carries the parent task's identity, including null. The work may run
