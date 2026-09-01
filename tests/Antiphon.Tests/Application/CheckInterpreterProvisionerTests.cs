@@ -137,9 +137,9 @@ public class CheckInterpreterProvisionerTests
 
         var reconciled = await ReloadAsync(agent.Id);
         reconciled.SystemPromptAppend.ShouldBe(CheckInterpretation.Contract);
-        reconciled.SystemPromptAppend!.ShouldContain("NEVER say the task is complete");
+        reconciled.SystemPromptAppend!.ShouldContain("NEVER say the **checked** task is complete");
         reconciled.SystemPromptAppend!.ShouldContain($"contract v{CheckInterpretation.ContractVersion}");
-        reconciled.SystemPromptAppend!.ShouldContain("contract v2");
+        reconciled.SystemPromptAppend!.ShouldContain("contract v3");
         reconciled.SystemPromptAppend!.ShouldContain("task-owned");
         reconciled.SystemPromptAppend!.ShouldContain("shared-checkout disclaimer");
     }
@@ -181,8 +181,10 @@ public class CheckInterpreterProvisionerTests
         // CARD-0227: the interpreter must not read the Shared-checkout digest line as PRODUCED.
         // The digest itself is the safety boundary (DelegateCheckProbeTests); this pins that the
         // standing contract the specialist is reconciled onto agrees with that fact shape.
-        CheckInterpretation.ContractVersion.ShouldBe("2");
+        CheckInterpretation.ContractVersion.ShouldBe("3");
         CheckInterpretation.Contract.ShouldContain($"contract v{CheckInterpretation.ContractVersion}");
+        CheckInterpretation.Contract.ShouldContain("NEVER say the **checked** task is complete");
+        CheckInterpretation.Contract.ShouldContain("Closing *this* Check task with `done`");
         CheckInterpretation.Contract.ShouldContain("task-owned");
         CheckInterpretation.Contract.ShouldContain("shared-checkout disclaimer");
         CheckInterpretation.Contract.ShouldContain(
