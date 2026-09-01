@@ -52,6 +52,7 @@ public sealed class AgentSupervisorHostedService : BackgroundService
     private DateTime _lastHerdrCorroborationSweepUtc = DateTime.MinValue;
     private DateTime _lastInvestigationSweepUtc = DateTime.MinValue;
     private DateTime _lastQueuedInputSweepUtc = DateTime.MinValue;
+    private DateTime _lastModelAvailabilitySweepUtc = DateTime.MinValue;
 
     public AgentSupervisorHostedService(
         IServiceScopeFactory scopeFactory,
@@ -179,6 +180,18 @@ public sealed class AgentSupervisorHostedService : BackgroundService
                             _logger.LogWarning(
                                 "Raised {Count} QueuedInputNeverConverted incident(s) (detection only)",
                                 stuck);
+                        }
+                    }
+
+                    if (DateTime.UtcNow - _lastModelAvailabilitySweepUtc >= TimeSpan.FromMinutes(1))
+                    {
+                        _lastModelAvailabilitySweepUtc = DateTime.UtcNow;
+                        var availability = scope.ServiceProvider.GetRequiredService<ModelAvailability>();
+                        var cleared = await availability.SweepExpiredAsync(stoppingToken);
+                        if (cleared > 0)
+                        {
+                            _logger.LogInformation(
+                                "Cleared {Count} expired model-availability hold(s)", cleared);
                         }
                     }
                 }

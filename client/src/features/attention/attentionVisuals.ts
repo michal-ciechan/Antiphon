@@ -181,6 +181,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     icon: TbHourglassHigh,
     hint: 'The delegate ended a turn without done/blocked/failed and is idle. It will Block if it stays that way; do not read Herdr done as finished.',
   },
+  ModelAvailabilityHold: {
+    label: 'Model held',
+    color: 'danger',
+    icon: TbClockPause,
+    hint: 'This model is paused — queued work skips it and new creates 409. Wait for the reset, or pick an available alias.',
+  },
 }
 
 export type AttentionGroupKey = 'now' | 'broken' | 'suspect' | 'failures'

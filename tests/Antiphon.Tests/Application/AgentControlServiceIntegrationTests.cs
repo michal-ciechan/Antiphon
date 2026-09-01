@@ -1315,6 +1315,98 @@ public class AgentControlServiceIntegrationTests
     }
 
     [Test]
+    public async Task Start_returns_409_model_disabled_when_the_agent_alias_is_held()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        var holdId = Guid.NewGuid();
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "model-hold-workspace");
+            Directory.CreateDirectory(workspace);
+            var adapter = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(
+                tempRoot, [adapter], defaultKind: "ClaudeCode", includeModelAvailability: true);
+
+            var agent = await SeedAgentAsync(db, "Held Fable", workspace, AgentKind.ClaudeCode, profileId: null);
+            agent.ModelLevel = AgentModelLevel.Frontier;
+            await db.SaveChangesAsync();
+            await db.ModelAvailabilityHolds
+                .Where(h => h.Kind == AgentKind.ClaudeCode && h.ModelAlias == "fable" && h.ClearedAt == null)
+                .ExecuteDeleteAsync();
+            db.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
+            {
+                Id = holdId,
+                Kind = AgentKind.ClaudeCode,
+                ModelAlias = "fable",
+                Source = ModelAvailabilitySource.AutoDetected,
+                DisabledUntil = DateTime.UtcNow.AddHours(1),
+                HitAt = DateTime.UtcNow,
+                Reason = "session-limit resets 18:10 Europe/London",
+            });
+            await db.SaveChangesAsync();
+
+            var ex = await Should.ThrowAsync<ModelDisabledException>(
+                () => harness.Control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None));
+            ex.Code.ShouldBe("model_disabled");
+            adapter.Started.ShouldBeFalse();
+        }
+        finally
+        {
+            await db.ModelAvailabilityHolds.Where(h => h.Id == holdId).ExecuteDeleteAsync();
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Start_of_a_haiku_agent_succeeds_while_fable_is_held()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        var holdId = Guid.NewGuid();
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "haiku-hold-workspace");
+            Directory.CreateDirectory(workspace);
+            var adapter = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(
+                tempRoot, [adapter], defaultKind: "ClaudeCode", includeModelAvailability: true);
+
+            var agent = await SeedAgentAsync(db, "Haiku Interpreter", workspace, AgentKind.ClaudeCode, profileId: null);
+            agent.ModelLevel = AgentModelLevel.Low;
+            await db.SaveChangesAsync();
+            await db.ModelAvailabilityHolds
+                .Where(h => h.Kind == AgentKind.ClaudeCode && h.ModelAlias == "fable" && h.ClearedAt == null)
+                .ExecuteDeleteAsync();
+            db.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
+            {
+                Id = holdId,
+                Kind = AgentKind.ClaudeCode,
+                ModelAlias = "fable",
+                Source = ModelAvailabilitySource.AutoDetected,
+                DisabledUntil = null,
+                HitAt = DateTime.UtcNow,
+                Reason = "Fable 5 per-model cap (no reset stated)",
+            });
+            await db.SaveChangesAsync();
+
+            var detail = await harness.Control.StartAsync(
+                agent.Id, new StartAgentRequest(Fresh: true), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            detail.PersistentSessionId.ShouldNotBeNull();
+            adapter.Started.ShouldBeTrue();
+        }
+        finally
+        {
+            await db.ModelAvailabilityHolds.Where(h => h.Id == holdId).ExecuteDeleteAsync();
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task Start_of_a_Claude_agent_passes_with_no_sample()
     {
         await using var db = CreateContext();
@@ -1400,6 +1492,7 @@ public class AgentControlServiceIntegrationTests
         bool includeLaunchResolver = false,
         string? connectionString = null,
         bool includeQuotaGate = false,
+        bool includeModelAvailability = false,
         AgentWorkspaceProvisioner? workspace = null)
     {
         var services = new ServiceCollection();
@@ -1465,6 +1558,8 @@ public class AgentControlServiceIntegrationTests
             services.AddSingleton(Options.Create(new SubscriptionQuotaGateSettings()));
             services.AddScoped<SubscriptionQuotaGate>();
         }
+        if (includeModelAvailability)
+            services.AddScoped<ModelAvailability>();
         services.AddSingleton<Antiphon.Server.Application.Interfaces.IDirectoryWriter>(
             new Antiphon.Server.Infrastructure.FileSystem.FileSystemDirectoryWriter(new System.IO.Abstractions.FileSystem()));
         services.AddScoped<BoardService>();

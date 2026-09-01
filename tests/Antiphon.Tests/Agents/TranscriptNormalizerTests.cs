@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Services;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Shouldly;
@@ -159,6 +160,10 @@ public class TranscriptNormalizerTests
             .Where(l => !string.IsNullOrWhiteSpace(l))
             .ToArray();
 
+    private static string FableLimitFixtureLine() =>
+        File.ReadLines(Path.Combine(AppContext.BaseDirectory, "Agents", "Fixtures", "api-error-fable-limit.jsonl"))
+            .First(l => !string.IsNullOrWhiteSpace(l));
+
     private static string[] QueuedCommandFixtureLines() =>
         File.ReadLines(Path.Combine(AppContext.BaseDirectory, "Agents", "Fixtures", "queued-command.jsonl"))
             .Where(l => !string.IsNullOrWhiteSpace(l))
@@ -243,6 +248,24 @@ public class TranscriptNormalizerTests
         text.ApiErrorClass.ShouldBeNull();
         text.ApiErrorStatus.ShouldBeNull();
         parts.ShouldAllBe(p => !TranscriptKinds.IsApiErrorStub(p.Kind, p.IsApiError));
+    }
+
+    [Test]
+    public void A_fable_5_cap_stub_stamps_the_api_error_fields_and_keeps_the_incident_text()
+    {
+        var parts = TranscriptNormalizer.Normalize(FableLimitFixtureLine());
+
+        parts.Count.ShouldBe(2);
+        var text = parts.Where(p => p.Kind == TranscriptKinds.AssistantText).ShouldHaveSingleItem();
+        text.Text.ShouldBe(UsageLimitWallParser.FableModelCapIncidentText);
+        foreach (var part in parts)
+        {
+            part.IsApiError.ShouldBe(true);
+            part.ApiErrorClass.ShouldBe("rate_limit");
+            part.ApiErrorStatus.ShouldBe(429);
+            part.Model.ShouldBeNull("the stub's message.model is <synthetic> — not a hold key");
+            TranscriptKinds.IsApiErrorStub(part.Kind, part.IsApiError).ShouldBeTrue();
+        }
     }
 
     // Text matching is REJECTED as the signal (spec §D1): an agent legitimately writing about

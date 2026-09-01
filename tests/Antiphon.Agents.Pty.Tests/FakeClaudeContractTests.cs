@@ -505,6 +505,42 @@ public class FakeClaudeContractTests
         }
     }
 
+    [Test]
+    public async Task Rate_limit_model_emits_the_fable_5_cap_text_with_rate_limit_class()
+    {
+        SkipIfUnavailable();
+        var path = Path.Combine(Path.GetTempPath(), $"fakeclaude-apierror-fable-{Guid.NewGuid():N}.jsonl");
+        try
+        {
+            await using var runner = await LaunchReadyFakeAsync(new Dictionary<string, string>
+            {
+                ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = path,
+                ["ANTIPHON_FAKE_API_ERROR"] = "rate_limit_model",
+            });
+
+            await EchoGatedSubmit.SendAsync(runner, "doomed turn");
+            (await runner.WaitForOutputAsync(
+                    s => s.Contains("You've reached your Fable 5 limit"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue("the per-model cap text, not the session-limit sentence");
+
+            var lines = await WaitForTranscriptLinesAsync(path, 2);
+            using (var doc = System.Text.Json.JsonDocument.Parse(lines[1]))
+            {
+                var root = doc.RootElement;
+                root.GetProperty("error").GetString().ShouldBe("rate_limit");
+                root.GetProperty("isApiErrorMessage").GetBoolean().ShouldBeTrue();
+                root.GetProperty("apiErrorStatus").GetInt32().ShouldBe(429);
+                root.GetProperty("message").GetProperty("model").GetString().ShouldBe("<synthetic>");
+            }
+
+            await runner.KillAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            try { File.Delete(path); File.Delete(path + ".timing"); } catch { }
+        }
+    }
+
     // Auth stubs carry NO apiErrorStatus on the real records — the absence itself is measured, so
     // the fake must model a missing member, not a null one.
     [Test]

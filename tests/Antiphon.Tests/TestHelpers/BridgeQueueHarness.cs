@@ -350,7 +350,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
     {
         await InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, errorText, sessionId: sessionId,
             isApiError: true, apiErrorClass: apiErrorClass, apiErrorStatus: apiErrorStatus);
-        await InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "stop_sequence", sessionId: sessionId,
+        await InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, errorText, stopReason: "stop_sequence", sessionId: sessionId,
             isApiError: true, apiErrorClass: apiErrorClass, apiErrorStatus: apiErrorStatus);
     }
 
@@ -485,6 +485,10 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
                 .Where(s => s.CardId == null && s.Cwd.StartsWith(TempRoot))
                 .Select(s => s.Id)
                 .ToListAsync();
+            await db.ModelAvailabilityHolds
+                .Where(h => h.SourceSessionId != null
+                    && (sessionIds.Contains(h.SourceSessionId.Value) || h.SourceSessionId == SessionId))
+                .ExecuteDeleteAsync();
             await db.SubscriptionUsageSamples
                 .Where(s => sessionIds.Contains(s.AgentSessionId) || s.AgentSessionId == SessionId)
                 .ExecuteDeleteAsync();

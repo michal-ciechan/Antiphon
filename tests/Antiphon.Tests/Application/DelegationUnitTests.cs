@@ -1092,6 +1092,7 @@ public class UnmarkedWaitingContractTests
     {
         ((int)AttentionKind.ReportUnsettled).ShouldBe(22);
         ((int)AttentionKind.UnmarkedWaiting).ShouldBe(23);
+        ((int)AttentionKind.ModelAvailabilityHold).ShouldBe(24);
     }
 
     [Test]

@@ -193,6 +193,7 @@ public sealed class AttentionService
         items.AddRange(await BuildOrchestratorInvestigationItemsAsync(since, ct));
         items.AddRange(await BuildQueuedInputStuckItemsAsync(since, ct));
         items.AddRange(await BuildAgentOutlivedTaskItemsAsync(now, ct));
+        items.AddRange(await BuildModelAvailabilityHoldItemsAsync(now, ct));
         items.AddRange(BuildRecentFailureItems(failed, costs, checkDigests));
 
         // Asked unconditionally, because RunnerConsulted is a claim about whether anybody asked and a
@@ -1367,6 +1368,114 @@ public sealed class AttentionService
     /// Warning-only, self-clearing projection of a non-AlwaysOn agent that finished (or lost)
     /// its one job and nothing retired it. Detection only — nothing here stops an agent.
     /// </summary>
+    private async Task<List<AttentionItemDto>> BuildModelAvailabilityHoldItemsAsync(
+        DateTime now, CancellationToken ct)
+    {
+        var holds = await _db.ModelAvailabilityHolds.AsNoTracking()
+            .Where(h => h.ClearedAt == null && (h.DisabledUntil == null || h.DisabledUntil > now))
+            .OrderBy(h => h.HitAt)
+            .ToListAsync(ct);
+        if (holds.Count == 0)
+            return [];
+
+        var heldKeys = holds
+            .Select(h => (h.Kind, h.ModelAlias))
+            .ToHashSet();
+        var kindWide = holds
+            .Where(h => h.ModelAlias == ModelAlias.KindWide)
+            .Select(h => h.Kind)
+            .ToHashSet();
+        var available = ModelAlias.DelegatableAliases
+            .Where(a => !kindWide.Contains(a.Kind) && !heldKeys.Contains((a.Kind, a.Alias)))
+            .Select(a => a.Alias)
+            .ToList();
+        var availableSentence = available.Count == 0 ? "(none)" : string.Join(", ", available);
+
+        var freshCutoff = now - TimeSpan.FromMinutes(180);
+        var samples = await _db.SubscriptionUsageSamples.AsNoTracking()
+            .Where(s => s.ParseStatus == SubscriptionUsageParseStatus.Parsed
+                && s.RemainingPercent != null
+                && s.ObservedAt >= freshCutoff)
+            .ToListAsync(ct);
+        var latestByKind = samples
+            .GroupBy(s => s.Provider)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(s => s.ObservedAt).First());
+
+        var items = new List<AttentionItemDto>(holds.Count);
+        foreach (var hold in holds)
+        {
+            var alias = hold.ModelAlias;
+            string headline;
+            if (hold.DisabledUntil is { } until)
+            {
+                var remaining = until - now;
+                var zone = ExtractZone(hold.Reason) ?? "UTC";
+                var local = until.ToString("HH:mm");
+                if (hold.Reason.Contains("resets ", StringComparison.Ordinal)
+                    && hold.Reason.Length >= 24)
+                {
+                    // Reason is "session-limit resets HH:mm Zone".
+                    var resetsAt = hold.Reason.IndexOf("resets ", StringComparison.Ordinal);
+                    if (resetsAt >= 0)
+                    {
+                        var rest = hold.Reason[(resetsAt + "resets ".Length)..];
+                        var parts = rest.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                        if (parts.Length >= 1)
+                            local = parts[0];
+                        if (parts.Length >= 2)
+                            zone = parts[1];
+                    }
+                }
+
+                headline =
+                    $"{alias} exhausted — resets {local} {zone} (in {Duration(remaining)}); "
+                    + $"dispatch paused for {alias}";
+            }
+            else
+            {
+                headline =
+                    $"{alias} exhausted (no reset stated); dispatch paused for {alias}; "
+                    + $"available: {availableSentence}";
+            }
+
+            var evidenceBits = new List<string>();
+            if (!string.IsNullOrWhiteSpace(hold.RawText))
+                evidenceBits.Add(Excerpt(hold.RawText));
+            if (hold.SourceSessionId is { } session)
+                evidenceBits.Add($"source session {session:D}");
+            if (hold.DisabledUntil is { } untilEvidence)
+                evidenceBits.Add($"disabled until {untilEvidence:u}");
+            else
+                evidenceBits.Add("disabled until cleared");
+            if (latestByKind.TryGetValue(hold.Kind, out var sample) && sample.RemainingPercent is { } pct)
+                evidenceBits.Add($"latest {hold.Kind} sample {pct:0.#}% remaining (observed {sample.ObservedAt:u})");
+
+            items.Add(new AttentionItemDto(
+                AttentionKind.ModelAvailabilityHold,
+                AlertSeverity.Error,
+                hold.SourceTaskId,
+                hold.SourceSessionId,
+                null,
+                null,
+                $"{hold.Kind} {alias}",
+                headline,
+                string.Join("\n", evidenceBits),
+                hold.HitAt,
+                null,
+                [],
+                ModelKind: hold.Kind.ToString(),
+                ModelAlias: alias));
+        }
+
+        return items;
+    }
+
+    private static string? ExtractZone(string reason)
+    {
+        var idx = reason.LastIndexOf(' ');
+        return idx < 0 ? null : reason[(idx + 1)..];
+    }
+
     private async Task<List<AttentionItemDto>> BuildAgentOutlivedTaskItemsAsync(
         DateTime now, CancellationToken ct)
     {

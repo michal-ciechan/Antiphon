@@ -22,6 +22,14 @@ public class ApiErrorClassifierTests
             .ShouldBe(ApiErrorClassification.Wall);
     }
 
+    [Test]
+    public void Fable_5_per_model_cap_text_is_still_a_wall()
+    {
+        ApiErrorClassifier
+            .Classify("rate_limit", 429, UsageLimitWallParser.FableModelCapIncidentText)
+            .ShouldBe(ApiErrorClassification.Wall);
+    }
+
     // The wall class keys on the structural error class, not on the reset text parsing — an
     // unparseable reset degrades the RESPONSE at S5 (30-minute ladder entry), never the class.
     [Test]
