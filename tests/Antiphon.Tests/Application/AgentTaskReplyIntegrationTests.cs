@@ -328,6 +328,123 @@ public class AgentTaskReplyIntegrationTests
     }
 
     [Test]
+    public async Task a_check_role_looks_stuck_blocked_token_settles_succeeded_exempt()
+    {
+        // CARD-0302 S1: LOOKS STUCK is the reading; the generic `blocked` token must not Block
+        // the Check row. Role is the gate — this does not parse LOOKS STUCK as English.
+        using var workspace = new TempWorkspace();
+        var agentId = await SeedAgentAsync(workspace.Path, $"check-s1-{Guid.NewGuid():N}"[..24],
+            poolDelegate: false);
+        await using (var db = CreateContext())
+        {
+            var agent = await db.Agents.SingleAsync(a => a.Id == agentId);
+            agent.AlwaysOn = true;
+            agent.Status = AgentStatus.Running;
+            await db.SaveChangesAsync();
+        }
+
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, configure: t =>
+        {
+            t.Role = AgentTaskRole.Check;
+            t.ReplyTo = AgentTaskReplyTo.None;
+            t.AgentId = agentId;
+        });
+        await BindAgentSessionAsync(agentId, sessionId);
+
+        const string reading = "LOOKS STUCK — session idle 28m.";
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id),
+            reading + "\n" + DelegationReportFormatter.ReportToken(task.Id, "blocked"),
+            closingVerdict: false);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Exempt);
+        settled.Result.ShouldBe(reading);
+        settled.AgentSessionId.ShouldBe(sessionId);
+
+        var events = await verify.AgentTaskEvents
+            .Where(e => e.AgentTaskId == task.Id)
+            .Select(e => e.Type)
+            .ToListAsync();
+        events.ShouldContain(AgentTaskEventType.Completed);
+        events.ShouldNotContain(AgentTaskEventType.Blocked);
+
+        (await verify.Agents.SingleAsync(a => a.Id == agentId)).ShouldNotBeNull();
+        (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId))
+            .Status.ShouldBe(SessionStatus.Running);
+        (await verify.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == sessionId))
+            .ShouldBe(0);
+    }
+
+    [Test]
+    public async Task a_check_role_trailing_question_settles_succeeded_exempt()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t =>
+            {
+                t.Role = AgentTaskRole.Check;
+                t.ReplyTo = AgentTaskReplyTo.None;
+            });
+
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id),
+            "AMBIGUOUS — the bundle does not say whether the delegate is waiting?",
+            closingVerdict: false);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Exempt);
+    }
+
+    [Test]
+    public async Task a_check_role_failed_token_still_fails_the_task()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => t.Role = AgentTaskRole.Check);
+        const string report = "Could not produce a reading: the digest was empty.";
+
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id),
+            report + "\n" + DelegationReportFormatter.ReportToken(task.Id, "failed"),
+            closingVerdict: false);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Failed);
+        settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
+        settled.FailureReason.ShouldBe("Could not produce a reading: the digest was empty.");
+        settled.Result.ShouldBe(report);
+    }
+
+    [Test]
+    public async Task a_non_check_blocked_token_still_blocks_marked()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+        const string report = "Need a decision on the retry bound.";
+
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id),
+            report + "\n" + DelegationReportFormatter.ReportToken(task.Id, "blocked"),
+            closingVerdict: false);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Blocked);
+        settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
+        settled.Result.ShouldBe(report);
+    }
+
+    [Test]
     public async Task a_failed_verdict_fails_the_task_with_the_first_line_as_reason()
     {
         using var workspace = new TempWorkspace();
@@ -1060,8 +1177,9 @@ public class AgentTaskReplyIntegrationTests
         await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
 
         await using var verify = CreateContext();
-        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
-            .Status.ShouldBe(AgentTaskStatus.Blocked, "it needs an answer, not a retry");
+        var blocked = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        blocked.Status.ShouldBe(AgentTaskStatus.Blocked, "it needs an answer, not a retry");
+        blocked.ReportEvidence.ShouldBe(AgentTaskReportEvidence.QuestionHeuristic);
     }
 
     [Test]
