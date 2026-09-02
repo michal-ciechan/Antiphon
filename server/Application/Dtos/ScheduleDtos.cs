@@ -99,11 +99,24 @@ public sealed record ScheduleTargetDto(
     Guid? CardId,
     string? CardIdentifier,
     CardStatus? CardStatus,
-    bool? CardArchived);
+    bool? CardArchived,
+    string? CardColumn = null,
+    Guid? CardOwnerSessionId = null);
+
+public sealed record SchedulePreviewEnvironmentDto(
+    bool OrchestratorPaused,
+    int? BoardActiveCount = null,
+    int? BoardCap = null,
+    string? ModelAvailabilityHold = null,
+    string? AssignedAgent = null,
+    string? DefaultDefinition = null);
 
 public sealed record SchedulePreviewDto(
     IReadOnlyList<ScheduleOccurrenceDto> NextOccurrences,
     ScheduleTargetDto Target,
     string Effect,
     string Spend,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    bool WillStartSession = false,
+    string? WillMove = null,
+    SchedulePreviewEnvironmentDto? Environment = null);

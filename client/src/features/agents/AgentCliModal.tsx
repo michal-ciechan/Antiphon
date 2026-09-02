@@ -1,7 +1,7 @@
 import { Button, Group, Modal, Stack, Tabs, Text } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { lazy } from 'react'
-import { TbListDetails, TbPlayerPlay, TbSend, TbTerminal2 } from 'react-icons/tb'
+import { TbCalendar, TbListDetails, TbPlayerPlay, TbSend, TbTerminal2 } from 'react-icons/tb'
 import type { AgentSummaryDto } from '../../api/agents'
 import { useAgent, useStartAgent } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
@@ -12,6 +12,7 @@ import { SessionWorkingBadge } from './SessionWorkingBadge'
 import { HerdrStatusBadge } from './HerdrStatusBadge'
 import { SmartComposer } from './SmartComposer'
 import { SessionTranscriptPanel } from './SessionTranscriptPanel'
+import { AgentSchedulesTab } from './AgentSchedulesTab'
 
 const SessionTerminal = lazy(() =>
   import('../board/SessionTerminal').then((m) => ({ default: m.SessionTerminal })),
@@ -81,6 +82,9 @@ export function AgentCliModal({ agent, remoteControl, opened, onClose }: AgentCl
             <Tabs.Tab value="transcript" leftSection={<TbListDetails size={14} />}>
               Transcript
             </Tabs.Tab>
+            <Tabs.Tab value="schedules" leftSection={<TbCalendar size={14} />}>
+              Schedules
+            </Tabs.Tab>
           </Tabs.List>
           <Tabs.Panel value="terminal">
             <Stack gap="xs">
@@ -102,41 +106,59 @@ export function AgentCliModal({ agent, remoteControl, opened, onClose }: AgentCl
               agentId={source.id}
             />
           </Tabs.Panel>
+          <Tabs.Panel value="schedules">
+            <AgentSchedulesTab agentId={source.id} agentName={source.name} />
+          </Tabs.Panel>
         </Tabs>
       ) : (
-        <Stack gap="md" py="sm">
-          <Text>
-            No terminal is running for <strong>{source.name}</strong>. Start the agent to open one
-            {hasCard
-              ? ' on its next queued card'
-              : ' as an interactive session in its working directory'}
-            {remoteControl ? ' (remote control on)' : ''}?
-          </Text>
-          {!hasCard && (
-            <Text size="sm" c="dimmed">
-              Nothing is queued, so this starts a human-driven terminal you can type into directly. It
-              resumes the agent&apos;s previous Claude session when one exists — use &quot;Start fresh&quot;
-              for a clean conversation.
-            </Text>
-          )}
-          <Group justify="flex-end">
-            <Button variant="default" onClick={onClose}>
-              Cancel
-            </Button>
-            {!hasCard && (
-              <Button variant="default" loading={startAgent.isPending} onClick={() => handleStart(true)}>
-                Start fresh
-              </Button>
-            )}
-            <Button
-              leftSection={<TbPlayerPlay size={16} />}
-              loading={startAgent.isPending}
-              onClick={() => handleStart()}
-            >
-              Start agent
-            </Button>
-          </Group>
-        </Stack>
+        <Tabs defaultValue="start" keepMounted={false}>
+          <Tabs.List mb="sm">
+            <Tabs.Tab value="start" leftSection={<TbPlayerPlay size={14} />}>
+              Start
+            </Tabs.Tab>
+            <Tabs.Tab value="schedules" leftSection={<TbCalendar size={14} />}>
+              Schedules
+            </Tabs.Tab>
+          </Tabs.List>
+          <Tabs.Panel value="start">
+            <Stack gap="md" py="sm">
+              <Text>
+                No terminal is running for <strong>{source.name}</strong>. Start the agent to open one
+                {hasCard
+                  ? ' on its next queued card'
+                  : ' as an interactive session in its working directory'}
+                {remoteControl ? ' (remote control on)' : ''}?
+              </Text>
+              {!hasCard && (
+                <Text size="sm" c="dimmed">
+                  Nothing is queued, so this starts a human-driven terminal you can type into directly. It
+                  resumes the agent&apos;s previous Claude session when one exists — use &quot;Start fresh&quot;
+                  for a clean conversation.
+                </Text>
+              )}
+              <Group justify="flex-end">
+                <Button variant="default" onClick={onClose}>
+                  Cancel
+                </Button>
+                {!hasCard && (
+                  <Button variant="default" loading={startAgent.isPending} onClick={() => handleStart(true)}>
+                    Start fresh
+                  </Button>
+                )}
+                <Button
+                  leftSection={<TbPlayerPlay size={16} />}
+                  loading={startAgent.isPending}
+                  onClick={() => handleStart()}
+                >
+                  Start agent
+                </Button>
+              </Group>
+            </Stack>
+          </Tabs.Panel>
+          <Tabs.Panel value="schedules">
+            <AgentSchedulesTab agentId={source.id} agentName={source.name} />
+          </Tabs.Panel>
+        </Tabs>
       )}
     </Modal>
   )

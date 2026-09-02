@@ -419,6 +419,8 @@ public class ScheduleSweepTests
             services.AddSingleton<AgentSessionRuntime>();
             services.AddSingleton<SessionMessageQueueService>();
             services.AddSingleton<ScheduleFireQueue>();
+            services.AddSingleton<OrchestratorControlState>();
+            services.AddSingleton<IScheduledCardActions>(new UnusedScheduledCardActions());
             services.AddScoped<ScheduleService>();
             _provider = services.BuildServiceProvider();
             Schedules = NewSchedules();
@@ -629,5 +631,23 @@ public class ScheduleSweepTests
             await db.SaveChangesAsync();
             return new Seeded(schedule, sessionId, workspace);
         }
+    }
+
+    /// <summary>
+    /// Prompt-arm tests never fire a card schedule. A call here means the harness was reused
+    /// for a card fire without wiring a fake, which would otherwise be a silent no-op.
+    /// </summary>
+    private sealed class UnusedScheduledCardActions : IScheduledCardActions
+    {
+        public Task<bool> ApplyAutomatedMoveAsync(
+            Guid cardId, CardStatus target, string reason, string movedBy, CancellationToken ct) =>
+            throw new InvalidOperationException("This harness does not fire card schedules.");
+
+        public Task<bool> ReleaseAutoDispatchHoldAsync(
+            Guid cardId, string reason, string actor, CancellationToken ct) =>
+            throw new InvalidOperationException("This harness does not fire card schedules.");
+
+        public Task<SpawnCardResult> SpawnAsync(Guid cardId, SpawnCardRequest request, CancellationToken ct) =>
+            throw new InvalidOperationException("This harness does not fire card schedules.");
     }
 }

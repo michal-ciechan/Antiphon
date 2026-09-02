@@ -332,6 +332,7 @@ try
     builder.Services.AddScoped<ProjectSetupService>();
     builder.Services.AddScoped<BoardService>();
     builder.Services.AddScoped<CardService>();
+    builder.Services.AddScoped<IScheduledCardActions>(sp => sp.GetRequiredService<CardService>());
     builder.Services.AddSingleton<CardTaskFileSyncGate>();
     builder.Services.AddScoped<CardTaskFileService>();
     builder.Services.AddScoped<CardCommentService>();

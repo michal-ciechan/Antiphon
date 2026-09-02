@@ -35,7 +35,8 @@ public sealed record QueuedMessageDto(
     DateTime CreatedAt,
     int DeliveryAttempts = 0,
     string Origin = "Ui",
-    bool Parked = false);
+    bool Parked = false,
+    string? NoteHeader = null);
 
 /// <summary>
 /// How a Mode:Now delivery was confirmed. Values of <see cref="DeliveryReceiptDto.ConfirmedBy"/>.

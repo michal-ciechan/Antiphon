@@ -12,7 +12,9 @@
 #   schedule.ps1 preview [-Agent a] [-Name n] [-Prompt s | -PromptFile p]
 #                        [-Repeat Once|Interval|Daily] [-FireAt utc] [-EveryMinutes n]
 #                        [-AtLocal HH:mm] [-DaysOfWeek mask] [-TimeZone id]
+#                        [-Card id] [-To Backlog|InProgress|Review] [-Start None|Release|Spawn]
 #   schedule.ps1 new     -Name n -Agent a [-Prompt s | -PromptFile p] ... (prints preview first)
+#                        OR -Name n -Card id -To InProgress [-Start None|Release|Spawn] [-AcceptSpend]
 #   schedule.ps1 enable  <id>
 #   schedule.ps1 disable <id>
 #   schedule.ps1 remove  <id>
@@ -65,6 +67,20 @@ param(
 
     [Parameter(ParameterSetName = 'Verb')]
     [string]$By,
+
+    [Parameter(ParameterSetName = 'Verb')]
+    [string]$Card,
+
+    [Parameter(ParameterSetName = 'Verb')]
+    [ValidateSet('Backlog', 'InProgress', 'Review')]
+    [string]$To,
+
+    [Parameter(ParameterSetName = 'Verb')]
+    [ValidateSet('None', 'Release', 'Spawn')]
+    [string]$Start = 'None',
+
+    [Parameter(ParameterSetName = 'Verb')]
+    [switch]$AcceptSpend,
 
     [Parameter(ParameterSetName = 'Verb')]
     [switch]$Json
@@ -137,15 +153,28 @@ function Resolve-Agent {
 }
 
 function New-CreateBody {
-    $promptText = Read-PromptText
-    $agentRef = Resolve-Agent
+    $isCard = -not [string]::IsNullOrWhiteSpace($Card)
     $body = @{
-        name       = $Name
-        kind       = 'Prompt'
-        repeat     = $Repeat
-        agent      = $agentRef
-        promptText = $promptText
-        createdBy  = $By
+        name      = $Name
+        kind      = $(if ($isCard) { 'Card' } else { 'Prompt' })
+        repeat    = $Repeat
+        createdBy = $By
+    }
+    if ($isCard) {
+        $body.cardId = $Card
+        if ([string]::IsNullOrWhiteSpace($To)) {
+            Write-Error "A card schedule requires -To (Backlog, InProgress, or Review)."
+            exit 1
+        }
+        $body.targetStatus = $To
+        $body.start = $Start
+        if ($AcceptSpend) { $body.acceptSpend = $true }
+    }
+    else {
+        $promptText = Read-PromptText
+        $agentRef = Resolve-Agent
+        $body.agent = $agentRef
+        $body.promptText = $promptText
     }
     if (-not [string]::IsNullOrWhiteSpace($TimeZone)) { $body.timeZoneId = $TimeZone }
     if (-not [string]::IsNullOrWhiteSpace($WhenTargetDown)) { $body.whenTargetDown = $WhenTargetDown }
@@ -184,8 +213,20 @@ function Write-Preview {
         Write-Output ("  agent {0}  live={1}  alwaysOn={2}  session={3}" -f `
             $Preview.target.agentName, $Preview.target.agentLive, $Preview.target.agentAlwaysOn, $Preview.target.sessionStatus)
     }
+    if ($Preview.target.cardIdentifier) {
+        Write-Output ("  card  {0}  status={1}  column={2}  archived={3}" -f `
+            $Preview.target.cardIdentifier, $Preview.target.cardStatus, $Preview.target.cardColumn, $Preview.target.cardArchived)
+    }
     Write-Output ("  effect {0}" -f $Preview.effect)
     Write-Output ("  spend  {0}" -f $Preview.spend)
+    if ($null -ne $Preview.willStartSession) {
+        Write-Output ("  start  willStartSession={0}  willMove={1}" -f $Preview.willStartSession, $Preview.willMove)
+    }
+    if ($null -ne $Preview.environment) {
+        $env = $Preview.environment
+        Write-Output ("  env    orchestratorPaused={0}  board={1}/{2}  hold={3}  assigned={4}  definition={5}" -f `
+            $env.orchestratorPaused, $env.boardActiveCount, $env.boardCap, $env.modelAvailabilityHold, $env.assignedAgent, $env.defaultDefinition)
+    }
     foreach ($w in @($Preview.warnings)) {
         Write-Output ("  warn   {0}" -f $w)
     }
@@ -209,6 +250,9 @@ switch ($Verb) {
         $agentRef = Resolve-Agent
         if (-not [string]::IsNullOrWhiteSpace($agentRef) -and ($agentRef -match '^[0-9a-fA-F-]{36}$')) {
             $qs += ("agentId={0}" -f $agentRef)
+        }
+        if (-not [string]::IsNullOrWhiteSpace($Card) -and ($Card -match '^[0-9a-fA-F-]{36}$')) {
+            $qs += ("cardId={0}" -f $Card)
         }
         $path = '/api/schedules'
         if ($qs.Count -gt 0) { $path = $path + '?' + ($qs -join '&') }
@@ -242,6 +286,11 @@ switch ($Verb) {
         $body = New-CreateBody
         $preview = Invoke-Antiphon -Method POST -Path '/api/schedules/preview' -Body $body
         if (-not $Json) { Write-Preview $preview }
+        $spend = $preview.spend
+        if ($spend -and $spend -ne 'none' -and -not $AcceptSpend) {
+            Write-Error "This schedule would start a session (spend=$spend). Re-run with -AcceptSpend after reading the preview."
+            exit 1
+        }
         $created = Invoke-Antiphon -Method POST -Path '/api/schedules' -Body $body
         if ($Json) { $created | ConvertTo-Json -Depth 8 }
         else {

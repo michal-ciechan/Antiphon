@@ -1803,6 +1803,54 @@ public class AttentionServiceTests
         item.Severity.ShouldBe(AlertSeverity.Warning);
     }
 
+    [Test]
+    public async Task a_misfire_is_a_warning_row_until_the_next_good_fire()
+    {
+        await using var scenario = new Scenario();
+        var agent = await scenario.AddAgentAsync(isPoolDelegate: false, alwaysOn: true);
+        var scheduleId = Guid.NewGuid();
+        await using (var db = CreateContext())
+        {
+            db.Schedules.Add(new Schedule
+            {
+                Id = scheduleId,
+                Name = "Morning triage",
+                Kind = ScheduleKind.Prompt,
+                Repeat = ScheduleRepeat.Daily,
+                TimeZoneId = "Europe/London",
+                NextFireAt = DateTime.UtcNow.AddHours(1),
+                Enabled = true,
+                AtLocal = "09:00",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow,
+                ConcurrencyToken = Guid.NewGuid(),
+                AgentId = agent,
+                PromptText = "triage",
+                LastOutcome = ScheduleFireOutcome.SkippedNoSession,
+                LastOutcomeDetail = "agent is down",
+                LastFiredAt = DateTime.UtcNow.AddMinutes(-3),
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var item = (await ItemsForAsync(scenario))
+            .Single(i => i.Kind == AttentionKind.ScheduleMisfired && i.AgentId == agent);
+        item.Severity.ShouldBe(AlertSeverity.Warning);
+        item.Headline.ShouldContain("Morning triage");
+        item.Actions.ShouldContain(AttentionAction.OpenAgent);
+
+        await using (var db = CreateContext())
+        {
+            var row = await db.Schedules.SingleAsync(s => s.Id == scheduleId);
+            row.LastOutcome = ScheduleFireOutcome.Delivered;
+            row.LastOutcomeDetail = null;
+            await db.SaveChangesAsync();
+        }
+
+        (await ItemsForAsync(scenario))
+            .ShouldNotContain(i => i.Kind == AttentionKind.ScheduleMisfired && i.AgentId == agent);
+    }
+
     // ---- 8. SessionDisagreement -------------------------------------------------------------------
 
     [Test]
@@ -2906,6 +2954,8 @@ public class AttentionServiceTests
             await db.ChatChannels.Where(c => c.AgentId != null && _agents.Contains(c.AgentId!.Value))
                 .ExecuteDeleteAsync();
             await db.AgentSessions.Where(s => _sessions.Contains(s.Id)).ExecuteDeleteAsync();
+            await db.ScheduleFires.Where(f => db.Schedules.Any(s => s.Id == f.ScheduleId && s.AgentId != null && _agents.Contains(s.AgentId.Value))).ExecuteDeleteAsync();
+            await db.Schedules.Where(s => s.AgentId != null && _agents.Contains(s.AgentId.Value)).ExecuteDeleteAsync();
             await db.Agents.Where(a => _agents.Contains(a.Id)).ExecuteDeleteAsync();
         }
     }

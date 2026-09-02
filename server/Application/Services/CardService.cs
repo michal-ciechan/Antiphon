@@ -14,7 +14,7 @@ using Npgsql;
 
 namespace Antiphon.Server.Application.Services;
 
-public sealed class CardService
+public sealed class CardService : IScheduledCardActions
 {
     /// <summary>The <c>Cards.Title</c> column is varchar(300); anything longer is a 400, not a 500.</summary>
     public const int MaxTitleLength = 300;
@@ -59,6 +59,13 @@ public sealed class CardService
     /// card-spawn path, and a history line has to say which automation moved the card.
     /// </summary>
     internal const string TransitionActor = "card-transitions";
+
+    /// <summary>
+    /// The author recorded on a CARD-0057 scheduled card action. Distinct from
+    /// <see cref="SystemActor"/> (the spawn path) and <see cref="TransitionActor"/>
+    /// (the evidence sweep), so a history line says which automation moved the card.
+    /// </summary>
+    internal const string SchedulerActor = "scheduler";
 
     private readonly AppDbContext _db;
     private readonly AgentRegistry _agentRegistry;
@@ -671,6 +678,52 @@ public sealed class CardService
         await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
         return true;
     }
+
+    /// <summary>
+    /// Lifts <see cref="Card.AutoDispatchHeldAt"/> so the orchestrator tick may start a card
+    /// session under its caps (CARD-0057 D6 <c>Start=Release</c>). Same eligibility guards as
+    /// <see cref="ApplyAutomatedMoveAsync"/>. Records the reason as a <c>Kind.Move</c> row with
+    /// unchanged columns — <see cref="CardRevisionLog"/> already supports that without a new kind.
+    /// </summary>
+    internal async Task<bool> ReleaseAutoDispatchHoldAsync(
+        Guid cardId, string reason, string actor, CancellationToken ct)
+    {
+        var card = await LoadCardForUpdateAsync(cardId, ct);
+
+        if (card.ArchivedAt is not null)
+            return false;
+        if (card.Status is CardStatus.NeedsDecision or CardStatus.Done or CardStatus.Canceled)
+            return false;
+        if (card.OwnerSessionId is not null)
+            return false;
+        if (card.AutoDispatchHeldAt is null)
+            return false;
+
+        var now = UtcNow();
+        CardRevisionLog.AppendMove(
+            card,
+            card.BoardColumnId,
+            card.Status,
+            card.BoardColumn,
+            reason,
+            actor,
+            now);
+        card.AutoDispatchHeldAt = null;
+        card.UpdatedAt = now;
+        card.ConcurrencyToken = Guid.NewGuid();
+
+        await SaveCardWriteAsync(card, ct);
+        await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
+        return true;
+    }
+
+    Task<bool> IScheduledCardActions.ApplyAutomatedMoveAsync(
+        Guid cardId, CardStatus target, string reason, string movedBy, CancellationToken ct) =>
+        ApplyAutomatedMoveAsync(cardId, target, reason, movedBy, ct);
+
+    Task<bool> IScheduledCardActions.ReleaseAutoDispatchHoldAsync(
+        Guid cardId, string reason, string actor, CancellationToken ct) =>
+        ReleaseAutoDispatchHoldAsync(cardId, reason, actor, ct);
 
     private static BoardColumn ResolveReopenTarget(Card card, Guid? requestedColumnId)
     {

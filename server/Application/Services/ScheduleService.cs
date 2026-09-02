@@ -1,5 +1,6 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -20,10 +21,18 @@ public sealed class ScheduleService
     public const int MaxNameLength = 200;
     public const int MaxCreatedByLength = 200;
 
+    internal const string SchedulerActor = CardService.SchedulerActor;
+
+    private static readonly CardStatus[] CardActionTargets =
+        [CardStatus.Backlog, CardStatus.InProgress, CardStatus.Review];
+
     private readonly AppDbContext _db;
     private readonly ScheduleFireQueue _queue;
     private readonly SessionMessageQueueService _messages;
     private readonly AgentSessionRuntime _runtime;
+    private readonly IScheduledCardActions _cards;
+    private readonly IEventBus _eventBus;
+    private readonly OrchestratorControlState _orchestrator;
     private readonly TimeProvider _time;
     private readonly ScheduleSettings _settings;
     private readonly DigestSettings _digest;
@@ -34,6 +43,9 @@ public sealed class ScheduleService
         ScheduleFireQueue queue,
         SessionMessageQueueService messages,
         AgentSessionRuntime runtime,
+        IScheduledCardActions cards,
+        IEventBus eventBus,
+        OrchestratorControlState orchestrator,
         TimeProvider time,
         IOptions<ScheduleSettings> settings,
         IOptions<DigestSettings> digest,
@@ -43,6 +55,9 @@ public sealed class ScheduleService
         _queue = queue;
         _messages = messages;
         _runtime = runtime;
+        _cards = cards;
+        _eventBus = eventBus;
+        _orchestrator = orchestrator;
         _time = time;
         _settings = settings.Value;
         _digest = digest.Value;
@@ -94,12 +109,6 @@ public sealed class ScheduleService
     {
         var row = await _db.Schedules.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id, ct)
             ?? throw new NotFoundException(nameof(Schedule), id);
-        if (row.Kind != ScheduleKind.Prompt)
-        {
-            throw new ValidationException(
-                nameof(Schedule.Kind),
-                "Card schedules are not enabled yet.");
-        }
 
         var now = UtcNow();
         if (!await TryClaimOneAsync(row, now, manual: true, ct))
@@ -183,6 +192,7 @@ public sealed class ScheduleService
                 ScheduleFireOutcome.Failed,
                 ex.Message,
                 queuedMessageId: null,
+                spawnedSessionId: null,
                 ct);
         }
     }
@@ -192,14 +202,6 @@ public sealed class ScheduleService
         var schedule = await _db.Schedules.FirstOrDefaultAsync(s => s.Id == claim.ScheduleId, ct);
         if (schedule is null)
             return;
-
-        if (schedule.Kind != ScheduleKind.Prompt)
-        {
-            await CompleteFireAsync(
-                claim.ScheduleId, claim.FireNumber, ScheduleFireOutcome.Failed,
-                "Card actions are not enabled yet.", null, ct);
-            return;
-        }
 
         var now = UtcNow();
         if (!claim.Manual && schedule.MissedGraceMinutes is int grace)
@@ -213,16 +215,31 @@ public sealed class ScheduleService
                     ScheduleFireOutcome.SkippedLate,
                     $"due {claim.DueAt:o}, skipped {FormatLate(late)} late (grace {grace} min)",
                     null,
+                    null,
                     ct);
                 return;
             }
+        }
+
+        if (schedule.Kind == ScheduleKind.Card)
+        {
+            await FireCardAsync(schedule, claim, now, ct);
+            return;
+        }
+
+        if (schedule.Kind != ScheduleKind.Prompt)
+        {
+            await CompleteFireAsync(
+                claim.ScheduleId, claim.FireNumber, ScheduleFireOutcome.Failed,
+                $"unknown schedule kind '{schedule.Kind}'", null, null, ct);
+            return;
         }
 
         if (schedule.AgentId is not Guid agentId)
         {
             await CompleteFireAsync(
                 claim.ScheduleId, claim.FireNumber, ScheduleFireOutcome.SkippedNoSession,
-                "schedule has no agent", null, ct);
+                "schedule has no agent", null, null, ct);
             return;
         }
 
@@ -231,7 +248,7 @@ public sealed class ScheduleService
         {
             await CompleteFireAsync(
                 claim.ScheduleId, claim.FireNumber, ScheduleFireOutcome.SkippedNoSession,
-                "agent is gone", null, ct);
+                "agent is gone", null, null, ct);
             return;
         }
 
@@ -239,7 +256,7 @@ public sealed class ScheduleService
         {
             await CompleteFireAsync(
                 claim.ScheduleId, claim.FireNumber, ScheduleFireOutcome.SkippedNoSession,
-                "agent has never launched", null, ct);
+                "agent has never launched", null, null, ct);
             return;
         }
 
@@ -249,7 +266,7 @@ public sealed class ScheduleService
         {
             await CompleteFireAsync(
                 claim.ScheduleId, claim.FireNumber, ScheduleFireOutcome.SkippedNoSession,
-                "persistent session row is gone", null, ct);
+                "persistent session row is gone", null, null, ct);
             return;
         }
 
@@ -264,6 +281,7 @@ public sealed class ScheduleService
                     agent.AlwaysOn
                         ? "agent is down (WhenTargetDown=Skip)"
                         : "agent is not always-on and has no live session",
+                    null,
                     null,
                     ct);
                 return;
@@ -330,7 +348,130 @@ public sealed class ScheduleService
             detail = string.IsNullOrEmpty(detail) ? $"fired {late} late" : $"{detail}; fired {late} late";
         }
 
-        await CompleteFireAsync(claim.ScheduleId, claim.FireNumber, outcome, detail, queuedId, ct);
+        await CompleteFireAsync(claim.ScheduleId, claim.FireNumber, outcome, detail, queuedId, null, ct);
+    }
+
+    private async Task FireCardAsync(Schedule schedule, FireClaim claim, DateTime now, CancellationToken ct)
+    {
+        if (schedule.CardId is not Guid cardId)
+        {
+            await SkipTargetGoneAsync(schedule, claim, "schedule has no card", ct);
+            return;
+        }
+
+        var card = await _db.Cards
+            .AsNoTracking()
+            .Include(c => c.BoardColumn)
+            .FirstOrDefaultAsync(c => c.Id == cardId, ct);
+        if (card is null)
+        {
+            await SkipTargetGoneAsync(schedule, claim, "card is gone", ct);
+            return;
+        }
+
+        var skipReason = TargetGoneReason(card);
+        if (skipReason is not null)
+        {
+            await SkipTargetGoneAsync(schedule, claim, skipReason, ct);
+            return;
+        }
+
+        var target = schedule.TargetStatus
+            ?? throw new InvalidOperationException("Card schedule has no target status.");
+        var reason =
+            $"Scheduled · {schedule.Name} · fire #{claim.FireNumber}";
+
+        try
+        {
+            switch (schedule.Start)
+            {
+                case ScheduleStart.None:
+                {
+                    var moved = await _cards.ApplyAutomatedMoveAsync(
+                        cardId, target, reason, SchedulerActor, ct);
+                    var detail = moved
+                        ? $"moved {card.Status} → {target}"
+                        : $"already {target}";
+                    await CompleteFireAsync(
+                        schedule.Id, claim.FireNumber, ScheduleFireOutcome.Moved, detail, null, null, ct);
+                    return;
+                }
+                case ScheduleStart.Release:
+                {
+                    var moved = await _cards.ApplyAutomatedMoveAsync(
+                        cardId, target, reason, SchedulerActor, ct);
+                    var released = await _cards.ReleaseAutoDispatchHoldAsync(
+                        cardId, $"{reason} — auto-dispatch hold released", SchedulerActor, ct);
+                    var detail = moved
+                        ? $"moved {card.Status} → {target}"
+                        : $"already {target}";
+                    detail += released ? "; auto-dispatch hold released" : "; hold already clear";
+                    await CompleteFireAsync(
+                        schedule.Id, claim.FireNumber, ScheduleFireOutcome.Released, detail, null, null, ct);
+                    return;
+                }
+                case ScheduleStart.Spawn:
+                {
+                    var spawned = await _cards.SpawnAsync(cardId, new SpawnCardRequest(), ct);
+                    await CompleteFireAsync(
+                        schedule.Id,
+                        claim.FireNumber,
+                        ScheduleFireOutcome.Spawned,
+                        $"spawned session {spawned.SessionId:D}",
+                        null,
+                        spawned.SessionId,
+                        ct);
+                    return;
+                }
+                default:
+                    await CompleteFireAsync(
+                        schedule.Id, claim.FireNumber, ScheduleFireOutcome.Failed,
+                        $"unknown start mode '{schedule.Start}'", null, null, ct);
+                    return;
+            }
+        }
+        catch (HttpException ex) when (ex.StatusCode == 409)
+        {
+            // Quota / model-hold 409 is a refusal. Never reroute (AGENTS.md).
+            var code = ex.Code ?? "conflict";
+            await CompleteFireAsync(
+                schedule.Id,
+                claim.FireNumber,
+                ScheduleFireOutcome.Refused,
+                $"{code}: {ex.Message}",
+                null,
+                null,
+                ct);
+        }
+    }
+
+    private static string? TargetGoneReason(Card card)
+    {
+        if (card.ArchivedAt is not null)
+            return "card is archived";
+        if (card.OwnerSessionId is not null)
+            return "card is owned by a live session";
+        if (card.Status is CardStatus.Done or CardStatus.Canceled)
+            return $"card is terminal ({card.Status})";
+        if (card.Status is CardStatus.NeedsDecision)
+            return "card is parked on NeedsDecision";
+        return null;
+    }
+
+    private async Task SkipTargetGoneAsync(
+        Schedule schedule, FireClaim claim, string reason, CancellationToken ct)
+    {
+        if (schedule.Repeat == ScheduleRepeat.Once)
+        {
+            schedule.Enabled = false;
+            schedule.NextFireAt = null;
+            schedule.UpdatedAt = UtcNow();
+            schedule.ConcurrencyToken = Guid.NewGuid();
+            await _db.SaveChangesAsync(ct);
+        }
+
+        await CompleteFireAsync(
+            schedule.Id, claim.FireNumber, ScheduleFireOutcome.SkippedTargetGone, reason, null, null, ct);
     }
 
     internal static (string Header, string Body) BuildPromptBody(
@@ -367,6 +508,7 @@ public sealed class ScheduleService
         ScheduleFireOutcome outcome,
         string? detail,
         Guid? queuedMessageId,
+        Guid? spawnedSessionId,
         CancellationToken ct)
     {
         var now = UtcNow();
@@ -378,6 +520,7 @@ public sealed class ScheduleService
             fire.Detail = detail;
             fire.CompletedAt = now;
             fire.QueuedMessageId = queuedMessageId;
+            fire.SpawnedSessionId = spawnedSessionId;
         }
 
         var schedule = await _db.Schedules.FirstOrDefaultAsync(s => s.Id == scheduleId, ct);
@@ -389,6 +532,8 @@ public sealed class ScheduleService
         }
 
         await _db.SaveChangesAsync(ct);
+        if (schedule is not null)
+            await PublishChangedAsync(schedule, ct);
     }
 
     public async Task PruneFiresAsync(CancellationToken ct)
@@ -446,9 +591,17 @@ public sealed class ScheduleService
 
     public async Task DeleteAsync(Guid id, CancellationToken ct)
     {
+        var existing = await _db.Schedules.AsNoTracking()
+            .Select(s => new { s.Id, s.AgentId, s.CardId })
+            .FirstOrDefaultAsync(s => s.Id == id, ct)
+            ?? throw new NotFoundException(nameof(Schedule), id);
         var rows = await _db.Schedules.Where(s => s.Id == id).ExecuteDeleteAsync(ct);
         if (rows == 0)
             throw new NotFoundException(nameof(Schedule), id);
+        await _eventBus.PublishToAllAsync(
+            "ScheduleChanged",
+            new { scheduleId = existing.Id, agentId = existing.AgentId, cardId = existing.CardId },
+            ct);
     }
 
     public async Task<SchedulePreviewDto> PreviewRequestAsync(CreateScheduleRequest request, CancellationToken ct)
@@ -474,6 +627,7 @@ public sealed class ScheduleService
         var row = await BuildFromRequestAsync(request, now, persist: true, ct);
         _db.Schedules.Add(row);
         await _db.SaveChangesAsync(ct);
+        await PublishChangedAsync(row, ct);
         return ToDto(row);
     }
 
@@ -553,40 +707,24 @@ public sealed class ScheduleService
         row.UpdatedAt = now;
         row.ConcurrencyToken = Guid.NewGuid();
         await _db.SaveChangesAsync(ct);
+        await PublishChangedAsync(row, ct);
         return ToDto(row);
     }
 
     private async Task<Schedule> BuildFromRequestAsync(
         CreateScheduleRequest request, DateTime now, bool persist, CancellationToken ct)
     {
-        if (request.Kind != ScheduleKind.Prompt)
-        {
-            throw new ValidationException(
-                nameof(CreateScheduleRequest.Kind),
-                "Card schedules ship in CARD-0057 phase 2. Create a Prompt schedule.");
-        }
-
         var name = RequireName(request.Name);
-        var prompt = RequirePrompt(request.PromptText);
         var zoneId = string.IsNullOrWhiteSpace(request.TimeZoneId)
             ? ResolveDefaultTimeZone()
             : RequireZone(request.TimeZoneId);
-
-        if (string.IsNullOrWhiteSpace(request.Agent))
-            throw new ValidationException(nameof(CreateScheduleRequest.Agent), "Agent is required for a prompt schedule.");
-
-        var agent = persist
-            ? await StandingAgentResolver.ResolveAsync(_db, request.Agent, nameof(CreateScheduleRequest.Agent), ct)
-            : await StandingAgentResolver.ResolveAsync(_db, request.Agent, nameof(CreateScheduleRequest.Agent), ct);
-
-        await RefuseForbiddenBodyAsync(agent.Id, prompt, ct);
-
         var repeat = request.Repeat;
+
         var row = new Schedule
         {
             Id = Guid.NewGuid(),
             Name = name,
-            Kind = ScheduleKind.Prompt,
+            Kind = request.Kind,
             Repeat = repeat,
             TimeZoneId = zoneId,
             Enabled = true,
@@ -594,14 +732,23 @@ public sealed class ScheduleService
             CreatedAt = now,
             UpdatedAt = now,
             ConcurrencyToken = Guid.NewGuid(),
-            AgentId = agent.Id,
-            Agent = persist ? null : agent,
-            PromptText = prompt,
-            WhenTargetDown = request.WhenTargetDown
-                ?? (agent.AlwaysOn ? ScheduleWhenTargetDown.Queue : ScheduleWhenTargetDown.Skip),
             DaysOfWeek = request.DaysOfWeek ?? 0,
             Start = ScheduleStart.None,
         };
+
+        switch (request.Kind)
+        {
+            case ScheduleKind.Prompt:
+                await ApplyPromptFieldsAsync(row, request, persist, ct);
+                break;
+            case ScheduleKind.Card:
+                await ApplyCardFieldsAsync(row, request, persist, ct);
+                break;
+            default:
+                throw new ValidationException(
+                    nameof(CreateScheduleRequest.Kind),
+                    $"Unknown schedule kind '{request.Kind}'.");
+        }
 
         switch (repeat)
         {
@@ -631,7 +778,78 @@ public sealed class ScheduleService
         }
 
         row.NextFireAt = ScheduleRecurrence.InitialNextFireAt(row, now);
+
+        if (persist
+            && row.Kind == ScheduleKind.Card
+            && row.Start is ScheduleStart.Release or ScheduleStart.Spawn
+            && !request.AcceptSpend)
+        {
+            throw new SpendUnacknowledgedException(await BuildPreviewAsync(row, ct));
+        }
+
         return row;
+    }
+
+    private async Task ApplyPromptFieldsAsync(
+        Schedule row, CreateScheduleRequest request, bool persist, CancellationToken ct)
+    {
+        var prompt = RequirePrompt(request.PromptText);
+        if (string.IsNullOrWhiteSpace(request.Agent))
+            throw new ValidationException(nameof(CreateScheduleRequest.Agent), "Agent is required for a prompt schedule.");
+
+        var agent = await StandingAgentResolver.ResolveAsync(
+            _db, request.Agent, nameof(CreateScheduleRequest.Agent), ct);
+        await RefuseForbiddenBodyAsync(agent.Id, prompt, ct);
+
+        row.AgentId = agent.Id;
+        row.Agent = persist ? null : agent;
+        row.PromptText = prompt;
+        row.WhenTargetDown = request.WhenTargetDown
+            ?? (agent.AlwaysOn ? ScheduleWhenTargetDown.Queue : ScheduleWhenTargetDown.Skip);
+        row.Start = ScheduleStart.None;
+    }
+
+    private async Task ApplyCardFieldsAsync(
+        Schedule row, CreateScheduleRequest request, bool persist, CancellationToken ct)
+    {
+        if (request.CardId is not Guid cardId)
+        {
+            throw new ValidationException(
+                nameof(CreateScheduleRequest.CardId),
+                "CardId is required for a card schedule.");
+        }
+
+        var target = request.TargetStatus
+            ?? throw new ValidationException(
+                nameof(CreateScheduleRequest.TargetStatus),
+                "TargetStatus is required for a card schedule (Backlog, InProgress, or Review).");
+        if (!CardActionTargets.Contains(target))
+        {
+            throw new ValidationException(
+                nameof(CreateScheduleRequest.TargetStatus),
+                "A card action cannot close a card or park it on NeedsDecision. TargetStatus must be Backlog, InProgress, or Review.");
+        }
+
+        var card = await _db.Cards.AsNoTracking()
+            .Include(c => c.Board).ThenInclude(b => b.Columns)
+            .Include(c => c.Board).ThenInclude(b => b.WorkflowDefinitions)
+            .Include(c => c.BoardColumn)
+            .Include(c => c.AssignedAgent)
+            .FirstOrDefaultAsync(c => c.Id == cardId, ct)
+            ?? throw new ValidationException(
+                nameof(CreateScheduleRequest.CardId),
+                $"No card matches '{cardId}'.");
+
+        row.CardId = card.Id;
+        row.Card = persist ? null : card;
+        row.TargetStatus = target;
+        row.Start = request.Start;
+        row.WhenTargetDown = ScheduleWhenTargetDown.Skip;
+        if (request.Start is ScheduleStart.Release or ScheduleStart.Spawn && request.AcceptSpend)
+        {
+            row.SpendAcceptedAt = UtcNow();
+            row.SpendAcceptedBy = TrimTo(request.CreatedBy, MaxCreatedByLength) ?? "operator";
+        }
     }
 
     private async Task RefuseForbiddenBodyAsync(Guid agentId, string prompt, CancellationToken ct)
@@ -658,6 +876,16 @@ public sealed class ScheduleService
         if (agent is null && schedule.AgentId is Guid agentId)
             agent = await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == agentId, ct);
 
+        Card? card = schedule.Card;
+        if (card is null && schedule.CardId is Guid cardId)
+        {
+            card = await _db.Cards.AsNoTracking()
+                .Include(c => c.Board).ThenInclude(b => b.WorkflowDefinitions)
+                .Include(c => c.BoardColumn)
+                .Include(c => c.AssignedAgent)
+                .FirstOrDefaultAsync(c => c.Id == cardId, ct);
+        }
+
         Guid? sessionId = null;
         AgentSession? session = null;
         var live = false;
@@ -669,35 +897,168 @@ public sealed class ScheduleService
         }
 
         var warnings = new List<string>();
-        if (agent is null)
-            warnings.Add("No agent is attached.");
-        else if (sessionId is null)
-            warnings.Add("The agent has never launched; a fire will skip.");
-        else if (!live && schedule.WhenTargetDown == ScheduleWhenTargetDown.Skip)
-            warnings.Add("The agent is down; WhenTargetDown=Skip will record SkippedNoSession.");
-        else if (!live)
-            warnings.Add("The agent is down; the prompt will wait on the persistent session for relaunch.");
+        string effect;
+        string spend;
+        var willStart = false;
+        string? willMove = null;
+        SchedulePreviewEnvironmentDto? environment = null;
 
-        var effect = agent is null
-            ? "no target"
-            : $"will enqueue WhenIdle onto {agent.Name}";
+        if (schedule.Kind == ScheduleKind.Card)
+        {
+            (effect, spend, willStart, willMove, environment) =
+                await DescribeCardPreviewAsync(schedule, card, warnings, ct);
+        }
+        else
+        {
+            spend = "none";
+            if (agent is null)
+            {
+                warnings.Add("No agent is attached.");
+                effect = "no target";
+            }
+            else if (sessionId is null)
+            {
+                warnings.Add("The agent has never launched; a fire will skip.");
+                effect = $"will enqueue WhenIdle onto {agent.Name}";
+            }
+            else if (!live && schedule.WhenTargetDown == ScheduleWhenTargetDown.Skip)
+            {
+                warnings.Add("The agent is down; WhenTargetDown=Skip will record SkippedNoSession.");
+                effect = $"will enqueue WhenIdle onto {agent.Name}";
+            }
+            else if (!live)
+            {
+                warnings.Add("The agent is down; the prompt will wait on the persistent session for relaunch.");
+                effect = $"will enqueue WhenIdle onto {agent.Name}";
+            }
+            else
+            {
+                effect = $"will enqueue WhenIdle onto {agent.Name}";
+            }
+        }
 
         return new SchedulePreviewDto(
             next,
             new ScheduleTargetDto(
                 agent?.Id,
                 agent?.Name,
-                live,
+                agent is null ? null : live,
                 agent?.AlwaysOn,
                 session?.Status.ToString(),
-                schedule.CardId,
-                schedule.Card?.Identifier,
-                schedule.Card?.Status,
-                schedule.Card?.ArchivedAt is not null),
+                card?.Id ?? schedule.CardId,
+                card?.Identifier,
+                card?.Status,
+                card?.ArchivedAt is not null,
+                card?.BoardColumn?.Name,
+                card?.OwnerSessionId),
             effect,
-            "none",
-            warnings);
+            spend,
+            warnings,
+            willStart,
+            willMove,
+            environment);
     }
+
+    private async Task<(
+        string Effect,
+        string Spend,
+        bool WillStartSession,
+        string? WillMove,
+        SchedulePreviewEnvironmentDto Environment)> DescribeCardPreviewAsync(
+        Schedule schedule,
+        Card? card,
+        List<string> warnings,
+        CancellationToken ct)
+    {
+        var spend = schedule.Start switch
+        {
+            ScheduleStart.Release => "orchestrator-under-cap",
+            ScheduleStart.Spawn => "immediate-session",
+            _ => "none",
+        };
+        var willStart = schedule.Start is ScheduleStart.Release or ScheduleStart.Spawn;
+        string? willMove = null;
+        if (card is not null && schedule.TargetStatus is { } target)
+        {
+            willMove = card.Status == target
+                ? $"already {DescribeStatus(target)}"
+                : $"{DescribeStatus(card.Status)} → {DescribeStatus(target)}";
+        }
+
+        if (card is null)
+            warnings.Add("No card is attached.");
+        else if (TargetGoneReason(card) is { } gone)
+            warnings.Add($"A fire will skip: {gone}.");
+        else if (schedule.Start == ScheduleStart.Spawn)
+            warnings.Add("Spawn bypasses board and column caps, the same as card.ps1 move -Spawn.");
+        else if (schedule.Start == ScheduleStart.Release)
+            warnings.Add("Release lets the orchestrator start a session under the board and column caps.");
+
+        int? activeCount = null;
+        int? cap = null;
+        string? hold = null;
+        string? assigned = card?.AssignedAgent?.Name;
+        string? definition = card?.Board.WorkflowDefinitions
+            .Where(d => d.IsActive)
+            .OrderByDescending(d => d.Version)
+            .Select(d => d.Name)
+            .FirstOrDefault();
+
+        if (card is not null)
+        {
+            cap = card.Board.MaxConcurrentSessions;
+            var activeStatuses = new[] { SessionStatus.Starting, SessionStatus.Running };
+            activeCount = await _db.AgentSessions.AsNoTracking()
+                .CountAsync(
+                    s => s.CardId != null
+                        && activeStatuses.Contains(s.Status)
+                        && _db.Cards.Any(c => c.Id == s.CardId && c.BoardId == card.BoardId),
+                    ct);
+
+            var kind = card.AssignedAgent?.Kind;
+            if (kind is AgentKind k)
+            {
+                var now = UtcNow();
+                var activeHold = await _db.ModelAvailabilityHolds.AsNoTracking()
+                    .Where(h => h.Kind == k && h.ClearedAt == null
+                        && (h.DisabledUntil == null || h.DisabledUntil > now))
+                    .OrderByDescending(h => h.HitAt)
+                    .FirstOrDefaultAsync(ct);
+                if (activeHold is not null)
+                    hold = $"{k}/{activeHold.ModelAlias} ({activeHold.Source})";
+            }
+        }
+
+        var environment = new SchedulePreviewEnvironmentDto(
+            _orchestrator.IsPaused,
+            activeCount,
+            cap,
+            hold,
+            assigned,
+            definition);
+
+        var startBit = willStart
+            ? schedule.Start == ScheduleStart.Spawn
+                ? "willStartSession: true (immediate, bypassing caps)"
+                : "willStartSession: true (orchestrator, under cap)"
+            : "willStartSession: false";
+        var moveBit = willMove is null ? "willMove: none" : $"willMove: {willMove}";
+        var effect = $"{moveBit}; {startBit}; spend: {spend}";
+        return (effect, spend, willStart, willMove, environment);
+    }
+
+    private static string DescribeStatus(CardStatus status) => status switch
+    {
+        CardStatus.InProgress => "In Progress",
+        CardStatus.NeedsDecision => "Needs decision",
+        _ => status.ToString(),
+    };
+
+    private Task PublishChangedAsync(Schedule schedule, CancellationToken ct) =>
+        _eventBus.PublishToAllAsync(
+            "ScheduleChanged",
+            new { scheduleId = schedule.Id, agentId = schedule.AgentId, cardId = schedule.CardId },
+            ct);
 
     private ScheduleDto ToDto(Schedule s, IReadOnlyList<ScheduleFire>? fires = null) =>
         new(

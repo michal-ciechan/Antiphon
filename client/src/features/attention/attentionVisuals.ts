@@ -16,6 +16,7 @@ import {
   TbSkull,
   TbUserOff,
   TbX,
+  TbCalendarOff,
 } from 'react-icons/tb'
 import type { AlertSeverity } from '../../api/agents'
 import type { AttentionItemDto, AttentionKind } from '../../api/attention'
@@ -192,6 +193,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     color: 'danger',
     icon: TbAlertTriangle,
     hint: 'The complexity chain has no available candidate. A human decides: clear a hold, wait for a reset, or reroute. Do not pick a kind yourself from an agent.',
+  },
+  ScheduleMisfired: {
+    label: 'Schedule misfire',
+    color: 'warning',
+    icon: TbCalendarOff,
+    hint: 'A clock-driven schedule skipped, refused, failed, or is stuck at Claimed. Open the agent or card; the next good fire clears this.',
   },
 }
 

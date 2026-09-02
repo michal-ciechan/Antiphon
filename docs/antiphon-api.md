@@ -281,7 +281,7 @@ string }`. Omitted `disabledUntil` is open-ended. Past UTC is 422. Script:
 
 ### Schedules
 
-`ScheduleEndpoints.cs` — the API behind `scripts/schedule.ps1` (CARD-0057 phase 1: prompt delivery).
+`ScheduleEndpoints.cs` — the API behind `scripts/schedule.ps1` (CARD-0057: prompt delivery and card actions).
 
 ```
 GET    /api/schedules?agentId=&cardId=&boardId=&enabled=
@@ -294,7 +294,7 @@ DELETE /api/schedules/{id}
 POST   /api/schedules/{id}/fire-now          bypasses grace, does not advance recurrence
 ```
 
-`CreateScheduleRequest` / `ScheduleDto` live in `server/Application/Dtos/ScheduleDtos.cs`. Phase 1 accepts `kind: Prompt` only; a card action is 422 until phase 2. Repeat is `Once` / `Interval` / `Daily` — no cron. Enums are names. Long prompt text belongs in `-PromptFile` on the script, never inline.
+`CreateScheduleRequest` / `ScheduleDto` live in `server/Application/Dtos/ScheduleDtos.cs`. `kind: Prompt` enqueues WhenIdle onto a standing agent. `kind: Card` moves a card (`Start=None` bookkeeping, `Release` lifts the auto-dispatch hold, `Spawn` launches now). `Release`/`Spawn` without `acceptSpend: true` is 422 `spend_unacknowledged` with the preview embedded. Repeat is `Once` / `Interval` / `Daily` — no cron. Enums are names. Long prompt text belongs in `-PromptFile` on the script, never inline. Card create: `schedule.ps1 new -Card … -To … -Start … -AcceptSpend`.
 
 ### Runner profiles and credentials
 
