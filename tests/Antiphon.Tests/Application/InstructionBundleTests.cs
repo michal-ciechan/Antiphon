@@ -247,6 +247,13 @@ public class InstructionBundleTests
         // CARD-0296: the pointer at the read-oriented HTTP surface. Without it an orchestrator
         // greps MapGet for routes that do not exist and reads the 404s as a broken server.
         DelegationReportFormatter.OrchestratorContract.ShouldContain("docs/ops-http.md");
+        // CARD-0017: the standing delegate-the-reading rule. Pin phrases, not the paragraph, so a
+        // later wording tweak of the carve-out does not fail this; the negative pin is what keeps
+        // the old "single file read" loosening from creeping back.
+        DelegationReportFormatter.OrchestratorContract.ShouldContain("Delegate the reading.");
+        DelegationReportFormatter.OrchestratorContract.ShouldContain("quote exactly or must judge personally");
+        DelegationReportFormatter.OrchestratorContract.ShouldContain("frontier-tier");
+        DelegationReportFormatter.OrchestratorContract.ShouldNotContain("single file read");
     }
 
     [Test]
@@ -282,11 +289,13 @@ public class InstructionBundleTests
         // orchestrator 1 156, telegram preset 1 802 => 9 198 composed chars, 31% of the 30 000 budget
         // and 28% of the OS limit. Re-measured 2026-08-30 after CARD-0250's channel-bound paragraph
         // (orchestrator 2 441, telegram preset 2 189) plus catalog growth since: 15 307 composed,
-        // 51% of the budget. That is what makes 30 000 a runaway stop rather than a working
-        // constraint, and it is why the guard can afford to THROW instead of truncating. The
-        // assertion is a headroom bound rather than the exact number so ordinary prose edits do not
-        // fail it — an order-of-magnitude growth does. /2 (15 000) was crossed by that planned
-        // paragraph; 2/3 still sits far under the 30 000 throw and would still catch a doubling.
+        // 51% of the budget. Re-measured 2026-09-02 after CARD-0017's delegate-the-reading paragraph
+        // (orchestrator 5 143) plus catalog growth since: 18 426 composed, 61% of the budget. That
+        // is what makes 30 000 a runaway stop rather than a working constraint, and it is why the
+        // guard can afford to THROW instead of truncating. The assertion is a headroom bound rather
+        // than the exact number so ordinary prose edits do not fail it — an order-of-magnitude
+        // growth does. /2 (15 000) was crossed by that planned paragraph; 2/3 still sits far under
+        // the 30 000 throw and would still catch a doubling.
         var budget = new DelegationSettings().CommandLineBudgetChars;
         var everything = InstructionBundles.All.Keys.Order().ToList();
 
