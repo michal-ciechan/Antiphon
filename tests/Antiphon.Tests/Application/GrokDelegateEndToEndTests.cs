@@ -268,6 +268,7 @@ public class GrokDelegateEndToEndTests
             settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
             settled.Result.ShouldNotBeNull().ShouldContain("FAKE response to:", customMessage:
                 "the report is the delegate's own turn-ending text");
+            settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
             settled.AgentKind.ShouldBe(AgentKind.Grok);
 
             // The usage counters are fakegrok's turn_completed.usage, read by the real normalizer
@@ -392,7 +393,11 @@ public class GrokDelegateEndToEndTests
             // ApiCallId, so this side takes CARD-0046's normal Landed path with the shipped grace.
             var apiCallId = $"msg_{Guid.NewGuid():N}";
             await SeedEntryAsync(sessionId, TranscriptKinds.UserPrompt, body, null);
-            await SeedEntryAsync(sessionId, TranscriptKinds.AssistantText, "Done. 3 passed, 0 failed.", apiCallId);
+            await SeedEntryAsync(
+                sessionId,
+                TranscriptKinds.AssistantText,
+                "Done. 3 passed, 0 failed.\n" + DelegationReportFormatter.ReportToken(queued.Id, "done"),
+                apiCallId);
             await SeedEntryAsync(sessionId, TranscriptKinds.TurnEnd, null, apiCallId, inputTokens: 1, outputTokens: 1);
 
             await harness.Provider.GetRequiredService<AgentTaskReplyService>()
@@ -403,6 +408,7 @@ public class GrokDelegateEndToEndTests
             settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
             settled.Result.ShouldNotBeNull().ShouldContain("3 passed", customMessage:
                 "the report is the seeded turn-ending text");
+            settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
             settled.TokensIn.ShouldBe(1);
             settled.TokensOut.ShouldBe(1);
 
@@ -491,7 +497,11 @@ public class GrokDelegateEndToEndTests
                 ArgsTemplate = ["--always-approve", "--no-alt-screen"],
                 // Where fakegrok writes its session files, and — the same value, read off the launch
                 // env — where the runner's GrokTranscriptTailer looks for updates.jsonl.
-                Env = new Dictionary<string, string> { ["GROK_HOME"] = grokHome },
+                Env = new Dictionary<string, string>
+                {
+                    ["GROK_HOME"] = grokHome,
+                    ["ANTIPHON_FAKE_REPORT_LINE"] = "1",
+                },
             };
         });
         services.AddSingleton<AgentRegistry>();

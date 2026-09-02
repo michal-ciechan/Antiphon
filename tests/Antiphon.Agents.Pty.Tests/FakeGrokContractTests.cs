@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using Antiphon.Agents.Pty;
 using Shouldly;
 using TUnit.Core;
@@ -273,6 +274,24 @@ public class FakeGrokContractTests
     }
 
     [Test]
+    public async Task Report_line_knob_appends_the_task_token_to_the_agent_message_chunk()
+    {
+        SkipIfUnavailable();
+        var taskId = "a1b2c3d4";
+        var prompt = $"[antiphon-task:{taskId}] do the work [antiphon-task:{taskId}]";
+        var token = $"[antiphon-report:{taskId} done]";
+
+        var onLast = await AgentChunkLastLineAsync(
+            prompt,
+            env: new Dictionary<string, string> { ["ANTIPHON_FAKE_REPORT_LINE"] = "1" });
+        onLast.ShouldBe(token);
+
+        var offLast = await AgentChunkLastLineAsync(prompt, env: null);
+        offLast.ShouldNotBe(token);
+        offLast.ShouldStartWith("FAKE response to:");
+    }
+
+    [Test]
     public async Task Submit_while_working_emits_cancelled_then_the_new_user_chunk()
     {
         SkipIfUnavailable();
@@ -475,6 +494,66 @@ public class FakeGrokContractTests
         {
             try { Directory.Delete(home, true); } catch { /* best effort */ }
         }
+    }
+
+    /// <summary>
+    /// CARD-0243: launch fakegrok, submit one marked prompt, return the last line of the
+    /// <c>agent_message_chunk</c> text. Used to pin the report-line knob on and off.
+    /// </summary>
+    private static async Task<string> AgentChunkLastLineAsync(
+        string prompt, IDictionary<string, string>? env)
+    {
+        var home = Path.Combine(Path.GetTempPath(), $"fakegrok-home-{Guid.NewGuid():N}");
+        var cwd = Path.Combine(Path.GetTempPath(), $"fakegrok-cwd-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(cwd);
+        var sessionId = Guid.NewGuid().ToString("D");
+        var fakeEnv = env is null
+            ? new Dictionary<string, string> { ["GROK_HOME"] = home }
+            : new Dictionary<string, string>(env) { ["GROK_HOME"] = home };
+        try
+        {
+            await using var runner = await LaunchReadyFakeAsync(
+                env: fakeEnv,
+                args: ["--cwd", cwd, "--session-id", sessionId]);
+
+            await runner.WriteAsync(prompt);
+            await Task.Delay(25);
+            await runner.WriteAsync("\r");
+            (await runner.WaitForOutputAsync(
+                s => s.Contains("SUBMITTED:"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue();
+
+            var sessionDir = Path.Combine(home, "sessions", Uri.EscapeDataString(Path.GetFullPath(cwd)), sessionId);
+            var updatesPath = Path.Combine(sessionDir, "updates.jsonl");
+            var text = await WaitForUpdatesAsync(updatesPath, "agent_message_chunk", "turn_completed");
+            await runner.KillAsync(TimeSpan.FromSeconds(2));
+            return LastAgentChunkLine(text);
+        }
+        finally
+        {
+            try { Directory.Delete(home, true); } catch { /* best effort */ }
+            try { Directory.Delete(cwd, true); } catch { /* best effort */ }
+        }
+    }
+
+    private static string LastAgentChunkLine(string updates)
+    {
+        foreach (var line in updates.Split('\n', StringSplitOptions.RemoveEmptyEntries).Reverse())
+        {
+            if (!line.Contains("agent_message_chunk", StringComparison.Ordinal))
+                continue;
+            using var doc = JsonDocument.Parse(line);
+            var text = doc.RootElement
+                .GetProperty("params")
+                .GetProperty("update")
+                .GetProperty("content")
+                .GetProperty("text")
+                .GetString() ?? "";
+            var lines = text.Replace("\r\n", "\n").Split('\n');
+            return lines[^1];
+        }
+
+        throw new InvalidOperationException("updates.jsonl had no agent_message_chunk");
     }
 
     /// <summary>

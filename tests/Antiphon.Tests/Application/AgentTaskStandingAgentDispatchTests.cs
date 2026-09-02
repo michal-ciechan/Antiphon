@@ -349,6 +349,7 @@ public class AgentTaskStandingAgentDispatchTests
             "the turn-end trigger fires for a session the dispatcher did not launch");
         settled.Result.ShouldContain("two commits in the last window");
         settled.CompletedAt.ShouldNotBeNull();
+        settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
 
         // And no pool handshake: ReleaseDelegateAsync filters on IsPoolDelegate, so a standing
         // agent is never pooled, never reserved, and above all never REMOVED when its task settles.
@@ -357,6 +358,51 @@ public class AgentTaskStandingAgentDispatchTests
         await using var verify = CreateContext();
         (await verify.Agents.AnyAsync(a => a.Id == agentId))
             .ShouldBeTrue("the janitor's delete path must never reach a standing agent");
+    }
+
+    /// <summary>
+    /// CARD-0243: an unmarked turn on a standing session is nudged once, stays Dispatched, and
+    /// still leaves the agent row alone — the interaction CARD-0159 introduced and nothing
+    /// pinned until now.
+    /// </summary>
+    [Test]
+    public async Task an_unmarked_turn_on_the_standing_session_is_nudged_and_still_leaves_the_agent_alone()
+    {
+        using var workspace = new TempWorkspace();
+        var (dispatcher, provider) = CreateHarness();
+        var (agentId, sessionId) = await SeedStandingAgentAsync(workspace.Path, alwaysOn: true);
+        var before = await AgentSnapshotAsync(agentId);
+        var task = await SeedQueuedTaskAsync(workspace.Path, pinnedAgentId: agentId);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+        (await ReloadTaskAsync(task.Id)).AgentSessionId.ShouldBe(sessionId);
+
+        var runtime = provider.GetRequiredService<AgentSessionRuntime>();
+        foreach (var entry in Turn(
+            sessionId,
+            prompt: DelegationReportFormatter.TaskMarker(task.Id) + "\n\nRead the bundle.",
+            reply: "Producing: two commits in the last window. Looks healthy.",
+            closingVerdict: false))
+        {
+            await runtime.ObserveTranscriptAsync(entry, CancellationToken.None);
+        }
+
+        var stored = await ReloadTaskAsync(task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        stored.ReportNudgedAt.ShouldNotBeNull();
+
+        await using var verify = CreateContext();
+        var nudge = await verify.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == sessionId
+                && m.Origin == QueuedMessageOrigin.Delegation
+                && m.Status == QueuedMessageStatus.Pending
+                && m.Body.Contains("closing report line"))
+            .ToListAsync();
+        var row = nudge.ShouldHaveSingleItem();
+        row.Body.ShouldContain(DelegationReportFormatter.TaskMarker(task.Id));
+
+        var after = await AgentSnapshotAsync(agentId);
+        after.ShouldBe(before, "the nudge into a standing agent's session must not touch the agent row");
     }
 
     // ---- helpers ---------------------------------------------------------------------------
@@ -392,9 +438,16 @@ public class AgentTaskStandingAgentDispatchTests
         await db.SaveChangesAsync();
     }
 
-    /// <summary>One complete turn as the tailer emits it: prompt, the response's text, its TurnEnd.</summary>
-    private static SessionRunnerTranscriptEvent[] Turn(Guid sessionId, string prompt, string reply)
+    /// <summary>
+    /// One complete turn as the tailer emits it: prompt, the response's text, its TurnEnd.
+    /// CARD-0159: when the prompt carries a task marker, append the closing report token unless
+    /// <paramref name="closingVerdict"/> is false. Copied from
+    /// <c>AgentTaskReplyIntegrationTests.ApplyClosingVerdict</c> — do not share across suites.
+    /// </summary>
+    private static SessionRunnerTranscriptEvent[] Turn(
+        Guid sessionId, string prompt, string reply, bool closingVerdict = true)
     {
+        reply = ApplyClosingVerdict(prompt, reply, closingVerdict);
         var api = $"msg_{Guid.NewGuid():N}";
         var tag = Guid.NewGuid().ToString("N");
         var at = DateTimeOffset.UtcNow;
@@ -407,6 +460,26 @@ public class AgentTaskStandingAgentDispatchTests
             new(sessionId, 3, TranscriptKinds.TurnEnd, $"{tag}-t", null, at.AddSeconds(2), "assistant",
                 null, null, null, null, null, "end_turn", api),
         ];
+    }
+
+    /// <summary>
+    /// CARD-0159: existing settlement tests predate the closing-line contract. Appending the
+    /// matching <c>[antiphon-report:id done]</c> (stripped again at settle) keeps them on the
+    /// marked path. Question reports and tests that pass <paramref name="closingVerdict"/> false
+    /// are left untouched so they exercise the heuristic / nudge arms.
+    /// </summary>
+    private static string ApplyClosingVerdict(string prompt, string reply, bool closingVerdict)
+    {
+        if (!closingVerdict || string.IsNullOrEmpty(reply))
+            return reply;
+        if (AgentTaskReplyService.LooksLikeAQuestion(reply))
+            return reply;
+        if (reply.Contains("[antiphon-report:", StringComparison.Ordinal))
+            return reply;
+        var shortId = DelegationReportFormatter.TryReadTaskMarkerId(prompt);
+        if (shortId is null)
+            return reply;
+        return reply.TrimEnd() + "\n" + DelegationReportFormatter.ReportToken(shortId, "done");
     }
 
     private static (AgentTaskDispatcher Dispatcher, ServiceProvider Provider) CreateHarness(
