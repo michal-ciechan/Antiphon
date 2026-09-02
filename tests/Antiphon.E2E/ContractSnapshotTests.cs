@@ -318,7 +318,248 @@ public class ContractSnapshotTests
             workspace: null, scrubTimestamps: false, scrubGuids: false);
     }
 
+    /// <summary>
+    /// CARD-0002 S2. Own test so a pre-existing <c>agent-tasks.json</c> drift (extra summary
+    /// fields the fixture was never recaptured against) cannot block capturing the home-rail
+    /// contract. Seeds the same unbound-task run plus a Review card, a NeedsDecision card,
+    /// and a bound Working task.
+    /// </summary>
+    [Test]
+    public async Task Home_tasks_rail_contract()
+    {
+        var app = await SharedApp.GetAsync();
+        const string cwd = @"C:\src\antiphon";
+        var t0 = new DateTime(2026, 2, 3, 9, 0, 0, DateTimeKind.Utc);
+        var root = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001");
+        var schema = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000002");
+        var suite = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000003");
+        var install = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000004");
+        var hang = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000005");
+
+        using (var scope = app.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            if (await db.AgentTasks.AnyAsync(t => t.RootTaskId == root))
+            {
+                db.AgentTaskEvents.RemoveRange(db.AgentTaskEvents.Where(e => db.AgentTasks
+                    .Where(t => t.RootTaskId == root).Select(t => t.Id).Contains(e.AgentTaskId)));
+                db.AgentTasks.RemoveRange(db.AgentTasks.Where(t => t.RootTaskId == root));
+                await db.SaveChangesAsync();
+            }
+
+            var agents = new Dictionary<string, Guid>
+            {
+                ["task-upgrade"] = Guid.Parse("bbbbbbbb-0000-0000-0000-000000000001"),
+                ["task-schema"] = Guid.Parse("bbbbbbbb-0000-0000-0000-000000000002"),
+                ["task-suite"] = Guid.Parse("bbbbbbbb-0000-0000-0000-000000000003"),
+                ["task-install"] = Guid.Parse("bbbbbbbb-0000-0000-0000-000000000004"),
+                ["task-hang"] = Guid.Parse("bbbbbbbb-0000-0000-0000-000000000005"),
+            };
+            var levels = new Dictionary<string, Server.Domain.Enums.AgentModelLevel>
+            {
+                ["task-upgrade"] = Server.Domain.Enums.AgentModelLevel.Frontier,
+                ["task-schema"] = Server.Domain.Enums.AgentModelLevel.Frontier,
+                ["task-suite"] = Server.Domain.Enums.AgentModelLevel.Low,
+                ["task-install"] = Server.Domain.Enums.AgentModelLevel.Medium,
+                ["task-hang"] = Server.Domain.Enums.AgentModelLevel.Frontier,
+            };
+            var existing = await db.Agents
+                .Where(a => agents.Values.Contains(a.Id)).Select(a => a.Id).ToListAsync();
+            foreach (var (name, id) in agents.Where(a => !existing.Contains(a.Value)))
+                db.Agents.Add(DelegateAgent(id, name, cwd, levels[name], t0));
+            await db.SaveChangesAsync();
+
+            db.AgentTasks.AddRange(
+                Task(root, root, null, 0, "Ship the Postgres 18 upgrade", cwd, t0, agents["task-upgrade"], "task-upgrade", t =>
+                {
+                    t.Kind = Server.Domain.Enums.AgentTaskKind.Orchestrator;
+                    t.Role = Server.Domain.Enums.AgentTaskRole.Plan;
+                    t.ModelLevel = Server.Domain.Enums.AgentModelLevel.Frontier;
+                    t.Status = Server.Domain.Enums.AgentTaskStatus.Working;
+                    t.DispatchedAt = t0;
+                    t.TokensIn = 84_000; t.CacheReadTokens = 2_400_000; t.CacheCreationTokens = 41_000;
+                    t.TokensOut = 3_100; t.CostUsd = 0.412m; t.CostPricingVersion = Server.Application.Services.DelegationCost.PricingVersion;
+                }),
+                Task(schema, root, root, 1, "Migrate the schema and connection strings", cwd, t0.AddMinutes(2),
+                    agents["task-schema"], "task-schema", t =>
+                {
+                    t.Kind = Server.Domain.Enums.AgentTaskKind.Orchestrator;
+                    t.Role = Server.Domain.Enums.AgentTaskRole.Code;
+                    t.ModelLevel = Server.Domain.Enums.AgentModelLevel.Frontier;
+                    t.Status = Server.Domain.Enums.AgentTaskStatus.Working;
+                    t.Workspace = Server.Domain.Enums.WorkspaceMode.Worktree;
+                    t.MergeTargetRef = "feat/pg18";
+                    t.DispatchedAt = t0.AddMinutes(2);
+                    t.TokensIn = 61_500; t.CacheReadTokens = 1_850_000; t.CacheCreationTokens = 32_000;
+                    t.TokensOut = 4_800; t.CostUsd = 0.318m; t.CostPricingVersion = Server.Application.Services.DelegationCost.PricingVersion;
+                }),
+                Task(suite, root, schema, 2, "Run the integration suite and report failures", cwd, t0.AddMinutes(9),
+                    agents["task-suite"], "task-suite", t =>
+                {
+                    t.Role = Server.Domain.Enums.AgentTaskRole.Test;
+                    t.ModelLevel = Server.Domain.Enums.AgentModelLevel.Low;
+                    t.Status = Server.Domain.Enums.AgentTaskStatus.Succeeded;
+                    t.Scope = "tests/**";
+                    t.DispatchedAt = t0.AddMinutes(9);
+                    t.CompletedAt = t0.AddMinutes(13).AddSeconds(24);
+                    t.TokensIn = 22_000; t.CacheReadTokens = 430_000; t.CacheCreationTokens = 9_000;
+                    t.TokensOut = 900; t.CostUsd = 0.019m; t.CostPricingVersion = Server.Application.Services.DelegationCost.PricingVersion;
+                }),
+                Task(install, root, root, 1, "Rewrite the Windows install section", cwd, t0.AddMinutes(3),
+                    agents["task-install"], "task-install", t =>
+                {
+                    t.Role = Server.Domain.Enums.AgentTaskRole.Docs;
+                    t.ModelLevel = Server.Domain.Enums.AgentModelLevel.Medium;
+                    t.Status = Server.Domain.Enums.AgentTaskStatus.Blocked;
+                    t.Workspace = Server.Domain.Enums.WorkspaceMode.ReadOnly;
+                    t.Scope = "docs/setup.md";
+                    t.DispatchedAt = t0.AddMinutes(3);
+                    t.TokensIn = 18_400; t.CacheReadTokens = 520_000; t.CacheCreationTokens = 11_000;
+                    t.TokensOut = 1_250; t.CostUsd = 0.031m; t.CostPricingVersion = Server.Application.Services.DelegationCost.PricingVersion;
+                }),
+                Task(hang, root, root, 1, "Find out why the suite hangs on CI", cwd, t0.AddMinutes(4),
+                    agents["task-hang"], "task-hang", t =>
+                {
+                    t.Role = Server.Domain.Enums.AgentTaskRole.Debug;
+                    t.ModelLevel = Server.Domain.Enums.AgentModelLevel.Frontier;
+                    t.EscalatedFrom = Server.Domain.Enums.AgentModelLevel.High;
+                    t.Attempt = 2;
+                    t.Status = Server.Domain.Enums.AgentTaskStatus.Queued;
+                    t.TokensIn = 40_100; t.CacheReadTokens = 1_150_000; t.CacheCreationTokens = 21_000;
+                    t.TokensOut = 2_600; t.CostUsd = 0.204m; t.CostPricingVersion = Server.Application.Services.DelegationCost.PricingVersion;
+                }));
+            await db.SaveChangesAsync();
+            await SeedHomeTasksScenarioAsync(db, cwd, t0);
+        }
+
+        var homeIds = new HashSet<Guid>
+        {
+            root, schema, suite, install, hang,
+            HomeReviewCardId, HomeDecisionCardId, HomeRunningCardId,
+        };
+        await SnapshotHomeTasksAsync(app, homeIds);
+    }
+
     // ---- scenario helpers ----
+
+    private static readonly Guid HomeProjectId = Guid.Parse("cccccccc-0000-0000-0000-000000000001");
+    private static readonly Guid HomeBoardId = Guid.Parse("cccccccc-0000-0000-0000-000000000002");
+    private static readonly Guid HomeReviewCardId = Guid.Parse("cccccccc-0000-0000-0000-000000000003");
+    private static readonly Guid HomeDecisionCardId = Guid.Parse("cccccccc-0000-0000-0000-000000000004");
+    private static readonly Guid HomeRunningCardId = Guid.Parse("cccccccc-0000-0000-0000-000000000005");
+    private static readonly Guid HomeBoundTaskId = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000006");
+    private static readonly Guid HomeBoundAgentId = Guid.Parse("bbbbbbbb-0000-0000-0000-000000000006");
+
+    private static async Task SeedHomeTasksScenarioAsync(AppDbContext db, string cwd, DateTime t0)
+    {
+        db.AgentTasks.RemoveRange(db.AgentTasks.Where(t => t.Id == HomeBoundTaskId));
+        db.Cards.RemoveRange(db.Cards.Where(c =>
+            c.Id == HomeReviewCardId || c.Id == HomeDecisionCardId || c.Id == HomeRunningCardId));
+        await db.SaveChangesAsync();
+
+        if (!await db.Agents.AnyAsync(a => a.Id == HomeBoundAgentId))
+            db.Agents.Add(DelegateAgent(HomeBoundAgentId, "task-bound", cwd, Server.Domain.Enums.AgentModelLevel.High, t0));
+
+        if (!await db.Projects.AnyAsync(p => p.Id == HomeProjectId))
+        {
+            db.Projects.Add(new Project
+            {
+                Id = HomeProjectId,
+                Name = "Home tasks contract",
+                GitRepositoryUrl = "https://example.test/antiphon.git",
+                LocalRepositoryPath = cwd,
+                BaseBranch = "master",
+                CreatedAt = t0,
+                UpdatedAt = t0,
+            });
+        }
+
+        if (!await db.Boards.AnyAsync(b => b.Id == HomeBoardId))
+        {
+            db.Boards.Add(new Board
+            {
+                Id = HomeBoardId,
+                ProjectId = HomeProjectId,
+                Name = "Home",
+                CreatedAt = t0,
+                UpdatedAt = t0,
+            });
+            var columns = new (Guid Id, string Key, string Name, Server.Domain.Enums.CardStatus Status, bool Active, bool Terminal)[]
+            {
+                (Guid.Parse("cccccccc-0000-0000-0000-000000000011"), "backlog", "Backlog", Server.Domain.Enums.CardStatus.Backlog, false, false),
+                (Guid.Parse("cccccccc-0000-0000-0000-000000000012"), "in-progress", "In Progress", Server.Domain.Enums.CardStatus.InProgress, true, false),
+                (Guid.Parse("cccccccc-0000-0000-0000-000000000013"), "review", "Review", Server.Domain.Enums.CardStatus.Review, false, false),
+                (Guid.Parse("cccccccc-0000-0000-0000-000000000014"), "needs-decision", "Needs decision", Server.Domain.Enums.CardStatus.NeedsDecision, false, false),
+                (Guid.Parse("cccccccc-0000-0000-0000-000000000015"), "done", "Done", Server.Domain.Enums.CardStatus.Done, false, true),
+                (Guid.Parse("cccccccc-0000-0000-0000-000000000016"), "canceled", "Canceled", Server.Domain.Enums.CardStatus.Canceled, false, true),
+            };
+            for (var i = 0; i < columns.Length; i++)
+            {
+                var col = columns[i];
+                db.BoardColumns.Add(new BoardColumn
+                {
+                    Id = col.Id,
+                    BoardId = HomeBoardId,
+                    StateKey = col.Key,
+                    Name = col.Name,
+                    ColumnOrder = i,
+                    CardStatus = col.Status,
+                    IsActive = col.Active,
+                    IsTerminal = col.Terminal,
+                    CreatedAt = t0,
+                    UpdatedAt = t0,
+                });
+            }
+
+            await db.SaveChangesAsync();
+        }
+
+        var columnByStatus = await db.BoardColumns
+            .Where(c => c.BoardId == HomeBoardId)
+            .ToDictionaryAsync(c => c.CardStatus);
+
+        db.Cards.AddRange(
+            HomeCard(HomeReviewCardId, "CARD-0002", "Tasks section on the home rail",
+                Server.Domain.Enums.CardStatus.Review, columnByStatus, t0.AddMinutes(-40)),
+            HomeCard(HomeDecisionCardId, "CARD-0003", "Should validation errors block save?",
+                Server.Domain.Enums.CardStatus.NeedsDecision, columnByStatus, t0.AddMinutes(-20)),
+            HomeCard(HomeRunningCardId, "CARD-0004", "Ship the Postgres 18 upgrade",
+                Server.Domain.Enums.CardStatus.InProgress, columnByStatus, t0, startedAt: t0));
+        await db.SaveChangesAsync();
+
+        db.AgentTasks.Add(Task(
+            HomeBoundTaskId, HomeBoundTaskId, null, 0,
+            "CARD-0004 bound code pass", cwd, t0.AddMinutes(1),
+            HomeBoundAgentId, "task-bound", t =>
+            {
+                t.CardId = HomeRunningCardId;
+                t.Role = Server.Domain.Enums.AgentTaskRole.Code;
+                t.ModelLevel = Server.Domain.Enums.AgentModelLevel.High;
+                t.Status = Server.Domain.Enums.AgentTaskStatus.Working;
+                t.DispatchedAt = t0.AddMinutes(1);
+                t.CostUsd = 0.11m;
+                t.CostPricingVersion = Server.Application.Services.DelegationCost.PricingVersion;
+            }));
+        await db.SaveChangesAsync();
+    }
+
+    private static Card HomeCard(
+        Guid id, string identifier, string title, Server.Domain.Enums.CardStatus status,
+        IReadOnlyDictionary<Server.Domain.Enums.CardStatus, BoardColumn> columns, DateTime at,
+        DateTime? startedAt = null) =>
+        new()
+        {
+            Id = id,
+            BoardId = HomeBoardId,
+            BoardColumnId = columns[status].Id,
+            Identifier = identifier,
+            Title = title,
+            Status = status,
+            Priority = 1,
+            CreatedAt = at,
+            UpdatedAt = at,
+            StartedAt = startedAt,
+        };
 
     private static Agent DelegateAgent(
         Guid id, string name, string cwd, Server.Domain.Enums.AgentModelLevel level, DateTime at) =>
@@ -395,6 +636,43 @@ public class ContractSnapshotTests
     }
 
     // ---- snapshot machinery ----
+
+    /// <summary>
+    /// Fleet-global <c>GET /api/home/tasks</c> is otherwise polluted by whatever else SharedApp
+    /// has written. Keep the scenario's own ids so the fixture is what Storybook seeds, and
+    /// stamp a fixed generatedAt — that clock is not part of the contract.
+    /// </summary>
+    private static async Task SnapshotHomeTasksAsync(AntiphonAppFixture app, IReadOnlySet<Guid> keepIds)
+    {
+        var response = await app.HttpClient.GetAsync("/api/home/tasks");
+        response.EnsureSuccessStatusCode();
+        var node = JsonNode.Parse(await response.Content.ReadAsStringAsync())!;
+        node["generatedAt"] = "2026-02-03T09:00:00Z";
+        var items = node["items"]!.AsArray();
+        var kept = items
+            .Where(item => keepIds.Contains(Guid.Parse(item!["id"]!.GetValue<string>())))
+            .ToList();
+        items.Clear();
+        foreach (var item in kept)
+            items.Add(item);
+
+        var fixtureName = "home-tasks.json";
+        var pretty = PrettyPrint(node.ToJsonString());
+        var fixturePath = Path.Combine(FixturesDir(), fixtureName);
+        if (!File.Exists(fixturePath))
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(fixturePath)!);
+            await File.WriteAllTextAsync(fixturePath, pretty);
+            Console.WriteLine($"CAPTURED contract fixture {fixtureName}");
+            return;
+        }
+
+        var existing = await File.ReadAllTextAsync(fixturePath);
+        Normalize(existing).ShouldBe(
+            Normalize(pretty),
+            $"Backend contract for /api/home/tasks drifted from {fixtureName}. If the change is intentional, "
+            + "verify the frontend stories against the new shape, delete the fixture, and re-run to re-capture.");
+    }
 
     private static async Task SnapshotAsync(
         AntiphonAppFixture app, string url, string fixtureName, string? workspace,
