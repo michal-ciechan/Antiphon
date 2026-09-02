@@ -56,6 +56,37 @@ public class AgentTaskLivenessTests
     }
 
     [Test]
+    public void ClassifyFailure_names_SystemRequest_and_ProcessExit_and_reserves_not_recorded_for_Unknown()
+    {
+        var system = AgentTaskLiveness.ClassifyFailure(
+            Guid.NewGuid(),
+            new AgentTaskLiveness.SessionSnapshot(
+                SessionStatus.Stopped, DateTime.UtcNow, null, SessionTerminationSource.SystemRequest),
+            hasTranscriptEntries: false);
+        system.FailureCode.ShouldBe(AgentTaskFailureCode.StoppedBeforeFirstPrompt);
+        system.Reason.ShouldContain("SystemRequest");
+        system.Reason.ShouldNotContain("not recorded");
+
+        var process = AgentTaskLiveness.ClassifyFailure(
+            Guid.NewGuid(),
+            new AgentTaskLiveness.SessionSnapshot(
+                SessionStatus.Stopped, DateTime.UtcNow, null, SessionTerminationSource.ProcessExit, ExitCode: 0),
+            hasTranscriptEntries: false);
+        process.FailureCode.ShouldBe(AgentTaskFailureCode.StoppedBeforeFirstPrompt);
+        process.Reason.ShouldContain("ProcessExit");
+        process.Reason.ShouldContain("exit code 0");
+        process.Reason.ShouldNotContain("not recorded");
+
+        var unknown = AgentTaskLiveness.ClassifyFailure(
+            Guid.NewGuid(),
+            new AgentTaskLiveness.SessionSnapshot(
+                SessionStatus.Stopped, DateTime.UtcNow, null, SessionTerminationSource.Unknown),
+            hasTranscriptEntries: false);
+        unknown.FailureCode.ShouldBe(AgentTaskFailureCode.StoppedBeforeFirstPrompt);
+        unknown.Reason.ShouldContain("not recorded");
+    }
+
+    [Test]
     public void ClassifyFailure_preserves_an_existing_session_failure_reason()
     {
         var snapshot = new AgentTaskLiveness.SessionSnapshot(
