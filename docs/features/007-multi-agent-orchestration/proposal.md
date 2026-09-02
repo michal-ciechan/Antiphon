@@ -550,6 +550,8 @@ hooks can refuse a tool call outright, which turns the rule into an invariant.
 > `TaskChip`/`TierBadge`, `TaskDrawer`, `DelegateModal`; mounted as the second tab of
 > `features/orchestrator/OrchestratorPage` (`/orchestrator?tab=delegations`) and reachable from the
 > files view's "Delegate…". Screenshots: `docs/ui-screenshots/delegations-board--*.png`.
+> Lanes are active-only with a sixty-minute *Just settled* grace; settled work is the *History*
+> tab (`/orchestrator?tab=history`) (CARD-0093).
 
 **Delegations board** — a second tab on the existing `/orchestrator` page rather than a new
 top-level section; that page already owns "what is the fleet doing right now". Left: the task tree

@@ -1,5 +1,5 @@
 import type { AgentTaskSummaryDto } from '../../api/agentTasks'
-import { formatCost, tierAlias } from '../delegations/taskVisuals'
+import { formatCost, isSettled, tierAlias } from '../delegations/taskVisuals'
 
 /**
  * The pure half of `WorkLine` (spec §D3 band 2): one live task as the orchestrator loop's own
@@ -71,5 +71,6 @@ export function taskWorkLine(
 export function workLineTarget(task: AgentTaskSummaryDto): string {
   const match = TITLE_CITATION.exec(task.title)
   if (match) return `/thread/card-${Number(match[1])}`
+  if (isSettled(task.status)) return `/orchestrator?tab=history&task=${task.id}`
   return `/orchestrator?tab=delegations&task=${task.id}`
 }

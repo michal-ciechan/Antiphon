@@ -354,9 +354,9 @@ describe('TasksSection', () => {
     expect(screen.getByText('Done item 0')).toBeInTheDocument()
     expect(screen.getByText('Done item 11')).toBeInTheDocument()
     expect(screen.queryByText('Done item 12')).not.toBeInTheDocument()
-    expect(screen.getByRole('link', { name: '+1 more → open delegations' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: '+1 more → open history' })).toHaveAttribute(
       'href',
-      '/orchestrator?tab=delegations',
+      '/orchestrator?tab=history',
     )
   })
 

@@ -317,7 +317,14 @@ export function TaskCard({
             </Menu.Item>
           )}
           {item.source === 'Delegation' && (
-            <Menu.Item component={Link} to={`/orchestrator?tab=delegations&task=${item.id}`}>
+            <Menu.Item
+              component={Link}
+              to={
+                item.group === 'Done'
+                  ? `/orchestrator?tab=history&task=${item.id}`
+                  : `/orchestrator?tab=delegations&task=${item.id}`
+              }
+            >
               Open delegations
             </Menu.Item>
           )}

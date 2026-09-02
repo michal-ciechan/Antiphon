@@ -149,7 +149,7 @@ export function TasksSection({
                   />
                 ))
               )}
-              <MoreLink hidden={hidden} visible={visible} />
+              <MoreLink hidden={hidden} visible={visible} group={group} />
             </Stack>
           )
         })}
@@ -177,8 +177,23 @@ function SectionHeader() {
   )
 }
 
-function MoreLink({ hidden, visible }: { hidden: number; visible: HomeTaskItemDto[] }) {
+function MoreLink({
+  hidden,
+  visible,
+  group,
+}: {
+  hidden: number
+  visible: HomeTaskItemDto[]
+  group: HomeTaskGroup
+}) {
   if (hidden <= 0) return null
+  if (group === 'Done') {
+    return (
+      <Anchor component={Link} to="/orchestrator?tab=history" size="xs" c="dimmed">
+        +{hidden} more → open history
+      </Anchor>
+    )
+  }
   const card = visible.find((row) => row.source === 'Card' && row.boardId)
   const to = card?.boardId ? `/boards/${card.boardId}` : '/orchestrator?tab=delegations'
   const label = card

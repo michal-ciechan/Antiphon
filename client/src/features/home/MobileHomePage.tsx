@@ -265,7 +265,7 @@ function AwayBand({ delta }: { delta: AwayDelta }) {
             <>
               <Divider />
               <AwayRow
-                to="/orchestrator?tab=delegations"
+                to="/orchestrator?tab=history"
                 label="all settled work"
                 line={`+ ${hidden} more settled`}
                 sub="open the delegations board"

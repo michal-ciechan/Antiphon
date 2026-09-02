@@ -34,6 +34,14 @@ here before anyone opens the app.
 
 ![agents-filesreviewpanel--diff-no-threads](./agents-filesreviewpanel--diff-no-threads.png)
 
+## Agents/HerdrStatusBadge — States
+
+![agents-herdrstatusbadge--states](./agents-herdrstatusbadge--states.png)
+
+## Agents/HerdrStatusBadge — Disagreement
+
+![agents-herdrstatusbadge--disagreement](./agents-herdrstatusbadge--disagreement.png)
+
 ## Agents/SessionTranscriptPanel — Conversation
 
 ![agents-sessiontranscriptpanel--conversation](./agents-sessiontranscriptpanel--conversation.png)
@@ -70,17 +78,17 @@ here before anyone opens the app.
 
 ![delegations-board--delegate](./delegations-board--delegate.png)
 
+## Delegations/Board — History
+
+![delegations-board--history](./delegations-board--history.png)
+
+## Delegations/History — History
+
+![delegations-history--history](./delegations-history--history.png)
+
 ## Home/TasksSection — Rail
 
 ![home-taskssection--rail](./home-taskssection--rail.png)
-
-## Proposals/Mobile home — Needs You
-
-![proposals-mobile-home--needs-you](./proposals-mobile-home--needs-you.png)
-
-## Proposals/Mobile home — Calm
-
-![proposals-mobile-home--calm](./proposals-mobile-home--calm.png)
 
 ## Proposals/Card thread — Open
 
@@ -89,6 +97,14 @@ here before anyone opens the app.
 ## Proposals/Card thread — Settled
 
 ![proposals-card-thread--settled](./proposals-card-thread--settled.png)
+
+## Proposals/Mobile home — Needs You
+
+![proposals-mobile-home--needs-you](./proposals-mobile-home--needs-you.png)
+
+## Proposals/Mobile home — Calm
+
+![proposals-mobile-home--calm](./proposals-mobile-home--calm.png)
 
 ## Proposals/Plan reader — ToC first
 

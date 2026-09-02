@@ -207,7 +207,15 @@ curl -s -X POST http://localhost:17202/api/agents/{id}/attach-herdr \
 
 ```
 POST   /api/agent-tasks                      create (CreateAgentTaskRequest)
-GET    /api/agent-tasks  |  /api/agent-tasks/{id}      {id} accepts the 8-char short id
+GET    /api/agent-tasks                      list. Query: rootId, status (comma list of
+                                             AgentTaskStatus), includeChecks (bool, default false),
+                                             since (ISO instant). `since` keeps every non-settled
+                                             row regardless of age and trims only settled rows by
+                                             CompletedAt. Omitting every filter returns the full
+                                             table — scripts and `delegate.ps1` depend on that.
+GET    /api/agent-tasks/{id}                 {id} accepts the 8-char short id
+GET    /api/agent-tasks/summary              fleet-wide counters (active, blocked, runs,
+                                             totalCostUsd, byStatus), independent of the list window
 POST   /api/agent-tasks/{id}/cancel  |  /retry  |  /escalate
 POST   /api/agent-tasks/{id}/reply           answer a Blocked delegate's question
 POST   /api/agent-tasks/{id}/refine          steer a running delegate without cancelling it
