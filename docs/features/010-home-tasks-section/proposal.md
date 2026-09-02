@@ -1,6 +1,34 @@
 # 010 — Unified Tasks section on the home rail
 
-**Status: proposed** (design only — nothing here is implemented)
+**Status: superseded on 2026-09-02** by
+[`docs/superpowers/plans/2026-09-02-card-0002-home-tasks-section-plan.md`](../../superpowers/plans/2026-09-02-card-0002-home-tasks-section-plan.md).
+The central recommendation below (§3 — a read-only server projection, no storage merge) stands and
+is carried forward. Everything that names a status, a field, a group rule or a file was verified
+against the code on 2026-09-02 and the following is **stale** — read the plan, not these sections:
+
+- §1 "Two disjoint record systems": `CardStatus.Blocked` no longer exists; the human-parked state is
+  `NeedsDecision` (`ef914706`), and its question lives on the move/reopen revision and the
+  attention feed (`CardNeedsDecision`). `AgentTask.CardId` now binds a delegation to a card
+  (CARD-0040), and `CardWorkTransitionService` moves cards from bound tasks — "no server code joins
+  the two" is false.
+- §1 "Relevant API surface": `GET /api/cards` exists (`updatedSince` / `status` / `boardId`,
+  summary representation, 500 cap). `Project.LocalRepositoryPath` gives every card a directory,
+  so §4.4 ("cards carry no directory") and open item §8.1 are closed.
+- §1 "The surface being replaced": `ProjectTasksPanel` since gained the unread-deliverable dot and
+  `Read` link (`c4d7e0d7`); the plan keeps both in the Done group.
+- §2.2 groups: four → five (Review is its own group; the live board holds 31 Review cards); a
+  bound delegation nests under its card as the worker line instead of being a second item; stage
+  falls back to the bound task's role because no live card has a workflow run.
+- §2.4 kebab anchor `AgentsPage.tsx:170-206` is now `:496-532`.
+- §4.2/§5.2 DTOs: replaced (no `Question` field — the question is read from `/api/attention`;
+  `HumanReason` enum; `Worker` sub-record; `ReadAt`/`DeliverablePath`).
+- §4.5/§5.4 live updates: same events, plus `AgentQueueChanged`; key is `['homeTasks']`.
+- Home's header changed under CARD-0300 (`AttentionGlance` → `/attention`); the plan states the
+  boundary with it explicitly.
+
+`mockup.html` is still a fair sketch of the layout (agents third, tasks two-thirds, agent under
+its card, kebab); its group labels and the `Blocked` card state are the August design.
+
 **Replaces**: the flat delegations-only row list in `client/src/features/home/ProjectTasksPanel.tsx`
 **Card**: CARD-0002
 
