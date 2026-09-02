@@ -279,6 +279,48 @@ public class AgentSessionRuntimeTests
     }
 
     [Test]
+    public async Task an_exit_event_backfills_ProcessExit_onto_an_already_closed_row_with_no_source()
+    {
+        var (sessionId, agentId, logPath, runtime) = await SeedRunningSessionAsync(
+            status: SessionStatus.Stopped);
+        try
+        {
+            await runtime.ObserveExitAsync(sessionId, 0, AgentExitReason.ProcessExited, CancellationToken.None);
+
+            await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            var session = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            session.Status.ShouldBe(SessionStatus.Stopped);
+            session.TerminationSource.ShouldBe(SessionTerminationSource.ProcessExit);
+            session.ExitCode.ShouldBe(0);
+        }
+        finally
+        {
+            await CleanupSessionAsync(sessionId, agentId);
+            DeleteDirectoryBestEffort(logPath);
+        }
+    }
+
+    [Test]
+    public async Task a_cpu_spin_watchdog_exit_records_SystemRequest()
+    {
+        var (sessionId, agentId, logPath, runtime) = await SeedRunningSessionAsync();
+        try
+        {
+            await runtime.ObserveExitAsync(sessionId, -1, AgentExitReason.CpuSpinKilled, CancellationToken.None);
+
+            await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            var session = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            session.Status.ShouldBe(SessionStatus.Stopped);
+            session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
+        }
+        finally
+        {
+            await CleanupSessionAsync(sessionId, agentId);
+            DeleteDirectoryBestEffort(logPath);
+        }
+    }
+
+    [Test]
     public async Task HerdrPaneClosed_exit_is_Failed_not_a_clean_stop()
     {
         var (sessionId, agentId, logPath, runtime) = await SeedRunningSessionAsync();
@@ -326,7 +368,8 @@ public class AgentSessionRuntimeTests
     }
 
     private static async Task<(Guid SessionId, Guid AgentId, string LogPath, AgentSessionRuntime Runtime)> SeedRunningSessionAsync(
-        SessionTerminationSource terminationSource = SessionTerminationSource.Unknown)
+        SessionTerminationSource terminationSource = SessionTerminationSource.Unknown,
+        SessionStatus status = SessionStatus.Running)
     {
         var sessionId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
@@ -338,7 +381,7 @@ public class AgentSessionRuntimeTests
                 Id = sessionId,
                 DefinitionName = "claude",
                 AgentKind = AgentKind.ClaudeCode,
-                Status = SessionStatus.Running,
+                Status = status,
                 TerminationSource = terminationSource,
                 Cwd = Path.GetTempPath(),
                 Cols = 120,
