@@ -192,15 +192,76 @@ public sealed class OrchestratorService
     {
         var activeStatuses = ActiveSessionStatuses();
         var now = UtcNow();
+
+        var openTasks = await _db.AgentTasks
+            .AsNoTracking()
+            .Where(t => t.AgentSessionId != null
+                && t.Role != AgentTaskRole.Check
+                && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working))
+            .Select(t => new OpenRunningTask(
+                t.Id,
+                t.Title,
+                t.Role,
+                t.Status,
+                t.Kind,
+                t.RootTaskId,
+                t.ParentTaskId,
+                t.AgentName,
+                t.CardId,
+                t.TokensIn,
+                t.TokensOut,
+                t.CostUsd,
+                t.AgentSessionId!.Value))
+            .ToListAsync(ct);
+
+        var sessionIds = openTasks.Select(t => t.AgentSessionId).Distinct().ToList();
+        var tasksBySession = openTasks
+            .GroupBy(t => t.AgentSessionId)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        var cardIds = openTasks
+            .Where(t => t.CardId != null)
+            .Select(t => t.CardId!.Value)
+            .Distinct()
+            .ToList();
+        var taskCards = cardIds.Count == 0
+            ? new Dictionary<Guid, RunningTaskCard>()
+            : await _db.Cards
+                .AsNoTracking()
+                .Where(c => cardIds.Contains(c.Id))
+                .Select(c => new RunningTaskCard(
+                    c.Id,
+                    c.Identifier,
+                    c.Title,
+                    c.BoardId,
+                    c.Board.Name,
+                    c.Board.TrackerKind,
+                    c.Board.Project.LocalRepositoryPath))
+                .ToDictionaryAsync(c => c.Id, ct);
+
+        var parentByTaskId = new Dictionary<Guid, Guid?>();
+        var rootIds = openTasks.Select(t => t.RootTaskId).Distinct().ToList();
+        if (rootIds.Count > 0)
+        {
+            var links = await _db.AgentTasks
+                .AsNoTracking()
+                .Where(t => rootIds.Contains(t.RootTaskId))
+                .Select(t => new { t.Id, t.ParentTaskId })
+                .ToListAsync(ct);
+            foreach (var link in links)
+                parentByTaskId[link.Id] = link.ParentTaskId;
+        }
+
         var scopedSessions = ApplyScope(_db.AgentSessions
             .AsNoTracking()
             .Include(s => s.Card).ThenInclude(c => c.Board).ThenInclude(b => b.Project)
             .Include(s => s.RunAttempts).ThenInclude(a => a.TokenUsage)
             .AsSplitQuery());
+        // Card-spawn sessions (CardId set) plus the current session of every open non-Check
+        // task. A cardless interactive terminal with no such task stays out.
         var activeSessions = await scopedSessions
-            // Cardless interactive sessions aren't orchestrated card work — keep them out of this view.
-            .Where(s => activeStatuses.Contains(s.Status) && s.CardId != null)
-            .OrderByDescending(s => s.LastSeenAt)
+            .Where(s => activeStatuses.Contains(s.Status)
+                && (s.CardId != null || sessionIds.Contains(s.Id)))
             .ToListAsync(ct);
 
         var retryQueue = await ApplyScope(_db.RetrySchedules
@@ -226,45 +287,93 @@ public sealed class OrchestratorService
             })
             .FirstOrDefaultAsync(ct);
 
-        var running = activeSessions
-            .Select(session =>
-            {
-                var attempt = session.RunAttempts
-                    .OrderByDescending(a => a.AttemptNumber)
-                    .FirstOrDefault();
-                var live = false;
-                var lastSequence = 0L;
-                if (_runtime is not null && _runtime.TryGetLiveMetadata(session.Id, out var metadata))
-                {
-                    live = true;
-                    lastSequence = metadata.LastSequence;
-                }
+        var candidates = new List<RunningFamilyRow>();
+        foreach (var session in activeSessions)
+        {
+            tasksBySession.TryGetValue(session.Id, out var openTask);
+            var source = session.CardId != null
+                ? OrchestratorSessionSource.Card
+                : OrchestratorSessionSource.Delegation;
+            if (source == OrchestratorSessionSource.Delegation && openTask is null)
+                continue;
 
-                return new OrchestratorRunningSessionDto(
-                    session.Id,
-                    session.CardId!.Value,
-                    session.Card.Identifier,
-                    session.Card.Title,
-                    session.Card.BoardId,
-                    session.Card.Board.Name,
-                    session.DefinitionName,
-                    session.AgentKind.ToString(),
-                    session.Status.ToString(),
-                    attempt?.Id,
-                    session.RunAttempts.Count,
-                    attempt?.AttemptNumber,
-                    attempt?.Phase.ToString(),
-                    session.StartedAt,
-                    session.LastSeenAt,
-                    attempt?.LastEventAt,
-                    Math.Max(0, (long)(now - session.StartedAt).TotalSeconds),
-                    attempt?.TokenUsage?.TokensIn ?? 0,
-                    attempt?.TokenUsage?.TokensOut ?? 0,
-                    attempt?.TokenUsage?.CostUsd ?? 0,
-                    live,
-                    lastSequence);
-            })
-            .ToList();
+            Guid? cardId;
+            string? cardIdentifier;
+            string? cardTitle;
+            Guid? boardId;
+            string? boardName;
+            if (source == OrchestratorSessionSource.Card)
+            {
+                cardId = session.CardId;
+                cardIdentifier = session.Card.Identifier;
+                cardTitle = session.Card.Title;
+                boardId = session.Card.BoardId;
+                boardName = session.Card.Board.Name;
+            }
+            else if (openTask!.CardId is Guid taskCardId)
+            {
+                if (!taskCards.TryGetValue(taskCardId, out var taskCard)
+                    || !CardInScope(taskCard.TrackerKind, taskCard.ProjectPath))
+                    continue;
+                cardId = taskCard.Id;
+                cardIdentifier = taskCard.Identifier;
+                cardTitle = taskCard.Title;
+                boardId = taskCard.BoardId;
+                boardName = taskCard.BoardName;
+            }
+            else
+            {
+                cardId = null;
+                cardIdentifier = null;
+                cardTitle = null;
+                boardId = null;
+                boardName = null;
+            }
+
+            var attempt = session.RunAttempts
+                .OrderByDescending(a => a.AttemptNumber)
+                .FirstOrDefault();
+            var live = false;
+            var lastSequence = 0L;
+            if (_runtime is not null && _runtime.TryGetLiveMetadata(session.Id, out var metadata))
+            {
+                live = true;
+                lastSequence = metadata.LastSequence;
+            }
+
+            var fromTask = source == OrchestratorSessionSource.Delegation;
+            var dto = new OrchestratorRunningSessionDto(
+                session.Id,
+                source,
+                Depth: 0,
+                cardId,
+                cardIdentifier,
+                cardTitle,
+                boardId,
+                boardName,
+                openTask is null ? null : ToRunningTaskDto(openTask),
+                session.DefinitionName,
+                session.AgentKind.ToString(),
+                session.Status.ToString(),
+                fromTask ? null : attempt?.Id,
+                fromTask ? 0 : session.RunAttempts.Count,
+                fromTask ? null : attempt?.AttemptNumber,
+                fromTask ? null : attempt?.Phase.ToString(),
+                session.StartedAt,
+                session.LastSeenAt,
+                fromTask ? null : attempt?.LastEventAt,
+                Math.Max(0, (long)(now - session.StartedAt).TotalSeconds),
+                fromTask ? openTask!.TokensIn : attempt?.TokenUsage?.TokensIn ?? 0,
+                fromTask ? openTask!.TokensOut : attempt?.TokenUsage?.TokensOut ?? 0,
+                fromTask ? openTask!.CostUsd : attempt?.TokenUsage?.CostUsd ?? 0,
+                live,
+                lastSequence);
+            candidates.Add(new RunningFamilyRow(dto, session.StartedAt, openTask?.Id, openTask?.ParentTaskId));
+        }
+
+        var running = OrderRunningFamilies(candidates, parentByTaskId);
+        var runningCardSessions = running.Count(r => r.Source == OrchestratorSessionSource.Card);
+        var runningDelegateSessions = running.Count(r => r.Source == OrchestratorSessionSource.Delegation);
 
         var retryItems = retryQueue
             .Select(retry => new OrchestratorRetryQueueItemDto(
@@ -297,6 +406,8 @@ public sealed class OrchestratorService
             _settings.Enabled,
             now,
             running.Count,
+            runningCardSessions,
+            runningDelegateSessions,
             retryItems.Count,
             totals,
             limits,
@@ -312,10 +423,132 @@ public sealed class OrchestratorService
     {
         return string.IsNullOrWhiteSpace(_settings.InternalTrackerRepositoryPathPrefix)
             ? query
-            : query.Where(s => s.Card.Board.TrackerKind != TrackerKind.Internal
+            : query.Where(s => s.CardId == null
+                || s.Card.Board.TrackerKind != TrackerKind.Internal
                 || (s.Card.Board.Project.LocalRepositoryPath != null
                     && s.Card.Board.Project.LocalRepositoryPath.StartsWith(_settings.InternalTrackerRepositoryPathPrefix)));
     }
+
+    private bool CardInScope(TrackerKind trackerKind, string? localRepositoryPath)
+    {
+        if (string.IsNullOrWhiteSpace(_settings.InternalTrackerRepositoryPathPrefix))
+            return true;
+        return trackerKind != TrackerKind.Internal
+            || (localRepositoryPath != null
+                && localRepositoryPath.StartsWith(_settings.InternalTrackerRepositoryPathPrefix));
+    }
+
+    private static OrchestratorRunningTaskDto ToRunningTaskDto(OpenRunningTask task) =>
+        new(
+            task.Id,
+            DelegationReportFormatter.Short(task.Id),
+            task.Title,
+            task.Role,
+            task.Status,
+            task.Kind,
+            task.RootTaskId,
+            task.ParentTaskId,
+            task.AgentName);
+
+    private static List<OrchestratorRunningSessionDto> OrderRunningFamilies(
+        List<RunningFamilyRow> rows,
+        IReadOnlyDictionary<Guid, Guid?> parentByTaskId)
+    {
+        var presentByTaskId = rows
+            .Where(r => r.TaskId != null && r.Dto.Source != OrchestratorSessionSource.Card)
+            .GroupBy(r => r.TaskId!.Value)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        Guid? NearestPresentAncestor(Guid? parentId)
+        {
+            var seen = new HashSet<Guid>();
+            while (parentId is Guid id && seen.Add(id))
+            {
+                if (presentByTaskId.ContainsKey(id))
+                    return id;
+                if (!parentByTaskId.TryGetValue(id, out parentId))
+                    return null;
+            }
+
+            return null;
+        }
+
+        var roots = new List<RunningFamilyRow>();
+        var children = new Dictionary<Guid, List<RunningFamilyRow>>();
+        foreach (var row in rows)
+        {
+            if (row.Dto.Source == OrchestratorSessionSource.Card || row.TaskId is null)
+            {
+                roots.Add(row);
+                continue;
+            }
+
+            var ancestor = NearestPresentAncestor(row.ParentTaskId);
+            if (ancestor is null)
+            {
+                roots.Add(row);
+                continue;
+            }
+
+            if (!children.TryGetValue(ancestor.Value, out var siblings))
+            {
+                siblings = [];
+                children[ancestor.Value] = siblings;
+            }
+
+            siblings.Add(row);
+        }
+
+        roots.Sort((a, b) => b.StartedAt.CompareTo(a.StartedAt));
+        foreach (var siblings in children.Values)
+            siblings.Sort((a, b) => a.StartedAt.CompareTo(b.StartedAt));
+
+        var ordered = new List<OrchestratorRunningSessionDto>(rows.Count);
+        void Emit(RunningFamilyRow row, int depth)
+        {
+            ordered.Add(row.Dto with { Depth = row.Dto.Source == OrchestratorSessionSource.Card ? 0 : depth });
+            if (row.TaskId is Guid taskId && children.TryGetValue(taskId, out var kids))
+            {
+                foreach (var kid in kids)
+                    Emit(kid, depth + 1);
+            }
+        }
+
+        foreach (var root in roots)
+            Emit(root, 0);
+
+        return ordered;
+    }
+
+    private sealed record OpenRunningTask(
+        Guid Id,
+        string Title,
+        AgentTaskRole Role,
+        AgentTaskStatus Status,
+        AgentTaskKind Kind,
+        Guid RootTaskId,
+        Guid? ParentTaskId,
+        string? AgentName,
+        Guid? CardId,
+        long TokensIn,
+        long TokensOut,
+        decimal CostUsd,
+        Guid AgentSessionId);
+
+    private sealed record RunningTaskCard(
+        Guid Id,
+        string Identifier,
+        string Title,
+        Guid BoardId,
+        string BoardName,
+        TrackerKind TrackerKind,
+        string? ProjectPath);
+
+    private sealed record RunningFamilyRow(
+        OrchestratorRunningSessionDto Dto,
+        DateTime StartedAt,
+        Guid? TaskId,
+        Guid? ParentTaskId);
 
     private IQueryable<RetrySchedule> ApplyScope(IQueryable<RetrySchedule> query)
     {
