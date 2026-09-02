@@ -46,6 +46,42 @@ public sealed class CardTaskFileService
         _gitSettings = gitSettings?.Value ?? new GitSettings();
     }
 
+    /// <summary>
+    /// Reconcile every non-archived board of every non-archived project. Path-less projects are
+    /// included so they report <c>no_repository_path</c>; archived projects and archived boards
+    /// are omitted. One try/catch per board so a single failure cannot stop the tick.
+    /// </summary>
+    public async Task<IReadOnlyList<CardFileSyncBoardResult>> SyncAllAsync(
+        bool dryRun = false, CancellationToken ct = default)
+    {
+        var boardIds = await _db.Boards.AsNoTracking()
+            .Where(b => b.ArchivedAt == null && b.Project.ArchivedAt == null)
+            .OrderBy(b => b.ProjectId)
+            .ThenBy(b => b.CreatedAt)
+            .ThenBy(b => b.Id)
+            .Select(b => b.Id)
+            .ToListAsync(ct);
+
+        var results = new List<CardFileSyncBoardResult>(boardIds.Count);
+        foreach (var boardId in boardIds)
+        {
+            try
+            {
+                results.Add(await SyncBoardAsync(boardId, dryRun, ct));
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Card file sync failed for board {BoardId}", boardId);
+            }
+        }
+
+        return results;
+    }
+
     public async Task<CardFileSyncBoardResult> SyncBoardAsync(
         Guid boardId, bool dryRun = false, CancellationToken ct = default)
     {

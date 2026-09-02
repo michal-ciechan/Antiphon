@@ -26,7 +26,7 @@ public sealed class CardFileSyncSettings
 
     /// <summary>
     /// Tick cadence in seconds, floor 5. <c>0</c> disables the tick and leaves the endpoint on
-    /// (manual-only mode). The hosted tick itself lands in S3.
+    /// (manual-only mode).
     /// </summary>
     public int IntervalSeconds { get; set; } = 60;
 }

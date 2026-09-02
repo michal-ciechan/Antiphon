@@ -527,6 +527,8 @@ try
     builder.Services.AddHostedService<SessionReconciliationHostedService>();
     builder.Services.AddHostedService<
         Antiphon.Server.Infrastructure.Orchestration.CardWorkTransitionHostedService>();
+    builder.Services.AddHostedService<
+        Antiphon.Server.Infrastructure.Orchestration.CardTaskFileSyncHostedService>();
     builder.Services.AddHostedService<ParkedMessageSweepHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.AgentSupervisorHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.AppHostWatchdogStateHostedService>();
@@ -702,6 +704,7 @@ try
     app.MapApiKeyEndpoints();
     app.MapBoardEndpoints();
     app.MapTrackerSyncEndpoints();
+    app.MapCardFileSyncEndpoints();
     app.MapCardEndpoints();
     app.MapAgentEndpoints();
     app.MapAgentTuiEndpoints();

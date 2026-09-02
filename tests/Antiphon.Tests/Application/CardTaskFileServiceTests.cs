@@ -14,9 +14,9 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-0004: load, render, compare, write, delete (S1) and path-scoped commit with guards (S2).
-/// Assertions are scoped to this test's scratch directory and its own rows — the assembly shares
-/// one Postgres.
+/// CARD-0004: load, render, compare, write, delete (S1), path-scoped commit with guards (S2),
+/// and <c>SyncAllAsync</c> fleet sweep (S3). Assertions are scoped to this test's scratch
+/// directory and its own rows — the assembly shares one Postgres.
 /// </summary>
 [Category("Integration")]
 public class CardTaskFileServiceTests
@@ -450,6 +450,48 @@ public class CardTaskFileServiceTests
     }
 
     [Test]
+    public async Task SyncAllAsync_syncs_the_pathed_project_reports_pathless_and_skips_archived()
+    {
+        // Isolated schema so this sweep cannot write into another test's LocalRepositoryPath.
+        // The production method still iterates every live board; the pin is that our four boards
+        // are the only ones it can see here.
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var world = new World(schema.ConnectionString);
+        var repo = world.CreateRepo();
+        var withPath = await world.AddProjectAsync(repo.Path);
+        var withoutPath = await world.AddProjectAsync(localPath: null);
+        var archivedProject = await world.AddProjectAsync(repo.Path, archived: true);
+        var liveBoard = await world.AddBoardAsync(withPath.Id, "Live Sweep");
+        var pathlessBoard = await world.AddBoardAsync(withoutPath.Id, "Pathless Sweep");
+        var archivedBoard = await world.AddBoardAsync(withPath.Id, "Archived Sweep", archived: true);
+        var boardOnArchivedProject = await world.AddBoardAsync(archivedProject.Id, "Orphan Sweep");
+        await world.AddCardAsync(liveBoard, "CARD-0001", "Live Card");
+        await world.AddCardAsync(pathlessBoard, "CARD-0001", "Ghost");
+        await world.AddCardAsync(archivedBoard, "CARD-0001", "Hidden");
+        await world.AddCardAsync(boardOnArchivedProject, "CARD-0001", "Hidden");
+
+        var results = await world.SyncAllAsync();
+
+        results.Count.ShouldBe(2);
+        var live = results.Single(r => r.BoardId == liveBoard.Id);
+        live.WriteSkipReason.ShouldBeNull();
+        live.Written.ShouldBeGreaterThan(0);
+        live.Directory.ShouldBe("docs/cards/live-sweep");
+        File.Exists(Path.Combine(world.BoardDir(repo, "live-sweep"), "CARD-0001-live-card.md"))
+            .ShouldBeTrue();
+
+        var pathless = results.Single(r => r.BoardId == pathlessBoard.Id);
+        pathless.WriteSkipReason.ShouldBe("no_repository_path");
+        pathless.Written.ShouldBe(0);
+        pathless.Directory.ShouldBeNull();
+
+        results.ShouldNotContain(r => r.BoardId == archivedBoard.Id);
+        results.ShouldNotContain(r => r.BoardId == boardOnArchivedProject.Id);
+        Directory.Exists(world.BoardDir(repo, "archived-sweep")).ShouldBeFalse();
+        Directory.Exists(world.BoardDir(repo, "orphan-sweep")).ShouldBeFalse();
+    }
+
+    [Test]
     public async Task Index_lock_is_git_error_then_next_sync_after_removal_commits()
     {
         await using var world = new World();
@@ -508,6 +550,12 @@ public class CardTaskFileServiceTests
         private readonly List<ScratchGitRepo> _repos = [];
         private readonly List<string> _tempDirs = [];
         private readonly CardTaskFileSyncGate _gate = new();
+        private readonly string? _connectionString;
+
+        public World(string? connectionString = null)
+        {
+            _connectionString = connectionString;
+        }
 
         public ScratchGitRepo CreateRepo()
         {
@@ -638,16 +686,27 @@ public class CardTaskFileServiceTests
             Guid boardId, bool dryRun = false, bool autoCommit = false)
         {
             await using var db = CreateContext();
+            return await CreateService(db, autoCommit).SyncBoardAsync(boardId, dryRun, CancellationToken.None);
+        }
+
+        public async Task<IReadOnlyList<Antiphon.Server.Application.Dtos.CardFileSyncBoardResult>> SyncAllAsync(
+            bool dryRun = false, bool autoCommit = false)
+        {
+            await using var db = CreateContext();
+            return await CreateService(db, autoCommit).SyncAllAsync(dryRun, CancellationToken.None);
+        }
+
+        private CardTaskFileService CreateService(AppDbContext db, bool autoCommit)
+        {
             IOptions<CardFileSyncSettings>? settings = autoCommit
                 ? Options.Create(new CardFileSyncSettings { AutoCommit = true })
                 : null;
-            var service = new CardTaskFileService(
+            return new CardTaskFileService(
                 db,
                 _gate,
                 new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance),
                 NullLogger<CardTaskFileService>.Instance,
                 settings);
-            return await service.SyncBoardAsync(boardId, dryRun, CancellationToken.None);
         }
 
         public async ValueTask DisposeAsync()
@@ -670,6 +729,7 @@ public class CardTaskFileServiceTests
             }
         }
 
-        private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
+        private AppDbContext CreateContext() =>
+            new(TestDbFixture.CreateDbContextOptions(_connectionString));
     }
 }
