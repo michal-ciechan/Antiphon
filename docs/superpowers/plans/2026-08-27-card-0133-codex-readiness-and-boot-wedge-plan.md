@@ -1,5 +1,13 @@
 # CARD-0133 — Codex delegates: the readiness probe the card asked for, and the boot-wedge it actually measured
 
+> **Status 2026-09-02** (see `2026-09-02-card-0133-s1-positive-submit-evidence-status-plan.md`): S0 is done — the
+> mechanism is Codex's `PasteBurst` (`docs/investigations/2026-08-30-card-0133-s0-harness-diagnosis.md`), and
+> `-c disable_paste_burst=true` shipped as `f77d0d63`. **S1 shipped as `09a6a8ba` on 2026-08-27** (§2.3 below is its
+> spec); its single-poll emptied-composer latch was closed by CARD-0299 S1 (`fd6c8a50`). **S2 shipped as CARD-0299 S2
+> (`78629298`)** without the S0-P4 failure-time probe, and **S3 as CARD-0299 S3 (`94b29a4e`)**. Only S0-P4 (the
+> composer-clear keystroke) and S4 (`ComposerInputProbe` as the ready gate) remain, both deliberately deferred. The
+> residual S1 work (the named/card-launch boot-prompt path, production verification, docs) is in the 09-02 plan.
+
 **Date:** 2026-08-27 · **Card:** CARD-0133 (`c3a34ac6-5476-483b-bae2-1d5b7cb63753`) · **Status:** investigation
 complete, design only — nothing implemented. **Verified against:** `master` @ `19d828c` (this worktree). Every
 number below was read out of this machine on 2026-08-27: the live dev database (`antiphon-postgres`), the
