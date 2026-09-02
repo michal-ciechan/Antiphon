@@ -33,7 +33,7 @@ public class CardTaskFileRendererTests
             title: """Card: "the #1" task""",
             description: "Line1\r\n---\r\nLine3",
             status: CardStatus.NeedsDecision,
-            priority: 2,
+            importance: CardImportance.Normal,
             labelsJson: """["bug,grok,delegation","cards"]""",
             created: new DateTime(2026, 8, 9, 15, 5, 43, DateTimeKind.Utc),
             started: new DateTime(2026, 8, 20, 9, 12, 0, DateTimeKind.Utc),
@@ -63,7 +63,8 @@ public class CardTaskFileRendererTests
         rendered.ShouldContain("identifier: CARD-0004");
         rendered.ShouldContain("title: \"Card: \\\"the #1\\\" task\"");
         rendered.ShouldContain("status: NeedsDecision");
-        rendered.ShouldContain("priority: 2");
+        rendered.ShouldContain("importance: Normal");
+        rendered.ShouldContain("urgency: Normal");
         rendered.ShouldContain("labels: [\"bug,grok,delegation\", \"cards\"]");
         rendered.ShouldContain("created: 2026-08-09T15:05:43Z");
         rendered.ShouldContain("started: 2026-08-20T09:12:00Z");
@@ -130,13 +131,13 @@ public class CardTaskFileRendererTests
     [Test]
     public void Index_group_order_omits_empty_groups_and_orders_inside_a_group()
     {
-        var backlogHigh = MakeCard(Guid.NewGuid(), "CARD-0002", "later id, higher p", "", CardStatus.Backlog, priority: 3);
-        var backlogLow = MakeCard(Guid.NewGuid(), "CARD-0001", "earlier id, lower p", "", CardStatus.Backlog, priority: 1);
-        var backlogMid = MakeCard(Guid.NewGuid(), "CARD-0003", "same p, later id", "", CardStatus.Backlog, priority: 3);
-        var done = MakeCard(Guid.NewGuid(), "CARD-0004", "finished", "", CardStatus.Done, priority: 2);
-        var archived = MakeCard(Guid.NewGuid(), "CARD-0005", "gone", "", CardStatus.Done, priority: 5);
+        var backlogHigh = MakeCard(Guid.NewGuid(), "CARD-0002", "later id, more important", "", CardStatus.Backlog, CardImportance.High);
+        var backlogLow = MakeCard(Guid.NewGuid(), "CARD-0001", "earlier id, less important", "", CardStatus.Backlog, CardImportance.Low);
+        var backlogMid = MakeCard(Guid.NewGuid(), "CARD-0003", "same importance, later id", "", CardStatus.Backlog, CardImportance.High);
+        var done = MakeCard(Guid.NewGuid(), "CARD-0004", "finished", "", CardStatus.Done, CardImportance.Normal);
+        var archived = MakeCard(Guid.NewGuid(), "CARD-0005", "gone", "", CardStatus.Done, CardImportance.Low);
         archived.ArchivedAt = new DateTime(2026, 8, 25, 8, 0, 0, DateTimeKind.Utc);
-        var inProgress = MakeCard(Guid.NewGuid(), "CARD-0006", "working", "", CardStatus.InProgress, priority: 2,
+        var inProgress = MakeCard(Guid.NewGuid(), "CARD-0006", "working", "", CardStatus.InProgress, CardImportance.Normal,
             labelsJson: """["reliability"]""");
 
         var cards = new[] { backlogLow, done, archived, backlogHigh, inProgress, backlogMid };
@@ -163,10 +164,11 @@ public class CardTaskFileRendererTests
         var highPos = backlogBlock.IndexOf("CARD-0002", StringComparison.Ordinal);
         var midPos = backlogBlock.IndexOf("CARD-0003", StringComparison.Ordinal);
         var lowPos = backlogBlock.IndexOf("CARD-0001", StringComparison.Ordinal);
-        highPos.ShouldBeLessThan(midPos, "priority descending, then identifier ascending");
+        highPos.ShouldBeLessThan(midPos, "equal rank then CreatedAt then identifier");
         midPos.ShouldBeLessThan(lowPos);
 
-        index.ShouldContain($"- [CARD-0006]({names[inProgress.Id]}) — working `p2` `reliability`");
+        index.ShouldContain($"- [CARD-0006]({names[inProgress.Id]}) — working `reliability`");
+        index.ShouldContain("`high`");
         index.ShouldNotContain("\r");
         index.ShouldEndWith("\n");
         index.ShouldNotEndWith("\n\n");
@@ -209,7 +211,8 @@ public class CardTaskFileRendererTests
         string title,
         string description,
         CardStatus status,
-        int priority = 0,
+        CardImportance importance = CardImportance.Normal,
+        CardUrgency urgency = CardUrgency.Normal,
         string labelsJson = "[]",
         DateTime? created = null,
         DateTime? started = null,
@@ -221,7 +224,8 @@ public class CardTaskFileRendererTests
             Title = title,
             Description = description,
             Status = status,
-            Importance = (CardImportance)priority,
+            Importance = importance,
+            Urgency = urgency,
             LabelsJson = labelsJson,
             CreatedAt = created ?? new DateTime(2026, 8, 9, 12, 0, 0, DateTimeKind.Utc),
             StartedAt = started,

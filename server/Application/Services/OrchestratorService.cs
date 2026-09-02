@@ -508,7 +508,7 @@ public sealed class OrchestratorService
         CancellationToken ct)
     {
         var activeStatuses = ActiveSessionStatuses();
-        return await _db.Cards
+        var rows = await _db.Cards
             .AsNoTracking()
             .Where(c => string.IsNullOrWhiteSpace(_settings.InternalTrackerRepositoryPathPrefix)
                 || c.Board.TrackerKind != TrackerKind.Internal
@@ -524,14 +524,15 @@ public sealed class OrchestratorService
             .Where(c => c.RetrySchedule == null
                 || (c.RetrySchedule.AttemptCount < c.RetrySchedule.MaxAttempts
                     && (c.RetrySchedule.NextRetryAt == null || c.RetrySchedule.NextRetryAt <= utcNow)))
-            .OrderByDescending(c => c.Importance)
-            .ThenBy(c => c.CreatedAt)
             .Select(c => new DispatchCandidate(
                 c.Id,
                 c.Identifier,
                 c.Title,
                 c.Description,
-                (int)c.Importance,
+                c.Importance,
+                c.Urgency,
+                c.DueAt,
+                c.CreatedAt,
                 c.BoardId,
                 c.Board.MaxConcurrentSessions,
                 c.BoardColumnId,
@@ -549,6 +550,11 @@ public sealed class OrchestratorService
                     .Select(d => d.Content)
                     .FirstOrDefault()))
             .ToListAsync(ct);
+        return rows
+            .OrderBy(c => CardRanking.Rank(c.Importance, c.Urgency, c.DueAt, utcNow))
+            .ThenBy(c => CardRanking.DueAtSortKey(c.DueAt))
+            .ThenBy(c => c.CreatedAt)
+            .ToList();
     }
 
     private async Task<Dictionary<Guid, int>> CountActiveSessionsByBoardAsync(CancellationToken ct)
@@ -772,7 +778,10 @@ public sealed class OrchestratorService
         string Identifier,
         string Title,
         string Description,
-        int Priority,
+        CardImportance Importance,
+        CardUrgency Urgency,
+        DateTime? DueAt,
+        DateTime CreatedAt,
         Guid BoardId,
         int BoardMaxConcurrentSessions,
         Guid BoardColumnId,

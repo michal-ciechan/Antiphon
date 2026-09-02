@@ -247,10 +247,15 @@ public sealed class BoardService
     /// </remarks>
     internal static BoardDetailDto ToDetailDto(Board board, bool includeArchived)
     {
+        var now = DateTime.UtcNow;
         var cardsByColumn = board.Cards
             .Where(c => includeArchived || c.ArchivedAt == null)
             .GroupBy(c => c.BoardColumnId)
-            .ToDictionary(g => g.Key, g => g.OrderByDescending(c => c.Importance).ThenBy(c => c.CreatedAt).ToList());
+            .ToDictionary(g => g.Key, g => g
+                .OrderBy(c => CardRanking.Rank(c, now))
+                .ThenBy(c => CardRanking.DueAtSortKey(c.DueAt))
+                .ThenBy(c => c.CreatedAt)
+                .ToList());
 
         var columns = board.Columns
             .OrderBy(c => c.ColumnOrder)
@@ -264,7 +269,7 @@ public sealed class BoardService
                 column.IsTerminal,
                 column.MaxConcurrentSessions,
                 cardsByColumn.GetValueOrDefault(column.Id, [])
-                    .Select(ToCardDto)
+                    .Select(c => ToCardDto(c, now))
                     .ToList()))
             .ToList();
 
@@ -300,8 +305,10 @@ public sealed class BoardService
             board.ArchivedReason,
             board.ArchivedBy);
 
-    internal static CardDto ToCardDto(Card card)
+    internal static CardDto ToCardDto(Card card, DateTime? now = null)
     {
+        var utc = now ?? DateTime.UtcNow;
+        var effective = CardRanking.EffectiveUrgency(card, utc);
         return new CardDto(
             card.Id,
             card.BoardId,
@@ -317,7 +324,13 @@ public sealed class BoardService
             card.Identifier,
             card.Title,
             card.Description,
-            (int)card.Importance,
+            card.Importance,
+            card.Urgency,
+            card.DueAt,
+            card.UrgentSince,
+            effective,
+            CardRanking.Quadrant(card.Importance, effective),
+            CardRanking.Rank(card, utc),
             ParseLabels(card.LabelsJson),
             card.Status,
             card.ConcurrencyToken,
@@ -411,7 +424,9 @@ public sealed class BoardService
             revision.Kind,
             revision.Title,
             revision.Description,
-            (int?)revision.Importance,
+            revision.Importance,
+            revision.Urgency,
+            revision.DueAt,
             revision.LabelsJson is null ? null : ParseLabels(revision.LabelsJson),
             revision.FromColumnId,
             revision.ToColumnId,

@@ -100,12 +100,12 @@ public class HomeTaskServiceIntegrationTests
     }
 
     [Test]
-    public async Task a_review_card_is_review_and_backlog_cards_are_next_ordered_by_priority()
+    public async Task a_review_card_is_review_and_backlog_cards_are_next_ordered_by_rank()
     {
         await using var world = await World.CreateAsync();
         var review = await world.SeedCardAsync(CardStatus.Review);
-        var later = await world.SeedCardAsync(CardStatus.Backlog, priority: 5, createdAt: world.Now.AddMinutes(-1));
-        var sooner = await world.SeedCardAsync(CardStatus.Backlog, priority: 1, createdAt: world.Now.AddMinutes(-10));
+        var later = await world.SeedCardAsync(CardStatus.Backlog, CardImportance.Low, createdAt: world.Now.AddMinutes(-1));
+        var sooner = await world.SeedCardAsync(CardStatus.Backlog, CardImportance.Critical, createdAt: world.Now.AddMinutes(-10));
 
         var items = (await world.GetAsync()).Items.ToList();
         var reviewItem = items.Single(i => i.Id == review.Id);
@@ -461,7 +461,7 @@ public class HomeTaskServiceIntegrationTests
 
         public async Task<Card> SeedCardAsync(
             CardStatus status,
-            int priority = 0,
+            CardImportance importance = CardImportance.Normal,
             DateTime? createdAt = null,
             DateTime? updatedAt = null,
             DateTime? startedAt = null,
@@ -483,7 +483,7 @@ public class HomeTaskServiceIntegrationTests
                 Identifier = $"CARD-{Interlocked.Increment(ref _cardNumber):0000}",
                 Title = $"Home card {status}",
                 Status = status,
-                Importance = (CardImportance)priority,
+                Importance = importance,
                 AssignedAgentId = assignedAgentId,
                 CreatedAt = at,
                 UpdatedAt = updatedAt ?? at,

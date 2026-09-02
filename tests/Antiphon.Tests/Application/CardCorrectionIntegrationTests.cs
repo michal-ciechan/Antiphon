@@ -418,7 +418,7 @@ public class CardCorrectionIntegrationTests
                 new CreateBoardRequest(project.Id, "Correction board"), CancellationToken.None);
             var card = await harness.CardService.CreateAsync(
                 board.Id,
-                new CreateCardRequest(null, "Retry beats the cold-launch race", "As claimed in CARD-0018.", 1, ["bug"]),
+                new CreateCardRequest(null, "Retry beats the cold-launch race", "As claimed in CARD-0018.", CardImportance.High, Labels: ["bug"]),
                 CancellationToken.None);
 
             var updated = await harness.CardService.UpdateContentAsync(
@@ -428,14 +428,14 @@ public class CardCorrectionIntegrationTests
                     "Disproven by task a6e163fe attempt 2, which spawned a new session and lost its prompt.",
                     Title: "Retry does NOT beat the cold-launch race",
                     Description: "Attempt 2 lost its prompt the same way.",
-                    Priority: 0,
+                    Importance: CardImportance.Normal,
                     Labels: ["bug", "corrected"],
                     EditedBy: "operator"),
                 CancellationToken.None);
 
             updated.Title.ShouldBe("Retry does NOT beat the cold-launch race");
             updated.Description.ShouldBe("Attempt 2 lost its prompt the same way.");
-            updated.Priority.ShouldBe(0);
+            updated.Importance.ShouldBe(CardImportance.Normal);
             updated.Labels.ShouldBe(["bug", "corrected"]);
             updated.RevisionCount.ShouldBe(1);
             updated.ConcurrencyToken.ShouldNotBe(card.ConcurrencyToken);
@@ -453,7 +453,7 @@ public class CardCorrectionIntegrationTests
             revision.RevisionNumber.ShouldBe(1);
             revision.Title.ShouldBe("Retry beats the cold-launch race");
             revision.Description.ShouldBe("As claimed in CARD-0018.");
-            revision.Importance.ShouldBe((CardImportance)1);
+            revision.Importance.ShouldBe(CardImportance.High);
             revision.LabelsJson.ShouldBe("[\"bug\"]");
             revision.Reason.ShouldNotBeNull().ShouldContain("a6e163fe");
             revision.EditedBy.ShouldBe("operator");
@@ -482,7 +482,7 @@ public class CardCorrectionIntegrationTests
                 new CreateBoardRequest(project.Id, "Partial edit board"), CancellationToken.None);
             var card = await harness.CardService.CreateAsync(
                 board.Id,
-                new CreateCardRequest(null, "Keep my title", "Keep my description", 2, ["keep"]),
+                new CreateCardRequest(null, "Keep my title", "Keep my description", CardImportance.High, Labels: ["keep"]),
                 CancellationToken.None);
 
             var updated = await harness.CardService.UpdateContentAsync(
@@ -493,8 +493,105 @@ public class CardCorrectionIntegrationTests
 
             updated.Title.ShouldBe("Keep my title");
             updated.Description.ShouldBe("Rewritten.");
-            updated.Priority.ShouldBe(2);
+            updated.Importance.ShouldBe(CardImportance.High);
             updated.Labels.ShouldBe(["keep"]);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task An_edit_snapshots_importance_urgency_and_due_and_maintains_UrgentSince()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Axes board"), CancellationToken.None);
+            var due = DateTime.UtcNow.AddDays(60);
+            var card = await harness.CardService.CreateAsync(
+                board.Id,
+                new CreateCardRequest(null, "Axes", "body", CardImportance.Normal, CardUrgency.Normal, due),
+                CancellationToken.None);
+
+            card.Importance.ShouldBe(CardImportance.Normal);
+            card.Urgency.ShouldBe(CardUrgency.Normal);
+            card.DueAt.ShouldBe(due);
+            card.UrgentSince.ShouldBeNull();
+            card.EffectiveUrgency.ShouldBe(CardUrgency.Normal);
+            card.Quadrant.ShouldBe(CardQuadrant.Someday);
+            card.Rank.ShouldBe(10);
+
+            var raised = await harness.CardService.UpdateContentAsync(
+                card.Id,
+                new UpdateCardContentRequest(
+                    card.ConcurrencyToken, "This is blocking us now.", Urgency: CardUrgency.Now),
+                CancellationToken.None);
+
+            raised.Urgency.ShouldBe(CardUrgency.Now);
+            raised.UrgentSince.ShouldNotBeNull();
+            raised.EffectiveUrgency.ShouldBe(CardUrgency.Now);
+            raised.Quadrant.ShouldBe(CardQuadrant.Clear);
+            raised.Rank.ShouldBe(6);
+
+            await using (var verify = CreateContext())
+            {
+                var revision = await verify.CardRevisions.SingleAsync(r => r.CardId == card.Id);
+                revision.Importance.ShouldBe(CardImportance.Normal);
+                revision.Urgency.ShouldBe(CardUrgency.Normal);
+                revision.DueAt.ShouldBe(due);
+            }
+
+            var lowered = await harness.CardService.UpdateContentAsync(
+                raised.Id,
+                new UpdateCardContentRequest(
+                    raised.ConcurrencyToken, "No longer blocking.", Urgency: CardUrgency.Normal),
+                CancellationToken.None);
+            lowered.Urgency.ShouldBe(CardUrgency.Normal);
+            lowered.UrgentSince.ShouldBeNull();
+
+            var cleared = await harness.CardService.UpdateContentAsync(
+                lowered.Id,
+                new UpdateCardContentRequest(
+                    lowered.ConcurrencyToken, "Date was a guess.", ClearDueAt: true),
+                CancellationToken.None);
+            cleared.DueAt.ShouldBeNull();
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Creating_already_urgent_sets_UrgentSince()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Create urgent board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id,
+                new CreateCardRequest(null, "On fire", Urgency: CardUrgency.Now),
+                CancellationToken.None);
+
+            card.Urgency.ShouldBe(CardUrgency.Now);
+            card.UrgentSince.ShouldNotBeNull();
         }
         finally
         {

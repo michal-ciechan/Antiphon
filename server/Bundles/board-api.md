@@ -8,7 +8,9 @@ unless the script genuinely can't do it. These are the shapes that bite either w
   resolves whichever form you give it. There is no look-up-the-id-first step.
 
 - `GET /api/cards/limits` returns the current title/description/reason/actor length ceilings
-  (`-Limits` on the script). Today: title 300, description 20 000, reason 4 000, actor 200.
+  plus `importanceValues` / `urgencyValues` (`-Limits` on the script). Today: title 300,
+  description 20 000, reason 4 000, actor 200. There is no `priority` field; a write that still
+  sends one is 400.
 
 - EVERY WRITE CARRIES THE CARD'S CURRENT `concurrencyToken`, AND EVERY SUCCESSFUL WRITE ROTATES IT.
   Re-read the card between two writes to it; replaying a token you already spent is rejected as a
@@ -27,7 +29,7 @@ unless the script genuinely can't do it. These are the shapes that bite either w
 - MOVE AND REWRITE ARE DIFFERENT ENDPOINTS. `PATCH /api/cards/{id}` is move-only (`boardColumnId`,
   `concurrencyToken`, optional `reason`, optional `spawn`). `PATCH /api/cards/{id}/content` corrects
   the text (`concurrencyToken` plus a REQUIRED `reason`, then any of `title`, `description`,
-  `priority`, `labels`, `editedBy`); it records a revision carrying the values it superseded,
+  `importance`, `urgency`, `dueAt`, `clearDueAt`, `labels`, `editedBy`); it records a revision carrying the values it superseded,
   readable at `GET /api/cards/{id}/revisions`. A card that is simply wrong gets corrected in place —
   filing a second card to describe the mistake is what this endpoint exists to stop.
 

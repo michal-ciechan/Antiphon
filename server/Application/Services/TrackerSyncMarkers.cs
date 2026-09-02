@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -90,8 +91,10 @@ public static partial class TrackerSyncMarkers
             _ => status.ToString().ToLowerInvariant()
         };
 
-    public static string? PriorityLabel(int priority) =>
-        priority == 0 ? null : $"priority:{priority}";
+    public static string? PriorityLabel(CardImportance importance) =>
+        importance == CardImportance.Normal
+            ? null
+            : "priority:" + importance.ToString().ToLowerInvariant();
 
     [GeneratedRegex(@"<!--\s*antiphon:comment=([0-9a-fA-F]{32})\s*-->\s*$", RegexOptions.CultureInvariant)]
     private static partial Regex TrailingCommentMarkerRegex();

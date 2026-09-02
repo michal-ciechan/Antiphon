@@ -581,6 +581,7 @@ public class TrackerBidirectionalSyncTests
             result.Boards.Single().Creates.ShouldBe(1);
             fake.CreateIssueCalls.Count.ShouldBe(1);
             fake.CreateIssueCalls[0].Title.ShouldBe(fresh.Title);
+            fake.CreateIssueCalls[0].Labels.ShouldNotContain(l => l.StartsWith("priority:"));
             // CARD-0171
             result.Boards.Single().Changes
                 .Single(c => c.Kind == TrackerSyncChangeKind.Created)
@@ -590,6 +591,43 @@ public class TrackerBidirectionalSyncTests
         {
             await CleanupAsync(tempRoot);
         }
+    }
+
+    [Test]
+    public async Task Export_create_writes_the_importance_name_as_the_priority_label()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
+        try
+        {
+            var activatedAt = clock.GetUtcNow().UtcDateTime;
+            var graph = await SeedBoardAsync(db, tempRoot, clock, syncOutCreate: true, trackerActivatedAt: activatedAt);
+            var fresh = NewCard(graph, activatedAt.AddMinutes(5));
+            fresh.Importance = CardImportance.Critical;
+            db.Cards.Add(fresh);
+            await db.SaveChangesAsync();
+
+            var fake = new FakeBidirectionalTracker(TrackerKind.GitHubIssues) { Candidates = [] };
+            var sut = NewSut(db, fake, clock);
+            await sut.RunAsync(graph.Board.Id, CancellationToken.None);
+
+            fake.CreateIssueCalls.ShouldHaveSingleItem();
+            fake.CreateIssueCalls[0].Labels.ShouldContain("priority:critical");
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
+    public void PriorityLabel_emits_the_importance_name_and_omits_normal()
+    {
+        TrackerSyncMarkers.PriorityLabel(CardImportance.Critical).ShouldBe("priority:critical");
+        TrackerSyncMarkers.PriorityLabel(CardImportance.High).ShouldBe("priority:high");
+        TrackerSyncMarkers.PriorityLabel(CardImportance.Low).ShouldBe("priority:low");
+        TrackerSyncMarkers.PriorityLabel(CardImportance.Normal).ShouldBeNull();
     }
 
     [Test]

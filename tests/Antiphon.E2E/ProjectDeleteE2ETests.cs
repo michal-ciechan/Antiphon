@@ -302,7 +302,7 @@ public class ProjectDeleteE2ETests
 
     private async Task<Guid> CreateCardAsync(Guid boardId, string title)
     {
-        var payload = new { boardColumnId = (Guid?)null, title, description = string.Empty, priority = 0, labels = Array.Empty<string>() };
+        var payload = new { boardColumnId = (Guid?)null, title, description = string.Empty, labels = Array.Empty<string>() };
         var response = await _appFixture.HttpClient.PostAsJsonAsync($"/api/boards/{boardId}/cards", payload, JsonOptions);
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);

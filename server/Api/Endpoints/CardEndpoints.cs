@@ -32,7 +32,9 @@ public static class CardEndpoints
             CardService.MaxTitleLength,
             CardService.MaxDescriptionLength,
             CardService.MaxReasonLength,
-            CardService.MaxActorLength)));
+            CardService.MaxActorLength,
+            Enum.GetNames<CardImportance>(),
+            Enum.GetNames<CardUrgency>())));
 
         cards.MapGet("/", async (
             DateTime? updatedSince,

@@ -79,6 +79,19 @@ Anywhere a card id appears in a route it is a **string**, resolved by `CardServi
 lookup step. A foreign tracker's key (for example a Jira `ANT-12`) resolves through the card's
 external-issue ref; `#N` is always `CARD-000N` and never a GitHub issue number.
 
+### Importance, urgency, and rank (CARD-0039)
+
+A card stores `importance` (`Low | Normal | High | Critical`, default `Normal`) and `urgency`
+(`Normal | Soon | Now`, default `Normal`) plus an optional `dueAt`. Responses also carry the
+derived triple: `effectiveUrgency` (stored urgency escalated by a due date within 14 days → Soon,
+within 3 days or passed → Now), `quadrant` (`DoFirst | Schedule | Clear | Someday`), and `rank`
+(lower sorts first). There is no `priority` field. `CreateCardRequest` and `UpdateCardContentRequest`
+reject unknown JSON members, so a stale `priority` write is **400**, not a silent no-op.
+
+`PATCH /api/cards/{id}/content` takes optional `importance`, `urgency`, `dueAt`, and `clearDueAt`
+(the tri-state for the date; null `dueAt` means unchanged). `GET /api/cards/limits` includes
+`importanceValues` and `urgencyValues` from `Enum.GetNames`.
+
 `Identifier` is unique per **board**, not globally. Every `{id}` card route walks the same scope
 `delegate.ps1 -Card` uses (CARD-0218), narrowed by two query parameters:
 
@@ -106,7 +119,7 @@ below is a route group; the file named is the authority for its exact bodies.
 
 ```
 GET    /api/home/tasks                       read-only home-rail projection of cards and unbound delegations (CARD-0002). Fleet-global; the client filters by project directory. Bound tasks nest as a card's Worker, never as their own item. No question field — that text is GET /api/attention.
-GET    /api/cards/limits                     title/description/reason/actor length ceilings
+GET    /api/cards/limits                     title/description/reason/actor length ceilings plus importanceValues / urgencyValues (enum names)
 GET    /api/cards/{id}                       one card  (?boardId=&cwd=)
 GET    /api/cards/{id}/thread                card + its plans, tasks and commits (read-only projection)  (?boardId=&cwd=)
 PATCH  /api/cards/{id}                       move (column + concurrencyToken + reason, optional spawn)  (?boardId=&cwd=)
@@ -121,7 +134,7 @@ POST   /api/cards/{id}/pr                    open a pull request for the card  (
 
 GET    /api/boards  |  /api/boards/{id}  |  /api/boards/{id}/columns
 POST   /api/boards            DELETE /api/boards/{id}
-POST   /api/boards/{id}/cards                create a card on this board
+POST   /api/boards/{id}/cards                create a card on this board (importance/urgency names, optional dueAt; a `priority` field is 400)
 GET    /api/boards/{id}/workflow   PUT /api/boards/{id}/workflow    the board's workflow YAML
 POST   /api/boards/{id}/archive | /unarchive  hide/restore a board (reason body; not a delete)
 POST   /api/boards/{id}/card-files/sync      one-way card → docs/cards/<slug>/  (?dryRun=; CardFileSyncBoardResult; 409 card_file_sync_disabled | card_file_sync_running)

@@ -106,6 +106,22 @@ public class WorkflowDefinitionLoaderTests
         vars["card.identifier"].ShouldBe("CARD-0004");
         vars["issue.url"].ShouldBeNull();
         vars["issue.citation"].ShouldBe("");
+        vars["card.importance"].ShouldBe("High");
+        vars["card.urgency"].ShouldBe("Normal");
+        vars["card.effective_urgency"].ShouldBe("Normal");
+        vars["card.quadrant"].ShouldBe("Schedule");
+        vars["card.priority"].ShouldBe("7");
+        vars["issue.priority"].ShouldBe("7");
+    }
+
+    [Test]
+    public void CreateDefaultContent_uses_importance_and_urgency_names()
+    {
+        var board = new Board { Name = "Antiphon", MaxConcurrentSessions = 2 };
+        var content = WorkflowDefinitionLoader.CreateDefaultContent(board);
+        content.ShouldContain("Importance: {{ card.importance }}");
+        content.ShouldContain("Urgency: {{ card.urgency }}");
+        content.ShouldNotContain("Priority: {{ issue.priority }}");
     }
 
     [Test]
