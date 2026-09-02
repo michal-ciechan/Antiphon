@@ -10,6 +10,7 @@ using Antiphon.Server.Domain.ValueObjects;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -789,7 +790,53 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
     public async Task KillAsync(Guid sessionId, SessionTerminationSource source, CancellationToken ct)
     {
-        var session = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct)
+        // CARD-0319: never flush a caller's still-dirty change tracker. Settlement used to mark
+        // the task Succeeded on the scoped AppDbContext and then call KillAsync on that same
+        // instance; the first SaveChanges here committed the task, the pool sweeper deleted the
+        // agent, and SettleAsync's later save threw — skipping DeliverToParentAsync.
+        await using var isolated = CreateIsolatedDbContext();
+        await KillOnAsync(isolated, sessionId, source, ct);
+        await SyncTrackedSessionAfterIsolatedKillAsync(sessionId, ct);
+    }
+
+    /// <summary>
+    /// A fresh context with the same options as <see cref="_db"/> so this method's two
+    /// <c>SaveChangesAsync</c> calls cannot commit a caller's uncommitted entities.
+    /// </summary>
+    private AppDbContext CreateIsolatedDbContext()
+    {
+        var options = _db.GetService<IDbContextOptions>() as DbContextOptions<AppDbContext>
+            ?? throw new InvalidOperationException(
+                "AppDbContext is not configured with DbContextOptions<AppDbContext>.");
+        return new AppDbContext(options);
+    }
+
+    /// <summary>
+    /// Isolated KillAsync leaves the caller's tracker holding a stale Running session. Reload
+    /// (or detach) so a later SaveChanges on that context cannot write the old status back.
+    /// </summary>
+    private async Task SyncTrackedSessionAfterIsolatedKillAsync(Guid sessionId, CancellationToken ct)
+    {
+        var tracked = _db.ChangeTracker.Entries<AgentSession>()
+            .FirstOrDefault(e => e.Entity.Id == sessionId);
+        if (tracked is null)
+            return;
+
+        try
+        {
+            await tracked.ReloadAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Detaching stale session {SessionId} after isolated kill", sessionId);
+            tracked.State = EntityState.Detached;
+        }
+    }
+
+    private async Task KillOnAsync(
+        AppDbContext db, Guid sessionId, SessionTerminationSource source, CancellationToken ct)
+    {
+        var session = await db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct)
             ?? throw new NotFoundException(nameof(AgentSession), sessionId);
 
         // Persist the request source BEFORE asking the runner to kill so an exit-event race
@@ -802,7 +849,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
         session.Status = SessionStatus.Stopping;
         session.LastSeenAt = UtcNow();
-        await _db.SaveChangesAsync(ct);
+        await db.SaveChangesAsync(ct);
 
         var killed = await _runtime.KillAsync(
             sessionId,
@@ -827,7 +874,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             ? MemoryKilledFailureReason
             : killed ? null : "Agent process did not exit within the configured grace period.";
 
-        var attempt = await _db.RunAttempts
+        var attempt = await db.RunAttempts
             .Where(a => a.AgentSessionId == sessionId && a.CompletedAt == null)
             .OrderByDescending(a => a.AttemptNumber)
             .FirstOrDefaultAsync(ct);
@@ -844,7 +891,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 : session.FailureReason;
         }
 
-        await _db.SaveChangesAsync(ct);
+        await db.SaveChangesAsync(ct);
         await _eventBus.PublishToGroupAsync(
             AgentSessionGroups.Session(sessionId),
             "SessionExited",
@@ -853,7 +900,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         // Cardless (interactive) sessions have nothing to notify a board about.
         if (session.CardId is Guid cardId)
         {
-            var card = await _db.Cards
+            var card = await db.Cards
                 .AsNoTracking()
                 .Where(c => c.Id == cardId)
                 .Select(c => new { c.BoardId, c.Id })
