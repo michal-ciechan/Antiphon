@@ -298,6 +298,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<DateTime>("LastSeenAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int?>("LaunchBlock")
+                        .HasColumnType("integer");
+
                     b.Property<int>("Rows")
                         .HasColumnType("integer");
 

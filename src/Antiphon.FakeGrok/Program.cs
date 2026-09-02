@@ -39,6 +39,9 @@ namespace Antiphon.FakeGrok;
 ///  * Opt-in <c>ANTIPHON_FAKE_REPORT_LINE=1</c> (CARD-0243): a marked submit's
 ///    <c>agent_message_chunk</c> ends with <c>[antiphon-report:XXXXXXXX done]</c> so a
 ///    capstone-launched delegate honours the brief's closing line. Screen echo is unchanged.
+///  * Opt-in <c>ANTIPHON_FAKE_SIGN_IN=1</c> (CARD-0324): paint Grok 1.0.13's OAuth
+///    device-approval screen, ignore every key except <c>ctrl+q</c>, and exit 0 after
+///    <c>ANTIPHON_FAKE_SIGN_IN_EXIT_MS</c> (default 3000).
 /// </summary>
 internal static class Program
 {
@@ -90,6 +93,108 @@ internal static class Program
             "1",
             StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// CARD-0324: paint Grok 1.0.13's OAuth device-approval screen, ignore every key except
+    /// <c>ctrl+q</c>, and exit 0 after <c>ANTIPHON_FAKE_SIGN_IN_EXIT_MS</c> (default 3000).
+    /// The real 300 s sign-in ceiling in miniature.
+    /// </summary>
+    private static bool IsSignInMode() =>
+        string.Equals(
+            Environment.GetEnvironmentVariable("ANTIPHON_FAKE_SIGN_IN"),
+            "1",
+            StringComparison.OrdinalIgnoreCase);
+
+    private static int RunSignInMode(string[] args)
+    {
+        TryEnableRawConsole();
+        var cwd = Path.GetFullPath(GetArg(args, "--cwd") ?? Environment.CurrentDirectory);
+        var exitMs = int.TryParse(
+            Environment.GetEnvironmentVariable("ANTIPHON_FAKE_SIGN_IN_EXIT_MS"), out var ms) && ms > 0
+            ? ms
+            : 3000;
+        var inputLog = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_INPUT_LOG");
+
+        var stdout = Console.OpenStandardOutput();
+        void Write(string s)
+        {
+            var bytes = Encoding.UTF8.GetBytes(s);
+            stdout.Write(bytes, 0, bytes.Length);
+            stdout.Flush();
+        }
+
+        Write($"""
+            {cwd}
+                                                             Connecting...
+                                             Approve in your browser to finish signing in.
+                                                               FYED-XF4N
+                                                Make sure your browser shows this code.
+                                                If it doesn't open, click here to copy.
+                                           Copying not working? Click here to show full URL.
+                                                        Waiting for approval...
+                                                             ctrl+q  quit
+            """ + "\r\n");
+
+        var gate = new object();
+        var pending = new List<byte[]>();
+        var eof = false;
+        var quit = false;
+        var stdin = Console.OpenStandardInput();
+        var reader = new Thread(() =>
+        {
+            var buf = new byte[8192];
+            while (true)
+            {
+                int n;
+                try { n = stdin.Read(buf, 0, buf.Length); }
+                catch { break; }
+                if (n <= 0) { lock (gate) eof = true; break; }
+                lock (gate) pending.Add(buf[..n]);
+            }
+        })
+        { IsBackground = true, Name = "fakegrok-signin-stdin" };
+        reader.Start();
+
+        var deadline = Stopwatch.StartNew();
+        while (deadline.ElapsedMilliseconds < exitMs)
+        {
+            List<byte[]>? drained = null;
+            lock (gate)
+            {
+                if (pending.Count > 0)
+                {
+                    drained = new List<byte[]>(pending);
+                    pending.Clear();
+                }
+                else if (eof)
+                    break;
+            }
+
+            if (drained is not null)
+            {
+                foreach (var burst in drained)
+                {
+                    if (!string.IsNullOrWhiteSpace(inputLog))
+                    {
+                        try { File.AppendAllText(inputLog, Encoding.UTF8.GetString(burst)); }
+                        catch (IOException) { }
+                    }
+
+                    if (burst.Contains((byte)0x11))
+                    {
+                        quit = true;
+                        break;
+                    }
+                }
+            }
+
+            if (quit)
+                break;
+            Thread.Sleep(15);
+        }
+
+        return 0;
+    }
+
     private static int Main(string[] args)
     {
         if (IsHelp(args))
@@ -117,6 +222,9 @@ internal static class Program
             Console.WriteLine("  - grok-4.5");
             return 0;
         }
+
+        if (IsSignInMode())
+            return RunSignInMode(args);
 
         var banner = GetArg(args, "--banner") ?? "Fake Grok ready";
         var debugInput = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_DEBUG_INPUT") == "1";

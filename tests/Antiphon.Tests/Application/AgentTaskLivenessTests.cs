@@ -98,4 +98,23 @@ public class AgentTaskLivenessTests
         result.Reason.ShouldContain("the pty-host exited (code 1)");
         result.Reason.ShouldNotContain("StoppedBeforeFirstPrompt");
     }
+
+    [Test]
+    public void ClassifyFailure_ProviderSignInRequired_is_AuthenticationRequired_with_reason_verbatim()
+    {
+        const string reason =
+            "ProviderSignInRequired: Grok opened on its sign-in screen — run grok login";
+        var snapshot = new AgentTaskLiveness.SessionSnapshot(
+            SessionStatus.Failed,
+            DateTime.UtcNow,
+            reason,
+            SessionTerminationSource.SystemRequest,
+            LaunchBlock: SessionLaunchBlock.ProviderSignInRequired);
+
+        var result = AgentTaskLiveness.ClassifyFailure(Guid.NewGuid(), snapshot, hasTranscriptEntries: false);
+
+        result.FailureCode.ShouldBe(AgentTaskFailureCode.AuthenticationRequired);
+        result.Reason.ShouldContain(reason);
+        result.Reason.ShouldNotContain("StoppedBeforeFirstPrompt");
+    }
 }

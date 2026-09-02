@@ -241,8 +241,8 @@ public enum AgentTaskFailureCode
     StoppedBeforeFirstPrompt = 0,
 
     /// <summary>
-    /// The marked turn was killed by an HTTP 401 API-error stub (CARD-0286). Structural:
-    /// authentication or proxy-key configuration, never a retryable transport glitch.
+    /// Structural authentication failure: a 401 turn-kill (CARD-0286) or a provider
+    /// sign-in screen at launch (CARD-0324); never a retryable transport glitch.
     /// </summary>
     AuthenticationRequired = 1,
 

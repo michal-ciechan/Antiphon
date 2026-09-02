@@ -1174,12 +1174,12 @@ public sealed class AgentTaskDispatcher
             .ToList();
         var sessionById = (await _db.AgentSessions.AsNoTracking()
                 .Where(s => sessionIds.Contains(s.Id))
-                .Select(s => new { s.Id, s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode })
+                .Select(s => new { s.Id, s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock })
                 .ToListAsync(ct))
             .ToDictionary(
                 s => s.Id,
                 s => new AgentTaskLiveness.SessionSnapshot(
-                    s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode));
+                    s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock));
 
         var dead = new List<(AgentTask Task, AgentTaskLiveness.SessionSnapshot? Session)>();
         foreach (var task in open)
@@ -1624,6 +1624,68 @@ public sealed class AgentTaskDispatcher
     /// rather than discover it, but a parent session that cannot take a message is not a reason to
     /// leave the task open.</para>
     /// </summary>
+    /// <summary>
+    /// CARD-0324 S3: registry-path Grok with an Absent/Empty store fails before spawn.
+    /// Returns true when the task was failed (caller must not enqueue).
+    /// </summary>
+    private async Task<bool> TryFailGrokCredentialProbeAsync(
+        AgentTask claimed, DelegateProgram program, CancellationToken ct)
+    {
+        var env = MergeRegistryGrokProbeEnv(claimed, program);
+        var grokHome = GrokCredentialStore.ResolveGrokHome(env);
+        var finding = GrokCredentialStore.Inspect(grokHome, env);
+        if (!GrokCredentialStore.IsLaunchBlocking(finding))
+            return false;
+
+        var reason = GrokSignInPromptDetector.BlockReason(grokHome);
+        try
+        {
+            AgentSupervisorService? supervisor = null;
+            if (_scopeFactory is not null)
+            {
+                await using var scope = _scopeFactory.CreateAsyncScope();
+                supervisor = scope.ServiceProvider.GetService<AgentSupervisorService>();
+                if (supervisor is not null)
+                {
+                    var scopedDb = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                    await GrokSignInIncident.RecordAsync(
+                        scopedDb, supervisor, claimed.AgentId, sessionId: null, grokHome, reason, ct);
+                    await scopedDb.SaveChangesAsync(ct);
+                }
+            }
+
+            if (supervisor is null)
+                await GrokSignInIncident.RecordAsync(
+                    _db, supervisor: null, claimed.AgentId, sessionId: null, grokHome, reason, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex,
+                "Could not record provider-sign-in incident for task {ShortId}",
+                DelegationReportFormatter.Short(claimed.Id));
+        }
+
+        await FailAndNotifyAsync(
+            claimed, reason, "grok-credential-probe", ct, AgentTaskFailureCode.AuthenticationRequired);
+        return true;
+    }
+
+    private Dictionary<string, string> MergeRegistryGrokProbeEnv(AgentTask claimed, DelegateProgram program)
+    {
+        var env = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (_agentRegistry.Settings.Definitions.TryGetValue(program.DefinitionName, out var def))
+        {
+            foreach (var (key, value) in def.Env)
+                env[key] = value;
+        }
+
+        foreach (var (key, value) in AgentLaunchEnv.Parse(claimed.InheritedLaunchEnvJson))
+            env[key] = value;
+        foreach (var (key, value) in AgentLaunchEnv.Parse(claimed.LaunchEnvOverrideJson))
+            env[key] = value;
+        return env;
+    }
+
     private async Task FailAndNotifyAsync(
         AgentTask task, string reason, string sweep, CancellationToken ct,
         AgentTaskFailureCode? failureCode = null)
@@ -2268,6 +2330,17 @@ public sealed class AgentTaskDispatcher
         // must not be able to fail them. The outer tick catches the throw and fails the task with
         // the configuration gap named.
         var program = await ResolveDelegateProgramAsync(claimed, ct);
+
+        // CARD-0324: registry-path Grok only. Profiles (gkp) authenticate differently.
+        // Before the worktree so a missing store does not cut a throwaway checkout.
+        if (program.ProfileId is null
+            && program.Kind == AgentKind.Grok
+            && _agentRegistry.Settings.GrokCredentialProbeEnabled
+            && await TryFailGrokCredentialProbeAsync(claimed, program, ct))
+        {
+            await transaction.CommitAsync(ct);
+            return false;
+        }
 
         if (_quotaGate is not null)
         {

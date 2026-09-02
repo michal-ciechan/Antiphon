@@ -99,6 +99,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     private bool _staleSubmitUsed;
     public int PromptOutputDelayMs { get; set; } = 10;
     public bool ReadyResult { get; set; } = true;
+    public AgentLaunchBlock? LaunchBlock { get; set; }
     public bool TurnCompleted { get; set; } = true;
     public bool ThrowOnRenderedSnapshot { get; set; }
     public string SentInput { get; private set; } = string.Empty;

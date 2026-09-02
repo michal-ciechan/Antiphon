@@ -43,6 +43,14 @@ public class AgentSession
     public SessionTerminationSource TerminationSource { get; set; }
 
     /// <summary>
+    /// Why ready failed, when the adapter named it (CARD-0324). Null on every pre-existing
+    /// row and on every launch that became ready. The dead-session sweep maps
+    /// <see cref="SessionLaunchBlock.ProviderSignInRequired"/> to
+    /// <see cref="AgentTaskFailureCode.AuthenticationRequired"/>.
+    /// </summary>
+    public SessionLaunchBlock? LaunchBlock { get; set; }
+
+    /// <summary>
     /// Highest transcript sequence for which compaction recovery has already run. The durable
     /// dedupe anchor: TranscriptTailer restarts at offset 0 on every runner restart/adoption and
     /// republishes ALL historical events — an incident-row check would be defeated by incident

@@ -57,7 +57,7 @@ AGENTS.md is the universal index and mandatory safety core for this repository. 
 - Scope is a comma-separated list of area names and/or path globs. Unknown areas warn rather than reject; scope drift is recorded at settlement. Extend antiphon.areas.json only for a real collision and avoid leading filename wildcards.
 - A decision belongs on the card move/reopen revision and attention feed, never a new column or an alert sink. CARD-nnnn is board-scoped; #N means only CARD-000N.
 - Files under `docs/cards/` are generated from the board (CARD-0004); edit the card, not the file.
-- Subscription-quota 409 is a launch refusal. Choose another allowed agent or explicitly use the documented override; never silently reroute. Tracker writes are explicit, YAML-activated actions, not orchestration-tick side effects. A scheduled card action with `Release`/`Spawn` is a scheduled spend; it needs `acceptSpend` and is previewed first.
+- Subscription-quota 409 is a launch refusal. Choose another allowed agent or explicitly use the documented override; never silently reroute. A 409 `provider_sign_in_required` is the same shape for a Grok pool whose `GROK_HOME` has no usable session: pick another kind, run `grok login`, or pass `allowUnauthenticatedProvider` (`delegate.ps1 -AllowUnauthenticatedProvider`); never silently reroute. Tracker writes are explicit, YAML-activated actions, not orchestration-tick side effects. A scheduled card action with `Release`/`Spawn` is a scheduled spend; it needs `acceptSpend` and is previewed first.
 
 ### External tools and secrets
 

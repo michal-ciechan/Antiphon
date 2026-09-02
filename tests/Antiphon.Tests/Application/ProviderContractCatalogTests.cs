@@ -462,7 +462,9 @@ public sealed class ProviderContractCatalogTests
         grok.Kind.ShouldBe(BlockingStartupModalKind.AutoAnswerable);
         grok.PerScope.ShouldBe(BlockingStartupModalScope.Cwd);
         grok.Reason.ShouldContain("CARD-0315");
-        grok.Reason.ShouldContain("device-code");
+        grok.Reason.ShouldContain("CARD-0324");
+        grok.Reason.ShouldContain("Approve in your browser");
+        grok.Reason.ShouldContain("grok login");
 
         var codex = ProviderContractCatalog.For(AgentKind.Codex).BlockingStartupModal;
         codex.State.ShouldBe(AgentTuiCapabilityState.Supported);

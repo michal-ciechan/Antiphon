@@ -1644,6 +1644,7 @@ public class OrchestratorServiceIntegrationTests
         public Task SendInputAsync(string input, CancellationToken ct) => _inner.SendInputAsync(input, ct);
         public Task ResizeAsync(int cols, int rows, CancellationToken ct) => _inner.ResizeAsync(cols, rows, ct);
         public Task<bool> WaitForReadyAsync(CancellationToken ct) => _inner.WaitForReadyAsync(ct);
+        public AgentLaunchBlock? LaunchBlock => _inner.LaunchBlock;
         public Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct) => _inner.WaitForTurnCompleteAsync(ct);
         public string SnapshotRawOutput() => _inner.SnapshotRawOutput();
         public Task<string> SnapshotRawOutputAsync(CancellationToken ct) => _inner.SnapshotRawOutputAsync(ct);

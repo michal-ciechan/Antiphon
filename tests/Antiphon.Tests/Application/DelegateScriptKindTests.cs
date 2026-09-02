@@ -294,6 +294,31 @@ public sealed class DelegateScriptKindTests
     }
 
     [Test]
+    public async Task AllowUnauthenticatedProvider_sends_allowUnauthenticatedProvider_true()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(
+            server, "-Role", "Code", "-Kind", "Grok", "-Goal", "queue anyway",
+            "-AllowUnauthenticatedProvider");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.GetProperty("allowUnauthenticatedProvider").GetBoolean().ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task an_omitted_AllowUnauthenticatedProvider_sends_no_flag()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(server, "-Role", "Test", "-Goal", "run the suite");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.TryGetProperty("allowUnauthenticatedProvider", out _)
+            .ShouldBeFalse();
+    }
+
+    [Test]
     public async Task IgnoreModelDisabled_sends_ignoreModelDisabled_true()
     {
         using var server = new StubApi();

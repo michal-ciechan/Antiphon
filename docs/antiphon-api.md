@@ -49,7 +49,7 @@ localhost dev tool only. If Antiphon ever becomes multi-user, gate this behind a
 
 - `code` is present when the exception carried a **stable machine-readable code**. `conflict` and
   `validation_failed` are the generic ones; the specific ones worth branching on are
-  `herdr_refused`, `remote_control_refused`, `subscription_quota_low`, `card_identifier_ambiguous`, `channel_disabled`, `profile_not_found`,
+  `herdr_refused`, `remote_control_refused`, `subscription_quota_low`, `provider_sign_in_required`, `card_identifier_ambiguous`, `channel_disabled`, `profile_not_found`,
   `profile_resolution_unavailable`, `profile_revision_conflict`.
 - `errors` is present on validation failures (422), keyed by field.
 - Additional keys may be spliced in from an exception's `Extensions`.
@@ -234,6 +234,13 @@ API and is fully commented in place. The fields that change behaviour most: `rol
 > launch refusal, not a warning attached to a launch that already happened. Retry with
 > `ignoreSubscriptionQuota: true`, or pick another `agentKind`/agent. The dispatcher never refuses;
 > it only records an informational warning.
+>
+> It can also refuse with **409 `provider_sign_in_required`** (CARD-0324) for a registry-Grok
+> create whose `GROK_HOME` has no usable `auth.json`. The problem-details extension carries
+> `agentKind`, `grokHome`, and `remedy: "grok login"`. Retry with `allowUnauthenticatedProvider:
+> true` (`delegate.ps1 -AllowUnauthenticatedProvider`) to queue anyway; the dispatcher still
+> fails the task if the store is empty at launch. Never silently reroute. Profiles that
+> authenticate with an API key (the standing `gkp` path) are not probed.
 >
 > It can also refuse with **409 `model_disabled`** (CARD-0022 / CARD-0309) when that kind/alias is
 > on an active `ModelAvailabilityHold`. The detail lists remaining aliases (`available: opus,

@@ -106,6 +106,12 @@ public class AgentRegistrySettings
     public int GrokTrustPromptSettleMs { get; set; } = 15000;
     public int GrokDoneQuietPeriodMs { get; set; } = 3000;
     public int GrokDoneMaxWaitMs { get; set; } = 300000;
+
+    /// <summary>
+    /// CARD-0324. Pre-launch <c>auth.json</c> probe on registry-path Grok dispatches.
+    /// Default true. Disables only this layer — the screen detector still runs.
+    /// </summary>
+    public bool GrokCredentialProbeEnabled { get; set; } = true;
 }
 
 public class AgentDefinition

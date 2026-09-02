@@ -239,6 +239,7 @@ public class InstructionBundleTests
         DelegationReportFormatter.OrchestratorContract.ShouldContain("-Reply");
         DelegationReportFormatter.OrchestratorContract.ShouldContain("StoppedBeforeFirstPrompt");
         DelegationReportFormatter.OrchestratorContract.ShouldContain("AuthenticationRequired");
+        DelegationReportFormatter.OrchestratorContract.ShouldContain("grok login");
         DelegationReportFormatter.OrchestratorContract.ShouldContain("CompletedWithoutProgress");
         DelegationReportFormatter.OrchestratorContract.ShouldContain("Do not paste, log, or repeat credentials");
         DelegationReportFormatter.OrchestratorContract.ShouldContain(

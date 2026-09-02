@@ -30,6 +30,14 @@ public interface IAgentProtocolAdapter : IAsyncDisposable
     event Action<string>? OnTextDelta;
 
     Task<bool> WaitForReadyAsync(CancellationToken ct);
+
+    /// <summary>
+    /// Why the last <see cref="WaitForReadyAsync"/> returned false, when the adapter can name
+    /// it (CARD-0324). Null keeps today's generic "Agent process did not become ready."
+    /// Codex/Claude return null this card.
+    /// </summary>
+    AgentLaunchBlock? LaunchBlock => null;
+
     Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct);
 
     string SnapshotRawOutput();

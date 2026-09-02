@@ -42,6 +42,8 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter
     private long? _lastKnownTranscriptSequence;
     private string? _lastPrompt;
     private bool _started;
+    private IReadOnlyDictionary<string, string>? _launchEnv;
+    private AgentLaunchBlock? _launchBlock;
 
     public RunnerGrokAdapter(
         ISessionRunnerClient client,
@@ -60,6 +62,7 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter
     public int? Pid => _terminal.Pid;
     public AgentExitReason ExitReason => _terminal.ExitReason;
     public string? AuditDirectory => null;
+    public AgentLaunchBlock? LaunchBlock => _launchBlock;
     public event Action<string>? OnTextDelta
     {
         add { }
@@ -71,6 +74,7 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter
         if (_started)
             throw new InvalidOperationException("RunnerGrokAdapter already started.");
         _started = true;
+        _launchEnv = spec.Env;
         await _terminal.StartAsync(spec, ct);
     }
 
@@ -152,6 +156,23 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter
             ct);
         if (!quiet)
             return false;
+
+        // Sign-in gates trust (measured 1.0.13): an unauthenticated GROK_HOME parks on the
+        // OAuth device-approval / welcome screen and never paints the directory-trust dialog.
+        // Quiet-after-visible calls that READY and the brief is typed into a screen whose
+        // only bound key is ctrl+q (CARD-0324). Check first, type nothing.
+        var screen = await _terminal.SnapshotScreenAsync(ct);
+        if (GrokSignInPromptDetector.IsVisibleOnScreen(screen))
+        {
+            var grokHome = GrokCredentialStore.ResolveGrokHome(_launchEnv);
+            var reason = GrokSignInPromptDetector.BlockReason(grokHome);
+            _launchBlock = new AgentLaunchBlock(
+                AgentLaunchBlockKind.ProviderSignInRequired, reason, grokHome);
+            _logger?.LogError(
+                "Session {SessionId} opened on Grok's sign-in screen (GROK_HOME={GrokHome}). Nothing was typed. Screen:\n{Screen}",
+                _terminal.SessionId, grokHome, screen);
+            return false;
+        }
 
         // Quiet is not usable. A first launch into a cwd Grok has never seen parks on
         // "Do you trust the contents of this directory?" and makes no further output, so the

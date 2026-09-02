@@ -248,8 +248,18 @@ the whole session (reads must share write/delete), and is flushed per update.
   (`grok inspect --json` `projectTrusted`, measured 1.0.13). Exact-path seed of the worktree
   itself does. `GrokTrustPromptDetector` answers `y` in `RunnerGrokAdapter.WaitForReadyAsync`
   after the quiet wait (CARD-0315); Enter is not safe because both options render bold. An
-  **unauthenticated `GROK_HOME` parks on a device-code login that swallows input** — that one
-  is **fail-fast, never auto-answered**, and is global per `GROK_HOME`.
+  **unauthenticated `GROK_HOME` parks on Grok 1.0.13's OAuth device-approval screen**
+  (`Approve in your browser to finish signing in` / `Waiting for approval...`) or the
+  welcome token input (`Paste your token here`) — sign-in gates the trust dialog, so
+  a missing store never paints `Do you trust…` first. **Fail-fast, never auto-answered**,
+  global per `GROK_HOME`. `GrokSignInPromptDetector` (CARD-0324) types nothing and
+  fails the launch with `AuthenticationRequired` naming `grok login`. The store going
+  missing is Grok clearing `auth.json` after a *permanent* refresh failure (the lock
+  file is a permanent artefact and is not evidence of a hung refresh). Registry-path
+  pool launches also refuse at create with **409 `provider_sign_in_required`**; pass
+  `allowUnauthenticatedProvider` (`delegate.ps1 -AllowUnauthenticatedProvider`) to
+  queue anyway. Do not put `XAI_API_KEY` on the registry `grok` definition by default
+  — that moves pool spend onto console.x.ai metered billing.
 - No remote control. Refused at create/PATCH/start/card-spawn with `409 remote_control_refused`
   and never typed (`RemoteControlPolicy`, CARD-0212). No claude.ai session entry.
 - Context occupancy is Grok's own numbers: `auto_compact_completed.tokens_after` and single-call

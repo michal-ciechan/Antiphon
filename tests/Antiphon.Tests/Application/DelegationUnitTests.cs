@@ -1114,6 +1114,7 @@ public class BootWedgeContractTests
     {
         ((int)AgentIncidentKind.QueuedInputNeverConverted).ShouldBe(43);
         ((int)AgentIncidentKind.BootWedged).ShouldBe(44);
+        ((int)AgentIncidentKind.ProviderSignInRequired).ShouldBe(45);
         ((int)AttentionKind.UnmarkedWaiting).ShouldBe(23);
     }
 

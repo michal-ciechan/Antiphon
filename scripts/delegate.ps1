@@ -106,6 +106,12 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [switch]$IgnoreSubscriptionQuota,
 
+    # Bypass the CARD-0324 create-time 409 provider_sign_in_required. Queues a Grok
+    # task even when GROK_HOME has no usable session. The dispatcher still fails it
+    # if the store is empty at launch. For the operator about to run `grok login`.
+    [Parameter(ParameterSetName = 'Create')]
+    [switch]$AllowUnauthenticatedProvider,
+
     # Bypass the CARD-0309 create-time 409 model_disabled. Queues the task; the dispatcher
     # still skips it until the hold clears. This is NOT a launch-anyway switch - Start
     # never honours it.
@@ -348,6 +354,7 @@ switch ($PSCmdlet.ParameterSetName) {
         # Omitted (0 - an unbound [int] is 0, not $null) leaves the server's default expectation.
         if ($ExpectAbout -gt 0) { $body['expectedMinutes'] = $ExpectAbout }
         if ($IgnoreSubscriptionQuota) { $body['ignoreSubscriptionQuota'] = $true }
+        if ($AllowUnauthenticatedProvider) { $body['allowUnauthenticatedProvider'] = $true }
         if ($IgnoreModelDisabled) { $body['ignoreModelDisabled'] = $true }
         if ($IgnoreRoutingPin) { $body['ignoreRoutingPin'] = $true }
         if ($Complexity) { $body['complexity'] = $Complexity }

@@ -26,7 +26,9 @@ launch/completion incident. Surface the blocked or failed item, inspect the reco
 terminal evidence (API error text, worktree path, zero-progress facts), and choose an
 allowed recovery explicitly. Do not paste, log, or repeat credentials. Do not launch a
 replacement automatically — a different allowed agent kind is an intentional operator
-choice.
+choice. `AuthenticationRequired` from a Grok pool launch means this host needs
+`grok login` (the OAuth store under `GROK_HOME` has no usable session). Do not retry
+Grok. Do not switch profile to hide it.
 
 Reports arrive between your turns as `[task <id> done] ...`. Do not poll and do not wait —
 end your turn; the report will reach you. A delegate's own report closes with

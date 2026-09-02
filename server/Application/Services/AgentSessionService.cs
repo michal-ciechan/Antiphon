@@ -284,6 +284,12 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 // the DB write is what carries the source, and the exit-event scope only writes
                 // when it still sees Unknown.
                 SessionTermination.Record(session, SessionTerminationSource.SystemRequest);
+                if (ex is AgentLaunchBlockedException blocked)
+                {
+                    session.LaunchBlock = GrokSignInIncident.ToSessionBlock(blocked.Block.Kind);
+                    if (blocked.Block.Kind == AgentLaunchBlockKind.ProviderSignInRequired)
+                        await RecordProviderSignInRequiredAsync(session.Id, blocked, CancellationToken.None);
+                }
             }
 
             await _db.SaveChangesAsync(CancellationToken.None);
@@ -344,6 +350,12 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             session.EndedAt = UtcNow();
             session.LastSeenAt = session.EndedAt.Value;
             SessionTermination.Record(session, SessionTerminationSource.SystemRequest);
+            if (ex is AgentLaunchBlockedException blocked)
+            {
+                session.LaunchBlock = GrokSignInIncident.ToSessionBlock(blocked.Block.Kind);
+                if (blocked.Block.Kind == AgentLaunchBlockKind.ProviderSignInRequired)
+                    await RecordProviderSignInRequiredAsync(session.Id, blocked, CancellationToken.None, agentId);
+            }
 
             // The Start API already flipped the agent to Running before this background launch ran.
             // Without rolling that back the UI shows a phantom "Running" agent with no live session
@@ -529,6 +541,40 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         {
             _logger.LogWarning(incidentEx,
                 "Could not record stale-runner incident for failed launch of session {SessionId}", sessionId);
+        }
+    }
+
+    /// <summary>
+    /// CARD-0324: one Critical incident per <c>GROK_HOME</c>, not one per dead worker.
+    /// </summary>
+    private async Task RecordProviderSignInRequiredAsync(
+        Guid sessionId, AgentLaunchBlockedException blocked, CancellationToken ct, Guid? agentId = null)
+    {
+        try
+        {
+            if (agentId is null)
+            {
+                agentId = await _db.AgentTasks
+                    .Where(t => t.AgentSessionId == sessionId && t.AgentId != null)
+                    .OrderByDescending(t => t.DispatchedAt)
+                    .Select(t => t.AgentId)
+                    .FirstOrDefaultAsync(ct);
+            }
+
+            var grokHome = blocked.Block.GrokHome
+                ?? GrokCredentialStore.ResolveGrokHome();
+
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var supervisor = scope.ServiceProvider.GetService<AgentSupervisorService>();
+            await GrokSignInIncident.RecordAsync(
+                db, supervisor, agentId, sessionId, grokHome, blocked.Block.Reason, ct);
+            await db.SaveChangesAsync(ct);
+        }
+        catch (Exception incidentEx) when (incidentEx is not OperationCanceledException)
+        {
+            _logger.LogWarning(incidentEx,
+                "Could not record provider-sign-in incident for failed launch of session {SessionId}", sessionId);
         }
     }
 
@@ -1342,8 +1388,13 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
     private static async Task WaitForReadyOrThrowAsync(IAgentProtocolAdapter adapter, CancellationToken ct)
     {
-        if (!await adapter.WaitForReadyAsync(ct))
-            throw new InvalidOperationException("Agent process did not become ready.");
+        if (await adapter.WaitForReadyAsync(ct))
+            return;
+
+        if (adapter.LaunchBlock is { } block)
+            throw new AgentLaunchBlockedException(block);
+
+        throw new InvalidOperationException("Agent process did not become ready.");
     }
 
     // Cap on how long we wait for each remote-control slash command to echo output before moving on.

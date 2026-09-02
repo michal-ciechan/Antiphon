@@ -225,6 +225,29 @@ public class AgentTaskDeadSessionReconciliationTests
         failed.FailureReason.ShouldNotContain("not recorded");
     }
 
+    [Test]
+    public async Task a_failed_session_with_ProviderSignInRequired_is_AuthenticationRequired_with_reason_verbatim()
+    {
+        const string reason =
+            "ProviderSignInRequired: Grok opened on its sign-in screen — run grok login";
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(
+            AgentTaskStatus.Dispatched, SessionStatus.Failed,
+            failureReason: reason,
+            agentKind: AgentKind.Grok,
+            terminationSource: SessionTerminationSource.SystemRequest,
+            launchBlock: SessionLaunchBlock.ProviderSignInRequired);
+        var harness = scenario.Harness(task.SessionId);
+
+        await scenario.PastGraceAsync(harness);
+
+        var failed = await scenario.ReadTaskAsync(task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureCode.ShouldBe(AgentTaskFailureCode.AuthenticationRequired);
+        failed.FailureReason.ShouldContain(reason);
+        harness.Stopper.Killed.ShouldBeEmpty("THE SWEEP NEVER KILLS");
+    }
+
     // ---- 6-8: the evidence gates -----------------------------------------------------------------
 
     /// <summary>
@@ -637,7 +660,8 @@ public class AgentTaskDeadSessionReconciliationTests
             string? repoPath = null,
             string? sessionCwd = null,
             AgentKind agentKind = AgentKind.ClaudeCode,
-            SessionTerminationSource terminationSource = SessionTerminationSource.Unknown)
+            SessionTerminationSource terminationSource = SessionTerminationSource.Unknown,
+            SessionLaunchBlock? launchBlock = null)
         {
             await EnsureParentSessionAsync();
 
@@ -666,6 +690,7 @@ public class AgentTaskDeadSessionReconciliationTests
                 EndedAt = endedMinutesAgo is { } ago ? DateTime.UtcNow.AddMinutes(-ago) : null,
                 FailureReason = failureReason,
                 TerminationSource = terminationSource,
+                LaunchBlock = launchBlock,
             });
             db.Agents.Add(new Agent
             {
@@ -804,12 +829,12 @@ public class AgentTaskDeadSessionReconciliationTests
             await using var db = CreateContext();
             var row = await db.AgentSessions.AsNoTracking()
                 .Where(s => s.Id == sessionId)
-                .Select(s => new { s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode })
+                .Select(s => new { s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock })
                 .SingleOrDefaultAsync();
             return row is null
                 ? null
                 : new AgentTaskLiveness.SessionSnapshot(
-                    row.Status, row.EndedAt, row.FailureReason, row.TerminationSource, row.ExitCode);
+                    row.Status, row.EndedAt, row.FailureReason, row.TerminationSource, row.ExitCode, row.LaunchBlock);
         }
 
         /// <summary>Everything queued into THIS scenario's parent session, and nothing else.</summary>

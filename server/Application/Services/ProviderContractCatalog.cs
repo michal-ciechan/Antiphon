@@ -126,7 +126,7 @@ public static class ProviderContractCatalog
             CompactionMarking.Marked),
         BlockingStartupModal: new BlockingStartupModalContract(
             AgentTuiCapabilityState.Supported,
-            "First launch into an unseen cwd parks on 'Do you trust the contents of this directory?' (y/n). GrokTrustPromptDetector auto-answers y (CARD-0315); the decision is per-cwd in ~/.grok/trusted_folders.toml. Nested git worktrees are separate workspaces, so every fresh -Worktree path hits this. Separately, an unauthenticated GROK_HOME parks on a device-code login that swallows input (measured 1.0.5) — fail-fast, never auto-answered, global per GROK_HOME.",
+            "First launch into an unseen cwd parks on 'Do you trust the contents of this directory?' (y/n). GrokTrustPromptDetector auto-answers y (CARD-0315); the decision is per-cwd in ~/.grok/trusted_folders.toml. Nested git worktrees are separate workspaces, so every fresh -Worktree path hits this. Sign-in gates trust: an unauthenticated GROK_HOME parks on Grok 1.0.13's OAuth device-approval screen ('Approve in your browser to finish signing in' / 'Waiting for approval...') or the welcome token input ('Paste your token here') — fail-fast, never auto-answered, global per GROK_HOME. GrokSignInPromptDetector (CARD-0324) types nothing and names `grok login`. A missing auth.json is the signature of Grok clearing credentials after a permanent refresh failure, not a lock-file race.",
             BlockingStartupModalKind.AutoAnswerable,
             BlockingStartupModalScope.Cwd),
         SubscriptionUsagePoll: new SubscriptionUsagePollContract(

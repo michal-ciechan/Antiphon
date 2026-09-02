@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -39,6 +40,9 @@ public sealed class AgentTaskService
     private readonly RoutingPinService? _routingPins;
     // CARD-0090. Same optional contract: absent, -Complexity is 422 (no walker to consult).
     private readonly ComplexityRoutingService? _complexityRouting;
+    // CARD-0324. Optional so predating harnesses keep constructing this; absent, the
+    // create-time Grok store probe uses the shipped default (enabled).
+    private readonly AgentRegistrySettings? _registrySettings;
 
     public AgentTaskService(
         AppDbContext db,
@@ -53,7 +57,8 @@ public sealed class AgentTaskService
         ApiKeyEnvResolver? apiKeyEnvResolver = null,
         ModelAvailability? modelAvailability = null,
         RoutingPinService? routingPins = null,
-        ComplexityRoutingService? complexityRouting = null)
+        ComplexityRoutingService? complexityRouting = null,
+        IOptions<AgentRegistrySettings>? registrySettings = null)
     {
         _areas = areas;
         _db = db;
@@ -68,6 +73,7 @@ public sealed class AgentTaskService
         _modelAvailability = modelAvailability;
         _routingPins = routingPins;
         _complexityRouting = complexityRouting;
+        _registrySettings = registrySettings?.Value;
     }
 
     /// <summary>
@@ -660,6 +666,13 @@ public sealed class AgentTaskService
 
         var repeatOf = await FindLaunchFailureRepeatAsync(
             task.CardId, task.Goal, task.Kind, task.Role, task.AgentKind, ct);
+        if (repeatOf is null && !routingExhausted)
+        {
+            await RefuseUnauthenticatedGrokAsync(
+                agentKind, task.AgentId, request.LaunchEnvOverride, request.InheritedLlmEnv,
+                request.AllowUnauthenticatedProvider, ct);
+        }
+
         if (repeatOf is not null)
         {
             task.Status = AgentTaskStatus.Blocked;
@@ -1185,6 +1198,12 @@ public sealed class AgentTaskService
             await BlockRepeatAsync(task, repeatOf, ct);
             return await SummaryOfAsync(task, ct);
         }
+
+        await RefuseUnauthenticatedGrokAsync(
+            task.AgentKind, task.AgentId,
+            AgentLaunchEnv.Parse(task.LaunchEnvOverrideJson),
+            AgentLaunchEnv.Parse(task.InheritedLaunchEnvJson),
+            allowUnauthenticated: false, ct);
 
         await RequeueAsync(
             task, AgentTaskEventType.Retried, task.ModelLevel,
@@ -1814,6 +1833,59 @@ public sealed class AgentTaskService
             && !string.IsNullOrWhiteSpace(request.WorkingDirectory))
             return message + WorktreeSourceRepositoryGuidance;
         return message;
+    }
+
+    /// <summary>
+    /// CARD-0324: 409 <c>provider_sign_in_required</c> for a registry-Grok create/retry
+    /// whose store is Absent/Empty. Standing-profile Grok and API-key launches skip.
+    /// </summary>
+    private async Task RefuseUnauthenticatedGrokAsync(
+        AgentKind agentKind,
+        Guid? agentId,
+        IReadOnlyDictionary<string, string>? launchEnvOverride,
+        IReadOnlyDictionary<string, string>? inheritedEnv,
+        bool allowUnauthenticated,
+        CancellationToken ct)
+    {
+        var settings = _registrySettings;
+        if (allowUnauthenticated
+            || agentKind != AgentKind.Grok
+            || settings is not { GrokCredentialProbeEnabled: true })
+            return;
+
+        if (agentId is Guid pinnedId)
+        {
+            var pinned = await _db.Agents.AsNoTracking()
+                .Where(a => a.Id == pinnedId)
+                .Select(a => new { a.IsPoolDelegate, a.TuiProfileId })
+                .FirstOrDefaultAsync(ct);
+            if (pinned is { IsPoolDelegate: false, TuiProfileId: not null })
+                return;
+        }
+
+        var env = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (settings.Definitions.TryGetValue("grok", out var def))
+        {
+            foreach (var (key, value) in def.Env)
+                env[key] = value;
+        }
+
+        if (inheritedEnv is not null)
+        {
+            foreach (var (key, value) in inheritedEnv)
+                env[key] = value;
+        }
+
+        if (launchEnvOverride is not null)
+        {
+            foreach (var (key, value) in launchEnvOverride)
+                env[key] = value;
+        }
+
+        var grokHome = GrokCredentialStore.ResolveGrokHome(env);
+        var finding = GrokCredentialStore.Inspect(grokHome, env);
+        if (GrokCredentialStore.IsLaunchBlocking(finding))
+            throw new ProviderSignInRequiredException(grokHome);
     }
 
     private async Task<AgentTask?> FindLaunchFailureRepeatAsync(

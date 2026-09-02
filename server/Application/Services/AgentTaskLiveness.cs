@@ -31,7 +31,8 @@ public static class AgentTaskLiveness
         DateTime? EndedAt,
         string? FailureReason,
         SessionTerminationSource TerminationSource = SessionTerminationSource.Unknown,
-        int? ExitCode = null);
+        int? ExitCode = null,
+        SessionLaunchBlock? LaunchBlock = null);
 
     /// <summary>
     /// The reason written onto a task the dead-session sweep fails, plus the durable failure
@@ -89,6 +90,16 @@ public static class AgentTaskLiveness
         Guid? agentSessionId, SessionSnapshot? session, bool hasTranscriptEntries)
     {
         var what = Describe(agentSessionId, session);
+        if (session?.LaunchBlock == SessionLaunchBlock.ProviderSignInRequired)
+        {
+            var named = session.Value.FailureReason is { Length: > 0 } text
+                ? text
+                : "ProviderSignInRequired";
+            return new DeadSessionFailure(
+                Format(what, named, agentSessionId),
+                AgentTaskFailureCode.AuthenticationRequired);
+        }
+
         if (session?.FailureReason is { Length: > 0 } existing)
             return new DeadSessionFailure(Format(what, existing, agentSessionId), null);
 

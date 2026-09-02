@@ -606,6 +606,7 @@ public class CodexDelegateDispatchTests
         services.AddOptions<AgentRegistrySettings>().Configure(s =>
         {
             s.DefaultDefinition = "claude";
+            s.GrokCredentialProbeEnabled = false;
             s.Definitions["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "claude" };
             s.Definitions["grok"] = new AgentDefinition
             {

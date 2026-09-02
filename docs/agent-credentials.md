@@ -39,6 +39,19 @@ or the Settings UI).
 authenticates with `ANTHROPIC_API_KEY=<this>`"*; an API key says *"the value called
 `anthropic-default` is `<this>`, and anyone may reference it"*.
 
+Grok's OAuth session lives in `GROK_HOME/auth.json` (default `~/.grok/auth.json`). That file is
+Grok's, never copied into Antiphon, never written by a launch, and never a secret Antiphon
+stores. When it is missing, registry-path pool Grok fails fast (CARD-0324) rather than typing
+into the sign-in screen. `auth.json.lock` is a permanent artefact of the last refresh and is
+not evidence the store is present.
+
+Putting `XAI_API_KEY` (or the gkp-style `GROK_CODE_XAI_API_KEY` + proxy) on
+`Agents:Definitions:grok:Env` would make a cleared OAuth store degrade to API-key auth
+instead of the sign-in screen. That is real resilience — and it moves pool spend from the
+SuperGrok subscription onto console.x.ai metered billing without anyone choosing that. It is
+an opt-in, not the default. The standing `gkp` profile already authenticates that way on
+purpose; the registry `grok` definition does not.
+
 ## 2. Merge order
 
 `AgentTuiLaunchResolver` builds one dictionary, in this order. **Later wins.**

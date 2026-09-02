@@ -1078,6 +1078,9 @@ public class AppDbContext : DbContext
             // evidence of an operator action until a later write records one.
             entity.Property(s => s.TerminationSource).IsRequired()
                 .HasDefaultValue(SessionTerminationSource.Unknown);
+            // CARD-0324. Null on every pre-existing row — a Failed session is not a
+            // sign-in block until a later write records one.
+            entity.Property(s => s.LaunchBlock);
             entity.Property(s => s.DelegationTokenHash).HasMaxLength(64);
             entity.Property(s => s.EffectiveModelId).HasMaxLength(500);
             // Stamps, not text — one "key vhash8" per composed bundle. Generous but bounded: the

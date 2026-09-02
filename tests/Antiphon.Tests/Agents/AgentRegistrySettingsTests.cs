@@ -56,6 +56,7 @@ public class AgentRegistrySettingsTests
         settings.CodexReadyQuietPeriodMs.ShouldBe(4321);
         settings.CodexBootStatusMaxWaitMs.ShouldBe(10_000);
         settings.CodexDoneQuietPeriodMs.ShouldBe(3456);
+        new AgentRegistrySettings().GrokCredentialProbeEnabled.ShouldBeTrue();
     }
 
     /// <summary>

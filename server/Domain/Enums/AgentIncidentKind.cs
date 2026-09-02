@@ -448,4 +448,14 @@ public enum AgentIncidentKind
     /// relaunched once; a second wedge Fails the task.
     /// </summary>
     BootWedged = 44,
+
+    /// <summary>
+    /// CARD-0324: a Grok pool launch opened on the provider sign-in screen (OAuth
+    /// device-approval / welcome token input). Critical — NeedsHuman: no retry can
+    /// fix a cleared <c>auth.json</c>. Deduped per <c>GROK_HOME</c> rather than per
+    /// session, so the fifth dead worker is not the fifth Critical row. Closed when
+    /// a later registry-path Grok launch on that home reports ready. Detail names
+    /// the store and the <c>grok login</c> remedy.
+    /// </summary>
+    ProviderSignInRequired = 45,
 }

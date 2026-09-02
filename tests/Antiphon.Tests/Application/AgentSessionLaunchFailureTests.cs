@@ -66,6 +66,33 @@ public class AgentSessionLaunchFailureTests
     }
 
     [Test]
+    public async Task Interactive_sign_in_block_persists_LaunchBlock_and_the_named_reason()
+    {
+        var grokHome = Path.Combine(Path.GetTempPath(), $"antiphon-grok-home-{Guid.NewGuid():N}");
+        var reason = GrokSignInPromptDetector.BlockReason(grokHome);
+        var adapter = new FakeAgentProtocolAdapter
+        {
+            ReadyResult = false,
+            LaunchBlock = new AgentLaunchBlock(
+                AgentLaunchBlockKind.ProviderSignInRequired, reason, grokHome),
+        };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+
+        var launch = fixture.LaunchInteractiveAsync();
+
+        var ex = await Should.ThrowAsync<AgentLaunchBlockedException>(launch);
+        ex.Block.Kind.ShouldBe(AgentLaunchBlockKind.ProviderSignInRequired);
+        adapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
+
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        session.Status.ShouldBe(SessionStatus.Failed);
+        session.LaunchBlock.ShouldBe(SessionLaunchBlock.ProviderSignInRequired);
+        session.FailureReason.ShouldBe(reason);
+        session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
+    }
+
+    [Test]
     public async Task Herdr_pairing_refusal_records_SystemRequest()
     {
         var adapter = new FakeAgentProtocolAdapter();

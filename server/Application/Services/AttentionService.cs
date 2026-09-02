@@ -524,12 +524,12 @@ public sealed class AttentionService
 
         var sessions = await _db.AgentSessions.AsNoTracking()
             .Where(s => sessionIds.Contains(s.Id))
-            .Select(s => new { s.Id, s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode })
+            .Select(s => new { s.Id, s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock })
             .ToListAsync(ct);
         var sessionById = sessions.ToDictionary(
             s => s.Id,
             s => new AgentTaskLiveness.SessionSnapshot(
-                s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode));
+                s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode, s.LaunchBlock));
 
         // "Has the session written anything at all" — the FailNeverStartedAsync predicate, asked in
         // one query for the whole candidate set rather than once per task.
@@ -1176,12 +1176,33 @@ public sealed class AttentionService
 
         var recent = await _db.AgentIncidents.AsNoTracking()
             .Where(i => i.Severity >= AlertSeverity.Error && i.CreatedAt >= since)
-            .Select(i => new { i.Id, i.AgentId, i.SessionId, i.Kind, i.Severity, i.Message, i.CreatedAt })
+            .Select(i => new { i.Id, i.AgentId, i.SessionId, i.Kind, i.Severity, i.Message, i.CreatedAt, i.FailureReason })
             .ToListAsync(ct);
 
         var fresh = recent.Where(i => !attachedIncidents.Contains(i.Id)).ToList();
         if (fresh.Count == 0)
             return items;
+
+        // CARD-0324: a later registry-path Grok ready launch closes the sign-in episode.
+        var signIn = fresh
+            .Where(i => i.Kind == AgentIncidentKind.ProviderSignInRequired)
+            .ToList();
+        if (signIn.Count > 0)
+        {
+            var closed = new HashSet<Guid>();
+            foreach (var row in signIn)
+            {
+                if (await GrokSignInIncident.IsClosedAsync(_db, row.CreatedAt, ct))
+                    closed.Add(row.Id);
+            }
+
+            if (closed.Count > 0)
+            {
+                fresh = fresh.Where(i => !closed.Contains(i.Id)).ToList();
+                if (fresh.Count == 0)
+                    return items;
+            }
+        }
 
         var agentIds = fresh.Where(i => i.AgentId != null).Select(i => i.AgentId!.Value).Distinct().ToList();
         var agentNames = agentIds.Count == 0

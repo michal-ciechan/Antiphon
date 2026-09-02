@@ -121,7 +121,14 @@ public sealed record CreateAgentTaskRequest(
     /// Blocked task (CARD-0090). Default false: Blocked-for-a-human is the durable decision
     /// request so an orchestrator cannot guess a kind.
     /// </summary>
-    bool RefuseIfExhausted = false);
+    bool RefuseIfExhausted = false,
+    /// <summary>
+    /// Bypass the CARD-0324 create-time 409 <c>provider_sign_in_required</c>. Default false:
+    /// a registry-Grok create whose <c>GROK_HOME</c> has no usable session is refused.
+    /// True queues the task; the dispatcher still fails it if the store is empty at launch.
+    /// For the operator who is about to run <c>grok login</c> and wants the task queued.
+    /// </summary>
+    bool AllowUnauthenticatedProvider = false);
 
 public sealed record AgentTaskSummaryDto(
     Guid Id,
