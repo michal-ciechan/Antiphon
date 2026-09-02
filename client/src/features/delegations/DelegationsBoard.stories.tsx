@@ -1,10 +1,12 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import type { AgentTaskDetailDto, AgentTaskSummaryDto } from '../../api/agentTasks'
+import type { AgentTaskDetailDto, AgentTaskListSummaryDto, AgentTaskSummaryDto } from '../../api/agentTasks'
 import { agentTaskKeys } from '../../api/agentTasks'
 import { DelegateModal } from './DelegateModal'
 import { DelegationsBoard } from './DelegationsBoard'
+import { DelegationsHistory } from './DelegationsHistory'
 import { TaskDrawer } from './TaskDrawer'
+import { SETTLED_STATUSES, isSettled } from './taskVisuals'
 // CONTRACT fixtures — captured (and drift-guarded) by tests/Antiphon.E2E/ContractSnapshotTests
 // against the REAL backend. Stories must seed from these files ONLY: hand-written mock shapes can
 // silently diverge from what the server actually returns; these cannot.
@@ -13,6 +15,14 @@ import agentTaskDetailFixture from '../../test/fixtures/contract/agent-task-deta
 
 const tasks = agentTasksFixture as AgentTaskSummaryDto[]
 const detail = agentTaskDetailFixture as AgentTaskDetailDto
+const settled = tasks.filter((task) => isSettled(task.status))
+const listSummary: AgentTaskListSummaryDto = {
+  active: tasks.filter((task) => task.status === 'Dispatched' || task.status === 'Working').length,
+  blocked: tasks.filter((task) => task.status === 'Blocked').length,
+  runs: new Set(tasks.map((task) => task.rootTaskId)).size,
+  totalCostUsd: tasks.reduce((sum, task) => sum + task.costUsd, 0),
+  byStatus: {},
+}
 
 /**
  * The board mounts with a pre-seeded QueryClient (the repo's no-MSW Storybook convention): every
@@ -29,16 +39,25 @@ const detail = agentTaskDetailFixture as AgentTaskDetailDto
 const NOW = Date.parse('2026-02-03T09:14:00Z')
 Date.now = () => NOW
 
-function withContractData(Story: () => React.ReactElement) {
+function seedClient(): QueryClient {
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false, staleTime: Infinity, gcTime: Infinity, refetchInterval: false },
     },
   })
-  client.setQueryData(agentTaskKeys.list(), tasks)
+  client.setQueryData(agentTaskKeys.list(false, { since: 'active' }), tasks)
+  client.setQueryData(
+    agentTaskKeys.list(false, { since: 'default', status: SETTLED_STATUSES }),
+    settled,
+  )
+  client.setQueryData(agentTaskKeys.summary(), listSummary)
   client.setQueryData(agentTaskKeys.detail(detail.summary.id), detail)
+  return client
+}
+
+function withContractData(Story: () => React.ReactElement) {
   return (
-    <QueryClientProvider client={client}>
+    <QueryClientProvider client={seedClient()}>
       <Story />
     </QueryClientProvider>
   )
@@ -76,4 +95,9 @@ export const Delegate: StoryObj<typeof DelegateModal> = {
       }}
     />
   ),
+}
+
+/** Settled work, newest first — the History tab of /orchestrator. */
+export const History: StoryObj<typeof DelegationsHistory> = {
+  render: () => <DelegationsHistory />,
 }

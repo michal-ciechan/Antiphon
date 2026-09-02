@@ -1,5 +1,5 @@
 import { HttpResponse, http } from 'msw'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AttentionDto, AttentionItemDto } from '../../api/attention'
 import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
@@ -46,6 +46,9 @@ function serve(items: AttentionItemDto[]) {
       agentTaskRequests += 1
       return HttpResponse.json([])
     }),
+    http.get('/api/agent-tasks/summary', () =>
+      HttpResponse.json({ active: 0, blocked: 0, runs: 0, totalCostUsd: 0, byStatus: {} }),
+    ),
     http.get('/api/boards', () => HttpResponse.json([])),
     // The Cards tab renders eagerly alongside the others, so its own endpoint has to answer with a
     // real shape — an empty object throws inside OrchestratorPanel and takes the page down with it.
@@ -80,6 +83,10 @@ function serve(items: AttentionItemDto[]) {
 }
 
 describe('OrchestratorPage', () => {
+  afterEach(() => {
+    window.history.pushState({}, '', '/')
+  })
+
   it('defers the delegations request until its tab is opened', async () => {
     const requests = serve([])
 
@@ -134,5 +141,15 @@ describe('OrchestratorPage', () => {
 
     const tab = await screen.findByRole('tab', { name: /Decisions/ })
     await waitFor(() => expect(tab).toHaveTextContent('1'))
+  })
+
+  it('?tab=history renders the History panel, and the Delegations panel is not mounted', async () => {
+    serve([])
+    window.history.pushState({}, '', '/orchestrator?tab=history')
+    renderWithProviders(<OrchestratorPage />)
+
+    expect(await screen.findByRole('heading', { name: 'History' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Delegations' })).not.toBeInTheDocument()
+    expect(screen.queryByTestId('lane-working')).not.toBeInTheDocument()
   })
 })
