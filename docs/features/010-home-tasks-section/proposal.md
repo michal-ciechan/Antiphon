@@ -29,6 +29,11 @@ against the code on 2026-09-02 and the following is **stale** — read the plan,
 `mockup.html` is still a fair sketch of the layout (agents third, tasks two-thirds, agent under
 its card, kebab); its group labels and the `Blocked` card state are the August design.
 
+**Addendum (CARD-0031, 2026-09-02):** story S1 ("what is happening right now") is this surface —
+"010 extended", not a third design. The gaps it closes (a progress verdict and elapsed/last-activity
+on Running items, the queue reason on Up next, the terminal reason on Done cards) are planned in
+[`2026-09-02-card-0031-project-status-view-plan.md`](../../superpowers/plans/2026-09-02-card-0031-project-status-view-plan.md).
+
 **Replaces**: the flat delegations-only row list in `client/src/features/home/ProjectTasksPanel.tsx`
 **Card**: CARD-0002
 
