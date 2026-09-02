@@ -70,6 +70,10 @@ here before anyone opens the app.
 
 ![delegations-board--delegate](./delegations-board--delegate.png)
 
+## Home/TasksSection — Rail
+
+![home-taskssection--rail](./home-taskssection--rail.png)
+
 ## Proposals/Mobile home — Needs You
 
 ![proposals-mobile-home--needs-you](./proposals-mobile-home--needs-you.png)
