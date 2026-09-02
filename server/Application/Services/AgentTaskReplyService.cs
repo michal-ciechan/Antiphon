@@ -608,6 +608,11 @@ public sealed class AgentTaskReplyService
         // session is how the conversation continues. CARD-0286's zero-progress failure keeps the
         // worktree for inspection and records the incident before release so cascade-delete of
         // the ephemeral agent cannot erase it (CARD-0085's ownership-safe order).
+        //
+        // CARD-0319: persist the task row and deliver the parent note BEFORE releasing the
+        // agent. KillAsync's own SaveChanges used to flush this tracker (including the still-
+        // uncommitted settlement); the pool sweeper then deleted the agent; the later save
+        // threw; OnTurnEndAsync swallowed it and skipped delivery.
         if (task.FailureCode == AgentTaskFailureCode.CompletedWithoutProgress
             && task.AgentSessionId is Guid noProgressFrom)
         {
@@ -617,42 +622,7 @@ public sealed class AgentTaskReplyService
                 $"Delegate task {DelegationReportFormatter.Short(task.Id)} reported completion without worktree progress",
                 failureReason ?? "The delegate reported completion but Antiphon observed no post-dispatch worktree progress.",
                 ct, AlertSeverity.Error);
-            await ReleaseDelegateAsync(services, db, task, now, ct, killSession: false);
         }
-        else if (task.Status == AgentTaskStatus.Succeeded)
-            await ReleaseDelegateAsync(services, db, task, now, ct);
-
-        await db.SaveChangesAsync(ct);
-
-        if (turn.FinalMessageMissing && task.AgentSessionId is Guid missingFrom)
-        {
-            await RecordFinalMessageMissingAsync(
-                services, db, task, missingFrom,
-                $"Task {DelegationReportFormatter.Short(task.Id)} settled without the delegate's final "
-                + $"message. {FinalMessageMissingDetail(settledBody.Length, _settings.FinalMessageGraceSeconds)} "
-                + "The caller has been told the report may be preamble; the whole turn is in this "
-                + "session's transcript.",
-                ct);
-        }
-
-        if (turn.AbandonedSubagents > 0 && task.AgentSessionId is Guid abandonedFrom)
-        {
-            await RecordIncidentOnceAsync(
-                services, db, task, abandonedFrom,
-                AgentIncidentKind.DelegateSubagentsNeverReported,
-                $"Delegate task {DelegationReportFormatter.Short(task.Id)} settled with background "
-                + "subagents unreported",
-                $"Task {DelegationReportFormatter.Short(task.Id)} settled while "
-                + $"{turn.AbandonedSubagents} background subagent(s) it launched had still not "
-                + $"reported after {_settings.SubagentGraceMinutes} minutes. The stored report may be "
-                + "the delegate's announcement of that work rather than its outcome — the launches "
-                + "and any notifications are in this session's transcript.",
-                ct);
-        }
-
-        _logger.LogInformation(
-            "Task {ShortId} settled as {Status} ({Chars:N0} chars, ${Cost:0.000}, {Evidence})",
-            DelegationReportFormatter.Short(task.Id), task.Status, settledBody.Length, task.CostUsd, evidence);
 
         if (task.FailureCode == AgentTaskFailureCode.CompletedWithoutProgress
             && failureReason is not null)
@@ -660,9 +630,50 @@ public sealed class AgentTaskReplyService
             callerWarning = callerWarning is null ? failureReason : $"{failureReason}\n\n{callerWarning}";
         }
 
-        await DeliverToParentAsync(
-            task, settledBody, ct, workspaceNote, callerWarning, drift, gitHeader);
-        await PublishAsync(task, ct);
+        var shouldRelease = task.FailureCode == AgentTaskFailureCode.CompletedWithoutProgress
+            || task.Status == AgentTaskStatus.Succeeded;
+        var killSession = task.FailureCode != AgentTaskFailureCode.CompletedWithoutProgress;
+
+        await PersistDeliverThenReleaseAsync(
+            services, db, task, now, settledBody, ct,
+            release: shouldRelease,
+            killSession: killSession,
+            workspaceNote: workspaceNote,
+            warning: callerWarning,
+            drift: drift,
+            git: gitHeader,
+            afterPersist: async token =>
+            {
+                if (turn.FinalMessageMissing && task.AgentSessionId is Guid missingFrom)
+                {
+                    await RecordFinalMessageMissingAsync(
+                        services, db, task, missingFrom,
+                        $"Task {DelegationReportFormatter.Short(task.Id)} settled without the delegate's final "
+                        + $"message. {FinalMessageMissingDetail(settledBody.Length, _settings.FinalMessageGraceSeconds)} "
+                        + "The caller has been told the report may be preamble; the whole turn is in this "
+                        + "session's transcript.",
+                        token);
+                }
+
+                if (turn.AbandonedSubagents > 0 && task.AgentSessionId is Guid abandonedFrom)
+                {
+                    await RecordIncidentOnceAsync(
+                        services, db, task, abandonedFrom,
+                        AgentIncidentKind.DelegateSubagentsNeverReported,
+                        $"Delegate task {DelegationReportFormatter.Short(task.Id)} settled with background "
+                        + "subagents unreported",
+                        $"Task {DelegationReportFormatter.Short(task.Id)} settled while "
+                        + $"{turn.AbandonedSubagents} background subagent(s) it launched had still not "
+                        + $"reported after {_settings.SubagentGraceMinutes} minutes. The stored report may be "
+                        + "the delegate's announcement of that work rather than its outcome — the launches "
+                        + "and any notifications are in this session's transcript.",
+                        token);
+                }
+
+                _logger.LogInformation(
+                    "Task {ShortId} settled as {Status} ({Chars:N0} chars, ${Cost:0.000}, {Evidence})",
+                    DelegationReportFormatter.Short(task.Id), task.Status, settledBody.Length, task.CostUsd, evidence);
+            });
     }
 
     /// <summary>
@@ -773,17 +784,20 @@ public sealed class AgentTaskReplyService
         // Ordinary success release, minus the kill: the session may still be a live worker whose
         // only crime was an unbound transcript (CARD-0056). killSession: false also skips the
         // agent-row delete so the incident just recorded is not cascaded away.
-        if (task.Status == AgentTaskStatus.Succeeded)
-            await ReleaseDelegateAsync(scope.ServiceProvider, db, task, now, ct, killSession: false);
-
-        await db.SaveChangesAsync(ct);
-
-        _logger.LogWarning(
-            "Task {ShortId} recovered from bind refusal ({Evidence}); settled Succeeded. Session not killed.",
-            DelegationReportFormatter.Short(task.Id), where);
-
-        await DeliverToParentAsync(task, note, ct, workspaceNote, warning);
-        await PublishAsync(task, ct);
+        // CARD-0319: persist + deliver before release, same order as SettleAsync.
+        await PersistDeliverThenReleaseAsync(
+            scope.ServiceProvider, db, task, now, note, ct,
+            release: task.Status == AgentTaskStatus.Succeeded,
+            killSession: false,
+            workspaceNote: workspaceNote,
+            warning: warning,
+            afterPersist: _ =>
+            {
+                _logger.LogWarning(
+                    "Task {ShortId} recovered from bind refusal ({Evidence}); settled Succeeded. Session not killed.",
+                    DelegationReportFormatter.Short(task.Id), where);
+                return Task.CompletedTask;
+            });
     }
 
     /// <summary>
@@ -816,24 +830,23 @@ public sealed class AgentTaskReplyService
         task.ConcurrencyToken = Guid.NewGuid();
         db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Failed, reason, now));
 
-        await ReleaseDelegateAsync(services, db, task, now, ct);
-        await db.SaveChangesAsync(ct);
+        await PersistDeliverThenReleaseAsync(
+            services, db, task, now, reason, ct,
+            afterPersist: async token =>
+            {
+                await RecordFinalMessageMissingAsync(
+                    services, db, task, sessionId,
+                    $"Task {DelegationReportFormatter.Short(task.Id)} failed with no report: its turn-ending "
+                    + $"response wrote no text within the {_settings.FinalMessageGraceSeconds}s grace and the "
+                    + "turn produced none either. The delegate may have done the work — the session's "
+                    + "transcript is the only record of it.",
+                    token);
 
-        await RecordFinalMessageMissingAsync(
-            services, db, task, sessionId,
-            $"Task {DelegationReportFormatter.Short(task.Id)} failed with no report: its turn-ending "
-            + $"response wrote no text within the {_settings.FinalMessageGraceSeconds}s grace and the "
-            + "turn produced none either. The delegate may have done the work — the session's "
-            + "transcript is the only record of it.",
-            ct);
-
-        _logger.LogWarning(
-            "Task {ShortId} failed: session {SessionId} ended a turn with no text at all within the "
-            + "{Grace}s grace",
-            DelegationReportFormatter.Short(task.Id), sessionId, _settings.FinalMessageGraceSeconds);
-
-        await DeliverToParentAsync(task, reason, ct);
-        await PublishAsync(task, ct);
+                _logger.LogWarning(
+                    "Task {ShortId} failed: session {SessionId} ended a turn with no text at all within the "
+                    + "{Grace}s grace",
+                    DelegationReportFormatter.Short(task.Id), sessionId, _settings.FinalMessageGraceSeconds);
+            });
     }
 
     /// <summary>
@@ -892,46 +905,45 @@ public sealed class AgentTaskReplyService
         task.ConcurrencyToken = Guid.NewGuid();
         db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Failed, reason, now));
 
-        await ReleaseDelegateAsync(services, db, task, now, ct);
-        await db.SaveChangesAsync(ct);
+        await PersistDeliverThenReleaseAsync(
+            services, db, task, now, reason, ct,
+            afterPersist: async token =>
+            {
+                // Severity is the CARD-0055/0067 rule: Critical when the agent is channel-bound (a human is
+                // waiting on a line this death just went silent on) — and for NeedsHuman, where no retry
+                // will ever exist and a human is the ONLY recovery.
+                var channelBound = task.AgentId is Guid boundAgentId
+                    && await db.ChatChannels.AsNoTracking().AnyAsync(c => c.AgentId == boundAgentId, token);
+                var severity = channelBound || classification == ApiErrorClassification.NeedsHuman
+                    ? AlertSeverity.Critical
+                    : AlertSeverity.Warning;
 
-        // Severity is the CARD-0055/0067 rule: Critical when the agent is channel-bound (a human is
-        // waiting on a line this death just went silent on) — and for NeedsHuman, where no retry
-        // will ever exist and a human is the ONLY recovery.
-        var channelBound = task.AgentId is Guid boundAgentId
-            && await db.ChatChannels.AsNoTracking().AnyAsync(c => c.AgentId == boundAgentId, ct);
-        var severity = channelBound || classification == ApiErrorClassification.NeedsHuman
-            ? AlertSeverity.Critical
-            : AlertSeverity.Warning;
+                // A dirty SHARED checkout is the human's exposure to see when deciding about the dead task
+                // (spec §D6): auto-salvage is rejected — the operator's own edits live there too — so the
+                // incident carries the evidence instead. Best-effort by design.
+                var dirt = task.Workspace == WorkspaceMode.Shared
+                    ? await TryReadGitStatusShortAsync(task.WorkingDirectory, token)
+                    : null;
 
-        // A dirty SHARED checkout is the human's exposure to see when deciding about the dead task
-        // (spec §D6): auto-salvage is rejected — the operator's own edits live there too — so the
-        // incident carries the evidence instead. Best-effort by design.
-        var dirt = task.Workspace == WorkspaceMode.Shared
-            ? await TryReadGitStatusShortAsync(task.WorkingDirectory, ct)
-            : null;
+                await RecordIncidentOnceAsync(
+                    services, db, task, sessionId, AgentIncidentKind.ApiErrorTurnDied,
+                    $"Delegate task {DelegationReportFormatter.Short(task.Id)} died on an API error ({classification})",
+                    $"Task {DelegationReportFormatter.Short(task.Id)} was killed by an API error, not "
+                    + $"finished: {classification} ({stub.ErrorClass ?? "no error class"}"
+                    + (stub.ErrorStatus is int s ? $", HTTP {s}" : string.Empty)
+                    + $"). The task is Failed and the error text was NOT stored as its result: {errorText}"
+                    + (string.IsNullOrWhiteSpace(dirt)
+                        ? string.Empty
+                        : $"\n\nThe shared checkout at {task.WorkingDirectory} has uncommitted changes the "
+                          + $"dead task may own (git status --short):\n{dirt}"),
+                    token, severity);
 
-        await RecordIncidentOnceAsync(
-            services, db, task, sessionId, AgentIncidentKind.ApiErrorTurnDied,
-            $"Delegate task {DelegationReportFormatter.Short(task.Id)} died on an API error ({classification})",
-            $"Task {DelegationReportFormatter.Short(task.Id)} was killed by an API error, not "
-            + $"finished: {classification} ({stub.ErrorClass ?? "no error class"}"
-            + (stub.ErrorStatus is int s ? $", HTTP {s}" : string.Empty)
-            + $"). The task is Failed and the error text was NOT stored as its result: {errorText}"
-            + (string.IsNullOrWhiteSpace(dirt)
-                ? string.Empty
-                : $"\n\nThe shared checkout at {task.WorkingDirectory} has uncommitted changes the "
-                  + $"dead task may own (git status --short):\n{dirt}"),
-            ct, severity);
-
-        _logger.LogWarning(
-            "Task {ShortId} failed: session {SessionId}'s turn was killed by an API error "
-            + "({Classification}: {Class}/{Status})",
-            DelegationReportFormatter.Short(task.Id), sessionId, classification,
-            stub.ErrorClass, stub.ErrorStatus);
-
-        await DeliverToParentAsync(task, reason, ct);
-        await PublishAsync(task, ct);
+                _logger.LogWarning(
+                    "Task {ShortId} failed: session {SessionId}'s turn was killed by an API error "
+                    + "({Classification}: {Class}/{Status})",
+                    DelegationReportFormatter.Short(task.Id), sessionId, classification,
+                    stub.ErrorClass, stub.ErrorStatus);
+            });
     }
 
     /// <summary>
@@ -1229,6 +1241,93 @@ public sealed class AgentTaskReplyService
     }
 
     /// <summary>
+    /// CARD-0319: persist the task row, notify the parent, THEN release the agent. A later
+    /// concurrency exception on an unrelated row (the agent the pool sweeper already deleted)
+    /// must not skip delivery — the task being correctly Succeeded is the delivery trigger,
+    /// not a successful save of the retire.
+    /// </summary>
+    private async Task PersistDeliverThenReleaseAsync(
+        IServiceProvider services,
+        AppDbContext db,
+        AgentTask task,
+        DateTime now,
+        string report,
+        CancellationToken ct,
+        bool release = true,
+        bool killSession = true,
+        string? workspaceNote = null,
+        string? warning = null,
+        string? drift = null,
+        string? git = null,
+        Func<CancellationToken, Task>? afterPersist = null)
+    {
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            if (!await TaskAlreadyPersistedAsync(task, ct))
+                throw;
+            _logger.LogWarning(
+                ex,
+                "Settlement of task {ShortId} raced on a later row; the task is already {Status} (CARD-0319)",
+                DelegationReportFormatter.Short(task.Id), task.Status);
+        }
+
+        if (afterPersist is not null)
+            await afterPersist(ct);
+
+        await DeliverToParentAsync(task, report, ct, workspaceNote, warning, drift, git);
+        await PublishAsync(task, ct);
+
+        if (!release)
+            return;
+
+        try
+        {
+            await ReleaseDelegateAsync(services, db, task, now, ct, killSession);
+            await db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex,
+                "Could not persist delegate release for task {ShortId} after the parent note was delivered (CARD-0319)",
+                DelegationReportFormatter.Short(task.Id));
+        }
+    }
+
+    /// <summary>
+    /// Fresh-context read: true when the store already has this task in the status we just
+    /// assigned, with a CompletedAt. Used to keep delivering after an unrelated row (the
+    /// agent) caused the settlement SaveChanges to throw.
+    /// </summary>
+    private async Task<bool> TaskAlreadyPersistedAsync(AgentTask task, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var store = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var stored = await store.AgentTasks.AsNoTracking()
+                .Where(t => t.Id == task.Id)
+                .Select(t => new { t.Status, t.CompletedAt })
+                .FirstOrDefaultAsync(ct);
+            return stored is not null
+                && stored.Status == task.Status
+                && stored.CompletedAt is not null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex,
+                "Could not re-read task {ShortId} after a settlement concurrency exception",
+                DelegationReportFormatter.Short(task.Id));
+            return false;
+        }
+    }
+
+    /// <summary>
     /// What happens to the delegate when its task settles: a Shared pool delegate with a live
     /// session goes WARM — reserved for its own run for a window, then open to any work in its
     /// directory, until the pool janitor retires it. Everything else pool-spawned (worktree
@@ -1299,7 +1398,13 @@ public sealed class AgentTaskReplyService
         {
             try
             {
-                await services.GetRequiredService<IDelegateSessionStopper>().KillAsync(sessionId, ct);
+                // CARD-0319: resolve the stopper from a NEW scope so KillAsync's SaveChanges
+                // cannot flush this caller's still-dirty change tracker. AgentSessionService is
+                // scoped and IDelegateSessionStopper is the same instance.
+                await using var killScope = _scopeFactory.CreateAsyncScope();
+                await killScope.ServiceProvider
+                    .GetRequiredService<IDelegateSessionStopper>()
+                    .KillAsync(sessionId, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
