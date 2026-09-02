@@ -54,3 +54,11 @@ badge every agent carrying it until each next launches — that is the mechanism
 
 A rule that earns standing status gets PR'd into a file here. Recorded anywhere else — a findings
 doc, a skill, one orchestrator's habit — it reaches nobody.
+
+## Reply styles
+
+The `style-*` files (`style-normal`, `style-terse`, `style-caveman`, `style-brief`,
+`style-explanatory`) are chosen through `Agent.ReplyStyle`, never attached — `bundleKeys` refuses
+them with 422 because two voices at once has nothing to dedup against. `Normal` composes to
+nothing (the file still ships so every enum value has a block). The style block sits after
+attachments and before the agent's own `SystemPromptAppend`, which keeps the last word.

@@ -54,7 +54,7 @@ public class InstructionBundleTests
             "board-api", "check-interpreter", "delegate-basics", "orchestrator",
             // One per AgentReplyStyle value (CARD-0060), style-normal included — see AgentReplyStyles
             // for why the one that is never composed still ships as a file.
-            "style-caveman", "style-explanatory", "style-normal", "style-terse",
+            "style-brief", "style-caveman", "style-explanatory", "style-normal", "style-terse",
         ]);
     }
 

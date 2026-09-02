@@ -63,6 +63,7 @@ public class AgentReplyStyleTests
     [Arguments(AgentReplyStyle.Normal)]
     [Arguments(AgentReplyStyle.Terse)]
     [Arguments(AgentReplyStyle.Caveman)]
+    [Arguments(AgentReplyStyle.Brief)]
     [Arguments(AgentReplyStyle.Explanatory)]
     public void every_style_block_ends_with_the_correctness_sentence(AgentReplyStyle style)
     {
@@ -89,6 +90,7 @@ public class AgentReplyStyleTests
     [Test]
     [Arguments(AgentReplyStyle.Terse, "style-terse")]
     [Arguments(AgentReplyStyle.Caveman, "style-caveman")]
+    [Arguments(AgentReplyStyle.Brief, "style-brief")]
     [Arguments(AgentReplyStyle.Explanatory, "style-explanatory")]
     public void a_chosen_style_composes_its_block_under_a_versioned_header(AgentReplyStyle style, string key)
     {
@@ -125,6 +127,20 @@ public class AgentReplyStyleTests
 
         text.ShouldContain("stay exact");
         text.ShouldContain("Code, commands and quoted output are written normally");
+    }
+
+    [Test]
+    public void the_brief_block_asks_for_decision_bullets_usable_as_a_final_report()
+    {
+        // CARD-0078: Brief is the operator's decision-bullet register, written so a worker can
+        // use it on its own final report, not only a standing orchestrator talking to a human.
+        // Caveman stays grunt-speak — this pin is what stops the two from being silently swapped.
+        var text = InstructionBundles.TextOf(AgentReplyStyles.BundleKey(AgentReplyStyle.Brief));
+
+        text.ShouldContain("Lead with the outcome");
+        text.ShouldContain("your own final report");
+        text.ShouldContain("stay exact");
+        text.ShouldNotContain("Talk like caveman");
     }
 
     // ---- create, update, and what the DTO shows --------------------------------------------------
