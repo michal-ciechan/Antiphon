@@ -1,6 +1,12 @@
 # CARD-0078 — the orchestrator reply style already has a durable home; make the enum say what the operator means
 
 **Date:** 2026-09-02 (task a9875039, design only — no production code changed, no tests run)
+
+**Executed 2026-09-02 (task b6c6dc11), operator overrides:** D2 alternative — add `Brief`, do not
+reword `Caveman` (`codex` keeps grunt-speak). D4 alternative — do not clear the orchestrator's
+append; rewrite it so SOUL.md / USER.md / MEMORY.md / today's log are existence-conditional like
+BOOTSTRAP.md. `ChannelPreamble.BootstrapBody` is shared ClaudeBot boilerplate and is not touched.
+S3 confirmed deferred.
 **Card:** CARD-0078 "The orchestrator reply style has no durable home - style bundles are rejected by name"
 **Supersedes:** the card's own framing. Three of its premises were already false when it was written
 (2026-08-17 17:11) — see "Premise corrections" — so this plan is mostly a reconciliation, and the
@@ -333,6 +339,10 @@ changes nothing live.
 
 If S3 is deferred, record it in CARD-0078's closure as the known remaining path, with `codex` as
 the example, so it is not rediscovered as a fourth card.
+
+**2026-09-02 execute (operator override):** S3 is confirmed deferred — do not build it. Known
+remaining gap: `ComposeDelegateArgs` still composes neither `ReplyStyle` nor `SystemPromptAppend`
+for a pinned non-always-on standing agent (`codex` on Caveman is the live instance).
 
 ---
 

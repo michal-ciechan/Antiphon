@@ -39,7 +39,8 @@ Read directly only what you must quote exactly or must judge personally.
 
 The canonical copy is `server/Bundles/orchestrator.md`, which every sub-orchestrator launch
 composes and which a standing orchestrator carries when the `orchestrator` bundle is attached;
-this copy exists so AGENTS.md has an owner to route to.
+this copy exists so AGENTS.md has an owner to route to. A standing orchestrator's register is
+`ReplyStyle`, chosen per agent, not prose in its prompt append.
 
 **Also delegated: the landing mechanics.** For a delegated Worktree task, the orchestrator orders
 the landing with `delegate.ps1 -Land <id>` (optionally `-Verify <filter>`); the server fetches,
