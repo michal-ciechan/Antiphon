@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -6,12 +8,19 @@ namespace Antiphon.Server.Application.Services;
 /// Per-repository lock for CARD-0004 card-file sync. One <see cref="SemaphoreSlim"/> per
 /// full-path-normalised repository path: the tick takes it with <c>WaitAsync(0)</c> and skips a
 /// busy repo; the endpoint takes it the same way and answers 409 <c>card_file_sync_running</c>.
-/// Boards of one project run sequentially under that one lock.
+/// Boards of one project run sequentially under that one lock. Last skip-reason lives here so a
+/// rebase that lasts ten ticks logs Warning once.
 /// </summary>
 public sealed class CardTaskFileSyncGate
 {
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _lastSkipReasons = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ILogger<CardTaskFileSyncGate> _logger;
+
+    public CardTaskFileSyncGate(ILogger<CardTaskFileSyncGate>? logger = null)
+    {
+        _logger = logger ?? NullLogger<CardTaskFileSyncGate>.Instance;
+    }
 
     /// <summary>
     /// Try to enter the lock for <paramref name="repositoryPath"/> without waiting. Null means
@@ -47,6 +56,12 @@ public sealed class CardTaskFileSyncGate
                 changed = !string.Equals(previous, reason, StringComparison.Ordinal);
                 return reason;
             });
+
+        if (changed)
+            _logger.LogWarning("Card file sync skipped for {Repository}: {Reason}", key, reason);
+        else
+            _logger.LogDebug("Card file sync skipped for {Repository}: {Reason}", key, reason);
+
         return changed;
     }
 

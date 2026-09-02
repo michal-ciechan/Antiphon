@@ -1,19 +1,22 @@
 using System.Text;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-0004 S1: load, render, compare, write, delete. Assertions are scoped to this test's
-/// scratch directory and its own rows — the assembly shares one Postgres.
+/// CARD-0004: load, render, compare, write, delete (S1) and path-scoped commit with guards (S2).
+/// Assertions are scoped to this test's scratch directory and its own rows — the assembly shares
+/// one Postgres.
 /// </summary>
 [Category("Integration")]
 public class CardTaskFileServiceTests
@@ -243,6 +246,250 @@ public class CardTaskFileServiceTests
         laterDir!.Length.ShouldBe("docs/cards/foo-".Length + 8);
     }
 
+    [Test]
+    public async Task First_sync_commits_one_trailered_commit_and_second_sync_leaves_head()
+    {
+        await using var world = new World();
+        var repo = world.CreateRepo();
+        var project = await world.AddProjectAsync(repo.Path);
+        var board = await world.AddBoardAsync(project.Id, "Sync Board");
+        await world.AddCardAsync(board, "CARD-0001", "First");
+        await world.AddCardAsync(board, "CARD-0002", "Second");
+        var headBefore = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+
+        var first = await world.SyncAsync(board.Id, autoCommit: true);
+
+        first.WriteSkipReason.ShouldBeNull();
+        first.CommitSkipReason.ShouldBeNull();
+        first.CommitSha.ShouldNotBeNull();
+        first.CommitSha.ShouldNotBe(headBefore);
+        first.Written.ShouldBe(3);
+
+        var subject = (await repo.GitReadAsync("log", "-1", "--format=%s")).Trim();
+        subject.ShouldBe("antiphon: sync card files (Sync Board)");
+        var trailer = (await repo.GitReadAsync("log", "-1", "--format=%(trailers:key=antiphon,valueonly)")).Trim();
+        trailer.ShouldBe("true");
+        var message = await repo.GitReadAsync("log", "-1", "--format=%B");
+        message.ShouldNotContain("CARD-0001");
+        message.ShouldNotContain("CARD-0002");
+        SyncCommitCount(await repo.GitReadAsync("log", "--format=%s")).ShouldBe(1);
+        (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldBe(first.CommitSha);
+
+        var second = await world.SyncAsync(board.Id, autoCommit: true);
+        second.Written.ShouldBe(0);
+        second.Deleted.ShouldBe(0);
+        second.CommitSkipReason.ShouldBe("nothing_to_commit");
+        second.CommitSha.ShouldBeNull();
+        (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldBe(first.CommitSha);
+        SyncCommitCount(await repo.GitReadAsync("log", "--format=%s")).ShouldBe(1);
+    }
+
+    [Test]
+    public async Task Title_edit_commit_is_one_rename_and_nothing_else()
+    {
+        await using var world = new World();
+        var repo = world.CreateRepo();
+        var project = await world.AddProjectAsync(repo.Path);
+        var board = await world.AddBoardAsync(project.Id, "Rename Board");
+        var card = await world.AddCardAsync(board, "CARD-0001", "Old Title");
+        await world.SyncAsync(board.Id, autoCommit: true);
+
+        await world.RenameCardAsync(card.Id, "New Title");
+        var result = await world.SyncAsync(board.Id, autoCommit: true);
+
+        result.CommitSkipReason.ShouldBeNull();
+        result.CommitSha.ShouldNotBeNull();
+
+        var status = await repo.GitReadAsync("diff", "--name-status", "--find-renames", "HEAD~1", "HEAD");
+        var lines = SplitGitLines(status);
+        lines.Count(l => l.StartsWith('R')).ShouldBe(1);
+        lines.ShouldContain(l => l.Contains("CARD-0001-old-title.md", StringComparison.Ordinal)
+            && l.Contains("CARD-0001-new-title.md", StringComparison.Ordinal));
+        lines.ShouldAllBe(l =>
+            l.StartsWith('R')
+            || (l.StartsWith('M') && l.Contains("INDEX.md", StringComparison.Ordinal)));
+        lines.ShouldNotContain(l => l.StartsWith('A') || l.StartsWith('D'));
+    }
+
+    [Test]
+    public async Task Unrelated_staged_file_stays_staged_and_is_absent_from_the_sync_commit()
+    {
+        await using var world = new World();
+        var repo = world.CreateRepo();
+        var project = await world.AddProjectAsync(repo.Path);
+        var board = await world.AddBoardAsync(project.Id, "Staged Board");
+        await world.AddCardAsync(board, "CARD-0001", "Keep");
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "sidecar.txt"), "stay staged");
+        await repo.GitAsync("add", "sidecar.txt");
+
+        var result = await world.SyncAsync(board.Id, autoCommit: true);
+
+        result.CommitSha.ShouldNotBeNull();
+        var staged = await repo.GitReadAsync("diff", "--cached", "--name-only");
+        SplitGitLines(staged).ShouldContain("sidecar.txt");
+        var committed = await repo.GitReadAsync("diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD");
+        SplitGitLines(committed).ShouldNotContain("sidecar.txt");
+        SplitGitLines(committed).ShouldNotContain(p => p.Contains("sidecar", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public async Task Rebase_in_progress_writes_files_skips_commit_and_leaves_head()
+    {
+        await using var world = new World();
+        var repo = world.CreateRepo();
+        var project = await world.AddProjectAsync(repo.Path);
+        var board = await world.AddBoardAsync(project.Id, "Rebase Board");
+        await world.AddCardAsync(board, "CARD-0001", "One");
+        var rebasePath = ResolveGitPath(repo.Path, (await repo.GitReadAsync("rev-parse", "--git-path", "rebase-merge")).Trim());
+        Directory.CreateDirectory(rebasePath);
+        var headBefore = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+
+        var result = await world.SyncAsync(board.Id, autoCommit: true);
+
+        result.Written.ShouldBeGreaterThan(0);
+        result.CommitSkipReason.ShouldBe("rebase_in_progress");
+        result.CommitSha.ShouldBeNull();
+        File.Exists(Path.Combine(world.BoardDir(repo, "rebase-board"), "CARD-0001-one.md")).ShouldBeTrue();
+        (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldBe(headBefore);
+    }
+
+    [Test]
+    public async Task Directory_removed_next_sync_commits()
+    {
+        await using var world = new World();
+        var repo = world.CreateRepo();
+        var project = await world.AddProjectAsync(repo.Path);
+        var board = await world.AddBoardAsync(project.Id, "Removed Board");
+        await world.AddCardAsync(board, "CARD-0001", "One");
+        var first = await world.SyncAsync(board.Id, autoCommit: true);
+        first.CommitSha.ShouldNotBeNull();
+
+        Directory.Delete(world.BoardDir(repo, "removed-board"), recursive: true);
+        // Removing the files from HEAD (not just the working tree) is the case that needs a
+        // restore commit; a working-tree-only delete of identical content is nothing_to_commit.
+        await repo.GitAsync("add", "-A", "--", "docs/cards");
+        await repo.GitAsync("commit", "-m", "removed card files");
+        var afterDelete = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+
+        var second = await world.SyncAsync(board.Id, autoCommit: true);
+
+        second.CommitSha.ShouldNotBeNull();
+        second.CommitSha.ShouldNotBe(first.CommitSha);
+        second.CommitSha.ShouldNotBe(afterDelete);
+        second.Written.ShouldBeGreaterThan(0);
+        second.CommitSkipReason.ShouldBeNull();
+        File.Exists(Path.Combine(world.BoardDir(repo, "removed-board"), "INDEX.md")).ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task Detached_head_writes_files_and_skips_commit()
+    {
+        await using var world = new World();
+        var repo = world.CreateRepo();
+        var project = await world.AddProjectAsync(repo.Path);
+        var board = await world.AddBoardAsync(project.Id, "Detach Board");
+        await world.AddCardAsync(board, "CARD-0001", "One");
+        await repo.GitAsync("checkout", "--detach");
+        var headBefore = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+
+        var result = await world.SyncAsync(board.Id, autoCommit: true);
+
+        result.Written.ShouldBeGreaterThan(0);
+        result.CommitSkipReason.ShouldBe("detached_head");
+        result.CommitSha.ShouldBeNull();
+        (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldBe(headBefore);
+        File.Exists(Path.Combine(world.BoardDir(repo, "detach-board"), "CARD-0001-one.md")).ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task AutoCommit_false_is_the_production_default_and_leaves_a_dirty_tree()
+    {
+        new CardFileSyncSettings().AutoCommit.ShouldBeFalse(
+            "operator decision over the plan's original true: do not flip this default");
+
+        await using var world = new World();
+        var repo = world.CreateRepo();
+        var project = await world.AddProjectAsync(repo.Path);
+        var board = await world.AddBoardAsync(project.Id, "Dirty Board");
+        await world.AddCardAsync(board, "CARD-0001", "One");
+        var headBefore = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+
+        var result = await world.SyncAsync(board.Id);
+
+        result.Written.ShouldBeGreaterThan(0);
+        result.CommitSkipReason.ShouldBe("autocommit_disabled");
+        result.CommitSha.ShouldBeNull();
+        (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldBe(headBefore);
+        SplitGitLines(await repo.GitReadAsync("status", "--porcelain", "--", "docs/cards"))
+            .ShouldNotBeEmpty();
+    }
+
+    [Test]
+    public async Task Autocrlf_checkout_may_rewrite_but_commits_nothing()
+    {
+        await using var world = new World();
+        var repo = world.CreateRepo();
+        await repo.GitAsync("config", "core.autocrlf", "true");
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, ".gitattributes"), "* text=auto\n");
+        await repo.GitAsync("add", ".gitattributes");
+        await repo.GitAsync("commit", "-m", "gitattributes");
+
+        var project = await world.AddProjectAsync(repo.Path);
+        var board = await world.AddBoardAsync(project.Id, "Crlf Pin");
+        await world.AddCardAsync(board, "CARD-0001", "One");
+        var first = await world.SyncAsync(board.Id, autoCommit: true);
+        first.CommitSha.ShouldNotBeNull();
+        var head = first.CommitSha;
+
+        await repo.GitAsync("checkout", "--", "docs/cards");
+        var second = await world.SyncAsync(board.Id, autoCommit: true);
+
+        second.CommitSkipReason.ShouldBe("nothing_to_commit");
+        second.CommitSha.ShouldBeNull();
+        (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldBe(head);
+    }
+
+    [Test]
+    public async Task Index_lock_is_git_error_then_next_sync_after_removal_commits()
+    {
+        await using var world = new World();
+        var repo = world.CreateRepo();
+        var project = await world.AddProjectAsync(repo.Path);
+        var board = await world.AddBoardAsync(project.Id, "Lock Board");
+        await world.AddCardAsync(board, "CARD-0001", "One");
+        var lockPath = ResolveGitPath(
+            repo.Path,
+            (await repo.GitReadAsync("rev-parse", "--git-path", "index.lock")).Trim());
+        await File.WriteAllTextAsync(lockPath, "");
+        var headBefore = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+
+        var first = await world.SyncAsync(board.Id, autoCommit: true);
+
+        first.Written.ShouldBeGreaterThan(0);
+        first.CommitSkipReason.ShouldBe("git_error");
+        first.CommitSha.ShouldBeNull();
+        first.Error.ShouldNotBeNullOrWhiteSpace();
+        File.Exists(Path.Combine(world.BoardDir(repo, "lock-board"), "CARD-0001-one.md")).ShouldBeTrue();
+        (await repo.GitReadAsync("rev-parse", "HEAD")).Trim().ShouldBe(headBefore);
+
+        File.Delete(lockPath);
+        var second = await world.SyncAsync(board.Id, autoCommit: true);
+        second.CommitSha.ShouldNotBeNull();
+        second.CommitSha.ShouldNotBe(headBefore);
+        second.CommitSkipReason.ShouldBeNull();
+    }
+
+    private static int SyncCommitCount(string log) =>
+        SplitGitLines(log).Count(l => l.StartsWith("antiphon: sync card files", StringComparison.Ordinal));
+
+    private static string[] SplitGitLines(string output) =>
+        output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private static string ResolveGitPath(string repoPath, string gitPathOutput) =>
+        Path.IsPathRooted(gitPathOutput)
+            ? gitPathOutput
+            : Path.GetFullPath(Path.Combine(repoPath, gitPathOutput));
+
     private static void AssertLfNoBom(byte[] bytes)
     {
         bytes.Length.ShouldBeGreaterThan(0);
@@ -265,6 +512,8 @@ public class CardTaskFileServiceTests
         public ScratchGitRepo CreateRepo()
         {
             var repo = new ScratchGitRepo("c0004");
+            // git commit --only requires HEAD; seed so the first sync is never the repo's first commit.
+            repo.CommitFileAsync(".keep", "seed\n").GetAwaiter().GetResult();
             _repos.Add(repo);
             return repo;
         }
@@ -386,14 +635,18 @@ public class CardTaskFileServiceTests
         }
 
         public async Task<Antiphon.Server.Application.Dtos.CardFileSyncBoardResult> SyncAsync(
-            Guid boardId, bool dryRun = false)
+            Guid boardId, bool dryRun = false, bool autoCommit = false)
         {
             await using var db = CreateContext();
+            IOptions<CardFileSyncSettings>? settings = autoCommit
+                ? Options.Create(new CardFileSyncSettings { AutoCommit = true })
+                : null;
             var service = new CardTaskFileService(
                 db,
                 _gate,
                 new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance),
-                NullLogger<CardTaskFileService>.Instance);
+                NullLogger<CardTaskFileService>.Instance,
+                settings);
             return await service.SyncBoardAsync(boardId, dryRun, CancellationToken.None);
         }
 
