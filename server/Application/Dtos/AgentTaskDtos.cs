@@ -100,7 +100,15 @@ public sealed record CreateAgentTaskRequest(
     /// kind is inherited, the task queues while the agent is busy, and the caller gets the normal
     /// completion note when it settles.
     /// </summary>
-    string? Agent = null);
+    string? Agent = null,
+    /// <summary>
+    /// Ignore the CARD-0305 routing pin for THIS create. Default false: a request that disagrees
+    /// with a <c>Required</c> pin is refused 409 <c>routing_pin_conflict</c>. True proceeds with
+    /// what the caller asked for and leaves the pin standing — it is one-shot, never a clear.
+    /// Entirely distinct from <see cref="IgnoreModelDisabled"/>: this one is about which model
+    /// SHOULD run this card+role, that one about whether the model MAY run at all.
+    /// </summary>
+    bool IgnoreRoutingPin = false);
 
 public sealed record AgentTaskSummaryDto(
     Guid Id,

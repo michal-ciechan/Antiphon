@@ -420,6 +420,8 @@ try
     builder.Services.AddScoped<SubscriptionUsageReader>();
     builder.Services.AddScoped<SubscriptionQuotaGate>();
     builder.Services.AddScoped<ModelAvailability>();
+    // CARD-0305: per-card/stage routing pins. Scoped like the availability reader it hands off to.
+    builder.Services.AddScoped<RoutingPinService>();
     // CARD-0072 S5a: durable API-error retry. Singleton for the same reason as compaction —
     // the supervisor hosted service is a singleton and this is the action it calls.
     builder.Services.AddSingleton<ApiErrorRecoveryService>();
@@ -706,6 +708,7 @@ try
     app.MapOrchestratorEndpoints();
     app.MapAgentTaskEndpoints();
     app.MapModelAvailabilityEndpoints();
+    app.MapRoutingPinEndpoints();
     app.MapAttentionEndpoints();
     app.MapDigestEndpoints();
     app.MapDiagnosticsEndpoints();

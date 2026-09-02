@@ -48,6 +48,7 @@ public class AgentTaskPipelineStatusTests
             stage.Ready.ShouldBeEmpty();
             stage.InFlightCount.ShouldBe(0);
             stage.AtOrAboveRecommendation.ShouldBeFalse();
+            stage.RoutingPin.ShouldBeNull();
         }
     }
 
@@ -200,6 +201,73 @@ public class AgentTaskPipelineStatusTests
         ready.ReadySince.ShouldBe(completedAt, TimeSpan.FromMilliseconds(1));
         ready.DeliverablePath.ShouldBe("docs/superpowers/plans/2026-09-01-card-9304.md");
         dto.Stages.Where(s => s.Role != AgentTaskRole.Code).ShouldAllBe(s => s.Ready.Count == 0);
+        ready.RoutingPin.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task a_ready_row_carries_the_card_code_pin_when_one_is_set()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var card = await SeedCardAsync(db, CardStatus.Review, "CARD-0305");
+        var completedAt = DateTime.UtcNow.AddMinutes(-8);
+        await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Plan, AgentTaskStatus.Succeeded,
+            title: "plan CARD-0305", cardId: card.Id, completedAt: completedAt,
+            createdAt: completedAt.AddMinutes(-20),
+            deliverablePath: "docs/superpowers/plans/2026-09-01-card-0305.md");
+        db.RoutingPins.Add(new RoutingPin
+        {
+            Id = Guid.NewGuid(),
+            CardId = card.Id,
+            Role = AgentTaskRole.Code,
+            Provenance = RoutingPinProvenance.Human,
+            Strength = RoutingPinStrength.Required,
+            AgentKind = AgentKind.Grok,
+            Reason = "operator: execute CARD-0305 on Grok",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+
+        var ready = (await CreateService(db).GetAsync(CancellationToken.None))
+            .Stages.Single(s => s.Role == AgentTaskRole.Code).Ready.ShouldHaveSingleItem();
+        var pin = ready.RoutingPin.ShouldNotBeNull();
+        pin.CardIdentifier.ShouldBe("CARD-0305");
+        pin.AgentKind.ShouldBe(AgentKind.Grok);
+        pin.Provenance.ShouldBe(RoutingPinProvenance.Human);
+    }
+
+    [Test]
+    public async Task a_dated_pin_is_the_queued_reason_when_nothing_else_holds_the_task()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var card = await SeedCardAsync(db, CardStatus.InProgress, "CARD-0301");
+        var task = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Plan, AgentTaskStatus.Queued,
+            title: "dated plan", cardId: card.Id);
+        db.RoutingPins.Add(new RoutingPin
+        {
+            Id = Guid.NewGuid(),
+            CardId = card.Id,
+            Role = AgentTaskRole.Plan,
+            Provenance = RoutingPinProvenance.Human,
+            Strength = RoutingPinStrength.Required,
+            AgentKind = AgentKind.ClaudeCode,
+            ModelLevel = AgentModelLevel.Frontier,
+            NotBefore = DateTime.UtcNow.AddHours(6),
+            Reason = "operator: plan on fable after the weekly cap",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+
+        var plan = (await CreateService(db).GetAsync(CancellationToken.None))
+            .Stages.Single(s => s.Role == AgentTaskRole.Plan);
+        plan.Queued.Single(t => t.TaskId == task.Id).QueueReason
+            .ShouldBe(AgentTaskPipelineStatusService.QueueReasonRoutingPinNotBefore);
+        plan.RoutingPin.ShouldBeNull("the dated pin is on the card, not stage-wide");
     }
 
     [Test]

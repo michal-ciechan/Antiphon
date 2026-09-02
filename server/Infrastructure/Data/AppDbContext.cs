@@ -63,6 +63,7 @@ public class AppDbContext : DbContext
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
     public DbSet<SubscriptionUsageSample> SubscriptionUsageSamples => Set<SubscriptionUsageSample>();
     public DbSet<ModelAvailabilityHold> ModelAvailabilityHolds => Set<ModelAvailabilityHold>();
+    public DbSet<RoutingPin> RoutingPins => Set<RoutingPin>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -1538,6 +1539,38 @@ public class AppDbContext : DbContext
                 .IsUnique()
                 .HasFilter("\"ClearedAt\" IS NULL")
                 .HasDatabaseName("IX_ModelAvailabilityHolds_Kind_ModelAlias_Active");
+        });
+
+        modelBuilder.Entity<RoutingPin>(entity =>
+        {
+            entity.ToTable("RoutingPins");
+            entity.HasKey(p => p.Id);
+            entity.Property(p => p.Role).IsRequired();
+            entity.Property(p => p.Provenance).IsRequired();
+            entity.Property(p => p.Strength).IsRequired();
+            entity.Property(p => p.ForbiddenAliases).HasMaxLength(400);
+            entity.Property(p => p.Reason).IsRequired().HasMaxLength(400);
+            entity.Property(p => p.CreatedAt).IsRequired();
+            entity.Property(p => p.UpdatedAt).IsRequired();
+
+            // Active = ClearedAt IS NULL, and the two grains index separately: one active pin per
+            // (card, role), and one active stage-wide pin per role.
+            entity.HasIndex(p => new { p.CardId, p.Role })
+                .IsUnique()
+                .HasFilter("\"CardId\" IS NOT NULL AND \"ClearedAt\" IS NULL")
+                .HasDatabaseName("IX_RoutingPins_CardId_Role_Active");
+            entity.HasIndex(p => p.Role)
+                .IsUnique()
+                .HasFilter("\"CardId\" IS NULL AND \"ClearedAt\" IS NULL")
+                .HasDatabaseName("IX_RoutingPins_Role_Stage_Active");
+
+            // CASCADE, not SET NULL as the plan sketched: nulling CardId on a deleted card would
+            // silently PROMOTE that card's pin to a fleet-wide stage rule for the role (and could
+            // collide with the stage index). A deleted card's instruction dies with it.
+            entity.HasOne(p => p.Card)
+                .WithMany()
+                .HasForeignKey(p => p.CardId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
     }

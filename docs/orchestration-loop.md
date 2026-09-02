@@ -127,6 +127,13 @@ flaky test.
 
 Say this in the brief explicitly; do not assume the role name carries it.
 
+**Routing pins beat RolePolicy.** A Human pin on a card+role (or a stage-wide pin for that role)
+is what the next `delegate.ps1` create reads; RolePolicy remains the provenance-less fallback when
+no pin exists. A Human pin survives a RolePolicy edit and an Auto rewrite (409 `routing_pin_human`).
+`scripts/routing-pin.ps1` is the write surface; `delegate.ps1 -Pin` records this dispatch as Human
+Required. A pin naming a held alias is still 409 `model_disabled` (CARD-0309) — pins consume
+`Require`, they do not write a hold, and `ignoreRoutingPin` is not `ignoreModelDisabled`.
+
 The best single result of this period came from a `Debug` agent; the cheapest useful one was a haiku
 check at **$0.12**.
 
@@ -140,7 +147,9 @@ Never launch the `claude` CLI directly, and never a `launch-remote` script. When
 token (`0`, `1`, `99`) is a **400** — the wire is the member name, not the enum ordinal (CARD-0007).
 Frontier maps to fable (Claude) by default, or `grok-4.6` when `Kind=Grok` is passed.
 If `delegate.ps1` 409s `model_disabled`, pick an alias from `available` or wait until
-`disabledUntil`; do not retry the same kind/tier.
+`disabledUntil`; do not retry the same kind/tier. If the 409 also says the available list does
+not satisfy a routing pin, wait, pass `-IgnoreModelDisabled` to queue, or replace the pin — do
+not pick from `available`.
 
 ### Reuse first
 

@@ -229,7 +229,7 @@ If a parallel CARD-0022 Code agent is in flight: rebase onto it; do not merge a 
 | Naive `-Until 2026-09-04T00:00` as local | Script refuses missing offset. Server 422s past UTC. |
 | AttentionKind 24 taken | Re-read `AttentionDtos.cs` at code time. Append, never renumber. |
 | Live Fable sessions keep running | CARD-0022: do not disconnect. New creates 409; queued skip. |
-| CARD-0305 pin of held fable | Future CreateAsync 409. Not this card. |
+| CARD-0305 pin of held fable | Pins consume `Require`; they do not write holds. A Required pin on a held alias is still 409 `model_disabled` with the available list plus a coda that the list does not satisfy the pin. |
 
 ---
 
@@ -238,3 +238,4 @@ If a parallel CARD-0022 Code agent is in flight: rebase onto it; do not merge a 
 - After deploy, `model-availability.ps1 hold -Kind ClaudeCode -Model fable -Until <Thursday 00:00Z>` is the CARD-0301 memory-file replacement. The next `delegate.ps1 -Role Plan` (Frontier → fable) 409s with the available list; `-Kind Grok` proceeds.
 - Do not Reply/Cancel Check-interpreter tasks as a workaround. Do not hand-edit agent ModelId to dodge the gate.
 - CARD-0022 Code, when it lands, writes AutoDetected onto the same rows; the outrank tests are the contract it must keep green.
+- CARD-0305 pins consume `Require`; they do not write holds. `ignoreRoutingPin` and `ignoreModelDisabled` stay distinct flags.
