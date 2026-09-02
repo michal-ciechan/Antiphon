@@ -37,6 +37,8 @@ public sealed class AgentTaskService
     // CARD-0305. Same optional contract: absent, create resolves routing exactly as it does today
     // and no pin is ever consulted.
     private readonly RoutingPinService? _routingPins;
+    // CARD-0090. Same optional contract: absent, -Complexity is 422 (no walker to consult).
+    private readonly ComplexityRoutingService? _complexityRouting;
 
     public AgentTaskService(
         AppDbContext db,
@@ -50,7 +52,8 @@ public sealed class AgentTaskService
         AreaMapLoader? areas = null,
         ApiKeyEnvResolver? apiKeyEnvResolver = null,
         ModelAvailability? modelAvailability = null,
-        RoutingPinService? routingPins = null)
+        RoutingPinService? routingPins = null,
+        ComplexityRoutingService? complexityRouting = null)
     {
         _areas = areas;
         _db = db;
@@ -64,6 +67,7 @@ public sealed class AgentTaskService
         _apiKeyEnvResolver = apiKeyEnvResolver;
         _modelAvailability = modelAvailability;
         _routingPins = routingPins;
+        _complexityRouting = complexityRouting;
     }
 
     /// <summary>
@@ -311,6 +315,36 @@ public sealed class AgentTaskService
                 resolved.WorkingDirectory),
             ct);
 
+        // CARD-0090: an explicit pair is a single candidate the caller chose, and the shipped
+        // rule is that an explicit choice is never silently rerouted. One or the other.
+        if (request.Complexity is not null)
+        {
+            if (request.AgentKind is not null || request.ModelLevel is not null)
+            {
+                throw new ValidationException(
+                    nameof(request.Complexity),
+                    "complexity cannot be combined with agentKind or modelLevel. An explicit pair "
+                    + "is a single candidate the caller chose and is never silently rerouted. Pass "
+                    + "-Complexity without -Kind/-Level, or pass the pair without -Complexity.");
+            }
+
+            if (request.IgnoreModelDisabled)
+            {
+                throw new ValidationException(
+                    nameof(request.IgnoreModelDisabled),
+                    "ignoreModelDisabled cannot be combined with complexity: a chain skips a held "
+                    + "candidate, so there is nothing to ignore. Omit the flag, or pass an explicit "
+                    + "-Kind/-Level instead of -Complexity.");
+            }
+
+            if (_complexityRouting is null)
+            {
+                throw new ValidationException(
+                    nameof(request.Complexity),
+                    "complexity chains are not available in this host.");
+            }
+        }
+
         // CARD-0305: the standing instruction for THIS card+role (else this role's stage-wide
         // one). It fills what the caller left open and refuses what disagrees with a Required
         // human pin — before the role policy, the quota gate and the CARD-0309 hold, so the alias
@@ -329,8 +363,14 @@ public sealed class AgentTaskService
             {
                 request = request with
                 {
-                    AgentKind = pinDecision.AgentKind ?? request.AgentKind,
-                    ModelLevel = pinDecision.ModelLevel ?? request.ModelLevel,
+                    // A complexity walk composes the pin itself; overlaying kind/level here
+                    // would make a Preferred pin look like an explicit request.
+                    AgentKind = request.Complexity is null
+                        ? pinDecision.AgentKind ?? request.AgentKind
+                        : request.AgentKind,
+                    ModelLevel = request.Complexity is null
+                        ? pinDecision.ModelLevel ?? request.ModelLevel
+                        : request.ModelLevel,
                     // Only when the caller named none: an explicit -Agent has already been
                     // reconciled against the pin above (or refused).
                     AgentId = liveFollowUp ? request.AgentId : request.AgentId ?? pinDecision.AgentId,
@@ -368,72 +408,170 @@ public sealed class AgentTaskService
         }
 
         var id = Guid.NewGuid();
-        var level = ResolveLevel(request.Kind, request.Role, request.ModelLevel);
-        var agentKind = ResolveAgentKind(request.Kind, request.Role, request.AgentKind);
-        // The stage-wide forbid list bites the alias that was ACTUALLY resolved, so it runs after
-        // the role policy has filled in whatever the request and the pin both left open.
-        _routingPins?.EnforceForbiddenAliases(pinDecision, agentKind, level);
-        if (_quotaGate is not null)
+        ComplexityRoutingService.Walk? routingWalk = null;
+        var routingExhausted = false;
+        AgentModelLevel level;
+        AgentKind agentKind;
+        if (request.Complexity is { } complexity)
         {
-            var quotaKey = SubscriptionUsageKey.For(subscriptionOwner, agentKind);
-            var quotaOverride = await _quotaGate.EnforceAsync(
-                agentKind,
-                quotaKey,
+            routingWalk = await _complexityRouting!.WalkAsync(
+                complexity,
+                request.Kind,
+                request.Role,
+                pinDecision,
+                binding.CardId,
+                subscriptionOwner,
                 request.IgnoreSubscriptionQuota,
-                $"task '{BuildTitle(request)}'",
                 ct);
-            if (quotaOverride is not null)
-            {
-                var quotaWarning = SubscriptionQuotaPolicy.FormatOverride(quotaOverride);
-                warning = warning is null ? quotaWarning : warning + " " + quotaWarning;
-            }
-        }
 
-        if (_modelAvailability is not null)
-        {
-            var alias = ModelLevelAliases.For(agentKind, level);
-            if (pinnedStandingAgent is { ModelId: { Length: > 0 } modelId }
-                && ModelAlias.Normalize(agentKind, modelId) is { } pinned)
+            if (pinDecision.Applied
+                && pinDecision.Pin!.Strength == RoutingPinStrength.Required
+                && routingWalk.Source.StartsWith("pin:", StringComparison.Ordinal))
             {
-                alias = pinned;
+                var bypass =
+                    $"complexity chain bypassed by {RoutingPinService.Describe(pinDecision.Pin, pinDecision.CardIdentifier)}.";
+                warning = warning is null ? bypass : warning + " " + bypass;
             }
 
-            if (request.IgnoreModelDisabled)
+            if (routingWalk.Chosen is { } chosen)
             {
-                var hold = await _modelAvailability.GetActiveHoldAsync(agentKind, alias, ct);
-                if (hold is not null)
+                agentKind = chosen.Kind;
+                level = chosen.Level;
+                var skipped = routingWalk.SkippedWarning();
+                if (skipped.Length > 0)
+                    warning = warning is null ? skipped : warning + " " + skipped;
+            }
+            else if (pinDecision.Applied
+                && pinDecision.Pin!.Strength == RoutingPinStrength.Required
+                && !routingWalk.Walked)
+            {
+                // Required pin, single candidate: today's 409s, never Blocked.
+                agentKind = routingWalk.Outcomes.Count > 0
+                    ? routingWalk.Outcomes[0].Candidate.Kind
+                    : ResolveAgentKind(request.Kind, request.Role, request.AgentKind);
+                level = routingWalk.Outcomes.Count > 0
+                    ? routingWalk.Outcomes[0].Candidate.Level
+                    : ResolveLevel(request.Kind, request.Role, request.ModelLevel);
+                _routingPins?.EnforceForbiddenAliases(pinDecision, agentKind, level);
+                if (_quotaGate is not null)
                 {
-                    var name = hold.ModelAlias == ModelAlias.KindWide
-                        ? hold.Kind.ToString()
-                        : hold.ModelAlias;
-                    var untilBit = hold.DisabledUntil is { } until
-                        ? $"until {until:yyyy-MM-ddTHH:mm:ssZ}"
-                        : "(no re-enable time)";
-                    var holdWarning =
-                        $"{name} is held {untilBit}; queued, will dispatch when the hold clears (ignoreModelDisabled).";
-                    warning = warning is null ? holdWarning : warning + " " + holdWarning;
+                    await _quotaGate.EnforceAsync(
+                        agentKind,
+                        SubscriptionUsageKey.For(subscriptionOwner, agentKind),
+                        request.IgnoreSubscriptionQuota,
+                        $"task '{BuildTitle(request)}'",
+                        ct);
                 }
+
+                if (_modelAvailability is not null)
+                {
+                    var alias = ModelLevelAliases.For(agentKind, level);
+                    try
+                    {
+                        await _modelAvailability.RequireAsync(agentKind, alias, ct);
+                    }
+                    catch (ModelDisabledException ex)
+                    {
+                        throw ex.WithCoda(
+                            $"this work is pinned to {alias} by {RoutingPinService.Describe(pinDecision.Pin, pinDecision.CardIdentifier)} "
+                            + $"(\"{pinDecision.Pin.Reason}\") — the available list does not satisfy the pin. "
+                            + "Wait for the hold to clear, pass ignoreModelDisabled to queue it anyway, or "
+                            + "replace the pin.");
+                    }
+                }
+            }
+            else if (request.RefuseIfExhausted)
+            {
+                throw new RoutingExhaustedException(
+                    routingWalk.ExhaustedSentence()
+                    + " A human decides: clear a hold, wait for a reset, or POST /api/agent-tasks/{id}/reroute. "
+                    + "Do NOT pick a kind yourself.",
+                    routingWalk.ToDto());
             }
             else
             {
-                // CARD-0305 handshake: the pin decided the alias, the hold decides whether it may
-                // run. A held alias that a Required pin named is STILL 409 model_disabled with the
-                // available list — never a silent reroute onto something the pin excludes — but the
-                // sentence says the list does not satisfy the pin, so the operator knows waiting,
-                // ignoreModelDisabled, or REPLACING the pin are the three real options.
-                try
+                routingExhausted = true;
+                if (routingWalk.Outcomes.Count > 0)
                 {
-                    await _modelAvailability.RequireAsync(agentKind, alias, ct);
+                    agentKind = routingWalk.Outcomes[0].Candidate.Kind;
+                    level = routingWalk.Outcomes[0].Candidate.Level;
                 }
-                catch (ModelDisabledException ex)
-                    when (pinDecision.Applied
-                        && pinDecision.Pin!.Strength == RoutingPinStrength.Required)
+                else
                 {
-                    throw ex.WithCoda(
-                        $"this work is pinned to {alias} by {RoutingPinService.Describe(pinDecision.Pin, pinDecision.CardIdentifier)} "
-                        + $"(\"{pinDecision.Pin.Reason}\") — the available list does not satisfy the pin. "
-                        + "Wait for the hold to clear, pass ignoreModelDisabled to queue it anyway, or "
-                        + "replace the pin.");
+                    agentKind = ResolveAgentKind(request.Kind, request.Role, request.AgentKind);
+                    level = ResolveLevel(request.Kind, request.Role, request.ModelLevel);
+                }
+            }
+        }
+        else
+        {
+            level = ResolveLevel(request.Kind, request.Role, request.ModelLevel);
+            agentKind = ResolveAgentKind(request.Kind, request.Role, request.AgentKind);
+            // The stage-wide forbid list bites the alias that was ACTUALLY resolved, so it runs after
+            // the role policy has filled in whatever the request and the pin both left open.
+            _routingPins?.EnforceForbiddenAliases(pinDecision, agentKind, level);
+            if (_quotaGate is not null)
+            {
+                var quotaKey = SubscriptionUsageKey.For(subscriptionOwner, agentKind);
+                var quotaOverride = await _quotaGate.EnforceAsync(
+                    agentKind,
+                    quotaKey,
+                    request.IgnoreSubscriptionQuota,
+                    $"task '{BuildTitle(request)}'",
+                    ct);
+                if (quotaOverride is not null)
+                {
+                    var quotaWarning = SubscriptionQuotaPolicy.FormatOverride(quotaOverride);
+                    warning = warning is null ? quotaWarning : warning + " " + quotaWarning;
+                }
+            }
+
+            if (_modelAvailability is not null)
+            {
+                var alias = ModelLevelAliases.For(agentKind, level);
+                if (pinnedStandingAgent is { ModelId: { Length: > 0 } modelId }
+                    && ModelAlias.Normalize(agentKind, modelId) is { } pinned)
+                {
+                    alias = pinned;
+                }
+
+                if (request.IgnoreModelDisabled)
+                {
+                    var hold = await _modelAvailability.GetActiveHoldAsync(agentKind, alias, ct);
+                    if (hold is not null)
+                    {
+                        var name = hold.ModelAlias == ModelAlias.KindWide
+                            ? hold.Kind.ToString()
+                            : hold.ModelAlias;
+                        var untilBit = hold.DisabledUntil is { } until
+                            ? $"until {until:yyyy-MM-ddTHH:mm:ssZ}"
+                            : "(no re-enable time)";
+                        var holdWarning =
+                            $"{name} is held {untilBit}; queued, will dispatch when the hold clears (ignoreModelDisabled).";
+                        warning = warning is null ? holdWarning : warning + " " + holdWarning;
+                    }
+                }
+                else
+                {
+                    // CARD-0305 handshake: the pin decided the alias, the hold decides whether it may
+                    // run. A held alias that a Required pin named is STILL 409 model_disabled with the
+                    // available list — never a silent reroute onto something the pin excludes — but the
+                    // sentence says the list does not satisfy the pin, so the operator knows waiting,
+                    // ignoreModelDisabled, or REPLACING the pin are the three real options.
+                    try
+                    {
+                        await _modelAvailability.RequireAsync(agentKind, alias, ct);
+                    }
+                    catch (ModelDisabledException ex)
+                        when (pinDecision.Applied
+                            && pinDecision.Pin!.Strength == RoutingPinStrength.Required)
+                    {
+                        throw ex.WithCoda(
+                            $"this work is pinned to {alias} by {RoutingPinService.Describe(pinDecision.Pin, pinDecision.CardIdentifier)} "
+                            + $"(\"{pinDecision.Pin.Reason}\") — the available list does not satisfy the pin. "
+                            + "Wait for the hold to clear, pass ignoreModelDisabled to queue it anyway, or "
+                            + "replace the pin.");
+                    }
                 }
             }
         }
@@ -494,6 +632,7 @@ public sealed class AgentTaskService
             InheritedLaunchEnvJson = AgentLaunchEnv.Serialize(inheritedLaunchEnv),
             AgentKind = agentKind,
             ModelLevel = level,
+            Complexity = request.Complexity,
             Workspace = workspace,
             DenyDirectEdits = request.DenyDirectEdits,
             WorkingDirectory = resolved.WorkingDirectory,
@@ -526,6 +665,13 @@ public sealed class AgentTaskService
             task.Status = AgentTaskStatus.Blocked;
             task.FailureReason = RepeatBlockReason(repeatOf, task.AgentKind);
         }
+        else if (routingExhausted && routingWalk is not null)
+        {
+            task.Status = AgentTaskStatus.Blocked;
+            task.FailureReason = routingWalk.ExhaustedSentence()
+                + " A human must choose; do not pick a kind yourself.";
+            task.AgentSessionId = null;
+        }
 
         _db.AgentTasks.Add(task);
         _db.AgentTaskEvents.Add(new AgentTaskEvent
@@ -546,16 +692,17 @@ public sealed class AgentTaskService
                 + CardScopeSuffix(binding.Identifier)
                 // CARD-0305: which standing instruction produced that kind/tier. Without it the
                 // event says "Codex Frontier" and nothing records that a human pinned it there.
-                + (pinDecision.EventNote is { } pinNote ? $" [{pinNote}]" : string.Empty),
+                + (pinDecision.EventNote is { } pinNote ? $" [{pinNote}]" : string.Empty)
+                + (routingWalk is { } walk ? FormatComplexityCreatedDetail(walk) : string.Empty),
             At = now,
         });
-        if (repeatOf is not null)
+        if (repeatOf is not null || routingExhausted)
         {
             AddEvent(id, AgentTaskEventType.Blocked, null, task.FailureReason!, now);
             await EnqueueBlockedParentNoteAsync(task, task.FailureReason!, ct);
             warning = warning is null ? task.FailureReason : warning + " " + task.FailureReason;
         }
-        if (warning is not null && (repeatOf is null || warning != task.FailureReason))
+        if (warning is not null && ((repeatOf is null && !routingExhausted) || warning != task.FailureReason))
             AddEvent(id, AgentTaskEventType.Warning, null, warning, now);
         // D1: an area name the repo's map does not know is ACCEPTED as an opaque label and warned
         // about. A bookkeeping field must never refuse a launch — this one would be refusing it for
@@ -580,7 +727,9 @@ public sealed class AgentTaskService
             ScopeOverlaps: await FindScopeOverlapsAsync(task, ct),
             CardId: binding.CardId,
             CardIdentifier: binding.Identifier,
-            FollowUpMessage: followUpMessage);
+            FollowUpMessage: followUpMessage,
+            Complexity: request.Complexity,
+            Routing: routingWalk?.ToDto());
     }
 
     private async Task<string?> CompletionHeaderAsync(Guid taskId, CancellationToken ct) =>
@@ -1564,7 +1713,30 @@ public sealed class AgentTaskService
                 && cardIdentifiers.TryGetValue(cardId, out var identifier)
                     ? identifier
                     : null,
-            task.ReportEvidence);
+            task.ReportEvidence,
+            task.Complexity);
+    }
+
+    private static string FormatComplexityCreatedDetail(ComplexityRoutingService.Walk walk)
+    {
+        if (walk.Chosen is { } chosen)
+        {
+            var index = 0;
+            for (var i = 0; i < walk.Outcomes.Count; i++)
+            {
+                if (walk.Outcomes[i].Outcome == "chosen")
+                {
+                    index = i + 1;
+                    break;
+                }
+            }
+
+            var skipped = walk.SkippedWarning();
+            return $" complexity={walk.Complexity} candidate {index}/{walk.Outcomes.Count} {chosen.Alias}"
+                + (skipped.Length > 0 ? $"; {skipped}" : string.Empty);
+        }
+
+        return $" complexity={walk.Complexity} exhausted";
     }
 
     /// <summary>Internal so the attention projection rolls up subtree spend the SAME way the board

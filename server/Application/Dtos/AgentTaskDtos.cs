@@ -108,7 +108,20 @@ public sealed record CreateAgentTaskRequest(
     /// Entirely distinct from <see cref="IgnoreModelDisabled"/>: this one is about which model
     /// SHOULD run this card+role, that one about whether the model MAY run at all.
     /// </summary>
-    bool IgnoreRoutingPin = false);
+    bool IgnoreRoutingPin = false,
+    /// <summary>
+    /// Caller-declared hardness (CARD-0090). When set, kind/level are chosen by walking the
+    /// matching complexity chain. Combined with an explicit <see cref="AgentKind"/> or
+    /// <see cref="ModelLevel"/> is 422 — an explicit pair is never silently rerouted.
+    /// Combined with <see cref="IgnoreModelDisabled"/> is 422: a chain skips a held candidate.
+    /// </summary>
+    TaskComplexity? Complexity = null,
+    /// <summary>
+    /// When the chain is exhausted, 409 <c>routing_exhausted</c> instead of inserting a
+    /// Blocked task (CARD-0090). Default false: Blocked-for-a-human is the durable decision
+    /// request so an orchestrator cannot guess a kind.
+    /// </summary>
+    bool RefuseIfExhausted = false);
 
 public sealed record AgentTaskSummaryDto(
     Guid Id,
@@ -178,7 +191,11 @@ public sealed record AgentTaskSummaryDto(
     /// pre-existing row; a new settlement is <c>Marked</c> / <c>UnmarkedAfterNudge</c> /
     /// <c>QuestionHeuristic</c> / <c>FinalMessageMissing</c> / <c>Exempt</c>.
     /// </summary>
-    AgentTaskReportEvidence ReportEvidence = AgentTaskReportEvidence.Legacy);
+    AgentTaskReportEvidence ReportEvidence = AgentTaskReportEvidence.Legacy,
+    /// <summary>
+    /// CARD-0090. Non-null when this task's kind/level was chosen by a complexity chain.
+    /// </summary>
+    TaskComplexity? Complexity = null);
 
 /// <summary>Fleet-wide counters for the delegations board, independent of its history window.</summary>
 public sealed record AgentTaskListSummaryDto(
@@ -245,7 +262,11 @@ public sealed record AgentTaskCreatedDto(
     /// How a requested follow-up was dispatched: either on its still-live agent, or as a fresh
     /// delegate after that agent was unavailable. Null when this was not a follow-up.
     /// </summary>
-    string? FollowUpMessage = null);
+    string? FollowUpMessage = null,
+    /// <summary>CARD-0090. The complexity tier that chose kind/level, when one did.</summary>
+    TaskComplexity? Complexity = null,
+    /// <summary>CARD-0090. The walk that produced kind/level (or exhausted the chain).</summary>
+    ComplexityRoutingDto? Routing = null);
 
 /// <summary>
 /// One running task a newly created task overlaps, and what the dispatcher will do about it.

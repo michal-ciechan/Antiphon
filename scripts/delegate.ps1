@@ -124,6 +124,17 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [switch]$IgnoreRoutingPin,
 
+    # Caller-declared hardness (CARD-0090). Walks the Hard/Medium/Easy chain instead of resolving
+    # kind/level from the role policy. Combined with -Kind or -Level is refused: an explicit pair
+    # is a single candidate the caller chose and is never silently rerouted.
+    [Parameter(ParameterSetName = 'Create')]
+    [ValidateSet('Hard', 'Medium', 'Easy')]
+    [string]$Complexity,
+
+    # When the chain is exhausted, 409 routing_exhausted instead of a Blocked task (CARD-0090).
+    [Parameter(ParameterSetName = 'Create')]
+    [switch]$RefuseIfExhausted,
+
     # Overlay env vars on this task's process launch (CARD-0106). ANTIPHON_* names are refused
     # 422. A non-empty overlay excludes the task from warm-pool reuse (reuse launches no
     # process, so the overlay could never apply). Combined with -OnAgent is refused 422.
@@ -286,6 +297,12 @@ switch ($PSCmdlet.ParameterSetName) {
                 + 'a follow-up already pins to the agent that ran the prior task. Use -Agent or -OnAgent, not both.')
             exit 1
         }
+        if ($Complexity -and ($Kind -or $Level)) {
+            Write-Error ('complexity cannot be combined with agentKind or modelLevel. An explicit pair ' `
+                + 'is a single candidate the caller chose and is never silently rerouted. Pass ' `
+                + '-Complexity without -Kind/-Level, or pass the pair without -Complexity.')
+            exit 1
+        }
 
         $body = @{
             goal = $Goal
@@ -313,6 +330,8 @@ switch ($PSCmdlet.ParameterSetName) {
         if ($IgnoreSubscriptionQuota) { $body['ignoreSubscriptionQuota'] = $true }
         if ($IgnoreModelDisabled) { $body['ignoreModelDisabled'] = $true }
         if ($IgnoreRoutingPin) { $body['ignoreRoutingPin'] = $true }
+        if ($Complexity) { $body['complexity'] = $Complexity }
+        if ($RefuseIfExhausted) { $body['refuseIfExhausted'] = $true }
         if ($EnvOverride -and $EnvOverride.Count -gt 0) { $body['launchEnvOverride'] = $EnvOverride }
         if (-not $NoInheritEnv) {
             $inheritedLlmEnv = @{}
@@ -342,10 +361,36 @@ switch ($PSCmdlet.ParameterSetName) {
         # caller can still correct a mis-binding - the alternative is discovering it on the board.
         $cardNote = ''
         if ($created.cardIdentifier) { $cardNote = " - bound to $($created.cardIdentifier)" }
-        Write-Output ("queued task {0} ({1} {2} on {3}{4}){5}{6}" -f `
-                $created.shortId, $body.kind.ToLower(), $body.role.ToLower(), $created.modelLevel, $kindNote, $routing, $cardNote)
-        # A warning at creation is the caller's one chance to reconsider before the collision.
-        if ($created.warning) { Write-Output ("WARNING: {0}" -f $created.warning) }
+        if ($created.status -eq 'Blocked' -and $created.complexity) {
+            Write-Output ("BLOCKED - {0}" -f $created.warning)
+            Write-Output ('A human decides: clear a hold (model-availability.ps1 clear), wait for a reset, or delegate.ps1 -Reroute <id> -Kind .. -Level ..  Do NOT pick a kind yourself.')
+        }
+        else {
+            Write-Output ("queued task {0} ({1} {2} on {3}{4}){5}{6}" -f `
+                    $created.shortId, $body.kind.ToLower(), $body.role.ToLower(), $created.modelLevel, $kindNote, $routing, $cardNote)
+            if ($created.routing -and $created.routing.candidates) {
+                $all = @($created.routing.candidates)
+                $chosen = $all | Where-Object { $_.outcome -eq 'chosen' } | Select-Object -First 1
+                $skipped = @($all | Where-Object { $_.outcome -eq 'skipped' })
+                if ($null -ne $chosen) {
+                    $idx = 1
+                    foreach ($c in $all) {
+                        if ($c.outcome -eq 'chosen') { break }
+                        $idx++
+                    }
+                    $skipBits = @()
+                    foreach ($s in $skipped) {
+                        $why = if ($s.reason) { $s.reason } else { 'skipped' }
+                        $skipBits += ("{0} ({1})" -f $s.alias, $why)
+                    }
+                    $skipText = if ($skipBits.Count -gt 0) { '; skipped ' + ($skipBits -join ', ') } else { '' }
+                    Write-Output ("routed {0} -> {1} (candidate {2}/{3}){4}" -f `
+                            $created.complexity, $chosen.alias, $idx, $all.Count, $skipText)
+                }
+            }
+            # A warning at creation is the caller's one chance to reconsider before the collision.
+            if ($created.warning) { Write-Output ("WARNING: {0}" -f $created.warning) }
+        }
         # -Pin records what this dispatch RESOLVED to, not what was typed: a caller who passed no
         # -Kind and got Grok from the role policy still means "next time, the same" - and the pin is
         # what makes that survive the next policy change. Human + Required, because a pin written by
@@ -366,8 +411,13 @@ switch ($PSCmdlet.ParameterSetName) {
                     reason     = ("pinned by delegate.ps1 -Pin from task {0}" -f $created.shortId)
                 }
                 $pinned = Invoke-Antiphon -Method PUT -Path '/api/routing-pins' -Body $pinBody
-                Write-Output ("pinned {0} {1} to {2}/{3} (human, required)" -f `
-                        $created.cardIdentifier, $pinned.role, $pinned.agentKind, $pinned.modelLevel)
+                $pinLine = "pinned {0} {1} to {2}/{3} (human, required)" -f `
+                    $created.cardIdentifier, $pinned.role, $pinned.agentKind, $pinned.modelLevel
+                if ($Complexity) {
+                    $pinLine = $pinLine + (" (this removes {0} {1} from {2}-chain fallback; clear the pin to restore it)" -f `
+                            $created.cardIdentifier, $body.role, $Complexity)
+                }
+                Write-Output $pinLine
             }
         }
         if ($created.followUpMessage) { Write-Output ("FOLLOW-UP: {0}" -f $created.followUpMessage) }

@@ -121,6 +121,57 @@ public sealed class DelegateScriptKindTests
     }
 
     [Test]
+    public async Task Complexity_Hard_is_posted_as_complexity()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(
+            server, "-Role", "Plan", "-Goal", "plan it", "-Complexity", "Hard");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.GetProperty("complexity").GetString().ShouldBe("Hard");
+        body.RootElement.TryGetProperty("refuseIfExhausted", out _)
+            .ShouldBeFalse("an omitted -RefuseIfExhausted must leave the request as it was");
+    }
+
+    [Test]
+    public async Task an_omitted_Complexity_sends_nothing_at_all()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(server, "-Role", "Plan", "-Goal", "plan it");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.TryGetProperty("complexity", out _)
+            .ShouldBeFalse("an omitted -Complexity must leave the request exactly as it was before the flag existed");
+    }
+
+    [Test]
+    public async Task Complexity_plus_Kind_is_refused_locally()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(
+            server, "-Role", "Plan", "-Goal", "plan it", "-Complexity", "Hard", "-Kind", "Grok");
+
+        run.ExitCode.ShouldNotBe(0);
+        run.Output.ShouldContain("never silently rerouted");
+        server.RequestCount.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task RefuseIfExhausted_is_posted_only_when_set()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(
+            server, "-Role", "Plan", "-Goal", "plan it", "-Complexity", "Easy", "-RefuseIfExhausted");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.GetProperty("refuseIfExhausted").GetBoolean().ShouldBeTrue();
+        body.RootElement.GetProperty("complexity").GetString().ShouldBe("Easy");
+    }
+
+    [Test]
     public async Task IgnoreSubscriptionQuota_sends_ignoreSubscriptionQuota_true()
     {
         using var server = new StubApi();
