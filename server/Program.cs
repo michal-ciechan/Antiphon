@@ -163,6 +163,9 @@ try
         .ValidateOnStart();
     // CARD-0040: cards move themselves from the delegated work bound to them.
     builder.Services.Configure<CardWorkTransitionSettings>(builder.Configuration.GetSection("CardTransitions"));
+    // CARD-0004: card → docs/cards/<slug>/ files. AutoCommit defaults false — do not flip it;
+    // a human dryRun then a manual sync must land before anyone turns committing on.
+    builder.Services.Configure<CardFileSyncSettings>(builder.Configuration.GetSection(CardFileSyncSettings.SectionName));
     builder.Services.Configure<ParkedMessageSweepSettings>(builder.Configuration.GetSection("ParkedMessages"));
     builder.Services.Configure<SupervisionSettings>(builder.Configuration.GetSection("Supervision"));
     builder.Services.Configure<SubscriptionUsageMonitoringSettings>(
@@ -323,6 +326,8 @@ try
     builder.Services.AddScoped<ProjectSetupService>();
     builder.Services.AddScoped<BoardService>();
     builder.Services.AddScoped<CardService>();
+    builder.Services.AddSingleton<CardTaskFileSyncGate>();
+    builder.Services.AddScoped<CardTaskFileService>();
     builder.Services.AddScoped<CardCommentService>();
     // One card's work gathered from the four places it is recorded, correlated by the identifier
     // everything already cites. Read-only; scoped because it is one query burst per request.
