@@ -25,6 +25,14 @@ namespace Antiphon.Tests.Application;
 public class SessionTerminationSourcePersistenceTests
 {
     [Test]
+    public void Record_never_overwrites_a_prior_source()
+    {
+        var session = new AgentSession { TerminationSource = SessionTerminationSource.OperatorRequest };
+        SessionTermination.Record(session, SessionTerminationSource.SystemRequest).ShouldBeFalse();
+        session.TerminationSource.ShouldBe(SessionTerminationSource.OperatorRequest);
+    }
+
+    [Test]
     public async Task KillAsync_persists_OperatorRequest_before_the_runner_kill()
     {
         var sessionId = Guid.NewGuid();

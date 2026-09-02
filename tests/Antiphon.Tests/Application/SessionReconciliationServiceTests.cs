@@ -50,6 +50,7 @@ public class SessionReconciliationServiceTests
             dbSession.Status.ShouldBe(SessionStatus.Failed);
             dbSession.FailureReason.ShouldNotBeNull();
             dbSession.FailureReason.ShouldContain("does not know this session");
+            dbSession.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
             dbSession.EndedAt.ShouldNotBeNull();
 
             var dbAgent = await verify.Agents.SingleAsync(a => a.Id == agent);

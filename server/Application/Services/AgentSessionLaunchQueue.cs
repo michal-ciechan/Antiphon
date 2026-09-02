@@ -311,6 +311,7 @@ public sealed class AgentSessionLaunchQueue
             card.OwnerSession.EndedAt ??= utcNow;
             card.OwnerSession.LastSeenAt = utcNow;
             card.OwnerSession.FailureReason = failureReason;
+            SessionTermination.Record(card.OwnerSession, SessionTerminationSource.SystemRequest);
         }
 
         card.OwnerSessionId = null;

@@ -1,5 +1,6 @@
 ﻿using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -59,8 +60,47 @@ public class AgentSessionLaunchFailureTests
         await using var db = LaunchFixture.CreateContext();
         var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
         session.Status.ShouldBe(SessionStatus.Failed);
+        session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
         var agent = await db.Agents.SingleAsync(a => a.Id == fixture.AgentId);
         agent.Status.ShouldBe(AgentStatus.Failed, "the Start API already flipped it to Running");
+    }
+
+    [Test]
+    public async Task Herdr_pairing_refusal_records_SystemRequest()
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+
+        await using (var db = LaunchFixture.CreateContext())
+        {
+            var sessionRow = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+            sessionRow.SessionBackend = SessionBackend.Herdr;
+            var agent = await db.Agents.SingleAsync(a => a.Id == fixture.AgentId);
+            agent.Kind = AgentKind.Raw;
+            await db.SaveChangesAsync();
+        }
+
+        var spec = new AgentLaunchSpec(
+            "fake",
+            AgentKind.Raw,
+            "fake",
+            [],
+            new Dictionary<string, string>(),
+            fixture.Workspace,
+            120,
+            30,
+            Backend: SessionBackend.Herdr);
+
+        var ex = await Should.ThrowAsync<ConflictException>(
+            fixture.LaunchInteractiveAsync(spec: spec));
+        ex.Code.ShouldBe("herdr_refused");
+        adapter.Started.ShouldBeFalse();
+
+        await using var verify = LaunchFixture.CreateContext();
+        var session = await verify.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        session.Status.ShouldBe(SessionStatus.Failed);
+        session.FailureReason.ShouldContain("Raw");
+        session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
     }
 
     // ---- CARD-0106 S2: the API key tripwire, in the method every launch passes through ----------
@@ -152,6 +192,7 @@ public class AgentSessionLaunchFailureTests
         await using var db = LaunchFixture.CreateContext();
         var session = await db.AgentSessions.SingleAsync(s => s.CardId == card);
         session.Status.ShouldBe(SessionStatus.Failed);
+        session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
         var attempt = await db.RunAttempts.SingleAsync(a => a.CardId == card);
         attempt.Phase.ShouldBe(RunPhase.Failed);
     }
