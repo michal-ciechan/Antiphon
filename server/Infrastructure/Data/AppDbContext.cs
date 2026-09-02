@@ -880,7 +880,10 @@ public class AppDbContext : DbContext
             // application check, an over-long description sailed past validation and came back as a
             // raw 500 from Postgres ("22001: value too long") — the whole point of the fix.
             entity.Property(c => c.Description).HasColumnType("text");
-            entity.Property(c => c.Priority).IsRequired();
+            entity.Property(c => c.Importance).IsRequired().HasDefaultValue(CardImportance.Normal);
+            entity.Property(c => c.Urgency).IsRequired().HasDefaultValue(CardUrgency.Normal);
+            entity.Property(c => c.DueAt);
+            entity.Property(c => c.UrgentSince);
             entity.Property(c => c.LabelsJson).IsRequired().HasColumnType("jsonb");
             entity.Property(c => c.Status).IsRequired();
             entity.Property(c => c.ConcurrencyToken).IsConcurrencyToken();
@@ -948,6 +951,9 @@ public class AppDbContext : DbContext
             entity.Property(r => r.CardId).IsRequired();
             entity.Property(r => r.RevisionNumber).IsRequired();
             entity.Property(r => r.Kind).IsRequired();
+            entity.Property(r => r.Importance);
+            entity.Property(r => r.Urgency);
+            entity.Property(r => r.DueAt);
             entity.Property(r => r.Title).HasMaxLength(300);
             // text + application ceiling, matching Cards.Description — a revision holds a copy of
             // exactly that value, so a tighter column here would 500 on the very edit it records.

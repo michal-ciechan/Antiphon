@@ -101,7 +101,7 @@ internal static class CardTaskFileRenderer
         AppendLine(sb, $"identifier: {card.Identifier}");
         AppendLine(sb, $"title: {YamlQuote(card.Title)}");
         AppendLine(sb, $"status: {card.Status}");
-        AppendLine(sb, $"priority: {card.Priority}");
+        AppendLine(sb, $"priority: {(int)card.Importance}");
         AppendLine(sb, $"labels: [{string.Join(", ", labels.Select(YamlQuote))}]");
         AppendLine(sb, $"created: {FormatTimestamp(card.CreatedAt)}");
         if (card.StartedAt is { } started)
@@ -166,7 +166,7 @@ internal static class CardTaskFileRenderer
         {
             var group = cards
                 .Where(match)
-                .OrderByDescending(c => c.Priority)
+                .OrderByDescending(c => c.Importance)
                 .ThenBy(c => c.Identifier, StringComparer.Ordinal)
                 .ToList();
             if (group.Count == 0)
@@ -180,7 +180,7 @@ internal static class CardTaskFileRenderer
                     continue;
                 var labels = BoardService.ParseLabels(card.LabelsJson);
                 var labelBits = string.Concat(labels.Select(l => $" `{l}`"));
-                AppendLine(sb, $"- [{card.Identifier}]({fileName}) — {card.Title} `p{card.Priority}`{labelBits}");
+                AppendLine(sb, $"- [{card.Identifier}]({fileName}) — {card.Title} `p{(int)card.Importance}`{labelBits}");
             }
         }
 

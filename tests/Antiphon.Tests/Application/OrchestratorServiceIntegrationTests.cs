@@ -203,7 +203,7 @@ public class OrchestratorServiceIntegrationTests
                 .SingleAsync(c => c.BoardId == graph.Board.Id);
             syncedCard.Identifier.ShouldBe("CARD-0001");
             syncedCard.Title.ShouldBe("External issue");
-            syncedCard.Priority.ShouldBe(4);
+            syncedCard.Importance.ShouldBe((CardImportance)4);
             syncedCard.ExternalIssueRef.ShouldNotBeNull();
             syncedCard.ExternalIssueRef!.TrackerKind.ShouldBe(TrackerKind.GitHubIssues);
             syncedCard.ExternalIssueRef.ExternalId.ShouldBe("acme/app#42");
@@ -341,7 +341,7 @@ public class OrchestratorServiceIntegrationTests
             cards.Count.ShouldBe(1);
             cards.Single().Title.ShouldBe("Updated title");
             cards.Single().Description.ShouldBe("Updated description");
-            cards.Single().Priority.ShouldBe(5);
+            cards.Single().Importance.ShouldBe((CardImportance)5);
             cards.Single().ExternalIssueRef!.Url.ShouldBe("https://linear.test/ANT-1");
         }
         finally
@@ -1352,7 +1352,7 @@ public class OrchestratorServiceIntegrationTests
             Identifier = $"{prefix}-{Guid.NewGuid():N}"[..20],
             Title = $"Card {prefix}",
             Description = "Run from orchestrator",
-            Priority = 1,
+            Importance = CardImportance.High,
             Status = column.CardStatus,
             CreatedAt = now,
             UpdatedAt = now,

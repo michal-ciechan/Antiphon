@@ -68,7 +68,7 @@ public sealed class HomeTaskService
                 c.Title,
                 c.TerminalReason,
                 c.Status,
-                c.Priority,
+                (int)c.Importance,
                 c.BoardId,
                 c.OwnerSessionId,
                 c.ActiveWorkflowRun != null ? c.ActiveWorkflowRun.Status : (CardWorkflowRunStatus?)null,

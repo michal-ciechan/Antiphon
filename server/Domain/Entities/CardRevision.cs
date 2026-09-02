@@ -41,8 +41,14 @@ public class CardRevision
     /// <summary>The SUPERSEDED description.</summary>
     public string? Description { get; set; }
 
-    /// <summary>The SUPERSEDED priority.</summary>
-    public int? Priority { get; set; }
+    /// <summary>The SUPERSEDED importance.</summary>
+    public CardImportance? Importance { get; set; }
+
+    /// <summary>The SUPERSEDED urgency.</summary>
+    public CardUrgency? Urgency { get; set; }
+
+    /// <summary>The SUPERSEDED due date.</summary>
+    public DateTime? DueAt { get; set; }
 
     /// <summary>The SUPERSEDED labels, same jsonb shape as <see cref="Card.LabelsJson"/>.</summary>
     public string? LabelsJson { get; set; }

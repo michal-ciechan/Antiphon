@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Antiphon.E2E.Fixtures;
 using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
@@ -643,7 +644,7 @@ public class ContractSnapshotTests
             Identifier = "CARD-0031",
             Title = "Project status view",
             Status = Server.Domain.Enums.CardStatus.Review,
-            Priority = 1,
+            Importance = CardImportance.High,
             CreatedAt = t0.AddDays(-3),
             UpdatedAt = t0.AddDays(-3),
         });
@@ -699,7 +700,7 @@ public class ContractSnapshotTests
             Identifier = identifier,
             Title = title,
             Status = status,
-            Priority = 1,
+            Importance = CardImportance.High,
             CreatedAt = at,
             UpdatedAt = at,
             StartedAt = startedAt,

@@ -333,7 +333,7 @@ public class TrackerSyncEndpointTests
                 Identifier = "CARD-0171",
                 Title = "Notify smoke card",
                 Description = "desc",
-                Priority = 0,
+                Importance = CardImportance.Normal,
                 LabelsJson = "[]",
                 Status = CardStatus.Backlog,
                 ConcurrencyToken = Guid.NewGuid(),

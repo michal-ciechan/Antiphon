@@ -1737,7 +1737,7 @@ public class AgentServiceIntegrationTests
             Identifier = identifier,
             Title = title,
             Description = title,
-            Priority = 1,
+            Importance = CardImportance.High,
             LabelsJson = "[]",
             Status = CardStatus.Backlog,
             CreatedAt = now,

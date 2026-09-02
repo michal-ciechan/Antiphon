@@ -250,7 +250,7 @@ public sealed class BoardService
         var cardsByColumn = board.Cards
             .Where(c => includeArchived || c.ArchivedAt == null)
             .GroupBy(c => c.BoardColumnId)
-            .ToDictionary(g => g.Key, g => g.OrderByDescending(c => c.Priority).ThenBy(c => c.CreatedAt).ToList());
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(c => c.Importance).ThenBy(c => c.CreatedAt).ToList());
 
         var columns = board.Columns
             .OrderBy(c => c.ColumnOrder)
@@ -317,7 +317,7 @@ public sealed class BoardService
             card.Identifier,
             card.Title,
             card.Description,
-            card.Priority,
+            (int)card.Importance,
             ParseLabels(card.LabelsJson),
             card.Status,
             card.ConcurrencyToken,
@@ -411,7 +411,7 @@ public sealed class BoardService
             revision.Kind,
             revision.Title,
             revision.Description,
-            revision.Priority,
+            (int?)revision.Importance,
             revision.LabelsJson is null ? null : ParseLabels(revision.LabelsJson),
             revision.FromColumnId,
             revision.ToColumnId,

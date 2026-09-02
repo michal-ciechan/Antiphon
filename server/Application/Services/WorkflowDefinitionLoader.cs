@@ -214,7 +214,7 @@ public sealed partial class WorkflowDefinitionLoader
             ["issue.identifier"] = card.ExternalIssueRef?.ExternalKey ?? card.Identifier,
             ["issue.title"] = card.Title,
             ["issue.description"] = card.Description,
-            ["issue.priority"] = card.Priority.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["issue.priority"] = ((int)card.Importance).ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["issue.url"] = card.ExternalIssueRef?.Url,
             ["issue.tracker"] = card.ExternalIssueRef is { } ext
                 ? TrackerIssueCitation.DisplayName(ext.TrackerKind)
@@ -223,7 +223,7 @@ public sealed partial class WorkflowDefinitionLoader
             ["card.identifier"] = card.Identifier,
             ["card.title"] = card.Title,
             ["card.description"] = card.Description,
-            ["card.priority"] = card.Priority.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["card.priority"] = ((int)card.Importance).ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["board.id"] = card.BoardId.ToString(),
             ["workspace.path"] = worktree?.Path,
             ["workspace.branch"] = worktree?.Branch,

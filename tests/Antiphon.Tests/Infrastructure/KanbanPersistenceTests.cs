@@ -375,7 +375,7 @@ public class KanbanPersistenceTests
             Identifier = cardIdentifier,
             Title = "Build persistence",
             Description = "Persist the kanban graph",
-            Priority = 1,
+            Importance = CardImportance.High,
             LabelsJson = """["backend","bdd"]""",
             Status = CardStatus.InProgress,
             CreatedAt = now,

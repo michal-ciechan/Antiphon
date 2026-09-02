@@ -772,7 +772,7 @@ public class TrackerBidirectionalSyncTests
             Identifier = $"CARD-{Random.Shared.Next(1000, 9999)}",
             Title = $"Card {Guid.NewGuid():N}"[..20],
             Description = "desc",
-            Priority = 0,
+            Importance = CardImportance.Normal,
             LabelsJson = "[]",
             Status = CardStatus.Backlog,
             ConcurrencyToken = Guid.NewGuid(),
