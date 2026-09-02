@@ -57,7 +57,7 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
   },
   {
     event: 'BoardChanged',
-    getKeys: (p) => [['boards'], ...(p.boardId ? [['boards', p.boardId]] : [])],
+    getKeys: (p) => [['boards'], ...(p.boardId ? [['boards', p.boardId]] : []), ['homeTasks']],
   },
   {
     event: 'WorkflowReloaded',
@@ -77,6 +77,7 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
       // A card parked for (or moved out of) a human decision changes the same attention feed as
       // delegated-task events. This makes the decision chip and panel update on the next paint.
       ['attention'],
+      ['homeTasks'],
     ],
   },
   {
@@ -86,6 +87,7 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
       ['boards'],
       ...(p.boardId ? [['boards', p.boardId]] : []),
       ['cards', 'list'],
+      ['homeTasks'],
     ],
   },
   {
@@ -95,6 +97,7 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
       ...(p.agentId ? [['agents', 'detail', p.agentId]] : []),
       // An agent's incidents and its session's fate both feed the attention projection.
       ['attention'],
+      ['homeTasks'],
     ],
   },
   {
@@ -104,6 +107,7 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
       ...(p.agentId ? [['agents', 'detail', p.agentId], ['agents', 'queue', p.agentId]] : []),
       ['boards'],
       ...(p.boardId ? [['boards', p.boardId]] : []),
+      ['homeTasks'],
     ],
   },
   {
@@ -121,6 +125,7 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
       ...(p.agentId ? [['agents', 'detail', p.agentId]] : []),
       ['boards'],
       ...(p.boardId ? [['boards', p.boardId]] : []),
+      ['homeTasks'],
     ],
   },
   {
@@ -140,6 +145,7 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
       // The thread's task rows are correlated by citation, not by key, so no payload field can
       // narrow this — any task change may belong to any open thread.
       ['cards', 'thread'],
+      ['homeTasks'],
     ],
   },
   {

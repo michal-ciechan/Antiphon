@@ -86,8 +86,9 @@ export const homeTaskKeys = {
 }
 
 /**
- * The 15s poll matches `useAgentTasks` / `useAttention`: SignalR already invalidates this key,
- * so the interval only covers a dropped connection. S5 wires the invalidation map.
+ * The 15s poll matches `useAgentTasks` / `useAttention`: SignalR already invalidates this key
+ * (`CardChanged`, `BoardChanged`, `AgentTaskChanged`, `RunAttemptChanged`, `SessionFinished`,
+ * `AgentChanged`, `AgentQueueChanged`), so the interval only covers a dropped connection.
  */
 export function useHomeTasks(enabled = true) {
   return useQuery({
