@@ -733,11 +733,11 @@ function BoardCreateModal({ opened, onClose }: { opened: boolean; onClose: () =>
         maxConcurrentSessions: Number(maxConcurrentSessions) || 1,
       },
       {
-        onSuccess: () => {
+        onSuccess: (board) => {
           onClose()
           setName('')
           setDescription('')
-          navigate('/boards')
+          navigate(`/boards/${board.id}`)
         },
       },
     )
