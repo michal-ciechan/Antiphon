@@ -187,7 +187,7 @@ public sealed class ExternalTrackerSyncService
                     continue;
                 }
 
-                if (UpdateExisting(existingRef, targetColumn, issue, isBlocked, ownsNonTerminal, utcNow))
+                if (UpdateExisting(existingRef, targetColumn, issue, isBlocked, ownsNonTerminal, utcNow, config.OperatorLogins))
                 {
                     changed = true;
                     // Self-guarding: only acts if the tracker state landed the card in
@@ -218,6 +218,7 @@ public sealed class ExternalTrackerSyncService
                 }
                 if (existingCard is not null && existingCard.ExternalIssueRef is null)
                 {
+                    var linkedAuthor = NormalizeAuthor(issue.Author);
                     var linked = new ExternalIssueRef
                     {
                         Id = Guid.NewGuid(),
@@ -234,6 +235,8 @@ public sealed class ExternalTrackerSyncService
                             : "open",
                         LastRevisionSynced = existingCard.RevisionCount,
                         LastOutboundSyncedAt = utcNow,
+                        Author = linkedAuthor,
+                        AuthorIsOperator = JudgeAuthorIsOperator(linkedAuthor, config.OperatorLogins),
                         Card = existingCard
                     };
                     existingCard.ExternalIssueRef = linked;
@@ -245,6 +248,8 @@ public sealed class ExternalTrackerSyncService
             }
 
             allocator ??= await CardIdentifierAllocator.ForBoardAsync(_db, board.Id, ct);
+            var author = NormalizeAuthor(issue.Author);
+            var authorIsOperator = JudgeAuthorIsOperator(author, config.OperatorLogins);
             var card = new Card
             {
                 Id = Guid.NewGuid(),
@@ -253,7 +258,8 @@ public sealed class ExternalTrackerSyncService
                 Identifier = allocator.Next(),
                 Title = issue.Title.Trim(),
                 Description = issue.Description.Trim(),
-                Importance = CardRanking.FromTrackerScale(issue.Priority),
+                Importance = CardRanking.FromTrackedIssue(issue.Priority, authorIsOperator),
+                ImportanceProvenance = CardImportanceProvenance.Auto,
                 LabelsJson = BoardService.SerializeLabels(
                     TrackerSyncMarkers.StripManagedLabels(issue.Labels)),
                 Status = targetColumn.CardStatus,
@@ -278,6 +284,8 @@ public sealed class ExternalTrackerSyncService
                     ? "closed"
                     : "open",
                 LastRevisionSynced = 0,
+                Author = author,
+                AuthorIsOperator = authorIsOperator,
                 Card = card
             };
             card.ExternalIssueRef = externalRef;
@@ -299,7 +307,8 @@ public sealed class ExternalTrackerSyncService
         TrackedIssue issue,
         bool isBlocked,
         bool trackerOwnsNonTerminalColumn,
-        DateTime utcNow)
+        DateTime utcNow,
+        IReadOnlyList<string>? operatorLogins)
     {
         var card = externalRef.Card;
         var changed = false;
@@ -307,35 +316,46 @@ public sealed class ExternalTrackerSyncService
         // title/body/free-form labels/priority — IN skips those fields.
         var importAuthoritative = externalRef.Origin != ExternalIssueOrigin.AntiphonExport;
 
+        ApplyAuthor(externalRef, issue, operatorLogins, ref changed);
+
         if (importAuthoritative)
         {
             var title = issue.Title.Trim();
-            if (card.Title != title)
-            {
-                card.Title = title;
-                changed = true;
-            }
+            var titleChanged = card.Title != title;
 
             var description = issue.Description.Trim();
-            if (card.Description != description)
-            {
-                card.Description = description;
-                changed = true;
-            }
+            var descriptionChanged = card.Description != description;
 
             // Strip managed status:*/priority:* so card labels never accumulate sync-owned prefixes.
             var labelsJson = BoardService.SerializeLabels(
                 TrackerSyncMarkers.StripManagedLabels(issue.Labels));
-            if (card.LabelsJson != labelsJson)
-            {
-                card.LabelsJson = labelsJson;
-                changed = true;
-            }
+            var labelsChanged = card.LabelsJson != labelsJson;
 
-            var importedImportance = CardRanking.FromTrackerScale(issue.Priority);
-            if (card.Importance != importedImportance)
+            var importedImportance = CardRanking.FromTrackedIssue(issue.Priority, externalRef.AuthorIsOperator);
+            var importanceChanged = card.ImportanceProvenance != CardImportanceProvenance.Human
+                && card.Importance != importedImportance;
+
+            if (titleChanged || descriptionChanged || labelsChanged || importanceChanged)
             {
-                card.Importance = importedImportance;
+                var fields = new List<string>(4);
+                if (titleChanged) fields.Add("title");
+                if (descriptionChanged) fields.Add("description");
+                if (labelsChanged) fields.Add("labels");
+                if (importanceChanged) fields.Add("importance");
+                CardRevisionLog.AppendContentEdit(
+                    card,
+                    $"External tracker {issue.ExternalKey} changed: {string.Join(", ", fields)}.",
+                    TrackerActor,
+                    utcNow);
+
+                if (titleChanged)
+                    card.Title = title;
+                if (descriptionChanged)
+                    card.Description = description;
+                if (labelsChanged)
+                    card.LabelsJson = labelsJson;
+                if (importanceChanged)
+                    card.Importance = importedImportance;
                 changed = true;
             }
         }
@@ -413,6 +433,52 @@ public sealed class ExternalTrackerSyncService
 
         return changed;
     }
+
+    private static void ApplyAuthor(
+        ExternalIssueRef externalRef,
+        TrackedIssue issue,
+        IReadOnlyList<string>? operatorLogins,
+        ref bool changed)
+    {
+        var author = NormalizeAuthor(issue.Author);
+        if (!string.Equals(externalRef.Author, author, StringComparison.Ordinal))
+        {
+            externalRef.Author = author;
+            changed = true;
+        }
+
+        var judged = JudgeAuthorIsOperator(author, operatorLogins);
+        if (externalRef.AuthorIsOperator != judged)
+        {
+            externalRef.AuthorIsOperator = judged;
+            changed = true;
+        }
+    }
+
+    internal static bool? JudgeAuthorIsOperator(string? author, IReadOnlyList<string>? operatorLogins)
+    {
+        if (operatorLogins is null || operatorLogins.Count == 0)
+            return null;
+
+        if (string.IsNullOrWhiteSpace(author))
+            return false;
+
+        var normalized = NormalizeLogin(author);
+        foreach (var login in operatorLogins)
+        {
+            if (string.IsNullOrWhiteSpace(login))
+                continue;
+            if (string.Equals(NormalizeLogin(login), normalized, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static string? NormalizeAuthor(string? author) =>
+        string.IsNullOrWhiteSpace(author) ? null : author.Trim();
+
+    private static string NormalizeLogin(string login) => login.Trim().TrimStart('@');
 
     private async Task<IReadOnlySet<string>> ResolveBlockedIssueIdsAsync(
         Guid boardId,

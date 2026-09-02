@@ -325,6 +325,7 @@ public sealed class BoardService
             card.Title,
             card.Description,
             card.Importance,
+            card.ImportanceProvenance,
             card.Urgency,
             card.DueAt,
             card.UrgentSince,
@@ -363,8 +364,29 @@ public sealed class BoardService
             card.ArchivedBy,
             card.AutoDispatchHeldAt,
             card.ExternalIssueRef is { } ext
-                ? new ExternalIssueDto(ext.TrackerKind, ext.ExternalKey, ext.Url)
+                ? new ExternalIssueDto(
+                    ext.TrackerKind,
+                    ext.ExternalKey,
+                    ext.Url,
+                    ext.Author,
+                    ext.AuthorIsOperator,
+                    NeedsHumanReview(card))
                 : null);
+    }
+
+    /// <summary>
+    /// Derived at read time (CARD-0327 decision 7): an import-origin card from a non-operator
+    /// author that nobody has rated, still in Backlog. Rating, moving, or archiving clears it.
+    /// </summary>
+    internal static bool NeedsHumanReview(Card card)
+    {
+        var ext = card.ExternalIssueRef;
+        return ext is not null
+            && ext.Origin == ExternalIssueOrigin.ExternalImport
+            && ext.AuthorIsOperator == false
+            && card.ImportanceProvenance == CardImportanceProvenance.Auto
+            && card.Status == CardStatus.Backlog
+            && card.ArchivedAt is null;
     }
 
     /// <summary>Reuses the full-card projection, then removes data list surfaces never render.</summary>

@@ -16,6 +16,14 @@ public class Card
     public string Title { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public CardImportance Importance { get; set; } = CardImportance.Normal;
+
+    /// <summary>
+    /// Whether <see cref="Importance"/> was produced by an automatic writer or an explicit
+    /// create/edit (CARD-0327). Auto is the default; the tracker sync writes importance only
+    /// while this is Auto.
+    /// </summary>
+    public CardImportanceProvenance ImportanceProvenance { get; set; } = CardImportanceProvenance.Auto;
+
     public CardUrgency Urgency { get; set; } = CardUrgency.Normal;
     public DateTime? DueAt { get; set; }
 

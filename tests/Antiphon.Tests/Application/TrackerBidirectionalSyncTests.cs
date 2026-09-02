@@ -437,6 +437,47 @@ public class TrackerBidirectionalSyncTests
     }
 
     [Test]
+    public async Task External_tracker_content_edit_is_not_echoed_as_a_GitHub_comment()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
+        try
+        {
+            var graph = await SeedLinkedBoardAsync(db, tempRoot, clock, origin: ExternalIssueOrigin.ExternalImport);
+            db.CardRevisions.Add(new CardRevision
+            {
+                Id = Guid.NewGuid(),
+                CardId = graph.Card.Id,
+                RevisionNumber = ++graph.Card.RevisionCount,
+                Kind = CardRevisionKind.ContentEdit,
+                Title = "old title",
+                Reason = "External tracker #1 changed: title.",
+                EditedBy = "external-tracker",
+                CreatedAt = clock.GetUtcNow().UtcDateTime,
+                Card = graph.Card
+            });
+            await db.SaveChangesAsync();
+
+            var fake = new FakeBidirectionalTracker(TrackerKind.GitHubIssues)
+            {
+                Candidates = [Issue("acme/app#1", "open", "Title", "Body", [])]
+            };
+            var sut = NewSut(db, fake, clock);
+            var result = (await sut.RunAsync(graph.Board.Id, CancellationToken.None)).Boards.Single();
+
+            result.CommentsOut.ShouldBe(0);
+            fake.PostCommentCalls.ShouldBeEmpty();
+            (await db.ExternalIssueRefs.SingleAsync(r => r.CardId == graph.Card.Id))
+                .LastRevisionSynced.ShouldBe(0);
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task Default_mode_reopen_lands_in_backlog_not_active()
     {
         await using var db = CreateContext();

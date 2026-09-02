@@ -54,7 +54,8 @@ public sealed class TrackerCache
             SetKey(config.ActiveStates),
             config.ApiKeyEnv,
             config.Jql,
-            OptionsKey(config.Options));
+            OptionsKey(config.Options),
+            SetKey(config.OperatorLogins ?? []));
 
     private static string SetKey(IEnumerable<string> values) =>
         string.Join(

@@ -180,15 +180,16 @@ public class ExternalTrackerSyncLandingColumnTests
         TrackerLandingColumn.Resolve(board, config)!.Id.ShouldBe(todo.Id);
     }
 
-    private static ExternalTrackerSyncService NewSut(AppDbContext db, IIssueTracker tracker) =>
+    internal static ExternalTrackerSyncService NewSut(AppDbContext db, IIssueTracker tracker) =>
         new(db, [tracker], new MockEventBus(), NullLogger<ExternalTrackerSyncService>.Instance);
 
-    private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
+    internal static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
-    private static string NewTempRoot() =>
+    internal static string NewTempRoot() =>
         Path.Combine(Path.GetTempPath(), $"antiphon-land-sync-{Guid.NewGuid():N}");
 
-    private static async Task<DefaultGraph> SeedTrackedBoardAsync(AppDbContext db, string tempRoot)
+    internal static async Task<DefaultGraph> SeedTrackedBoardAsync(
+        AppDbContext db, string tempRoot, string? operatorLoginsYaml = null)
     {
         var now = DateTime.UtcNow;
         var project = NewProject(tempRoot, now);
@@ -201,7 +202,7 @@ public class ExternalTrackerSyncLandingColumnTests
         board.Columns.Add(active);
         board.Columns.Add(review);
         board.Columns.Add(done);
-        board.WorkflowDefinitions.Add(Workflow(board, now, """
+        var trackerYaml = """
             ---
             tracker:
               kind: github_issues
@@ -209,7 +210,15 @@ public class ExternalTrackerSyncLandingColumnTests
               active_states: [open]
             ---
             Work on {{ issue.identifier }}.
-            """));
+            """;
+        if (operatorLoginsYaml is not null)
+        {
+            trackerYaml = trackerYaml.Replace(
+                "active_states: [open]",
+                "active_states: [open]\n  operator_logins: " + operatorLoginsYaml,
+                StringComparison.Ordinal);
+        }
+        board.WorkflowDefinitions.Add(Workflow(board, now, trackerYaml));
         db.Projects.Add(project);
         await db.SaveChangesAsync();
         return new DefaultGraph(project, board, backlog, active, review, done);
@@ -303,11 +312,18 @@ public class ExternalTrackerSyncLandingColumnTests
             Board = board
         };
 
-    private static TrackedIssue Issue(string externalId, string key, string title, string body) =>
-        new(externalId, key, title, body, "open", 0, [], [],
-            $"https://github.test/{externalId.Replace('#', '/')}", "{}");
+    internal static TrackedIssue Issue(
+        string externalId,
+        string key,
+        string title,
+        string body,
+        int priority = 0,
+        string? author = null,
+        IReadOnlyList<string>? labels = null) =>
+        new(externalId, key, title, body, "open", priority, labels ?? [], [],
+            $"https://github.test/{externalId.Replace('#', '/')}", "{}", author);
 
-    private static async Task CleanupAsync(string tempRoot)
+    internal static async Task CleanupAsync(string tempRoot)
     {
         await using var db = CreateContext();
         var projectIds = await db.Projects
@@ -330,12 +346,12 @@ public class ExternalTrackerSyncLandingColumnTests
         try { if (Directory.Exists(tempRoot)) Directory.Delete(tempRoot, true); } catch { /* best effort */ }
     }
 
-    private sealed record DefaultGraph(
+    internal sealed record DefaultGraph(
         Project Project, Board Board, BoardColumn Backlog, BoardColumn Active, BoardColumn Review, BoardColumn Done);
 
     private sealed record TwoColumnGraph(Project Project, Board Board, BoardColumn Todo, BoardColumn Done);
 
-    private sealed class FakeIssueTracker(TrackerKind kind, IReadOnlyList<TrackedIssue> issues) : IIssueTracker
+    internal sealed class FakeIssueTracker(TrackerKind kind, IReadOnlyList<TrackedIssue> issues) : IIssueTracker
     {
         public TrackerKind Kind { get; } = kind;
         public IReadOnlyList<TrackedIssue> Candidates { get; set; } = issues;

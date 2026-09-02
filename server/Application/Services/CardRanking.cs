@@ -80,6 +80,16 @@ public static class CardRanking
         _ => CardImportance.Normal
     };
 
+    /// <summary>
+    /// Tracker-derived importance for an import-origin card (CARD-0327). An explicit priority
+    /// label wins; otherwise an operator-authored issue with no label defaults High. Written
+    /// with provenance Auto so a human rating still outranks it.
+    /// </summary>
+    public static CardImportance FromTrackedIssue(int trackerScale, bool? authorIsOperator) =>
+        trackerScale != 0
+            ? FromTrackerScale(trackerScale)
+            : authorIsOperator == true ? CardImportance.High : CardImportance.Normal;
+
     /// <summary>Earliest due date first; null sorts last.</summary>
     public static DateTime DueAtSortKey(DateTime? dueAt) => dueAt ?? DateTime.MaxValue;
 

@@ -601,6 +601,120 @@ public class CardCorrectionIntegrationTests
     }
 
     [Test]
+    public async Task Create_without_importance_is_Normal_Auto_and_explicit_importance_is_Human()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Provenance create board"), CancellationToken.None);
+
+            var omitted = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Default"), CancellationToken.None);
+            omitted.Importance.ShouldBe(CardImportance.Normal);
+            omitted.ImportanceProvenance.ShouldBe(CardImportanceProvenance.Auto);
+
+            var explicitHigh = await harness.CardService.CreateAsync(
+                board.Id,
+                new CreateCardRequest(null, "Rated", Importance: CardImportance.High),
+                CancellationToken.None);
+            explicitHigh.Importance.ShouldBe(CardImportance.High);
+            explicitHigh.ImportanceProvenance.ShouldBe(CardImportanceProvenance.Human);
+
+            var explicitLow = await harness.CardService.CreateAsync(
+                board.Id,
+                new CreateCardRequest(null, "Low rated", Importance: CardImportance.Low),
+                CancellationToken.None);
+            explicitLow.Importance.ShouldBe(CardImportance.Low);
+            explicitLow.ImportanceProvenance.ShouldBe(CardImportanceProvenance.Human);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Edit_with_importance_sets_Human_and_title_only_leaves_provenance()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Provenance edit board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Unrated"), CancellationToken.None);
+            card.ImportanceProvenance.ShouldBe(CardImportanceProvenance.Auto);
+
+            var titled = await harness.CardService.UpdateContentAsync(
+                card.Id,
+                new UpdateCardContentRequest(card.ConcurrencyToken, "Title only.", Title: "Still unrated"),
+                CancellationToken.None);
+            titled.ImportanceProvenance.ShouldBe(CardImportanceProvenance.Auto);
+            titled.Title.ShouldBe("Still unrated");
+
+            var rated = await harness.CardService.UpdateContentAsync(
+                titled.Id,
+                new UpdateCardContentRequest(titled.ConcurrencyToken, "This is High.", Importance: CardImportance.High),
+                CancellationToken.None);
+            rated.Importance.ShouldBe(CardImportance.High);
+            rated.ImportanceProvenance.ShouldBe(CardImportanceProvenance.Human);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task ImportanceProvenance_Auto_hands_the_field_back_to_the_automatic_writer()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Hand back board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id,
+                new CreateCardRequest(null, "Rated", Importance: CardImportance.High),
+                CancellationToken.None);
+            card.ImportanceProvenance.ShouldBe(CardImportanceProvenance.Human);
+
+            var handed = await harness.CardService.UpdateContentAsync(
+                card.Id,
+                new UpdateCardContentRequest(
+                    card.ConcurrencyToken,
+                    "Let the tracker own it again.",
+                    ImportanceProvenance: CardImportanceProvenance.Auto),
+                CancellationToken.None);
+            handed.Importance.ShouldBe(CardImportance.High);
+            handed.ImportanceProvenance.ShouldBe(CardImportanceProvenance.Auto);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task An_edit_with_a_stale_token_is_a_conflict_and_writes_no_revision()
     {
         await using var db = CreateContext();
