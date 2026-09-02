@@ -255,7 +255,8 @@ public sealed class AgentService
                     null,
                     null,
                     null,
-                    null),
+                    null,
+                    s.TerminationSource),
                 s.ComposedBundleStamp))
             .ToListAsync(ct);
 

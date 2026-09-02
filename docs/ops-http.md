@@ -127,7 +127,9 @@ transcript-confirmed `UserPrompt` evidence — not a screen redraw — as the de
 ## Killing
 
 `POST /api/agents/{id}/stop` is the front door for a named agent; `POST /api/sessions/{id}/kill`
-kills one session and records `OperatorRequest` as the termination source. The runner's
+kills one session and records `OperatorRequest` as the termination source. The session summary
+now carries `terminationSource`; `Unknown` on a row closed after CARD-0316 ships is a bug to
+file, not a state. The runner's
 `POST :17204/sessions/{id}/kill` and `POST :17204/sessions/kill-all` bypass all of that
 bookkeeping — last resort only, and `kill-all` is scorched earth across every session on the box.
 

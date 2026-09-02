@@ -190,7 +190,18 @@ export interface AgentSessionSummaryDto {
   herdrAgentStatusSinceUtc?: string | null
   /** CARD-0213: `launched` | `attached`. Null for pty / older servers. */
   herdrOrigin?: 'launched' | 'attached' | null
+  /**
+   * CARD-0316: who ended the session. Enums serialise as strings. Omitted/null on older
+   * servers; `Unknown` on a row closed after this card ships is a bug to file.
+   */
+  terminationSource?: SessionTerminationSource | null
 }
+
+export type SessionTerminationSource =
+  | 'Unknown'
+  | 'OperatorRequest'
+  | 'SystemRequest'
+  | 'ProcessExit'
 
 export type HerdrAgentStatus = 'idle' | 'working' | 'blocked' | 'done' | 'unknown'
 
