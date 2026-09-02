@@ -3,12 +3,12 @@ import {
   Badge,
   Box,
   Button,
+  Divider,
   Group,
   Loader,
   Menu,
   Paper,
   Stack,
-  Tabs,
   Text,
   Tooltip,
   UnstyledButton,
@@ -20,11 +20,9 @@ import {
   TbChevronDown,
   TbFolder,
   TbGitBranch,
-  TbLayoutList,
-  TbMessage,
   TbUserShare,
 } from 'react-icons/tb'
-import { Link, useSearchParams } from 'react-router'
+import { Link } from 'react-router'
 import { useAgentList } from '../../api/agents'
 import { useAgentTasks } from '../../api/agentTasks'
 import { useWorkspaceGitInfos, useWorkspaceWorktrees } from '../../api/filesystem'
@@ -35,7 +33,7 @@ import { AttentionGlance } from '../attention/AttentionGlance'
 import { AgentRail } from './AgentRail'
 import { MobileHomePage } from './MobileHomePage'
 import { ReportBugButton } from '../diagnostics/ReportBugButton'
-import { ProjectTasksPanel } from './ProjectTasksPanel'
+import { TasksSection } from './tasks/TasksSection'
 import { isUnreadDeliverable, taskIsInProject } from './taskReview'
 import {
   buildProjects,
@@ -74,7 +72,6 @@ function DesktopHomePage() {
   const agents = useAgentList()
   const tasks = useAgentTasks(false, { since: 'default' })
   const [delegateOpen, delegate] = useDisclosure(false)
-  const [params, setParams] = useSearchParams()
 
   // Git identity (repo root + branch) for every directory on screen — what lets a worktree- or
   // subdirectory-scoped agent nest under the repo it belongs to instead of standing alone.
@@ -205,27 +202,49 @@ function DesktopHomePage() {
       />
 
       <Group align="stretch" gap="sm" wrap="nowrap" style={{ flexGrow: 1, minHeight: 0 }}>
-        {/* Agent rail */}
+        {/* Agent + Tasks rail */}
         <Paper
           withBorder
           p="xs"
-          w={240}
+          w={300}
           style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}
+          data-testid="home-rail"
         >
-          <Group justify="space-between" pb={6} style={{ flexShrink: 0 }}>
-            <Text size="xs" tt="uppercase" fw={700} c="dimmed">
-              Agents
-            </Text>
-            <Anchor component={Link} to="/agents" size="xs" c="dimmed">
-              manage
-            </Anchor>
-          </Group>
-          <AgentRail
-            agents={workspace?.agents ?? []}
-            selectedId={agent?.id ?? null}
-            onSelect={(id) => {
+          <Box
+            style={{
+              flex: '0 0 auto',
+              maxHeight: '33%',
+              display: 'flex',
+              flexDirection: 'column',
+              minHeight: 0,
+            }}
+          >
+            <Group justify="space-between" pb={6} style={{ flexShrink: 0 }}>
+              <Text size="xs" tt="uppercase" fw={700} c="dimmed">
+                Agents
+              </Text>
+              <Anchor component={Link} to="/agents" size="xs" c="dimmed">
+                manage
+              </Anchor>
+            </Group>
+            <AgentRail
+              agents={workspace?.agents ?? []}
+              selectedId={agent?.id ?? null}
+              onSelect={(id) => {
+                if (workspace) setAgentByProject({ ...agentByProject, [workspace.key]: id })
+              }}
+            />
+          </Box>
+          <Divider my="xs" />
+          <TasksSection
+            dirKeys={
+              projectView ? [projectView.key, ...projectView.workspaces.map((w) => w.key)] : []
+            }
+            workspaceAgents={workspace?.agents ?? []}
+            onSelectAgent={(id) => {
               if (workspace) setAgentByProject({ ...agentByProject, [workspace.key]: id })
             }}
+            style={{ flex: 1, minHeight: 0 }}
           />
         </Paper>
 
@@ -256,74 +275,39 @@ function DesktopHomePage() {
           )}
         </Box>
 
-        {/* Chat / Tasks dock */}
+        {/* Chat dock — Tasks live on the rail; ?tab=tasks bookmarks land here. */}
         <Paper
           withBorder
           w={400}
           style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}
           data-testid="home-dock"
         >
-          <Tabs
-            value={params.get('tab') === 'tasks' ? 'tasks' : 'chat'}
-            onChange={(value) => {
-              const next = new URLSearchParams(params)
-              if (value === 'tasks') next.set('tab', 'tasks')
-              else next.delete('tab')
-              setParams(next)
-            }}
-            style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flexGrow: 1 }}
-          >
-            <Tabs.List style={{ flexShrink: 0 }}>
-              <Tabs.Tab value="chat" leftSection={<TbMessage size={14} />}>
-                Chat
-              </Tabs.Tab>
-              <Tabs.Tab value="tasks" leftSection={<TbLayoutList size={14} />}>
-                Tasks
-              </Tabs.Tab>
-              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', paddingRight: 8 }}>
-                <ReportBugButton agentId={agent?.id} sessionId={sessionId ?? undefined} />
-              </div>
-            </Tabs.List>
-            <Tabs.Panel
-              value="chat"
-              p="xs"
-              style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flexGrow: 1 }}
-            >
-              {sessionId ? (
-                <SessionTranscriptPanel
-                  sessionId={sessionId}
-                  withComposer
-                  composerCollapsed
-                  fitHeight
-                  transcriptBinding={agent?.liveSession?.transcriptBinding}
-                  liveStatus={agent?.liveSession?.status}
-                  startedAt={agent?.liveSession?.startedAt}
-                  agentId={agent?.id}
-                />
-              ) : (
-                <Text size="sm" c="dimmed" ta="center" py="xl">
-                  {agent
-                    ? 'No session for this agent yet — start it from the Agents page to talk to it here.'
-                    : 'Select an agent to talk to it here.'}
-                </Text>
-              )}
-            </Tabs.Panel>
-            <Tabs.Panel
-              value="tasks"
-              p="xs"
-              style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flexGrow: 1 }}
-            >
-              {projectView ? (
-                <ProjectTasksPanel
-                  dirKeys={[projectView.key, ...projectView.workspaces.map((w) => w.key)]}
-                />
-              ) : (
-                <Text size="sm" c="dimmed" ta="center" py="xl">
-                  No project selected.
-                </Text>
-              )}
-            </Tabs.Panel>
-          </Tabs>
+          <Group justify="space-between" p="xs" pb={6} style={{ flexShrink: 0 }} wrap="nowrap">
+            <Text size="xs" tt="uppercase" fw={700} c="dimmed">
+              Chat
+            </Text>
+            <ReportBugButton agentId={agent?.id} sessionId={sessionId ?? undefined} />
+          </Group>
+          <Box p="xs" style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flexGrow: 1 }}>
+            {sessionId ? (
+              <SessionTranscriptPanel
+                sessionId={sessionId}
+                withComposer
+                composerCollapsed
+                fitHeight
+                transcriptBinding={agent?.liveSession?.transcriptBinding}
+                liveStatus={agent?.liveSession?.status}
+                startedAt={agent?.liveSession?.startedAt}
+                agentId={agent?.id}
+              />
+            ) : (
+              <Text size="sm" c="dimmed" ta="center" py="xl">
+                {agent
+                  ? 'No session for this agent yet — start it from the Agents page to talk to it here.'
+                  : 'Select an agent to talk to it here.'}
+              </Text>
+            )}
+          </Box>
         </Paper>
       </Group>
     </Box>
@@ -340,7 +324,12 @@ function ToReadBadge({ dirKeys }: { dirKeys: string[] }) {
   if (count === 0) return null
 
   return (
-    <Anchor component={Link} to="/?tab=tasks" underline="never">
+    <UnstyledButton
+      aria-label={`To read (${count})`}
+      onClick={() =>
+        document.getElementById('home-tasks-done')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      }
+    >
       <Badge
         size="sm"
         variant="light"
@@ -350,7 +339,7 @@ function ToReadBadge({ dirKeys }: { dirKeys: string[] }) {
       >
         To read ({count})
       </Badge>
-    </Anchor>
+    </UnstyledButton>
   )
 }
 

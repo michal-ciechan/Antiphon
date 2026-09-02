@@ -67,29 +67,31 @@ in it.
 ┌────────────────────────────────────────────────────────────────────────┐
 │  [Project ▾ antiphon]  ...path...      [Delegate work]  [Board ↗]      │
 ├──────────┬──────────────────────────────────────────┬──────────────────┤
-│ Agents   │  Files (tree + viewer)                   │ Chat | Tasks     │
+│ Agents   │  Files (tree + viewer)                   │ Chat             │
 │  ● axc   │   – tree sidebar                         │                  │
 │  ○ pool-1│   – viewer: RENDERED default for md      │  transcript      │
-│  + new   │   – select text → "Send to agents"       │  + composer      │
-│          │                                          │  (or task list)  │
+│──────────│   – select text → "Send to agents"       │  + composer      │
+│ Tasks    │                                          │                  │
+│  groups  │                                          │                  │
 └──────────┴──────────────────────────────────────────┴──────────────────┘
 ```
 
-- **Agent rail (left, ~240px).** Every agent in the project's directory, one compact row: name,
-  working spinner / attention badge (same semantics as AgentsPage — quiet states show nothing),
-  liveness dot, queue length. Clicking selects the agent — which drives BOTH the files pane and the
-  chat dock. Pool delegates are ordinary rows here; watching the pool is watching this rail.
-  Footer links: manage agents (`/agents`), new agent.
+- **Agent + Tasks rail (left, ~300px).** Agents occupy the top third (max-height 33%): every agent
+  in the project's directory, one compact row: name, working spinner / attention badge (same
+  semantics as AgentsPage — quiet states show nothing), liveness dot, queue length. Clicking
+  selects the agent — which drives BOTH the files pane and the chat dock. Pool delegates are
+  ordinary rows here; watching the pool is watching this rail. Footer links: manage agents
+  (`/agents`), new agent. Below a divider, the **Tasks** section (`GET /api/home/tasks`, filtered
+  to the selected project's directories) lists Cards and unbound delegations in five groups
+  (Needs you · Running · To review · Up next · Done). Bound delegations nest as the card's
+  worker line. See CARD-0002 / feature 010.
 - **Files center.** `FilesReviewPanel` in `sidebar` layout for the selected agent. This is the
   page's default and dominant surface. Markdown now defaults to **Rendered** everywhere (it used to
   default to Diff when the file had changes); Diff/Raw remain one click away.
-- **Right dock (~400px), two tabs.**
-  - **Chat** — `SessionTranscriptPanel` with composer against the selected agent's live/persistent
-    session; empty-state points at Start when there is no session.
-  - **Tasks** — the project's delegations (client-filtered `useAgentTasks()` by directory,
-    worktree tasks match via `repoPath`): active ones first (Queued/Dispatched/Working/Blocked with
-    status colours), then recently done (Succeeded/Failed/Canceled) — "what's done" at a glance.
-    Each row deep-links to the full board drawer (`/orchestrator?tab=delegations&task=<id>`).
+- **Right dock (~400px), chat only.** `SessionTranscriptPanel` with composer against the selected
+  agent's live/persistent session; empty-state points at Start when there is no session. The old
+  Tasks tab is gone (`ProjectTasksPanel` deleted); a stale `?tab=tasks` bookmark lands on chat.
+  The header **To read** badge scrolls the rail's Done group (`#home-tasks-done`) into view.
 - **Header.** Project switcher, full path, **Delegate work** (opens `DelegateModal` prefilled with
   the project directory — the same queue the orchestrators use), and a link to the Delegations
   board.

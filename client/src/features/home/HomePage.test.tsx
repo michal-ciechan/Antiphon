@@ -106,9 +106,48 @@ function attentionItem(overrides: Record<string, unknown> = {}) {
   }
 }
 
+function homeTask(overrides: Record<string, unknown> = {}) {
+  return {
+    key: 'task:11111111-0000-0000-0000-000000000001',
+    source: 'Delegation',
+    id: '11111111-0000-0000-0000-000000000001',
+    identifier: '11111111',
+    title: 'tighten the deploy doc',
+    group: 'Running',
+    state: 'Working',
+    humanReason: null,
+    stage: 'Docs',
+    workflowRunStatus: null,
+    priority: null,
+    boardId: null,
+    worker: null,
+    ownerAgentId: null,
+    agentKind: 'ClaudeCode',
+    modelLevel: 'Medium',
+    escalatedFrom: null,
+    role: 'Docs',
+    costUsd: 0.42,
+    agentId: null,
+    agentName: 'pool-1',
+    agentSessionId: null,
+    readAt: null,
+    deliverablePath: null,
+    deliverableRef: null,
+    workingDirectory: 'C:\\src\\antiphon',
+    repoPath: null,
+    worktreePath: null,
+    createdAt: '2026-08-08T10:00:00Z',
+    startedAt: '2026-08-08T10:00:05Z',
+    updatedAt: '2026-08-08T10:00:00Z',
+    completedAt: null,
+    ...overrides,
+  }
+}
+
 function seed({
   agents = [agent({})],
   tasks = [] as unknown[],
+  homeTasks = [] as unknown[],
   gitInfos = {} as Record<string, unknown>,
   worktrees = {} as Record<string, unknown>,
   attention = [] as unknown[],
@@ -116,6 +155,9 @@ function seed({
   server.use(
     http.get('/api/agents', () => HttpResponse.json(agents)),
     http.get('/api/agent-tasks', () => HttpResponse.json(tasks)),
+    http.get('/api/home/tasks', () =>
+      HttpResponse.json({ generatedAt: '2026-08-17T10:00:00Z', items: homeTasks }),
+    ),
     // The mobile branch's away band asks for boards; desktop never does.
     http.get('/api/boards', () => HttpResponse.json([])),
     http.get('/api/attention', () =>
@@ -189,22 +231,22 @@ describe('HomePage', () => {
     expect(requestedPaths).toEqual(['C:\\src\\antiphon', 'C:\\wt\\card-216'])
   })
 
-  it('loads the unbounded task panel separately from the home page’s recent-task window', async () => {
-    let taskRequests = 0
-    seed({ tasks: [task({})] })
-    server.use(
-      http.get('/api/agent-tasks', () => {
-        taskRequests += 1
-        return HttpResponse.json([task({})])
-      }),
-    )
-
+  it('puts Tasks on the agent rail and keeps the dock as chat only', async () => {
+    seed({
+      agents: [
+        agent({ id: 'a2', name: 'pool-1', liveSession: { id: 's2', status: 'Running' } }),
+      ],
+    })
     renderWithProviders(<HomePage />)
 
-    await waitFor(() => expect(taskRequests).toBe(1))
-    await userEvent.click(screen.getByRole('tab', { name: 'Tasks' }))
-    expect(await screen.findByText('tighten the deploy doc')).toBeInTheDocument()
-    expect(taskRequests).toBe(2)
+    const rail = await screen.findByTestId('home-rail')
+    expect(within(rail).getByText('Agents')).toBeInTheDocument()
+    expect(within(rail).getByText('Tasks')).toBeInTheDocument()
+
+    const dock = screen.getByTestId('home-dock')
+    expect(within(dock).queryByRole('tab', { name: 'Tasks' })).not.toBeInTheDocument()
+    expect(within(dock).queryByRole('tab', { name: 'Chat' })).not.toBeInTheDocument()
+    expect(within(dock).getByTestId('chat-panel')).toHaveTextContent('s2')
   })
 
   it('shows the project, its agents, and the files pane for the picked agent', async () => {
@@ -297,7 +339,7 @@ describe('HomePage', () => {
     expect(screen.getByTestId('chat-panel')).toHaveTextContent('session-a1')
   })
 
-  it('the Tasks tab lists only this project’s delegations — worktree tasks match via their repo', async () => {
+  it('the Tasks rail lists only this project’s items — worktree tasks match via their repo', async () => {
     seed({
       agents: [agent({})],
       tasks: [
@@ -317,17 +359,37 @@ describe('HomePage', () => {
           workingDirectory: 'C:\\src\\am-service',
         }),
       ],
+      homeTasks: [
+        homeTask({}),
+        homeTask({
+          key: 'task:11111111-0000-0000-0000-000000000002',
+          id: '11111111-0000-0000-0000-000000000002',
+          identifier: '11111111',
+          title: 'merge-back from a worktree',
+          group: 'Done',
+          state: 'Succeeded',
+          workingDirectory: 'C:\\wt\\task-abc',
+          repoPath: 'C:\\src\\antiphon',
+          completedAt: '2026-08-08T11:00:00Z',
+        }),
+        homeTask({
+          key: 'task:11111111-0000-0000-0000-000000000003',
+          id: '11111111-0000-0000-0000-000000000003',
+          identifier: '11111111',
+          title: 'other project task',
+          workingDirectory: 'C:\\src\\am-service',
+        }),
+      ],
     })
     renderWithProviders(<HomePage />)
 
-    // The other-project directory appears in the switcher, but its tasks stay out of this panel.
+    // The other-project directory appears in the switcher, but its tasks stay out of this rail.
     await waitFor(() => expect(screen.getByTestId('project-switcher')).toHaveTextContent('antiphon'))
-    await userEvent.click(screen.getByRole('tab', { name: 'Tasks' }))
 
-    const dock = screen.getByTestId('home-dock')
-    expect(within(dock).getByText('tighten the deploy doc')).toBeInTheDocument()
-    expect(within(dock).getByText('merge-back from a worktree')).toBeInTheDocument()
-    expect(within(dock).queryByText('other project task')).not.toBeInTheDocument()
+    const rail = screen.getByTestId('home-rail')
+    expect(await within(rail).findByText('tighten the deploy doc')).toBeInTheDocument()
+    expect(within(rail).getByText('merge-back from a worktree')).toBeInTheDocument()
+    expect(within(rail).queryByText('other project task')).not.toBeInTheDocument()
   })
 
   it('with no agents anywhere it still offers the two ways to start', async () => {
