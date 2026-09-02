@@ -327,6 +327,9 @@ The whole inbound/outbound model is [messaging/build-your-own-gateway.md](messag
 
 ```
 GET    /api/orchestrator/state    POST /api/orchestrator/pause | /resume | /tick
+                                  running = card-spawn sessions plus the current session of every
+                                  Dispatched/Working non-Check task; Blocked and interactive
+                                  sessions excluded.
 
 GET    /api/workflows  |  /api/workflows/{id}     POST /api/workflows
 POST   /api/workflows/{id}/pause | /resume | /abandon | /visit | /close
