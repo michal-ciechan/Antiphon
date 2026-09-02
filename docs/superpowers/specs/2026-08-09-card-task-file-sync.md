@@ -1,8 +1,43 @@
 # Card → repo task file sync
 
-**Status:** planned, not started
+**Status: superseded on 2026-09-02** by
+[`docs/superpowers/plans/2026-09-02-card-0004-card-task-file-sync-plan.md`](../plans/2026-09-02-card-0004-card-task-file-sync-plan.md).
+The three decisions that matter — card → file **one-way**, the **project repo only** (never a
+worktree), and a **reconcile loop with a path-scoped, trailered, never-pushed commit** — stand and
+are carried forward. Everything below that names a fact about the code was re-checked on
+2026-09-02 and the following is **stale** — read the plan, not these sections:
+
+- **"Two facts that shape the whole design", fact 1** ("there is no card-edit API at all"): false
+  since 2026-08-14. CARD-0019 shipped `PATCH /api/cards/{id}/content`, `/archive`, `/unarchive`,
+  a `CardRevision` log; CARD-0054 added `/reopen`; CARD-0166 added `/discussion`; `GET /api/cards`
+  lists. One-way now rests on the branch-ambiguity argument and on the record being append-only
+  *with a reason and actor* — which a file edit cannot supply — not on a missing API.
+- **Fact 2** (six mutating services, no in-proc bus): still true in kind. `IEventBus` is still
+  outbound-only; `CardChanged` is now published from seven files, and `CardWorkTransitionService`
+  (CARD-0040) and the tracker import (CARD-0166/0175) also write cards. A sweep is still the answer.
+- **§Location `.antiphon/tasks/`**: dead. `.gitignore:48` ignores all of `.antiphon/` (`e1dc5443`,
+  2026-08-11 — two days after this spec); nothing there can be committed, and `.antiphon/boards/`
+  is likewise not checked in. The plan uses `docs/cards/<board-slug>/`.
+- **§Location frontmatter**: `agent` is dropped (volatile); `NeedsDecision` status, `archived*`,
+  `external_*` (the Antiphon board is `TrackerKind.GitHubIssues` with 24 linked cards) and
+  `## Outcome` (terminal reason) are added; `updated` is not rendered.
+- **§When it fires, trigger 1** (enqueue from `CardService`) and the 30 s commit debounce: dropped —
+  tick + manual endpoint only; a burst lands as one commit because the tick is the batch.
+- **§Testing, "Two cards sharing an `Identifier`"**: impossible per board since
+  `IX_Cards_BoardId_Identifier`; replaced by two boards in one project.
+- **§Risks, `NextIdentifierAsync` is count-based**: fixed (CARD-0005, `CardIdentifierAllocator`
+  parse-max+1, archive occupies the number).
+- **§Committing**: the idempotence gate is `git status --porcelain -- <dir>`, not a byte compare —
+  this machine runs `core.autocrlf=true`; and the commit message must never cite a card
+  identifier because `CardThreadService` correlates commits by `--grep <identifier>`.
+- The endpoint is `POST /api/boards/{id}/card-files/sync` (`?dryRun=`), not `/tasks/sync`: "task"
+  now means `AgentTask` throughout the repo. The class names `CardTaskFileService` and
+  `CardTaskFileSyncHostedService` are kept as the card wrote them.
+- Every `file:line` citation below is from 2026-08-09 and has moved.
+
+**Original status (2026-08-09):** planned, not started
 **Date:** 2026-08-09
-**Tracking:** [TODO.md](../../../TODO.md) → "Card → repo task file sync"
+**Tracking:** CARD-0004 (this was "[TODO.md](../../../TODO.md) → Card → repo task file sync" when written)
 
 Sync board Cards into the git repository as human-readable task files that stay up to date and get
 checked in, so outstanding work has a durable in-repo home: visible in the file tree, visible in
