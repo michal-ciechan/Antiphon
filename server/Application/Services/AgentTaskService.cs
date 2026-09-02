@@ -1245,55 +1245,8 @@ public sealed class AgentTaskService
     /// dispatcher-spawned ephemeral population is all <see cref="Agent.IsPoolDelegate"/>, and
     /// "same delegate again" is <see cref="CreateAgentTaskRequest.FollowUpOnTask"/>'s job.
     /// </summary>
-    private async Task<Agent> ResolveStandingAgentAsync(string reference, CancellationToken ct)
-    {
-        var value = reference.Trim();
-        List<Agent> matches;
-        if (Guid.TryParse(value, out var id))
-        {
-            matches = await _db.Agents.AsNoTracking().Where(a => a.Id == id).ToListAsync(ct);
-        }
-        else
-        {
-            matches = await _db.Agents.AsNoTracking().Where(a => a.Slug == value).ToListAsync(ct);
-            if (matches.Count == 0)
-            {
-                var lowered = value.ToLowerInvariant();
-                matches = await _db.Agents.AsNoTracking()
-                    .Where(a => a.Name.ToLower() == lowered)
-                    .ToListAsync(ct);
-            }
-        }
-
-        if (matches.Count == 0)
-        {
-            throw new ValidationException(
-                nameof(CreateAgentTaskRequest.Agent),
-                $"No agent matches '{value}' (tried guid, exact slug, then case-insensitive "
-                + "name). Check the agent's name, or pass its guid.");
-        }
-
-        if (matches.Count > 1)
-        {
-            var candidates = string.Join(
-                ", ", matches.Select(a => $"'{a.Name}' (slug '{a.Slug}', {a.Id})"));
-            throw new ValidationException(
-                nameof(CreateAgentTaskRequest.Agent),
-                $"'{value}' is ambiguous — it matches {matches.Count} agents: {candidates}. "
-                + "Pass the guid of the one you mean.");
-        }
-
-        var agent = matches[0];
-        if (agent.IsPoolDelegate)
-        {
-            throw new ValidationException(
-                nameof(CreateAgentTaskRequest.Agent),
-                $"'{agent.Name}' is a pool delegate, not a standing agent. For a follow-up on "
-                + "the delegate that ran an earlier task, use followUpOnTask (-OnAgent <taskId>).");
-        }
-
-        return agent;
-    }
+    private Task<Agent> ResolveStandingAgentAsync(string reference, CancellationToken ct) =>
+        StandingAgentResolver.ResolveAsync(_db, reference, nameof(CreateAgentTaskRequest.Agent), ct);
 
     /// <summary>
     /// Spawn the Merge-role delegate that resolves a Worktree task's rebase conflict. SYSTEM

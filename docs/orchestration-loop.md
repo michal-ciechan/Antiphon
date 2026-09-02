@@ -432,10 +432,11 @@ cannot open it.
 
 ## 9. What to automate first
 
-**The check-in timer (CARD-0047) and the card CLI (CARD-0051, `scripts/card.ps1`) have shipped** —
-§4 and §7 now describe them running, not proposed. In rough order of payback for what's left:
+**Scheduled prompts have shipped** (CARD-0057 phase 1, `scripts/schedule.ps1`) — a `Daily` schedule
+to the orchestrator is how the unmerged-branch sweep from §1 runs. The check-in timer (CARD-0047)
+and the card CLI (CARD-0051, `scripts/card.ps1`) have shipped. In rough order of payback for what's left:
 
-1. **The unmerged-branch sweep** from §1 — a scheduled job that reports genuinely unapplied work.
+1. **The unmerged-branch sweep** from §1 — a `Daily` schedule to the orchestrator that reports genuinely unapplied work.
 2. **A post-merge deploy script** that reads the diff and decides which restarts §6 requires.
 
 

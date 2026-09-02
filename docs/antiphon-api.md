@@ -263,6 +263,23 @@ value or `*` (kind-wide, OR'd with per-alias rows). PUT body: `{ disabledUntil?:
 string }`. Omitted `disabledUntil` is open-ended. Past UTC is 422. Script:
 `scripts/model-availability.ps1 get|hold|clear`.
 
+### Schedules
+
+`ScheduleEndpoints.cs` — the API behind `scripts/schedule.ps1` (CARD-0057 phase 1: prompt delivery).
+
+```
+GET    /api/schedules?agentId=&cardId=&boardId=&enabled=
+GET    /api/schedules/{id}                   last 10 fires included
+POST   /api/schedules                        create (CreateScheduleRequest)
+POST   /api/schedules/preview                same body, no write
+GET    /api/schedules/{id}/preview
+PATCH  /api/schedules/{id}                   concurrency token; recomputes NextFireAt
+DELETE /api/schedules/{id}
+POST   /api/schedules/{id}/fire-now          bypasses grace, does not advance recurrence
+```
+
+`CreateScheduleRequest` / `ScheduleDto` live in `server/Application/Dtos/ScheduleDtos.cs`. Phase 1 accepts `kind: Prompt` only; a card action is 422 until phase 2. Repeat is `Once` / `Interval` / `Daily` — no cron. Enums are names. Long prompt text belongs in `-PromptFile` on the script, never inline.
+
 ### Runner profiles and credentials
 
 `AgentTuiEndpoints.cs`, `ApiKeyEndpoints.cs` — see
@@ -423,6 +440,7 @@ concurrency tokens and PowerShell's quoting hazards.
 | Script | For |
 |---|---|
 | `scripts/card.ps1` | `get`, `history`, `new`, `edit`, `move`, `close`, `reopen`, `archive`, `unarchive`, `-Limits`. Long text via `-DescriptionFile` / `-ReasonFile`, never inline. |
+| `scripts/schedule.ps1` | `list`, `get`, `preview`, `new`, `enable`, `disable`, `remove`, `fire`. Long text via `-PromptFile`. Prints preview before create. |
 | `scripts/delegate.ps1` | create / `-Status` / `-Reply` / `-Refine` a delegated task |
 | `scripts/github-sync.ps1` | a bidirectional tracker push |
 | `scripts/checkpoint-task.ps1` | WIP-commit a stalled task's work without killing it |

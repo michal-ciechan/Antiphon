@@ -33,6 +33,12 @@ public class SessionQueuedMessage
     /// <summary>The delegated task a completion note reports, when this is a delegation completion row.</summary>
     public Guid? SourceTaskId { get; set; }
 
+    /// <summary>
+    /// The schedule that enqueued this row (CARD-0057). Used to cancel a previous still-Pending
+    /// copy so a recurring prompt that missed several days delivers once on boot, not N times.
+    /// </summary>
+    public Guid? SourceScheduleId { get; set; }
+
     /// <summary>The normalized digest of the raw report carried by a completion note.</summary>
     public string? ContentDigest { get; set; }
 
