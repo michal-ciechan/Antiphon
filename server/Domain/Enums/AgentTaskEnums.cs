@@ -214,8 +214,9 @@ public enum AgentTaskFailureCode
 {
     /// <summary>
     /// The bound session reached <see cref="SessionStatus.Stopped"/> with zero transcript
-    /// entries and no persisted operator-stop source. Antiphon observed no prompt; it does
-    /// not know who ended the session.
+    /// entries and no operator-stop source. Antiphon observed no prompt; the reason names the
+    /// recorded <c>TerminationSource</c> when one exists, and says "not recorded" only for
+    /// <see cref="SessionTerminationSource.Unknown"/>.
     /// </summary>
     StoppedBeforeFirstPrompt = 0,
 

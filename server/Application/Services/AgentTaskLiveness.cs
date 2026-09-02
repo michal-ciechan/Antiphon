@@ -22,7 +22,7 @@ namespace Antiphon.Server.Application.Services;
 public static class AgentTaskLiveness
 {
     /// <summary>
-    /// The four fields of a session row the verdict reads. A <c>null</c> snapshot means the row is
+    /// The five fields of a session row the verdict reads. A <c>null</c> snapshot means the row is
     /// GONE — that is the only way "row missing" is spelled, so no caller can disagree with another
     /// about what a present-but-empty snapshot would mean.
     /// </summary>
@@ -30,7 +30,8 @@ public static class AgentTaskLiveness
         SessionStatus Status,
         DateTime? EndedAt,
         string? FailureReason,
-        SessionTerminationSource TerminationSource = SessionTerminationSource.Unknown);
+        SessionTerminationSource TerminationSource = SessionTerminationSource.Unknown,
+        int? ExitCode = null);
 
     /// <summary>
     /// The reason written onto a task the dead-session sweep fails, plus the durable failure
@@ -103,8 +104,8 @@ public static class AgentTaskLiveness
             return new DeadSessionFailure(
                 Format(
                     what,
-                    "StoppedBeforeFirstPrompt: Antiphon observed no prompt before the session stopped, "
-                    + "and the stop origin was not recorded",
+                    "StoppedBeforeFirstPrompt: Antiphon observed no prompt before the session stopped"
+                    + DescribeStop(stopped.TerminationSource, stopped.ExitCode),
                     agentSessionId),
                 AgentTaskFailureCode.StoppedBeforeFirstPrompt);
         }
@@ -119,8 +120,29 @@ public static class AgentTaskLiveness
         var evidence = session?.Status == SessionStatus.Stopped
             ? "stopped before the task settled, with no failure reason recorded"
             : "no failure reason recorded";
+        if (session is { Status: SessionStatus.Stopped } settled
+            && settled.TerminationSource is SessionTerminationSource.SystemRequest
+                or SessionTerminationSource.ProcessExit)
+        {
+            evidence += DescribeStop(settled.TerminationSource, settled.ExitCode);
+        }
+
         return new DeadSessionFailure(Format(what, evidence, agentSessionId), null);
     }
+
+    /// <summary>
+    /// Source-specific clause after the empty-Stopped prefix, and the same clause appended to the
+    /// non-empty Stopped fall-through for <see cref="SessionTerminationSource.SystemRequest"/> and
+    /// <see cref="SessionTerminationSource.ProcessExit"/>. <see cref="SessionTerminationSource.Unknown"/>
+    /// keeps "not recorded"; operator stops do not use this helper.
+    /// </summary>
+    private static string DescribeStop(SessionTerminationSource source, int? exitCode) => source switch
+    {
+        SessionTerminationSource.SystemRequest => "; Antiphon itself ended it (SystemRequest)",
+        SessionTerminationSource.ProcessExit =>
+            $"; the agent process exited on its own (ProcessExit, exit code {exitCode?.ToString() ?? "unknown"})",
+        _ => ", and the stop origin was not recorded",
+    };
 
     private static string Format(string what, string evidence, Guid? sessionId) =>
         $"Session died before the task settled: {what} ({evidence}). No report is coming"

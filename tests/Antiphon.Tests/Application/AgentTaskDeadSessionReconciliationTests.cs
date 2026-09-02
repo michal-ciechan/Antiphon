@@ -186,6 +186,8 @@ public class AgentTaskDeadSessionReconciliationTests
         var failed = await scenario.ReadTaskAsync(task.Id);
         failed.FailureCode.ShouldBe(AgentTaskFailureCode.StoppedBeforeFirstPrompt);
         failed.FailureReason.ShouldNotContain("operator");
+        failed.FailureReason.ShouldContain("ProcessExit");
+        failed.FailureReason.ShouldNotContain("not recorded");
     }
 
     [Test]
@@ -202,6 +204,25 @@ public class AgentTaskDeadSessionReconciliationTests
         var failed = await scenario.ReadTaskAsync(task.Id);
         failed.FailureCode.ShouldBe(AgentTaskFailureCode.StoppedBeforeFirstPrompt);
         failed.FailureReason.ShouldNotContain("operator");
+        failed.FailureReason.ShouldContain("not recorded");
+    }
+
+    [Test]
+    public async Task a_system_request_stop_is_not_promoted_to_an_operator_stop()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(
+            AgentTaskStatus.Dispatched, SessionStatus.Stopped,
+            terminationSource: SessionTerminationSource.SystemRequest);
+        var harness = scenario.Harness(task.SessionId);
+
+        await scenario.PastGraceAsync(harness);
+
+        var failed = await scenario.ReadTaskAsync(task.Id);
+        failed.FailureCode.ShouldBe(AgentTaskFailureCode.StoppedBeforeFirstPrompt);
+        failed.FailureReason.ShouldNotContain("operator");
+        failed.FailureReason.ShouldContain("SystemRequest");
+        failed.FailureReason.ShouldNotContain("not recorded");
     }
 
     // ---- 6-8: the evidence gates -----------------------------------------------------------------
@@ -783,12 +804,12 @@ public class AgentTaskDeadSessionReconciliationTests
             await using var db = CreateContext();
             var row = await db.AgentSessions.AsNoTracking()
                 .Where(s => s.Id == sessionId)
-                .Select(s => new { s.Status, s.EndedAt, s.FailureReason, s.TerminationSource })
+                .Select(s => new { s.Status, s.EndedAt, s.FailureReason, s.TerminationSource, s.ExitCode })
                 .SingleOrDefaultAsync();
             return row is null
                 ? null
                 : new AgentTaskLiveness.SessionSnapshot(
-                    row.Status, row.EndedAt, row.FailureReason, row.TerminationSource);
+                    row.Status, row.EndedAt, row.FailureReason, row.TerminationSource, row.ExitCode);
         }
 
         /// <summary>Everything queued into THIS scenario's parent session, and nothing else.</summary>
