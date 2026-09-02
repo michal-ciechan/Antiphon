@@ -341,7 +341,8 @@ public sealed class BoardService
                     s.ExitCode,
                     s.FailureReason,
                     s.TuiProfileRevisionId,
-                    s.EffectiveModelId))
+                    s.EffectiveModelId,
+                    TerminationSource: s.TerminationSource))
                 .ToList(),
             card.RevisionCount,
             card.ArchivedAt,

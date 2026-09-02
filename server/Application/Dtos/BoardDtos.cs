@@ -116,7 +116,10 @@ public sealed record AgentSessionSummaryDto(
     string? HerdrAgentStatus = null,
     DateTime? HerdrAgentStatusSinceUtc = null,
     // CARD-0213: HerdrPaneOrigins mirrored from the runner sidecar. Null for pty / older runners.
-    string? HerdrOrigin = null);
+    string? HerdrOrigin = null,
+    // CARD-0316: who ended the session. Additive; older clients omit it. Unknown on a row
+    // closed after this card ships is a bug to file, not a state.
+    SessionTerminationSource? TerminationSource = null);
 
 public sealed record CreateBoardRequest(
     Guid ProjectId,
