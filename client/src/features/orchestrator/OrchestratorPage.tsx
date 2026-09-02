@@ -6,6 +6,7 @@ import { AttentionPanel } from '../attention/AttentionPanel'
 import { DecisionsPanel } from '../attention/DecisionsPanel'
 import { DelegationsBoard } from '../delegations/DelegationsBoard'
 import { DelegationsHistory } from '../delegations/DelegationsHistory'
+import { BacklogSection } from './BacklogSection'
 import { ComplexityChainPanel } from './ComplexityChainPanel'
 import { ModelAvailabilityPanel } from './ModelAvailabilityPanel'
 import { OrchestratorPanel } from './OrchestratorPanel'
@@ -79,7 +80,11 @@ export function OrchestratorPage() {
       </Tabs.List>
 
       <Tabs.Panel value="cards">
-        <OrchestratorPanel />
+        {/* Backlog is a sibling so its fetch cannot blank Running Sessions. */}
+        <Stack gap="lg">
+          <OrchestratorPanel />
+          <BacklogSection />
+        </Stack>
       </Tabs.Panel>
       <Tabs.Panel value="delegations">
         <DelegationsBoard />
