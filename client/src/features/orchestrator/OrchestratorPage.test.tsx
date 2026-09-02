@@ -28,6 +28,7 @@ function stuck(overrides: Partial<AttentionItemDto>): AttentionItemDto {
 function serve(items: AttentionItemDto[]) {
   let agentTaskRequests = 0
   let orchestratorStateRequests = 0
+  let cardsRequests = 0
   server.use(
     http.get('/api/attention', () =>
       HttpResponse.json<AttentionDto>({
@@ -50,6 +51,10 @@ function serve(items: AttentionItemDto[]) {
       HttpResponse.json({ active: 0, blocked: 0, runs: 0, totalCostUsd: 0, byStatus: {} }),
     ),
     http.get('/api/boards', () => HttpResponse.json([])),
+    http.get('/api/cards', () => {
+      cardsRequests += 1
+      return HttpResponse.json({ cards: [], truncated: false })
+    }),
     // The Cards tab renders eagerly alongside the others, so its own endpoint has to answer with a
     // real shape — an empty object throws inside OrchestratorPanel and takes the page down with it.
     http.get('/api/orchestrator/state', () => {
@@ -79,6 +84,7 @@ function serve(items: AttentionItemDto[]) {
   return {
     agentTaskRequests: () => agentTaskRequests,
     orchestratorStateRequests: () => orchestratorStateRequests,
+    cardsRequests: () => cardsRequests,
   }
 }
 
@@ -151,5 +157,31 @@ describe('OrchestratorPage', () => {
     expect(await screen.findByRole('heading', { name: 'History' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Delegations' })).not.toBeInTheDocument()
     expect(screen.queryByTestId('lane-working')).not.toBeInTheDocument()
+  })
+
+  it('the cards tab renders the backlog section under the retry queue', async () => {
+    serve([])
+    renderWithProviders(<OrchestratorPage />)
+
+    const retry = await screen.findByRole('heading', { name: 'Retry Queue' })
+    const backlog = await screen.findByRole('heading', { name: 'Backlog' })
+    expect(retry.compareDocumentPosition(backlog) & Node.DOCUMENT_POSITION_FOLLOWING).toBeGreaterThan(0)
+    expect(screen.getByTestId('backlog-box-DoFirst')).toBeInTheDocument()
+    expect(screen.getByTestId('backlog-box-Schedule')).toBeInTheDocument()
+    expect(screen.getByTestId('backlog-box-Clear')).toBeInTheDocument()
+    expect(screen.getByTestId('backlog-box-Someday')).toBeInTheDocument()
+  })
+
+  it('the backlog request is deferred while another tab is open', async () => {
+    const requests = serve([])
+    window.history.pushState({}, '', '/orchestrator?tab=history')
+    renderWithProviders(<OrchestratorPage />)
+
+    expect(await screen.findByRole('heading', { name: 'History' })).toBeInTheDocument()
+    expect(requests.cardsRequests()).toBe(0)
+    expect(requests.orchestratorStateRequests()).toBe(0)
+
+    await userEvent.click(screen.getByRole('tab', { name: /cards/i }))
+    await waitFor(() => expect(requests.cardsRequests()).toBe(1))
   })
 })
