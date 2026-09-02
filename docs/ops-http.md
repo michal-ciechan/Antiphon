@@ -43,6 +43,7 @@ header when it is set. Inside a running agent session both are already in the en
 | A session's screen | GET | `/api/sessions/{id}/buffer` |
 | A session's transcript | GET | `/api/sessions/{id}/transcript?since={sequence}` |
 | Type work into a session | POST | `/api/sessions/{id}/messages` |
+| Schedules for an agent / card | GET | `/api/schedules?agentId=` / `?cardId=` (`scripts/schedule.ps1`) |
 | Kill a session | POST | `/api/sessions/{id}/kill` |
 | Live runner sessions / rendered screen | GET | `:17204/sessions`, `:17204/sessions/{id}/snapshot` |
 

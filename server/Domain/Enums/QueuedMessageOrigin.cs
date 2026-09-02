@@ -44,4 +44,10 @@ public enum QueuedMessageOrigin
     /// for a human (parking exists for human-owed content).
     /// </summary>
     Supervision = 5,
+
+    /// <summary>
+    /// A clock-driven prompt to a standing agent (CARD-0057). Like <see cref="Check"/> it must
+    /// NOT batch: two schedules firing together are two turns, not one merged prompt.
+    /// </summary>
+    Scheduled = 6,
 }

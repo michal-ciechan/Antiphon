@@ -65,6 +65,8 @@ public class AppDbContext : DbContext
     public DbSet<ModelAvailabilityHold> ModelAvailabilityHolds => Set<ModelAvailabilityHold>();
     public DbSet<RoutingPin> RoutingPins => Set<RoutingPin>();
     public DbSet<ComplexityChain> ComplexityChains => Set<ComplexityChain>();
+    public DbSet<Schedule> Schedules => Set<Schedule>();
+    public DbSet<ScheduleFire> ScheduleFires => Set<ScheduleFire>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -1179,6 +1181,9 @@ public class AppDbContext : DbContext
             entity.HasIndex(m => new { m.AgentSessionId, m.Status, m.Sequence })
                 .HasDatabaseName("IX_SessionQueuedMessages_AgentSessionId_Status_Sequence");
 
+            entity.HasIndex(m => m.SourceScheduleId)
+                .HasDatabaseName("IX_SessionQueuedMessages_SourceScheduleId");
+
             // CARD-0067: the channel-reply correlation sweep is a GLOBAL query over the handful of
             // rows still owed a reply, so it gets a partial index rather than a table scan.
             entity.HasIndex(m => new { m.Origin, m.Status })
@@ -1597,6 +1602,65 @@ public class AppDbContext : DbContext
                 .IsUnique()
                 .HasFilter("\"ClearedAt\" IS NULL")
                 .HasDatabaseName("IX_ComplexityChains_Complexity_Active");
+        });
+
+        modelBuilder.Entity<Schedule>(entity =>
+        {
+            entity.ToTable("Schedules");
+            entity.HasKey(s => s.Id);
+            entity.Property(s => s.Name).IsRequired().HasMaxLength(200);
+            entity.Property(s => s.Kind).IsRequired();
+            entity.Property(s => s.Repeat).IsRequired();
+            entity.Property(s => s.TimeZoneId).IsRequired().HasMaxLength(100);
+            entity.Property(s => s.Enabled).IsRequired();
+            entity.Property(s => s.FireCount).IsRequired();
+            entity.Property(s => s.LastOutcomeDetail).HasMaxLength(2000);
+            entity.Property(s => s.CreatedBy).HasMaxLength(200);
+            entity.Property(s => s.CreatedAt).IsRequired();
+            entity.Property(s => s.UpdatedAt).IsRequired();
+            entity.Property(s => s.ConcurrencyToken).IsRequired();
+            entity.Property(s => s.PromptText).HasColumnType("text");
+            entity.Property(s => s.WhenTargetDown).IsRequired();
+            entity.Property(s => s.Start).IsRequired();
+            entity.Property(s => s.SpendAcceptedBy).HasMaxLength(200);
+            entity.Property(s => s.AtLocal).HasMaxLength(5);
+
+            entity.HasIndex(s => new { s.Enabled, s.NextFireAt })
+                .HasDatabaseName("IX_Schedules_Enabled_NextFireAt");
+            entity.HasIndex(s => s.AgentId).HasDatabaseName("IX_Schedules_AgentId");
+            entity.HasIndex(s => s.CardId).HasDatabaseName("IX_Schedules_CardId");
+
+            entity.HasOne(s => s.Agent)
+                .WithMany()
+                .HasForeignKey(s => s.AgentId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(s => s.Card)
+                .WithMany()
+                .HasForeignKey(s => s.CardId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ScheduleFire>(entity =>
+        {
+            entity.ToTable("ScheduleFires");
+            entity.HasKey(f => f.Id);
+            entity.Property(f => f.ScheduleId).IsRequired();
+            entity.Property(f => f.FireNumber).IsRequired();
+            entity.Property(f => f.DueAt).IsRequired();
+            entity.Property(f => f.ClaimedAt).IsRequired();
+            entity.Property(f => f.Outcome).IsRequired();
+            entity.Property(f => f.Detail).HasColumnType("text");
+            entity.Property(f => f.Manual).IsRequired();
+
+            entity.HasIndex(f => new { f.ScheduleId, f.FireNumber })
+                .IsUnique()
+                .HasDatabaseName("IX_ScheduleFires_ScheduleId_FireNumber");
+
+            entity.HasOne(f => f.Schedule)
+                .WithMany(s => s.Fires)
+                .HasForeignKey(f => f.ScheduleId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
     }
