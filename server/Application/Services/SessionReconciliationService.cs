@@ -171,6 +171,7 @@ public sealed class SessionReconciliationService
                     "Session runner does not know this session (launch failed or the runner restarted).";
                 session.EndedAt ??= now;
                 session.LastSeenAt = now;
+                SessionTermination.Record(session, SessionTerminationSource.SystemRequest);
                 closedSessionIds.Add(session.Id);
                 _logger.LogWarning(
                     "Reconciliation closed session {SessionId}: unknown to the session runner", session.Id);

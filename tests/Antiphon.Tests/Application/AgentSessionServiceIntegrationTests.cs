@@ -152,6 +152,7 @@ public class AgentSessionServiceIntegrationTests
             var session = await db.AgentSessions.SingleAsync(s => s.Id == result.SessionId);
             session.Status.ShouldBe(SessionStatus.Failed);
             session.FailureReason.ShouldBe("Timed out waiting for first agent output.");
+            session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
         }
         finally
         {
@@ -574,6 +575,7 @@ public class AgentSessionServiceIntegrationTests
             var refreshedSession = await db.AgentSessions.SingleAsync(s => s.Id == session.Id);
             refreshedSession.Status.ShouldBe(SessionStatus.Failed);
             refreshedSession.FailureReason.ShouldBe(AgentSessionService.ClaudeSessionNotFoundFailureReason);
+            refreshedSession.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
             var refreshedCard = await db.Cards.SingleAsync(c => c.Id == graph.Card.Id);
             refreshedCard.OwnerSessionId.ShouldBeNull();
         }
@@ -646,6 +648,7 @@ public class AgentSessionServiceIntegrationTests
             session.Status.ShouldBe(SessionStatus.Failed);
             session.FailureReason.ShouldNotBeNull();
             session.FailureReason.ShouldContain("MemoryKilled");
+            session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
             session.ExitCode.ShouldBe(137);
             var attempt = await db.RunAttempts.SingleAsync(a => a.Id == result.RunAttemptId);
             attempt.Phase.ShouldBe(RunPhase.Failed);
@@ -1016,6 +1019,7 @@ public class AgentSessionServiceIntegrationTests
             var firstSession = await db.AgentSessions.SingleAsync(s => s.Id == firstResult.SessionId);
             firstSession.Status.ShouldBe(SessionStatus.Failed);
             firstSession.FailureReason.ShouldBe("Timed out waiting for the agent turn to complete.");
+            firstSession.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
             var firstAttempt = await db.RunAttempts.SingleAsync(a => a.Id == firstResult.RunAttemptId);
             firstAttempt.Phase.ShouldBe(RunPhase.TimedOut);
 

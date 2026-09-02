@@ -58,6 +58,7 @@ public class RunAttemptStallDetectorTests
         attempt.CompletedAt.ShouldNotBeNull();
         var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
         session.Status.ShouldBe(SessionStatus.Failed);
+        session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
         eventBus.PublishedEvents.Single(e => e.EventName == "RunAttemptStalled")
             .Group.ShouldBe(AgentSessionGroups.Session(sessionId));
     }

@@ -769,6 +769,7 @@ public class OrchestratorServiceIntegrationTests
             var storedSession = await verify.AgentSessions.SingleAsync(s => s.Id == session.Id);
             storedSession.Status.ShouldBe(SessionStatus.Stopped);
             storedSession.FailureReason.ShouldBeNull();
+            storedSession.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
             var attempt = await verify.RunAttempts.SingleAsync(a => a.AgentSessionId == session.Id);
             attempt.Phase.ShouldBe(RunPhase.Succeeded);
             (await verify.RetrySchedules.CountAsync(r => r.CardId == graph.Card.Id)).ShouldBe(0);
@@ -948,6 +949,7 @@ public class OrchestratorServiceIntegrationTests
             card.OwnerSessionId.ShouldBeNull();
             var session = await verify.AgentSessions.SingleAsync(s => s.CardId == graph.Card.Id);
             session.Status.ShouldBe(SessionStatus.Failed);
+            session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
             var retry = await verify.RetrySchedules.SingleAsync(r => r.CardId == graph.Card.Id);
             retry.NextRetryAt.ShouldNotBeNull();
             retry.LastError.ShouldNotBeNull();
@@ -1022,6 +1024,7 @@ public class OrchestratorServiceIntegrationTests
             card.OwnerSessionId.ShouldBeNull();
             var storedSession = await verify.AgentSessions.SingleAsync(s => s.Id == session.Id);
             storedSession.Status.ShouldBe(SessionStatus.Failed);
+            storedSession.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
             (await verify.RetrySchedules.CountAsync(r => r.CardId == graph.Card.Id)).ShouldBe(1);
         }
         finally

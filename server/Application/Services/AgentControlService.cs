@@ -586,6 +586,7 @@ public sealed class AgentControlService
             session.FailureReason = ex is HttpException http && http.Code is { } code ? code : ex.Message;
             session.EndedAt = UtcNow();
             session.LastSeenAt = session.EndedAt.Value;
+            SessionTermination.Record(session, SessionTerminationSource.SystemRequest);
             await _db.SaveChangesAsync(CancellationToken.None);
             throw;
         }

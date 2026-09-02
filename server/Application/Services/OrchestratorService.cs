@@ -687,6 +687,7 @@ public sealed class OrchestratorService
         card.OwnerSession.EndedAt ??= utcNow;
         card.OwnerSession.LastSeenAt = utcNow;
         card.OwnerSession.FailureReason = null;
+        SessionTermination.Record(card.OwnerSession, SessionTerminationSource.SystemRequest);
     }
 
     private static string BuildPrompt(DispatchCandidate candidate)
@@ -791,6 +792,7 @@ public sealed class OrchestratorService
             card.OwnerSession.EndedAt = utcNow;
             card.OwnerSession.LastSeenAt = utcNow;
             card.OwnerSession.FailureReason = "Runtime session was not found during reconciliation.";
+            SessionTermination.Record(card.OwnerSession, SessionTerminationSource.SystemRequest);
         }
 
         var attempt = await _db.RunAttempts

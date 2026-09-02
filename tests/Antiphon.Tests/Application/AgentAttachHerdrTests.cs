@@ -291,6 +291,7 @@ public class AgentAttachHerdrTests
             var row = await db.AgentSessions.SingleAsync(s => s.Id == nativeId);
             row.Status.ShouldBe(SessionStatus.Failed);
             row.FailureReason.ShouldBe(HerdrProblemTypes.TranscriptNotFound);
+            row.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
         }
         finally
         {

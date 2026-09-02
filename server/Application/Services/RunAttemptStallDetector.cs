@@ -62,6 +62,7 @@ public sealed class RunAttemptStallDetector
                     attempt.AgentSession.EndedAt = now;
                     attempt.AgentSession.LastSeenAt = now;
                     attempt.AgentSession.FailureReason = "Session stalled due to idle output.";
+                    SessionTermination.Record(attempt.AgentSession, SessionTerminationSource.SystemRequest);
 
                     await TryKillRuntimeSessionAsync(attempt.AgentSession.Id, ct);
                     await _eventBus.PublishToGroupAsync(

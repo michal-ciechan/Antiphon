@@ -218,6 +218,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                     session.Status = SessionStatus.Failed;
                     session.FailureReason = "Timed out waiting for first agent output.";
                     session.EndedAt = UtcNow();
+                    SessionTermination.Record(session, SessionTerminationSource.SystemRequest);
                     await adapter.KillAsync(TimeSpan.FromMilliseconds(Math.Max(100, _settings.KillGraceMs)), ct);
                     await adapter.DisposeAsync();
                 }
@@ -244,6 +245,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                     session.Status = SessionStatus.Failed;
                     session.FailureReason = "Timed out waiting for the agent turn to complete.";
                     session.EndedAt = UtcNow();
+                    SessionTermination.Record(session, SessionTerminationSource.SystemRequest);
                     await adapter.KillAsync(TimeSpan.FromMilliseconds(Math.Max(100, _settings.KillGraceMs)), ct);
                     await adapter.DisposeAsync();
                 }
@@ -276,6 +278,11 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 session.Status = SessionStatus.Failed;
                 session.FailureReason = ex.Message;
                 session.EndedAt = UtcNow();
+                // CARD-0056: teardown already ran (KillAndDisposeAsync above). Stamp after the kill
+                // on this catch because that order outranks the CARD-0256 stamp-before-kill rule;
+                // the DB write is what carries the source, and the exit-event scope only writes
+                // when it still sees Unknown.
+                SessionTermination.Record(session, SessionTerminationSource.SystemRequest);
             }
 
             await _db.SaveChangesAsync(CancellationToken.None);
@@ -335,6 +342,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             session.FailureReason = ex.Message;
             session.EndedAt = UtcNow();
             session.LastSeenAt = session.EndedAt.Value;
+            SessionTermination.Record(session, SessionTerminationSource.SystemRequest);
 
             // The Start API already flipped the agent to Running before this background launch ran.
             // Without rolling that back the UI shows a phantom "Running" agent with no live session
@@ -966,6 +974,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             session.FailureReason = failureReason;
             session.EndedAt = UtcNow();
             session.LastSeenAt = session.EndedAt.Value;
+            SessionTermination.Record(session, SessionTerminationSource.SystemRequest);
             session.Card.OwnerSessionId = null;
             session.Card.ConcurrencyToken = Guid.NewGuid();
             session.Card.UpdatedAt = session.EndedAt.Value;
@@ -1191,6 +1200,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             session.Status = SessionStatus.Failed;
             session.FailureReason = $"Herdr launch refused: {kind} is not supported on herdr.";
             session.EndedAt = UtcNow();
+            SessionTermination.Record(session, SessionTerminationSource.SystemRequest);
             throw;
         }
 
@@ -2054,6 +2064,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         session.EndedAt = UtcNow();
         session.LastSeenAt = session.EndedAt.Value;
         session.FailureReason = MemoryKilledFailureReason;
+        SessionTermination.Record(session, SessionTermination.FromExitReason(adapter.ExitReason));
         if (adapter.Exited.IsCompletedSuccessfully)
             session.ExitCode = adapter.Exited.Result;
         attempt.ExitCode = session.ExitCode;
