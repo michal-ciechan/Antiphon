@@ -61,7 +61,7 @@ public sealed class AgentTaskPipelineStatusService
             .Select(t => new TaskRow(
                 t.Id, t.Title, t.Role, t.Status, t.CardId, t.AgentName, t.CreatedAt, t.DispatchedAt,
                 t.CompletedAt, t.AgentSessionId, t.WorkingDirectory, t.RepoPath, t.Scope, t.Workspace,
-                t.WorktreeBranch, t.DeliverablePath, t.DeliverableRef))
+                t.WorktreeBranch, t.DeliverablePath, t.DeliverableRef, t.Complexity, t.FailureReason))
             .ToListAsync(ct);
 
         var boundPlans = await _db.AgentTasks.AsNoTracking()
@@ -69,7 +69,7 @@ public sealed class AgentTaskPipelineStatusService
             .Select(t => new TaskRow(
                 t.Id, t.Title, t.Role, t.Status, t.CardId, t.AgentName, t.CreatedAt, t.DispatchedAt,
                 t.CompletedAt, t.AgentSessionId, t.WorkingDirectory, t.RepoPath, t.Scope, t.Workspace,
-                t.WorktreeBranch, t.DeliverablePath, t.DeliverableRef))
+                t.WorktreeBranch, t.DeliverablePath, t.DeliverableRef, t.Complexity, t.FailureReason))
             .ToListAsync(ct);
 
         var latestPlans = boundPlans
@@ -93,7 +93,7 @@ public sealed class AgentTaskPipelineStatusService
                         t.Id, t.Title, t.Role, t.Status, t.CardId, t.AgentName, t.CreatedAt,
                         t.DispatchedAt, t.CompletedAt, t.AgentSessionId, t.WorkingDirectory,
                         t.RepoPath, t.Scope, t.Workspace, t.WorktreeBranch, t.DeliverablePath,
-                        t.DeliverableRef))
+                        t.DeliverableRef, t.Complexity, t.FailureReason))
                     .ToListAsync(ct))
                 .GroupBy(t => t.CardId!.Value)
                 .ToDictionary(g => g.Key, g => g.ToList());
@@ -359,7 +359,11 @@ public sealed class AgentTaskPipelineStatusService
             DelegationReportFormatter.Short(task.Id),
             task.Title,
             CardRef(task.CardId, cards),
-            task.CreatedAt);
+            task.CreatedAt,
+            RoutingExhausted: task.Complexity is not null
+                && task.FailureReason is not null
+                && task.FailureReason.StartsWith(
+                    ComplexityRoutingService.RoutingExhaustedPrefix, StringComparison.Ordinal));
 
     private static AgentTaskPipelineCardRefDto? CardRef(
         Guid? cardId, Dictionary<Guid, CardRow> cards) =>
@@ -421,7 +425,9 @@ public sealed class AgentTaskPipelineStatusService
         WorkspaceMode Workspace,
         string? WorktreeBranch,
         string? DeliverablePath,
-        string? DeliverableRef);
+        string? DeliverableRef,
+        TaskComplexity? Complexity = null,
+        string? FailureReason = null);
 
     private sealed record CardRow(
         Guid Id, string Identifier, string Title, CardStatus Status, DateTime? ArchivedAt);

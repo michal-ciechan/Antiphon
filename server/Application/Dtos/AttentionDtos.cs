@@ -201,6 +201,14 @@ public enum AttentionKind
     /// lifecycle, no ack. Appended after shipped 23; do not renumber.
     /// </summary>
     ModelAvailabilityHold = 24,
+
+    /// <summary>
+    /// A complexity chain (or later a multi-candidate pin) has no available candidate
+    /// (CARD-0090). Grouped one Error row per exhausted list source. Recency is lifecycle:
+    /// the row disappears when the last blocked task is resumed, rerouted or cancelled.
+    /// Appended after shipped 24; do not renumber.
+    /// </summary>
+    RoutingExhausted = 25,
 }
 
 /// <summary>

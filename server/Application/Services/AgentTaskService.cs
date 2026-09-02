@@ -1193,6 +1193,80 @@ public sealed class AgentTaskService
     }
 
     /// <summary>
+    /// Explicit human pick of (kind, level) that ends chain governance (CARD-0090).
+    /// Blocked-for-routing or Queued only. Require applies: a held alias is 409
+    /// <c>model_disabled</c>.
+    /// </summary>
+    public async Task<AgentTaskSummaryDto> RerouteAsync(
+        Guid id, AgentKind agentKind, AgentModelLevel modelLevel, CancellationToken ct)
+    {
+        var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.Id == id, ct)
+            ?? throw new NotFoundException(nameof(AgentTask), id);
+
+        if (task.Status is AgentTaskStatus.Working or AgentTaskStatus.Dispatched)
+        {
+            throw new ConflictException(
+                $"Task {DelegationReportFormatter.Short(id)} is {task.Status}; reroute is for "
+                + "Blocked-for-routing or Queued tasks only.");
+        }
+
+        if (task.Status is not (AgentTaskStatus.Queued or AgentTaskStatus.Blocked))
+        {
+            throw new ConflictException(
+                $"Task {DelegationReportFormatter.Short(id)} is {task.Status} and cannot be rerouted.");
+        }
+
+        if (task.Status == AgentTaskStatus.Blocked
+            && (task.Complexity is null
+                || task.FailureReason is null
+                || !task.FailureReason.StartsWith(ComplexityRoutingService.RoutingExhaustedPrefix, StringComparison.Ordinal)))
+        {
+            throw new ConflictException(
+                $"Task {DelegationReportFormatter.Short(id)} is blocked on a question, not routing. "
+                + "Use reply, not reroute.");
+        }
+
+        if (!DelegatableKinds.Contains(agentKind))
+        {
+            throw new ValidationException(
+                nameof(agentKind),
+                $"{agentKind} is not a delegate kind. Reroute to "
+                + $"{string.Join(" or ", DelegatableKinds)}.");
+        }
+
+        if (task.Kind == AgentTaskKind.Orchestrator && agentKind != AgentKind.ClaudeCode)
+        {
+            throw new ValidationException(
+                nameof(agentKind),
+                "An orchestrator cannot be rerouted off ClaudeCode.");
+        }
+
+        var alias = ModelLevelAliases.For(agentKind, modelLevel);
+        if (_modelAvailability is not null)
+            await _modelAvailability.RequireAsync(agentKind, alias, ct);
+
+        task.AgentKind = agentKind;
+        task.ModelLevel = modelLevel;
+        task.Complexity = null;
+        var detail = $"rerouted to {alias} (explicit; chain governance ended)";
+
+        if (task.Status == AgentTaskStatus.Queued)
+        {
+            var now = UtcNow();
+            task.ConcurrencyToken = Guid.NewGuid();
+            AddEvent(task.Id, AgentTaskEventType.Rerouted, modelLevel, detail, now);
+            await _db.SaveChangesAsync(ct);
+            await _eventBus.PublishToAllAsync(
+                "AgentTaskChanged", new { taskId = id, rootId = task.RootTaskId }, ct);
+            return await SummaryOfAsync(task, ct);
+        }
+
+        task.FailureReason = null;
+        await RequeueAsync(task, AgentTaskEventType.Rerouted, modelLevel, detail, ct);
+        return await SummaryOfAsync(task, ct);
+    }
+
+    /// <summary>
     /// Move a task up the ladder and run it again. The tier bump is applied IN PLACE (one chip per
     /// task, <see cref="AgentTask.EscalatedFrom"/> set, the ladder readable in the events) rather
     /// than forking a second row — and the next attempt carries a handoff block built from what the
@@ -1837,7 +1911,7 @@ public sealed class AgentTaskService
             prior.FailureCode);
     }
 
-    private async Task EnqueueBlockedParentNoteAsync(AgentTask task, string reason, CancellationToken ct)
+    internal async Task EnqueueBlockedParentNoteAsync(AgentTask task, string reason, CancellationToken ct)
     {
         if (task.ParentSessionId is not Guid parentSession)
             return;

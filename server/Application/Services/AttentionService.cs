@@ -178,7 +178,14 @@ public sealed class AttentionService
         var costs = await LoadSubtreeCostsAsync(subjects, ct);
         var checkDigests = await LoadLatestCheckDigestsAsync(subjects, ct);
 
-        items.AddRange(await BuildBlockedAsync(blocked, costs, checkDigests, ct));
+        var routingBlocked = blocked
+            .Where(t => t.Complexity is not null
+                && t.FailureReason is not null
+                && t.FailureReason.StartsWith(ComplexityRoutingService.RoutingExhaustedPrefix, StringComparison.Ordinal))
+            .ToList();
+        var questionBlocked = blocked.Except(routingBlocked).ToList();
+        items.AddRange(await BuildBlockedAsync(questionBlocked, costs, checkDigests, ct));
+        items.AddRange(await BuildRoutingExhaustedItemsAsync(routingBlocked, costs, ct));
         items.AddRange(await BuildCardNeedsDecisionAsync(ct));
         items.AddRange(await BuildCardStalledAsync(now, ct));
         var openItems = await BuildOpenTaskItemsAsync(
@@ -280,6 +287,68 @@ public sealed class AttentionService
                 at,
                 costs.GetValueOrDefault(task.Id),
                 [AttentionAction.Reply, AttentionAction.Cancel, AttentionAction.Escalate]));
+        }
+
+        return items;
+    }
+
+    // ---- CARD-0090: a complexity chain has no available candidate --------------------------------
+
+    private async Task<List<AttentionItemDto>> BuildRoutingExhaustedItemsAsync(
+        IReadOnlyList<AgentTask> blocked,
+        IReadOnlyDictionary<Guid, decimal> costs,
+        CancellationToken ct)
+    {
+        if (blocked.Count == 0)
+            return [];
+
+        var grouped = blocked
+            .GroupBy(t => t.Complexity)
+            .OrderBy(g => g.Key)
+            .ToList();
+        var cardIds = blocked.Where(t => t.CardId is not null).Select(t => t.CardId!.Value).Distinct().ToList();
+        var cards = cardIds.Count == 0
+            ? new Dictionary<Guid, Card>()
+            : await _db.Cards.AsNoTracking()
+                .Where(c => cardIds.Contains(c.Id))
+                .ToDictionaryAsync(c => c.Id, ct);
+
+        var items = new List<AttentionItemDto>(grouped.Count);
+        foreach (var group in grouped)
+        {
+            var ordered = group.OrderBy(t => t.CreatedAt).ToList();
+            var oldest = ordered[0];
+            var complexity = group.Key!.Value;
+            Guid? cardId = ordered.Select(t => t.CardId).Distinct().Count() == 1 ? oldest.CardId : null;
+            Guid? boardId = cardId is Guid id && cards.TryGetValue(id, out var card) ? card.BoardId : null;
+            var headline = oldest.FailureReason
+                ?? $"{complexity} chain exhausted";
+            if (ordered.Count > 1)
+                headline += $" {ordered.Count} tasks waiting";
+
+            var evidenceBits = ordered.Select(t =>
+            {
+                var cardBit = t.CardId is Guid cid && cards.TryGetValue(cid, out var c)
+                    ? c.Identifier
+                    : "no card";
+                return $"{DelegationReportFormatter.Short(t.Id)} {cardBit} {t.Role}";
+            });
+
+            items.Add(new AttentionItemDto(
+                AttentionKind.RoutingExhausted,
+                AlertSeverity.Error,
+                oldest.Id,
+                null,
+                oldest.AgentId,
+                null,
+                $"{complexity} chain exhausted",
+                headline,
+                string.Join("\n", evidenceBits),
+                oldest.CreatedAt,
+                costs.GetValueOrDefault(oldest.Id),
+                [AttentionAction.OpenDrawer, AttentionAction.OpenCard],
+                CardId: cardId,
+                BoardId: boardId));
         }
 
         return items;

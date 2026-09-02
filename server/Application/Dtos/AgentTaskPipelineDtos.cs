@@ -61,7 +61,9 @@ public sealed record AgentTaskPipelineBlockedDto(
     string ShortId,
     string Title,
     AgentTaskPipelineCardRefDto? Card,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    /// <summary>CARD-0090: this Blocked row is routing-exhausted, not a question.</summary>
+    bool RoutingExhausted = false);
 
 public sealed record AgentTaskPipelineReadyDto(
     AgentTaskPipelineCardRefDto Card,

@@ -72,6 +72,8 @@ public sealed class AgentTaskDispatcher
     // were snapshotted onto the row at create, and re-resolving a pin at spawn would silently
     // rewrite work that was already authorised.
     private readonly RoutingPinService? _routingPins;
+    // CARD-0090. Optional: absent, chain tasks take today's Held skip and are never re-walked.
+    private readonly ComplexityRoutingService? _complexityRouting;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -118,8 +120,10 @@ public sealed class AgentTaskDispatcher
         DeferredReportSweepMarks? sweepMarks = null,
         ModelAvailability? modelAvailability = null,
         BootWedgeRelaunchState? bootWedgePending = null,
-        RoutingPinService? routingPins = null)
+        RoutingPinService? routingPins = null,
+        ComplexityRoutingService? complexityRouting = null)
     {
+        _complexityRouting = complexityRouting;
         _routingPins = routingPins;
         _bootWedgePending = bootWedgePending;
         _sweepMarks = sweepMarks;
@@ -174,7 +178,9 @@ public sealed class AgentTaskDispatcher
         /// <see cref="SkippedModelAvailability"/> on purpose — a dated pin and a fleet hold are
         /// two different clocks and conflating them hides which one the work is waiting on.
         /// </summary>
-        int SkippedRoutingPin = 0);
+        int SkippedRoutingPin = 0,
+        int BlockedRoutingExhausted = 0,
+        int ResumedRoutingBlocked = 0);
 
     public async Task<TickResult> TickAsync(CancellationToken ct)
     {
@@ -257,6 +263,12 @@ public sealed class AgentTaskDispatcher
         // nothing; counting it would let a system at the cap starve every interpretation and
         // silently degrade all checks exactly when the operator most wants eyes on the fleet.
         // Their own backlog is bounded separately, on the interpreter (CARD-0047 §1.3).
+        var resumedRoutingBlocked = 0;
+        sweepFailures += await RunSweepAsync(
+            "resume routing-blocked",
+            async ct2 => resumedRoutingBlocked = await ResumeRoutingBlockedAsync(ct2),
+            ct);
+
         var active = await _db.AgentTasks.CountAsync(
             t => t.Role != AgentTaskRole.Check
                 && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working), ct);
@@ -266,7 +278,8 @@ public sealed class AgentTaskDispatcher
             .OrderBy(t => t.CreatedAt)
             .ToListAsync(ct);
         if (queued.Count == 0)
-            return new TickResult(0, 0, 0, 0, 0, sweepFailures);
+            return new TickResult(
+                0, 0, 0, 0, 0, sweepFailures, ResumedRoutingBlocked: resumedRoutingBlocked);
 
         // Tasks that declare overlapping file scopes must not run concurrently — the second waits
         // rather than racing on read-modify-write. This is the cost of Shared being the default,
@@ -322,6 +335,7 @@ public sealed class AgentTaskDispatcher
         var skippedScope = 0;
         var skippedModelAvailability = 0;
         var skippedRoutingPin = 0;
+        var blockedRoutingExhausted = 0;
         var failures = 0;
 
         foreach (var task in queued)
@@ -414,29 +428,60 @@ public sealed class AgentTaskDispatcher
 
             // CARD-0022: a held model must not spawn. Check-role tasks skip only if the
             // interpreter's own alias is held — a fable hold does not starve haiku checks.
-            if (_modelAvailability is not null)
+            // CARD-0090: a chain-chosen task re-walks instead of sitting Held on a snapshot
+            // alias the operator already listed a fallback for. A Required pin is never
+            // rerouted by a tick.
+            if (_modelAvailability is not null || _quotaGate is not null)
             {
                 var alias = await ResolveDispatchAliasAsync(task, ct);
-                if (await _modelAvailability.IsHeldAsync(task.AgentKind, alias, ct))
+                var modelHeld = _modelAvailability is not null
+                    && await _modelAvailability.IsHeldAsync(task.AgentKind, alias, ct);
+                var quotaRefuse = false;
+                if (!modelHeld && _quotaGate is not null)
                 {
-                    skippedModelAvailability++;
-                    if (everHeld.Add(task.Id))
-                    {
-                        _db.AgentTaskEvents.Add(new AgentTaskEvent
-                        {
-                            Id = Guid.NewGuid(),
-                            AgentTaskId = task.Id,
-                            Type = AgentTaskEventType.Held,
-                            Detail = $"{alias} is held; dispatch paused for that model.",
-                            At = UtcNow(),
-                        });
-                        await _db.SaveChangesAsync(ct);
-                        _logger.LogInformation(
-                            "Task {ShortId} held: model {Alias} is unavailable",
-                            DelegationReportFormatter.Short(task.Id), alias);
-                    }
+                    var verdict = await _quotaGate.EvaluateAsync(
+                        task.AgentKind,
+                        SubscriptionUsageKey.For(null, task.AgentKind),
+                        ct);
+                    quotaRefuse = verdict is not null;
+                }
 
-                    continue;
+                if (modelHeld || quotaRefuse)
+                {
+                    if (task.Complexity is not null
+                        && _complexityRouting is not null
+                        && await TryRewalkQueuedChainAsync(task, alias, everHeld, ct))
+                    {
+                        // Kind/level updated; fall through to spawn.
+                    }
+                    else if (task.Complexity is not null
+                        && _complexityRouting is not null
+                        && await BlockQueuedChainIfExhaustedAsync(task, ct))
+                    {
+                        blockedRoutingExhausted++;
+                        continue;
+                    }
+                    else
+                    {
+                        skippedModelAvailability++;
+                        if (everHeld.Add(task.Id))
+                        {
+                            _db.AgentTaskEvents.Add(new AgentTaskEvent
+                            {
+                                Id = Guid.NewGuid(),
+                                AgentTaskId = task.Id,
+                                Type = AgentTaskEventType.Held,
+                                Detail = $"{alias} is held; dispatch paused for that model.",
+                                At = UtcNow(),
+                            });
+                            await _db.SaveChangesAsync(ct);
+                            _logger.LogInformation(
+                                "Task {ShortId} held: model {Alias} is unavailable",
+                                DelegationReportFormatter.Short(task.Id), alias);
+                        }
+
+                        continue;
+                    }
                 }
             }
 
@@ -506,8 +551,162 @@ public sealed class AgentTaskDispatcher
 
         return new TickResult(
             queued.Count, dispatched, skippedConcurrency, skippedScope, failures, sweepFailures,
-            skippedModelAvailability, skippedRoutingPin);
+            skippedModelAvailability, skippedRoutingPin, blockedRoutingExhausted, resumedRoutingBlocked);
     }
+
+    /// <summary>
+    /// Re-walk a queued chain task whose snapshot alias cannot run. Returns true when kind/level
+    /// were updated to a different survivor (caller falls through to spawn). Required pins never
+    /// reroute.
+    /// </summary>
+    private async Task<bool> TryRewalkQueuedChainAsync(
+        AgentTask task, string currentAlias, HashSet<Guid> everHeld, CancellationToken ct)
+    {
+        var walk = await WalkTaskChainAsync(task, ct);
+        if (walk is null)
+            return false;
+        if (PinForbidsReroute(walk, task))
+            return false;
+        if (walk.Chosen is not { } chosen)
+            return false;
+        if (chosen.Kind == task.AgentKind && chosen.Level == task.ModelLevel)
+            return false;
+
+        var from = currentAlias;
+        task.AgentKind = chosen.Kind;
+        task.ModelLevel = chosen.Level;
+        var index = 0;
+        for (var i = 0; i < walk.Outcomes.Count; i++)
+        {
+            if (walk.Outcomes[i].Outcome == "chosen")
+            {
+                index = i + 1;
+                break;
+            }
+        }
+
+        _db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = task.Id,
+            Type = AgentTaskEventType.Rerouted,
+            ModelLevel = chosen.Level,
+            Detail =
+                $"{from} held → {chosen.Alias} ({task.Complexity} chain {index}/{walk.Outcomes.Count}) at dispatch",
+            At = UtcNow(),
+        });
+        await _db.SaveChangesAsync(ct);
+        _logger.LogInformation(
+            "Task {ShortId} rerouted at dispatch: {From} → {To}",
+            DelegationReportFormatter.Short(task.Id), from, chosen.Alias);
+        return true;
+    }
+
+    private async Task<bool> BlockQueuedChainIfExhaustedAsync(AgentTask task, CancellationToken ct)
+    {
+        var walk = await WalkTaskChainAsync(task, ct);
+        if (walk is null || walk.Chosen is not null || PinForbidsReroute(walk, task))
+            return false;
+
+        var reason = walk.ExhaustedSentence() + " A human must choose; do not pick a kind yourself.";
+        task.Status = AgentTaskStatus.Blocked;
+        task.FailureReason = reason;
+        task.AgentSessionId = null;
+        task.ConcurrencyToken = Guid.NewGuid();
+        _db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = task.Id,
+            Type = AgentTaskEventType.Blocked,
+            Detail = reason,
+            At = UtcNow(),
+        });
+        await _tasks.EnqueueBlockedParentNoteAsync(task, reason, ct);
+        await _db.SaveChangesAsync(ct);
+        _logger.LogInformation(
+            "Task {ShortId} blocked: routing exhausted at dispatch",
+            DelegationReportFormatter.Short(task.Id));
+        return true;
+    }
+
+    private async Task<int> ResumeRoutingBlockedAsync(CancellationToken ct)
+    {
+        if (_complexityRouting is null)
+            return 0;
+
+        var blocked = await _db.AgentTasks
+            .Where(t => t.Status == AgentTaskStatus.Blocked
+                && t.Complexity != null
+                && t.FailureReason != null
+                && t.FailureReason.StartsWith(ComplexityRoutingService.RoutingExhaustedPrefix))
+            .ToListAsync(ct);
+        var resumed = 0;
+        foreach (var task in blocked)
+        {
+            var walk = await WalkTaskChainAsync(task, ct);
+            if (walk?.Chosen is not { } chosen)
+                continue;
+            if (PinForbidsReroute(walk, task))
+                continue;
+
+            task.Status = AgentTaskStatus.Queued;
+            task.AgentKind = chosen.Kind;
+            task.ModelLevel = chosen.Level;
+            task.FailureReason = null;
+            task.ConcurrencyToken = Guid.NewGuid();
+            var index = 0;
+            for (var i = 0; i < walk.Outcomes.Count; i++)
+            {
+                if (walk.Outcomes[i].Outcome == "chosen")
+                {
+                    index = i + 1;
+                    break;
+                }
+            }
+
+            _db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(),
+                AgentTaskId = task.Id,
+                Type = AgentTaskEventType.Rerouted,
+                ModelLevel = chosen.Level,
+                Detail =
+                    $"capacity returned: requeued on {chosen.Alias} ({task.Complexity} chain {index}/{walk.Outcomes.Count})",
+                At = UtcNow(),
+            });
+            resumed++;
+        }
+
+        if (resumed > 0)
+            await _db.SaveChangesAsync(ct);
+        return resumed;
+    }
+
+    private async Task<ComplexityRoutingService.Walk?> WalkTaskChainAsync(AgentTask task, CancellationToken ct)
+    {
+        if (_complexityRouting is null || task.Complexity is not { } complexity)
+            return null;
+
+        var pin = RoutingPinService.Decision.None;
+        if (_routingPins is not null)
+        {
+            pin = await _routingPins.ResolveAsync(
+                task.CardId,
+                task.Role,
+                new RoutingPinService.Ask(null, null, task.AgentId, IgnoreRoutingPin: false),
+                ct);
+        }
+
+        Agent? owner = null;
+        if (task.AgentId is Guid agentId)
+            owner = await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == agentId, ct);
+
+        return await _complexityRouting.WalkAsync(
+            complexity, task.Kind, task.Role, pin, task.CardId, owner, ignoreSubscriptionQuota: false, ct);
+    }
+
+    private static bool PinForbidsReroute(ComplexityRoutingService.Walk walk, AgentTask task) =>
+        !walk.Walked && walk.Source.StartsWith("pin:", StringComparison.Ordinal);
 
     /// <summary>
     /// Run one of the tick's clocks so that its failure costs ONLY itself.

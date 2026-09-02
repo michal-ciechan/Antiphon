@@ -27,6 +27,7 @@ param(
 
     # Override the role's tier. Say why in -Goal.
     [Parameter(ParameterSetName = 'Create')]
+    [Parameter(ParameterSetName = 'Reroute', Mandatory = $true)]
     [ValidateSet('Frontier', 'High', 'Medium', 'Low')]
     [string]$Level,
 
@@ -37,6 +38,7 @@ param(
     # keeps typed line breaks intact, a body over ~one write costs an extra Enter - so its briefs and
     # refinements also travel by file. An orchestrator stays ClaudeCode for both.
     [Parameter(ParameterSetName = 'Create')]
+    [Parameter(ParameterSetName = 'Reroute', Mandatory = $true)]
     [ValidateSet('ClaudeCode', 'Grok', 'Codex')]
     [string]$Kind,
 
@@ -174,6 +176,11 @@ param(
     [Parameter(ParameterSetName = 'Land')]
     [string]$Verify,
 
+    # Explicit pick of kind/level for a Blocked-for-routing or Queued chain task (CARD-0090).
+    # Ends chain governance for that task. Use with -Kind and -Level.
+    [Parameter(ParameterSetName = 'Reroute', Mandatory = $true)]
+    [string]$Reroute,
+
     # Print the repo's named areas - what -Scope may name, and the paths each one owns. Reads
     # antiphon.areas.json at the repo root of -Dir (or the current directory).
     [Parameter(ParameterSetName = 'ListAreas', Mandatory = $true)]
@@ -248,6 +255,19 @@ switch ($PSCmdlet.ParameterSetName) {
         Invoke-Antiphon -Method POST -Path "/api/agent-tasks/$Land/land" -Body $body | Out-Null
         $suffix = if ($Verify) { " with test filter '$Verify'" } else { '' }
         Write-Output "Queued land for task $Land$suffix. The outcome will be delivered to the caller session."
+        return
+    }
+
+    'Reroute' {
+        if (-not $Kind -or -not $Level) {
+            Write-Error 'reroute requires -Kind and -Level (the explicit pair a human chose).'
+            exit 1
+        }
+        Invoke-Antiphon -Method POST -Path "/api/agent-tasks/$Reroute/reroute" -Body @{
+            agentKind  = $Kind
+            modelLevel = $Level
+        } | Out-Null
+        Write-Output ("rerouted task {0} to {1}/{2} (chain governance ended)" -f $Reroute, $Kind, $Level)
         return
     }
 

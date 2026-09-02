@@ -159,6 +159,22 @@ public sealed class DelegateScriptKindTests
     }
 
     [Test]
+    public async Task Reroute_posts_kind_and_level()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(
+            server, "-Reroute", "11111111-1111-1111-1111-111111111111",
+            "-Kind", "Grok", "-Level", "Frontier");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        server.LastPath.ShouldBe("/api/agent-tasks/11111111-1111-1111-1111-111111111111/reroute");
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.GetProperty("agentKind").GetString().ShouldBe("Grok");
+        body.RootElement.GetProperty("modelLevel").GetString().ShouldBe("Frontier");
+        run.Output.ShouldContain("rerouted");
+    }
+
+    [Test]
     public async Task RefuseIfExhausted_is_posted_only_when_set()
     {
         using var server = new StubApi();
@@ -372,6 +388,8 @@ public sealed class DelegateScriptKindTests
 
         public JsonDocument? LastBody { get; private set; }
 
+        public string? LastPath { get; private set; }
+
         public int RequestCount { get; private set; }
 
         private async Task PumpAsync()
@@ -383,6 +401,7 @@ public sealed class DelegateScriptKindTests
                 catch (Exception) { return; /* stopped */ }
 
                 RequestCount++;
+                LastPath = context.Request.Url?.PathAndQuery;
                 using (var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8))
                 {
                     var raw = await reader.ReadToEndAsync();

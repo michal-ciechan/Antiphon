@@ -222,6 +222,9 @@ public sealed record AgentTaskDetailDto(
     /// </summary>
     AgentTaskFailureCode? FailureCode = null);
 
+/// <summary>POST /api/agent-tasks/{id}/reroute (CARD-0090).</summary>
+public sealed record RerouteAgentTaskRequest(AgentKind AgentKind, AgentModelLevel ModelLevel);
+
 public sealed record AgentTaskEventDto(
     AgentTaskEventType Type,
     AgentModelLevel? ModelLevel,
