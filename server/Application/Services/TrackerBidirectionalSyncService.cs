@@ -469,7 +469,7 @@ public sealed class TrackerBidirectionalSyncService
         var card = issueRef.Card;
         var desiredStatus = TrackerSyncMarkers.StatusLabel(card.Status);
         var desiredPriority = issueRef.Origin == ExternalIssueOrigin.AntiphonExport
-            ? TrackerSyncMarkers.PriorityLabel((int)card.Importance)
+            ? TrackerSyncMarkers.PriorityLabel(card.Importance)
             : null;
 
         var currentLabels = current.Labels.ToList();
@@ -689,7 +689,7 @@ public sealed class TrackerBidirectionalSyncService
         {
             var labels = BoardService.ParseLabels(card.LabelsJson).ToList();
             labels.Add(TrackerSyncMarkers.StatusLabel(card.Status));
-            if (TrackerSyncMarkers.PriorityLabel((int)card.Importance) is { } p)
+            if (TrackerSyncMarkers.PriorityLabel(card.Importance) is { } p)
                 labels.Add(p);
 
             var body = TrackerSyncMarkers.AppendCardMarkerFooter(

@@ -73,6 +73,41 @@ public class OrchestratorServiceIntegrationTests
     }
 
     [Test]
+    public async Task PollTick_dispatches_critical_now_ahead_of_an_earlier_low_normal()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var graph = CreateGraph(tempRoot, boardMaxConcurrent: 1);
+            graph.Card.Importance = CardImportance.Low;
+            graph.Card.Urgency = CardUrgency.Normal;
+            graph.Card.CreatedAt = DateTime.UtcNow.AddMinutes(-10);
+            var urgent = AddCard(graph, "C39", graph.ActiveColumn);
+            urgent.Importance = CardImportance.Critical;
+            urgent.Urgency = CardUrgency.Now;
+            urgent.CreatedAt = DateTime.UtcNow;
+            db.Add(graph.Project);
+            await db.SaveChangesAsync();
+
+            var adapter = new FakeAgentProtocolAdapter { PromptOutput = "RANK_OK" };
+            await using var harness = BuildHarness(tempRoot, [adapter]);
+
+            var result = await harness.Orchestrator.PollTickAsync(CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            result.Dispatched.ShouldBeGreaterThanOrEqualTo(1);
+            adapter.SentPrompt.ShouldContain(urgent.Identifier);
+            adapter.SentPrompt.ShouldNotContain(graph.Card.Identifier);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task Orchestrator_dispatches_eligible_card_through_agent_session_service()
     {
         await using var db = CreateContext();
@@ -203,7 +238,7 @@ public class OrchestratorServiceIntegrationTests
                 .SingleAsync(c => c.BoardId == graph.Board.Id);
             syncedCard.Identifier.ShouldBe("CARD-0001");
             syncedCard.Title.ShouldBe("External issue");
-            syncedCard.Importance.ShouldBe((CardImportance)4);
+            syncedCard.Importance.ShouldBe(CardImportance.High);
             syncedCard.ExternalIssueRef.ShouldNotBeNull();
             syncedCard.ExternalIssueRef!.TrackerKind.ShouldBe(TrackerKind.GitHubIssues);
             syncedCard.ExternalIssueRef.ExternalId.ShouldBe("acme/app#42");
@@ -341,7 +376,7 @@ public class OrchestratorServiceIntegrationTests
             cards.Count.ShouldBe(1);
             cards.Single().Title.ShouldBe("Updated title");
             cards.Single().Description.ShouldBe("Updated description");
-            cards.Single().Importance.ShouldBe((CardImportance)5);
+            cards.Single().Importance.ShouldBe(CardImportance.Critical);
             cards.Single().ExternalIssueRef!.Url.ShouldBe("https://linear.test/ANT-1");
         }
         finally

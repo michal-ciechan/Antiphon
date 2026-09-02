@@ -209,12 +209,15 @@ public sealed partial class WorkflowDefinitionLoader
 
     public static IReadOnlyDictionary<string, string?> BuildPromptVariables(Card card, Worktree? worktree)
     {
+        var now = DateTime.UtcNow;
+        var effective = CardRanking.EffectiveUrgency(card, now);
+        var rank = CardRanking.Rank(card, now).ToString(System.Globalization.CultureInfo.InvariantCulture);
         return new Dictionary<string, string?>(StringComparer.Ordinal)
         {
             ["issue.identifier"] = card.ExternalIssueRef?.ExternalKey ?? card.Identifier,
             ["issue.title"] = card.Title,
             ["issue.description"] = card.Description,
-            ["issue.priority"] = ((int)card.Importance).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["issue.priority"] = rank,
             ["issue.url"] = card.ExternalIssueRef?.Url,
             ["issue.tracker"] = card.ExternalIssueRef is { } ext
                 ? TrackerIssueCitation.DisplayName(ext.TrackerKind)
@@ -223,7 +226,12 @@ public sealed partial class WorkflowDefinitionLoader
             ["card.identifier"] = card.Identifier,
             ["card.title"] = card.Title,
             ["card.description"] = card.Description,
-            ["card.priority"] = ((int)card.Importance).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["card.priority"] = rank,
+            ["card.importance"] = card.Importance.ToString(),
+            ["card.urgency"] = card.Urgency.ToString(),
+            ["card.effective_urgency"] = effective.ToString(),
+            ["card.quadrant"] = CardRanking.Quadrant(card.Importance, effective).ToString(),
+            ["card.due_at"] = card.DueAt?.ToString("o", System.Globalization.CultureInfo.InvariantCulture),
             ["board.id"] = card.BoardId.ToString(),
             ["workspace.path"] = worktree?.Path,
             ["workspace.branch"] = worktree?.Branch,
@@ -241,7 +249,8 @@ public sealed partial class WorkflowDefinitionLoader
         ---
         Work on card {{ card.identifier }}{{ issue.citation }}: {{ issue.title }}
 
-        Priority: {{ issue.priority }}
+        Importance: {{ card.importance }}
+        Urgency: {{ card.urgency }}
 
         {{ issue.description }}
         """;

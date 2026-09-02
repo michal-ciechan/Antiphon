@@ -135,7 +135,10 @@ public sealed class CardService
             Identifier = await NextIdentifierAsync(board.Id, ct),
             Title = request.Title.Trim(),
             Description = request.Description?.Trim() ?? string.Empty,
-            Importance = (CardImportance)request.Priority,
+            Importance = request.Importance,
+            Urgency = request.Urgency,
+            DueAt = request.DueAt,
+            UrgentSince = request.Urgency > CardUrgency.Normal ? now : null,
             LabelsJson = BoardService.SerializeLabels(request.Labels),
             Status = column.CardStatus,
             CreatedAt = now,
@@ -456,8 +459,20 @@ public sealed class CardService
             card.Title = request.Title.Trim();
         if (request.Description is not null)
             card.Description = request.Description.Trim();
-        if (request.Priority is int priority)
-            card.Importance = (CardImportance)priority;
+        if (request.Importance is { } importance)
+            card.Importance = importance;
+        if (request.Urgency is { } urgency)
+        {
+            if (urgency > CardUrgency.Normal && card.Urgency == CardUrgency.Normal)
+                card.UrgentSince = now;
+            else if (urgency == CardUrgency.Normal)
+                card.UrgentSince = null;
+            card.Urgency = urgency;
+        }
+        if (request.ClearDueAt)
+            card.DueAt = null;
+        else if (request.DueAt is { } dueAt)
+            card.DueAt = dueAt;
         if (request.Labels is not null)
             card.LabelsJson = BoardService.SerializeLabels(request.Labels);
         card.UpdatedAt = now;
@@ -1088,8 +1103,6 @@ public sealed class CardService
         var errors = new Dictionary<string, string[]>();
         if (string.IsNullOrWhiteSpace(request.Title))
             errors[nameof(request.Title)] = ["Card title is required."];
-        if (request.Priority < 0)
-            errors[nameof(request.Priority)] = ["Priority must not be negative."];
         RequireWithinLimit(errors, nameof(request.Title), request.Title?.Trim(), MaxTitleLength);
         RequireWithinLimit(errors, nameof(request.Description), request.Description?.Trim(), MaxDescriptionLength);
         if (errors.Count > 0)
@@ -1122,18 +1135,21 @@ public sealed class CardService
 
         var hasContent = request.Title is not null
             || request.Description is not null
-            || request.Priority is not null
+            || request.Importance is not null
+            || request.Urgency is not null
+            || request.DueAt is not null
+            || request.ClearDueAt
             || request.Labels is not null;
         if (!hasContent)
         {
             errors[nameof(request.Title)] =
-                ["At least one of Title, Description, Priority or Labels must be provided."];
+                ["At least one of Title, Description, Importance, Urgency, DueAt, ClearDueAt or Labels must be provided."];
         }
 
         if (request.Title is not null && string.IsNullOrWhiteSpace(request.Title))
             errors[nameof(request.Title)] = ["Card title must not be blank."];
-        if (request.Priority is int priority && priority < 0)
-            errors[nameof(request.Priority)] = ["Priority must not be negative."];
+        if (request.ClearDueAt && request.DueAt is not null)
+            errors[nameof(request.ClearDueAt)] = ["ClearDueAt cannot be combined with DueAt."];
 
         RequireWithinLimit(errors, nameof(request.Title), request.Title?.Trim(), MaxTitleLength);
         RequireWithinLimit(errors, nameof(request.Description), request.Description?.Trim(), MaxDescriptionLength);

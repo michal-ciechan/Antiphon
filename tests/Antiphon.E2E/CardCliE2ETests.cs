@@ -153,6 +153,8 @@ public class CardCliE2ETests
         limits.Stdout.ShouldContain("description 20000");
         limits.Stdout.ShouldContain("reason      4000");
         limits.Stdout.ShouldContain("actor       200");
+        limits.Stdout.ShouldContain("importance  Low, Normal, High, Critical");
+        limits.Stdout.ShouldContain("urgency     Normal, Soon, Now");
 
         // Fails locally and deterministically, naming the ceiling — no round trip, no 422 after the
         // text was already assembled.
@@ -220,6 +222,36 @@ public class CardCliE2ETests
         var stillLive = RunCard("reopen", "CARD-0001", "-Reason", "Already live.");
         stillLive.ExitCode.ShouldNotBe(0);
         stillLive.All.ShouldContain("not closed");
+    }
+
+    [Test]
+    public async Task The_cli_sets_importance_urgency_and_due_and_refuses_minus_Priority()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var projectId = await CreateProjectAsync($"Card CLI Axes Project {suffix}");
+        var boardName = $"Card CLI Axes Board {suffix}";
+        await CreateBoardAsync(projectId, boardName);
+
+        var created = RunCard("new", "-Board", boardName, "-Title", "Rated",
+            "-Importance", "High", "-Urgency", "Soon", "-DueAt", "2026-09-20T12:00:00Z");
+        created.ExitCode.ShouldBe(0, created.All);
+        created.Stdout.ShouldContain("High/Soon");
+
+        var read = RunCard("get", "CARD-0001", "-Json");
+        read.ExitCode.ShouldBe(0, read.All);
+        var card = JsonDocument.Parse(read.Stdout).RootElement;
+        card.GetProperty("importance").GetString().ShouldBe("High");
+        card.GetProperty("urgency").GetString().ShouldBe("Soon");
+        card.GetProperty("dueAt").GetString().ShouldNotBeNullOrEmpty();
+
+        var edited = RunCard("edit", "CARD-0001", "-Reason", "Now, not soon.", "-Urgency", "Now");
+        edited.ExitCode.ShouldBe(0, edited.All);
+        edited.Stdout.ShouldContain("High/Now");
+
+        var stale = RunCard("new", "-Board", boardName, "-Title", "Old flag", "-Priority", "0");
+        stale.ExitCode.ShouldNotBe(0);
+        stale.All.ShouldContain("-Importance");
+        stale.All.ShouldContain("-Urgency");
     }
 
     [Test]

@@ -125,6 +125,76 @@ public class IssueTrackerAdapterTests
         issues.Single().ExternalId.ShouldBe("lin-1");
         issues.Single().ExternalKey.ShouldBe("ANT-123");
         issues.Single().BlockedByExternalIds.ShouldBe(["lin-blocker"]);
+        issues.Single().Priority.ShouldBe(2);
+    }
+
+    [Test]
+    public async Task LinearTracker_maps_urgent_onto_the_shared_tracker_scale()
+    {
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = Json("""
+                {
+                  "data": {
+                    "issues": {
+                      "nodes": [
+                        {
+                          "id": "lin-urgent",
+                          "identifier": "ANT-1",
+                          "title": "Urgent",
+                          "description": "",
+                          "priority": 1,
+                          "url": "https://linear.test/ANT-1",
+                          "state": { "name": "Todo" },
+                          "labels": { "nodes": [] },
+                          "inverseRelations": { "nodes": [] }
+                        }
+                      ]
+                    }
+                  }
+                }
+                """)
+        });
+        var tracker = new LinearTracker(new HttpClient(handler));
+        var config = NewConfig(TrackerKind.Linear) with
+        {
+            BaseUrl = "https://linear.test/graphql",
+            ProjectKey = "Antiphon",
+            ActiveStates = ["Todo"]
+        };
+
+        var issues = await tracker.FetchCandidatesAsync(config, CancellationToken.None);
+        issues.Single().Priority.ShouldBe(5);
+    }
+
+    [Test]
+    public async Task GitHubIssuesTracker_p0_label_is_tracker_scale_five()
+    {
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = Json("""
+                [
+                  {
+                    "number": 7,
+                    "title": "P0 fire",
+                    "body": "",
+                    "state": "open",
+                    "html_url": "https://github.test/acme/app/issues/7",
+                    "labels": [ { "name": "p0" } ]
+                  }
+                ]
+                """)
+        });
+        var tracker = new GitHubIssuesTracker(new HttpClient(handler));
+        var config = NewConfig(TrackerKind.GitHubIssues) with
+        {
+            BaseUrl = "https://github.test/api/v3",
+            Repository = "acme/app",
+            ActiveStates = ["open"]
+        };
+
+        var issues = await tracker.FetchCandidatesAsync(config, CancellationToken.None);
+        issues.Single().Priority.ShouldBe(5);
     }
 
     [Test]

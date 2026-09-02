@@ -43,7 +43,7 @@ public class BoardServiceIntegrationTests
                 CancellationToken.None);
             var card = await harness.CardService.CreateAsync(
                 board.Id,
-                new CreateCardRequest(null, "Wire board UI", "Build the usable board", 3, ["ui", "e08"]),
+                new CreateCardRequest(null, "Wire board UI", "Build the usable board", CardImportance.Low, Labels: ["ui", "e08"]),
                 CancellationToken.None);
             var agent = await harness.AgentService.CreateAsync(
                 new CreateAgentRequest(

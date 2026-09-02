@@ -253,7 +253,7 @@ public sealed class ExternalTrackerSyncService
                 Identifier = allocator.Next(),
                 Title = issue.Title.Trim(),
                 Description = issue.Description.Trim(),
-                Importance = (CardImportance)issue.Priority,
+                Importance = CardRanking.FromTrackerScale(issue.Priority),
                 LabelsJson = BoardService.SerializeLabels(
                     TrackerSyncMarkers.StripManagedLabels(issue.Labels)),
                 Status = targetColumn.CardStatus,
@@ -332,7 +332,7 @@ public sealed class ExternalTrackerSyncService
                 changed = true;
             }
 
-            var importedImportance = (CardImportance)issue.Priority;
+            var importedImportance = CardRanking.FromTrackerScale(issue.Priority);
             if (card.Importance != importedImportance)
             {
                 card.Importance = importedImportance;

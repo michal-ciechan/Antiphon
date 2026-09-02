@@ -46,7 +46,7 @@ public sealed class HomeTaskService
         foreach (var card in cards)
         {
             boundByCard.TryGetValue(card.Id, out var bound);
-            ranked.Add(RankCard(card, bound, ownerAgents));
+            ranked.Add(RankCard(card, bound, ownerAgents, now));
         }
 
         foreach (var task in unbound)
@@ -68,7 +68,10 @@ public sealed class HomeTaskService
                 c.Title,
                 c.TerminalReason,
                 c.Status,
-                (int)c.Importance,
+                c.Importance,
+                c.Urgency,
+                c.DueAt,
+                c.UrgentSince,
                 c.BoardId,
                 c.OwnerSessionId,
                 c.ActiveWorkflowRun != null ? c.ActiveWorkflowRun.Status : (CardWorkflowRunStatus?)null,
@@ -175,7 +178,8 @@ public sealed class HomeTaskService
     private static RankedItem RankCard(
         CardRow card,
         List<BoundRow>? bound,
-        IReadOnlyDictionary<Guid, Guid> ownerAgents)
+        IReadOnlyDictionary<Guid, Guid> ownerAgents,
+        DateTime now)
     {
         BoundRow? openBound = null;
         BoundRow? newest = null;
@@ -199,6 +203,8 @@ public sealed class HomeTaskService
             ?? workerRow?.RepoPath
             ?? workerRow?.WorkingDirectory;
 
+        var effective = CardRanking.EffectiveUrgency(card.Urgency, card.DueAt, now);
+        var rank = CardRanking.Rank(card.Importance, card.Urgency, card.DueAt, now);
         var item = new HomeTaskItemDto(
             Key: $"card:{card.Id:N}",
             Source: HomeTaskSource.Card,
@@ -211,7 +217,11 @@ public sealed class HomeTaskService
             HumanReason: reason,
             Stage: stage,
             WorkflowRunStatus: card.WorkflowRunStatus,
-            Priority: card.Priority,
+            Importance: card.Importance,
+            EffectiveUrgency: effective,
+            Quadrant: CardRanking.Quadrant(card.Importance, effective),
+            Rank: rank,
+            UrgentSince: card.UrgentSince,
             BoardId: card.BoardId,
             Worker: worker,
             OwnerAgentId: ownerAgentId,
@@ -245,7 +255,7 @@ public sealed class HomeTaskService
             waitingSince,
             runningAt,
             NextSourceRank: 0,
-            card.Priority,
+            rank,
             card.CreatedAt,
             card.UpdatedAt,
             card.CompletedAt ?? DateTime.MinValue);
@@ -266,7 +276,11 @@ public sealed class HomeTaskService
             HumanReason: reason,
             Stage: task.Role.ToString(),
             WorkflowRunStatus: null,
-            Priority: null,
+            Importance: null,
+            EffectiveUrgency: null,
+            Quadrant: null,
+            Rank: null,
+            UrgentSince: null,
             BoardId: null,
             Worker: null,
             OwnerAgentId: null,
@@ -298,7 +312,7 @@ public sealed class HomeTaskService
             waitingSince,
             runningAt,
             NextSourceRank: 1,
-            Priority: 0,
+            Rank: 10,
             task.CreatedAt,
             item.UpdatedAt,
             task.CompletedAt ?? DateTime.MinValue);
@@ -408,8 +422,8 @@ public sealed class HomeTaskService
             {
                 var source = a.NextSourceRank.CompareTo(b.NextSourceRank);
                 if (source != 0) return source;
-                var priority = a.Priority.CompareTo(b.Priority);
-                if (priority != 0) return priority;
+                var rank = a.Rank.CompareTo(b.Rank);
+                if (rank != 0) return rank;
                 var created = a.CreatedAt.CompareTo(b.CreatedAt);
                 if (created != 0) return created;
                 break;
@@ -449,7 +463,10 @@ public sealed class HomeTaskService
         string Title,
         string? TerminalReason,
         CardStatus Status,
-        int Priority,
+        CardImportance Importance,
+        CardUrgency Urgency,
+        DateTime? DueAt,
+        DateTime? UrgentSince,
         Guid BoardId,
         Guid? OwnerSessionId,
         CardWorkflowRunStatus? WorkflowRunStatus,
@@ -507,7 +524,7 @@ public sealed class HomeTaskService
         DateTime WaitingSince,
         DateTime RunningAt,
         int NextSourceRank,
-        int Priority,
+        int Rank,
         DateTime CreatedAt,
         DateTime UpdatedAt,
         DateTime CompletedAt);

@@ -152,12 +152,26 @@ public sealed class LinearTracker : IIssueTracker
                 ? description.GetString() ?? string.Empty
                 : string.Empty,
             State: issue.GetProperty("state").GetProperty("name").GetString() ?? string.Empty,
-            Priority: issue.TryGetProperty("priority", out var priority) ? priority.GetInt32() : 0,
+            Priority: MapLinearPriority(
+                issue.TryGetProperty("priority", out var priority) ? priority.GetInt32() : 0),
             Labels: labels,
             BlockedByExternalIds: blockers,
             Url: issue.TryGetProperty("url", out var url) ? url.GetString() ?? string.Empty : string.Empty,
             RawPayloadJson: issue.GetRawText());
     }
+
+    /// <summary>
+    /// Linear's 1 = urgent … 4 = low onto the 0–5 tracker scale the GitHub/Jira adapters already
+    /// emit (5, 4, 2, 1) so import mapping agrees across all three.
+    /// </summary>
+    private static int MapLinearPriority(int linear) => linear switch
+    {
+        1 => 5,
+        2 => 4,
+        3 => 2,
+        4 => 1,
+        _ => 0
+    };
 
     private static IReadOnlyList<string> ReadNestedNames(JsonElement element, string propertyName)
     {

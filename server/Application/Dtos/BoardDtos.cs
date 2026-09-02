@@ -59,7 +59,13 @@ public sealed record CardDto(
     string Identifier,
     string Title,
     string Description,
-    int Priority,
+    CardImportance Importance,
+    CardUrgency Urgency,
+    DateTime? DueAt,
+    DateTime? UrgentSince,
+    CardUrgency EffectiveUrgency,
+    CardQuadrant Quadrant,
+    int Rank,
     IReadOnlyList<string> Labels,
     CardStatus Status,
     Guid ConcurrencyToken,
@@ -136,11 +142,14 @@ public sealed record ArchiveBoardRequest(string Reason, string? ArchivedBy = nul
 /// <summary>Undoing a board archive — same reason contract; mistakes need correcting too.</summary>
 public sealed record UnarchiveBoardRequest(string Reason, string? UnarchivedBy = null);
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record CreateCardRequest(
     Guid? BoardColumnId,
     string Title,
     string? Description = null,
-    int Priority = 0,
+    CardImportance Importance = CardImportance.Normal,
+    CardUrgency Urgency = CardUrgency.Normal,
+    DateTime? DueAt = null,
     IReadOnlyList<string>? Labels = null);
 
 /// <param name="Reason">
@@ -193,12 +202,16 @@ public sealed record MoveCardResult(
 /// Self-reported author (agent name, "operator"). The server has no principals, so this is honest
 /// free text and must never be presented as an authenticated actor.
 /// </param>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record UpdateCardContentRequest(
     Guid ConcurrencyToken,
     string Reason,
     string? Title = null,
     string? Description = null,
-    int? Priority = null,
+    CardImportance? Importance = null,
+    CardUrgency? Urgency = null,
+    DateTime? DueAt = null,
+    bool ClearDueAt = false,
     IReadOnlyList<string>? Labels = null,
     string? EditedBy = null);
 
@@ -237,7 +250,9 @@ public sealed record CardRevisionDto(
     CardRevisionKind Kind,
     string? Title,
     string? Description,
-    int? Priority,
+    CardImportance? Importance,
+    CardUrgency? Urgency,
+    DateTime? DueAt,
     IReadOnlyList<string>? Labels,
     Guid? FromColumnId,
     Guid? ToColumnId,
@@ -264,7 +279,9 @@ public sealed record CardLimitsDto(
     int MaxTitleLength,
     int MaxDescriptionLength,
     int MaxReasonLength,
-    int MaxActorLength);
+    int MaxActorLength,
+    IReadOnlyList<string> ImportanceValues,
+    IReadOnlyList<string> UrgencyValues);
 
 public sealed record SpawnCardRequest(
     string? DefinitionName = null,

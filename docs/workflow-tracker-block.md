@@ -76,7 +76,9 @@ Work on {{ issue.identifier }}.
 
 ## Ownership / out of scope (v1)
 
-- Sync owns managed labels `status:*` (always) and `priority:*` (export-origin only). A human
+- Sync owns managed labels `status:*` (always) and `priority:*` (export-origin only). The
+  priority label carries the importance *name*: `priority:critical`, `priority:high`,
+  `priority:low`. `Normal` importance exports no priority label. A human
   edit of those on GitHub is rewritten on the next sync. **Known noise mode (CARD-0171):** a human
   who re-adds a managed label every cycle produces `labelsChanged=1` on every run, so a
   notify-enabled board would say "labels updated on 1 issue" every 3 hours forever. Mitigation is

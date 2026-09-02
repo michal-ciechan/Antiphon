@@ -185,6 +185,27 @@ public class CardCorrectionApiTests
         limits.MaxDescriptionLength.ShouldBe(CardService.MaxDescriptionLength);
         limits.MaxReasonLength.ShouldBe(CardService.MaxReasonLength);
         limits.MaxActorLength.ShouldBe(CardService.MaxActorLength);
+        limits.ImportanceValues.ShouldBe(Enum.GetNames<CardImportance>());
+        limits.UrgencyValues.ShouldBe(Enum.GetNames<CardUrgency>());
+    }
+
+    [Test]
+    public async Task A_stale_priority_field_on_create_or_edit_is_a_400()
+    {
+        var (board, card) = await SeedAsync("Priority refused board", "Has a name", "body");
+        using var client = _factory.CreateClient();
+
+        var create = await client.PostAsJsonAsync(
+            $"/api/boards/{board.Id}/cards",
+            new { title = "stale caller", priority = 0 },
+            Json);
+        create.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+
+        var edit = await client.PatchAsJsonAsync(
+            $"/api/cards/{card.Id}/content",
+            new { concurrencyToken = card.ConcurrencyToken, reason = "old script", priority = 1 },
+            Json);
+        edit.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
     }
 
     [Test]

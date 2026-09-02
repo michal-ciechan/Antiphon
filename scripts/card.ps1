@@ -33,9 +33,12 @@
 #   card.ps1 get       CARD-0051 [-Json]
 #   card.ps1 history   CARD-0051 [-Json]
 #   card.ps1 new       -Board <name|guid> -Title <t> [-DescriptionFile p | -Description s]
-#                      [-Priority n] [-Labels a,b]
+#                      [-Importance Low|Normal|High|Critical] [-Urgency Normal|Soon|Now]
+#                      [-DueAt iso] [-Labels a,b]
 #   card.ps1 edit      CARD-0051 -Reason <r> | -ReasonFile <p> [-Title t]
-#                      [-DescriptionFile p | -Description s] [-Priority n] [-Labels a,b]
+#                      [-DescriptionFile p | -Description s]
+#                      [-Importance Low|Normal|High|Critical] [-Urgency Normal|Soon|Now]
+#                      [-DueAt iso] [-ClearDueAt] [-Labels a,b]
 #                      [-By name] [-Token g]
 #   card.ps1 move      CARD-0051 -To <column name|guid> [-Reason r | -ReasonFile p] [-Spawn] [-Token g]
 #   card.ps1 close     CARD-0051 -Reason r | -ReasonFile p
@@ -82,10 +85,23 @@ param(
     [Parameter(ParameterSetName = 'Verb')]
     [string]$To,
 
-    # -1 means "leave it alone". 0 is a real priority, so an unbound [int] (which is 0) cannot be
-    # used as the unset marker.
+    # Kept for one release as a hard error that names the replacements. Do not send it.
     [Parameter(ParameterSetName = 'Verb')]
     [int]$Priority = -1,
+
+    [Parameter(ParameterSetName = 'Verb')]
+    [ValidateSet('Low', 'Normal', 'High', 'Critical')]
+    [string]$Importance,
+
+    [Parameter(ParameterSetName = 'Verb')]
+    [ValidateSet('Normal', 'Soon', 'Now')]
+    [string]$Urgency,
+
+    [Parameter(ParameterSetName = 'Verb')]
+    [string]$DueAt,
+
+    [Parameter(ParameterSetName = 'Verb')]
+    [switch]$ClearDueAt,
 
     [Parameter(ParameterSetName = 'Verb')]
     [string[]]$Labels,
@@ -270,7 +286,8 @@ function Write-CardLine {
     param($TheCard)
     $labels = ''
     if ($TheCard.labels -and $TheCard.labels.Count -gt 0) { $labels = ' [' + ($TheCard.labels -join ', ') + ']' }
-    Write-Output ("{0}  {1}  {2}{3}" -f $TheCard.identifier, $TheCard.status, $TheCard.title, $labels)
+    Write-Output ("{0}  {1}  {2}/{3}  rank {4}  {5}{6}" -f `
+            $TheCard.identifier, $TheCard.status, $TheCard.importance, $TheCard.urgency, $TheCard.rank, $TheCard.title, $labels)
 }
 
 function Get-BoardColumns {
@@ -284,7 +301,14 @@ if ($PSCmdlet.ParameterSetName -eq 'Limits') {
     Write-Output ("description {0}" -f $l.maxDescriptionLength)
     Write-Output ("reason      {0}" -f $l.maxReasonLength)
     Write-Output ("actor       {0}" -f $l.maxActorLength)
+    Write-Output ("importance  {0}" -f ($l.importanceValues -join ', '))
+    Write-Output ("urgency     {0}" -f ($l.urgencyValues -join ', '))
     return
+}
+
+if ($PSBoundParameters.ContainsKey('Priority')) {
+    Write-Error '-Priority is gone. Use -Importance (Low|Normal|High|Critical), -Urgency (Normal|Soon|Now), and -DueAt / -ClearDueAt.'
+    exit 1
 }
 
 $script:resolvedBoardId = $null
@@ -300,6 +324,10 @@ switch ($Verb) {
         Write-Output ("id          {0}" -f $theCard.id)
         Write-Output ("board       {0}" -f $theCard.boardId)
         Write-Output ("column      {0}" -f $theCard.boardColumnId)
+        Write-Output ("importance  {0}" -f $theCard.importance)
+        Write-Output ("urgency     {0}" -f $theCard.urgency)
+        Write-Output ("rank        {0}" -f $theCard.rank)
+        if ($theCard.dueAt) { Write-Output ("due         {0}" -f $theCard.dueAt) }
         Write-Output ("token       {0}" -f $theCard.concurrencyToken)
         Write-Output ("revisions   {0}" -f $theCard.revisionCount)
         if ($theCard.assignedAgentName) { Write-Output ("agent       {0}" -f $theCard.assignedAgentName) }
@@ -349,7 +377,9 @@ switch ($Verb) {
 
         $body = @{ title = $Title }
         if (-not [string]::IsNullOrEmpty($desc)) { $body['description'] = $desc }
-        if ($Priority -ge 0) { $body['priority'] = $Priority }
+        if ($PSBoundParameters.ContainsKey('Importance')) { $body['importance'] = $Importance }
+        if ($PSBoundParameters.ContainsKey('Urgency')) { $body['urgency'] = $Urgency }
+        if (-not [string]::IsNullOrWhiteSpace($DueAt)) { $body['dueAt'] = $DueAt }
         if ($Labels) { $body['labels'] = @($Labels) }
 
         $created = Invoke-Antiphon -Method POST -Path "/api/boards/$boardId/cards" -Body $body
@@ -375,11 +405,14 @@ switch ($Verb) {
         }
         if (-not [string]::IsNullOrWhiteSpace($Title)) { $body['title'] = $Title }
         if (-not [string]::IsNullOrEmpty($desc)) { $body['description'] = $desc }
-        if ($Priority -ge 0) { $body['priority'] = $Priority }
+        if ($PSBoundParameters.ContainsKey('Importance')) { $body['importance'] = $Importance }
+        if ($PSBoundParameters.ContainsKey('Urgency')) { $body['urgency'] = $Urgency }
+        if ($ClearDueAt) { $body['clearDueAt'] = $true }
+        elseif (-not [string]::IsNullOrWhiteSpace($DueAt)) { $body['dueAt'] = $DueAt }
         if ($Labels) { $body['labels'] = @($Labels) }
         if (-not [string]::IsNullOrWhiteSpace($By)) { $body['editedBy'] = $By }
         if ($body.Count -le 2) {
-            Write-Error 'Nothing to change. Pass at least one of -Title, -Description/-DescriptionFile, -Priority, -Labels.'
+            Write-Error 'Nothing to change. Pass at least one of -Title, -Description/-DescriptionFile, -Importance, -Urgency, -DueAt, -ClearDueAt, -Labels.'
             exit 1
         }
 
