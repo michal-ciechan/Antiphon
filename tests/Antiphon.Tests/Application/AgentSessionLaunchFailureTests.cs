@@ -625,6 +625,39 @@ public class AgentSessionLaunchFailureTests
         session.Status.ShouldBe(SessionStatus.Failed);
     }
 
+    /// <summary>
+    /// CARD-0133 S1b-A: a Codex boot prompt that fails with the body still in the composer must
+    /// not be re-typed (CARD-0056 / CARD-0108: splicing a second copy onto the first). The launch
+    /// catch still kills; the session is Failed with the real reason instead of waiting out the
+    /// 300 s turn-complete timeout.
+    /// </summary>
+    [Test]
+    public async Task Codex_prompt_failure_with_composer_may_hold_body_writes_once_kills_and_fails()
+    {
+        var adapter = new FakeAgentProtocolAdapter
+        {
+            PromptFailure = _ => new PromptDeliveryException(
+                "The composer STILL SHOWS the body, so it is holding an unsubmitted prompt.",
+                composerMayHoldBody: true),
+        };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        var card = await fixture.CreateCardAsync();
+
+        var start = fixture.StartCardSessionAsync(card, "do the work", kind: AgentKind.Codex);
+
+        await Should.ThrowAsync<PromptDeliveryException>(start);
+        adapter.Prompts.ShouldBe(["do the work"], "ComposerMayHoldBody skips the remaining re-types");
+        adapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
+        adapter.Killed.ShouldBeTrue();
+
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.CardId == card);
+        session.Status.ShouldBe(SessionStatus.Failed);
+        session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
+        var attempt = await db.RunAttempts.SingleAsync(a => a.CardId == card);
+        attempt.Phase.ShouldBe(RunPhase.Failed);
+    }
+
     // ---- Slice 3: boot retry + transcript late-confirm ------------------------------------------
 
     /// <summary>

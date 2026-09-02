@@ -120,7 +120,7 @@
 
 ### Gotcha #78
 
-- **Codex unobservable submit evidence is Working or emptied-composer sustained `PostEvidenceSettleMs` (500 ms)** (CARD-0299): a single empty/ghost/MCP-spinner snapshot is not a submit. At the unobservable deadline, a body still visible in the composer (and no Working latched) is `NoSubmitOutput`, not degraded Sent. Ready waits until `Starting MCP server` / `Booting MCP server` have been absent 500 ms, bound `CodexBootStatusMaxWaitMs` (10 s; expiry logs a Warning and types anyway). A cold Codex first-delivery `NoSubmitOutput` (null baseline, origin Delegation, attempts 1, Dispatched task) records `BootWedged` (44), cancels the queue row, kills the session regardless of AlwaysOn, and relaunches once; a second wedge Fails immediately instead of waiting out the 10-minute watchdog.
+- **Codex unobservable submit evidence is Working or emptied-composer sustained `PostEvidenceSettleMs` (500 ms)** (CARD-0299): a single empty/ghost/MCP-spinner snapshot is not a submit. At the unobservable deadline, a body still visible in the composer (and no Working latched) is `NoSubmitOutput`, not degraded Sent. Ready waits until `Starting MCP server` / `Booting MCP server` have been absent 500 ms, bound `CodexBootStatusMaxWaitMs` (10 s; expiry logs a Warning and types anyway). A cold Codex first-delivery `NoSubmitOutput` (null baseline, origin Delegation, attempts 1, Dispatched task) records `BootWedged` (44), cancels the queue row, kills the session regardless of AlwaysOn, and relaunches once; a second wedge Fails immediately instead of waiting out the 10-minute watchdog. The named/card-launch boot prompt (`CodexSubmitConfirmation`) degrades to the same Working / body-still-visible look when no transcript ever binds.
 
 ### Gotcha #79
 

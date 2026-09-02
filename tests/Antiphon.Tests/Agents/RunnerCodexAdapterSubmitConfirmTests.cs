@@ -94,6 +94,48 @@ public class RunnerCodexAdapterSubmitConfirmTests
 
         // Must NOT throw: a missing observer is not evidence that the prompt failed, and failing
         // the launch over it would kill sessions that are working fine (CARD-0055's degrade posture).
+        // IdleScreen holds neither the body nor Working, so S1b-A's two-look still takes the
+        // blind return (neither arm).
+        await adapter.SendPromptAsync(Body, CancellationToken.None);
+
+        client.BodyWrites.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task A_blind_first_turn_with_the_body_still_standing_after_every_Enter_throws_composer_may_hold_body()
+    {
+        var client = new ScriptedCodexRunnerClient
+        {
+            ThrowOnTranscript = true,
+            ConfirmAfterEnters = 0,
+            IndicatorScreenReads = 0,
+            QuietScreen = ScriptedCodexRunnerClient.IdleScreen.Replace(
+                "  > \n", $"  > {Body}\n", StringComparison.Ordinal),
+        };
+        var adapter = NewAdapter(client);
+        await adapter.StartAsync(NewSpec(), CancellationToken.None);
+
+        var ex = await Should.ThrowAsync<PromptDeliveryException>(
+            () => adapter.SendPromptAsync(Body, CancellationToken.None));
+
+        ex.ComposerMayHoldBody.ShouldBeTrue();
+        ex.Message.ShouldContain("STILL SHOWS");
+        ex.Message.ShouldContain("transcript never produced a row");
+        client.Enters.ShouldBe(4);
+        client.BodyWrites.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task A_blind_first_turn_that_shows_the_Working_indicator_is_a_degraded_success()
+    {
+        var client = new ScriptedCodexRunnerClient
+        {
+            ThrowOnTranscript = true,
+            IndicatorScreenReads = 100,
+        };
+        var adapter = NewAdapter(client);
+        await adapter.StartAsync(NewSpec(), CancellationToken.None);
+
         await adapter.SendPromptAsync(Body, CancellationToken.None);
 
         client.BodyWrites.ShouldBe(1);
