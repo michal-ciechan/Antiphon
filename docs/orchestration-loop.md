@@ -379,6 +379,21 @@ Split by what each part actually is:
   to the CLI — fix a wrong rule there, not here. Everything *around* the card — which agents exist,
   what they are running, a board's columns, a live session's transcript — is
   [ops-http.md](ops-http.md); read it rather than grepping the endpoint files for a route.
+- **Card files under `docs/cards/<slug>/` are generated one-way from the board (CARD-0004).** The
+  database is the source of truth; every sync overwrites the files. Edit the card (`scripts/card.ps1`),
+  never the file. A 60 s tick and `POST /api/boards/{id}/card-files/sync?dryRun=` are the only
+  triggers — there is no enqueue from `CardService`. Settings (`CardFileSync`): `Enabled` (default
+  true; off means the feature does not exist), `AutoCommit` (production **false** — files write, no
+  commit until an operator turns it on), `IntervalSeconds` (default 60, floor 5; `0` is manual-only
+  and leaves the endpoint on). `Enabled=false` is **409** `card_file_sync_disabled`; a concurrent
+  run on the same repo is **409** `card_file_sync_running`. When AutoCommit is on, the commit is
+  path-scoped (`git add -A -- <dir>` then `git commit --only -m "antiphon: sync card files (<board>)"
+  --trailer antiphon=true -- <dir>`), **never pushed**, and the message **never names a card
+  identifier** (`CardThreadService` greps identifiers and would list every sync commit on every
+  card's thread). Guards skip the commit (files stay written; retry next tick; log once per reason
+  change): `rebase_in_progress`, `merge_in_progress`, `cherry_pick_in_progress`, `detached_head`,
+  `conflicted_paths` under the directory, `git_error` (an `index.lock` held by a delegate is the
+  expected one). Archived cards keep their file; archived boards and projects are skipped.
 - Findings that outlive the card go in `docs/investigations/`. Agent scratch output lands in
   `.antiphon/`, which is **gitignored** — an 11 KB proven root-cause writeup was nearly lost that way.
 

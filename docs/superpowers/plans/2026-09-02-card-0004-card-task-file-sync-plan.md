@@ -515,5 +515,18 @@ Git child processes need no `ParallelLimiter` (`DelegationWorktreeTests` carries
 
 ## Execution notes
 
-*(filled in by the executing task: commit shas per slice, test counts, the first live commit's sha
-and `--stat`.)*
+Landed on master. `CardFileSync:AutoCommit` stayed **false** in production (`appsettings.json` and
+the `CardFileSyncSettings` default) — operator-pinned in S1 over this plan's original `true`, so
+the first AppHost restart after S3 would write files and not commit them. There is **no first live
+sync commit** and no `--stat`; `docs/cards/` is not on disk in `C:\src\Antiphon` as of S4.
+
+| Slice | Sha | Tests |
+|---|---|---|
+| S1 renderer/writer | `753f2416` | 19 passed (`CardTaskFileRendererTests` + `CardTaskFileServiceTests`) |
+| S2 path-scoped commit | `637484d9` | 28 passed (same two classes) |
+| S3 hosted tick + endpoint | `43844c6f` | 32 passed (+ `CardFileSyncEndpointTests` + `CardFileSyncDisabledEndpointTests`) |
+| S4 docs and the record | this commit | docs only |
+
+Production settings as shipped: `Enabled=true`, `AutoCommit=false`, `IntervalSeconds=60`. A human
+runs `POST /api/boards/{id}/card-files/sync?dryRun=true`, reviews, then a real manual sync, before
+`AutoCommit` is ever turned on. Do not flip the default back to `true` as a drive-by.

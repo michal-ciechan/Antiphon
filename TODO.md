@@ -1,9 +1,10 @@
 # Outstanding work
 
-A hand-maintained list of known-but-unfixed things, so they survive outside anyone's chat history.
-Interim measure: the intent is for board cards to generate this automatically — see
-[Card → repo task file sync](docs/superpowers/specs/2026-08-09-card-task-file-sync.md). Until that
-ships, add items here by hand.
+A hand-maintained leftover of known-but-unfixed things, so they survive outside anyone's chat
+history. The generated board list is
+[docs/cards/antiphon/INDEX.md](docs/cards/antiphon/INDEX.md) (CARD-0004). Edit the card
+(`scripts/card.ps1`), not those files. Items below stay here until they are themselves cards and
+this file is retired.
 
 Each entry says what is wrong, how it shows up, and what a fix has to decide. Delete an entry when
 it is done — git history is the record.

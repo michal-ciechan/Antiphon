@@ -124,6 +124,7 @@ POST   /api/boards            DELETE /api/boards/{id}
 POST   /api/boards/{id}/cards                create a card on this board
 GET    /api/boards/{id}/workflow   PUT /api/boards/{id}/workflow    the board's workflow YAML
 POST   /api/boards/{id}/archive | /unarchive  hide/restore a board (reason body; not a delete)
+POST   /api/boards/{id}/card-files/sync      one-way card → docs/cards/<slug>/  (?dryRun=; CardFileSyncBoardResult; 409 card_file_sync_disabled | card_file_sync_running)
 
 GET    /api/projects  |  /api/projects/{id}
 POST   /api/projects   PUT /api/projects/{id}   DELETE /api/projects/{id}

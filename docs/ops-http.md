@@ -35,6 +35,7 @@ header when it is set. Inside a running agent session both are already in the en
 | Boards | GET | `/api/boards` (`?includeArchived=true`) |
 | One board | GET | `/api/boards/{id}` (`?view=summary`, `?includeArchived=`) |
 | A board's columns, name to id | GET | `/api/boards/{id}/columns` |
+| Sync one board's cards onto disk (one-way) | POST | `/api/boards/{id}/card-files/sync` (`?dryRun=true`) |
 | A board's cards | GET | `/api/cards?boardId={guid}` |
 | One card | GET | `/api/cards/{id}` — `CARD-0296` resolves; prefer `card.ps1 get` |
 | Home Tasks rail (cards + unbound delegations) | GET | `/api/home/tasks` |
