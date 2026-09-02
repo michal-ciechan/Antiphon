@@ -8,6 +8,7 @@ import {
   Menu,
   Paper,
   Text,
+  Tooltip,
   UnstyledButton,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
@@ -21,11 +22,14 @@ import {
   useCancelAgentTask,
   useEscalateAgentTask,
   useRetryAgentTask,
+  type AgentTaskPipelineDto,
   type AgentTaskStatus,
 } from '../../../api/agentTasks'
+import type { AttentionItemDto } from '../../../api/attention'
 import { useSpawnCard, type CardStatus } from '../../../api/boards'
 import { getApiErrorMessage } from '../../../api/client'
 import type { HomeTaskItemDto } from '../../../api/homeTasks'
+import { ATTENTION_VISUALS } from '../../attention/attentionVisuals'
 import { stateLabel } from '../../board/boardVisuals'
 import { TierBadge } from '../../delegations/TaskChip'
 import { formatCost, shortId, STATUS_COLOR } from '../../delegations/taskVisuals'
@@ -35,9 +39,15 @@ import {
   HUMAN_REASON_LABEL,
   SOURCE_LABEL,
   STATE_COLOR,
+  formatElapsed,
+  formatRelativeAgo,
   isAnswerable,
   isSpawnable,
+  queueReasonFor,
+  readinessFor,
+  runningSince,
   workerAgent,
+  type HomeTaskPipelineRow,
 } from './homeTasksModel'
 
 const OPEN_WORKER: ReadonlySet<AgentTaskStatus> = new Set(['Queued', 'Dispatched', 'Working', 'Blocked'])
@@ -47,6 +57,10 @@ export function TaskCard({
   item,
   question = null,
   agents = [],
+  liveness = null,
+  pipelineRow = null,
+  pipeline = null,
+  now = Date.now(),
   onOpen,
   onOpenTask,
   onSelectAgent,
@@ -54,6 +68,10 @@ export function TaskCard({
   item: HomeTaskItemDto
   question?: string | null
   agents?: AgentSummaryDto[]
+  liveness?: AttentionItemDto | null
+  pipelineRow?: HomeTaskPipelineRow | null
+  pipeline?: AgentTaskPipelineDto | null
+  now?: number
   onOpen: () => void
   onOpenTask?: (taskId: string) => void
   onSelectAgent?: (agentId: string) => void
@@ -88,6 +106,14 @@ export function TaskCard({
   const settled = SETTLED.has(item.state)
   const atTopTier = item.modelLevel === 'Frontier'
   const agent = workerAgent(item, agents)
+  const running = item.group === 'Running'
+  const headerLiveness = running && item.source === 'Delegation' ? liveness : null
+  const workerLiveness = running && item.worker ? liveness : null
+  const elapsed = runningElapsed(item, pipelineRow, now)
+  const queue = item.group === 'Next' ? queueReasonFor(item, pipeline) : null
+  const ready = item.group === 'Next' ? readinessFor(item, pipeline) : null
+  const terminalLine =
+    item.group === 'Done' && item.source === 'Card' ? firstNonBlankLine(item.terminalReason) : null
 
   const onError = (fallback: string) => (error: unknown) =>
     notifications.show({ color: 'red', message: getApiErrorMessage(error, fallback) })
@@ -135,6 +161,7 @@ export function TaskCard({
                   {HUMAN_REASON_LABEL[reason]}
                 </Badge>
               )}
+              {headerLiveness && <LivenessBadge item={headerLiveness} />}
             </Group>
           </Group>
 
@@ -202,9 +229,50 @@ export function TaskCard({
           <WorkerLine
             item={item}
             agent={agent}
+            liveness={workerLiveness}
+            now={now}
             onOpenTask={onOpenTask}
             onSelectAgent={onSelectAgent}
           />
+        )}
+
+        {elapsed && (
+          <Text size="xs" c="dimmed" mt={4} data-testid={`task-elapsed-${item.id}`}>
+            {elapsed}
+          </Text>
+        )}
+
+        {queue && (
+          <Text size="xs" c="dimmed" mt={4} data-testid={`task-queue-${item.id}`}>
+            {queue.line}
+          </Text>
+        )}
+
+        {ready && (
+          <Group mt={4} gap={6} wrap="nowrap">
+            <Text size="xs" c="dimmed" data-testid={`task-ready-${item.id}`}>
+              plan landed {formatRelativeAgo(ready.since, now)} — ready for Code
+            </Text>
+            <Anchor
+              component={Link}
+              to={`/plans?${new URLSearchParams({
+                file: ready.deliverablePath,
+                ...(ready.deliverableRef ? { ref: ready.deliverableRef } : {}),
+                task: ready.sourcePlanTaskId,
+              }).toString()}`}
+              size="xs"
+              onClick={(event) => event.stopPropagation()}
+              data-testid={`task-ready-read-${item.id}`}
+            >
+              Read
+            </Anchor>
+          </Group>
+        )}
+
+        {terminalLine && (
+          <Text size="xs" c="dimmed" lineClamp={1} mt={4} data-testid={`task-terminal-${item.id}`}>
+            {terminalLine}
+          </Text>
         )}
       </Paper>
 
@@ -319,11 +387,15 @@ export function TaskCard({
 function WorkerLine({
   item,
   agent,
+  liveness,
+  now,
   onOpenTask,
   onSelectAgent,
 }: {
   item: HomeTaskItemDto
   agent: AgentSummaryDto | null
+  liveness: AttentionItemDto | null
+  now: number
   onOpenTask?: (taskId: string) => void
   onSelectAgent?: (agentId: string) => void
 }) {
@@ -334,7 +406,7 @@ function WorkerLine({
 
   if (settled) {
     const word = worker.status === 'Succeeded' ? 'done' : worker.status.toLowerCase()
-    const ago = worker.completedAt ? ` ${formatRelativeAgo(worker.completedAt)}` : ''
+    const ago = worker.completedAt ? ` ${formatRelativeAgo(worker.completedAt, now)}` : ''
     return (
       <Text
         size="xs"
@@ -410,7 +482,53 @@ function WorkerLine({
           {worker.status}
         </Badge>
       )}
+      {liveness && <LivenessBadge item={liveness} />}
     </Group>
+  )
+}
+
+function LivenessBadge({ item }: { item: AttentionItemDto }) {
+  const visual = ATTENTION_VISUALS[item.kind]
+  const Icon = visual.icon
+  return (
+    <Tooltip label={visual.hint} multiline w={280}>
+      <Badge
+        size="xs"
+        variant="light"
+        color={visual.color}
+        leftSection={<Icon size={12} />}
+        data-testid={`task-liveness-${item.kind}`}
+      >
+        {visual.label}
+      </Badge>
+    </Tooltip>
+  )
+}
+
+function runningElapsed(
+  item: HomeTaskItemDto,
+  pipelineRow: HomeTaskPipelineRow | null,
+  now: number,
+): string | null {
+  const openWorker = item.worker != null && OPEN_WORKER.has(item.worker.status)
+  const runningDelegation = item.source === 'Delegation' && item.group === 'Running'
+  if (!openWorker && !runningDelegation) return null
+  const since = runningSince(item)
+  if (!since) return null
+  const elapsed = formatElapsed(since, now)
+  const lastActivityAt =
+    pipelineRow && 'lastActivityAt' in pipelineRow ? pipelineRow.lastActivityAt : null
+  if (lastActivityAt) return `${elapsed} · active ${formatRelativeAgo(lastActivityAt, now)}`
+  return elapsed
+}
+
+function firstNonBlankLine(text: string | null | undefined): string | null {
+  if (!text) return null
+  return (
+    text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) ?? null
   )
 }
 
@@ -424,10 +542,4 @@ function isHomeUnread(item: HomeTaskItemDto): boolean {
   })
 }
 
-function formatRelativeAgo(iso: string, now = Date.now()): string {
-  const mins = Math.max(0, Math.floor((now - Date.parse(iso)) / 60_000))
-  if (mins < 60) return `${mins}m ago`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}h ago`
-  return `${Math.floor(hours / 24)}d ago`
-}
+

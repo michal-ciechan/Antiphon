@@ -1,17 +1,34 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentSummaryDto } from '../../../api/agents'
-import type { AttentionItemDto } from '../../../api/attention'
+import type { AttentionItemDto, AttentionKind } from '../../../api/attention'
 import type { CardStatus } from '../../../api/boards'
-import type { AgentTaskStatus } from '../../../api/agentTasks'
+import type {
+  AgentTaskPipelineDto,
+  AgentTaskPipelineHolderDto,
+  AgentTaskPipelineInFlightDto,
+  AgentTaskPipelineQueueReason,
+  AgentTaskPipelineQueuedDto,
+  AgentTaskPipelineReadyDto,
+  AgentTaskPipelineStageDto,
+  AgentTaskStatus,
+  RoutingPinRefDto,
+} from '../../../api/agentTasks'
 import type { HomeTaskGroup, HomeTaskItemDto, HomeTaskWorkerDto } from '../../../api/homeTasks'
 import { STATE_COLORS } from '../../board/boardVisuals'
 import { STATUS_COLOR } from '../../delegations/taskVisuals'
 import { normalizeDir } from '../projectGrouping'
 import {
+  LIVENESS_KINDS,
   STATE_COLOR,
   filterByProject,
+  formatElapsed,
   groupItems,
+  livenessFor,
+  pipelineRowFor,
   questionFor,
+  queueReasonFor,
+  readinessFor,
+  runningSince,
   workerAgent,
 } from './homeTasksModel'
 
@@ -250,5 +267,315 @@ describe('STATE_COLOR', () => {
     for (const status of TASK_STATUSES) {
       expect(STATE_COLOR[status]).toBe(STATUS_COLOR[status])
     }
+  })
+})
+
+const LIVENESS_KIND_LIST: AttentionKind[] = [
+  'DeadSession',
+  'NeverStarted',
+  'BriefUndelivered',
+  'ReportUnsettled',
+  'UnmarkedWaiting',
+  'PastExpectedIdle',
+  'ProgressStalled',
+  'Overdue',
+  'ChecksSpent',
+  'UncorrelatedReport',
+]
+
+function pipeline(overrides: Partial<AgentTaskPipelineDto> = {}): AgentTaskPipelineDto {
+  return {
+    asOf: '2026-02-03T09:00:00Z',
+    recommendationsAreAdvisory: true,
+    maxConcurrentTasks: 6,
+    inFlightAgainstCap: 6,
+    stages: [],
+    ...overrides,
+  }
+}
+
+function stage(overrides: Partial<AgentTaskPipelineStageDto> = {}): AgentTaskPipelineStageDto {
+  return {
+    role: 'Code',
+    recommendedInFlight: 1,
+    inFlightCount: 0,
+    atOrAboveRecommendation: false,
+    inFlight: [],
+    queued: [],
+    blocked: [],
+    ready: [],
+    routingPin: null,
+    ...overrides,
+  }
+}
+
+function inFlightRow(
+  overrides: Partial<AgentTaskPipelineInFlightDto> = {},
+): AgentTaskPipelineInFlightDto {
+  return {
+    taskId: 'aaaaaaaa-0000-0000-0000-000000000006',
+    shortId: 'aaaaaaaa',
+    title: 'in flight',
+    status: 'Working',
+    card: null,
+    agentName: 'task-bound',
+    dispatchedAt: '2026-02-03T07:00:00Z',
+    lastActivityAt: '2026-02-03T09:11:00Z',
+    ...overrides,
+  }
+}
+
+function queuedRow(overrides: Partial<AgentTaskPipelineQueuedDto> = {}): AgentTaskPipelineQueuedDto {
+  return {
+    taskId: 'bbbbbbbb-0000-0000-0000-000000000007',
+    shortId: 'bbbbbbbb',
+    title: 'queued work',
+    card: null,
+    createdAt: '2026-02-03T08:50:00Z',
+    queueReason: 'awaitingDispatch',
+    heldBy: [],
+    ...overrides,
+  }
+}
+
+function holder(overrides: Partial<AgentTaskPipelineHolderDto> = {}): AgentTaskPipelineHolderDto {
+  return {
+    taskId: 'aaaaaaaa-0000-0000-0000-000000000006',
+    shortId: '1a2b3c4d',
+    title: 'in-flight docs pass',
+    ...overrides,
+  }
+}
+
+function readyRow(overrides: Partial<AgentTaskPipelineReadyDto> = {}): AgentTaskPipelineReadyDto {
+  return {
+    card: {
+      id: '11111111-0000-0000-0000-000000000001',
+      identifier: 'CARD-0001',
+      title: 'A card',
+    },
+    sourcePlanTaskId: 'cccccccc-0000-0000-0000-000000000003',
+    sourcePlanShortId: 'cccccccc',
+    readySince: '2026-01-31T11:00:00Z',
+    deliverablePath: 'docs/superpowers/plans/example.md',
+    deliverableRef: 'abc',
+    routingPin: null,
+    ...overrides,
+  }
+}
+
+function pin(overrides: Partial<RoutingPinRefDto> = {}): RoutingPinRefDto {
+  return {
+    id: 'pin-1',
+    cardId: null,
+    cardIdentifier: null,
+    role: 'Code',
+    provenance: 'Auto',
+    strength: 'Required',
+    agentKind: null,
+    modelLevel: null,
+    notBefore: '2026-02-03T14:00:00Z',
+    reason: 'test',
+    ...overrides,
+  }
+}
+
+describe('livenessFor', () => {
+  it('pins the ten progress kinds and excludes BlockedQuestion and CardStalled', () => {
+    expect([...LIVENESS_KINDS].sort()).toEqual([...LIVENESS_KIND_LIST].sort())
+    expect(LIVENESS_KINDS.size).toBe(10)
+    expect(LIVENESS_KINDS.has('BlockedQuestion')).toBe(false)
+    expect(LIVENESS_KINDS.has('CardStalled')).toBe(false)
+  })
+
+  it('matches a delegation by its own id', () => {
+    const task = item({ id: 'task-1', source: 'Delegation' })
+    const row = attention({ kind: 'DeadSession', taskId: 'task-1' })
+    expect(livenessFor(task, [row])).toEqual(row)
+  })
+
+  it('matches a card by the bound worker id', () => {
+    const card = item({ source: 'Card', worker: worker({ taskId: 'worker-1' }) })
+    const row = attention({ kind: 'Overdue', taskId: 'worker-1' })
+    expect(livenessFor(card, [row])).toEqual(row)
+  })
+
+  it('does not treat BlockedQuestion or CardStalled as liveness even when task-keyed', () => {
+    const task = item({ id: 'task-1', source: 'Delegation' })
+    expect(
+      livenessFor(task, [attention({ kind: 'BlockedQuestion', taskId: 'task-1' })]),
+    ).toBeNull()
+    expect(
+      livenessFor(task, [attention({ kind: 'CardStalled', taskId: 'task-1' })]),
+    ).toBeNull()
+  })
+
+  it('returns the first matching liveness row', () => {
+    const task = item({ id: 'task-1', source: 'Delegation' })
+    const first = attention({ kind: 'ProgressStalled', taskId: 'task-1', title: 'first' })
+    const second = attention({ kind: 'Overdue', taskId: 'task-1', title: 'second' })
+    expect(livenessFor(task, [first, second])?.title).toBe('first')
+  })
+
+  it('returns null when the feed has no matching row', () => {
+    expect(livenessFor(item({ worker: worker() }), [attention({ kind: 'Overdue', taskId: 'other' })])).toBeNull()
+    expect(livenessFor(item({ source: 'Card', worker: null }), [attention({ kind: 'Overdue' })])).toBeNull()
+  })
+})
+
+describe('runningSince', () => {
+  it('prefers worker.dispatchedAt, then startedAt, then createdAt', () => {
+    const withDispatch = item({
+      group: 'Running',
+      startedAt: '2026-02-03T08:00:00Z',
+      createdAt: '2026-02-03T07:00:00Z',
+      worker: worker({ dispatchedAt: '2026-02-03T09:00:00Z' }),
+    })
+    expect(runningSince(withDispatch)).toBe('2026-02-03T09:00:00Z')
+
+    const noDispatch = item({
+      group: 'Running',
+      startedAt: '2026-02-03T08:00:00Z',
+      createdAt: '2026-02-03T07:00:00Z',
+      worker: worker({ dispatchedAt: null }),
+    })
+    expect(runningSince(noDispatch)).toBe('2026-02-03T08:00:00Z')
+
+    const createdOnly = item({
+      group: 'Running',
+      startedAt: null,
+      createdAt: '2026-02-03T07:00:00Z',
+      worker: null,
+    })
+    expect(runningSince(createdOnly)).toBe('2026-02-03T07:00:00Z')
+  })
+
+  it('returns null off Running', () => {
+    expect(runningSince(item({ group: 'Next', worker: worker() }))).toBeNull()
+    expect(runningSince(item({ group: 'Done', worker: worker() }))).toBeNull()
+    expect(runningSince(item({ group: 'NeedsHuman', worker: worker({ status: 'Blocked' }) }))).toBeNull()
+  })
+})
+
+describe('pipelineRowFor', () => {
+  it('finds in-flight and queued rows by item id or worker taskId, and ready by card id', () => {
+    const inflight = inFlightRow({ taskId: 'worker-1' })
+    const queued = queuedRow({ taskId: 'task-queued' })
+    const ready = readyRow()
+    const pipe = pipeline({
+      stages: [
+        stage({
+          inFlight: [inflight],
+          queued: [queued],
+          ready: [ready],
+        }),
+      ],
+    })
+
+    expect(pipelineRowFor(item({ worker: worker({ taskId: 'worker-1' }) }), pipe)).toEqual(inflight)
+    expect(
+      pipelineRowFor(item({ id: 'task-queued', source: 'Delegation', worker: null }), pipe),
+    ).toEqual(queued)
+    expect(pipelineRowFor(item({ source: 'Card', worker: null }), pipe)).toEqual(ready)
+  })
+})
+
+describe('queueReasonFor', () => {
+  function queuedPipeline(
+    reason: AgentTaskPipelineQueueReason,
+    extras: Partial<AgentTaskPipelineQueuedDto> = {},
+    stageExtras: Partial<AgentTaskPipelineStageDto> = {},
+    pipelineExtras: Partial<AgentTaskPipelineDto> = {},
+  ) {
+    const row = queuedRow({ taskId: 'task-queued', queueReason: reason, ...extras })
+    return {
+      row,
+      pipe: pipeline({
+        ...pipelineExtras,
+        stages: [stage({ queued: [row], ...stageExtras })],
+      }),
+      item: item({
+        id: 'task-queued',
+        source: 'Delegation',
+        group: 'Next',
+        state: 'Queued',
+        worker: null,
+      }),
+    }
+  }
+
+  it('names a shared checkout holder and +N when more', () => {
+    const { pipe, item: queued } = queuedPipeline('sharedCheckoutLease', {
+      heldBy: [holder(), holder({ taskId: 'other', shortId: 'other001', title: 'second' })],
+    })
+    const view = queueReasonFor(queued, pipe)
+    expect(view?.reason).toBe('sharedCheckoutLease')
+    expect(view?.line).toBe(
+      'waiting: shared checkout held by task-1a2b3c4d — in-flight docs pass +1',
+    )
+    expect(view?.holders).toHaveLength(2)
+  })
+
+  it('prints the concurrency cap as in-flight of max slots', () => {
+    const { pipe, item: queued } = queuedPipeline(
+      'concurrencyCap',
+      {},
+      {},
+      { maxConcurrentTasks: 6, inFlightAgainstCap: 6 },
+    )
+    expect(queueReasonFor(queued, pipe)?.line).toBe('waiting: 6 of 6 task slots in use')
+  })
+
+  it('prints a routing pin not-before clock', () => {
+    const { pipe, item: queued } = queuedPipeline(
+      'routingPinNotBefore',
+      {},
+      { routingPin: pin({ notBefore: '2026-02-03T14:00:00Z' }) },
+    )
+    expect(queueReasonFor(queued, pipe)?.line).toBe('waiting: not before 14:00 (routing pin)')
+  })
+
+  it('prints awaitingDispatch as the next-tick line', () => {
+    const { pipe, item: queued } = queuedPipeline('awaitingDispatch')
+    expect(queueReasonFor(queued, pipe)?.line).toBe('queued — next dispatch tick')
+  })
+
+  it('returns null for a card whose worker is not queued', () => {
+    const pipe = pipeline({
+      stages: [stage({ queued: [queuedRow({ taskId: 'someone-else' })] })],
+    })
+    expect(queueReasonFor(item({ group: 'Next', worker: worker() }), pipe)).toBeNull()
+    expect(queueReasonFor(item({ group: 'Next', worker: null }), pipe)).toBeNull()
+  })
+})
+
+describe('readinessFor', () => {
+  it('finds a ready card by card id', () => {
+    const ready = readyRow()
+    const pipe = pipeline({ stages: [stage({ ready: [ready] })] })
+    const view = readinessFor(item({ source: 'Card', group: 'Next', state: 'Backlog' }), pipe)
+    expect(view).toEqual({
+      since: ready.readySince,
+      deliverablePath: ready.deliverablePath,
+      deliverableRef: ready.deliverableRef,
+      sourcePlanShortId: ready.sourcePlanShortId,
+      sourcePlanTaskId: ready.sourcePlanTaskId,
+    })
+  })
+
+  it('never asks a Done or NeedsDecision card', () => {
+    const pipe = pipeline({ stages: [stage({ ready: [readyRow()] })] })
+    expect(
+      readinessFor(item({ source: 'Card', group: 'Done', state: 'Done' }), pipe),
+    ).toBeNull()
+    expect(
+      readinessFor(item({ source: 'Card', group: 'NeedsHuman', state: 'NeedsDecision' }), pipe),
+    ).toBeNull()
+  })
+})
+
+describe('formatElapsed', () => {
+  it('pins 2h14m at the story clock 2026-02-03T09:14:00Z', () => {
+    expect(formatElapsed('2026-02-03T07:00:00Z', Date.parse('2026-02-03T09:14:00Z'))).toBe('2h14m')
   })
 })

@@ -1,5 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentSummaryDto } from '../../../api/agents'
+import type {
+  AgentTaskPipelineDto,
+  AgentTaskPipelineInFlightDto,
+  AgentTaskPipelineQueueReason,
+  AgentTaskPipelineQueuedDto,
+  AgentTaskPipelineReadyDto,
+  AgentTaskPipelineStageDto,
+  RoutingPinRefDto,
+} from '../../../api/agentTasks'
+import type { AttentionItemDto } from '../../../api/attention'
 import type { HomeTaskItemDto, HomeTaskWorkerDto } from '../../../api/homeTasks'
 import { renderWithProviders, screen, userEvent } from '../../../test/utils'
 import { TaskCard } from './TaskCard'
@@ -313,5 +323,374 @@ describe('TaskCard', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Task menu CARD-0002' }))
     expect(await screen.findByRole('menuitem', { name: 'Open' })).toBeInTheDocument()
     expect(onOpen).not.toHaveBeenCalled()
+  })
+
+  const NOW = Date.parse('2026-02-03T09:14:00Z')
+
+  function attention(overrides: Partial<AttentionItemDto> = {}): AttentionItemDto {
+    return {
+      kind: 'Overdue',
+      severity: 'Warning',
+      taskId: 'aaaaaaaa-0000-0000-0000-000000000006',
+      sessionId: null,
+      agentId: null,
+      messageId: null,
+      cardId: null,
+      title: 'Overdue',
+      headline: 'Overdue',
+      evidence: 'past the deadline',
+      sinceUtc: '2026-02-03T08:00:00Z',
+      subtreeCostUsd: null,
+      actions: [],
+      ...overrides,
+    }
+  }
+
+  function pipeline(overrides: Partial<AgentTaskPipelineDto> = {}): AgentTaskPipelineDto {
+    return {
+      asOf: '2026-02-03T09:00:00Z',
+      recommendationsAreAdvisory: true,
+      maxConcurrentTasks: 6,
+      inFlightAgainstCap: 6,
+      stages: [],
+      ...overrides,
+    }
+  }
+
+  function stage(overrides: Partial<AgentTaskPipelineStageDto> = {}): AgentTaskPipelineStageDto {
+    return {
+      role: 'Code',
+      recommendedInFlight: 1,
+      inFlightCount: 0,
+      atOrAboveRecommendation: false,
+      inFlight: [],
+      queued: [],
+      blocked: [],
+      ready: [],
+      routingPin: null,
+      ...overrides,
+    }
+  }
+
+  function inFlightRow(
+    overrides: Partial<AgentTaskPipelineInFlightDto> = {},
+  ): AgentTaskPipelineInFlightDto {
+    return {
+      taskId: 'aaaaaaaa-0000-0000-0000-000000000006',
+      shortId: 'aaaaaaaa',
+      title: 'in flight',
+      status: 'Dispatched',
+      card: null,
+      agentName: 'task-bound',
+      dispatchedAt: '2026-02-03T07:00:00Z',
+      lastActivityAt: '2026-02-03T09:11:00Z',
+      ...overrides,
+    }
+  }
+
+  function queuedRow(
+    overrides: Partial<AgentTaskPipelineQueuedDto> = {},
+  ): AgentTaskPipelineQueuedDto {
+    return {
+      taskId: 'bbbbbbbb-0000-0000-0000-000000000007',
+      shortId: 'bbbbbbbb',
+      title: 'queued work',
+      card: null,
+      createdAt: '2026-02-03T08:50:00Z',
+      queueReason: 'awaitingDispatch',
+      heldBy: [],
+      ...overrides,
+    }
+  }
+
+  function readyRow(overrides: Partial<AgentTaskPipelineReadyDto> = {}): AgentTaskPipelineReadyDto {
+    return {
+      card: {
+        id: '11111111-0000-0000-0000-000000000001',
+        identifier: 'CARD-0002',
+        title: 'Tasks section on the home rail',
+      },
+      sourcePlanTaskId: 'cccccccc-0000-0000-0000-000000000003',
+      sourcePlanShortId: 'cccccccc',
+      readySince: '2026-01-31T11:00:00Z',
+      deliverablePath: 'docs/superpowers/plans/example.md',
+      deliverableRef: 'abc',
+      routingPin: null,
+      ...overrides,
+    }
+  }
+
+  function pin(overrides: Partial<RoutingPinRefDto> = {}): RoutingPinRefDto {
+    return {
+      id: 'pin-1',
+      cardId: null,
+      cardIdentifier: null,
+      role: 'Code',
+      provenance: 'Auto',
+      strength: 'Required',
+      agentKind: null,
+      modelLevel: null,
+      notBefore: '2026-02-03T14:00:00Z',
+      reason: 'test',
+      ...overrides,
+    }
+  }
+
+  it('renders the liveness visual label, not the raw kind or worker status', () => {
+    renderWithProviders(
+      <TaskCard
+        item={item({ worker: worker({ status: 'Dispatched' }) })}
+        liveness={attention({ kind: 'DeadSession' })}
+        now={NOW}
+        onOpen={() => {}}
+      />,
+    )
+    expect(screen.getByTestId('task-liveness-DeadSession')).toHaveTextContent('Dead session')
+    expect(screen.queryByText('DeadSession')).not.toBeInTheDocument()
+    expect(screen.getByText('Dispatched')).toBeInTheDocument()
+  })
+
+  it('keeps the Working spinner beside an Overdue verdict', () => {
+    renderWithProviders(
+      <TaskCard
+        item={item({ worker: worker({ status: 'Working' }) })}
+        agents={[agent({ working: true })]}
+        liveness={attention({ kind: 'Overdue' })}
+        now={NOW}
+        onOpen={() => {}}
+      />,
+    )
+    expect(screen.getByText('Working')).toBeInTheDocument()
+    expect(screen.getByTestId('task-liveness-Overdue')).toHaveTextContent('Overdue')
+  })
+
+  it('prints elapsed on a Running card with a Dispatched worker and on a Running delegation, not Up next or Done', () => {
+    const { rerender } = renderWithProviders(
+      <TaskCard
+        item={item({
+          worker: worker({ status: 'Dispatched', dispatchedAt: '2026-02-03T07:00:00Z' }),
+        })}
+        now={NOW}
+        onOpen={() => {}}
+      />,
+    )
+    expect(screen.getByTestId('task-elapsed-11111111-0000-0000-0000-000000000001')).toHaveTextContent(
+      '2h14m',
+    )
+
+    rerender(
+      <TaskCard
+        item={item({
+          source: 'Delegation',
+          id: 'task-run',
+          identifier: '15c3cb72',
+          group: 'Running',
+          state: 'Working',
+          worker: null,
+          startedAt: '2026-02-03T07:00:00Z',
+          createdAt: '2026-02-03T06:00:00Z',
+          modelLevel: 'High',
+          agentKind: 'ClaudeCode',
+          role: 'Docs',
+        })}
+        now={NOW}
+        onOpen={() => {}}
+      />,
+    )
+    expect(screen.getByTestId('task-elapsed-task-run')).toHaveTextContent('2h14m')
+
+    rerender(
+      <TaskCard
+        item={item({
+          group: 'Next',
+          state: 'Backlog',
+          worker: worker({ status: 'Queued', dispatchedAt: '2026-02-03T07:00:00Z' }),
+        })}
+        now={NOW}
+        onOpen={() => {}}
+      />,
+    )
+    expect(screen.queryByTestId('task-elapsed-11111111-0000-0000-0000-000000000001')).not.toBeInTheDocument()
+
+    rerender(
+      <TaskCard
+        item={item({
+          group: 'Done',
+          state: 'Done',
+          terminalReason: 'Closed.',
+          worker: worker({ status: 'Succeeded', completedAt: '2026-02-03T08:00:00Z' }),
+        })}
+        now={NOW}
+        onOpen={() => {}}
+      />,
+    )
+    expect(screen.queryByTestId('task-elapsed-11111111-0000-0000-0000-000000000001')).not.toBeInTheDocument()
+  })
+
+  it('prints active Xm ago only when the pipeline row has lastActivityAt', () => {
+    const running = item({
+      worker: worker({ status: 'Dispatched', dispatchedAt: '2026-02-03T07:00:00Z' }),
+    })
+    const { rerender } = renderWithProviders(
+      <TaskCard item={running} now={NOW} onOpen={() => {}} />,
+    )
+    expect(screen.getByTestId(`task-elapsed-${running.id}`)).toHaveTextContent('2h14m')
+    expect(screen.getByTestId(`task-elapsed-${running.id}`)).not.toHaveTextContent('active')
+
+    rerender(
+      <TaskCard item={running} pipelineRow={inFlightRow()} now={NOW} onOpen={() => {}} />,
+    )
+    expect(screen.getByTestId(`task-elapsed-${running.id}`)).toHaveTextContent('2h14m · active 3m ago')
+  })
+
+  it.each<[AgentTaskPipelineQueueReason, string, Partial<AgentTaskPipelineQueuedDto>, Partial<AgentTaskPipelineStageDto>]>([
+    [
+      'sharedCheckoutLease',
+      'waiting: shared checkout held by task-1a2b3c4d — in-flight docs pass +1',
+      {
+        heldBy: [
+          { taskId: 'hold-1', shortId: '1a2b3c4d', title: 'in-flight docs pass' },
+          { taskId: 'hold-2', shortId: 'other001', title: 'second' },
+        ],
+      },
+      {},
+    ],
+    ['concurrencyCap', 'waiting: 6 of 6 task slots in use', {}, {}],
+    ['routingPinNotBefore', 'waiting: not before 14:00 (routing pin)', {}, { routingPin: pin() }],
+    ['awaitingDispatch', 'queued — next dispatch tick', {}, {}],
+  ])('prints the %s queue-reason line', (reason, line, queuedExtras, stageExtras) => {
+    const queued = item({
+      source: 'Delegation',
+      id: 'bbbbbbbb-0000-0000-0000-000000000007',
+      identifier: 'bbbbbbbb',
+      group: 'Next',
+      state: 'Queued',
+      worker: null,
+      modelLevel: 'High',
+      agentKind: 'ClaudeCode',
+      role: 'Code',
+    })
+    const pipe = pipeline({
+      stages: [
+        stage({
+          queued: [queuedRow({ queueReason: reason, ...queuedExtras })],
+          ...stageExtras,
+        }),
+      ],
+    })
+    renderWithProviders(<TaskCard item={queued} pipeline={pipe} now={NOW} onOpen={() => {}} />)
+    expect(screen.getByTestId(`task-queue-${queued.id}`)).toHaveTextContent(line)
+  })
+
+  it('renders the ready line and Read link without firing onOpen', async () => {
+    const onOpen = vi.fn()
+    const card = item({ group: 'Next', state: 'Backlog', worker: null, stage: 'Plan' })
+    const pipe = pipeline({ stages: [stage({ ready: [readyRow()] })] })
+    renderWithProviders(
+      <TaskCard item={card} pipeline={pipe} now={NOW} onOpen={onOpen} />,
+    )
+
+    expect(screen.getByTestId(`task-ready-${card.id}`)).toHaveTextContent(
+      'plan landed 2d ago — ready for Code',
+    )
+    const read = screen.getByTestId(`task-ready-read-${card.id}`)
+    expect(read).toHaveAttribute(
+      'href',
+      `/plans?${new URLSearchParams({
+        file: 'docs/superpowers/plans/example.md',
+        ref: 'abc',
+        task: 'cccccccc-0000-0000-0000-000000000003',
+      }).toString()}`,
+    )
+    await userEvent.click(read)
+    expect(onOpen).not.toHaveBeenCalled()
+  })
+
+  it('prints terminalReason first line on a Done card only', () => {
+    const { rerender } = renderWithProviders(
+      <TaskCard
+        item={item({
+          group: 'Done',
+          state: 'Done',
+          terminalReason: '\n\n  Fixed and merged to master.\nMore detail',
+        })}
+        now={NOW}
+        onOpen={() => {}}
+      />,
+    )
+    expect(screen.getByTestId('task-terminal-11111111-0000-0000-0000-000000000001')).toHaveTextContent(
+      'Fixed and merged to master.',
+    )
+
+    rerender(
+      <TaskCard
+        item={item({
+          source: 'Delegation',
+          id: 'task-done',
+          identifier: 'abcd1234',
+          group: 'Done',
+          state: 'Succeeded',
+          role: 'Plan',
+          modelLevel: 'High',
+          agentKind: 'ClaudeCode',
+          terminalReason: 'Should not show',
+          readAt: '2026-02-03T09:00:00Z',
+        })}
+        now={NOW}
+        onOpen={() => {}}
+      />,
+    )
+    expect(screen.queryByTestId('task-terminal-task-done')).not.toBeInTheDocument()
+    expect(screen.queryByText('Should not show')).not.toBeInTheDocument()
+
+    rerender(
+      <TaskCard
+        item={item({
+          group: 'Running',
+          terminalReason: 'Should not show on Running',
+        })}
+        now={NOW}
+        onOpen={() => {}}
+      />,
+    )
+    expect(screen.queryByText('Should not show on Running')).not.toBeInTheDocument()
+  })
+
+  it('leaves a Needs-you item visually unchanged — no elapsed, queue, ready, terminal, or verdict', () => {
+    const needsYou = item({
+      group: 'NeedsHuman',
+      state: 'NeedsDecision',
+      humanReason: 'Decision',
+      stage: null,
+      worker: null,
+      terminalReason: 'not for this group',
+    })
+    const pipe = pipeline({
+      stages: [
+        stage({
+          queued: [queuedRow({ taskId: needsYou.id, queueReason: 'awaitingDispatch' })],
+          ready: [readyRow({ card: { id: needsYou.id, identifier: 'CARD-0002', title: needsYou.title } })],
+        }),
+      ],
+    })
+    renderWithProviders(
+      <TaskCard
+        item={needsYou}
+        liveness={attention({ kind: 'Overdue', taskId: needsYou.id })}
+        pipelineRow={inFlightRow({ taskId: needsYou.id })}
+        pipeline={pipe}
+        now={NOW}
+        onOpen={() => {}}
+      />,
+    )
+    expect(screen.getAllByText('Needs decision').length).toBeGreaterThan(0)
+    expect(screen.queryByTestId(`task-elapsed-${needsYou.id}`)).not.toBeInTheDocument()
+    expect(screen.queryByTestId(`task-queue-${needsYou.id}`)).not.toBeInTheDocument()
+    expect(screen.queryByTestId(`task-ready-${needsYou.id}`)).not.toBeInTheDocument()
+    expect(screen.queryByTestId(`task-terminal-${needsYou.id}`)).not.toBeInTheDocument()
+    expect(screen.queryByTestId('task-liveness-Overdue')).not.toBeInTheDocument()
+    expect(screen.queryByText(/waiting:/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/ready for Code/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/active /)).not.toBeInTheDocument()
   })
 })

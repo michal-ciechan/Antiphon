@@ -1,10 +1,19 @@
 import type { AgentSummaryDto } from '../../../api/agents'
-import type { AgentTaskStatus } from '../../../api/agentTasks'
-import type { AttentionItemDto } from '../../../api/attention'
+import type {
+  AgentTaskPipelineDto,
+  AgentTaskPipelineHolderDto,
+  AgentTaskPipelineInFlightDto,
+  AgentTaskPipelineQueueReason,
+  AgentTaskPipelineQueuedDto,
+  AgentTaskPipelineReadyDto,
+  AgentTaskPipelineStageDto,
+  AgentTaskStatus,
+} from '../../../api/agentTasks'
+import type { AttentionItemDto, AttentionKind } from '../../../api/attention'
 import type { CardStatus } from '../../../api/boards'
 import type { HomeTaskGroup, HomeTaskHumanReason, HomeTaskItemDto, HomeTaskSource } from '../../../api/homeTasks'
 import { STATE_COLORS } from '../../board/boardVisuals'
-import { STATUS_COLOR } from '../../delegations/taskVisuals'
+import { formatDuration, STATUS_COLOR } from '../../delegations/taskVisuals'
 import { normalizeDir } from '../projectGrouping'
 
 export const SOURCE_LABEL: Record<HomeTaskSource, string> = {
@@ -143,4 +152,194 @@ export function isSpawnable(item: HomeTaskItemDto): boolean {
 export function isAnswerable(item: HomeTaskItemDto): boolean {
   if (item.source === 'Delegation') return item.state === 'Blocked'
   return item.worker?.status === 'Blocked'
+}
+
+/**
+ * Task-progress conditions the rail may badge. Deliberately not total over AttentionKind: a new
+ * kind is ignored here until someone adds it. BlockedQuestion / CardStalled are never liveness.
+ */
+export const LIVENESS_KINDS: ReadonlySet<AttentionKind> = new Set([
+  'DeadSession',
+  'NeverStarted',
+  'BriefUndelivered',
+  'ReportUnsettled',
+  'UnmarkedWaiting',
+  'PastExpectedIdle',
+  'ProgressStalled',
+  'Overdue',
+  'ChecksSpent',
+  'UncorrelatedReport',
+])
+
+/** Join key for attention and in-flight/queued pipeline rows: the task, never the card. */
+function taskKey(item: HomeTaskItemDto): string | null {
+  return item.source === 'Delegation' ? item.id : (item.worker?.taskId ?? null)
+}
+
+/**
+ * First attention row whose taskId is this item's task and whose kind is a progress verdict.
+ * Cards join on the bound worker; unbound delegations join on their own id. First match wins.
+ */
+export function livenessFor(
+  item: HomeTaskItemDto,
+  attentionItems: AttentionItemDto[],
+): AttentionItemDto | null {
+  const key = taskKey(item)
+  if (!key) return null
+  return attentionItems.find((row) => row.taskId === key && LIVENESS_KINDS.has(row.kind)) ?? null
+}
+
+/**
+ * Instant the Running item started counting elapsed time: worker dispatch, else startedAt, else
+ * createdAt. Null off the Running group — Up next / Done / Needs you never print duration.
+ */
+export function runningSince(item: HomeTaskItemDto): string | null {
+  if (item.group !== 'Running') return null
+  return item.worker?.dispatchedAt ?? item.startedAt ?? item.createdAt
+}
+
+export type HomeTaskPipelineRow =
+  | AgentTaskPipelineInFlightDto
+  | AgentTaskPipelineQueuedDto
+  | AgentTaskPipelineReadyDto
+
+/**
+ * In-flight and queued rows match the item's task id (own id or worker.taskId). Ready rows match
+ * a card by card.id. Null when the pipeline is missing or has no row for this item.
+ */
+export function pipelineRowFor(
+  item: HomeTaskItemDto,
+  pipeline: AgentTaskPipelineDto | null | undefined,
+): HomeTaskPipelineRow | null {
+  if (!pipeline) return null
+  const key = taskKey(item)
+  if (key) {
+    for (const stage of pipeline.stages) {
+      const inFlight = stage.inFlight.find((row) => row.taskId === key)
+      if (inFlight) return inFlight
+    }
+    for (const stage of pipeline.stages) {
+      const queued = stage.queued.find((row) => row.taskId === key)
+      if (queued) return queued
+    }
+  }
+  if (item.source === 'Card') {
+    for (const stage of pipeline.stages) {
+      const ready = stage.ready.find((row) => row.card.id === item.id)
+      if (ready) return ready
+    }
+  }
+  return null
+}
+
+export const QUEUE_REASON_LABEL: Record<AgentTaskPipelineQueueReason, string> = {
+  sharedCheckoutLease: 'waiting: shared checkout held by',
+  concurrencyCap: 'waiting: task slots in use',
+  routingPinNotBefore: 'waiting: not before',
+  awaitingDispatch: 'queued — next dispatch tick',
+}
+
+export interface QueueReasonView {
+  reason: AgentTaskPipelineQueueReason
+  line: string
+  holders: AgentTaskPipelineHolderDto[]
+}
+
+/**
+ * Why an Up-next item has not dispatched, read from the pipeline queued row. Null when the item
+ * has no task key or that task is not queued (a card whose worker is not queued).
+ */
+export function queueReasonFor(
+  item: HomeTaskItemDto,
+  pipeline: AgentTaskPipelineDto | null | undefined,
+): QueueReasonView | null {
+  if (!pipeline) return null
+  const key = taskKey(item)
+  if (!key) return null
+  for (const stage of pipeline.stages) {
+    const queued = stage.queued.find((row) => row.taskId === key)
+    if (!queued) continue
+    return {
+      reason: queued.queueReason,
+      line: queueReasonLine(queued, pipeline, stage),
+      holders: queued.heldBy,
+    }
+  }
+  return null
+}
+
+function queueReasonLine(
+  queued: AgentTaskPipelineQueuedDto,
+  pipeline: AgentTaskPipelineDto,
+  stage: AgentTaskPipelineStageDto,
+): string {
+  switch (queued.queueReason) {
+    case 'sharedCheckoutLease': {
+      const first = queued.heldBy[0]
+      const who = first ? `task-${first.shortId} — ${first.title}` : 'another task'
+      const extra = queued.heldBy.length > 1 ? ` +${queued.heldBy.length - 1}` : ''
+      return `waiting: shared checkout held by ${who}${extra}`
+    }
+    case 'concurrencyCap':
+      return `waiting: ${pipeline.inFlightAgainstCap} of ${pipeline.maxConcurrentTasks} task slots in use`
+    case 'routingPinNotBefore': {
+      const notBefore = stage.routingPin?.notBefore
+      const clock = notBefore ? formatClockUtc(notBefore) : null
+      return clock
+        ? `waiting: not before ${clock} (routing pin)`
+        : 'waiting: not before (routing pin)'
+    }
+    case 'awaitingDispatch':
+      return QUEUE_REASON_LABEL.awaitingDispatch
+  }
+}
+
+function formatClockUtc(iso: string): string {
+  const date = new Date(iso)
+  return `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}`
+}
+
+export interface ReadinessView {
+  since: string
+  deliverablePath: string
+  deliverableRef: string | null
+  sourcePlanShortId: string
+  sourcePlanTaskId: string
+}
+
+/**
+ * Up-next card the pipeline lists as ready for Code. Done and NeedsDecision cards are never
+ * asked — a close verdict or a parked decision is not a "ready" line.
+ */
+export function readinessFor(
+  item: HomeTaskItemDto,
+  pipeline: AgentTaskPipelineDto | null | undefined,
+): ReadinessView | null {
+  if (!pipeline) return null
+  if (item.source !== 'Card') return null
+  if (item.group === 'Done' || item.state === 'Done' || item.state === 'NeedsDecision') return null
+  for (const stage of pipeline.stages) {
+    const ready = stage.ready.find((row) => row.card.id === item.id)
+    if (!ready) continue
+    return {
+      since: ready.readySince,
+      deliverablePath: ready.deliverablePath,
+      deliverableRef: ready.deliverableRef,
+      sourcePlanShortId: ready.sourcePlanShortId,
+      sourcePlanTaskId: ready.sourcePlanTaskId,
+    }
+  }
+  return null
+}
+
+export function formatRelativeAgo(iso: string, now = Date.now()): string {
+  const mins = Math.max(0, Math.floor((now - Date.parse(iso)) / 60_000))
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
+}
+
+export function formatElapsed(fromIso: string, now = Date.now()): string {
+  return formatDuration(Math.max(0, (now - Date.parse(fromIso)) / 1000))
 }
