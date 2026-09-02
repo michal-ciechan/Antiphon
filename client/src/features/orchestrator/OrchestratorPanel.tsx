@@ -1,7 +1,9 @@
 import {
   ActionIcon,
   Alert,
+  Anchor,
   Badge,
+  Box,
   Button,
   Group,
   Loader,
@@ -17,12 +19,20 @@ import {
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { TbAlertCircle, TbPlayerPause, TbPlayerPlay, TbRefresh, TbRotateClockwise, TbServer2 } from 'react-icons/tb'
+import { Link } from 'react-router'
+import type { OrchestratorRunningSessionDto, OrchestratorSessionSource } from '../../api/orchestrator'
 import {
   useOrchestratorState,
   usePauseOrchestrator,
   useResumeOrchestrator,
   useRunOrchestratorTick,
 } from '../../api/orchestrator'
+import { STATUS_COLOR } from '../delegations/taskVisuals'
+
+const SOURCE_CHIP: Record<OrchestratorSessionSource, { label: string; color: string }> = {
+  Card: { label: 'Card', color: 'active' },
+  Delegation: { label: 'Task', color: 'violet' },
+}
 
 function formatDuration(totalSeconds: number): string {
   const seconds = Math.max(0, Math.floor(totalSeconds))
@@ -46,13 +56,27 @@ function formatCurrency(value: number): string {
   }).format(value)
 }
 
-function SummaryMetric({ label, value }: { label: string; value: string | number }) {
+function SummaryMetric({
+  label,
+  value,
+  subline,
+}: {
+  label: string
+  value: string | number
+  subline?: string
+}) {
   return (
     <Paper withBorder p="md">
       <Text size="xs" c="dimmed" tt="uppercase" fw={700}>{label}</Text>
       <Text size="xl" fw={700}>{value}</Text>
+      {subline ? <Text size="xs" c="dimmed">{subline}</Text> : null}
     </Paper>
   )
+}
+
+function sessionCardLabel(session: OrchestratorRunningSessionDto): string {
+  if (session.cardIdentifier) return session.cardIdentifier
+  return session.task?.title ?? session.definitionName
 }
 
 export function OrchestratorPanel() {
@@ -143,8 +167,16 @@ export function OrchestratorPanel() {
         </Group>
       </Group>
 
+      <Text size="xs" c="dimmed">
+        Pause and Tick govern card auto-dispatch. Delegate sessions are dispatched by the task pipeline and are listed here for visibility.
+      </Text>
+
       <SimpleGrid cols={{ base: 2, md: 6 }} spacing="sm">
-        <SummaryMetric label="Running" value={data.runningSessions} />
+        <SummaryMetric
+          label="Running"
+          value={data.runningSessions}
+          subline={`${data.runningCardSessions ?? 0} card · ${data.runningDelegateSessions ?? 0} delegate`}
+        />
         <SummaryMetric label="Retry Queue" value={data.retryQueueLength} />
         <SummaryMetric label="Tokens" value={totalTokens.toLocaleString()} />
         <SummaryMetric label="Cost" value={formatCurrency(data.totals.costUsd)} />
@@ -164,7 +196,7 @@ export function OrchestratorPanel() {
                 <Table.Th>Card</Table.Th>
                 <Table.Th>Board</Table.Th>
                 <Table.Th>Agent</Table.Th>
-                <Table.Th>Phase</Table.Th>
+                <Table.Th>Phase / status</Table.Th>
                 <Table.Th>Turns</Table.Th>
                 <Table.Th>Runtime</Table.Th>
                 <Table.Th>Tokens</Table.Th>
@@ -181,18 +213,54 @@ export function OrchestratorPanel() {
               ) : data.running.map((session) => (
                 <Table.Tr key={session.sessionId}>
                   <Table.Td>
-                    <Text size="sm" fw={600}>{session.cardIdentifier}</Text>
-                    <Text size="xs" c="dimmed">{session.cardTitle}</Text>
+                    <Box pl={session.depth * 16}>
+                      <Group gap={6} wrap="nowrap">
+                        {session.depth > 0 ? <Text size="sm" c="dimmed">└</Text> : null}
+                        <Badge
+                          size="xs"
+                          variant="outline"
+                          color={SOURCE_CHIP[session.source].color}
+                        >
+                          {SOURCE_CHIP[session.source].label}
+                        </Badge>
+                        <Text size="sm" fw={600}>{sessionCardLabel(session)}</Text>
+                        {session.task ? (
+                          <Anchor
+                            component={Link}
+                            to={`/orchestrator?tab=delegations&task=${session.task.taskId}`}
+                            size="xs"
+                            c="dimmed"
+                            ff="monospace"
+                          >
+                            {session.task.shortId}
+                          </Anchor>
+                        ) : null}
+                      </Group>
+                      {session.cardIdentifier ? (
+                        <Text size="xs" c="dimmed">{session.cardTitle}</Text>
+                      ) : null}
+                    </Box>
                   </Table.Td>
-                  <Table.Td>{session.boardName}</Table.Td>
+                  <Table.Td>{session.boardName ?? '—'}</Table.Td>
                   <Table.Td>
                     <Text size="sm">{session.definitionName}</Text>
                     <Text size="xs" c="dimmed">{session.agentKind}</Text>
+                    {session.task?.agentName ? (
+                      <Text size="xs" c="dimmed">{session.task.agentName}</Text>
+                    ) : null}
                   </Table.Td>
                   <Table.Td>
-                    <Badge size="sm" variant="light">{session.phase ?? session.status}</Badge>
+                    {session.source === 'Delegation' && session.task ? (
+                      <Badge size="sm" variant="light" color={STATUS_COLOR[session.task.status]}>
+                        {`${session.task.role.toLowerCase()} · ${session.task.status}`}
+                      </Badge>
+                    ) : (
+                      <Badge size="sm" variant="light">{session.phase ?? session.status}</Badge>
+                    )}
                   </Table.Td>
-                  <Table.Td>{session.turnCount}</Table.Td>
+                  <Table.Td>
+                    {session.turnCount === 0 && session.source === 'Delegation' ? '—' : session.turnCount}
+                  </Table.Td>
                   <Table.Td>{formatDuration(session.runtimeSeconds)}</Table.Td>
                   <Table.Td>{(session.tokensIn + session.tokensOut).toLocaleString()}</Table.Td>
                   <Table.Td>
