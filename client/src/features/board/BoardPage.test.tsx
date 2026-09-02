@@ -440,6 +440,57 @@ describe('archived cards', () => {
   })
 })
 
+describe('creating a board', () => {
+  it('navigates to the new board, not the All-cards view', async () => {
+    const created: BoardDetailDto = {
+      ...board,
+      id: 'board-created',
+      name: 'Sprint Two',
+      columns: board.columns.map((column) => ({
+        ...column,
+        id: `${column.id}-created`,
+        cards: [],
+      })),
+    }
+
+    server.use(
+      http.get('/api/boards', () => HttpResponse.json([boardSummary()])),
+      http.get('/api/boards/board-1', () => HttpResponse.json(board)),
+      http.get('/api/boards/board-created', () => HttpResponse.json(created)),
+      http.get('/api/projects', () =>
+        HttpResponse.json([
+          {
+            id: 'project-1',
+            name: 'Project One',
+            gitRepositoryUrl: 'https://example.test/repo.git',
+            baseBranch: 'master',
+            constitutionPath: '',
+            gitHubIntegrationEnabled: false,
+            notificationsEnabled: false,
+            createdAt: '2026-01-01T00:00:00Z',
+            updatedAt: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+      agentDefinitionsHandler(),
+      http.post('/api/boards', () => HttpResponse.json(created)),
+    )
+
+    renderBoardRoute('/boards')
+    await userEvent.click(await screen.findByRole('button', { name: 'New Board' }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'New Board' })
+    await userEvent.click(within(dialog).getByRole('textbox', { name: 'Project' }))
+    await userEvent.click(await screen.findByRole('option', { name: 'Project One' }))
+    await userEvent.type(within(dialog).getByLabelText('Name'), 'Sprint Two')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Create' }))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/boards/board-created'))
+    expect(await screen.findByText('Project One / Sprint Two')).toBeInTheDocument()
+    expect(screen.queryByText('All cards')).not.toBeInTheDocument()
+  })
+})
+
 describe('creating a card', () => {
   async function openCreateDialog() {
     renderBoardRoute('/boards/board-1')
