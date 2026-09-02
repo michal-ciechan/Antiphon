@@ -21,6 +21,17 @@ Failed launches release the claim and leave the card in its current workflow col
 
 Moving a card to a terminal column while a session is active stops the session and clears the claim.
 
+## Importance and urgency
+
+Cards store two named axes; a single `priority` number is not an API field (a request that still sends it is a 400).
+
+- **Importance** (`Low | Normal | High | Critical`, default `Normal`) is a human rating and does not drift. `Critical` is reserved for work that changes how everything else gets done or is actively costing us.
+- **Urgency** (`Normal | Soon | Now`, default `Normal`) is a human rating of the cost of delay. An optional `dueAt` escalates *effective* urgency: a date within 14 days implies `Soon`, within 3 days or already passed implies `Now`. There is no automatic decay. `urgentSince` is set when urgency rises above `Normal` and cleared when it returns, so the Home rail can show how long a card has been rated urgent.
+- **Rank** is derived at read time: `rank = 13 − (3·importance + 2·effectiveUrgency)`, lower sorts first. Board columns, orchestrator dispatch, the Home *Up next* rail and the `docs/cards/` index all sort by this. Ties break by `dueAt` (earliest first, null last) then `CreatedAt`.
+- **Quadrant** is the Eisenhower cell for grouping, not the sort key: important = `High` or `Critical`; urgent = effective urgency ≠ `Normal`. The four cells are `DoFirst`, `Schedule`, `Clear` and `Someday`. Rank is not monotone across those bands.
+
+Blocking is its own signal (CARD-0100) and does not feed urgency. The board shows an importance chip for `Critical`/`High`/`Low` only and an urgency badge when effective urgency is not `Normal`; the undifferentiated default is unbadged.
+
 ## Delegated work — cards move themselves (CARD-0040)
 
 Everything above is the **card-spawn path**: a card that owns an agent session (`Card.OwnerSessionId`),
@@ -79,8 +90,8 @@ no open bound task, no live session and no owning card session becomes a Warning
 `AttentionKind.CardStalled` row in `GET /api/attention`, naming the last bound task's outcome. Nothing
 un-stalls it automatically — move it, or start something.
 
-**Review → Done is not automated, in any form.** That is the card's conditional arm and it waits on
-CARD-0039 and on a confidence signal nobody has defined.
+**Review → Done is not automated, in any form.** CARD-0039 shipped the ranking axes; closing a card
+is still a human move. A confidence signal nobody has defined is still required.
 
 ## Diff Review Comments
 
@@ -101,5 +112,5 @@ The success transition targets the first board column whose `CardStatus` is `Rev
 
 ### Preserved Gotcha #57
 
-- **A card with a bound task moves ITSELF, and a manual move after the evidence is respected** (CARD-0040): `AgentTask.CardId` is resolved once at creation - an explicit `delegate.ps1 -Card CARD-nnnn` (422 if it names no card), else the parent/follow-up/merge task's card, else the FIRST `CARD-nnnn` in the title, never for `Role = Check`. Identifiers are unique per BOARD, so resolution walks caller-boards -> repo-matched project boards -> every board and binds only on uniqueness inside the scope that answers; ambiguity binds nothing and warns. `CardWorkTransitionService` then sweeps every 60 s over durable rows only (never session or transcript liveness): Backlog/Review -> **In Progress** while a bound task is Dispatched/Working/Blocked, Backlog/InProgress -> **Review** when the newest evidence is a `Succeeded` settle and nothing is open, and `Failed`/`Canceled` move nothing. **The edge trigger is the whole safety property**: it acts only when the evidence is NEWER than the card's last Move/Reopen row (`UpdatedAt` with no history), so a human who drags a card back is never overridden, and the sweep is idempotent because its own row becomes the new last word. The actor is `card-transitions`, NOT `system` (that name means the RunAttempt/card-spawn path), and the two paths never collide because the sweep skips every card with `OwnerSessionId != null`. An automated move calls `ApplyColumnMove` directly like `ReopenAsync`, so it cannot spawn; it sets `AutoDispatchHeldAt` on an active landing (CARD-0087) and dequeues on Review (CARD-0001). A card In Progress past `CardTransitions:StaleAfterDays` (7) with nothing open and nothing live becomes a Warning `AttentionKind.CardStalled` row - detection only, nothing un-stalls it (CARD-0153's rule). **Review -> Done is NOT automated** and waits on CARD-0039. Pinned by `AgentTaskCardBindingTests`, `CardWorkTransitionServiceTests`, `AttentionServiceTests`.
+- **A card with a bound task moves ITSELF, and a manual move after the evidence is respected** (CARD-0040): `AgentTask.CardId` is resolved once at creation - an explicit `delegate.ps1 -Card CARD-nnnn` (422 if it names no card), else the parent/follow-up/merge task's card, else the FIRST `CARD-nnnn` in the title, never for `Role = Check`. Identifiers are unique per BOARD, so resolution walks caller-boards -> repo-matched project boards -> every board and binds only on uniqueness inside the scope that answers; ambiguity binds nothing and warns. `CardWorkTransitionService` then sweeps every 60 s over durable rows only (never session or transcript liveness): Backlog/Review -> **In Progress** while a bound task is Dispatched/Working/Blocked, Backlog/InProgress -> **Review** when the newest evidence is a `Succeeded` settle and nothing is open, and `Failed`/`Canceled` move nothing. **The edge trigger is the whole safety property**: it acts only when the evidence is NEWER than the card's last Move/Reopen row (`UpdatedAt` with no history), so a human who drags a card back is never overridden, and the sweep is idempotent because its own row becomes the new last word. The actor is `card-transitions`, NOT `system` (that name means the RunAttempt/card-spawn path), and the two paths never collide because the sweep skips every card with `OwnerSessionId != null`. An automated move calls `ApplyColumnMove` directly like `ReopenAsync`, so it cannot spawn; it sets `AutoDispatchHeldAt` on an active landing (CARD-0087) and dequeues on Review (CARD-0001). A card In Progress past `CardTransitions:StaleAfterDays` (7) with nothing open and nothing live becomes a Warning `AttentionKind.CardStalled` row - detection only, nothing un-stalls it (CARD-0153's rule). **Review -> Done is NOT automated** — CARD-0039 shipped the ranking axes; closing a card is still a human move. Pinned by `AgentTaskCardBindingTests`, `CardWorkTransitionServiceTests`, `AttentionServiceTests`.
 <!-- CARD-0254 preserved source ends -->

@@ -70,7 +70,7 @@ function card(overrides: Partial<CardDto> = {}): CardDto {
     identifier: 'CARD-0067',
     title: 'reply durability',
     description: '',
-    importance: 'Critical', effectiveUrgency: 'Normal', quadrant: 'Schedule', rank: 4, urgentSince: null,
+    importance: 'Critical', urgency: 'Normal', dueAt: null, urgentSince: null, effectiveUrgency: 'Normal', quadrant: 'Schedule', rank: 4,
     labels: [],
     status: 'Done',
     concurrencyToken: 'ct',

@@ -81,7 +81,7 @@ anyone noticed.
 
 ### Picking
 
-P0 first, but prefer a card that **changes how everything else gets done** over one more feature.
+Lowest `rank` first — the formula already prefers a card that **changes how everything else gets done** over one more feature.
 Prefer a card whose plan already exists — but check properly, see below.
 
 ### "Is there a solid plan?"

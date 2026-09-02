@@ -61,7 +61,7 @@ describe('ModelAvailabilityPanel', () => {
         snapshot = { ...snapshot, holds: [...snapshot.holds, hold] }
         return HttpResponse.json(hold)
       }),
-      http.delete('/api/model-availability/:kind/:alias', ({ request, params }) => {
+      http.delete('/api/model-availability/:kind/:alias', ({ params }) => {
         deletes.push(`${params.kind}/${params.alias}`)
         snapshot = {
           ...snapshot,

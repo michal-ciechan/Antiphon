@@ -76,7 +76,7 @@ function cardDto(): CardDto {
     identifier: 'CARD-0002',
     title: 'Tasks section on the home rail',
     description: 'Rail list of cards and delegations',
-    importance: 'High', effectiveUrgency: 'Normal', quadrant: 'Schedule', rank: 7, urgentSince: null,
+    importance: 'High', urgency: 'Normal', dueAt: null, urgentSince: null, effectiveUrgency: 'Normal', quadrant: 'Schedule', rank: 7,
     labels: [],
     status: 'InProgress',
     concurrencyToken: 'token-1',
