@@ -187,6 +187,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     icon: TbClockPause,
     hint: 'This model is paused — queued work skips it and new creates 409 model_disabled. Clear the hold, wait until it expires, or pick an available alias.',
   },
+  RoutingExhausted: {
+    label: 'Routing exhausted',
+    color: 'danger',
+    icon: TbAlertTriangle,
+    hint: 'The complexity chain has no available candidate. A human decides: clear a hold, wait for a reset, or reroute. Do not pick a kind yourself from an agent.',
+  },
 }
 
 export type AttentionGroupKey = 'now' | 'broken' | 'suspect' | 'failures'

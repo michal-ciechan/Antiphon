@@ -44,6 +44,7 @@ const ALL_KINDS: AttentionKind[] = [
   'ReportUnsettled',
   'UnmarkedWaiting',
   'ModelAvailabilityHold',
+  'RoutingExhausted',
 ]
 
 function item(overrides: Partial<AttentionItemDto> & { kind: AttentionKind }): AttentionItemDto {

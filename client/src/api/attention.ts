@@ -113,6 +113,11 @@ export type AttentionKind =
    * Error. Dispatch skips queued work; new creates 409 model_disabled.
    */
   | 'ModelAvailabilityHold'
+  /**
+   * A complexity chain has no available candidate (CARD-0090). Error. One row per exhausted
+   * list; disappears when the last blocked task resumes, reroutes or is cancelled.
+   */
+  | 'RoutingExhausted'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =

@@ -189,7 +189,7 @@ Optional: CARD-0304's `GET /api/agent-tasks/pipeline` may later list holds. **No
 - Spec D7: strike fleet-wide `UsageLimitState`; point here. Leave S1–S3/S5a history.
 - `docs/agent-kinds.md` / session-runtime-invariants: new gotcha — usage walls are **per-model**; CARD-0072's 30-minute WallPrompt is not recovery for a per-model cap; `/usage-credits` is not a readout.
 - CARD-0309 card (when someone plans it): "table, reader, 409, dispatcher skip already exist; this card adds Manual upsert, optional `ignoreModelDisabled`, UI/`card.ps1` toggle, and the outrank rule tests if not already green."
-- CARD-0090: "unavailable" = `ModelAvailability.IsHeld`; do not invent a second pause list.
+- CARD-0090: "unavailable" = `ModelAvailability.IsHeld`; do not invent a second pause list. **Consumed:** CARD-0090 S1–S4 walks `IsHeldAsync` (and quota, forbid, kind clamp) per candidate and Blocks when the list is exhausted. No second pause table.
 
 ---
 

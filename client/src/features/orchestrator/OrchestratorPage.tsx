@@ -5,6 +5,7 @@ import { useAttention } from '../../api/attention'
 import { AttentionPanel } from '../attention/AttentionPanel'
 import { DecisionsPanel } from '../attention/DecisionsPanel'
 import { DelegationsBoard } from '../delegations/DelegationsBoard'
+import { ComplexityChainPanel } from './ComplexityChainPanel'
 import { ModelAvailabilityPanel } from './ModelAvailabilityPanel'
 import { OrchestratorPanel } from './OrchestratorPanel'
 
@@ -82,6 +83,7 @@ export function OrchestratorPage() {
       <Tabs.Panel value="attention">
         <Stack gap="md">
           <ModelAvailabilityPanel />
+          <ComplexityChainPanel />
           <AttentionPanel />
         </Stack>
       </Tabs.Panel>

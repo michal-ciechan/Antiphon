@@ -235,6 +235,12 @@ API and is fully commented in place. The fields that change behaviour most: `rol
 > A Required routing pin that named the held alias keeps the same code and available list, plus a
 > coda that the list does not satisfy the pin — do not silently pick from `available`.
 >
+> Create may also send **`complexity`** (`Hard`/`Medium`/`Easy`) and **`refuseIfExhausted`**
+> (CARD-0090). Combined with explicit `agentKind`/`modelLevel` or with `ignoreModelDisabled` is
+> 422. Exhausted chains insert the task **Blocked** (200) unless `refuseIfExhausted` is true,
+> which is **409 `routing_exhausted`** with a `complexityRouting` extension. Auto-over-Human
+> chain writes are **409 `complexity_chain_human`**.
+>
 > Routing pins (CARD-0305) can also refuse create with **409 `routing_pin_conflict`** (explicit
 > kind/level/agent disagrees with a Required pin), **409 `routing_pin_forbidden`** (resolved alias
 > is on the stage pin's forbid list), or **409 `routing_pin_human`** (Auto PUT onto an active Human
@@ -251,6 +257,16 @@ A pin is the standing instruction the **next** create reads; it does not rewrite
 Stage-wide: omit `card`. Check role is 422. Script: `scripts/routing-pin.ps1 get|set|clear`.
 `delegate.ps1 -Pin` writes Human Required from the resolved kind/level; `-Pin` without a card is
 refused (that would be a stage-wide pin).
+
+```
+GET    /api/complexity-chains                          three tiers, live availableNow per candidate
+PUT    /api/complexity-chains/{complexity}             upsert active row (Human cannot be overwritten by Auto)
+DELETE /api/complexity-chains/{complexity}             clear → config default (204 if already clear)
+POST   /api/agent-tasks/{id}/reroute                   { agentKind, modelLevel } — Blocked-for-routing or Queued
+```
+
+Config defaults for chains ship **empty**. Script: `scripts/complexity-chain.ps1 get|set|clear`.
+`delegate.ps1 -Complexity Hard|Medium|Easy`, `-RefuseIfExhausted`, `-Reroute <id> -Kind … -Level …`.
 
 ```
 GET    /api/model-availability                         active holds + remaining aliases

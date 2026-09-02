@@ -62,7 +62,13 @@ function detail(overrides: Partial<AgentTaskSummaryDto> = {}, extra: Partial<Age
 }
 
 function serve(body: AgentTaskDetailDto, extra: Parameters<typeof server.use> = []) {
-  server.use(http.get('/api/agent-tasks/:id', () => HttpResponse.json(body)), ...extra)
+  server.use(
+    http.get('/api/agent-tasks/:id', () => HttpResponse.json(body)),
+    http.get('/api/model-availability', () =>
+      HttpResponse.json({ holds: [], available: ['fable', 'opus', 'grok-4.6'] }),
+    ),
+    ...extra,
+  )
 }
 
 describe('TaskDrawer', () => {
@@ -199,5 +205,28 @@ describe('TaskDrawer', () => {
     renderWithProviders(<TaskDrawer taskId={TASK_ID} onClose={() => {}} />)
 
     expect(await screen.findByText('C:/src/antiphon/.antiphon/task-77777777.md')).toBeInTheDocument()
+  })
+
+  it('shows a Reroute control on a routing-exhausted Blocked task and posts kind/level', async () => {
+    const posts: Array<{ url: string; body: unknown }> = []
+    serve(
+      detail(
+        { status: 'Blocked', complexity: 'Hard', completedAt: null },
+        { failureReason: 'routing exhausted: Hard chain — fable held' },
+      ),
+      [
+        http.post('/api/agent-tasks/:id/reroute', async ({ request }) => {
+          posts.push({ url: request.url, body: await request.json() })
+          return HttpResponse.json({ id: TASK_ID, status: 'Queued' })
+        }),
+      ],
+    )
+    renderWithProviders(<TaskDrawer taskId={TASK_ID} onClose={() => {}} />)
+
+    expect(await screen.findByTestId('task-reroute')).toBeInTheDocument()
+    expect(screen.getByText('Hard')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Reroute' }))
+    await waitFor(() => expect(posts.length).toBe(1))
+    expect(posts[0].body).toEqual({ agentKind: 'Grok', modelLevel: 'Frontier' })
   })
 })

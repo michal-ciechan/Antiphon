@@ -149,6 +149,15 @@ no pin exists. A Human pin survives a RolePolicy edit and an Auto rewrite (409 `
 Required. A pin naming a held alias is still 409 `model_disabled` (CARD-0309) — pins consume
 `Require`, they do not write a hold, and `ignoreRoutingPin` is not `ignoreModelDisabled`.
 
+**Complexity chains (CARD-0090).** Pass `-Complexity Hard|Medium|Easy` when the work's hardness
+should pick (kind, level) from an ordered fallback list, instead of an explicit `-Kind`/`-Level`.
+An explicit pair is never rerouted — combining `-Complexity` with `-Kind` or `-Level` is 422.
+Config defaults ship empty; write the live lists with `complexity-chain.ps1 set`. When the chain
+is exhausted the task is **Blocked** (or 409 `routing_exhausted` with `-RefuseIfExhausted`):
+**relay that to the operator and never pick a kind yourself.** A human answers with Retry,
+`delegate.ps1 -Reroute <id> -Kind … -Level …`, Cancel, or by clearing a hold. Auto-resume onto
+an already-listed candidate when capacity returns is executing the instruction, not a new guess.
+
 The best single result of this period came from a `Debug` agent; the cheapest useful one was a haiku
 check at **$0.12**.
 

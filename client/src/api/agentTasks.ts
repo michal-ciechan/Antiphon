@@ -136,6 +136,8 @@ export interface AgentTaskSummaryDto {
   cardIdentifier?: string | null
   /** How the stored report was classified at settlement (CARD-0159). */
   reportEvidence?: AgentTaskReportEvidence
+  /** CARD-0090. Set when kind/level was chosen by a complexity chain. */
+  complexity?: 'Hard' | 'Medium' | 'Easy' | null
 }
 
 export interface AgentTaskEventDto {
@@ -231,6 +233,8 @@ export interface AgentTaskPipelineBlockedDto {
   title: string
   card: AgentTaskPipelineCardRefDto | null
   createdAt: string
+  /** CARD-0090: this Blocked row is routing-exhausted, not a question. */
+  routingExhausted?: boolean
 }
 
 export interface AgentTaskPipelineReadyDto {
@@ -455,5 +459,13 @@ export function useMarkAgentTaskRead() {
 export function useReplyToAgentTask() {
   return useTaskMutation(({ id, message }: { id: string; message: string }) =>
     apiPost<AgentTaskSummaryDto>(`/agent-tasks/${id}/reply`, { message }),
+  )
+}
+
+/** CARD-0090: explicit kind/level that ends chain governance. */
+export function useRerouteAgentTask() {
+  return useTaskMutation(
+    ({ id, agentKind, modelLevel }: { id: string; agentKind: AgentKind; modelLevel: AgentModelLevel }) =>
+      apiPost<AgentTaskSummaryDto>(`/agent-tasks/${id}/reroute`, { agentKind, modelLevel }),
   )
 }

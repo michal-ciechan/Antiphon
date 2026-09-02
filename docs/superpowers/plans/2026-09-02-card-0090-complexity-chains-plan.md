@@ -354,7 +354,7 @@ Delete `bin-card0090*` after. Shared-Postgres tests seed by id.
 
 ## Execution notes
 
-- **Day one after deploy**, the operator replaces the memory log with Human rows, e.g. today's live rule:
+- **Day one after deploy**, the operator writes Human rows (config defaults ship empty). Replace the routing-habit chronological log with these, e.g. today's live rule:
   ```
   complexity-chain.ps1 set -Complexity Hard   -Candidates ClaudeCode/Frontier,ClaudeCode/High,Codex/Frontier,Grok/Frontier -Provenance Human -Reason "plan-grade work: fable, opus, sol, then grok"
   complexity-chain.ps1 set -Complexity Medium -Candidates Grok/Frontier,Codex/High,ClaudeCode/High -Provenance Human -Reason "execute on grok; terra then opus if grok is out"

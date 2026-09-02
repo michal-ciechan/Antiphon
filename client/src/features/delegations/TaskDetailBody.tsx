@@ -9,6 +9,7 @@ import {
   Loader,
   Paper,
   ScrollArea,
+  Select,
   Stack,
   Text,
   Textarea,
@@ -27,6 +28,7 @@ import {
   TbTerminal2,
 } from 'react-icons/tb'
 import { getApiErrorMessage } from '../../api/client'
+import type { AgentModelLevel } from '../../api/agents'
 import {
   useAgentTask,
   useCancelAgentTask,
@@ -34,8 +36,11 @@ import {
   useRetryAgentTask,
   useReplyToAgentTask,
   useMarkAgentTaskRead,
+  useRerouteAgentTask,
   type AgentTaskDetailDto,
 } from '../../api/agentTasks'
+import type { AgentKind } from '../../api/boards'
+import { useModelAvailability } from '../../api/modelAvailability'
 import { RenderedMarkdown } from '../../shared/RenderedMarkdown'
 import { SelectionComposer, SelectionDelegate } from '../agents/SelectionDelegate'
 import { TierBadge } from './TaskChip'
@@ -88,9 +93,13 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
   const escalate = useEscalateAgentTask()
   const cancel = useCancelAgentTask()
   const reply = useReplyToAgentTask()
+  const reroute = useRerouteAgentTask()
+  const availability = useModelAvailability()
   const markRead = useMarkAgentTaskRead()
   const [answer, setAnswer] = useState('')
   const [selection, setSelection] = useState<string | null>(null)
+  const [rerouteKind, setRerouteKind] = useState<string | null>('Grok')
+  const [rerouteLevel, setRerouteLevel] = useState<string | null>('Frontier')
   const stampedTask = useRef<string | null>(null)
 
   const running = summary.status === 'Dispatched' || summary.status === 'Working'
@@ -121,6 +130,11 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
         {summary.escalatedFrom && (
           <Badge size="sm" variant="light" color="warning" leftSection={<TbArrowBigUpLine size={12} />}>
             escalated from {tierAlias(summary.escalatedFrom, summary.agentKind)}
+          </Badge>
+        )}
+        {summary.complexity && (
+          <Badge size="sm" variant="light" color="violet">
+            {summary.complexity}
           </Badge>
         )}
         <Badge size="sm" variant="default">
@@ -292,6 +306,58 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
           ))}
         </Timeline>
       </Section>
+
+      {summary.status === 'Blocked' && summary.complexity && detail.failureReason?.startsWith('routing exhausted:') && (
+        <Paper withBorder p="sm" data-testid="task-reroute">
+          <Stack gap="xs">
+            <Text size="sm" fw={600}>
+              Reroute
+            </Text>
+            <Text size="xs" c="dimmed">
+              Explicit kind/level. Ends chain governance. Held aliases 409.
+            </Text>
+            <Group>
+              <Select
+                size="xs"
+                label="Kind"
+                data={['ClaudeCode', 'Grok', 'Codex']}
+                value={rerouteKind}
+                onChange={setRerouteKind}
+              />
+              <Select
+                size="xs"
+                label="Level"
+                data={['Frontier', 'High', 'Medium', 'Low']}
+                value={rerouteLevel}
+                onChange={setRerouteLevel}
+              />
+              <Button
+                size="xs"
+                mt="lg"
+                loading={reroute.isPending}
+                disabled={!rerouteKind || !rerouteLevel}
+                onClick={() =>
+                  reroute.mutate(
+                    {
+                      id: summary.id,
+                      agentKind: rerouteKind as AgentKind,
+                      modelLevel: rerouteLevel as AgentModelLevel,
+                    },
+                    { onSuccess: () => notifications.show({ color: 'green', message: 'Rerouted' }), onError: onError('Reroute failed') },
+                  )
+                }
+              >
+                Reroute
+              </Button>
+            </Group>
+            {availability.data && (
+              <Text size="xs" c="dimmed">
+                available: {availability.data.available.join(', ') || '(none)'}
+              </Text>
+            )}
+          </Stack>
+        </Paper>
+      )}
 
       <Group justify="flex-end">
         <Tooltip label={settled ? 'Run it again at the same tier' : 'Stop the delegate and run it again'} withArrow>
