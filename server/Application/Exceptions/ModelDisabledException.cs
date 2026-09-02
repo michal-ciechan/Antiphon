@@ -16,7 +16,30 @@ public sealed class ModelDisabledException : HttpException
     public ModelDisabledException(ModelAvailabilityHold hold, IReadOnlyList<string> available)
         : base(409, FormatRefusal(hold, available), ErrorCode, BuildExtensions(hold, available))
     {
+        Hold = hold;
+        Available = available;
     }
+
+    private ModelDisabledException(
+        ModelAvailabilityHold hold, IReadOnlyList<string> available, string message)
+        : base(409, message, ErrorCode, BuildExtensions(hold, available))
+    {
+        Hold = hold;
+        Available = available;
+    }
+
+    public ModelAvailabilityHold Hold { get; }
+
+    public IReadOnlyList<string> Available { get; }
+
+    /// <summary>
+    /// CARD-0305: the same refusal, with a sentence appended saying the available list does not
+    /// satisfy a Required routing pin. Same code and same <c>modelAvailability</c> extension — the
+    /// pin does not turn a hold into a different failure, it explains why picking from the list is
+    /// not the operator's decision to make silently.
+    /// </summary>
+    public ModelDisabledException WithCoda(string coda) =>
+        new(Hold, Available, $"{Message} — {coda}");
 
     public static string FormatRefusal(ModelAvailabilityHold hold, IReadOnlyList<string> available)
     {

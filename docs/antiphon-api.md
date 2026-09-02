@@ -202,7 +202,8 @@ GET    /api/agent-tasks/areas?directory=     the repo's named areas (antiphon.ar
 API and is fully commented in place. The fields that change behaviour most: `role`, `kind`
 (`Worker` / `Orchestrator`), `modelLevel`, `agentKind` (ClaudeCode / Grok / Codex — see
 [agent-kinds.md](agent-kinds.md)), `workspace`, `workingDirectory`, `scope`, `followUpOnTask`,
-`expectedMinutes`, `envOverride`, `ignoreSubscriptionQuota`, `ignoreModelDisabled`.
+`expectedMinutes`, `envOverride`, `ignoreSubscriptionQuota`, `ignoreModelDisabled`,
+`ignoreRoutingPin`.
 
 > `POST /api/agent-tasks` can refuse with **409 `subscription_quota_low`** (CARD-0136). That is a
 > launch refusal, not a warning attached to a launch that already happened. Retry with
@@ -214,6 +215,25 @@ API and is fully commented in place. The fields that change behaviour most: `rol
 > sonnet, …`); the `modelAvailability` problem-details extension carries `kind`, `modelAlias`,
 > `disabledUntil`, `source`, and `available`. `ignoreModelDisabled: true` on **create only** queues
 > the task; the dispatcher still skips it until the hold clears. Start never honours the flag.
+> A Required routing pin that named the held alias keeps the same code and available list, plus a
+> coda that the list does not satisfy the pin — do not silently pick from `available`.
+>
+> Routing pins (CARD-0305) can also refuse create with **409 `routing_pin_conflict`** (explicit
+> kind/level/agent disagrees with a Required pin), **409 `routing_pin_forbidden`** (resolved alias
+> is on the stage pin's forbid list), or **409 `routing_pin_human`** (Auto PUT onto an active Human
+> row). `ignoreRoutingPin: true` is one-shot and does not clear the pin; it is not
+> `ignoreModelDisabled`.
+
+```
+GET    /api/routing-pins?card=CARD-0304&role=Plan     active pins (card query includes stage-wide)
+PUT    /api/routing-pins                              upsert the grain (Human cannot be overwritten by Auto)
+DELETE /api/routing-pins/{id}                         clear (204 if already clear)
+```
+
+A pin is the standing instruction the **next** create reads; it does not rewrite Queued work.
+Stage-wide: omit `card`. Check role is 422. Script: `scripts/routing-pin.ps1 get|set|clear`.
+`delegate.ps1 -Pin` writes Human Required from the resolved kind/level; `-Pin` without a card is
+refused (that would be a stage-wide pin).
 
 ```
 GET    /api/model-availability                         active holds + remaining aliases

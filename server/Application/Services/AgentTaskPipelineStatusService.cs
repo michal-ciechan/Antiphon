@@ -1,5 +1,6 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -15,6 +16,8 @@ public sealed class AgentTaskPipelineStatusService
 {
     internal const string QueueReasonSharedCheckoutLease = "sharedCheckoutLease";
     internal const string QueueReasonAwaitingDispatch = "awaitingDispatch";
+    /// <summary>CARD-0305: waiting on its routing pin's <c>NotBefore</c>, not on a checkout.</summary>
+    internal const string QueueReasonRoutingPinNotBefore = "routingPinNotBefore";
     internal const string PlanDeliverablePrefix = "docs/superpowers/plans/";
 
     private static readonly AgentTaskRole[] VisibleRoles = Enum.GetValues<AgentTaskRole>()
@@ -103,7 +106,21 @@ public sealed class AgentTaskPipelineStatusService
                 .Select(c => new CardRow(c.Id, c.Identifier, c.Title, c.Status, c.ArchivedAt))
                 .ToDictionaryAsync(c => c.Id, ct);
 
-        var ready = BuildReady(candidatePlans, codeByCard, cards);
+        // CARD-0305, read-only: the pins that the NEXT dispatch in each stage would resolve
+        // through. Expiry is filtered rather than cleared — this projection never writes, so a
+        // NotAfter that has passed is simply not returned here and the lazy clear happens the next
+        // time a create or a dispatch tick reads the row.
+        var activePins = await _db.RoutingPins.AsNoTracking()
+            .Where(p => p.ClearedAt == null && (p.NotAfter == null || p.NotAfter > asOf))
+            .ToListAsync(ct);
+        var stagePins = activePins
+            .Where(p => p.CardId == null)
+            .ToDictionary(p => p.Role);
+        var cardPins = activePins
+            .Where(p => p.CardId != null)
+            .ToDictionary(p => (p.CardId!.Value, p.Role));
+
+        var ready = BuildReady(candidatePlans, codeByCard, cards, stagePins, cardPins);
 
         var inFlightRows = open
             .Where(t => t.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
@@ -132,7 +149,7 @@ public sealed class AgentTaskPipelineStatusService
             var roleQueued = queued
                 .Where(t => t.Role == role)
                 .OrderBy(t => t.CreatedAt).ThenBy(t => t.Id)
-                .Select(t => ToQueued(t, cards, holders))
+                .Select(t => ToQueued(t, cards, holders, stagePins, cardPins, asOf))
                 .ToList();
             var roleBlocked = blocked
                 .Where(t => t.Role == role)
@@ -149,7 +166,10 @@ public sealed class AgentTaskPipelineStatusService
                 roleInFlight,
                 roleQueued,
                 roleBlocked,
-                roleReady));
+                roleReady,
+                stagePins.TryGetValue(role, out var stagePin)
+                    ? RoutingPinService.ToRef(stagePin, null)
+                    : null));
         }
 
         return new AgentTaskPipelineDto(asOf, RecommendationsAreAdvisory: true, stages);
@@ -184,7 +204,9 @@ public sealed class AgentTaskPipelineStatusService
     private IReadOnlyList<AgentTaskPipelineReadyDto> BuildReady(
         List<TaskRow> candidatePlans,
         Dictionary<Guid, List<TaskRow>> codeByCard,
-        Dictionary<Guid, CardRow> cards)
+        Dictionary<Guid, CardRow> cards,
+        Dictionary<AgentTaskRole, RoutingPin> stagePins,
+        Dictionary<(Guid CardId, AgentTaskRole Role), RoutingPin> cardPins)
     {
         var ready = new List<AgentTaskPipelineReadyDto>();
         foreach (var plan in candidatePlans)
@@ -202,13 +224,15 @@ public sealed class AgentTaskPipelineStatusService
                 continue;
             }
 
+            var codePin = EffectivePin(card.Id, AgentTaskRole.Code, stagePins, cardPins);
             ready.Add(new AgentTaskPipelineReadyDto(
                 new AgentTaskPipelineCardRefDto(card.Id, card.Identifier, card.Title),
                 plan.Id,
                 DelegationReportFormatter.Short(plan.Id),
                 plan.CompletedAt!.Value,
                 plan.DeliverablePath!,
-                plan.DeliverableRef));
+                plan.DeliverableRef,
+                codePin is null ? null : RoutingPinService.ToRef(codePin, card.Identifier)));
         }
 
         return ready
@@ -217,10 +241,30 @@ public sealed class AgentTaskPipelineStatusService
             .ToList();
     }
 
+    /// <summary>
+    /// The pin a dispatch of this card+role would resolve through: the card's own pin outranks the
+    /// stage-wide one AS A WHOLE ROW, exactly as <see cref="RoutingPinService.ResolveAsync"/> does.
+    /// </summary>
+    private static RoutingPin? EffectivePin(
+        Guid? cardId,
+        AgentTaskRole role,
+        Dictionary<AgentTaskRole, RoutingPin> stagePins,
+        Dictionary<(Guid CardId, AgentTaskRole Role), RoutingPin> cardPins)
+    {
+        if (role == AgentTaskRole.Check)
+            return null;
+        if (cardId is Guid id && cardPins.TryGetValue((id, role), out var cardPin))
+            return cardPin;
+        return stagePins.TryGetValue(role, out var stagePin) ? stagePin : null;
+    }
+
     private AgentTaskPipelineQueuedDto ToQueued(
         TaskRow task,
         Dictionary<Guid, CardRow> cards,
-        List<SharedWriterLeaseProjection.Holder> holders)
+        List<SharedWriterLeaseProjection.Holder> holders,
+        Dictionary<AgentTaskRole, RoutingPin> stagePins,
+        Dictionary<(Guid CardId, AgentTaskRole Role), RoutingPin> cardPins,
+        DateTime asOf)
     {
         IReadOnlyList<AgentTaskPipelineHolderDto> heldBy = [];
         var queueReason = QueueReasonAwaitingDispatch;
@@ -242,6 +286,15 @@ public sealed class AgentTaskPipelineStatusService
                         o.Holder.Title))
                     .ToList();
             }
+        }
+
+        // CARD-0305: the same precedence the dispatcher applies — the lease is checked first, so a
+        // task waiting on BOTH reports the checkout it is behind, not the date it is before.
+        if (queueReason == QueueReasonAwaitingDispatch
+            && EffectivePin(task.CardId, task.Role, stagePins, cardPins) is { NotBefore: { } notBefore }
+            && notBefore > asOf)
+        {
+            queueReason = QueueReasonRoutingPinNotBefore;
         }
 
         return new AgentTaskPipelineQueuedDto(
