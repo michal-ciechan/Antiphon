@@ -53,6 +53,7 @@ AGENTS.md is the universal index and mandatory safety core for this repository. 
 
 ### Cards and tracker
 
+- Orchestrators delegate the reading: a session that dispatches delegates sends one for how something works and takes its answer, reading directly only what it must quote exactly or judge personally — even when it looks one grep away, even to another frontier-tier agent. A delegate reads its own files and never sub-delegates. Owner: [docs/orchestration-loop.md](docs/orchestration-loop.md) §0.
 - Scope is a comma-separated list of area names and/or path globs. Unknown areas warn rather than reject; scope drift is recorded at settlement. Extend antiphon.areas.json only for a real collision and avoid leading filename wildcards.
 - A decision belongs on the card move/reopen revision and attention feed, never a new column or an alert sink. CARD-nnnn is board-scoped; #N means only CARD-000N.
 - Files under `docs/cards/` are generated from the board (CARD-0004); edit the card, not the file.

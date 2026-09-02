@@ -28,6 +28,19 @@ archaeology - and verification is not archaeology's quieter cousin. It is trust,
    seconds, then an Edit, a build, a commit and a deploy, all in the orchestrator's own context) -
    the exact thing this ladder exists to make rare.
 
+**The standing rule (CARD-0017)**
+
+Delegate the reading. When you need to know how something works - what a file contains, where
+something is called, what shape the data is, whether an endpoint exists - send a delegate and
+take its answer. Do not read it into your own context. This holds even when the answer looks one
+grep away, and even when the delegate is another frontier-tier agent: your context is the scarce
+resource for the whole run, and every file read into it is capacity the run never gets back.
+Read directly only what you must quote exactly or must judge personally.
+
+The canonical copy is `server/Bundles/orchestrator.md`, which every sub-orchestrator launch
+composes and which a standing orchestrator carries when the `orchestrator` bundle is attached;
+this copy exists so AGENTS.md has an owner to route to.
+
 **Also delegated: the landing mechanics.** For a delegated Worktree task, the orchestrator orders
 the landing with `delegate.ps1 -Land <id>` (optionally `-Verify <filter>`); the server fetches,
 rebases, verifies when required, fast-forwards, pushes, and cleans up. The resulting
@@ -35,9 +48,10 @@ rebases, verifies when required, fast-forwards, pushes, and cleans up. The resul
 what a refusal means, but does none of those git operations itself.
 
 Since CARD-0247, a `PreToolUse` hook in this repo nudges at the third consecutive cold source read
-(it never blocks; `ANTIPHON_ORCHESTRATOR=0` silences it for a hacking session), and a server sweep
-records each run as an `OrchestratorInvestigation` Warning on the attention feed. A row there is
-not a fault to fix in the code - it is a habit to fix in the next brief.
+(it never blocks; `ANTIPHON_ORCHESTRATOR=0` silences it for a hacking session) - the hook is the
+backstop at the third read; the rule is the bundle's - and a server sweep records each run as an
+`OrchestratorInvestigation` Warning on the attention feed. A row there is not a fault to fix in
+the code - it is a habit to fix in the next brief.
 
 ---
 
