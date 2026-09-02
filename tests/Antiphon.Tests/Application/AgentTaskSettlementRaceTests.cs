@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -18,11 +19,71 @@ namespace Antiphon.Tests.Application;
 /// CARD-0319: KillAsync's own SaveChanges on the shared scoped context used to flush an
 /// uncommitted settlement; the pool sweeper then deleted the agent; SettleAsync's later
 /// SaveChanges threw; OnTurnEndAsync swallowed it and skipped the parent '[task done]' note.
+///
+/// CARD-0320: two concurrent OnTurnEndAsync calls (live observer + CARD-0288 arm 0) used to
+/// both persist and both DeliverToParent. Per-session settle lock + enqueue digest skip.
 /// </summary>
 [Category("Integration")]
 [NotInParallel("AgentQueue")]
 public class AgentTaskSettlementRaceTests
 {
+    [Test]
+    public async Task concurrent_on_turn_end_for_the_same_task_enqueues_one_parent_note()
+    {
+        using var workspace = new TempWorkspace();
+        await using var provider = BuildHarness();
+
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var (task, sessionId) = await SeedSharedTaskAsync(workspace.Path, parentSessionId);
+        var report = "Wrote the slice. 12 passed, 0 failed.";
+        await SeedMarkedTurnAsync(sessionId, task.Id, report);
+
+        var replies = provider.GetRequiredService<AgentTaskReplyService>();
+        await Task.WhenAll(
+            replies.OnTurnEndAsync(sessionId, CancellationToken.None),
+            replies.OnTurnEndAsync(sessionId, CancellationToken.None));
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+
+        var queued = await verify.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == parentSessionId && m.Origin == QueuedMessageOrigin.Delegation)
+            .ToListAsync();
+        queued.Count.ShouldBe(1, "CARD-0320: two OnTurnEndAsync calls must not double-enqueue");
+        queued[0].SourceTaskId.ShouldBe(task.Id);
+        queued[0].Body.ShouldContain($"[task {DelegationReportFormatter.Short(task.Id)} done]");
+    }
+
+    [Test]
+    public async Task enqueue_skips_a_second_delegation_note_with_the_same_source_task_and_digest()
+    {
+        using var workspace = new TempWorkspace();
+        await using var provider = BuildHarness();
+
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var taskId = Guid.NewGuid();
+        var report = "Wrote the slice.";
+        var digest = DelegationNoteDigest.Compute(report);
+        var body = $"[task {DelegationReportFormatter.Short(taskId)} done]\n{report}";
+        var queue = provider.GetRequiredService<SessionMessageQueueService>();
+
+        await queue.EnqueueAsync(
+            parentSessionId, body, MessageSendMode.WhenIdle, CancellationToken.None,
+            QueuedMessageOrigin.Delegation, $"task:{taskId:N}", taskId, digest);
+        await queue.EnqueueAsync(
+            parentSessionId, body, MessageSendMode.WhenIdle, CancellationToken.None,
+            QueuedMessageOrigin.Delegation, $"task:{taskId:N}", taskId, digest);
+
+        await using var verify = CreateContext();
+        var queued = await verify.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == parentSessionId && m.Origin == QueuedMessageOrigin.Delegation)
+            .ToListAsync();
+        queued.Count.ShouldBe(1, "CARD-0320: SourceTaskId+ContentDigest must not enqueue twice");
+        queued[0].SourceTaskId.ShouldBe(taskId);
+        queued[0].ContentDigest.ShouldBe(digest);
+    }
+
     [Test]
     public async Task worktree_pool_settle_delivers_parent_note_when_kill_savechanges_races_retire()
     {
@@ -141,6 +202,69 @@ public class AgentTaskSettlementRaceTests
                 Retiring.Value = false;
             }
         }
+    }
+
+    private static async Task<(AgentTask Task, Guid SessionId)> SeedSharedTaskAsync(
+        string workingDirectory, Guid parentSessionId)
+    {
+        var sessionId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var taskId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        var agentName = $"task-{taskId:N}"[..13];
+        var task = new AgentTask
+        {
+            Id = taskId,
+            RootTaskId = taskId,
+            ParentSessionId = parentSessionId,
+            ReplyTo = AgentTaskReplyTo.Session,
+            Title = "CARD-0320 concurrent settle",
+            Goal = "Settle once.",
+            Kind = AgentTaskKind.Worker,
+            Role = AgentTaskRole.Docs,
+            ModelLevel = AgentModelLevel.Medium,
+            Workspace = WorkspaceMode.Shared,
+            WorkingDirectory = workingDirectory,
+            AgentId = agentId,
+            AgentName = agentName,
+            AgentSessionId = sessionId,
+            Ephemeral = true,
+            Status = AgentTaskStatus.Dispatched,
+            CreatedAt = now,
+            DispatchedAt = now,
+        };
+
+        await using var db = CreateContext();
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = sessionId,
+            DefinitionName = "fake",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Running,
+            Cwd = workingDirectory,
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = now,
+            StartedAt = now,
+            LastSeenAt = now,
+        });
+        db.Agents.Add(new Agent
+        {
+            Id = agentId,
+            Name = agentName,
+            Slug = agentName,
+            WorkingDirectory = workingDirectory,
+            Details = "CARD-0320 shared delegate.",
+            Status = AgentStatus.Running,
+            ModelLevel = AgentModelLevel.Medium,
+            IsPoolDelegate = true,
+            PersistentSessionId = sessionId.ToString("D"),
+            CreatedAt = now,
+            UpdatedAt = now,
+        });
+        db.AgentTasks.Add(task);
+        await db.SaveChangesAsync();
+        return (task, sessionId);
     }
 
     private static async Task<(AgentTask Task, Guid SessionId)> SeedWorktreePoolTaskAsync(

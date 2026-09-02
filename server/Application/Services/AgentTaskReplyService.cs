@@ -1,4 +1,5 @@
 ﻿using Antiphon.Agents.Pty;
+using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -33,6 +34,16 @@ public sealed class AgentTaskReplyService
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AgentTaskReplyService> _logger;
     private readonly PtyDeliveryProfile? _ptyProfile;
+    // CARD-0320: one in-flight OnTurnEndAsync per session. Arm 0 used to re-enter while the live
+    // observer was still inside SettleAsync; ConcurrencyToken is not an EF token, so both saves
+    // succeeded and both delivered.
+    private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _settleLocks = new();
+
+    /// <summary>
+    /// Test hook: runs after the open task is loaded, while the per-session settle lock is held
+    /// and before any persist. Null in production.
+    /// </summary>
+    internal Func<Guid, CancellationToken, Task>? DelayAfterOpenTaskLoadedAsync { get; set; }
 
     public AgentTaskReplyService(
         IServiceScopeFactory scopeFactory,
@@ -59,10 +70,32 @@ public sealed class AgentTaskReplyService
         _ptyProfile?.Ceilings.ReplyInlineMaxChars ?? _settings.ReplyInlineMaxChars;
 
     /// <summary>
+    /// True while <see cref="OnTurnEndAsync"/> holds this session's settle lock — including the
+    /// test hook that pauses after the open task is loaded. Arm 0 uses this to skip rather than
+    /// stall the 5 s dispatcher tick behind a live settle.
+    /// </summary>
+    internal bool IsSettleInFlight(Guid sessionId) =>
+        _settleLocks.TryGetValue(sessionId, out var gate) && gate.CurrentCount == 0;
+
+    /// <summary>
     /// A session finished a turn. If that session is running a delegated task and the turn was the
     /// one we asked for, settle the task and deliver its report.
     /// </summary>
     public async Task OnTurnEndAsync(Guid sessionId, CancellationToken ct)
+    {
+        var gate = _settleLocks.GetOrAdd(sessionId, static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            await OnTurnEndLockedAsync(sessionId, ct);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task OnTurnEndLockedAsync(Guid sessionId, CancellationToken ct)
     {
         try
         {
@@ -74,6 +107,9 @@ public sealed class AgentTaskReplyService
                     && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working), ct);
             if (task is null)
                 return;
+
+            if (DelayAfterOpenTaskLoadedAsync is not null)
+                await DelayAfterOpenTaskLoadedAsync(sessionId, ct);
 
             var turn = await ExtractMarkedTurnAsync(db, sessionId, task, ct);
 

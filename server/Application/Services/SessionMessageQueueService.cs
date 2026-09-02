@@ -291,6 +291,23 @@ public sealed class SessionMessageQueueService
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var now = UtcNow();
 
+            // CARD-0320: the per-session queue lock serialises two EnqueueAsync calls but used
+            // to let both insert. A Delegation note with the same SourceTaskId+ContentDigest
+            // is the same completion, not a second turn.
+            if (origin == QueuedMessageOrigin.Delegation
+                && sourceTaskId is Guid sourced
+                && !string.IsNullOrEmpty(contentDigest)
+                && await db.SessionQueuedMessages.AsNoTracking().AnyAsync(
+                    m => m.SourceTaskId == sourced
+                        && m.ContentDigest == contentDigest
+                        && m.Origin == QueuedMessageOrigin.Delegation, ct))
+            {
+                _logger.LogWarning(
+                    "Skipping duplicate Delegation note for task {SourceTaskId} on session {SessionId} (CARD-0320)",
+                    sourced, sessionId);
+                return await GetQueueAsync(sessionId, ct);
+            }
+
             var nextSequence = (await db.SessionQueuedMessages
                 .Where(m => m.AgentSessionId == sessionId)
                 .MaxAsync(m => (long?)m.Sequence, ct) ?? 0) + 1;

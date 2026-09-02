@@ -1222,6 +1222,57 @@ public class AgentTaskDeliveryWatchdogTests
     }
 
     [Test]
+    public async Task arm_0_while_live_on_turn_end_in_progress_enqueues_one_parent_note()
+    {
+        var logs = new List<string>();
+        var (dispatcher, replies, parentSessionId, task) = await CreateArm0RaceHarnessAsync(logs);
+        await SeedMarkedReportTurnAsync(task.AgentSessionId!.Value, task.Id, storedMinutesAgo: 0);
+
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        replies.DelayAfterOpenTaskLoadedAsync = async (_, ct) =>
+        {
+            entered.TrySetResult();
+            using var reg = ct.Register(() => release.TrySetCanceled());
+            await release.Task.WaitAsync(ct);
+        };
+
+        try
+        {
+            var live = replies.OnTurnEndAsync(task.AgentSessionId!.Value, CancellationToken.None);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+            var sweep = dispatcher.SettleDeferredReportsAsync(CancellationToken.None);
+            var finished = await Task.WhenAny(sweep, Task.Delay(TimeSpan.FromSeconds(5)));
+            ReferenceEquals(finished, sweep).ShouldBeTrue(
+                "arm 0 must skip an in-flight settle rather than wait on its lock");
+            await sweep;
+
+            logs.ShouldContain(l =>
+                l.Contains(DelegationReportFormatter.Short(task.Id), StringComparison.Ordinal)
+                && l.Contains("settlement already in flight", StringComparison.Ordinal));
+
+            release.TrySetResult();
+            await live.WaitAsync(TimeSpan.FromSeconds(15));
+        }
+        finally
+        {
+            replies.DelayAfterOpenTaskLoadedAsync = null;
+            release.TrySetResult();
+        }
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+
+        var queued = await verify.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == parentSessionId && m.Origin == QueuedMessageOrigin.Delegation)
+            .ToListAsync();
+        queued.Count.ShouldBe(1, "CARD-0320: arm 0 racing a live OnTurnEndAsync must not double-enqueue");
+        queued[0].SourceTaskId.ShouldBe(task.Id);
+    }
+
+    [Test]
     public async Task a_second_arm_0_pass_on_an_unchanged_settled_boundary_is_a_noop()
     {
         var logs = new List<string>();
@@ -1693,6 +1744,108 @@ public class AgentTaskDeliveryWatchdogTests
     }
 
     // ---- helpers ---------------------------------------------------------------------------
+
+    /// <summary>
+    /// CARD-0320: same graph as <see cref="CreateHarness"/>, plus a parent session the completion
+    /// note can land on, and the reply service so the test can pause a live OnTurnEndAsync.
+    /// </summary>
+    private static async Task<(
+        AgentTaskDispatcher Dispatcher,
+        AgentTaskReplyService Replies,
+        Guid ParentSessionId,
+        AgentTask Task)> CreateArm0RaceHarnessAsync(List<string> logs)
+    {
+        var stopper = new RecordingSessionStopper();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<ILogger<AgentTaskDispatcher>>(new ListLogger<AgentTaskDispatcher>(logs));
+        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
+        services.AddSingleton<IEventBus, MockEventBus>();
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton(Options.Create(new SupervisionSettings()));
+        services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
+        services.AddSingleton(Options.Create(new DelegationSettings
+        {
+            SubagentGraceMinutes = 30,
+            ReportSweepRehandSeconds = 0,
+            ReplyInlineMaxChars = 20_000,
+        }));
+        services.AddSingleton<DeferredReportSweepMarks>();
+        services.AddOptions<AgentRegistrySettings>();
+        services.AddSingleton<AgentRegistry>();
+        services.AddSingleton<AgentSessionLaunchQueue>();
+        services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<SessionMessageQueueService>();
+        services.AddSingleton<IDelegateSessionStopper>(stopper);
+        services.AddSingleton<DelegationWorkspaceResolver>();
+        services.AddDelegationWorktreeGraph(new GitSettings
+        {
+            WorktreeBasePath = Path.Combine(Path.GetTempPath(), "antiphon-delivery-wt"),
+        });
+        services.AddScoped<AgentTaskService>();
+        services.AddSingleton<AgentTaskReplyService>();
+        services.AddSingleton(Options.Create(new DelegateBindRefusalRecoverySettings()));
+        services.AddSingleton<DelegateBindRefusalRecovery>();
+        services.AddScoped<AgentTaskDispatcher>();
+
+        var provider = services.BuildServiceProvider();
+        var dispatcher = provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+        var replies = provider.GetRequiredService<AgentTaskReplyService>();
+
+        var parentSessionId = Guid.NewGuid();
+        var sessionId = Guid.NewGuid();
+        var taskId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        var task = new AgentTask
+        {
+            Id = taskId,
+            RootTaskId = taskId,
+            ParentSessionId = parentSessionId,
+            ReplyTo = AgentTaskReplyTo.Session,
+            Title = "CARD-0320 arm-0 race",
+            Goal = "Settle once.",
+            Role = AgentTaskRole.Plan,
+            AgentKind = AgentKind.ClaudeCode,
+            ModelLevel = AgentModelLevel.Frontier,
+            Workspace = WorkspaceMode.Shared,
+            WorkingDirectory = Path.GetTempPath(),
+            AgentSessionId = sessionId,
+            Status = AgentTaskStatus.Dispatched,
+            CreatedAt = now,
+            DispatchedAt = now,
+        };
+
+        await using var db = CreateContext();
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = parentSessionId,
+            DefinitionName = "fake",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Running,
+            Cwd = Path.GetTempPath(),
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = now,
+            StartedAt = now,
+            LastSeenAt = now,
+        });
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = sessionId,
+            DefinitionName = "fake",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Running,
+            Cwd = Path.GetTempPath(),
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = now,
+            StartedAt = now,
+            LastSeenAt = now,
+        });
+        db.AgentTasks.Add(task);
+        await db.SaveChangesAsync();
+        return (dispatcher, replies, parentSessionId, task);
+    }
 
     private static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper) CreateHarness(
         DelegateBindRefusalRecoverySettings? recoverySettings = null,

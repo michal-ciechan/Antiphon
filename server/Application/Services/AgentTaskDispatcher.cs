@@ -1571,17 +1571,40 @@ public sealed class AgentTaskDispatcher
 
                 if (markedTaskId is Guid tid)
                 {
-                    if (_sweepMarks is null
-                        || _sweepMarks.ShouldHandOff(sessionId, end.Sequence, lastEntryAt: null, now, rehandSeconds))
+                    if (_sweepMarks is not null
+                        && !_sweepMarks.ShouldHandOff(sessionId, end.Sequence, lastEntryAt: null, now, rehandSeconds))
+                    {
+                        continue;
+                    }
+
+                    // CARD-0320: the live observer may already be inside OnTurnEndAsync for this
+                    // task (status still Dispatched/Working until persist). Re-entering would
+                    // double-deliver. Skip if the task left the open states, or a settle is in
+                    // flight. Record the watermark BEFORE the await so a 5 s tick during a
+                    // slow settle cannot pile another hand-off.
+                    var stillOpen = await _db.AgentTasks.AsNoTracking()
+                        .AnyAsync(t => t.Id == tid
+                            && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working), ct);
+                    if (!stillOpen)
+                        continue;
+
+                    if (_replies.IsSettleInFlight(sessionId))
                     {
                         _logger.LogWarning(
                             "Task {ShortId}: marked report already in transcript at boundary {Sequence} — "
-                            + "re-invoking settlement",
+                            + "settlement already in flight, not re-entering",
                             DelegationReportFormatter.Short(tid), end.Sequence);
-                        await _replies.OnTurnEndAsync(sessionId, ct);
                         _sweepMarks?.RecordHandOff(sessionId, end.Sequence, lastEntryAt: null, now);
-                        swept++;
+                        continue;
                     }
+
+                    _logger.LogWarning(
+                        "Task {ShortId}: marked report already in transcript at boundary {Sequence} — "
+                        + "re-invoking settlement",
+                        DelegationReportFormatter.Short(tid), end.Sequence);
+                    _sweepMarks?.RecordHandOff(sessionId, end.Sequence, lastEntryAt: null, now);
+                    await _replies.OnTurnEndAsync(sessionId, ct);
+                    swept++;
                     continue;
                 }
             }
