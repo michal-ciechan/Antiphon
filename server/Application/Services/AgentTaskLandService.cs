@@ -100,7 +100,9 @@ public sealed class AgentTaskLandService
             return LandRunResult.Held;
         }
 
+        var rebaseWatch = Stopwatch.StartNew();
         var prepared = await _worktrees.PrepareLandAsync(task, ct);
+        var rebaseSeconds = ElapsedSeconds(rebaseWatch);
         if (prepared.Conflicted)
         {
             task.Status = AgentTaskStatus.Blocked;
@@ -109,6 +111,9 @@ public sealed class AgentTaskLandService
             _db.AgentTaskEvents.Add(Event(task.Id, AgentTaskEventType.Conflicted,
                 $"Conflicts: {string.Join(", ", prepared.ConflictFiles)}", _clock.GetUtcNow().UtcDateTime));
             var merge = await _tasks.CreateMergeTaskAsync(task, prepared.ConflictFiles, ct, prepared.Target);
+            Record(task, OrchestrationStage.Rebase, StageOutcomeKind.Found, rebaseSeconds,
+                string.Join(", ", prepared.ConflictFiles),
+                merge is null ? "merge task cap reached" : merge.Id.ToString("D"));
             await _db.SaveChangesAsync(ct);
             await DeliverAsync(task, merge is null
                 ? $"land conflict on {prepared.Target}: {string.Join(", ", prepared.ConflictFiles)}; merge task cap reached"
@@ -119,26 +124,47 @@ public sealed class AgentTaskLandService
 
         if (!prepared.Succeeded)
         {
+            Record(task, OrchestrationStage.Rebase, StageOutcomeKind.Failed, rebaseSeconds,
+                prepared.Detail ?? "Land preparation failed.");
             await RefuseAsync(task, prepared.Detail ?? "Land preparation failed.", ct);
             return LandRunResult.Complete;
         }
 
+        var verifyWatch = Stopwatch.StartNew();
         var verification = prepared.BaseMoved
             ? await VerifyAsync(task.WorktreePath!, verifyFilter, ct)
             : LandVerification.Success("build skipped (base unchanged)");
-        if (!verification.Ok)
+        var verifySeconds = prepared.BaseMoved ? ElapsedSeconds(verifyWatch) : 0;
+        Record(task, OrchestrationStage.Rebase, StageOutcomeKind.Clean, rebaseSeconds);
+        if (!prepared.BaseMoved)
         {
+            Record(task, OrchestrationStage.Verify, StageOutcomeKind.Skipped, verifySeconds,
+                "build skipped (base unchanged)");
+        }
+        else if (verification.Ok)
+        {
+            Record(task, OrchestrationStage.Verify, StageOutcomeKind.Clean, verifySeconds, verification.Description);
+        }
+        else
+        {
+            Record(task, OrchestrationStage.Verify, StageOutcomeKind.Found, verifySeconds,
+                $"{verification.Step} failed:\n{verification.Tail}", task.WorktreePath);
             await RefuseAsync(task, $"{verification.Step} failed:\n{verification.Tail}", ct);
             return LandRunResult.Complete;
         }
 
+        var cleanupWatch = Stopwatch.StartNew();
         var finalized = await _worktrees.FinalizeLandAsync(task, prepared.Target!, ct);
+        var cleanupSeconds = ElapsedSeconds(cleanupWatch);
         if (!finalized.Succeeded)
         {
+            Record(task, OrchestrationStage.Cleanup, StageOutcomeKind.Failed, cleanupSeconds,
+                finalized.Detail ?? "Land finalization failed.");
             await RefuseAsync(task, finalized.Detail ?? "Land finalization failed.", ct);
             return LandRunResult.Complete;
         }
 
+        Record(task, OrchestrationStage.Cleanup, StageOutcomeKind.Clean, cleanupSeconds);
         var verify = prepared.BaseMoved
             ? verification.Description
             : "build skipped (base unchanged)";
@@ -256,6 +282,37 @@ public sealed class AgentTaskLandService
             ? $"tests {total.Groups[1].Value}/{total.Groups[1].Value}"
             : "tests OK";
     }
+
+    private void Record(
+        AgentTask task,
+        OrchestrationStage stage,
+        StageOutcomeKind outcome,
+        int durationSeconds,
+        string detail = "",
+        string? @ref = null)
+    {
+        _db.StageOutcomes.Add(new StageOutcome
+        {
+            Id = Guid.NewGuid(),
+            Stage = stage,
+            Outcome = outcome,
+            Source = StageOutcomeSource.Server,
+            SubjectTaskId = task.Id,
+            CardId = task.CardId,
+            DurationSeconds = durationSeconds,
+            Detail = Clip(detail),
+            Ref = @ref,
+            RecordedAt = _clock.GetUtcNow().UtcDateTime,
+        });
+    }
+
+    private static int ElapsedSeconds(Stopwatch watch) =>
+        (int)Math.Clamp(Math.Round(watch.Elapsed.TotalSeconds), 0, int.MaxValue);
+
+    internal static string Clip(string detail) =>
+        detail.Length <= StageOutcome.DetailMaxLength
+            ? detail
+            : detail[..StageOutcome.DetailMaxLength];
 
     private Task PublishAsync(AgentTask task, CancellationToken ct) =>
         _eventBus.PublishToAllAsync("AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);

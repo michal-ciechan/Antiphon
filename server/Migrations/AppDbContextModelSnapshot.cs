@@ -471,6 +471,9 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("character varying(4000)");
 
+                    b.Property<Guid?>("FollowUpOfTaskId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Goal")
                         .IsRequired()
                         .HasMaxLength(20000)
@@ -566,6 +569,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<string>("Scope")
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
+
+                    b.Property<int?>("Stage")
+                        .HasColumnType("integer");
 
                     b.Property<int>("Status")
                         .HasColumnType("integer");
@@ -2974,6 +2980,82 @@ namespace Antiphon.Server.Migrations
                         .HasDatabaseName("IX_StageExecutions_StageId_Version");
 
                     b.ToTable("StageExecutions", (string)null);
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.StageOutcome", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("CardId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal?>("CostUsd")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<string>("Detail")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<int>("DurationSeconds")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Outcome")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("RecordedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Ref")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<decimal?>("ResolutionCostUsd")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<Guid?>("ResolutionTaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Source")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Stage")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("StageTaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("SubjectTaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("SupersedesId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long?>("TokensIn")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("TokensOut")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CardId")
+                        .HasDatabaseName("IX_StageOutcomes_CardId");
+
+                    b.HasIndex("RecordedAt")
+                        .HasDatabaseName("IX_StageOutcomes_RecordedAt");
+
+                    b.HasIndex("StageTaskId")
+                        .HasDatabaseName("IX_StageOutcomes_StageTaskId");
+
+                    b.HasIndex("Stage", "RecordedAt")
+                        .HasDatabaseName("IX_StageOutcomes_Stage_RecordedAt");
+
+                    b.ToTable("StageOutcomes", (string)null);
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.SubscriptionUsageSample", b =>

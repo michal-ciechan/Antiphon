@@ -1272,6 +1272,7 @@ public sealed class AgentTaskReplyService
         db.AgentTaskEvents.Add(NewEvent(
             conflicted.Id, AgentTaskEventType.Merged,
             $"Conflict resolved by merge task {DelegationReportFormatter.Short(merge.Id)}.", now));
+        await StageOutcomeService.AttachMergeResolutionAsync(db, merge, ct);
         await ReleaseDelegateAsync(services, db, conflicted, now, ct);
         await PublishAsync(conflicted, ct);
     }

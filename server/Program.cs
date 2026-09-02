@@ -295,6 +295,7 @@ try
     builder.Services.AddScoped<AgentTaskPipelineStatusService>();
     builder.Services.AddSingleton<AgentTaskLandQueue>();
     builder.Services.AddScoped<AgentTaskLandService>();
+    builder.Services.AddScoped<StageOutcomeService>();
     // CARD-0140 S3: AgentTuiLaunchResolver is already AddScoped below; the dispatcher's optional
     // constructor parameter picks it up so a pinned standing agent launches from its own profile.
     builder.Services.AddScoped<AgentTaskDispatcher>();
@@ -556,6 +557,7 @@ try
     // One-shot: re-prices tasks costed before CARD-0023, so the per-root ceiling stops reading
     // ~10x-inflated history. No-ops once every row carries the current pricing version.
     builder.Services.AddHostedService<DelegationCostBackfillService>();
+    builder.Services.AddHostedService<StageOutcomeBackfillService>();
     builder.Services.AddHostedService<WorkflowFileWatcherHostedService>();
     builder.Services.AddHostedService<SessionRunnerEventPump>();
 
@@ -732,6 +734,7 @@ try
     app.MapAgentTaskEndpoints();
     app.MapModelAvailabilityEndpoints();
     app.MapRoutingPinEndpoints();
+    app.MapStageOutcomeEndpoints();
     app.MapComplexityChainEndpoints();
     app.MapScheduleEndpoints();
     app.MapAttentionEndpoints();

@@ -55,6 +55,7 @@ public class AppDbContext : DbContext
     public DbSet<Alert> Alerts => Set<Alert>();
     public DbSet<AgentTask> AgentTasks => Set<AgentTask>();
     public DbSet<AgentTaskEvent> AgentTaskEvents => Set<AgentTaskEvent>();
+    public DbSet<StageOutcome> StageOutcomes => Set<StageOutcome>();
     public DbSet<AgentTuiProfile> AgentTuiProfiles => Set<AgentTuiProfile>();
     public DbSet<AgentTuiProfileRevision> AgentTuiProfileRevisions => Set<AgentTuiProfileRevision>();
     public DbSet<AgentTuiSecret> AgentTuiSecrets => Set<AgentTuiSecret>();
@@ -1472,6 +1473,9 @@ public class AppDbContext : DbContext
             entity.Property(t => t.BootWedgeRelaunchCount).IsRequired().HasDefaultValue(0);
             // CARD-0090. Null on every pre-existing row: kind/level was not chosen by a chain.
             entity.Property(t => t.Complexity).IsRequired(false);
+            // CARD-0272. Null on every pre-existing row: S2 fills these at create.
+            entity.Property(t => t.Stage).IsRequired(false);
+            entity.Property(t => t.FollowUpOfTaskId).IsRequired(false);
 
             entity.HasIndex(t => new { t.RootTaskId, t.CreatedAt }).HasDatabaseName("IX_AgentTasks_RootTaskId_CreatedAt");
             entity.HasIndex(t => t.Status).HasDatabaseName("IX_AgentTasks_Status");
@@ -1521,6 +1525,28 @@ public class AppDbContext : DbContext
                 .WithMany(t => t.Events)
                 .HasForeignKey(e => e.AgentTaskId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<StageOutcome>(entity =>
+        {
+            entity.ToTable("StageOutcomes");
+            entity.HasKey(o => o.Id);
+            entity.Property(o => o.Stage).IsRequired();
+            entity.Property(o => o.Outcome).IsRequired();
+            entity.Property(o => o.Source).IsRequired();
+            entity.Property(o => o.CostUsd).HasPrecision(18, 6);
+            entity.Property(o => o.ResolutionCostUsd).HasPrecision(18, 6);
+            entity.Property(o => o.DurationSeconds).IsRequired();
+            entity.Property(o => o.Detail).IsRequired().HasMaxLength(StageOutcome.DetailMaxLength);
+            entity.Property(o => o.Ref).HasMaxLength(1000);
+            entity.Property(o => o.RecordedAt).IsRequired();
+
+            // Provenance only — no FK. The hit rate needs months of clean runs, including after
+            // DataRetentionService deletes the task the row was about.
+            entity.HasIndex(o => o.RecordedAt).HasDatabaseName("IX_StageOutcomes_RecordedAt");
+            entity.HasIndex(o => new { o.Stage, o.RecordedAt }).HasDatabaseName("IX_StageOutcomes_Stage_RecordedAt");
+            entity.HasIndex(o => o.CardId).HasDatabaseName("IX_StageOutcomes_CardId");
+            entity.HasIndex(o => o.StageTaskId).HasDatabaseName("IX_StageOutcomes_StageTaskId");
         });
 
         modelBuilder.Entity<SubscriptionUsageSample>(entity =>

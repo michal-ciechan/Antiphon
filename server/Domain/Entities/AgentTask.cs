@@ -20,6 +20,18 @@ public class AgentTask
 
     public Guid? ParentTaskId { get; set; }
 
+    /// <summary>
+    /// The prior task this one followed up (CARD-0272). Null when this is not a follow-up.
+    /// Set at create from <c>FollowUpOnTask</c> (S2); the column ships with the StageOutcomes table.
+    /// </summary>
+    public Guid? FollowUpOfTaskId { get; set; }
+
+    /// <summary>
+    /// Dispatch-time declaration of which pipeline question this task answers (CARD-0272).
+    /// Null = not a stage run (Code/Plan, and any role without an explicit <c>-Stage</c>).
+    /// </summary>
+    public OrchestrationStage? Stage { get; set; }
+
     /// <summary>The session the report is delivered into when <see cref="ReplyTo"/> is Session.</summary>
     public Guid? ParentSessionId { get; set; }
 
