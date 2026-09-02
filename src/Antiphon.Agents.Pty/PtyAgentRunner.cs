@@ -190,9 +190,10 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         await _writeGate.WaitAsync(ct);
         try
         {
+            // BodyConsumed matches the rendered composer; the raw buffer still holds ANSI.
             LastSendLineOutcome = await EchoGatedLineSender.SendAsync(
                 line,
-                _ => Task.FromResult(SnapshotText()),
+                _ => Task.FromResult(SnapshotScreen()),
                 WriteCoreAsync,
                 EchoGatedLineSender.DefaultOptions,
                 ct);
