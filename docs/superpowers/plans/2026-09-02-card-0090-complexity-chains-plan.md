@@ -6,6 +6,17 @@
 
 ---
 
+## Addendum (2026-09-02, CARD-0322 Plan pass, task 084537e1) — build the walker list-in
+
+CARD-0322 (`docs/superpowers/plans/2026-09-02-card-0322-routing-pin-candidates-plan.md`) is the second list source for the walker below: a routing pin's ordered `Candidates`. To keep it a *source* and not a second walker, build `WalkAsync` as two pieces from day one — the Code pass reads that plan's §"Walker contract" before writing `ComplexityRoutingService`:
+
+- a pure, DB-free `RoutingCandidates.Compose(pinDecision, chain?, requestKind?, requestLevel?, resolveAgainstRolePolicy)` → ordered, deduped complete pairs + `Source` (`chain:Hard` | `pin:CARD-0301 Plan` | …) + per-candidate `Origin` (`pin` | `chain` | `rolePolicy`) + `Walked` (count ≥ 2). The Required-pin-wins / Preferred-pin-prepends rows of §Decision 5 live here.
+- `WalkCandidatesAsync(IReadOnlyList<Candidate>, WalkContext, ct)` — the four filters of §Decision 3, in order, with no knowledge of where the list came from. `WalkAsync(complexity, …)` is `Compose` + `WalkCandidatesAsync`.
+
+`Walk` and `ComplexityRoutingDto` carry `Source` and `Origin`. Nothing else in this plan moves. Also note: the enum tails quoted under "Ground truth" are stale — `AgentTaskEventType` now ends at `LandRefused = 22`; append after that, re-read at code time. The `DelegationSettings.ComplexityChains` shipped defaults under §Entities are superseded by an operator decision relayed to the CARD-0322 pass on 2026-09-02: defaults stay EMPTY until a human sets them (routing policy changed nine times in three days), and auto-resume onto an already-listed candidate when capacity returns is wanted. That decision is not yet on CARD-0090's revision history; the orchestrator should record it there before the Code pass starts.
+
+---
+
 ## The card is stale on two points — read this first
 
 | Card says (2026-08-19) | True today (2026-09-02, checked in code) |
