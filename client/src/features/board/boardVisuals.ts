@@ -5,7 +5,7 @@ import type { CardStatus } from '../../api/boards'
  * (feature 011 §2.1). Amber/green is a known CVD-weak pair, so nothing here may be the only
  * thing telling two states apart — every node is name-labelled and every badge is worded.
  */
-const STATE_COLORS: Record<CardStatus, string> = {
+export const STATE_COLORS: Record<CardStatus, string> = {
   Backlog: 'gray',
   InProgress: 'active',
   Review: 'warning',

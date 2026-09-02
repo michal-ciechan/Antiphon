@@ -10,7 +10,10 @@ export function taskIsInProject(task: AgentTaskSummaryDto, dirKeys: string[]): b
 }
 
 /** A successful, recent, human-created deliverable which no operator has opened yet. */
-export function isUnreadDeliverable(task: AgentTaskSummaryDto, now = Date.now()): boolean {
+export function isUnreadDeliverable(
+  task: Pick<AgentTaskSummaryDto, 'status' | 'role' | 'completedAt'> & { readAt?: string | null },
+  now = Date.now(),
+): boolean {
   if (task.status !== 'Succeeded' || task.role === 'Check' || task.readAt !== null || !task.completedAt) {
     return false
   }
