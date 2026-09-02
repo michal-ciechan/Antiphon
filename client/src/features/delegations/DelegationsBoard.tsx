@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Alert,
+  Anchor,
   Badge,
   Box,
   Button,
@@ -17,7 +18,7 @@ import {
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useMemo, useRef, useState } from 'react'
 import { TbAlertCircle, TbPlus, TbRefresh } from 'react-icons/tb'
-import { useSearchParams } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 import {
   useAgentTaskListSummary,
   useAgentTasks,
@@ -37,8 +38,7 @@ import { LANES, buildTaskForest, formatCost, laneOf, subtreeIds, type TaskNode }
  * you walk a tree to find it.
  */
 export function DelegationsBoard() {
-  const [showAll, setShowAll] = useState(false)
-  const tasks = useAgentTasks(false, { since: showAll ? undefined : 'default' })
+  const tasks = useAgentTasks(false, { since: 'active' })
   const summary = useAgentTaskListSummary()
   // ?task=<id> opens the drawer on arrival — how the home page's task rows land here.
   const [searchParams] = useSearchParams()
@@ -133,9 +133,6 @@ export function DelegationsBoard() {
               onChange={(event) => setOnlyThisRun(event.currentTarget.checked)}
             />
           )}
-          <Button size="xs" variant="default" onClick={() => setShowAll((current) => !current)}>
-            {showAll ? 'Show recent' : 'Show all'}
-          </Button>
           <Tooltip label="Refresh">
             <ActionIcon variant="subtle" onClick={() => tasks.refetch()} loading={tasks.isFetching}>
               <TbRefresh />
@@ -160,6 +157,7 @@ export function DelegationsBoard() {
               forest={forest}
               expanded={effectiveExpanded}
               selectedId={selectedId}
+              runs={totals?.runs ?? 0}
               onToggle={toggle}
               onSelect={open}
             />
@@ -172,9 +170,22 @@ export function DelegationsBoard() {
             return (
               <Paper key={lane.key} withBorder p="xs" data-testid={`lane-${lane.key}`}>
                 <Group justify="space-between" mb={6} wrap="nowrap">
-                  <Text size="xs" tt="uppercase" fw={700}>
-                    {lane.label}
-                  </Text>
+                  <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+                    <Text size="xs" tt="uppercase" fw={700}>
+                      {lane.label}
+                    </Text>
+                    {lane.key === 'done' && (
+                      <Anchor
+                        component={Link}
+                        to="/orchestrator?tab=history"
+                        size="xs"
+                        c="dimmed"
+                        style={{ flexShrink: 0 }}
+                      >
+                        older in History →
+                      </Anchor>
+                    )}
+                  </Group>
                   <Badge size="xs" variant="default">
                     {laneTasks.length}
                   </Badge>

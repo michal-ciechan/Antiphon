@@ -134,7 +134,7 @@ function detailFor(task: AgentTaskSummaryDto): AgentTaskDetailDto {
   }
 }
 
-function serveTasks(tasks: AgentTaskSummaryDto[] = RUN) {
+function serveTasks(tasks: AgentTaskSummaryDto[] = RUN, summaryOverride?: Partial<AgentTaskListSummaryDto>) {
   const summary: AgentTaskListSummaryDto = {
     active: tasks.filter((task) => task.status === 'Dispatched' || task.status === 'Working').length,
     blocked: tasks.filter((task) => task.status === 'Blocked').length,
@@ -143,6 +143,7 @@ function serveTasks(tasks: AgentTaskSummaryDto[] = RUN) {
     byStatus: Object.fromEntries(
       tasks.map((task) => task.status).map((status) => [status, tasks.filter((task) => task.status === status).length]),
     ),
+    ...summaryOverride,
   }
   server.use(
     http.get('/api/agent-tasks', () => HttpResponse.json(tasks)),
@@ -157,11 +158,12 @@ function serveTasks(tasks: AgentTaskSummaryDto[] = RUN) {
 const shortId = (id: string) => id.replace(/-/g, '').slice(0, 8)
 
 describe('DelegationsBoard', () => {
-  it('requests the configured recent window by default, then the complete history on Show all', async () => {
-    const sinceParameters: Array<string | null> = []
+  it('requests the active window by default', async () => {
+    const captured: Array<{ since: string | null; status: string | null }> = []
     server.use(
       http.get('/api/agent-tasks', ({ request }) => {
-        sinceParameters.push(new URL(request.url).searchParams.get('since'))
+        const params = new URL(request.url).searchParams
+        captured.push({ since: params.get('since'), status: params.get('status') })
         return HttpResponse.json(RUN)
       }),
       http.get('/api/agent-tasks/summary', () =>
@@ -171,11 +173,11 @@ describe('DelegationsBoard', () => {
     renderWithProviders(<DelegationsBoard />)
 
     await screen.findByTestId('lane-working')
-    expect(sinceParameters).toHaveLength(1)
-    expect(sinceParameters[0]).toMatch(/^\d{4}-\d{2}-\d{2}T/)
-
-    await userEvent.click(screen.getByRole('button', { name: 'Show all' }))
-    await waitFor(() => expect(sinceParameters).toContain(null))
+    expect(captured).toHaveLength(1)
+    expect(captured[0].status).toBeNull()
+    expect(captured[0].since).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+    const ageMs = Date.now() - Date.parse(captured[0].since!)
+    expect(Math.abs(ageMs - 60 * 60 * 1000)).toBeLessThanOrEqual(5_000)
   })
 
   it('virtualizes a large lane instead of rendering every task card', async () => {
@@ -214,6 +216,11 @@ describe('DelegationsBoard', () => {
     expect(within(screen.getByTestId('lane-blocked')).getByText('Update the compose file')).toBeInTheDocument()
 
     const done = screen.getByTestId('lane-done')
+    expect(within(done).getByText('Just settled')).toBeInTheDocument()
+    expect(within(done).getByRole('link', { name: 'older in History →' })).toHaveAttribute(
+      'href',
+      '/orchestrator?tab=history',
+    )
     expect(within(done).getByText('Run the suite')).toBeInTheDocument()
     expect(within(done).getByText('Fix the flaky channel test')).toBeInTheDocument()
 
@@ -340,10 +347,42 @@ describe('DelegationsBoard', () => {
     expect(screen.getByTestId(`task-tree-row-${shortId(RUN[0].id)}`)).toBeInTheDocument()
   })
 
-  it('says what an empty board is for instead of showing nothing', async () => {
+  it('says what an empty board is for', async () => {
     serveTasks([])
+    const first = renderWithProviders(<DelegationsBoard />)
+    expect(await screen.findByText(/No delegated tasks yet/)).toBeInTheDocument()
+    first.unmount()
+
+    serveTasks([], { runs: 812 })
+    renderWithProviders(<DelegationsBoard />)
+    expect(await screen.findByText(/Nothing in flight/)).toBeInTheDocument()
+    expect(screen.getByText(/812 runs settled/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'open History →' })).toHaveAttribute(
+      'href',
+      '/orchestrator?tab=history',
+    )
+  })
+
+  it('opens the drawer for a settled task named in the URL even when it is not on the board', async () => {
+    const settledId = '99999999-9999-9999-9999-999999999999'
+    const settled = summary({
+      id: settledId,
+      title: 'A settled task from last week',
+      status: 'Succeeded',
+      completedAt: '2026-08-01T10:00:00Z',
+    })
+    serveTasks()
+    server.use(
+      http.get('/api/agent-tasks/:id', ({ params }) => {
+        if (params.id === settledId) return HttpResponse.json(detailFor(settled))
+        const found = RUN.find((task) => task.id === params.id)
+        return found ? HttpResponse.json(detailFor(found)) : new HttpResponse(null, { status: 404 })
+      }),
+    )
+    window.history.pushState({}, '', `/orchestrator?tab=delegations&task=${settledId}`)
     renderWithProviders(<DelegationsBoard />)
 
-    expect(await screen.findByText(/No delegated tasks yet/)).toBeInTheDocument()
+    expect(await screen.findByText('A settled task from last week')).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
   })
 })

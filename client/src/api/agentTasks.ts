@@ -345,9 +345,12 @@ export const agentTaskKeys = {
 /** Seven days is the shipped Delegation:DefaultWindowDays setting. */
 export const DELEGATIONS_DEFAULT_WINDOW_DAYS = 7
 
+/** Settled tasks this recent still sit on the active board (the *Just settled* lane). */
+export const DELEGATIONS_ACTIVE_GRACE_MINUTES = 60
+
 export interface AgentTaskListOptions {
-  /** `default` resolves when each request runs, keeping the recent window rolling without cache-key churn. */
-  since?: string | 'default'
+  /** `default` / `active` resolve when each request runs, keeping the window rolling without cache-key churn. */
+  since?: string | 'default' | 'active'
   status?: AgentTaskStatus[]
 }
 
@@ -358,7 +361,9 @@ function queryForAgentTasks(includeChecks: boolean, options: AgentTaskListOption
     const since =
       options.since === 'default'
         ? new Date(Date.now() - DELEGATIONS_DEFAULT_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString()
-        : options.since
+        : options.since === 'active'
+          ? new Date(Date.now() - DELEGATIONS_ACTIVE_GRACE_MINUTES * 60 * 1000).toISOString()
+          : options.since
     query.set('since', since)
   }
   if (options.status?.length) query.set('status', options.status.join(','))

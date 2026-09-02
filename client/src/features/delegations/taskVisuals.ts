@@ -68,11 +68,23 @@ export const STATUS_COLOR: Record<AgentTaskStatus, string> = {
 
 export type LaneKey = 'queued' | 'working' | 'blocked' | 'done'
 
+/** Terminal statuses — the server's `since` clause, Home's `IsOpenBound`, and this board all agree. */
+export const SETTLED_STATUSES: AgentTaskStatus[] = ['Succeeded', 'Failed', 'Canceled']
+
+export function isSettled(status: AgentTaskStatus): boolean {
+  return SETTLED_STATUSES.includes(status)
+}
+
 export const LANES: Array<{ key: LaneKey; label: string; statuses: AgentTaskStatus[]; hint: string }> = [
   { key: 'queued', label: 'Queued', statuses: ['Queued'], hint: 'waiting for a dispatch slot' },
   { key: 'working', label: 'Working', statuses: ['Dispatched', 'Working'], hint: 'a delegate is on it' },
   { key: 'blocked', label: 'Blocked', statuses: ['Blocked'], hint: 'asked a question — answer it' },
-  { key: 'done', label: 'Done', statuses: ['Succeeded', 'Failed', 'Canceled'], hint: 'settled' },
+  {
+    key: 'done',
+    label: 'Just settled',
+    statuses: SETTLED_STATUSES,
+    hint: 'settled in the last hour · older in History →',
+  },
 ]
 
 export function laneOf(status: AgentTaskStatus): LaneKey {

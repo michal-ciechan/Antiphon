@@ -11,6 +11,7 @@ import {
   formatCost,
   formatDuration,
   isLegacyCostEstimate,
+  isSettled,
   laneOf,
   subtreeIds,
   tierAlias,
@@ -137,6 +138,16 @@ describe('lanes', () => {
 
   it('keeps Blocked out of Done — a question needs an answer, not filing', () => {
     expect(laneOf('Blocked')).toBe('blocked')
+  })
+
+  it('treats Succeeded, Failed and Canceled as settled, and nothing else', () => {
+    expect(isSettled('Succeeded')).toBe(true)
+    expect(isSettled('Failed')).toBe(true)
+    expect(isSettled('Canceled')).toBe(true)
+    expect(isSettled('Queued')).toBe(false)
+    expect(isSettled('Dispatched')).toBe(false)
+    expect(isSettled('Working')).toBe(false)
+    expect(isSettled('Blocked')).toBe(false)
   })
 })
 

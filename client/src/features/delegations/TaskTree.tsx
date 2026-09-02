@@ -1,5 +1,6 @@
-import { ActionIcon, Badge, Box, Group, Text, Tooltip, UnstyledButton } from '@mantine/core'
+import { ActionIcon, Anchor, Badge, Box, Group, Text, Tooltip, UnstyledButton } from '@mantine/core'
 import { TbChevronDown, TbChevronRight, TbSitemap } from 'react-icons/tb'
+import { Link } from 'react-router'
 import type { AgentTaskSummaryDto } from '../../api/agentTasks'
 import { TierBadge } from './TaskChip'
 import { STATUS_COLOR, countSubtree, formatCost, shortId, type TaskNode } from './taskVisuals'
@@ -14,16 +15,28 @@ export function TaskTree({
   forest,
   expanded,
   selectedId,
+  runs = 0,
   onToggle,
   onSelect,
 }: {
   forest: TaskNode[]
   expanded: Set<string>
   selectedId: string | null
+  runs?: number
   onToggle: (id: string) => void
   onSelect: (task: AgentTaskSummaryDto) => void
 }) {
   if (forest.length === 0) {
+    if (runs > 0) {
+      return (
+        <Text size="sm" c="dimmed" p="sm">
+          Nothing in flight. {runs} run{runs === 1 ? '' : 's'} settled —{' '}
+          <Anchor component={Link} to="/orchestrator?tab=history">
+            open History →
+          </Anchor>
+        </Text>
+      )
+    }
     return (
       <Text size="sm" c="dimmed" p="sm">
         No delegated tasks yet. Start one with “New task”, or let an orchestrator delegate with the
