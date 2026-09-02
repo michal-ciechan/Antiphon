@@ -313,6 +313,11 @@ For an ad-hoc `codex exec` probe from an agent scratchpad, set
 test helper and must never write into the user's normal Codex home.
 
 **Behaviour worth knowing:**
+- Delivery verification (owner: `ProviderContractCatalog` Codex `DeliveryVerification`): after a
+  settled pre-Enter screen, a submit is proven by the Working indicator or an emptied composer
+  sustained `PostEvidenceSettleMs`; sequence advance is not evidence. A body still visible at 30 s
+  with no Working is `NoSubmitOutput`. A cold-delegate first-delivery `NoSubmitOutput` relaunches
+  once (`BootWedged`).
 - Turn completion is an explicit `event_msg/task_complete` row. Codex renders **no "Worked for Ns"
   done-line**, so the screen fallback is the *lifecycle* of the `Working (Ns — esc to interrupt)`
   indicator — appeared, then left. Bare quiet time was the CARD-0108 defect: it certified a

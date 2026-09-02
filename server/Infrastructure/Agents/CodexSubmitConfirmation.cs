@@ -41,13 +41,15 @@ public sealed record CodexSubmitOptions(
 /// that actually submitted, but the binding sits behind it.</para>
 ///
 /// <para><b>Where the transcript never becomes observable at all</b> — a refused or failed bind, a
-/// transcript-disabled session, an adapter with no transcript source — this degrades to the blind
-/// pre-CARD-0108 behaviour plus a Warning, rather than failing a launch over a missing observer. A
-/// session with no transcript is already a <c>TranscriptBindFailed</c> incident by CARD-0099 S1's
-/// rules, and degrading delivery verification when observability is absent is the documented
-/// CARD-0055 posture. The distinguishing evidence is whether ANY row was ever seen: a transcript
-/// that produces rows but never one confirming this body is a live pipeline saying the body did not
-/// submit, and that throws.</para>
+/// transcript-disabled session, an adapter with no transcript source — the CARD-0055 degrade still
+/// stands, but the named/card-launch path is no longer a blind return the moment the window expires
+/// (CARD-0133 S1b-A). After the last Enter, this looks twice <see cref="CodexMcpBoot.AbsentSettle"/>
+/// apart: <see cref="CodexWorkingIndicator"/> on either look is degraded success; the body still
+/// visible on <b>both</b> looks throws <see cref="PromptDeliveryException"/> with
+/// <see cref="PromptDeliveryException.ComposerMayHoldBody"/>; neither (body gone, no Working) is
+/// today's blind return. A transcript that produces rows but never one confirming this body is a
+/// live pipeline saying the body did not submit, and that throws on the transcript-live arm
+/// unchanged.</para>
 /// </summary>
 internal static class CodexSubmitConfirmation
 {
@@ -62,7 +64,8 @@ internal static class CodexSubmitConfirmation
     /// <param name="snapshotScreen">Rendered screen, for the look that decides <see cref="PromptDeliveryException.ComposerMayHoldBody"/>.</param>
     /// <param name="log">Non-fatal delivery events (an Enter re-press, the degraded path). Warning level.</param>
     /// <exception cref="PromptDeliveryException">
-    /// The transcript is demonstrably live and never confirmed this body.
+    /// The transcript is demonstrably live and never confirmed this body, or (CARD-0133 S1b-A)
+    /// no row was ever seen and the composer still shows the body after two post-Enter looks.
     /// </exception>
     public static async Task SubmitAsync(
         string body,
@@ -112,30 +115,76 @@ internal static class CodexSubmitConfirmation
             await pressEnter(ct);
         }
 
-        var screen = await SafeScreenAsync(snapshotScreen, ct);
-        var stillVisible = ComposerStillShows(screen, body);
-
         if (!anyRowEverSeen)
         {
-            log?.Invoke(
-                $"Codex submit could not be confirmed in {options.ConfirmTimeout.TotalSeconds:F0}s and "
-                + "this session produced NO transcript rows at all, so there is nothing to confirm "
-                + "against — treating the delivery as blind (pre-CARD-0108 behaviour). A bound "
-                + "transcript is what makes this verifiable; its absence is already a "
-                + "TranscriptBindFailed-class fault. Body still visible on screen: " + stillVisible);
+            await ConcludeUnobservableSubmitAsync(
+                body, snapshotScreen, extraEnters, baselineSequence, options, log, ct);
             return;
         }
+
+        var screen = await SafeScreenAsync(snapshotScreen, ct);
+        var stillVisible = ComposerStillShows(screen, body);
 
         throw new PromptDeliveryException(
             $"Codex prompt ({body.Length} chars) was typed but no UserPrompt transcript row past "
             + $"sequence {baselineSequence} carried it within {options.ConfirmTimeout.TotalSeconds:F0}s "
             + $"across {extraEnters + 1} Enter press(es), while the transcript was live. "
             + (stillVisible
-                ? "The composer STILL SHOWS the body, so it is holding an unsubmitted prompt: "
-                  + "re-typing would splice a second copy onto the first. "
+                ? StillShowsSentence
                 : "The body is no longer visible on screen. ")
             + "Screen tail: " + Tail(screen, 400),
             composerMayHoldBody: stillVisible);
+    }
+
+    /// <summary>
+    /// CARD-0133 S1b-A: no transcript row was ever seen. Two looks
+    /// <see cref="CodexMcpBoot.AbsentSettle"/> apart decide among Working (degraded success),
+    /// body still standing on both (throw, composer may hold it), and neither (blind return).
+    /// Two looks so a single stale frame that still shows the body cannot fail a launch on its own.
+    /// </summary>
+    private static async Task ConcludeUnobservableSubmitAsync(
+        string body,
+        Func<CancellationToken, Task<string>> snapshotScreen,
+        int extraEnters,
+        long baselineSequence,
+        CodexSubmitOptions options,
+        Action<string>? log,
+        CancellationToken ct)
+    {
+        var first = await SafeScreenAsync(snapshotScreen, ct);
+        if (CodexWorkingIndicator.IsVisible(first))
+        {
+            log?.Invoke("Codex submit confirmed by Working indicator; transcript never bound");
+            return;
+        }
+
+        await Task.Delay(CodexMcpBoot.AbsentSettle, ct);
+
+        var second = await SafeScreenAsync(snapshotScreen, ct);
+        if (CodexWorkingIndicator.IsVisible(second))
+        {
+            log?.Invoke("Codex submit confirmed by Working indicator; transcript never bound");
+            return;
+        }
+
+        if (ComposerStillShows(first, body) && ComposerStillShows(second, body))
+        {
+            throw new PromptDeliveryException(
+                $"Codex prompt ({body.Length} chars) was typed but no UserPrompt transcript row past "
+                + $"sequence {baselineSequence} carried it within {options.ConfirmTimeout.TotalSeconds:F0}s "
+                + $"across {extraEnters + 1} Enter press(es), and the transcript never produced a row. "
+                + StillShowsSentence
+                + "Screen tail: " + Tail(second, 400),
+                composerMayHoldBody: true);
+        }
+
+        log?.Invoke(
+            $"Codex submit could not be confirmed in {options.ConfirmTimeout.TotalSeconds:F0}s and "
+            + "this session produced NO transcript rows at all, so there is nothing to confirm "
+            + "against — treating the delivery as blind (pre-CARD-0108 behaviour). A bound "
+            + "transcript is what makes this verifiable; its absence is already a "
+            + "TranscriptBindFailed-class fault. Body still visible on screen: "
+            + ComposerStillShows(second, body));
     }
 
     /// <summary>
@@ -197,6 +246,10 @@ internal static class CodexSubmitConfirmation
     }
 
     private const int HeadLookChars = 40;
+
+    private const string StillShowsSentence =
+        "The composer STILL SHOWS the body, so it is holding an unsubmitted prompt: "
+        + "re-typing would splice a second copy onto the first. ";
 
     private static string Squash(string text) => text.Replace(" ", "", StringComparison.Ordinal);
 
