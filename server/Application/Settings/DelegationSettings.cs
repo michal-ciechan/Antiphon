@@ -1,4 +1,5 @@
 using Antiphon.Agents.Pty;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
 using Microsoft.Extensions.Options;
 
@@ -311,6 +312,15 @@ public sealed class DelegationSettings
     };
 
     public AgentModelLevel DefaultLevel { get; set; } = AgentModelLevel.High;
+
+    /// <summary>
+    /// Config defaults for a complexity tier with no active <c>ComplexityChains</c> row
+    /// (CARD-0090). EMPTY as shipped — routing policy changed nine times in three days, so a
+    /// seeded fable→opus→sol→grok chain would be wrong the moment it landed. A human writes
+    /// the live lists with <c>complexity-chain.ps1 set</c>.
+    /// </summary>
+    public Dictionary<string, List<ComplexityCandidateSettings>> ComplexityChains { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// A Dispatched task whose session has written no TURN PROMPT of its own after this long never
@@ -706,6 +716,13 @@ public sealed class DelegationSettings
         public int? RecommendedInFlight { get; set; } = 1;
     }
 
+    /// <summary>One complete pair in <see cref="DelegationSettings.ComplexityChains"/>.</summary>
+    public sealed class ComplexityCandidateSettings
+    {
+        public AgentKind Kind { get; set; }
+        public AgentModelLevel Level { get; set; }
+    }
+
     /// <summary>
     /// The configured advisory in-flight recommendation for <paramref name="role"/>, or null when
     /// that role has no <see cref="RolePolicy"/> entry (shipped <c>Custom</c> / <c>Check</c>).
@@ -817,6 +834,41 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
             {
                 failures.Add(
                     $"Delegation:RolePolicy:{role}:RecommendedInFlight must be a positive integer or null (unbounded).");
+            }
+        }
+
+        foreach (var (tier, candidates) in options.ComplexityChains)
+        {
+            if (!Enum.TryParse<TaskComplexity>(tier, ignoreCase: true, out var complexity)
+                || !Enum.IsDefined(complexity))
+            {
+                failures.Add(
+                    $"Delegation:ComplexityChains has unknown tier '{tier}'. Use Hard, Medium, or Easy.");
+                continue;
+            }
+
+            if (candidates is null || candidates.Count == 0)
+                continue;
+            if (candidates.Count > 8)
+            {
+                failures.Add(
+                    $"Delegation:ComplexityChains:{tier} has {candidates.Count} candidates; the maximum is 8.");
+            }
+
+            var seen = new HashSet<(AgentKind, AgentModelLevel)>();
+            foreach (var candidate in candidates)
+            {
+                if (!AgentTaskService.DelegatableKinds.Contains(candidate.Kind))
+                {
+                    failures.Add(
+                        $"Delegation:ComplexityChains:{tier} names {candidate.Kind}, which is not a delegate kind.");
+                }
+
+                if (!seen.Add((candidate.Kind, candidate.Level)))
+                {
+                    failures.Add(
+                        $"Delegation:ComplexityChains:{tier} lists {candidate.Kind}/{candidate.Level} twice.");
+                }
             }
         }
 

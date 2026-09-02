@@ -165,6 +165,26 @@ public enum AgentTaskEventType
     /// The task branch and worktree are retained so a follow-up delegate can continue from facts.
     /// </summary>
     LandRefused = 22,
+
+    /// <summary>
+    /// The task's (kind, level) was re-chosen from a complexity chain (or later a multi-candidate
+    /// pin) because the previous snapshot could not run (CARD-0090). Never a silent guess past
+    /// the listed candidates. Appended after shipped 22; do not renumber.
+    /// </summary>
+    Rerouted = 23,
+}
+
+/// <summary>
+/// Caller-declared work hardness for a complexity chain (CARD-0090). Distinct from
+/// <see cref="AgentModelLevel"/> — they share the word Medium on purpose (the requester's word)
+/// but are different JSON fields and different script parameters (<c>-Complexity Medium</c> vs
+/// <c>-Level Medium</c>).
+/// </summary>
+public enum TaskComplexity
+{
+    Hard = 0,
+    Medium = 1,
+    Easy = 2,
 }
 
 /// <summary>

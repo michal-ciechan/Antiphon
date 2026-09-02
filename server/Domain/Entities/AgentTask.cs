@@ -74,6 +74,13 @@ public class AgentTask
     /// <summary>Resolved from the role policy at creation; an explicit override is recorded in the events.</summary>
     public AgentModelLevel ModelLevel { get; set; } = AgentModelLevel.High;
 
+    /// <summary>
+    /// Non-null = this task's kind/level was chosen by a complexity chain and may be re-chosen
+    /// by it (dispatch re-walk, Blocked-for-routing resume). Null after an explicit
+    /// <c>POST …/reroute</c> — that pick ends chain governance (CARD-0090).
+    /// </summary>
+    public TaskComplexity? Complexity { get; set; }
+
     /// <summary>Set when the task was escalated up a tier — the chip shows the ladder.</summary>
     public AgentModelLevel? EscalatedFrom { get; set; }
 

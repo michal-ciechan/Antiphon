@@ -418,6 +418,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<DateTime?>("CompletedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int?>("Complexity")
+                        .HasColumnType("integer");
+
                     b.Property<Guid>("ConcurrencyToken")
                         .HasColumnType("uuid");
 
@@ -1885,6 +1888,53 @@ namespace Antiphon.Server.Migrations
                         .IsUnique();
 
                     b.ToTable("ChatChannels", (string)null);
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.ComplexityChain", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CandidatesJson")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTime?>("ClearedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Complexity")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("NotAfter")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Provenance")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("character varying(400)");
+
+                    b.Property<Guid?>("SourceTaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Complexity")
+                        .IsUnique()
+                        .HasDatabaseName("IX_ComplexityChains_Complexity_Active")
+                        .HasFilter("\"ClearedAt\" IS NULL");
+
+                    b.ToTable("ComplexityChains", (string)null);
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.CostLedgerEntry", b =>

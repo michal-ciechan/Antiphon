@@ -64,6 +64,7 @@ public class AppDbContext : DbContext
     public DbSet<SubscriptionUsageSample> SubscriptionUsageSamples => Set<SubscriptionUsageSample>();
     public DbSet<ModelAvailabilityHold> ModelAvailabilityHolds => Set<ModelAvailabilityHold>();
     public DbSet<RoutingPin> RoutingPins => Set<RoutingPin>();
+    public DbSet<ComplexityChain> ComplexityChains => Set<ComplexityChain>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -1457,6 +1458,8 @@ public class AppDbContext : DbContext
             entity.Property(t => t.ReportNudgeMessageId).IsRequired(false);
             // CARD-0299 S2. Zero on every pre-existing row.
             entity.Property(t => t.BootWedgeRelaunchCount).IsRequired().HasDefaultValue(0);
+            // CARD-0090. Null on every pre-existing row: kind/level was not chosen by a chain.
+            entity.Property(t => t.Complexity).IsRequired(false);
 
             entity.HasIndex(t => new { t.RootTaskId, t.CreatedAt }).HasDatabaseName("IX_AgentTasks_RootTaskId_CreatedAt");
             entity.HasIndex(t => t.Status).HasDatabaseName("IX_AgentTasks_Status");
@@ -1577,6 +1580,23 @@ public class AppDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(p => p.CardId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ComplexityChain>(entity =>
+        {
+            entity.ToTable("ComplexityChains");
+            entity.HasKey(c => c.Id);
+            entity.Property(c => c.Complexity).IsRequired();
+            entity.Property(c => c.CandidatesJson).IsRequired().HasMaxLength(1000);
+            entity.Property(c => c.Provenance).IsRequired();
+            entity.Property(c => c.Reason).IsRequired().HasMaxLength(400);
+            entity.Property(c => c.CreatedAt).IsRequired();
+            entity.Property(c => c.UpdatedAt).IsRequired();
+
+            entity.HasIndex(c => c.Complexity)
+                .IsUnique()
+                .HasFilter("\"ClearedAt\" IS NULL")
+                .HasDatabaseName("IX_ComplexityChains_Complexity_Active");
         });
 
     }

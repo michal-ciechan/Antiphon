@@ -430,6 +430,9 @@ try
     builder.Services.AddScoped<ModelAvailability>();
     // CARD-0305: per-card/stage routing pins. Scoped like the availability reader it hands off to.
     builder.Services.AddScoped<RoutingPinService>();
+    // CARD-0090: complexity chains. Scoped like the pin/availability readers the walker consumes.
+    builder.Services.AddScoped<ComplexityRoutingService>();
+    builder.Services.AddScoped<ComplexityChainService>();
     // CARD-0072 S5a: durable API-error retry. Singleton for the same reason as compaction —
     // the supervisor hosted service is a singleton and this is the action it calls.
     builder.Services.AddSingleton<ApiErrorRecoveryService>();
@@ -720,6 +723,7 @@ try
     app.MapAgentTaskEndpoints();
     app.MapModelAvailabilityEndpoints();
     app.MapRoutingPinEndpoints();
+    app.MapComplexityChainEndpoints();
     app.MapAttentionEndpoints();
     app.MapHomeEndpoints();
     app.MapDigestEndpoints();
