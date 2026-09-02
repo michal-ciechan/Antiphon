@@ -56,6 +56,8 @@ function serve(items: AttentionItemDto[]) {
         enabled: true,
         generatedAt: '2026-08-17T10:00:00Z',
         runningSessions: 0,
+        runningCardSessions: 0,
+        runningDelegateSessions: 0,
         retryQueueLength: 0,
         totals: { tokensIn: 0, tokensOut: 0, costUsd: 0, activeRuntimeSeconds: 0 },
         limits: {

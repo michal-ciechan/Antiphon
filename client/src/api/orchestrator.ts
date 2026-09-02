@@ -1,5 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import type { AgentTaskKind, AgentTaskRole, AgentTaskStatus } from './agentTasks'
 import { apiGet, apiPost } from './client'
+
+export type OrchestratorSessionSource = 'Card' | 'Delegation'
+
+export interface OrchestratorRunningTaskDto {
+  taskId: string
+  shortId: string
+  title: string
+  role: AgentTaskRole
+  status: AgentTaskStatus
+  kind: AgentTaskKind
+  rootTaskId: string
+  parentTaskId: string | null
+  agentName: string | null
+}
 
 export interface OrchestratorStateTotalsDto {
   tokensIn: number
@@ -18,11 +33,14 @@ export interface OrchestratorStateLimitsDto {
 
 export interface OrchestratorRunningSessionDto {
   sessionId: string
-  cardId: string
-  cardIdentifier: string
-  cardTitle: string
-  boardId: string
-  boardName: string
+  source: OrchestratorSessionSource
+  depth: number
+  cardId: string | null
+  cardIdentifier: string | null
+  cardTitle: string | null
+  boardId: string | null
+  boardName: string | null
+  task: OrchestratorRunningTaskDto | null
   definitionName: string
   agentKind: string
   status: string
@@ -59,6 +77,8 @@ export interface OrchestratorStateDto {
   enabled: boolean
   generatedAt: string
   runningSessions: number
+  runningCardSessions: number
+  runningDelegateSessions: number
   retryQueueLength: number
   totals: OrchestratorStateTotalsDto
   limits: OrchestratorStateLimitsDto
