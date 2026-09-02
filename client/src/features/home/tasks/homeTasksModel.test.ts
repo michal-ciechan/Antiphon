@@ -33,6 +33,7 @@ function item(overrides: Partial<HomeTaskItemDto> = {}): HomeTaskItemDto {
     id: '11111111-0000-0000-0000-000000000001',
     identifier: 'CARD-0001',
     title: 'A card',
+    terminalReason: null,
     group: 'Running',
     state: 'InProgress',
     humanReason: null,

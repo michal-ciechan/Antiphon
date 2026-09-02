@@ -41,6 +41,8 @@ export interface HomeTaskItemDto {
   /** CARD-nnnn or the 8-char task short id. */
   identifier: string
   title: string
+  /** Card close verdict. Null for delegations and open cards. */
+  terminalReason: string | null
   group: HomeTaskGroup
   /** Native status name verbatim, never remapped. */
   state: string

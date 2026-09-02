@@ -169,6 +169,100 @@ export interface AgentTaskListSummaryDto {
   byStatus: Partial<Record<AgentTaskStatus, number>>
 }
 
+/** Why a queued pipeline row has not dispatched (CARD-0304 / CARD-0031). */
+export type AgentTaskPipelineQueueReason =
+  | 'sharedCheckoutLease'
+  | 'concurrencyCap'
+  | 'routingPinNotBefore'
+  | 'awaitingDispatch'
+
+export type RoutingPinProvenance = 'Auto' | 'Human'
+export type RoutingPinStrength = 'Preferred' | 'Required'
+
+export interface RoutingPinRefDto {
+  id: string
+  cardId: string | null
+  cardIdentifier: string | null
+  role: AgentTaskRole
+  provenance: RoutingPinProvenance
+  strength: RoutingPinStrength
+  agentKind: AgentKind | null
+  modelLevel: AgentModelLevel | null
+  notBefore: string | null
+  reason: string
+}
+
+export interface AgentTaskPipelineCardRefDto {
+  id: string
+  identifier: string
+  title: string
+}
+
+export interface AgentTaskPipelineHolderDto {
+  taskId: string
+  shortId: string
+  title: string
+}
+
+export interface AgentTaskPipelineInFlightDto {
+  taskId: string
+  shortId: string
+  title: string
+  status: AgentTaskStatus
+  card: AgentTaskPipelineCardRefDto | null
+  agentName: string | null
+  dispatchedAt: string | null
+  lastActivityAt: string
+}
+
+export interface AgentTaskPipelineQueuedDto {
+  taskId: string
+  shortId: string
+  title: string
+  card: AgentTaskPipelineCardRefDto | null
+  createdAt: string
+  queueReason: AgentTaskPipelineQueueReason
+  heldBy: AgentTaskPipelineHolderDto[]
+}
+
+export interface AgentTaskPipelineBlockedDto {
+  taskId: string
+  shortId: string
+  title: string
+  card: AgentTaskPipelineCardRefDto | null
+  createdAt: string
+}
+
+export interface AgentTaskPipelineReadyDto {
+  card: AgentTaskPipelineCardRefDto
+  sourcePlanTaskId: string
+  sourcePlanShortId: string
+  readySince: string
+  deliverablePath: string
+  deliverableRef: string | null
+  routingPin?: RoutingPinRefDto | null
+}
+
+export interface AgentTaskPipelineStageDto {
+  role: AgentTaskRole
+  recommendedInFlight: number | null
+  inFlightCount: number
+  atOrAboveRecommendation: boolean
+  inFlight: AgentTaskPipelineInFlightDto[]
+  queued: AgentTaskPipelineQueuedDto[]
+  blocked: AgentTaskPipelineBlockedDto[]
+  ready: AgentTaskPipelineReadyDto[]
+  routingPin?: RoutingPinRefDto | null
+}
+
+export interface AgentTaskPipelineDto {
+  asOf: string
+  recommendationsAreAdvisory: boolean
+  maxConcurrentTasks: number
+  inFlightAgainstCap: number
+  stages: AgentTaskPipelineStageDto[]
+}
+
 export interface CreateAgentTaskRequest {
   goal: string
   title?: string | null
@@ -241,6 +335,7 @@ export const agentTaskKeys = {
     ['agentTasks', 'list', includeChecks, options.since ?? null, options.status?.join(',') ?? null] as const,
   summary: () => ['agentTasks', 'summary'] as const,
   detail: (id: string) => ['agentTasks', 'detail', id] as const,
+  pipeline: () => ['agentTasks', 'pipeline'] as const,
 }
 
 /** Seven days is the shipped Delegation:DefaultWindowDays setting. */
@@ -288,6 +383,21 @@ export function useAgentTaskListSummary() {
     queryFn: () => apiGet<AgentTaskListSummaryDto>('/agent-tasks/summary'),
     refetchInterval: 15_000,
     staleTime: 5_000,
+  })
+}
+
+/**
+ * Fleet-wide pipeline projection (CARD-0304 / CARD-0031). SignalR already invalidates this key
+ * (`AgentTaskChanged`, `AgentQueueChanged`, `SessionFinished`); the interval covers a dropped
+ * connection. Nobody on Home should block on this — a failed fetch is "no enrichment".
+ */
+export function usePipeline(enabled = true) {
+  return useQuery({
+    queryKey: agentTaskKeys.pipeline(),
+    queryFn: () => apiGet<AgentTaskPipelineDto>('/agent-tasks/pipeline'),
+    refetchInterval: 15_000,
+    staleTime: 5_000,
+    enabled,
   })
 }
 

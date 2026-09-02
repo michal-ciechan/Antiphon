@@ -18,6 +18,12 @@ public sealed class AgentTaskPipelineStatusService
     internal const string QueueReasonAwaitingDispatch = "awaitingDispatch";
     /// <summary>CARD-0305: waiting on its routing pin's <c>NotBefore</c>, not on a checkout.</summary>
     internal const string QueueReasonRoutingPinNotBefore = "routingPinNotBefore";
+    /// <summary>
+    /// CARD-0031: the fleet is at <see cref="DelegationSettings.MaxConcurrentTasks"/>. Same
+    /// predicate as the dispatcher's active-task count (non-Check Dispatched/Working). Reported
+    /// only after lease and pin, so a task behind a checkout still names the checkout.
+    /// </summary>
+    internal const string QueueReasonConcurrencyCap = "concurrencyCap";
     internal const string PlanDeliverablePrefix = "docs/superpowers/plans/";
 
     private static readonly AgentTaskRole[] VisibleRoles = Enum.GetValues<AgentTaskRole>()
@@ -149,7 +155,7 @@ public sealed class AgentTaskPipelineStatusService
             var roleQueued = queued
                 .Where(t => t.Role == role)
                 .OrderBy(t => t.CreatedAt).ThenBy(t => t.Id)
-                .Select(t => ToQueued(t, cards, holders, stagePins, cardPins, asOf))
+                .Select(t => ToQueued(t, cards, holders, stagePins, cardPins, asOf, inFlightRows.Count))
                 .ToList();
             var roleBlocked = blocked
                 .Where(t => t.Role == role)
@@ -172,7 +178,12 @@ public sealed class AgentTaskPipelineStatusService
                     : null));
         }
 
-        return new AgentTaskPipelineDto(asOf, RecommendationsAreAdvisory: true, stages);
+        return new AgentTaskPipelineDto(
+            asOf,
+            RecommendationsAreAdvisory: true,
+            _settings.MaxConcurrentTasks,
+            inFlightRows.Count,
+            stages);
     }
 
     internal static bool IsVerifiedPlanDeliverable(string? path)
@@ -264,7 +275,8 @@ public sealed class AgentTaskPipelineStatusService
         List<SharedWriterLeaseProjection.Holder> holders,
         Dictionary<AgentTaskRole, RoutingPin> stagePins,
         Dictionary<(Guid CardId, AgentTaskRole Role), RoutingPin> cardPins,
-        DateTime asOf)
+        DateTime asOf,
+        int inFlightAgainstCap)
     {
         IReadOnlyList<AgentTaskPipelineHolderDto> heldBy = [];
         var queueReason = QueueReasonAwaitingDispatch;
@@ -295,6 +307,14 @@ public sealed class AgentTaskPipelineStatusService
             && notBefore > asOf)
         {
             queueReason = QueueReasonRoutingPinNotBefore;
+        }
+
+        // Lease → pin → cap, the reasons the rail can name. The dispatcher itself checks the cap
+        // first and continues, but a task that is also behind a checkout still reports the checkout.
+        if (queueReason == QueueReasonAwaitingDispatch
+            && inFlightAgainstCap >= _settings.MaxConcurrentTasks)
+        {
+            queueReason = QueueReasonConcurrencyCap;
         }
 
         return new AgentTaskPipelineQueuedDto(

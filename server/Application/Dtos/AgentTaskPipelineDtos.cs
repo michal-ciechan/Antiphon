@@ -9,6 +9,13 @@ namespace Antiphon.Server.Application.Dtos;
 public sealed record AgentTaskPipelineDto(
     DateTime AsOf,
     bool RecommendationsAreAdvisory,
+    /// <summary>CARD-0031: <c>DelegationSettings.MaxConcurrentTasks</c>.</summary>
+    int MaxConcurrentTasks,
+    /// <summary>
+    /// CARD-0031: non-Check Dispatched/Working count — the same predicate as the dispatcher's
+    /// active-task query.
+    /// </summary>
+    int InFlightAgainstCap,
     IReadOnlyList<AgentTaskPipelineStageDto> Stages);
 
 public sealed record AgentTaskPipelineStageDto(

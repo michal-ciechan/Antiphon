@@ -28,6 +28,7 @@ function item(overrides: Partial<HomeTaskItemDto> = {}): HomeTaskItemDto {
     id: CARD_ID,
     identifier: 'CARD-0002',
     title: 'Tasks section on the home rail',
+    terminalReason: null,
     group: 'Running',
     state: 'InProgress',
     humanReason: null,

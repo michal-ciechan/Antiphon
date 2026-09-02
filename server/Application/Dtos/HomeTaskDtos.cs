@@ -57,6 +57,7 @@ public sealed record HomeTaskWorkerDto(
 /// <param name="Key">
 /// <c>card:{id:N}</c> or <c>task:{id:N}</c> — stable React key, and the tie-break sort key.
 /// </param>
+/// <param name="TerminalReason">Card close verdict (first-line read on the rail). Null for delegations and open cards.</param>
 /// <param name="State">Native status name verbatim (<c>NeedsDecision</c>, <c>Working</c>), never remapped.</param>
 /// <param name="Stage">
 /// <c>ActiveWorkflowRun.CurrentStage.Name</c>, else the newest bound task's Role name (cards);
@@ -68,6 +69,7 @@ public sealed record HomeTaskItemDto(
     Guid Id,
     string Identifier,
     string Title,
+    string? TerminalReason,
     HomeTaskGroup Group,
     string State,
     HomeTaskHumanReason? HumanReason,

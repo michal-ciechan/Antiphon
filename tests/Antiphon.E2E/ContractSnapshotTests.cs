@@ -440,6 +440,29 @@ public class ContractSnapshotTests
         await SnapshotHomeTasksAsync(app, homeIds);
     }
 
+    /// <summary>
+    /// CARD-0031 S3. Own scenario so a home-rail recapture cannot pick up a bound Plan worker.
+    /// Seeds one in-flight Shared writer, one queued task behind that lease, and one ready card.
+    /// </summary>
+    [Test]
+    public async Task Pipeline_status_contract()
+    {
+        var app = await SharedApp.GetAsync();
+        const string cwd = @"C:\src\antiphon-pipeline";
+        var t0 = new DateTime(2026, 2, 3, 9, 0, 0, DateTimeKind.Utc);
+
+        using (var scope = app.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await SeedPipelineScenarioAsync(db, cwd, t0);
+        }
+
+        await SnapshotPipelineAsync(
+            app,
+            new HashSet<Guid> { PipelineHolderTaskId, PipelineQueuedTaskId, PipelinePlanTaskId },
+            new HashSet<Guid> { PipelineReadyCardId });
+    }
+
     // ---- scenario helpers ----
 
     private static readonly Guid HomeProjectId = Guid.Parse("cccccccc-0000-0000-0000-000000000001");
@@ -449,6 +472,14 @@ public class ContractSnapshotTests
     private static readonly Guid HomeRunningCardId = Guid.Parse("cccccccc-0000-0000-0000-000000000005");
     private static readonly Guid HomeBoundTaskId = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000006");
     private static readonly Guid HomeBoundAgentId = Guid.Parse("bbbbbbbb-0000-0000-0000-000000000006");
+    private static readonly Guid PipelineHolderTaskId = Guid.Parse("dddddddd-0000-0000-0000-000000000001");
+    private static readonly Guid PipelineQueuedTaskId = Guid.Parse("dddddddd-0000-0000-0000-000000000002");
+    private static readonly Guid PipelinePlanTaskId = Guid.Parse("dddddddd-0000-0000-0000-000000000003");
+    private static readonly Guid PipelineHolderAgentId = Guid.Parse("dddddddd-0000-0000-0000-000000000011");
+    private static readonly Guid PipelineQueuedAgentId = Guid.Parse("dddddddd-0000-0000-0000-000000000012");
+    private static readonly Guid PipelineProjectId = Guid.Parse("dddddddd-0000-0000-0000-000000000021");
+    private static readonly Guid PipelineBoardId = Guid.Parse("dddddddd-0000-0000-0000-000000000022");
+    private static readonly Guid PipelineReadyCardId = Guid.Parse("dddddddd-0000-0000-0000-000000000023");
 
     private static async Task SeedHomeTasksScenarioAsync(AppDbContext db, string cwd, DateTime t0)
     {
@@ -540,6 +571,119 @@ public class ContractSnapshotTests
                 t.CostUsd = 0.11m;
                 t.CostPricingVersion = Server.Application.Services.DelegationCost.PricingVersion;
             }));
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedPipelineScenarioAsync(AppDbContext db, string cwd, DateTime t0)
+    {
+        db.AgentTaskEvents.RemoveRange(db.AgentTaskEvents.Where(e =>
+            e.AgentTaskId == PipelineHolderTaskId
+            || e.AgentTaskId == PipelineQueuedTaskId
+            || e.AgentTaskId == PipelinePlanTaskId));
+        db.AgentTasks.RemoveRange(db.AgentTasks.Where(t =>
+            t.Id == PipelineHolderTaskId
+            || t.Id == PipelineQueuedTaskId
+            || t.Id == PipelinePlanTaskId));
+        db.Cards.RemoveRange(db.Cards.Where(c => c.Id == PipelineReadyCardId));
+        await db.SaveChangesAsync();
+
+        if (!await db.Agents.AnyAsync(a => a.Id == PipelineHolderAgentId))
+            db.Agents.Add(DelegateAgent(PipelineHolderAgentId, "pipe-holder", cwd, Server.Domain.Enums.AgentModelLevel.Medium, t0));
+        if (!await db.Agents.AnyAsync(a => a.Id == PipelineQueuedAgentId))
+            db.Agents.Add(DelegateAgent(PipelineQueuedAgentId, "pipe-queued", cwd, Server.Domain.Enums.AgentModelLevel.Medium, t0));
+
+        if (!await db.Projects.AnyAsync(p => p.Id == PipelineProjectId))
+        {
+            db.Projects.Add(new Project
+            {
+                Id = PipelineProjectId,
+                Name = "Pipeline contract",
+                GitRepositoryUrl = "https://example.test/pipeline.git",
+                LocalRepositoryPath = cwd,
+                BaseBranch = "master",
+                CreatedAt = t0,
+                UpdatedAt = t0,
+            });
+        }
+
+        if (!await db.Boards.AnyAsync(b => b.Id == PipelineBoardId))
+        {
+            db.Boards.Add(new Board
+            {
+                Id = PipelineBoardId,
+                ProjectId = PipelineProjectId,
+                Name = "Pipeline",
+                CreatedAt = t0,
+                UpdatedAt = t0,
+            });
+            db.BoardColumns.Add(new BoardColumn
+            {
+                Id = Guid.Parse("dddddddd-0000-0000-0000-000000000031"),
+                BoardId = PipelineBoardId,
+                StateKey = "review",
+                Name = "Review",
+                ColumnOrder = 0,
+                CardStatus = Server.Domain.Enums.CardStatus.Review,
+                CreatedAt = t0,
+                UpdatedAt = t0,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var reviewColumnId = await db.BoardColumns
+            .Where(c => c.BoardId == PipelineBoardId && c.CardStatus == Server.Domain.Enums.CardStatus.Review)
+            .Select(c => c.Id)
+            .SingleAsync();
+
+        db.Cards.Add(new Card
+        {
+            Id = PipelineReadyCardId,
+            BoardId = PipelineBoardId,
+            BoardColumnId = reviewColumnId,
+            Identifier = "CARD-0031",
+            Title = "Project status view",
+            Status = Server.Domain.Enums.CardStatus.Review,
+            Priority = 1,
+            CreatedAt = t0.AddDays(-3),
+            UpdatedAt = t0.AddDays(-3),
+        });
+        await db.SaveChangesAsync();
+
+        db.AgentTasks.AddRange(
+            Task(PipelineHolderTaskId, PipelineHolderTaskId, null, 0,
+                "in-flight docs pass", cwd, t0.AddMinutes(-20),
+                PipelineHolderAgentId, "pipe-holder", t =>
+                {
+                    t.Role = Server.Domain.Enums.AgentTaskRole.Docs;
+                    t.ModelLevel = Server.Domain.Enums.AgentModelLevel.Medium;
+                    t.Status = Server.Domain.Enums.AgentTaskStatus.Working;
+                    t.Workspace = Server.Domain.Enums.WorkspaceMode.Shared;
+                    t.DispatchedAt = t0.AddMinutes(-20);
+                    t.CostPricingVersion = Server.Application.Services.DelegationCost.PricingVersion;
+                }),
+            Task(PipelineQueuedTaskId, PipelineQueuedTaskId, null, 0,
+                "queued behind the checkout", cwd, t0.AddMinutes(-10),
+                PipelineQueuedAgentId, "pipe-queued", t =>
+                {
+                    t.Role = Server.Domain.Enums.AgentTaskRole.Docs;
+                    t.ModelLevel = Server.Domain.Enums.AgentModelLevel.Medium;
+                    t.Status = Server.Domain.Enums.AgentTaskStatus.Queued;
+                    t.Workspace = Server.Domain.Enums.WorkspaceMode.Shared;
+                    t.CostPricingVersion = Server.Application.Services.DelegationCost.PricingVersion;
+                }),
+            Task(PipelinePlanTaskId, PipelinePlanTaskId, null, 0,
+                "CARD-0031 plan", cwd, t0.AddDays(-3),
+                PipelineHolderAgentId, "pipe-holder", t =>
+                {
+                    t.CardId = PipelineReadyCardId;
+                    t.Role = Server.Domain.Enums.AgentTaskRole.Plan;
+                    t.ModelLevel = Server.Domain.Enums.AgentModelLevel.Frontier;
+                    t.Status = Server.Domain.Enums.AgentTaskStatus.Succeeded;
+                    t.DispatchedAt = t0.AddDays(-3);
+                    t.CompletedAt = t0.AddDays(-3).AddHours(2);
+                    t.DeliverablePath = "docs/superpowers/plans/2026-09-02-card-0031-project-status-view-plan.md";
+                    t.CostPricingVersion = Server.Application.Services.DelegationCost.PricingVersion;
+                }));
         await db.SaveChangesAsync();
     }
 
@@ -672,6 +816,83 @@ public class ContractSnapshotTests
             Normalize(pretty),
             $"Backend contract for /api/home/tasks drifted from {fixtureName}. If the change is intentional, "
             + "verify the frontend stories against the new shape, delete the fixture, and re-run to re-capture.");
+    }
+
+    /// <summary>
+    /// CARD-0031 S3. Fleet-global <c>GET /api/agent-tasks/pipeline</c> is otherwise polluted by
+    /// whatever else SharedApp has written. Keep the scenario's own task/card ids, stamp a fixed
+    /// asOf, and rewrite the cap counters from the kept in-flight rows so the fixture is the
+    /// contract Storybook seeds rather than the live fleet.
+    /// </summary>
+    private static async Task SnapshotPipelineAsync(
+        AntiphonAppFixture app, IReadOnlySet<Guid> keepTaskIds, IReadOnlySet<Guid> keepCardIds)
+    {
+        var response = await app.HttpClient.GetAsync("/api/agent-tasks/pipeline");
+        response.EnsureSuccessStatusCode();
+        var node = JsonNode.Parse(await response.Content.ReadAsStringAsync())!;
+        node["asOf"] = "2026-02-03T09:00:00Z";
+
+        var keptInFlight = 0;
+        foreach (var stage in node["stages"]!.AsArray())
+        {
+            keptInFlight += FilterPipelineRows(stage!["inFlight"]!.AsArray(), keepTaskIds, idKey: "taskId");
+            FilterPipelineRows(stage["queued"]!.AsArray(), keepTaskIds, idKey: "taskId");
+            FilterPipelineRows(stage["blocked"]!.AsArray(), keepTaskIds, idKey: "taskId");
+            FilterReadyRows(stage["ready"]!.AsArray(), keepCardIds, keepTaskIds);
+            var remaining = stage["inFlight"]!.AsArray().Count;
+            stage["inFlightCount"] = remaining;
+            var recommended = stage["recommendedInFlight"];
+            stage["atOrAboveRecommendation"] =
+                recommended is JsonValue rec
+                && rec.TryGetValue<int>(out var limit)
+                && remaining >= limit;
+        }
+
+        node["inFlightAgainstCap"] = keptInFlight;
+
+        var fixtureName = "pipeline.json";
+        var pretty = PrettyPrint(node.ToJsonString());
+        var fixturePath = Path.Combine(FixturesDir(), fixtureName);
+        if (!File.Exists(fixturePath))
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(fixturePath)!);
+            await File.WriteAllTextAsync(fixturePath, pretty);
+            Console.WriteLine($"CAPTURED contract fixture {fixtureName}");
+            return;
+        }
+
+        var existing = await File.ReadAllTextAsync(fixturePath);
+        Normalize(existing).ShouldBe(
+            Normalize(pretty),
+            $"Backend contract for /api/agent-tasks/pipeline drifted from {fixtureName}. If the change is intentional, "
+            + "verify the frontend stories against the new shape, delete the fixture, and re-run to re-capture.");
+    }
+
+    private static int FilterPipelineRows(JsonArray rows, IReadOnlySet<Guid> keepIds, string idKey)
+    {
+        var kept = rows
+            .Where(row => keepIds.Contains(Guid.Parse(row![idKey]!.GetValue<string>())))
+            .ToList();
+        rows.Clear();
+        foreach (var row in kept)
+            rows.Add(row);
+        return kept.Count;
+    }
+
+    private static void FilterReadyRows(
+        JsonArray rows, IReadOnlySet<Guid> keepCardIds, IReadOnlySet<Guid> keepTaskIds)
+    {
+        var kept = rows
+            .Where(row =>
+            {
+                var cardId = Guid.Parse(row!["card"]!["id"]!.GetValue<string>());
+                var planId = Guid.Parse(row["sourcePlanTaskId"]!.GetValue<string>());
+                return keepCardIds.Contains(cardId) || keepTaskIds.Contains(planId);
+            })
+            .ToList();
+        rows.Clear();
+        foreach (var row in kept)
+            rows.Add(row);
     }
 
     private static async Task SnapshotAsync(

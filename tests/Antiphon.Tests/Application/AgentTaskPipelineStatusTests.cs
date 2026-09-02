@@ -34,6 +34,8 @@ public class AgentTaskPipelineStatusTests
         var dto = await pipeline.GetAsync(CancellationToken.None);
 
         dto.RecommendationsAreAdvisory.ShouldBeTrue();
+        dto.MaxConcurrentTasks.ShouldBe(6);
+        dto.InFlightAgainstCap.ShouldBe(0);
         dto.Stages.Select(s => s.Role).ShouldBe([
             AgentTaskRole.Custom, AgentTaskRole.Plan, AgentTaskRole.Code, AgentTaskRole.Review,
             AgentTaskRole.Debug, AgentTaskRole.Coverage, AgentTaskRole.Docs, AgentTaskRole.Commit,
@@ -179,6 +181,74 @@ public class AgentTaskPipelineStatusTests
         var ordinaryRow = docs.Queued.Single(t => t.TaskId == ordinary.Id);
         ordinaryRow.QueueReason.ShouldBe(AgentTaskPipelineStatusService.QueueReasonAwaitingDispatch);
         ordinaryRow.HeldBy.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task queued_work_is_concurrency_cap_when_in_flight_fills_the_cap()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var flyingDir = new TempWorkspace();
+        using var queuedDir = new TempWorkspace();
+        var flying = await SeedTaskAsync(db, flyingDir.Path, AgentTaskRole.Code, AgentTaskStatus.Working,
+            dispatchedAt: DateTime.UtcNow.AddMinutes(-2), title: "own flying",
+            workspace: WorkspaceMode.Shared, repoPath: flyingDir.Path);
+        var waiting = await SeedTaskAsync(db, queuedDir.Path, AgentTaskRole.Docs, AgentTaskStatus.Queued,
+            title: "own waiting", workspace: WorkspaceMode.Shared, repoPath: queuedDir.Path);
+
+        var settings = new DelegationSettings { MaxConcurrentTasks = 1 };
+        var dto = await CreateService(db, settings).GetAsync(CancellationToken.None);
+
+        dto.MaxConcurrentTasks.ShouldBe(1);
+        dto.InFlightAgainstCap.ShouldBe(1);
+        dto.Stages.SelectMany(s => s.InFlight).ShouldContain(t => t.TaskId == flying.Id);
+        var row = dto.Stages.SelectMany(s => s.Queued).Single(t => t.TaskId == waiting.Id);
+        row.QueueReason.ShouldBe(AgentTaskPipelineStatusService.QueueReasonConcurrencyCap);
+        row.HeldBy.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task a_lease_hold_outranks_the_concurrency_cap()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var heldDir = new TempWorkspace();
+        var holder = await SeedTaskAsync(db, heldDir.Path, AgentTaskRole.Code, AgentTaskStatus.Working,
+            dispatchedAt: DateTime.UtcNow.AddMinutes(-2), title: "own holder",
+            workspace: WorkspaceMode.Shared, repoPath: heldDir.Path);
+        var waiting = await SeedTaskAsync(db, heldDir.Path, AgentTaskRole.Docs, AgentTaskStatus.Queued,
+            title: "own waiting on lease", workspace: WorkspaceMode.Shared, repoPath: heldDir.Path);
+
+        var settings = new DelegationSettings { MaxConcurrentTasks = 1 };
+        var dto = await CreateService(db, settings).GetAsync(CancellationToken.None);
+
+        dto.InFlightAgainstCap.ShouldBe(1);
+        var row = dto.Stages.SelectMany(s => s.Queued).Single(t => t.TaskId == waiting.Id);
+        row.QueueReason.ShouldBe(AgentTaskPipelineStatusService.QueueReasonSharedCheckoutLease);
+        row.HeldBy.Select(h => h.TaskId).ShouldBe([holder.Id]);
+    }
+
+    [Test]
+    public async Task a_check_role_working_task_does_not_count_against_the_cap()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var checkDir = new TempWorkspace();
+        using var queuedDir = new TempWorkspace();
+        var check = await SeedTaskAsync(db, checkDir.Path, AgentTaskRole.Check, AgentTaskStatus.Working,
+            dispatchedAt: DateTime.UtcNow.AddMinutes(-2), title: "own check",
+            workspace: WorkspaceMode.Shared, repoPath: checkDir.Path);
+        var waiting = await SeedTaskAsync(db, queuedDir.Path, AgentTaskRole.Docs, AgentTaskStatus.Queued,
+            title: "own waiting beside a check", workspace: WorkspaceMode.Shared,
+            repoPath: queuedDir.Path);
+
+        var settings = new DelegationSettings { MaxConcurrentTasks = 1 };
+        var dto = await CreateService(db, settings).GetAsync(CancellationToken.None);
+
+        dto.InFlightAgainstCap.ShouldBe(0);
+        dto.Stages.SelectMany(s => s.InFlight).ShouldNotContain(t => t.TaskId == check.Id);
+        var row = dto.Stages.SelectMany(s => s.Queued).Single(t => t.TaskId == waiting.Id);
+        row.QueueReason.ShouldBe(AgentTaskPipelineStatusService.QueueReasonAwaitingDispatch);
     }
 
     [Test]
@@ -560,6 +630,8 @@ public class AgentTaskPipelineEndpointTests
         var json = await response.Content.ReadAsStringAsync();
         json.ShouldContain("\"asOf\"");
         json.ShouldContain("\"recommendationsAreAdvisory\"");
+        json.ShouldContain("\"maxConcurrentTasks\"");
+        json.ShouldContain("\"inFlightAgainstCap\"");
         json.ShouldContain("\"stages\"");
         json.ShouldContain("\"recommendedInFlight\"");
         json.ShouldContain("\"inFlightCount\"");
@@ -569,6 +641,8 @@ public class AgentTaskPipelineEndpointTests
         var dto = JsonSerializer.Deserialize<AgentTaskPipelineDto>(json, Json);
         dto.ShouldNotBeNull();
         dto.RecommendationsAreAdvisory.ShouldBeTrue();
+        dto.MaxConcurrentTasks.ShouldBe(6);
+        dto.InFlightAgainstCap.ShouldBe(0);
         dto.Stages.Count.ShouldBe(11);
         dto.Stages.ShouldNotContain(s => s.Role == AgentTaskRole.Check);
         dto.Stages.ShouldContain(s => s.Role == AgentTaskRole.Plan && s.RecommendedInFlight == 1);

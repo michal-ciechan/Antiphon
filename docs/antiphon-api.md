@@ -198,6 +198,7 @@ POST   /api/agent-tasks/{id}/cancel  |  /retry  |  /escalate
 POST   /api/agent-tasks/{id}/reply           answer a Blocked delegate's question
 POST   /api/agent-tasks/{id}/refine          steer a running delegate without cancelling it
 GET    /api/agent-tasks/areas?directory=     the repo's named areas (antiphon.areas.json)
+GET    /api/agent-tasks/pipeline             fleet-wide advisory in-flight / queued / blocked / ready snapshot. Queued queueReason is one of sharedCheckoutLease, concurrencyCap, routingPinNotBefore, awaitingDispatch.
 ```
 
 `CreateAgentTaskRequest` (`server/Application/Dtos/AgentTaskDtos.cs`) is the biggest body in the

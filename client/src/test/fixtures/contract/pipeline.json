@@ -1,0 +1,170 @@
+{
+  "asOf": "2026-02-03T09:00:00Z",
+  "recommendationsAreAdvisory": true,
+  "maxConcurrentTasks": 6,
+  "inFlightAgainstCap": 1,
+  "stages": [
+    {
+      "role": "Custom",
+      "recommendedInFlight": null,
+      "inFlightCount": 0,
+      "atOrAboveRecommendation": false,
+      "inFlight": [],
+      "queued": [],
+      "blocked": [],
+      "ready": [],
+      "routingPin": null
+    },
+    {
+      "role": "Plan",
+      "recommendedInFlight": 1,
+      "inFlightCount": 0,
+      "atOrAboveRecommendation": false,
+      "inFlight": [],
+      "queued": [],
+      "blocked": [],
+      "ready": [],
+      "routingPin": null
+    },
+    {
+      "role": "Code",
+      "recommendedInFlight": 1,
+      "inFlightCount": 0,
+      "atOrAboveRecommendation": false,
+      "inFlight": [],
+      "queued": [],
+      "blocked": [],
+      "ready": [
+        {
+          "card": {
+            "id": "dddddddd-0000-0000-0000-000000000023",
+            "identifier": "CARD-0031",
+            "title": "Project status view"
+          },
+          "sourcePlanTaskId": "dddddddd-0000-0000-0000-000000000003",
+          "sourcePlanShortId": "dddddddd",
+          "readySince": "2026-01-31T11:00:00Z",
+          "deliverablePath": "docs/superpowers/plans/2026-09-02-card-0031-project-status-view-plan.md",
+          "deliverableRef": null,
+          "routingPin": null
+        }
+      ],
+      "routingPin": null
+    },
+    {
+      "role": "Review",
+      "recommendedInFlight": 1,
+      "inFlightCount": 0,
+      "atOrAboveRecommendation": false,
+      "inFlight": [],
+      "queued": [],
+      "blocked": [],
+      "ready": [],
+      "routingPin": null
+    },
+    {
+      "role": "Debug",
+      "recommendedInFlight": 1,
+      "inFlightCount": 0,
+      "atOrAboveRecommendation": false,
+      "inFlight": [],
+      "queued": [],
+      "blocked": [],
+      "ready": [],
+      "routingPin": null
+    },
+    {
+      "role": "Coverage",
+      "recommendedInFlight": 1,
+      "inFlightCount": 0,
+      "atOrAboveRecommendation": false,
+      "inFlight": [],
+      "queued": [],
+      "blocked": [],
+      "ready": [],
+      "routingPin": null
+    },
+    {
+      "role": "Docs",
+      "recommendedInFlight": 1,
+      "inFlightCount": 1,
+      "atOrAboveRecommendation": true,
+      "inFlight": [
+        {
+          "taskId": "dddddddd-0000-0000-0000-000000000001",
+          "shortId": "dddddddd",
+          "title": "in-flight docs pass",
+          "status": "Working",
+          "card": null,
+          "agentName": "pipe-holder",
+          "dispatchedAt": "2026-02-03T08:40:00Z",
+          "lastActivityAt": "2026-02-03T08:40:00Z"
+        }
+      ],
+      "queued": [
+        {
+          "taskId": "dddddddd-0000-0000-0000-000000000002",
+          "shortId": "dddddddd",
+          "title": "queued behind the checkout",
+          "card": null,
+          "createdAt": "2026-02-03T08:50:00Z",
+          "queueReason": "sharedCheckoutLease",
+          "heldBy": [
+            {
+              "taskId": "dddddddd-0000-0000-0000-000000000001",
+              "shortId": "dddddddd",
+              "title": "in-flight docs pass"
+            }
+          ]
+        }
+      ],
+      "blocked": [],
+      "ready": [],
+      "routingPin": null
+    },
+    {
+      "role": "Commit",
+      "recommendedInFlight": 1,
+      "inFlightCount": 0,
+      "atOrAboveRecommendation": false,
+      "inFlight": [],
+      "queued": [],
+      "blocked": [],
+      "ready": [],
+      "routingPin": null
+    },
+    {
+      "role": "Test",
+      "recommendedInFlight": 1,
+      "inFlightCount": 0,
+      "atOrAboveRecommendation": false,
+      "inFlight": [],
+      "queued": [],
+      "blocked": [],
+      "ready": [],
+      "routingPin": null
+    },
+    {
+      "role": "Deploy",
+      "recommendedInFlight": 1,
+      "inFlightCount": 0,
+      "atOrAboveRecommendation": false,
+      "inFlight": [],
+      "queued": [],
+      "blocked": [],
+      "ready": [],
+      "routingPin": null
+    },
+    {
+      "role": "Merge",
+      "recommendedInFlight": 1,
+      "inFlightCount": 0,
+      "atOrAboveRecommendation": false,
+      "inFlight": [],
+      "queued": [],
+      "blocked": [],
+      "ready": [],
+      "routingPin": null
+    }
+  ]
+}

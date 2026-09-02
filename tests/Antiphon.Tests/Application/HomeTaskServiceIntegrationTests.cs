@@ -250,6 +250,20 @@ public class HomeTaskServiceIntegrationTests
     }
 
     [Test]
+    public async Task a_closed_card_carries_terminal_reason_and_an_open_card_does_not()
+    {
+        await using var world = await World.CreateAsync();
+        var closed = await world.SeedCardAsync(
+            CardStatus.Done, completedAt: world.Now.AddDays(-1),
+            terminalReason: "Shipped as the plan.");
+        var open = await world.SeedCardAsync(CardStatus.InProgress);
+
+        var dto = await world.GetAsync();
+        dto.Items.Single(i => i.Id == closed.Id).TerminalReason.ShouldBe("Shipped as the plan.");
+        dto.Items.Single(i => i.Id == open.Id).TerminalReason.ShouldBeNull();
+    }
+
+    [Test]
     public async Task Get_home_tasks_returns_200_and_serialises_enums_as_strings()
     {
         await using var factory = new AntiphonWebAppFactory();
@@ -453,7 +467,8 @@ public class HomeTaskServiceIntegrationTests
             DateTime? startedAt = null,
             DateTime? completedAt = null,
             Guid? boardId = null,
-            Guid? assignedAgentId = null)
+            Guid? assignedAgentId = null,
+            string? terminalReason = null)
         {
             await using var scope = _provider.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -474,6 +489,7 @@ public class HomeTaskServiceIntegrationTests
                 UpdatedAt = updatedAt ?? at,
                 StartedAt = startedAt,
                 CompletedAt = completedAt,
+                TerminalReason = terminalReason,
             };
             db.Cards.Add(card);
             await db.SaveChangesAsync();

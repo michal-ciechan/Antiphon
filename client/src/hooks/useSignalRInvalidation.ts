@@ -108,6 +108,7 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
       ['boards'],
       ...(p.boardId ? [['boards', p.boardId]] : []),
       ['homeTasks'],
+      ['agentTasks', 'pipeline'],
     ],
   },
   {
@@ -126,6 +127,7 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
       ['boards'],
       ...(p.boardId ? [['boards', p.boardId]] : []),
       ['homeTasks'],
+      ['agentTasks', 'pipeline'],
     ],
   },
   {
@@ -146,6 +148,7 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
       // narrow this — any task change may belong to any open thread.
       ['cards', 'thread'],
       ['homeTasks'],
+      ['agentTasks', 'pipeline'],
     ],
   },
   {
