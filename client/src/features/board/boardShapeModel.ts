@@ -1,4 +1,5 @@
-import type { BoardColumnDto, BoardDetailDto, CardDto, CardStatus } from '../../api/boards'
+import type { BoardColumnDto, BoardDetailDto, CardDto, CardImportance, CardQuadrant, CardStatus } from '../../api/boards'
+import { QUADRANT_ORDER } from './cardRanking'
 import { displayIdentifier, matchesIdentifierQuery } from '../../shared/cardIdentifier'
 
 /**
@@ -19,8 +20,8 @@ import { displayIdentifier, matchesIdentifierQuery } from '../../shared/cardIden
  * asks for them (`useBoard(id, { includeArchived })`).
  */
 
-/** Priorities the board renders, most important first. */
-export const PRIORITIES = [0, 1, 2, 3] as const
+/** Importance chips, most important first. */
+export const IMPORTANCES: readonly CardImportance[] = ['Critical', 'High', 'Normal', 'Low']
 
 /** Above this many cards in one state, the list bands by priority instead of running flat. */
 export const BAND_THRESHOLD = 20
@@ -33,19 +34,21 @@ export interface BoardFilter {
   query: string
   /** `stateKey` of the selected state, or null for "all states". */
   state: string | null
-  /** Priority numbers to keep; empty means all. */
-  priorities: number[]
+  /** Importance names to keep; empty means all. */
+  importances: CardImportance[]
+  /** When true, keep only cards whose effective urgency is not Normal. */
+  urgentOnly: boolean
   /** Labels a card must carry ALL of; empty means all. */
   labels: string[]
 }
 
-export const EMPTY_FILTER: BoardFilter = { query: '', state: null, priorities: [], labels: [] }
+export const EMPTY_FILTER: BoardFilter = { query: '', state: null, importances: [], urgentOnly: false, labels: [] }
 
 export type StateSignal =
   | { kind: 'empty' }
   | { kind: 'running'; count: number }
   | { kind: 'closed'; at: string }
-  | { kind: 'oldest'; identifier: string; ageDays: number; p0Count: number }
+  | { kind: 'oldest'; identifier: string; ageDays: number; criticalCount: number }
 
 export interface StateShape {
   columnId: string
@@ -55,14 +58,14 @@ export interface StateShape {
   cardStatus: CardStatus
   isActive: boolean
   isTerminal: boolean
-  /** Cards left after the query/priority/label filters, P0 first then oldest first. */
+  /** Cards left after the query/importance/urgent/label filters, lowest rank first. */
   cards: CardDto[]
   filteredCount: number
   /** Cards in this state before any filter — the `m` of `n of m`. */
   totalCount: number
-  /** Count per priority over the FILTERED cards, indexed by priority (0..3+). */
-  priorityMix: number[]
-  p0Count: number
+  /** Count per importance over the FILTERED cards, Critical-first. */
+  importanceMix: number[]
+  criticalCount: number
   /** Earliest-created card still in this state. Card age, never time in state. */
   oldest: CardDto | null
   liveSessionCount: number
@@ -79,7 +82,8 @@ export interface BoardShape {
 
 export function isFilterActive(filter: BoardFilter): boolean {
   return filter.query.trim() !== ''
-    || filter.priorities.length > 0
+    || filter.importances.length > 0
+    || filter.urgentOnly
     || filter.labels.length > 0
 }
 
@@ -91,7 +95,8 @@ export function hasLiveSession(card: CardDto): boolean {
 }
 
 export function cardMatchesFilter(card: CardDto, filter: BoardFilter): boolean {
-  if (filter.priorities.length > 0 && !filter.priorities.includes(card.priority)) return false
+  if (filter.importances.length > 0 && !filter.importances.includes(card.importance)) return false
+  if (filter.urgentOnly && card.effectiveUrgency === 'Normal') return false
   if (filter.labels.length > 0 && !filter.labels.every((label) => card.labels.includes(label))) {
     return false
   }
@@ -112,21 +117,19 @@ export function ageInDays(iso: string, now: Date): number {
   return Math.max(0, Math.floor((now.getTime() - created) / 86_400_000))
 }
 
-/**
- * P0 first, then oldest first. The server returns cards priority DESCENDING
- * (`BoardService.ToDetailDto`), which puts P3 at the top of a column; the whole design reads P0
- * as most important, so the ordering is settled here rather than relied on from the payload.
- */
+/** Lowest rank first, then earliest due date, then oldest created. */
 function orderCards(cards: CardDto[]): CardDto[] {
   return [...cards].sort((a, b) =>
-    a.priority - b.priority || a.createdAt.localeCompare(b.createdAt))
+    a.rank - b.rank
+    || (a.dueAt ?? '9999').localeCompare(b.dueAt ?? '9999')
+    || a.createdAt.localeCompare(b.createdAt))
 }
 
 function buildSignal(
   cards: CardDto[],
   column: Pick<BoardColumnDto, 'isTerminal'>,
   liveSessionCount: number,
-  p0Count: number,
+  criticalCount: number,
   now: Date,
 ): StateSignal {
   if (cards.length === 0) return { kind: 'empty' }
@@ -146,7 +149,7 @@ function buildSignal(
     kind: 'oldest',
     identifier: displayIdentifier(oldest.identifier),
     ageDays: ageInDays(oldest.createdAt, now),
-    p0Count,
+    criticalCount,
   }
 }
 
@@ -160,8 +163,8 @@ export function describeSignal(signal: StateSignal): string {
     case 'closed':
       return `last closed ${signal.at.slice(0, 10)}`
     case 'oldest':
-      return signal.p0Count > 0
-        ? `${signal.p0Count} P0 · oldest ${signal.identifier} · ${signal.ageDays}d`
+      return signal.criticalCount > 0
+        ? `${signal.criticalCount} Critical · oldest ${signal.identifier} · ${signal.ageDays}d`
         : `oldest ${signal.identifier} · ${signal.ageDays}d`
   }
 }
@@ -175,15 +178,9 @@ export function buildBoardShape(
     .sort((a, b) => a.columnOrder - b.columnOrder)
     .map<StateShape>((column) => {
       const cards = orderCards(column.cards.filter((card) => cardMatchesFilter(card, filter)))
-      const priorityMix: number[] = []
-      for (const card of cards) {
-        const bucket = Math.max(0, card.priority)
-        priorityMix[bucket] = (priorityMix[bucket] ?? 0) + 1
-      }
-      for (let index = 0; index < priorityMix.length; index += 1) {
-        priorityMix[index] = priorityMix[index] ?? 0
-      }
-      const p0Count = priorityMix[0] ?? 0
+      const importanceMix = IMPORTANCES.map((importance) =>
+        cards.filter((card) => card.importance === importance).length)
+      const criticalCount = importanceMix[0] ?? 0
       const liveSessionCount = cards.filter(hasLiveSession).length
       const oldest = cards.length === 0
         ? null
@@ -200,11 +197,11 @@ export function buildBoardShape(
         cards,
         filteredCount: cards.length,
         totalCount: column.cards.length,
-        priorityMix,
-        p0Count,
+        importanceMix,
+        criticalCount,
         oldest,
         liveSessionCount,
-        signal: buildSignal(cards, column, liveSessionCount, p0Count, now),
+        signal: buildSignal(cards, column, liveSessionCount, criticalCount, now),
       }
     })
 
@@ -234,22 +231,33 @@ export function emptyStateMessage(state: StateShape, filtered: boolean): string 
   return `Nothing is in ${state.name}.`
 }
 
-export interface PriorityBand {
-  priority: number
+export interface QuadrantBand {
+  quadrant: CardQuadrant
   cards: CardDto[]
 }
 
-/** The state's cards split into priority bands, P0 first. Empty bands are dropped. */
-export function priorityBands(cards: CardDto[]): PriorityBand[] {
-  const byPriority = new Map<number, CardDto[]>()
+const QUADRANT_LABELS: Record<CardQuadrant, string> = {
+  DoFirst: 'Do first',
+  Schedule: 'Schedule',
+  Clear: 'Clear',
+  Someday: 'Someday',
+}
+
+export function quadrantLabel(value: CardQuadrant): string {
+  return QUADRANT_LABELS[value]
+}
+
+/** The state's cards split into Eisenhower bands, DoFirst first. Empty bands are dropped. */
+export function quadrantBands(cards: CardDto[]): QuadrantBand[] {
+  const byQuadrant = new Map<CardQuadrant, CardDto[]>()
   for (const card of cards) {
-    const bucket = byPriority.get(card.priority) ?? []
+    const bucket = byQuadrant.get(card.quadrant) ?? []
     bucket.push(card)
-    byPriority.set(card.priority, bucket)
+    byQuadrant.set(card.quadrant, bucket)
   }
-  return [...byPriority.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([priority, banded]) => ({ priority, cards: banded }))
+  return QUADRANT_ORDER
+    .filter((cell) => (byQuadrant.get(cell)?.length ?? 0) > 0)
+    .map((cell) => ({ quadrant: cell, cards: byQuadrant.get(cell)! }))
 }
 
 /**

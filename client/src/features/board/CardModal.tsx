@@ -1,9 +1,9 @@
-import { ActionIcon, Alert, Anchor, Badge, Box, Button, Group, Modal, NumberInput, ScrollArea, Stack, Tabs, Text, TextInput, Textarea, Title } from '@mantine/core'
+import { ActionIcon, Alert, Anchor, Badge, Box, Button, Group, Modal, ScrollArea, Select, Stack, Tabs, Text, TextInput, Textarea, Title } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
 import { lazy, useMemo, useState } from 'react'
 import { TbHistory, TbInfoCircle, TbMessage, TbPencil, TbPlayerPlay, TbTerminal2, TbTimeline, TbX } from 'react-icons/tb'
-import type { BoardColumnDto, CardDto } from '../../api/boards'
+import type { BoardColumnDto, CardDto, CardImportance, CardUrgency } from '../../api/boards'
 import { CARD_LIMITS, useCard, useCardDiscussion, useCardRevisions, useCreateCard, useSpawnCard } from '../../api/boards'
 import { useAttention } from '../../api/attention'
 import { displayIdentifier, externalIssueTag } from '../../shared/cardIdentifier'
@@ -12,6 +12,7 @@ import { CardDiscussionPanel } from './CardDiscussionPanel'
 import { CardHistory } from './CardHistory'
 import { DiffReview } from './DiffReview'
 import { MoveMenu } from './MoveMenu'
+import { CardAxisBadges } from './CardAxisBadges'
 import { stateLabel } from './boardVisuals'
 import { SessionTabs } from './SessionTabs'
 import { CardThreadPanel } from '../thread/CardThreadPanel'
@@ -134,7 +135,7 @@ export function CardModal({ boardId, card: summaryCard, columns = [], opened, on
                 </Badge>
               )}
               <Badge variant="light">{stateLabel(card.status)}</Badge>
-              <Badge color="gray" variant="outline">P{card.priority}</Badge>
+              <CardAxisBadges card={card} />
               {activeSessionCount > 0 && (
                 <Badge color="green" variant="light">
                   {activeSessionCount} active
@@ -307,7 +308,9 @@ function CardCreateModal({ boardId, opened, onClose }: { boardId: string; opened
   const createCard = useCreateCard(boardId)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
-  const [priority, setPriority] = useState<number | string>(1)
+  const [importance, setImportance] = useState<CardImportance>('Normal')
+  const [urgency, setUrgency] = useState<CardUrgency>('Normal')
+  const [dueAt, setDueAt] = useState('')
   const [labels, setLabels] = useState('')
   const canSubmit = !!title.trim() && title.length <= CARD_LIMITS.title && description.length <= CARD_LIMITS.description
 
@@ -316,7 +319,9 @@ function CardCreateModal({ boardId, opened, onClose }: { boardId: string; opened
     createCard.mutate({
       title: title.trim(),
       description,
-      priority: Number(priority) || 0,
+      importance,
+      urgency,
+      dueAt: dueAt || null,
       labels: labels.split(',').map((label) => label.trim()).filter(Boolean),
     }, {
       onSuccess: onClose,
@@ -329,7 +334,24 @@ function CardCreateModal({ boardId, opened, onClose }: { boardId: string; opened
       <Stack>
         <TextInput label="Title" value={title} onChange={(event) => setTitle(event.currentTarget.value)} />
         <Textarea label="Description" value={description} onChange={(event) => setDescription(event.currentTarget.value)} autosize minRows={3} />
-        <NumberInput label="Priority" min={0} value={priority} onChange={setPriority} />
+        <Select
+          label="Importance"
+          data={['Low', 'Normal', 'High', 'Critical']}
+          value={importance}
+          onChange={(value) => setImportance((value as CardImportance) ?? 'Normal')}
+        />
+        <Select
+          label="Urgency"
+          data={['Normal', 'Soon', 'Now']}
+          value={urgency}
+          onChange={(value) => setUrgency((value as CardUrgency) ?? 'Normal')}
+        />
+        <TextInput
+          label="Due"
+          type="date"
+          value={dueAt}
+          onChange={(event) => setDueAt(event.currentTarget.value)}
+        />
         <TextInput label="Labels" value={labels} onChange={(event) => setLabels(event.currentTarget.value)} />
         <Group justify="flex-end">
           <Button variant="subtle" onClick={onClose}>Cancel</Button>
@@ -357,8 +379,10 @@ function CardDetails({ card, description }: { card: CardDto; description: string
       <Box className="card-page__metaGrid">
         <Text size="xs" c="dimmed">Status</Text>
         <Text size="xs" fw={600}>{card.status}</Text>
-        <Text size="xs" c="dimmed">Priority</Text>
-        <Text size="xs" fw={600}>P{card.priority}</Text>
+        <Text size="xs" c="dimmed">Importance</Text>
+        <Text size="xs" fw={600}>{card.importance}</Text>
+        <Text size="xs" c="dimmed">Urgency</Text>
+        <Text size="xs" fw={600}>{card.effectiveUrgency}</Text>
         <Text size="xs" c="dimmed">Sessions</Text>
         <Text size="xs" fw={600}>{card.sessions.length}</Text>
         {card.assignedAgentName && (

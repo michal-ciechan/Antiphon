@@ -32,7 +32,6 @@
           "identifier": "CARD-0014",
           "title": "`AgentsPage.test.tsx` is load-flaky",
           "description": "Fails intermittently in a full-suite run, passes reliably in isolation (checked repeatedly:\n19/20 then 20/20, 20/20). Timing-sensitive waits under parallel load",
-          "priority": 3,
           "labels": [
             "test-hygiene",
             "flaky"
@@ -44,7 +43,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "Low",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Someday",
+          "rank": 13
         },
         {
           "id": "215921ee-c4da-47f3-ba21-560331ae4d86",
@@ -61,7 +67,6 @@
           "identifier": "CARD-0015",
           "title": "`ClaudeAdapterLocalShellTests.Send_prompt_clears_live_buffer_before_send` is PTY-timing flaky",
           "description": "Fails under full parallel load, passes 4/4 in isolation. Documented in CLAUDE.md as a known class of\nflake for PTY tests; worth making deterministic rather than",
-          "priority": 3,
           "labels": [
             "test-hygiene",
             "flaky"
@@ -73,7 +78,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "Low",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Someday",
+          "rank": 13
         },
         {
           "id": "86b6542a-5f1e-4107-b04b-46d81c636225",
@@ -90,7 +102,6 @@
           "identifier": "CARD-0004",
           "title": "Card -> repo task file sync",
           "description": "Planned, not started. Full design in\n[docs/superpowers/specs/2026-08-09-card-task-file-sync.md](docs/superpowers/specs/2026-08-09-card-task-file-sync.md).\nFirst",
-          "priority": 2,
           "labels": [
             "feature",
             "cards"
@@ -102,7 +113,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "Normal",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Someday",
+          "rank": 10
         },
         {
           "id": "6b67a8bb-aaed-4ef2-90dd-876e7b4079bf",
@@ -119,7 +137,6 @@
           "identifier": "CARD-0008",
           "title": "Always-on cannot be set when an agent is created",
           "description": "`CreateAgentRequest` has no `alwaysOn` or `remoteControlEnabled` - only `UpdateAgentRequest` does. So\nevery supervised agent is a two-step: create, then PATCH. ",
-          "priority": 2,
           "labels": [
             "bug",
             "api",
@@ -132,7 +149,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "Normal",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Someday",
+          "rank": 10
         },
         {
           "id": "83588c84-1430-4588-bd16-75dfaa3d3816",
@@ -149,7 +173,6 @@
           "identifier": "CARD-0010",
           "title": "E2E failures needing a product decision (13)",
           "description": "Not flakes - each needs a call, not a retry:\n- Session-dependent tests: should the E2E fixture start a session runner, or should those tests be\n  marked as requ",
-          "priority": 2,
           "labels": [
             "tests",
             "e2e",
@@ -162,7 +185,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "Normal",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Someday",
+          "rank": 10
         },
         {
           "id": "26ff835b-1542-4c18-ab75-239032a0c56c",
@@ -179,7 +209,6 @@
           "identifier": "CARD-0013",
           "title": "`OrchestratorServiceIntegrationTests` asserts global counts",
           "description": "Asserts on `result.SkippedGlobalConcurrency` / `Dispatched` totals. Same shape as the three flakes\nalready fixed: every test in the assembly shares one Postgres",
-          "priority": 2,
           "labels": [
             "test-hygiene"
           ],
@@ -190,7 +219,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "Normal",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Someday",
+          "rank": 10
         },
         {
           "id": "cc43dc8f-25a0-42cb-a5dd-831f7eb2a504",
@@ -207,7 +243,6 @@
           "identifier": "CARD-0017",
           "title": "Steer orchestrator sessions to delegate their reading",
           "description": "Add a standing rule to the steering text Antiphon injects into ORCHESTRATOR agent sessions (not\nworker sessions - a worker should not delegate its own reading),",
-          "priority": 2,
           "labels": [
             "agents",
             "prompt",
@@ -220,7 +255,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "Normal",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Someday",
+          "rank": 10
         },
         {
           "id": "149c6211-e5aa-4161-858c-ec0a66e67777",
@@ -237,7 +279,6 @@
           "identifier": "CARD-0024",
           "title": "Delivery verification cannot detect truncation - compare against the recipient's transcript",
           "description": "`ComposerDeliveryEvidence.IsVisible` certifies a delivery by matching the body's HEAD or TAIL on screen. It matches on either end by necessity: a large paste re",
-          "priority": 2,
           "labels": [
             "delegation",
             "reliability",
@@ -250,7 +291,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "Normal",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Someday",
+          "rank": 10
         },
         {
           "id": "e626c3f4-96ad-475e-bbba-8693d6cc903a",
@@ -267,7 +315,6 @@
           "identifier": "CARD-0025",
           "title": "Only delegation paths spill oversized bodies to a file - channel and UI messages are still typed",
           "description": "The 2026-08-10 fix stops oversized bodies reaching the pty on the delegation paths only: `AgentTaskDispatcher.FitBriefForTyping` spills a large brief to `.antip",
-          "priority": 2,
           "labels": [
             "delegation",
             "channels",
@@ -280,7 +327,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "Normal",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Someday",
+          "rank": 10
         },
         {
           "id": "9c0f7660-0e10-47d5-bee1-c282a2dfd62b",
@@ -297,7 +351,6 @@
           "identifier": "CARD-0026",
           "title": "`JobObject_kills_session_when_memory_limit_exceeded` is standing red on master",
           "description": "`PtyAgentRunnerTests.JobObject_kills_session_when_memory_limit_exceeded` fails on a clean `master`, in isolation, not just under parallel load - verified 2026-0",
-          "priority": 2,
           "labels": [
             "test-hygiene",
             "pty",
@@ -310,7 +363,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "Normal",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Someday",
+          "rank": 10
         },
         {
           "id": "9a2bc9f3-b4ec-4e31-a865-296fdebcf2ac",
@@ -327,7 +387,6 @@
           "identifier": "CARD-0034",
           "title": "UX: review what an agent produced and react without leaving the page",
           "description": "Someone has a spec, plan or diff waiting. They want to read it and respond - accept, comment, or hand back a change - so that reviewing is part of the loop rath",
-          "priority": 2,
           "labels": [
             "ux",
             "review"
@@ -339,7 +398,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "Normal",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Someday",
+          "rank": 10
         },
         {
           "id": "93ae6cdb-8638-4b3b-8d41-563dbc93d548",
@@ -356,7 +422,6 @@
           "identifier": "CARD-0036",
           "title": "UX: catch up on what happened while away, from a phone",
           "description": "Someone returns after hours away, often on a phone, and wants a digest of what changed - what finished, failed, blocked, and what it cost - so they can triage f",
-          "priority": 2,
           "labels": [
             "ux",
             "channels",
@@ -369,7 +434,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "Normal",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Someday",
+          "rank": 10
         },
         {
           "id": "d595dddf-8632-403b-a229-1e0716f00d36",
@@ -386,7 +458,6 @@
           "identifier": "CARD-0038",
           "title": "Make Antiphon Linux and Docker ready - starting with the pty backend that assumes Windows",
           "description": "Antiphon is Windows-only in practice. Making it run on Linux and in a container is worth doing on its own merits, and there is one concrete bug already sitting ",
-          "priority": 2,
           "labels": [
             "linux",
             "docker",
@@ -400,7 +471,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "Normal",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Someday",
+          "rank": 10
         },
         {
           "id": "f5bd7de1-8512-4334-ba0e-0f6344cd5cf6",
@@ -417,7 +495,6 @@
           "identifier": "CARD-0002",
           "title": "Tasks section on the home rail - unified cards for board Cards and delegations",
           "description": "Give the home page a card-based Tasks section in the left rail, below the agents (agents ~1/3 of the rail height, tasks ~2/3). It replaces the flat row list in ",
-          "priority": 1,
           "labels": [
             "ui",
             "home",
@@ -430,7 +507,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "High",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 7
         },
         {
           "id": "6c44df90-5022-4d37-9d88-39ca48d85f91",
@@ -447,7 +531,6 @@
           "identifier": "CARD-0005",
           "title": "Card identifiers are reused after a delete",
           "description": "`CardService.NextIdentifierAsync` (`server/Application/Services/CardService.cs:253-257`) is\ncount-based: `CARD-{count+1}`. Delete a card and the next one create",
-          "priority": 1,
           "labels": [
             "bug",
             "cards"
@@ -459,7 +542,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "High",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 7
         },
         {
           "id": "95b5fe35-14ed-49fd-8860-641f2b892b41",
@@ -476,7 +566,6 @@
           "identifier": "CARD-0007",
           "title": "A numeric `modelLevel` is silently ignored on agent create",
           "description": "`POST /api/agents` with `\"modelLevel\": 0` returns **200 with an agent on `High`**, not `Frontier`.\n`CreateAgentRequest.ModelLevel` is a nullable enum and the AP",
-          "priority": 1,
           "labels": [
             "bug",
             "api",
@@ -489,7 +578,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "High",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 7
         },
         {
           "id": "549e971b-1cc6-4625-840e-5e9b3ce3de90",
@@ -506,7 +602,6 @@
           "identifier": "CARD-0009",
           "title": "E2E: session-runner port is ambiguous, and E2E targets the one nothing runs on",
           "description": "`Antiphon.AppHost/Program.cs` starts the runner on **17204** and overrides `SessionRunner__BaseUrl`\nto match. `server/appsettings.json` defaults `SessionRunner:",
-          "priority": 1,
           "labels": [
             "bug",
             "tests",
@@ -519,7 +614,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "High",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 7
         },
         {
           "id": "46026a0a-e0d9-403c-ab45-77de9f09cdcb",
@@ -536,7 +638,6 @@
           "identifier": "CARD-0011",
           "title": "Nothing supervises the AppHost",
           "description": "The \"Antiphon AppHost\" scheduled task only fires at logon. When the AppHost dies mid-session nothing\nrestarts it, so `https://antiphon.desktop.codeperf.net/` (C",
-          "priority": 1,
           "labels": [
             "reliability",
             "apphost"
@@ -548,7 +649,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "High",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 7
         },
         {
           "id": "b5167ec7-7e31-495b-b2f2-56c43b67b6c7",
@@ -565,7 +673,6 @@
           "identifier": "CARD-0032",
           "title": "UX: create a new project and get it to its first dispatched task",
           "description": "Someone starting work in a new repo wants to create a project and get it to the point where they can hand it work, without assembling configuration by hand firs",
-          "priority": 1,
           "labels": [
             "ux",
             "onboarding",
@@ -578,7 +685,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "High",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 7
         },
         {
           "id": "5b70a9f0-fa2c-464e-96af-9b73e8360da1",
@@ -595,7 +709,6 @@
           "identifier": "CARD-0033",
           "title": "UX: answer a blocked delegate question in place",
           "description": "A delegate has asked a question and is waiting. Show the question with enough context to answer it, and let it be answered in place, so the work resumes without",
-          "priority": 1,
           "labels": [
             "ux",
             "delegation"
@@ -607,7 +720,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "High",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 7
         },
         {
           "id": "1491a7af-b565-41a4-9604-b82d12605b63",
@@ -624,7 +744,6 @@
           "identifier": "CARD-0039",
           "title": "Cards need urgency and importance as separate axes, not one priority number",
           "description": "A card carries one `priority` integer (0-3), and it is doing two jobs at once: how much this matters, and how soon it needs doing. Those are independent, and co",
-          "priority": 1,
           "labels": [
             "cards",
             "ux",
@@ -637,7 +756,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "High",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 7
         },
         {
           "id": "9dc7c8cd-5db7-4e30-857b-b4dd626e054f",
@@ -654,7 +780,6 @@
           "identifier": "CARD-0040",
           "title": "Cards never move themselves - automate the column transitions from signals we already have",
           "description": "No card covers this, and the board proves it is needed: on 2026-08-13 it held **0 cards in In Progress and 0 in Done** while six Backlog cards were finished and",
-          "priority": 1,
           "labels": [
             "cards",
             "automation",
@@ -667,7 +792,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "High",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 7
         },
         {
           "id": "30a3ab79-b96a-45f2-b8d2-23f0027ffc72",
@@ -684,7 +816,6 @@
           "identifier": "CARD-0044",
           "title": "TranscriptEntries has no retention - 41k rows and growing; delete after 30 days",
           "description": "`TranscriptEntries` holds **41,629 rows** spanning 2026-06-12 to today and nothing ever deletes them. Every agent turn adds more, so it grows without bound - an",
-          "priority": 1,
           "labels": [
             "retention",
             "database",
@@ -697,7 +828,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "High",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 7
         },
         {
           "id": "5edc7b76-5247-44b7-bcaf-7447cb8b99bf",
@@ -714,7 +852,6 @@
           "identifier": "CARD-0019",
           "title": "A card cannot be edited or deleted, so the record cannot be corrected",
           "description": "Blocks the decision made 2026-08-09 that cards are the record for all outstanding work.\n\n`server/Api/Endpoints/CardEndpoints.cs` exposes exactly five operations",
-          "priority": 0,
           "labels": [
             "bug",
             "api",
@@ -728,7 +865,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "Critical",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 4
         },
         {
           "id": "cd1bfc41-bc09-4943-be1d-4b0fda7c56c5",
@@ -745,7 +889,6 @@
           "identifier": "CARD-0020",
           "title": "Addendum to CARD-0003: the stall backstop cannot fire, and a phase-aware deadline",
           "description": "Addendum to CARD-0003. Filed as its own card because a card cannot be appended to: `Card`\nhas no comment entity, and POST /api/cards/{id}/comments is not a note",
-          "priority": 0,
           "labels": [
             "reliability",
             "delegation"
@@ -757,7 +900,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "Critical",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 4
         },
         {
           "id": "177f87a0-d0de-49bc-bc05-81c7ca9d55ed",
@@ -774,7 +924,6 @@
           "identifier": "CARD-0021",
           "title": "A task outlives its dead session, and a stolen transcript hides it from the watchdog",
           "description": "A task whose SESSION IS DEAD stays Dispatched forever, and the new zero-transcript watchdog\ncannot catch it because a wrongly-adopted transcript makes it look s",
-          "priority": 0,
           "labels": [
             "reliability",
             "delegation"
@@ -786,7 +935,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "Critical",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 4
         },
         {
           "id": "33280c91-0d05-420e-af45-20fc608a36cd",
@@ -803,7 +959,6 @@
           "identifier": "CARD-0022",
           "title": "Notice usage-limit exhaustion, show what's left and when it resets, resume after",
           "description": "Notice when we run out of usage limits, show what is left and when it resets, and continue\nonce it does.\n\nToday nothing in Antiphon knows about usage limits. Wh",
-          "priority": 0,
           "labels": [
             "reliability",
             "observability"
@@ -815,7 +970,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "Critical",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 4
         },
         {
           "id": "0784bffb-1dac-4796-bb09-c5e628a77816",
@@ -832,7 +994,6 @@
           "identifier": "CARD-0029",
           "title": "A task handed to a reused warm delegate can be swallowed, and the stale report looks real",
           "description": "A task dispatched to a REUSED warm delegate can be swallowed whole: the task sits Dispatched forever, the delegate never sees the new brief, and its last report",
-          "priority": 0,
           "labels": [
             "delegation",
             "reliability",
@@ -845,7 +1006,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "Critical",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 4
         },
         {
           "id": "f1cf0be4-d06e-4290-b396-6e9b934d85a4",
@@ -862,7 +1030,6 @@
           "identifier": "CARD-0031",
           "title": "UX: a project status view that answers what is happening right now",
           "description": "Someone returns to a project - start of day, after a meeting, after a night - and wants one screen telling them the state of the work, so they can decide what t",
-          "priority": 0,
           "labels": [
             "ux",
             "home",
@@ -875,7 +1042,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "Critical",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 4
         },
         {
           "id": "43635fab-de31-4f12-87b8-df2f9af21bd5",
@@ -892,7 +1066,6 @@
           "identifier": "CARD-0035",
           "title": "UX: a diagnostic view for work that is stuck",
           "description": "Someone notices work is not moving and wants to see what state it is REALLY in and what went wrong, so they can retry, escalate, re-dispatch or fix it.\n\nThis is",
-          "priority": 0,
           "labels": [
             "ux",
             "reliability",
@@ -905,7 +1078,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "Critical",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 4
         },
         {
           "id": "4cf412f7-7d99-486e-9eeb-eb3eabbd797c",
@@ -922,7 +1102,6 @@
           "identifier": "CARD-0045",
           "title": "The test suite result depends on who launched it - 8 PTY tests inherit ANTIPHON_PTY_BACKEND",
           "description": "Since the session-runner picked up CARD-0037 (2026-08-13), an Antiphon-launched agent session inherits `ANTIPHON_PTY_BACKEND=modern`. Any delegate that runs the",
-          "priority": 0,
           "labels": [
             "tests",
             "pty",
@@ -935,7 +1114,14 @@
           "startedAt": null,
           "completedAt": null,
           "terminalReason": null,
-          "sessions": []
+          "sessions": [],
+          "importance": "Critical",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 4
         }
       ]
     },
@@ -964,7 +1150,6 @@
           "identifier": "CARD-0042",
           "title": "UX: the board should show the shape of the work - state graph on desktop, one state at a time on mobile",
           "description": "Story S7 in docs/product/user-stories.md, and a **key requirement**: cards are the record, so the surface that shows them has to be readable and accurate. On 20",
-          "priority": 1,
           "labels": [
             "ux",
             "board",
@@ -991,7 +1176,14 @@
               "exitCode": null,
               "failureReason": "Run attempt ended in phase TimedOut."
             }
-          ]
+          ],
+          "importance": "High",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 7
         }
       ]
     },
@@ -1031,7 +1223,6 @@
           "identifier": "CARD-0012",
           "title": "Fake gateway logs every health poll at Information",
           "description": "`logs/fake-gateway.log` reached 50 MB and grows roughly 90 MB/day: each `GET /health` writes three\n`Information` lines (`EndpointMiddleware`, `OkObjectResult`, ",
-          "priority": 2,
           "labels": [
             "reliability",
             "logging"
@@ -1043,7 +1234,14 @@
           "startedAt": null,
           "completedAt": "2026-08-13T09:40:09.806405Z",
           "terminalReason": "Fixed as part of CARD-0043 (71e7ce8). The fake gateway shipped with no appsettings.json at all; it now has one, and the health-poll noise was measured over 20 polls on the same binary: 15,477 bytes and 126 AspNetCore Information lines became 502 bytes and 0.",
-          "sessions": []
+          "sessions": [],
+          "importance": "Normal",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Someday",
+          "rank": 10
         },
         {
           "id": "301424c2-648b-4af4-9957-2dc3bdc238f2",
@@ -1060,7 +1258,6 @@
           "identifier": "CARD-0027",
           "title": "Root cause unknown: the pty input path silently drops chunks of a write, in two different shapes",
           "description": "Everything shipped so far SURVIVES this bug. Nothing explains it. Three fixes now exist purely to route around a transport we do not understand, and each was wr",
-          "priority": 1,
           "labels": [
             "delegation",
             "pty",
@@ -1088,7 +1285,14 @@
               "exitCode": null,
               "failureReason": "Session runner does not know this session (launch failed or the runner restarted)."
             }
-          ]
+          ],
+          "importance": "High",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 7
         },
         {
           "id": "ced5ccce-c978-4492-97b6-356a5f669d4a",
@@ -1105,7 +1309,6 @@
           "identifier": "CARD-0028",
           "title": "fakeclaude cannot reproduce the TUI's chunk clipping, so CI cannot catch it",
           "description": "fakeclaude is a .NET console peer that receives every byte. The real consumer is a Bun/Ink TUI that keeps ONE ~1024-byte read chunk per event-loop turn and disc",
-          "priority": 1,
           "labels": [
             "delegation",
             "pty",
@@ -1133,7 +1336,14 @@
               "exitCode": null,
               "failureReason": "Session runner does not know this session (launch failed or the runner restarted)."
             }
-          ]
+          ],
+          "importance": "High",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 7
         },
         {
           "id": "8b9bbe4c-d573-4f7c-b641-d952ee9be511",
@@ -1150,7 +1360,6 @@
           "identifier": "CARD-0043",
           "title": "Log retention is 14 hours, not 14 days - cut the volume, then keep 5 days",
           "description": "Keep 5 days of logs. Today there are roughly **14 hours**, and getting to 5 days by retention alone would cost about 12 GB - so the volume has to come down firs",
-          "priority": 1,
           "labels": [
             "logs",
             "retention",
@@ -1163,7 +1372,14 @@
           "startedAt": null,
           "completedAt": "2026-08-13T08:20:41.093256Z",
           "terminalReason": "Fixed and landed in 71e7ce8: log volume cut from 40.85 to 0.032 MB/h measured, retention switched to 5 days by time. Session-runner log deliberately kept at 14 days - it writes KB/day and cutting it would delete history for no gain.",
-          "sessions": []
+          "sessions": [],
+          "importance": "High",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 7
         },
         {
           "id": "a3d48835-1836-4d8d-941b-1ea01e183dea",
@@ -1180,7 +1396,6 @@
           "identifier": "CARD-0001",
           "title": "Agent Screen - Working Label - Always Working",
           "description": "Check this docs\\00xx-agentscreenworking-meaning\\initial-investigation.md, review it and come up with a implementation spec, and a thorough test spec of what and",
-          "priority": 0,
           "labels": [],
           "status": "Done",
           "concurrencyToken": "b40798bc-960f-40b4-9462-363f3cf73426",
@@ -1281,7 +1496,14 @@
               "exitCode": null,
               "failureReason": "Run attempt ended in phase TimedOut."
             }
-          ]
+          ],
+          "importance": "Critical",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 4
         },
         {
           "id": "14703986-6b98-43df-af60-74352febbbd3",
@@ -1298,7 +1520,6 @@
           "identifier": "CARD-0003",
           "title": "Surface launch and delivery errors instead of leaving a task silently Dispatched",
           "description": "Live miss 2026-08-09. Two delegated tasks (283c9476, 30b70dcc) sat at status Dispatched for 26 minutes with an empty transcript and working=false. Their agents,",
-          "priority": 0,
           "labels": [
             "reliability",
             "ui",
@@ -1325,7 +1546,14 @@
               "exitCode": null,
               "failureReason": "Session runner does not know this session (launch failed or the runner restarted)."
             }
-          ]
+          ],
+          "importance": "Critical",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 4
         },
         {
           "id": "408a5bb7-384d-4335-822c-72e06d55375d",
@@ -1342,7 +1570,6 @@
           "identifier": "CARD-0006",
           "title": "A session can adopt ANOTHER session's transcript - including a human's own conversation",
           "description": "Observed live 2026-08-09. `session-runner.log`:\n\n```\nWRN Session 18c04655-...: <session-id>.jsonl never appeared (Claude forked the id);\n    adopting discovered",
-          "priority": 0,
           "labels": [
             "bug",
             "session-runner",
@@ -1369,7 +1596,14 @@
               "exitCode": -1,
               "failureReason": "Process exited (KilledByRequest, code -1)."
             }
-          ]
+          ],
+          "importance": "Critical",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 4
         },
         {
           "id": "94477bd9-5d71-4ff5-9ddc-b36d28aa763e",
@@ -1386,7 +1620,6 @@
           "identifier": "CARD-0016",
           "title": "A delegated task's model tier never reaches the agent it spawns",
           "description": "Confirmed live 2026-08-09, three times in a row.\n\n`scripts/delegate.ps1 -Level Frontier` reports back \"queued task <id> (orchestrator plan on\nFrontier)\", and `G",
-          "priority": 0,
           "labels": [
             "bug",
             "agents",
@@ -1414,7 +1647,14 @@
               "exitCode": null,
               "failureReason": "Session runner does not know this session (launch failed or the runner restarted)."
             }
-          ]
+          ],
+          "importance": "Critical",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 4
         },
         {
           "id": "13cdabd1-2ac8-4388-bdca-d42d43fbeb01",
@@ -1431,7 +1671,6 @@
           "identifier": "CARD-0018",
           "title": "First prompt races the pty-host connection and is lost with no retry",
           "description": "Confirmed live 2026-08-09, reproducible on every cold launch. This is the mechanism behind\nCARD-0003; that card is about surfacing the failure, this one is abou",
-          "priority": 0,
           "labels": [
             "bug",
             "session-runner",
@@ -1459,7 +1698,14 @@
               "exitCode": null,
               "failureReason": "Session runner does not know this session (launch failed or the runner restarted)."
             }
-          ]
+          ],
+          "importance": "Critical",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 4
         },
         {
           "id": "f899bd6c-4810-40c8-a684-c8f3c2dc0cfe",
@@ -1476,7 +1722,6 @@
           "identifier": "CARD-0023",
           "title": "Delegation cost is ~10x overstated: cache reads priced as fresh input, stale rate table",
           "description": "Delegation cost is overstated - cache reads are billed at the full input rate, and the rate\ntable is stale. Because the per-root ceiling gates dispatch on this ",
-          "priority": 0,
           "labels": [
             "delegation",
             "cost"
@@ -1502,7 +1747,14 @@
               "exitCode": null,
               "failureReason": "Session runner does not know this session (launch failed or the runner restarted)."
             }
-          ]
+          ],
+          "importance": "Critical",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 4
         },
         {
           "id": "5eeed1d3-e88c-4382-b171-61b883f5e041",
@@ -1519,7 +1771,6 @@
           "identifier": "CARD-0030",
           "title": "Manual paste delivers multi-KB whole - find out why our pty write cannot",
           "description": "A human pastes several KB into Claude Code in a terminal and it arrives whole, every time. We write the same bytes through ConPTY and all but one ~1024-byte chu",
-          "priority": 0,
           "labels": [
             "pty",
             "delegation",
@@ -1547,7 +1798,14 @@
               "exitCode": null,
               "failureReason": "Session runner does not know this session (launch failed or the runner restarted)."
             }
-          ]
+          ],
+          "importance": "Critical",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 4
         },
         {
           "id": "4f15c829-4152-4b40-b129-75d16d89a236",
@@ -1564,7 +1822,6 @@
           "identifier": "CARD-0037",
           "title": "Ship a modern conpty backend so pastes survive, then retire the spill ceilings",
           "description": "CARD-0030 established that a large body CAN be delivered whole, and identified the fix. This card is shipping it.\n\nThe pseudoconsole `CreatePseudoConsole` in ke",
-          "priority": 0,
           "labels": [
             "pty",
             "delegation",
@@ -1592,7 +1849,14 @@
               "exitCode": null,
               "failureReason": "Session runner does not know this session (launch failed or the runner restarted)."
             }
-          ]
+          ],
+          "importance": "Critical",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 4
         },
         {
           "id": "0d6fb58e-0cfc-460d-85a3-72ae23b0dfbd",
@@ -1609,7 +1873,6 @@
           "identifier": "CARD-0041",
           "title": "A compacted session reads Working forever - two post-compaction records escape the idle rule",
           "description": "Agent `task-530ec4aa` (session `e77fb0a7`) has read **WORKING** since 2026-08-11 10:54, more than two days, with a dead session. Diagnosed against its stored tr",
-          "priority": 0,
           "labels": [
             "session",
             "working-state",
@@ -1623,7 +1886,14 @@
           "startedAt": null,
           "completedAt": "2026-08-13T08:20:41.01789Z",
           "terminalReason": "Fixed and landed in 3319a37: a manual compaction boundary now ends the turn and the continuation prompt is excluded from activity, across all three lockstep implementations. Session e77fb0a7 reads idle over its stored rows.",
-          "sessions": []
+          "sessions": [],
+          "importance": "Critical",
+          "urgency": "Normal",
+          "dueAt": null,
+          "urgentSince": null,
+          "effectiveUrgency": "Normal",
+          "quadrant": "Schedule",
+          "rank": 4
         }
       ]
     }

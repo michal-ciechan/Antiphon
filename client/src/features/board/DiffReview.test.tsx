@@ -20,7 +20,7 @@ const reviewCard: CardDto = {
   identifier: 'CARD-0001',
   title: 'Review diff',
   description: 'Inspect changes',
-  priority: 1,
+  importance: 'High', urgency: 'Normal', dueAt: null, urgentSince: null, effectiveUrgency: 'Normal', quadrant: 'Schedule', rank: 7,
   labels: ['review'],
   status: 'Review',
   concurrencyToken: 'token-1',

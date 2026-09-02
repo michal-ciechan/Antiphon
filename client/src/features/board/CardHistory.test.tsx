@@ -35,7 +35,7 @@ function revision(overrides: Partial<CardRevisionDto> & { id: string; revisionNu
     cardId: 'card-1',
     title: null,
     description: null,
-    priority: null,
+    importance: null, urgency: null, dueAt: null,
     labels: null,
     fromColumnId: null,
     toColumnId: null,
@@ -76,7 +76,7 @@ const interleaved: CardRevisionDto[] = [
     id: 'r2', revisionNumber: 2, kind: 'ContentEdit',
     title: 'Cards cannot be edited',
     description: 'the old body, which can run to twenty thousand characters',
-    priority: 3,
+    importance: 'Low', urgency: 'Normal', dueAt: null,
     labels: ['stale-label'],
     reason: 'title named the wrong failure', editedBy: 'Antiphon-Opus',
     createdAt: '2026-08-12T08:00:00Z',
@@ -142,7 +142,7 @@ describe('CardHistory', () => {
     expect(edited).toHaveTextContent('Edited')
     expect(edited).toHaveTextContent('title named the wrong failure')
     // Superseded priority and labels are small enough to show inline.
-    expect(edited).toHaveTextContent('P3')
+    expect(edited).toHaveTextContent('Low')
     expect(edited).toHaveTextContent('stale-label')
 
     expect(screen.queryByTestId('superseded-description-2')).not.toBeInTheDocument()

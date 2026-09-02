@@ -51,7 +51,7 @@ function card(overrides: Partial<CardDto> = {}): CardDto {
     identifier: 'CARD-0041',
     title: 'A compacted session reads Working forever',
     description: 'two post-compaction records escape the rule',
-    priority: 0,
+    importance: 'Critical', urgency: 'Normal', dueAt: null, urgentSince: null, effectiveUrgency: 'Normal', quadrant: 'Schedule', rank: 4,
     labels: ['session', 'reliability', 'never-shown'],
     status: 'Backlog',
     concurrencyToken: 'token-1',
@@ -97,7 +97,7 @@ describe('CardRow', () => {
   it('shows priority, the first two labels and the card age', () => {
     renderRow()
     const row = screen.getByRole('article', { name: /CARD-0041/ })
-    expect(within(row).getByText('P0')).toBeInTheDocument()
+    expect(within(row).getByText('Critical')).toBeInTheDocument()
     expect(within(row).getByText('session')).toBeInTheDocument()
     expect(within(row).getByText('reliability')).toBeInTheDocument()
     expect(within(row).queryByText('never-shown')).not.toBeInTheDocument()
@@ -343,7 +343,7 @@ describe('StateNode', () => {
 
   it('leads with the count as a numeral and carries the signal line', () => {
     renderWithProviders(
-      <StateNode state={nodeFor([card(), card({ id: 'c2', identifier: 'CARD-0042', priority: 2 })])}
+      <StateNode state={nodeFor([card(), card({ id: 'c2', identifier: 'CARD-0042', importance: 'Normal', rank: 10, quadrant: 'Someday' })])}
         selected={false}
         filtered={false}
         onSelect={vi.fn()}
@@ -351,7 +351,7 @@ describe('StateNode', () => {
     )
     const node = screen.getByTestId('state-node-backlog')
     expect(within(node).getByText('2')).toBeInTheDocument()
-    expect(within(node).getByText('1 P0 · oldest #41 · 3d')).toBeInTheDocument()
+    expect(within(node).getByText('1 Critical · oldest #41 · 3d')).toBeInTheDocument()
   })
 
   it('keeps rendering when the state is empty — absence is the information', () => {

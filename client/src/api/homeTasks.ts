@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { apiGet } from './client'
 import type { AgentModelLevel } from './agents'
-import type { AgentKind, CardWorkflowRunStatus } from './boards'
+import type { AgentKind, CardImportance, CardQuadrant, CardUrgency, CardWorkflowRunStatus } from './boards'
 import type { AgentTaskRole, AgentTaskStatus } from './agentTasks'
 
 /**
@@ -53,7 +53,11 @@ export interface HomeTaskItemDto {
    */
   stage: string | null
   workflowRunStatus: CardWorkflowRunStatus | null
-  priority: number | null
+  importance: CardImportance | null
+  effectiveUrgency: CardUrgency | null
+  quadrant: CardQuadrant | null
+  rank: number | null
+  urgentSince: string | null
   boardId: string | null
   worker: HomeTaskWorkerDto | null
   ownerAgentId: string | null

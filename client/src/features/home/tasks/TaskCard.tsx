@@ -30,7 +30,7 @@ import { useSpawnCard, type CardStatus } from '../../../api/boards'
 import { getApiErrorMessage } from '../../../api/client'
 import type { HomeTaskItemDto } from '../../../api/homeTasks'
 import { ATTENTION_VISUALS } from '../../attention/attentionVisuals'
-import { stateLabel } from '../../board/boardVisuals'
+import { importanceBadgeColor, stateLabel, urgencyBadgeColor } from '../../board/boardVisuals'
 import { TierBadge } from '../../delegations/TaskChip'
 import { formatCost, shortId, STATUS_COLOR } from '../../delegations/taskVisuals'
 import { cardNumber } from '../../../shared/cardIdentifier'
@@ -147,6 +147,16 @@ export function TaskCard({
               >
                 {SOURCE_LABEL[item.source]}
               </Badge>
+              {item.importance && item.importance !== 'Normal' && (
+                <Badge size="xs" variant="light" color={importanceBadgeColor(item.importance)}>
+                  {item.importance}
+                </Badge>
+              )}
+              {item.effectiveUrgency && item.effectiveUrgency !== 'Normal' && (
+                <Badge size="xs" variant="light" color={urgencyBadgeColor(item.effectiveUrgency)}>
+                  {item.effectiveUrgency.toLowerCase()}
+                </Badge>
+              )}
             </Group>
             <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
               <Badge size="xs" variant="light" color={stateColor}>
@@ -165,6 +175,11 @@ export function TaskCard({
             </Group>
           </Group>
 
+          {item.urgentSince && item.effectiveUrgency && item.effectiveUrgency !== 'Normal' && (
+            <Text size="xs" c="dimmed" mt={4}>
+              rated {item.effectiveUrgency} {formatRelativeAgo(item.urgentSince, now)}
+            </Text>
+          )}
           <Text size="sm" fw={600} lineClamp={2} mt={6}>
             {unread && (
               <Box

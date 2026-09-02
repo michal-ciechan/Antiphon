@@ -2,8 +2,8 @@ import { Badge, Box, Drawer, Group, Paper, Stack, Text, UnstyledButton } from '@
 import { useRef, useState } from 'react'
 import { TbChevronDown, TbChevronUp, TbLayoutGrid } from 'react-icons/tb'
 import type { BoardColumnDto } from '../../api/boards'
-import { describeSignal, emptyStateMessage, spineNeighbours, type StateShape } from './boardShapeModel'
-import { priorityFill, stateColor } from './boardVisuals'
+import { IMPORTANCES, describeSignal, emptyStateMessage, spineNeighbours, type StateShape } from './boardShapeModel'
+import { importanceFill, stateColor } from './boardVisuals'
 import { CardListSection } from './CardListSection'
 
 interface StatePagerProps {
@@ -168,9 +168,9 @@ export function StatePager({
                   <Text size="sm" fw={700}>{state.filteredCount}</Text>
                 </Group>
                 <Group gap={2} h={5} mt={6} wrap="nowrap">
-                  {state.priorityMix.map((count, priority) => (
+                  {state.importanceMix.map((count, index) => (
                     count > 0
-                      ? <Box key={priority} style={{ flex: count, height: 5, borderRadius: 2, ...priorityFill(priority) }} />
+                      ? <Box key={IMPORTANCES[index]} style={{ flex: count, height: 5, borderRadius: 2, ...importanceFill(IMPORTANCES[index]) }} />
                       : null
                   ))}
                 </Group>

@@ -1,7 +1,7 @@
-import { Button, Group, Modal, NumberInput, Stack, Text, TextInput, Textarea } from '@mantine/core'
+import { Button, Checkbox, Group, Modal, Select, Stack, Text, TextInput, Textarea } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useState } from 'react'
-import { CARD_LIMITS, type CardDto, useUpdateCardContent } from '../../api/boards'
+import { CARD_LIMITS, type CardDto, type CardImportance, type CardUrgency, useUpdateCardContent } from '../../api/boards'
 import { getApiErrorMessage, getApiFieldErrors } from '../../api/client'
 import { displayIdentifier } from '../../shared/cardIdentifier'
 import { LimitCounter } from './LimitCounter'
@@ -13,7 +13,7 @@ interface CardEditModalProps {
 }
 
 /** Which 422 keys this dialog has an input for. Anything else falls through to a notification. */
-const EDITABLE_FIELDS = ['Title', 'Description', 'Priority', 'Labels', 'Reason']
+const EDITABLE_FIELDS = ['Title', 'Description', 'Importance', 'Urgency', 'DueAt', 'ClearDueAt', 'Labels', 'Reason']
 
 /** The comma-separated labels field, both ways. Consistent with the create dialog, deliberately. */
 function parseLabels(value: string): string[] {
@@ -45,7 +45,10 @@ export function CardEditModal({ boardId, card, onClose }: CardEditModalProps) {
   const updateContent = useUpdateCardContent(boardId)
   const [title, setTitle] = useState(card.title)
   const [description, setDescription] = useState(card.description)
-  const [priority, setPriority] = useState<number | string>(card.priority)
+  const [importance, setImportance] = useState<CardImportance>(card.importance)
+  const [urgency, setUrgency] = useState<CardUrgency>(card.urgency)
+  const [dueAt, setDueAt] = useState(card.dueAt ? card.dueAt.slice(0, 10) : '')
+  const [clearDueAt, setClearDueAt] = useState(false)
   const [labels, setLabels] = useState(card.labels.join(', '))
   const [reason, setReason] = useState('')
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
@@ -62,7 +65,7 @@ export function CardEditModal({ boardId, card, onClose }: CardEditModalProps) {
   const submit = () => {
     if (!canSubmit) return
     const nextLabels = parseLabels(labels)
-    const nextPriority = Number(priority)
+    const currentDue = card.dueAt ? card.dueAt.slice(0, 10) : ''
 
     setFieldErrors({})
     updateContent.mutate(
@@ -73,7 +76,10 @@ export function CardEditModal({ boardId, card, onClose }: CardEditModalProps) {
           reason: reason.trim(),
           title: title.trim() === card.title ? null : title.trim(),
           description: description.trim() === card.description ? null : description.trim(),
-          priority: Number.isInteger(nextPriority) && nextPriority !== card.priority ? nextPriority : null,
+          importance: importance === card.importance ? null : importance,
+          urgency: urgency === card.urgency ? null : urgency,
+          dueAt: clearDueAt || dueAt === currentDue ? null : (dueAt || null),
+          clearDueAt: clearDueAt && !!card.dueAt,
           labels: sameLabels(nextLabels, card.labels) ? null : nextLabels,
           // Self-reported and never authenticated. The web UI is the operator's surface; agents
           // hit the API directly and name themselves.
@@ -129,13 +135,35 @@ export function CardEditModal({ boardId, card, onClose }: CardEditModalProps) {
           error={fieldErrors.Description}
           onChange={(event) => setDescription(event.currentTarget.value)}
         />
-        <NumberInput
-          label="Priority"
-          min={0}
-          value={priority}
-          error={fieldErrors.Priority}
-          onChange={setPriority}
+        <Select
+          label="Importance"
+          data={['Low', 'Normal', 'High', 'Critical']}
+          value={importance}
+          error={fieldErrors.Importance}
+          onChange={(value) => setImportance((value as CardImportance) ?? card.importance)}
         />
+        <Select
+          label="Urgency"
+          data={['Normal', 'Soon', 'Now']}
+          value={urgency}
+          error={fieldErrors.Urgency}
+          onChange={(value) => setUrgency((value as CardUrgency) ?? card.urgency)}
+        />
+        <TextInput
+          label="Due"
+          type="date"
+          value={clearDueAt ? '' : dueAt}
+          disabled={clearDueAt}
+          error={fieldErrors.DueAt}
+          onChange={(event) => setDueAt(event.currentTarget.value)}
+        />
+        {card.dueAt && (
+          <Checkbox
+            label="Clear due date"
+            checked={clearDueAt}
+            onChange={(event) => setClearDueAt(event.currentTarget.checked)}
+          />
+        )}
         <TextInput
           label="Labels"
           value={labels}

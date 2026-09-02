@@ -1,5 +1,8 @@
 import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query'
+import type { CardImportance, CardQuadrant, CardUrgency } from '../features/board/cardRanking'
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './client'
+
+export type { CardImportance, CardQuadrant, CardUrgency }
 
 export type TrackerKind = 'Internal' | 'Linear' | 'GitHubIssues' | 'Jira'
 export type CardStatus = 'Backlog' | 'InProgress' | 'Review' | 'Done' | 'NeedsDecision' | 'Canceled'
@@ -60,7 +63,13 @@ export interface CardDto {
   identifier: string
   title: string
   description: string
-  priority: number
+  importance: CardImportance
+  urgency: CardUrgency
+  dueAt: string | null
+  urgentSince: string | null
+  effectiveUrgency: CardUrgency
+  quadrant: CardQuadrant
+  rank: number
   labels: string[]
   status: CardStatus
   concurrencyToken: string
@@ -130,7 +139,9 @@ export interface CardRevisionDto {
   kind: CardRevisionKind
   title: string | null
   description: string | null
-  priority: number | null
+  importance: CardImportance | null
+  urgency: CardUrgency | null
+  dueAt: string | null
   labels: string[] | null
   fromColumnId: string | null
   toColumnId: string | null
@@ -223,7 +234,9 @@ export interface CreateCardRequest {
   boardColumnId?: string | null
   title: string
   description?: string | null
-  priority?: number
+  importance?: CardImportance
+  urgency?: CardUrgency
+  dueAt?: string | null
   labels?: string[]
 }
 
@@ -269,7 +282,10 @@ export interface UpdateCardContentRequest {
   reason: string
   title?: string | null
   description?: string | null
-  priority?: number | null
+  importance?: CardImportance | null
+  urgency?: CardUrgency | null
+  dueAt?: string | null
+  clearDueAt?: boolean
   labels?: string[] | null
   editedBy?: string | null
 }

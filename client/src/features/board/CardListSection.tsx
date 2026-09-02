@@ -1,7 +1,7 @@
 import { Badge, Box, Group, Stack, Text, UnstyledButton } from '@mantine/core'
 import { TbChevronDown, TbChevronRight } from 'react-icons/tb'
 import type { BoardColumnDto } from '../../api/boards'
-import { BAND_THRESHOLD, emptyStateMessage, priorityBands, type StateShape } from './boardShapeModel'
+import { BAND_THRESHOLD, emptyStateMessage, quadrantBands, quadrantLabel, type StateShape } from './boardShapeModel'
 import { stateColor } from './boardVisuals'
 import { CardRow } from './CardRow'
 
@@ -36,7 +36,7 @@ export function CardListSection({
   layout = 'row',
 }: CardListSectionProps) {
   const banded = state.cards.length > BAND_THRESHOLD
-  const bands = banded ? priorityBands(state.cards) : []
+  const bands = banded ? quadrantBands(state.cards) : []
 
   const rows = state.cards.map((card) => (
     <CardRow
@@ -60,22 +60,22 @@ export function CardListSection({
       ? (
         <Stack gap={2}>
           {bands.map((band, index) => {
-            const bandKey = `${state.stateKey}:${band.priority}`
+            const bandKey = `${state.stateKey}:${band.quadrant}`
             // The first two bands are open; the rest collapse to a summary row, because 31 cards
             // is otherwise a page of scrolling before the important ones are even counted.
             const open = index < 2 || expandedBands.has(bandKey)
             return (
-              <Box key={band.priority}>
+              <Box key={band.quadrant}>
                 <UnstyledButton
                   onClick={() => onToggleBand(bandKey)}
                   aria-expanded={open}
-                  aria-label={`P${band.priority} band, ${band.cards.length} cards`}
+                  aria-label={`${quadrantLabel(band.quadrant)} band, ${band.cards.length} cards`}
                   w="100%"
                 >
                   <Group gap={8} align="center" mt={index === 0 ? 0 : 8} mb={2} wrap="nowrap">
                     {open ? <TbChevronDown size={13} /> : <TbChevronRight size={13} />}
                     <Text size="xs" fw={700} c="dimmed" style={{ letterSpacing: '0.05em' }}>
-                      P{band.priority} — {band.cards.length}
+                      {quadrantLabel(band.quadrant)} — {band.cards.length}
                     </Text>
                     <Box style={{ flex: 1, borderTop: '1px solid var(--mantine-color-dark-5)' }} />
                   </Group>

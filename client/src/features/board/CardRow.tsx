@@ -3,7 +3,7 @@ import { TbTerminal2 } from 'react-icons/tb'
 import type { BoardColumnDto, CardDto } from '../../api/boards'
 import { displayIdentifier, externalIssueTag } from '../../shared/cardIdentifier'
 import { ageInDays, hasLiveSession } from './boardShapeModel'
-import { priorityBadgeColor } from './boardVisuals'
+import { CardAxisBadges } from './CardAxisBadges'
 import { MoveMenu } from './MoveMenu'
 
 interface CardRowProps {
@@ -72,9 +72,7 @@ export function CardRow({ card, boardId, columns, now, onOpen, layout = 'row' }:
           archived
         </Badge>
       )}
-      <Badge size="xs" color={priorityBadgeColor(card.priority)} variant="light" style={{ flex: 'none' }}>
-        P{card.priority}
-      </Badge>
+      <CardAxisBadges card={card} now={now} />
       {card.labels.slice(0, stacked ? 1 : 2).map((label) => (
         <Badge key={label} size="xs" color="gray" variant="outline" style={{ flex: 'none' }}>
           {label}
