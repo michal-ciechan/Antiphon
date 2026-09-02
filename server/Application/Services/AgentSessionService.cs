@@ -786,11 +786,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
         // Persist the request source BEFORE asking the runner to kill so an exit-event race
         // cannot record ProcessExit and erase operator/system intent (CARD-0256).
-        if (session.TerminationSource == SessionTerminationSource.Unknown
-            && session.Status is SessionStatus.Created or SessionStatus.Starting
-                or SessionStatus.Running or SessionStatus.Stopping)
+        if (session.Status is SessionStatus.Created or SessionStatus.Starting
+            or SessionStatus.Running or SessionStatus.Stopping)
         {
-            session.TerminationSource = source;
+            SessionTermination.Record(session, source);
         }
 
         session.Status = SessionStatus.Stopping;

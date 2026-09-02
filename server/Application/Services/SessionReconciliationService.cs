@@ -191,8 +191,7 @@ public sealed class SessionReconciliationService
                         $"Runner reported an exit that was never observed ({runnerSession.ExitReason}, "
                         + $"code {runnerSession.ExitCode?.ToString() ?? "unknown"}).";
                 }
-                if (session.TerminationSource == SessionTerminationSource.Unknown)
-                    session.TerminationSource = SessionTerminationSource.ProcessExit;
+                SessionTermination.Record(session, SessionTermination.FromExitReason(runnerSession.ExitReason));
                 session.EndedAt ??= now;
                 session.LastSeenAt = now;
                 closedSessionIds.Add(session.Id);

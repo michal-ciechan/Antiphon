@@ -169,10 +169,18 @@ public sealed class AgentSessionRuntime
                     session.FailureReason = $"Process exited ({exitReason}, code {exitCode?.ToString() ?? "unknown"}).";
                 // A prior KillAsync may already have persisted OperatorRequest/SystemRequest;
                 // an exit event must not erase it (CARD-0256).
-                if (session.TerminationSource == SessionTerminationSource.Unknown)
-                    session.TerminationSource = SessionTerminationSource.ProcessExit;
+                SessionTermination.Record(session, SessionTermination.FromExitReason(exitReason));
                 session.EndedAt ??= now;
                 session.LastSeenAt = now;
+                changed = true;
+            }
+            else if (session.Status is SessionStatus.Stopped or SessionStatus.Failed
+                     && session.TerminationSource == SessionTerminationSource.Unknown)
+            {
+                // Race C.1: a closer wrote the terminal status first and left the column empty.
+                // The exit event is the backfill path; it must not change the already-closed status.
+                SessionTermination.Record(session, SessionTermination.FromExitReason(exitReason));
+                session.ExitCode ??= exitCode;
                 changed = true;
             }
 
