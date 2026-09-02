@@ -34,7 +34,12 @@ public sealed record IssueTrackerConfig(
     /// Resolved bearer token populated by <c>TrackerTokenResolver</c> before tracker calls.
     /// Never serialized, never logged.
     /// </summary>
-    string? ResolvedToken = null);
+    string? ResolvedToken = null,
+    /// <summary>
+    /// Tracker logins treated as operators for this board (<c>tracker.operator_logins</c>).
+    /// Empty/null: the author rule never fires and nothing is marked for review.
+    /// </summary>
+    IReadOnlyList<string>? OperatorLogins = null);
 
 public sealed record TrackedIssue(
     string ExternalId,
@@ -46,7 +51,8 @@ public sealed record TrackedIssue(
     IReadOnlyList<string> Labels,
     IReadOnlyList<string> BlockedByExternalIds,
     string Url,
-    string RawPayloadJson);
+    string RawPayloadJson,
+    string? Author = null);
 
 /// <summary>CARD-0166: write + comment-pull capabilities. Implemented by GitHub only.</summary>
 public interface IBidirectionalIssueTracker : IIssueTracker

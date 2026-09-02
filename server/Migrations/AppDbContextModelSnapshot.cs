@@ -1422,9 +1422,12 @@ namespace Antiphon.Server.Migrations
                         .HasColumnType("character varying(100)");
 
                     b.Property<int>("Importance")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ImportanceProvenance")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("integer")
-                        .HasDefaultValue(1);
+                        .HasDefaultValue(0);
 
                     b.Property<string>("LabelsJson")
                         .IsRequired()
@@ -1999,6 +2002,13 @@ namespace Antiphon.Server.Migrations
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
+
+                    b.Property<string>("Author")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<bool?>("AuthorIsOperator")
+                        .HasColumnType("boolean");
 
                     b.Property<Guid>("CardId")
                         .HasColumnType("uuid");

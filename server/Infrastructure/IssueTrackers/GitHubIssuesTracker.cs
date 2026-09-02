@@ -295,7 +295,20 @@ public sealed class GitHubIssuesTracker : IBidirectionalIssueTracker
             Labels: labels,
             BlockedByExternalIds: [],
             Url: issue.TryGetProperty("html_url", out var url) ? url.GetString() ?? string.Empty : string.Empty,
-            RawPayloadJson: issue.GetRawText());
+            RawPayloadJson: issue.GetRawText(),
+            Author: ParseAuthor(issue));
+    }
+
+    private static string? ParseAuthor(JsonElement issue)
+    {
+        if (issue.TryGetProperty("user", out var user)
+            && user.TryGetProperty("login", out var login))
+        {
+            var value = login.GetString();
+            return string.IsNullOrWhiteSpace(value) ? null : value;
+        }
+
+        return null;
     }
 
     private static bool TryParseComment(

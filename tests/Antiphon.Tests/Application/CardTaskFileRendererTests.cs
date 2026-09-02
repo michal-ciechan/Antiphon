@@ -64,6 +64,7 @@ public class CardTaskFileRendererTests
         rendered.ShouldContain("title: \"Card: \\\"the #1\\\" task\"");
         rendered.ShouldContain("status: NeedsDecision");
         rendered.ShouldContain("importance: Normal");
+        rendered.ShouldContain("importance_provenance: Auto");
         rendered.ShouldContain("urgency: Normal");
         rendered.ShouldContain("labels: [\"bug,grok,delegation\", \"cards\"]");
         rendered.ShouldContain("created: 2026-08-09T15:05:43Z");
@@ -169,6 +170,7 @@ public class CardTaskFileRendererTests
 
         index.ShouldContain($"- [CARD-0006]({names[inProgress.Id]}) — working `reliability`");
         index.ShouldContain("`high`");
+        index.ShouldNotContain("`review`");
         index.ShouldNotContain("\r");
         index.ShouldEndWith("\n");
         index.ShouldNotEndWith("\n\n");
@@ -187,6 +189,35 @@ public class CardTaskFileRendererTests
         file.ShouldStartWith("CARD-0001-");
         file.ShouldEndWith(".md");
         file["CARD-0001-".Length..^".md".Length].Length.ShouldBe(60);
+    }
+
+    [Test]
+    public void Frontmatter_and_index_carry_author_and_the_review_marker()
+    {
+        var card = MakeCard(Guid.NewGuid(), "CARD-0325", "From GitHub", "body", CardStatus.Backlog);
+        card.ExternalIssueRef = new ExternalIssueRef
+        {
+            TrackerKind = TrackerKind.GitHubIssues,
+            ExternalKey = "#30",
+            Url = "https://github.test/acme/app/issues/30",
+            Origin = ExternalIssueOrigin.ExternalImport,
+            Author = "bob",
+            AuthorIsOperator = false,
+            Card = card
+        };
+
+        var rendered = CardTaskFileRenderer.RenderCard(card);
+        rendered.ShouldContain("importance_provenance: Auto");
+        rendered.ShouldContain("external_author: \"bob\"");
+        rendered.ShouldContain("needs_human_review: true");
+
+        var names = new Dictionary<Guid, string> { [card.Id] = "CARD-0325-from-github.md" };
+        var index = CardTaskFileRenderer.RenderIndex("Antiphon", [card], names);
+        index.ShouldContain("`review`");
+
+        card.ImportanceProvenance = CardImportanceProvenance.Human;
+        CardTaskFileRenderer.RenderCard(card).ShouldNotContain("needs_human_review:");
+        CardTaskFileRenderer.RenderIndex("Antiphon", [card], names).ShouldNotContain("`review`");
     }
 
     [Test]

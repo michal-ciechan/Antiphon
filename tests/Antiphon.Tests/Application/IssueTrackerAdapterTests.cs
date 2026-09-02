@@ -77,6 +77,7 @@ public class IssueTrackerAdapterTests
         issues[0].Title.ShouldBe("Fix sync");
         issues[0].Priority.ShouldBe(4);
         issues[0].Labels.ShouldBe(["priority: high", "backend"]);
+        issues[0].Author.ShouldBeNull();
         handler.Requests.Single().RequestUri!.ToString()
             .ShouldBe("https://github.test/api/v3/repos/acme/app/issues?state=open&per_page=100");
     }
@@ -195,6 +196,37 @@ public class IssueTrackerAdapterTests
 
         var issues = await tracker.FetchCandidatesAsync(config, CancellationToken.None);
         issues.Single().Priority.ShouldBe(5);
+    }
+
+    [Test]
+    public async Task GitHubIssuesTracker_reads_user_login_as_author()
+    {
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = Json("""
+                [
+                  {
+                    "number": 28,
+                    "title": "Raised by Mike",
+                    "body": "",
+                    "state": "open",
+                    "html_url": "https://github.test/acme/app/issues/28",
+                    "user": { "login": "michal-ciechan" },
+                    "labels": []
+                  }
+                ]
+                """)
+        });
+        var tracker = new GitHubIssuesTracker(new HttpClient(handler));
+        var config = NewConfig(TrackerKind.GitHubIssues) with
+        {
+            BaseUrl = "https://github.test/api/v3",
+            Repository = "acme/app",
+            ActiveStates = ["open"]
+        };
+
+        var issues = await tracker.FetchCandidatesAsync(config, CancellationToken.None);
+        issues.Single().Author.ShouldBe("michal-ciechan");
     }
 
     [Test]

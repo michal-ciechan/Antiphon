@@ -102,6 +102,7 @@ internal static class CardTaskFileRenderer
         AppendLine(sb, $"title: {YamlQuote(card.Title)}");
         AppendLine(sb, $"status: {card.Status}");
         AppendLine(sb, $"importance: {card.Importance}");
+        AppendLine(sb, $"importance_provenance: {card.ImportanceProvenance}");
         AppendLine(sb, $"urgency: {card.Urgency}");
         if (card.DueAt is { } due)
             AppendLine(sb, $"due: {FormatTimestamp(due)}");
@@ -116,6 +117,10 @@ internal static class CardTaskFileRenderer
             AppendLine(sb, $"external_tracker: {ext.TrackerKind}");
             AppendLine(sb, $"external_key: {YamlQuote(ext.ExternalKey)}");
             AppendLine(sb, $"external_url: {YamlQuote(ext.Url)}");
+            if (ext.Author is not null)
+                AppendLine(sb, $"external_author: {YamlQuote(ext.Author)}");
+            if (BoardService.NeedsHumanReview(card))
+                AppendLine(sb, "needs_human_review: true");
         }
         if (card.ArchivedAt is { } archived)
         {
@@ -201,6 +206,8 @@ internal static class CardTaskFileRenderer
         var effective = CardRanking.EffectiveUrgency(card, now);
         if (effective != CardUrgency.Normal)
             bits.Append($" `{effective.ToString().ToLowerInvariant()}`");
+        if (BoardService.NeedsHumanReview(card))
+            bits.Append(" `review`");
         return bits.ToString();
     }
 

@@ -883,7 +883,12 @@ public class AppDbContext : DbContext
             // application check, an over-long description sailed past validation and came back as a
             // raw 500 from Postgres ("22001: value too long") — the whole point of the fix.
             entity.Property(c => c.Description).HasColumnType("text");
-            entity.Property(c => c.Importance).IsRequired().HasDefaultValue(CardImportance.Normal);
+            // Low IS 0. HasDefaultValue(Normal) makes EF omit Low from INSERT and the column
+            // default (Normal) silently wins — CARD-0016's Frontier trap on the importance axis.
+            // The CARD-0039 migration's column default backfills existing rows; the entity
+            // initializer keeps Normal for creators that don't set it.
+            entity.Property(c => c.Importance).IsRequired();
+            entity.Property(c => c.ImportanceProvenance).IsRequired().HasDefaultValue(CardImportanceProvenance.Auto);
             entity.Property(c => c.Urgency).IsRequired().HasDefaultValue(CardUrgency.Normal);
             entity.Property(c => c.DueAt);
             entity.Property(c => c.UrgentSince);
@@ -1304,6 +1309,8 @@ public class AppDbContext : DbContext
             entity.Property(r => r.LastKnownExternalState).HasMaxLength(40);
             entity.Property(r => r.LastRevisionSynced).IsRequired();
             entity.Property(r => r.LastOutboundSyncedAt);
+            entity.Property(r => r.Author).HasMaxLength(200);
+            entity.Property(r => r.AuthorIsOperator);
 
             entity.HasIndex(r => r.CardId).IsUnique().HasDatabaseName("IX_ExternalIssueRefs_CardId");
             entity.HasIndex(r => new { r.TrackerKind, r.ExternalId })

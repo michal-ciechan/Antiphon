@@ -123,6 +123,16 @@ public class CardRankingTests
     }
 
     [Test]
+    public void FromTrackedIssue_explicit_label_wins_and_operator_default_is_High()
+    {
+        CardRanking.FromTrackedIssue(5, true).ShouldBe(CardImportance.Critical);
+        CardRanking.FromTrackedIssue(1, true).ShouldBe(CardImportance.Low);
+        CardRanking.FromTrackedIssue(0, true).ShouldBe(CardImportance.High);
+        CardRanking.FromTrackedIssue(0, false).ShouldBe(CardImportance.Normal);
+        CardRanking.FromTrackedIssue(0, null).ShouldBe(CardImportance.Normal);
+    }
+
+    [Test]
     public void Rank_ignores_blockedDependants_until_CARD_0100()
     {
         var without = CardRanking.Rank(CardImportance.High, CardUrgency.Now, null, Now);

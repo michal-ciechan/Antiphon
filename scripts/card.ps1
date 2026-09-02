@@ -38,6 +38,7 @@
 #   card.ps1 edit      CARD-0051 -Reason <r> | -ReasonFile <p> [-Title t]
 #                      [-DescriptionFile p | -Description s]
 #                      [-Importance Low|Normal|High|Critical] [-Urgency Normal|Soon|Now]
+#                      [-ImportanceProvenance Auto|Human]
 #                      [-DueAt iso] [-ClearDueAt] [-Labels a,b]
 #                      [-By name] [-Token g]
 #   card.ps1 move      CARD-0051 -To <column name|guid> [-Reason r | -ReasonFile p] [-Spawn] [-Token g]
@@ -92,6 +93,10 @@ param(
     [Parameter(ParameterSetName = 'Verb')]
     [ValidateSet('Low', 'Normal', 'High', 'Critical')]
     [string]$Importance,
+
+    [Parameter(ParameterSetName = 'Verb')]
+    [ValidateSet('Auto', 'Human')]
+    [string]$ImportanceProvenance,
 
     [Parameter(ParameterSetName = 'Verb')]
     [ValidateSet('Normal', 'Soon', 'Now')]
@@ -286,8 +291,10 @@ function Write-CardLine {
     param($TheCard)
     $labels = ''
     if ($TheCard.labels -and $TheCard.labels.Count -gt 0) { $labels = ' [' + ($TheCard.labels -join ', ') + ']' }
-    Write-Output ("{0}  {1}  {2}/{3}  rank {4}  {5}{6}" -f `
-            $TheCard.identifier, $TheCard.status, $TheCard.importance, $TheCard.urgency, $TheCard.rank, $TheCard.title, $labels)
+    $prov = 'auto'
+    if ($TheCard.importanceProvenance -eq 'Human') { $prov = 'human-rated' }
+    Write-Output ("{0}  {1}  {2}/{3}  rank {4} ({5})  {6}{7}" -f `
+            $TheCard.identifier, $TheCard.status, $TheCard.importance, $TheCard.urgency, $TheCard.rank, $prov, $TheCard.title, $labels)
 }
 
 function Get-BoardColumns {
@@ -332,6 +339,15 @@ switch ($Verb) {
         Write-Output ("revisions   {0}" -f $theCard.revisionCount)
         if ($theCard.assignedAgentName) { Write-Output ("agent       {0}" -f $theCard.assignedAgentName) }
         if ($theCard.ownerSessionId) { Write-Output ("session     {0}" -f $theCard.ownerSessionId) }
+        if ($theCard.externalIssue) {
+            $ext = $theCard.externalIssue.key
+            if ($theCard.externalIssue.needsHumanReview) {
+                $raised = $theCard.externalIssue.author
+                if ([string]::IsNullOrWhiteSpace($raised)) { $raised = 'unknown' }
+                $ext = $ext + (' [needs human review: raised by {0}]' -f $raised)
+            }
+            Write-Output ("external    {0}" -f $ext)
+        }
         if ($theCard.archivedAt) { Write-Output ("ARCHIVED    {0}" -f $theCard.archivedReason) }
         if ($theCard.terminalReason) { Write-Output ("closed      {0}" -f $theCard.terminalReason) }
         if (-not [string]::IsNullOrWhiteSpace($theCard.description)) {
@@ -406,13 +422,14 @@ switch ($Verb) {
         if (-not [string]::IsNullOrWhiteSpace($Title)) { $body['title'] = $Title }
         if (-not [string]::IsNullOrEmpty($desc)) { $body['description'] = $desc }
         if ($PSBoundParameters.ContainsKey('Importance')) { $body['importance'] = $Importance }
+        if ($PSBoundParameters.ContainsKey('ImportanceProvenance')) { $body['importanceProvenance'] = $ImportanceProvenance }
         if ($PSBoundParameters.ContainsKey('Urgency')) { $body['urgency'] = $Urgency }
         if ($ClearDueAt) { $body['clearDueAt'] = $true }
         elseif (-not [string]::IsNullOrWhiteSpace($DueAt)) { $body['dueAt'] = $DueAt }
         if ($Labels) { $body['labels'] = @($Labels) }
         if (-not [string]::IsNullOrWhiteSpace($By)) { $body['editedBy'] = $By }
         if ($body.Count -le 2) {
-            Write-Error 'Nothing to change. Pass at least one of -Title, -Description/-DescriptionFile, -Importance, -Urgency, -DueAt, -ClearDueAt, -Labels.'
+            Write-Error 'Nothing to change. Pass at least one of -Title, -Description/-DescriptionFile, -Importance, -ImportanceProvenance, -Urgency, -DueAt, -ClearDueAt, -Labels.'
             exit 1
         }
 

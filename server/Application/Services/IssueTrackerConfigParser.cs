@@ -110,7 +110,8 @@ public static class IssueTrackerConfigParser
                 GetScalar(trackerNode, "jql"),
                 options,
                 TokenKeyName: GetScalar(trackerNode, "token_key")
-                    ?? GetScalar(trackerNode, "token_key_name"));
+                    ?? GetScalar(trackerNode, "token_key_name"),
+                OperatorLogins: ParseStringList(trackerNode, "operator_logins") ?? []);
             return true;
         }
         catch (YamlException ex)

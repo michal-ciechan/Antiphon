@@ -28,5 +28,14 @@ public class ExternalIssueRef
     /// <summary>Coarse dirty check for export-origin title/body/label pushes.</summary>
     public DateTime? LastOutboundSyncedAt { get; set; }
 
+    /// <summary>Tracker login of the issue author. Refreshed every sync pass.</summary>
+    public string? Author { get; set; }
+
+    /// <summary>
+    /// Whether <see cref="Author"/> is in the board's <c>tracker.operator_logins</c>.
+    /// Null = not judged (the board has no operator list). Stored so readers never parse YAML.
+    /// </summary>
+    public bool? AuthorIsOperator { get; set; }
+
     public Card Card { get; set; } = null!;
 }

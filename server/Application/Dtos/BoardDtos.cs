@@ -60,6 +60,7 @@ public sealed record CardDto(
     string Title,
     string Description,
     CardImportance Importance,
+    CardImportanceProvenance ImportanceProvenance,
     CardUrgency Urgency,
     DateTime? DueAt,
     DateTime? UrgentSince,
@@ -92,7 +93,10 @@ public sealed record CardListDto(IReadOnlyList<CardDto> Cards, bool Truncated);
 public sealed record ExternalIssueDto(
     TrackerKind TrackerKind,
     string Key,
-    string Url);
+    string Url,
+    string? Author = null,
+    bool? AuthorIsOperator = null,
+    bool NeedsHumanReview = false);
 
 public sealed record AgentSessionSummaryDto(
     Guid Id,
@@ -147,7 +151,7 @@ public sealed record CreateCardRequest(
     Guid? BoardColumnId,
     string Title,
     string? Description = null,
-    CardImportance Importance = CardImportance.Normal,
+    CardImportance? Importance = null,
     CardUrgency Urgency = CardUrgency.Normal,
     DateTime? DueAt = null,
     IReadOnlyList<string>? Labels = null);
@@ -213,7 +217,8 @@ public sealed record UpdateCardContentRequest(
     DateTime? DueAt = null,
     bool ClearDueAt = false,
     IReadOnlyList<string>? Labels = null,
-    string? EditedBy = null);
+    string? EditedBy = null,
+    CardImportanceProvenance? ImportanceProvenance = null);
 
 /// <summary>
 /// Archive is what "delete" means for a card: the row stays, so references to its identifier never

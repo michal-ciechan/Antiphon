@@ -142,7 +142,10 @@ public sealed class CardService : IScheduledCardActions
             Identifier = await NextIdentifierAsync(board.Id, ct),
             Title = request.Title.Trim(),
             Description = request.Description?.Trim() ?? string.Empty,
-            Importance = request.Importance,
+            Importance = request.Importance ?? CardImportance.Normal,
+            ImportanceProvenance = request.Importance is null
+                ? CardImportanceProvenance.Auto
+                : CardImportanceProvenance.Human,
             Urgency = request.Urgency,
             DueAt = request.DueAt,
             UrgentSince = request.Urgency > CardUrgency.Normal ? now : null,
@@ -467,7 +470,12 @@ public sealed class CardService : IScheduledCardActions
         if (request.Description is not null)
             card.Description = request.Description.Trim();
         if (request.Importance is { } importance)
+        {
             card.Importance = importance;
+            card.ImportanceProvenance = CardImportanceProvenance.Human;
+        }
+        if (request.ImportanceProvenance is { } provenance)
+            card.ImportanceProvenance = provenance;
         if (request.Urgency is { } urgency)
         {
             if (urgency > CardUrgency.Normal && card.Urgency == CardUrgency.Normal)
@@ -1192,11 +1200,12 @@ public sealed class CardService : IScheduledCardActions
             || request.Urgency is not null
             || request.DueAt is not null
             || request.ClearDueAt
-            || request.Labels is not null;
+            || request.Labels is not null
+            || request.ImportanceProvenance is not null;
         if (!hasContent)
         {
             errors[nameof(request.Title)] =
-                ["At least one of Title, Description, Importance, Urgency, DueAt, ClearDueAt or Labels must be provided."];
+                ["At least one of Title, Description, Importance, Urgency, DueAt, ClearDueAt, Labels or ImportanceProvenance must be provided."];
         }
 
         if (request.Title is not null && string.IsNullOrWhiteSpace(request.Title))
