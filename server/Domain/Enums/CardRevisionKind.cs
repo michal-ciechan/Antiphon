@@ -8,7 +8,7 @@ namespace Antiphon.Server.Domain.Enums;
 /// </summary>
 public enum CardRevisionKind
 {
-    /// <summary>Text was superseded: the row carries the OLD title/description/priority/labels.</summary>
+    /// <summary>Text was superseded: the row carries the OLD title/description/importance/urgency/due/labels.</summary>
     ContentEdit = 0,
 
     /// <summary>The card changed column: the row carries from/to column and status. No text.</summary>

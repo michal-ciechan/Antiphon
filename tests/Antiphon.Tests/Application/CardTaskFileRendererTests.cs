@@ -221,7 +221,7 @@ public class CardTaskFileRendererTests
             Title = title,
             Description = description,
             Status = status,
-            Priority = priority,
+            Importance = (CardImportance)priority,
             LabelsJson = labelsJson,
             CreatedAt = created ?? new DateTime(2026, 8, 9, 12, 0, 0, DateTimeKind.Utc),
             StartedAt = started,

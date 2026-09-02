@@ -64,7 +64,7 @@ public class WorkflowDefinitionLoaderTests
             Identifier = "CARD-0176",
             Title = "Imported",
             Description = "body",
-            Priority = 2,
+            Importance = CardImportance.Normal,
             BoardId = Guid.NewGuid(),
             ExternalIssueRef = new ExternalIssueRef
             {
@@ -96,7 +96,7 @@ public class WorkflowDefinitionLoaderTests
             Identifier = "CARD-0004",
             Title = "Manual",
             Description = "body",
-            Priority = 1,
+            Importance = CardImportance.High,
             BoardId = Guid.NewGuid()
         };
 

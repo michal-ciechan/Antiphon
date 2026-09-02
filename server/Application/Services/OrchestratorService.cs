@@ -524,14 +524,14 @@ public sealed class OrchestratorService
             .Where(c => c.RetrySchedule == null
                 || (c.RetrySchedule.AttemptCount < c.RetrySchedule.MaxAttempts
                     && (c.RetrySchedule.NextRetryAt == null || c.RetrySchedule.NextRetryAt <= utcNow)))
-            .OrderByDescending(c => c.Priority)
+            .OrderByDescending(c => c.Importance)
             .ThenBy(c => c.CreatedAt)
             .Select(c => new DispatchCandidate(
                 c.Id,
                 c.Identifier,
                 c.Title,
                 c.Description,
-                c.Priority,
+                (int)c.Importance,
                 c.BoardId,
                 c.Board.MaxConcurrentSessions,
                 c.BoardColumnId,

@@ -453,7 +453,7 @@ public class CardCorrectionIntegrationTests
             revision.RevisionNumber.ShouldBe(1);
             revision.Title.ShouldBe("Retry beats the cold-launch race");
             revision.Description.ShouldBe("As claimed in CARD-0018.");
-            revision.Priority.ShouldBe(1);
+            revision.Importance.ShouldBe((CardImportance)1);
             revision.LabelsJson.ShouldBe("[\"bug\"]");
             revision.Reason.ShouldNotBeNull().ShouldContain("a6e163fe");
             revision.EditedBy.ShouldBe("operator");

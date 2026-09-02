@@ -1119,7 +1119,7 @@ public sealed class AgentService
                 c.Board.Name,
                 c.Identifier,
                 c.Title,
-                c.Priority,
+                (int)c.Importance,
                 c.AgentQueuePosition!.Value,
                 c.ActiveWorkflowRunId,
                 c.ActiveWorkflowRun?.Status,

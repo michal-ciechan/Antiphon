@@ -483,7 +483,7 @@ public class HomeTaskServiceIntegrationTests
                 Identifier = $"CARD-{Interlocked.Increment(ref _cardNumber):0000}",
                 Title = $"Home card {status}",
                 Status = status,
-                Priority = priority,
+                Importance = (CardImportance)priority,
                 AssignedAgentId = assignedAgentId,
                 CreatedAt = at,
                 UpdatedAt = updatedAt ?? at,

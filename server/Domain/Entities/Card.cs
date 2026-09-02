@@ -15,7 +15,15 @@ public class Card
     public string Identifier { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
-    public int Priority { get; set; }
+    public CardImportance Importance { get; set; } = CardImportance.Normal;
+    public CardUrgency Urgency { get; set; } = CardUrgency.Normal;
+    public DateTime? DueAt { get; set; }
+
+    /// <summary>
+    /// Set when <see cref="Urgency"/> rises above <see cref="CardUrgency.Normal"/>; cleared when
+    /// it returns. Surfaced as staleness ("rated Now 12d ago"), never used to decay the rating.
+    /// </summary>
+    public DateTime? UrgentSince { get; set; }
     public string LabelsJson { get; set; } = "[]";
     public CardStatus Status { get; set; } = CardStatus.Backlog;
     public Guid ConcurrencyToken { get; set; } = Guid.NewGuid();

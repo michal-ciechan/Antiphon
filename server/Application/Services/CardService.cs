@@ -135,7 +135,7 @@ public sealed class CardService
             Identifier = await NextIdentifierAsync(board.Id, ct),
             Title = request.Title.Trim(),
             Description = request.Description?.Trim() ?? string.Empty,
-            Priority = request.Priority,
+            Importance = (CardImportance)request.Priority,
             LabelsJson = BoardService.SerializeLabels(request.Labels),
             Status = column.CardStatus,
             CreatedAt = now,
@@ -457,7 +457,7 @@ public sealed class CardService
         if (request.Description is not null)
             card.Description = request.Description.Trim();
         if (request.Priority is int priority)
-            card.Priority = priority;
+            card.Importance = (CardImportance)priority;
         if (request.Labels is not null)
             card.LabelsJson = BoardService.SerializeLabels(request.Labels);
         card.UpdatedAt = now;

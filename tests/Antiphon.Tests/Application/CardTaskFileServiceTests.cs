@@ -651,7 +651,7 @@ public class CardTaskFileServiceTests
                 Title = title,
                 Description = $"body of {identifier}",
                 Status = CardStatus.Backlog,
-                Priority = 2,
+                Importance = CardImportance.Normal,
                 LabelsJson = "[]",
                 CreatedAt = now,
                 UpdatedAt = now,
