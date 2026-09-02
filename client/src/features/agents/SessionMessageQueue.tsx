@@ -128,6 +128,11 @@ export function SessionMessageQueue({ sessionId }: SessionMessageQueueProps) {
                         is about to go out, while every automatic path has already excluded it. The
                         chip is the whole difference between "queued" and "nothing will ever type
                         this again — send it yourself or drop it". */}
+                    {m.origin === 'Scheduled' && (
+                      <Badge size="xs" variant="light" color="violet" data-testid="scheduled-badge">
+                        {m.noteHeader || 'Scheduled'}
+                      </Badge>
+                    )}
                     {m.parked && (
                       <Tooltip
                         multiline

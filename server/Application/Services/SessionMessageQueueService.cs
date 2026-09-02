@@ -3078,7 +3078,8 @@ public sealed class SessionMessageQueueService
                 m.CreatedAt,
                 m.DeliveryAttempts,
                 m.Origin.ToString(),
-                m.DeliveryAttempts >= maxAttempts))
+                m.DeliveryAttempts >= maxAttempts,
+                m.NoteHeader))
             .ToListAsync(ct);
         var working = await IsWorkingAsync(db, sessionId, ct);
         return new SessionQueueDto(sessionId, messages, working);

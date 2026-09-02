@@ -6,6 +6,6 @@ public enum ScheduleKind
     /// <summary>Enqueue a prompt onto a standing agent's session.</summary>
     Prompt = 0,
 
-    /// <summary>Move a card (phase 2). Shared table; the fire arm lands in a later slice.</summary>
+    /// <summary>Move a card, optionally releasing the auto-dispatch hold or spawning.</summary>
     Card = 1,
 }

@@ -117,6 +117,7 @@ public sealed class AttentionService
     // _workspaceProgress is — every harness that predates this card keeps constructing this
     // service unchanged; production registers the options section, so DI always supplies it.
     private readonly CardWorkTransitionSettings _cardTransitions;
+    private readonly ScheduleSettings _schedules;
 
     public AttentionService(
         AppDbContext db,
@@ -129,7 +130,8 @@ public sealed class AttentionService
         TimeProvider timeProvider,
         ILogger<AttentionService> logger,
         IWorkspaceProgressProbe? workspaceProgress = null,
-        IOptions<CardWorkTransitionSettings>? cardTransitions = null)
+        IOptions<CardWorkTransitionSettings>? cardTransitions = null,
+        IOptions<ScheduleSettings>? schedules = null)
     {
         _db = db;
         _runnerClient = runnerClient;
@@ -139,6 +141,7 @@ public sealed class AttentionService
         _logger = logger;
         _workspaceProgress = workspaceProgress;
         _cardTransitions = cardTransitions?.Value ?? new CardWorkTransitionSettings();
+        _schedules = schedules?.Value ?? new ScheduleSettings();
     }
 
     public async Task<AttentionDto> GetAsync(CancellationToken ct, bool includeProgressProbe = true)
@@ -201,6 +204,7 @@ public sealed class AttentionService
         items.AddRange(await BuildQueuedInputStuckItemsAsync(since, ct));
         items.AddRange(await BuildAgentOutlivedTaskItemsAsync(now, ct));
         items.AddRange(await BuildModelAvailabilityHoldItemsAsync(now, ct));
+        items.AddRange(await BuildScheduleMisfireItemsAsync(now, ct));
         items.AddRange(BuildRecentFailureItems(failed, costs, checkDigests));
 
         // Asked unconditionally, because RunnerConsulted is a claim about whether anybody asked and a
@@ -1542,6 +1546,82 @@ public sealed class AttentionService
                 [AttentionAction.ClearHold],
                 ModelKind: hold.Kind.ToString(),
                 ModelAlias: alias));
+        }
+
+        return items;
+    }
+
+    /// <summary>
+    /// CARD-0057 S5: a schedule whose last fire skipped, refused, failed, or is stuck at Claimed.
+    /// Warning. Detection only. <c>SkippedLate</c> is a fire row, not this.
+    /// </summary>
+    private async Task<List<AttentionItemDto>> BuildScheduleMisfireItemsAsync(
+        DateTime now, CancellationToken ct)
+    {
+        var stuckAfter = TimeSpan.FromSeconds(Math.Max(1, _schedules.SweepSeconds) * 12);
+        var stuckBefore = now - stuckAfter;
+        var misfireOutcomes = new[]
+        {
+            ScheduleFireOutcome.SkippedNoSession,
+            ScheduleFireOutcome.SkippedTargetGone,
+            ScheduleFireOutcome.Refused,
+            ScheduleFireOutcome.Failed,
+        };
+
+        var rows = await _db.Schedules.AsNoTracking()
+            .Include(s => s.Agent)
+            .Include(s => s.Card)
+            .Where(s => s.Enabled
+                && ((s.LastOutcome != null && misfireOutcomes.Contains(s.LastOutcome.Value))
+                    || _db.ScheduleFires.Any(f =>
+                        f.ScheduleId == s.Id
+                        && f.Outcome == ScheduleFireOutcome.Claimed
+                        && f.CompletedAt == null
+                        && f.ClaimedAt <= stuckBefore)))
+            .ToListAsync(ct);
+
+        var items = new List<AttentionItemDto>(rows.Count);
+        foreach (var schedule in rows)
+        {
+            var stuck = await _db.ScheduleFires.AsNoTracking()
+                .Where(f => f.ScheduleId == schedule.Id
+                    && f.Outcome == ScheduleFireOutcome.Claimed
+                    && f.CompletedAt == null
+                    && f.ClaimedAt <= stuckBefore)
+                .OrderByDescending(f => f.FireNumber)
+                .FirstOrDefaultAsync(ct);
+
+            var outcome = stuck is not null
+                ? ScheduleFireOutcome.Claimed
+                : schedule.LastOutcome ?? ScheduleFireOutcome.Failed;
+            var headline = stuck is not null
+                ? $"{schedule.Name}: fire #{stuck.FireNumber} stuck at Claimed"
+                : $"{schedule.Name}: {outcome}";
+            var evidence = stuck is not null
+                ? $"claimed {stuck.ClaimedAt:u}; the worker has not completed this fire"
+                : schedule.LastOutcomeDetail ?? outcome.ToString();
+
+            var actions = new List<AttentionAction>();
+            if (schedule.AgentId is not null)
+                actions.Add(AttentionAction.OpenAgent);
+            if (schedule.CardId is not null)
+                actions.Add(AttentionAction.OpenCard);
+
+            items.Add(new AttentionItemDto(
+                AttentionKind.ScheduleMisfired,
+                AlertSeverity.Warning,
+                null,
+                null,
+                schedule.AgentId,
+                null,
+                schedule.Name,
+                headline,
+                evidence,
+                stuck?.ClaimedAt ?? schedule.LastFiredAt ?? schedule.UpdatedAt,
+                null,
+                actions,
+                CardId: schedule.CardId,
+                BoardId: schedule.Card?.BoardId));
         }
 
         return items;

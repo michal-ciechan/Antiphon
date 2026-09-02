@@ -73,6 +73,20 @@ describe('SessionMessageQueue', () => {
     expect(screen.getByText('the guest list, as asked')).toBeInTheDocument()
   })
 
+  it('shows the scheduled badge from the note header', async () => {
+    serve([
+      message({
+        origin: 'Scheduled',
+        noteHeader: 'Scheduled · Morning triage',
+        body: '[scheduled: Morning triage]\nhello',
+      }),
+    ])
+
+    renderWithProviders(<SessionMessageQueue sessionId="s1" />)
+
+    expect(await screen.findByTestId('scheduled-badge')).toHaveTextContent('Scheduled · Morning triage')
+  })
+
   it('leaves an ordinary pending message unmarked', async () => {
     serve([message({})])
 

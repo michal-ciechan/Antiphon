@@ -155,6 +155,15 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
     event: 'ChannelChanged',
     getKeys: () => [['channels']],
   },
+  {
+    event: 'ScheduleChanged',
+    getKeys: (p) => [
+      ['schedules'],
+      ...(p.agentId ? [['schedules', 'agent', p.agentId]] : []),
+      ...(p.cardId ? [['schedules', 'card', p.cardId]] : []),
+      ['attention'],
+    ],
+  },
 ]
 
 export function useSignalRInvalidation(connectionRef: RefObject<HubConnection | null>) {

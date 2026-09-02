@@ -142,6 +142,7 @@ All AI agents and developers MUST follow these 13 rules:
 | `GateActioned` | `['workflow', id]`, `['workflows']` | Gate approved, rejected, or go-back |
 | `ArtifactUpdated` | `['workflow', id, 'artifacts']` | New artifact version created |
 | `CascadeTriggered` | `['workflow', id, 'stages']`, `['workflow', id]` | Course correction cascade initiated |
+| `ScheduleChanged` | `['schedules']`, `['schedules', 'agent', agentId]`, `['schedules', 'card', cardId]`, `['attention']` | Schedule created, patched, deleted, or a fire completed |
 
 ## The record
 

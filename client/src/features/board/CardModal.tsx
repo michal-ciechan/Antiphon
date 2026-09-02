@@ -13,6 +13,7 @@ import { CardHistory } from './CardHistory'
 import { DiffReview } from './DiffReview'
 import { MoveMenu } from './MoveMenu'
 import { CardAxisBadges } from './CardAxisBadges'
+import { CardSchedulesList } from './CardSchedulesList'
 import { stateLabel } from './boardVisuals'
 import { SessionTabs } from './SessionTabs'
 import { CardThreadPanel } from '../thread/CardThreadPanel'
@@ -398,6 +399,8 @@ function CardDetails({ card, description }: { card: CardDto; description: string
           </>
         )}
       </Box>
+
+      <CardSchedulesList cardId={card.id} />
     </Stack>
   )
 }

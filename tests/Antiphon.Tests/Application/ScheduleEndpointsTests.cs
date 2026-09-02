@@ -4,6 +4,7 @@ using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
 
@@ -99,6 +100,29 @@ public class ScheduleEndpointsTests
     }
 
     [Test]
+    public async Task start_spawn_without_accept_spend_is_422_with_the_preview()
+    {
+        using var client = _factory.CreateClient();
+        var cardId = await SeedCardAsync();
+
+        var response = await client.PostAsJsonAsync("/api/schedules", new
+        {
+            name = "spawn thursday",
+            kind = "Card",
+            repeat = "Once",
+            cardId,
+            targetStatus = "InProgress",
+            start = "Spawn",
+            fireAt = DateTime.UtcNow.AddHours(1),
+        }, Json);
+        response.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
+        var body = await response.Content.ReadAsStringAsync();
+        body.ShouldContain("spend_unacknowledged");
+        body.ShouldContain("preview");
+        body.ShouldContain("immediate-session");
+    }
+
+    [Test]
     public async Task preview_writes_nothing()
     {
         using var client = _factory.CreateClient();
@@ -172,6 +196,56 @@ public class ScheduleEndpointsTests
         }, Json);
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<ScheduleDto>(Json))!;
+    }
+
+    private async Task<Guid> SeedCardAsync()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<Antiphon.Server.Infrastructure.Data.AppDbContext>();
+        var now = DateTime.UtcNow;
+        var project = new Antiphon.Server.Domain.Entities.Project
+        {
+            Id = Guid.NewGuid(),
+            Name = $"sched-card-{Guid.NewGuid():N}"[..24],
+            GitRepositoryUrl = "https://example.test/sched.git",
+            LocalRepositoryPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")),
+            BaseBranch = "main",
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        var board = new Antiphon.Server.Domain.Entities.Board
+        {
+            Id = Guid.NewGuid(),
+            ProjectId = project.Id,
+            Name = "Sched cards",
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        var column = new Antiphon.Server.Domain.Entities.BoardColumn
+        {
+            Id = Guid.NewGuid(),
+            BoardId = board.Id,
+            StateKey = "backlog",
+            Name = "Backlog",
+            ColumnOrder = 0,
+            CardStatus = CardStatus.Backlog,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        var card = new Antiphon.Server.Domain.Entities.Card
+        {
+            Id = Guid.NewGuid(),
+            BoardId = board.Id,
+            BoardColumnId = column.Id,
+            Identifier = $"SCD-{Guid.NewGuid():N}"[..12],
+            Title = "Scheduled card",
+            Status = CardStatus.Backlog,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        db.AddRange(project, board, column, card);
+        await db.SaveChangesAsync();
+        return card.Id;
     }
 
     private static async Task<int> ListCountAsync(HttpClient client, Guid agentId)

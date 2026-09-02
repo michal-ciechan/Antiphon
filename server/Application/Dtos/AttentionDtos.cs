@@ -209,6 +209,13 @@ public enum AttentionKind
     /// Appended after shipped 24; do not renumber.
     /// </summary>
     RoutingExhausted = 25,
+
+    /// <summary>
+    /// A schedule's last fire skipped, refused, failed, or is stuck at Claimed (CARD-0057 S5).
+    /// Warning. Cleared by the next good fire or by disabling. <c>SkippedLate</c> is a fire
+    /// row, not this. Appended after shipped 25; do not renumber.
+    /// </summary>
+    ScheduleMisfired = 26,
 }
 
 /// <summary>

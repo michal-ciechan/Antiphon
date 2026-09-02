@@ -118,6 +118,11 @@ export type AttentionKind =
    * list; disappears when the last blocked task resumes, reroutes or is cancelled.
    */
   | 'RoutingExhausted'
+  /**
+   * A schedule skipped, refused, failed, or is stuck at Claimed (CARD-0057). Warning.
+   * Cleared by the next good fire or by disabling. SkippedLate is not this.
+   */
+  | 'ScheduleMisfired'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =

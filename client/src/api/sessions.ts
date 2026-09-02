@@ -80,6 +80,8 @@ export interface QueuedMessageDto {
    * attention projection reads, so the queue and that view cannot disagree.
    */
   parked: boolean
+  /** Present on scheduled rows — the queue badge text (CARD-0057). */
+  noteHeader?: string | null
 }
 
 /** CARD-0180 S3: how a Mode:Now delivery was confirmed. */
