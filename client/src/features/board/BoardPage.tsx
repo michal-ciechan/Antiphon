@@ -31,7 +31,9 @@ import {
   CARD_LIMITS,
   type BoardColumnDto,
   type BoardDetailDto,
+  type CardImportance,
   type CardStatus,
+  type CardUrgency,
   formatTrackerSyncSummary,
   useAllBoardDetails,
   useBoard,
@@ -49,7 +51,7 @@ import { ShapeStrip } from './ShapeStrip'
 import { StatePager } from './StatePager'
 import { WorkflowEditor } from './WorkflowEditor'
 import {
-  PRIORITIES,
+  IMPORTANCES,
   type BoardFilter,
   buildBoardShape,
   defaultExpandedState,
@@ -363,23 +365,23 @@ function BoardShapeView({
 
   const selectedState = searchParams.get('state')
   const showArchived = searchParams.get('archived') === '1'
-  const priorities = useMemo(
-    () => (searchParams.get('p') ?? '')
+  const importances = useMemo(
+    () => (searchParams.get('imp') ?? '')
       .split(',')
       .map((value) => value.trim())
-      .filter(Boolean)
-      .map(Number)
-      .filter((value) => Number.isInteger(value)),
+      .filter((value): value is typeof IMPORTANCES[number] =>
+        (IMPORTANCES as readonly string[]).includes(value)),
     [searchParams],
   )
+  const urgentOnly = searchParams.get('urgent') === '1'
   const labels = useMemo(
     () => (searchParams.get('labels') ?? '').split(',').map((value) => value.trim()).filter(Boolean),
     [searchParams],
   )
 
   const filter: BoardFilter = useMemo(
-    () => ({ query, state: selectedState, priorities, labels }),
-    [query, selectedState, priorities, labels],
+    () => ({ query, state: selectedState, importances, urgentOnly, labels }),
+    [query, selectedState, importances, urgentOnly, labels],
   )
   // One clock for the whole render, so every age on screen is measured from the same instant.
   // Deriving the shape per render is deliberate and cheap: it is a single pass over the board's
@@ -422,25 +424,35 @@ function BoardShapeView({
     setQuery('')
     setSearchParams((current) => {
       const next = new URLSearchParams(current)
-      for (const key of ['q', 'p', 'labels', 'state', 'archived']) next.delete(key)
+      for (const key of ['q', 'imp', 'urgent', 'labels', 'state', 'archived']) next.delete(key)
       return next
     }, { replace: true })
   }
 
-  const priorityChips = (
-    <Chip.Group
-      multiple
-      value={priorities.map(String)}
-      onChange={(value) => setParam('p', value.length ? [...value].sort().join(',') : null)}
-    >
-      <Group gap={4}>
-        {PRIORITIES.map((priority) => (
-          <Chip key={priority} value={String(priority)} size="xs" variant="outline">
-            P{priority}
-          </Chip>
-        ))}
-      </Group>
-    </Chip.Group>
+  const importanceChips = (
+    <Group gap={4}>
+      <Chip.Group
+        multiple
+        value={importances}
+        onChange={(value) => setParam('imp', value.length ? [...value].join(',') : null)}
+      >
+        <Group gap={4}>
+          {IMPORTANCES.map((importance) => (
+            <Chip key={importance} value={importance} size="xs" variant="outline">
+              {importance}
+            </Chip>
+          ))}
+        </Group>
+      </Chip.Group>
+      <Chip
+        size="xs"
+        variant="outline"
+        checked={urgentOnly}
+        onChange={() => setParam('urgent', urgentOnly ? null : '1')}
+      >
+        Urgent
+      </Chip>
+    </Group>
   )
 
   /**
@@ -501,7 +513,7 @@ function BoardShapeView({
             </Popover.Target>
             <Popover.Dropdown>
               <Stack gap="xs" w={260}>
-                {priorityChips}
+                {importanceChips}
                 {labelSelect}
                 {archivedChip}
                 {(filtered || selectedState) && (
@@ -516,7 +528,7 @@ function BoardShapeView({
         )
         : (
           <>
-            {priorityChips}
+            {importanceChips}
             {labelSelect}
             {archivedChip}
             {(filtered || selectedState) && (
@@ -772,7 +784,9 @@ function CardCreateModal({
   const createCard = useCreateCard(boardId)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
-  const [priority, setPriority] = useState<number | string>(1)
+  const [importance, setImportance] = useState<CardImportance>('Normal')
+  const [urgency, setUrgency] = useState<CardUrgency>('Normal')
+  const [dueAt, setDueAt] = useState('')
   const [labels, setLabels] = useState('')
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
 
@@ -789,14 +803,18 @@ function CardCreateModal({
       {
         title,
         description,
-        priority: Number(priority) || 0,
+        importance,
+        urgency,
+        dueAt: dueAt || null,
         labels: labels.split(',').map((label) => label.trim()).filter(Boolean),
       },
       {
         onSuccess: () => {
           setTitle('')
           setDescription('')
-          setPriority(1)
+          setImportance('Normal')
+          setUrgency('Normal')
+          setDueAt('')
           setLabels('')
           onClose()
         },
@@ -834,7 +852,24 @@ function CardCreateModal({
           error={fieldErrors.Description}
           onChange={(event) => setDescription(event.currentTarget.value)}
         />
-        <NumberInput label="Priority" min={0} value={priority} onChange={setPriority} />
+        <Select
+          label="Importance"
+          data={['Low', 'Normal', 'High', 'Critical']}
+          value={importance}
+          onChange={(value) => setImportance((value as CardImportance) ?? 'Normal')}
+        />
+        <Select
+          label="Urgency"
+          data={['Normal', 'Soon', 'Now']}
+          value={urgency}
+          onChange={(value) => setUrgency((value as CardUrgency) ?? 'Normal')}
+        />
+        <TextInput
+          label="Due"
+          type="date"
+          value={dueAt}
+          onChange={(event) => setDueAt(event.currentTarget.value)}
+        />
         <TextInput label="Labels" value={labels} onChange={(event) => setLabels(event.currentTarget.value)} />
         <Group justify="flex-end">
           <Button variant="subtle" onClick={onClose}>Cancel</Button>

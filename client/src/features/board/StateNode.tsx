@@ -1,7 +1,8 @@
 import { Badge, Box, Group, Paper, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core'
 import { TbHelpCircle } from 'react-icons/tb'
 import { describeSignal, type StateShape } from './boardShapeModel'
-import { priorityFill, stateAccent, stateColor } from './boardVisuals'
+import { IMPORTANCES } from './boardShapeModel'
+import { importanceFill, stateAccent, stateColor } from './boardVisuals'
 
 interface StateNodeProps {
   state: StateShape
@@ -22,8 +23,8 @@ interface StateNodeProps {
 export function StateNode({ state, selected, filtered, onSelect }: StateNodeProps) {
   const empty = state.filteredCount === 0
   const accent = stateAccent(state.cardStatus)
-  const mixLabel = state.priorityMix
-    .map((count, priority) => (count > 0 ? `${count} P${priority}` : null))
+  const mixLabel = state.importanceMix
+    .map((count, index) => (count > 0 ? `${count} ${IMPORTANCES[index]}` : null))
     .filter(Boolean)
     .join(', ')
 
@@ -78,15 +79,15 @@ export function StateNode({ state, selected, filtered, onSelect }: StateNodeProp
           </Group>
 
           <Tooltip label={mixLabel || 'no cards'} withArrow disabled={!mixLabel}>
-            <Group gap={2} h={6} wrap="nowrap" aria-label={`priority mix: ${mixLabel || 'none'}`}>
+            <Group gap={2} h={6} wrap="nowrap" aria-label={`importance mix: ${mixLabel || 'none'}`}>
               {empty
                 ? <Box style={{ flex: 1, borderRadius: 2, background: 'var(--mantine-color-dark-4)' }} />
-                : state.priorityMix.map((count, priority) => (
+                : state.importanceMix.map((count, index) => (
                   count > 0
                     ? (
                       <Box
-                        key={priority}
-                        style={{ flex: count, borderRadius: 2, height: 6, ...priorityFill(priority) }}
+                        key={IMPORTANCES[index]}
+                        style={{ flex: count, borderRadius: 2, height: 6, ...importanceFill(IMPORTANCES[index]) }}
                       />
                     )
                     : null

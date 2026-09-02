@@ -56,7 +56,7 @@ function item(overrides: Partial<HomeTaskItemDto> = {}): HomeTaskItemDto {
     humanReason: null,
     stage: 'Plan',
     workflowRunStatus: null,
-    priority: 1,
+    importance: 'High', effectiveUrgency: 'Normal', quadrant: 'Schedule', rank: 7, urgentSince: null,
     boardId: 'board-1',
     worker: null,
     ownerAgentId: null,

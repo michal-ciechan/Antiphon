@@ -25,7 +25,7 @@ const card: CardDto = {
   identifier: 'CARD-0001',
   title: 'Implement terminal',
   description: 'Wire xterm to the session stream',
-  priority: 2,
+  importance: 'Normal', urgency: 'Normal', dueAt: null, urgentSince: null, effectiveUrgency: 'Normal', quadrant: 'Someday', rank: 10,
   labels: ['ui'],
   status: 'Backlog',
   concurrencyToken: 'token-1',
@@ -122,7 +122,7 @@ describe('CardModal', () => {
       agentDefinitionsHandler(), discussionHandler(), cardHandler({ ...card, status: 'NeedsDecision' }),
       http.get('/api/attention', () => HttpResponse.json({ generatedAt: '2026-08-27T12:00:00Z', runnerConsulted: true, items: [] })),
       http.get('/api/cards/card-1/revisions', () => HttpResponse.json([{
-        id: 'revision-1', cardId: 'card-1', revisionNumber: 1, kind: 'Reopen', title: null, description: null, priority: null, labels: null,
+        id: 'revision-1', cardId: 'card-1', revisionNumber: 1, kind: 'Reopen', title: null, description: null, importance: null, urgency: null, dueAt: null, labels: null,
         fromColumnId: null, toColumnId: 'column-decision', fromStatus: 'Done', toStatus: 'NeedsDecision', reason: 'Pick a database.', editedBy: null,
         createdAt: '2026-08-27T10:00:00Z', terminalReason: null, completedAt: null,
       }])),

@@ -2,6 +2,7 @@ import { Badge, Group, Paper, Stack, Text, Tooltip } from '@mantine/core'
 import { TbTerminal2 } from 'react-icons/tb'
 import type { CardDto } from '../../api/boards'
 import { displayIdentifier, externalIssueTag } from '../../shared/cardIdentifier'
+import { CardAxisBadges } from './CardAxisBadges'
 
 interface BoardCardProps {
   card: CardDto
@@ -48,7 +49,7 @@ export function BoardCard({ card, onOpen }: BoardCardProps) {
 
         <Group justify="space-between" gap={6}>
           <Group gap={4}>
-            <Badge size="xs" color="gray" variant="outline">P{card.priority}</Badge>
+            <CardAxisBadges card={card} />
             {card.labels.slice(0, 2).map((label) => (
               <Badge key={label} size="xs" color="active" variant="light">{label}</Badge>
             ))}

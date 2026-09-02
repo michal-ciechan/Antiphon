@@ -34,7 +34,7 @@ const cardStub: CardDto = {
   identifier: 'CARD-0019',
   title: 'Cards cannot be corrected',
   description: 'a record you cannot correct is a record that rots',
-  priority: 0,
+  importance: 'Critical', urgency: 'Normal', dueAt: null, urgentSince: null, effectiveUrgency: 'Normal', quadrant: 'Schedule', rank: 4,
   labels: ['board'],
   status: 'Backlog',
   concurrencyToken: 'token-1',
@@ -221,21 +221,21 @@ describe('useCardRevisions', () => {
   const revisions: CardRevisionDto[] = [
     {
       id: 'rev-4', cardId: 'card-1', revisionNumber: 4, kind: 'Unarchive',
-      title: null, description: null, priority: null, labels: null,
+      title: null, description: null, importance: null, urgency: null, dueAt: null, labels: null,
       fromColumnId: null, toColumnId: null, fromStatus: null, toStatus: null,
       reason: 'archived by mistake', editedBy: 'operator', createdAt: '2026-08-14T00:00:00Z',
       terminalReason: null, completedAt: null,
     },
     {
       id: 'rev-3', cardId: 'card-1', revisionNumber: 3, kind: 'Archive',
-      title: null, description: null, priority: null, labels: null,
+      title: null, description: null, importance: null, urgency: null, dueAt: null, labels: null,
       fromColumnId: null, toColumnId: null, fromStatus: null, toStatus: null,
       reason: 'duplicate', editedBy: 'operator', createdAt: '2026-08-13T00:00:00Z',
       terminalReason: null, completedAt: null,
     },
     {
       id: 'rev-2', cardId: 'card-1', revisionNumber: 2, kind: 'Move',
-      title: null, description: null, priority: null, labels: null,
+      title: null, description: null, importance: null, urgency: null, dueAt: null, labels: null,
       fromColumnId: 'column-backlog', toColumnId: 'column-review',
       fromStatus: 'Backlog', toStatus: 'Review',
       reason: 'ready for eyes', editedBy: null, createdAt: '2026-08-12T00:00:00Z',
@@ -243,7 +243,7 @@ describe('useCardRevisions', () => {
     },
     {
       id: 'rev-1', cardId: 'card-1', revisionNumber: 1, kind: 'ContentEdit',
-      title: 'The old title', description: 'the old description', priority: 2, labels: ['old'],
+      title: 'The old title', description: 'the old description', importance: 'Normal', urgency: 'Normal', dueAt: null, labels: ['old'],
       fromColumnId: null, toColumnId: null, fromStatus: null, toStatus: null,
       reason: 'title named the wrong file', editedBy: 'operator', createdAt: '2026-08-11T00:00:00Z',
       terminalReason: null, completedAt: null,

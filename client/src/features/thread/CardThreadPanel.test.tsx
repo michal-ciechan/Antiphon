@@ -21,7 +21,7 @@ const card: CardDto = {
   identifier: 'CARD-0067',
   title: 'Reply durability',
   description: '',
-  priority: 1,
+  importance: 'High', urgency: 'Normal', dueAt: null, urgentSince: null, effectiveUrgency: 'Normal', quadrant: 'Schedule', rank: 7,
   labels: [],
   status: 'Review',
   concurrencyToken: 'token-1',

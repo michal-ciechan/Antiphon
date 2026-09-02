@@ -118,7 +118,7 @@ function homeTask(overrides: Record<string, unknown> = {}) {
     humanReason: null,
     stage: 'Docs',
     workflowRunStatus: null,
-    priority: null,
+    importance: null, effectiveUrgency: null, quadrant: null, rank: null, urgentSince: null,
     boardId: null,
     worker: null,
     ownerAgentId: null,

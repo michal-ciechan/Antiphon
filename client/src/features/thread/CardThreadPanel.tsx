@@ -36,6 +36,7 @@ import { getApiErrorMessage } from '../../api/client'
 import { displayIdentifier } from '../../shared/cardIdentifier'
 import { BlockedReplyRow } from '../attention/BlockedReplyRow'
 import { ATTENTION_VISUALS } from '../attention/attentionVisuals'
+import { CardAxisBadges } from '../board/CardAxisBadges'
 import { legalMoveTargets } from '../board/boardShapeModel'
 import { DelegateModal, type DelegatePrefill } from '../delegations/DelegateModal'
 import { STATUS_COLOR, formatCost, tierAlias } from '../delegations/taskVisuals'
@@ -184,7 +185,7 @@ function ThreadCardHeader({ card }: { card: CardDto }) {
       </Group>
       <Group gap={6} mt={4}>
         <Badge variant="light">{card.status}</Badge>
-        <Badge color="gray" variant="outline">P{card.priority}</Badge>
+        <CardAxisBadges card={card} />
       </Group>
     </Box>
   )

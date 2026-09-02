@@ -1,9 +1,9 @@
-import { Button, Checkbox, Group, Modal, NumberInput, Select, Stack, TextInput, Textarea } from '@mantine/core'
+import { Button, Checkbox, Group, Modal, Select, Stack, TextInput, Textarea } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useMemo, useState } from 'react'
 import type { AgentSummaryDto } from '../../api/agents'
 import { useAssignAgentCard, useStartAgent } from '../../api/agents'
-import { useBoards, useCreateCard } from '../../api/boards'
+import { useBoards, useCreateCard, type CardImportance } from '../../api/boards'
 import { getApiErrorMessage } from '../../api/client'
 import { useRemoteControlSupport } from './useRemoteControlSupport'
 
@@ -22,7 +22,7 @@ export function AgentAddWorkModal({ agent, opened, onClose }: AgentAddWorkModalP
   const boards = useBoards()
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
-  const [priority, setPriority] = useState(0)
+  const [importance, setImportance] = useState<CardImportance>('Normal')
   const [pickedBoardId, setPickedBoardId] = useState<string | null>(agent.boardId)
   const rc = useRemoteControlSupport({ tuiProfileId: agent.tuiProfileId, kind: agent.kind })
   const [remoteControl, setRemoteControl] = useState(rc.supported)
@@ -36,7 +36,7 @@ export function AgentAddWorkModal({ agent, opened, onClose }: AgentAddWorkModalP
     if (opened) {
       setTitle('')
       setDescription('')
-      setPriority(0)
+      setImportance('Normal')
       setPickedBoardId(agent.boardId)
       setRemoteControl(rc.supported)
     }
@@ -62,7 +62,7 @@ export function AgentAddWorkModal({ agent, opened, onClose }: AgentAddWorkModalP
     if (!canSubmit) return
 
     createCard.mutate(
-      { title: title.trim(), description: description.trim() || null, priority },
+      { title: title.trim(), description: description.trim() || null, importance },
       {
         onSuccess: (card) => {
           // Card exists now; queue it on the agent so it becomes a piece of work.
@@ -126,11 +126,11 @@ export function AgentAddWorkModal({ agent, opened, onClose }: AgentAddWorkModalP
           value={description}
           onChange={(event) => setDescription(event.currentTarget.value)}
         />
-        <NumberInput
-          label="Priority"
-          value={priority}
-          onChange={(value) => setPriority(typeof value === 'number' ? value : 0)}
-          min={0}
+        <Select
+          label="Importance"
+          data={['Low', 'Normal', 'High', 'Critical']}
+          value={importance}
+          onChange={(value) => setImportance((value as CardImportance) ?? 'Normal')}
         />
         <Select
           label="Board"

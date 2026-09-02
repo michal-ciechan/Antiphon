@@ -22,7 +22,7 @@ function card(overrides: Partial<CardDto> = {}): CardDto {
     identifier: 'CARD-0019',
     title: 'Cards cannot be corrected',
     description: 'a record you cannot correct is a record that rots',
-    priority: 1,
+    importance: 'High', urgency: 'Normal', dueAt: null, urgentSince: null, effectiveUrgency: 'Normal', quadrant: 'Schedule', rank: 7,
     labels: ['board', 'record'],
     status: 'Backlog',
     concurrencyToken: 'token-1',
@@ -61,7 +61,7 @@ describe('CardEditModal', () => {
     renderEdit()
     expect(titleInput()).toHaveValue('Cards cannot be corrected')
     expect(descriptionInput()).toHaveValue('a record you cannot correct is a record that rots')
-    expect(screen.getByLabelText('Priority')).toHaveValue('1')
+    expect(screen.getByRole('textbox', { name: 'Importance' })).toHaveValue('High')
     expect(screen.getByLabelText('Labels')).toHaveValue('board, record')
   })
 
@@ -96,7 +96,10 @@ describe('CardEditModal', () => {
       // Untouched fields go as null — the server reads null as "unchanged", so an untouched 20k
       // description is never rewritten by a one-word title fix.
       description: null,
-      priority: null,
+      importance: null,
+      urgency: null,
+      dueAt: null,
+      clearDueAt: false,
       labels: null,
       editedBy: 'operator',
     }))

@@ -1,0 +1,14 @@
+[
+  { "importance": "Critical", "urgency": "Now", "rank": 0 },
+  { "importance": "Critical", "urgency": "Soon", "rank": 2 },
+  { "importance": "Critical", "urgency": "Normal", "rank": 4 },
+  { "importance": "High", "urgency": "Now", "rank": 3 },
+  { "importance": "High", "urgency": "Soon", "rank": 5 },
+  { "importance": "High", "urgency": "Normal", "rank": 7 },
+  { "importance": "Normal", "urgency": "Now", "rank": 6 },
+  { "importance": "Normal", "urgency": "Soon", "rank": 8 },
+  { "importance": "Normal", "urgency": "Normal", "rank": 10 },
+  { "importance": "Low", "urgency": "Now", "rank": 9 },
+  { "importance": "Low", "urgency": "Soon", "rank": 11 },
+  { "importance": "Low", "urgency": "Normal", "rank": 13 }
+]

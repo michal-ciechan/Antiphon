@@ -45,7 +45,7 @@ describe('getApiFieldErrors', () => {
 
   it('skips fields whose message array is empty or blank rather than mapping an empty string', () => {
     const error = new ApiError(422, 'Unprocessable Content', {
-      errors: { Title: [], Priority: ['  '], Reason: ['Reason is required.'] },
+      errors: { Title: [], Importance: ['  '], Reason: ['Reason is required.'] },
     })
 
     expect(getApiFieldErrors(error)).toEqual({ Reason: 'Reason is required.' })

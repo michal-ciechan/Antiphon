@@ -12,7 +12,7 @@ import {
   describeSignal,
   hasLiveSession,
   legalMoveTargets,
-  priorityBands,
+  quadrantBands,
   spineNeighbours,
 } from './boardShapeModel'
 
@@ -41,11 +41,11 @@ describe('buildBoardShape — the real board', () => {
     expect(shape.totalCount).toBe(45)
   })
 
-  it('renders the priority mix within each state', () => {
-    expect(state(shape, 'backlog').priorityMix).toEqual([8, 10, 11, 2])
-    expect(state(shape, 'backlog').p0Count).toBe(8)
-    expect(state(shape, 'done').priorityMix).toEqual([9, 3, 1])
-    expect(state(shape, 'review').priorityMix).toEqual([])
+  it('renders the importance mix within each state', () => {
+    expect(state(shape, 'backlog').importanceMix).toEqual([8, 10, 11, 2])
+    expect(state(shape, 'backlog').criticalCount).toBe(8)
+    expect(state(shape, 'done').importanceMix).toEqual([9, 3, 1, 0])
+    expect(state(shape, 'review').importanceMix).toEqual([0, 0, 0, 0])
   })
 
   it('reports the OLDEST card by creation, which is card age and not time in state', () => {
@@ -54,12 +54,12 @@ describe('buildBoardShape — the real board', () => {
     expect(state(shape, 'review').oldest).toBeNull()
   })
 
-  it('orders a state P0 first, then oldest first', () => {
+  it('orders a state lowest rank first, then oldest first', () => {
     const backlog = state(shape, 'backlog').cards
     expect(backlog[0].identifier).toBe('CARD-0019')
-    expect(backlog.slice(0, 8).every((card) => card.priority === 0)).toBe(true)
+    expect(backlog.slice(0, 8).every((card) => card.importance === 'Critical')).toBe(true)
     for (let index = 1; index < backlog.length; index += 1) {
-      expect(backlog[index - 1].priority).toBeLessThanOrEqual(backlog[index].priority)
+      expect(backlog[index - 1].rank).toBeLessThanOrEqual(backlog[index].rank)
     }
   })
 
@@ -71,7 +71,7 @@ describe('buildBoardShape — the real board', () => {
 
   it('derives one signal line per state by rule', () => {
     expect(describeSignal(state(shape, 'review').signal)).toBe('—')
-    expect(describeSignal(state(shape, 'backlog').signal)).toBe('8 P0 · oldest #2 · 3d')
+    expect(describeSignal(state(shape, 'backlog').signal)).toBe('8 Critical · oldest #2 · 3d')
     expect(describeSignal(state(shape, 'in-progress').signal)).toBe('oldest #42 · 0d')
     expect(describeSignal(state(shape, 'done').signal)).toBe('last closed 2026-08-13')
   })
@@ -97,8 +97,8 @@ describe('buildBoardShape — under filters', () => {
     expect(describeSignal(state(shape, 'in-progress').signal)).toBe('—')
   })
 
-  it('filters by priority and by label (AND)', () => {
-    const p0 = buildBoardShape(board, { ...EMPTY_FILTER, priorities: [0] }, NOW)
+  it('filters by importance and by label (AND)', () => {
+    const p0 = buildBoardShape(board, { ...EMPTY_FILTER, importances: ['Critical'] }, NOW)
     expect(p0.filteredCount).toBe(17)
     expect(state(p0, 'backlog').filteredCount).toBe(8)
 
@@ -124,7 +124,7 @@ describe('card matching', () => {
     title: 'Surface launch errors',
     description: 'The queue drops the reason',
     labels: ['reliability', 'ui'],
-    priority: 1,
+    importance: 'High', urgency: 'Normal', dueAt: null, urgentSince: null, effectiveUrgency: 'Normal', quadrant: 'Schedule', rank: 7,
   }
 
   it('matches title, description and labels case-insensitively', () => {
@@ -135,8 +135,8 @@ describe('card matching', () => {
   })
 
   it('combines filters conjunctively', () => {
-    expect(cardMatchesFilter(card, { ...EMPTY_FILTER, query: 'launch', priorities: [0] })).toBe(false)
-    expect(cardMatchesFilter(card, { ...EMPTY_FILTER, query: 'launch', priorities: [1] })).toBe(true)
+    expect(cardMatchesFilter(card, { ...EMPTY_FILTER, query: 'launch', importances: ['Critical'] })).toBe(false)
+    expect(cardMatchesFilter(card, { ...EMPTY_FILTER, query: 'launch', importances: ['High'] })).toBe(true)
     expect(cardMatchesFilter(card, { ...EMPTY_FILTER, labels: ['ui', 'missing'] })).toBe(false)
   })
 })
@@ -182,17 +182,17 @@ describe('live sessions', () => {
   })
 })
 
-describe('priority bands', () => {
-  it('splits a 31-card state P0 first and drops empty bands', () => {
+describe('quadrant bands', () => {
+  it('splits a 31-card state DoFirst first and drops empty bands', () => {
     const shape = buildBoardShape(board, EMPTY_FILTER, NOW)
     const backlog = state(shape, 'backlog')
     expect(backlog.filteredCount).toBeGreaterThan(BAND_THRESHOLD)
 
-    const bands = priorityBands(backlog.cards)
-    expect(bands.map((band) => [band.priority, band.cards.length])).toEqual([
-      [0, 8], [1, 10], [2, 11], [3, 2],
+    const bands = quadrantBands(backlog.cards)
+    expect(bands.map((band) => [band.quadrant, band.cards.length])).toEqual([
+      ['Schedule', 18], ['Someday', 13],
     ])
-    expect(priorityBands(state(shape, 'review').cards)).toEqual([])
+    expect(quadrantBands(state(shape, 'review').cards)).toEqual([])
   })
 })
 

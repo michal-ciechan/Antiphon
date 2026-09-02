@@ -19,7 +19,7 @@ function serve(items: AttentionItemDto[]) {
       id: item.cardId!, boardId: item.boardId!, boardColumnId: 'column-decision', ownerSessionId: null,
       currentWorktreeId: null, assignedAgentId: null, assignedAgentName: null, agentQueuePosition: null,
       activeWorkflowRunId: null, workflowRunStatus: null, currentWorkflowStageName: null,
-      identifier: item.title.split(' ')[0], title: item.title.replace(/^.*?\u2014 /, ''), description: '', priority: 1,
+      identifier: item.title.split(' ')[0], title: item.title.replace(/^.*?\u2014 /, ''), description: '', importance: 'High', urgency: 'Normal', dueAt: null, urgentSince: null, effectiveUrgency: 'Normal', quadrant: 'Schedule', rank: 7,
       labels: [], status: 'NeedsDecision', concurrencyToken: 'token-1', createdAt: '2026-01-01T00:00:00Z',
       updatedAt: item.sinceUtc, startedAt: null, completedAt: null, terminalReason: null, sessions: [],
       revisionCount: 1, archivedAt: null, archivedReason: null, archivedBy: null,

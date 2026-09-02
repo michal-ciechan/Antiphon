@@ -134,7 +134,8 @@ function SupersededClose({ revision }: { revision: CardRevisionDto }) {
 function SupersededContent({ revision }: { revision: CardRevisionDto }) {
   const [shown, setShown] = useState(false)
   const hasText = !!revision.title || !!revision.description
-  const hasMeta = revision.priority !== null || (revision.labels?.length ?? 0) > 0
+  const hasMeta = revision.importance !== null || revision.urgency !== null
+    || revision.dueAt !== null || (revision.labels?.length ?? 0) > 0
 
   if (!hasText && !hasMeta) return null
 
@@ -143,8 +144,14 @@ function SupersededContent({ revision }: { revision: CardRevisionDto }) {
       {hasMeta && (
         <Group gap={6} wrap="wrap" mb={4}>
           <Text size="xs" c="dimmed">was</Text>
-          {revision.priority !== null && (
-            <Badge size="xs" color="gray" variant="outline">P{revision.priority}</Badge>
+          {revision.importance !== null && (
+            <Badge size="xs" color="gray" variant="outline">{revision.importance}</Badge>
+          )}
+          {revision.urgency !== null && revision.urgency !== 'Normal' && (
+            <Badge size="xs" color="gray" variant="outline">{revision.urgency}</Badge>
+          )}
+          {revision.dueAt !== null && (
+            <Badge size="xs" color="gray" variant="outline">due {revision.dueAt.slice(0, 10)}</Badge>
           )}
           {(revision.labels ?? []).map((label) => (
             <Badge key={label} size="xs" color="gray" variant="outline">{label}</Badge>

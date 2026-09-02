@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiDelete, apiGet, apiPatch, apiPost } from './client'
-import { boardKeys, type AgentKind, type AgentSessionSummaryDto } from './boards'
+import { boardKeys, type AgentKind, type AgentSessionSummaryDto, type CardImportance, type CardUrgency } from './boards'
 
 export type { ContextFullnessState } from './boards'
 
@@ -236,7 +236,8 @@ export interface AgentQueueCardDto {
   boardName: string
   identifier: string
   title: string
-  priority: number
+  importance: CardImportance
+  urgency: CardUrgency
   queuePosition: number
   activeWorkflowRunId: string | null
   workflowStatus: CardWorkflowRunStatus | null

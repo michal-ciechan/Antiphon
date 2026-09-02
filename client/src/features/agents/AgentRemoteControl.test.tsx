@@ -182,7 +182,7 @@ const createdCard: CardDto = {
   identifier: 'CARD-0001',
   title: 'Do the thing',
   description: '',
-  priority: 0,
+  importance: 'Critical', urgency: 'Normal', dueAt: null, urgentSince: null, effectiveUrgency: 'Normal', quadrant: 'Schedule', rank: 4,
   labels: [],
   status: 'Backlog',
   concurrencyToken: 'token-1',
