@@ -163,6 +163,10 @@ try
         .ValidateOnStart();
     // CARD-0040: cards move themselves from the delegated work bound to them.
     builder.Services.Configure<CardWorkTransitionSettings>(builder.Configuration.GetSection("CardTransitions"));
+    builder.Services.AddSingleton<IValidateOptions<ScheduleSettings>, ScheduleSettingsValidator>();
+    builder.Services.AddOptions<ScheduleSettings>()
+        .Bind(builder.Configuration.GetSection(ScheduleSettings.SectionName))
+        .ValidateOnStart();
     // CARD-0004: card → docs/cards/<slug>/ files. AutoCommit defaults false — do not flip it;
     // a human dryRun then a manual sync must land before anyone turns committing on.
     builder.Services.Configure<CardFileSyncSettings>(builder.Configuration.GetSection(CardFileSyncSettings.SectionName));
@@ -301,6 +305,8 @@ try
     builder.Services.AddScoped<DelegateCheckProbe>();
     builder.Services.AddSingleton<AgentTaskCheckQueue>();
     builder.Services.AddScoped<AgentTaskCheckService>();
+    builder.Services.AddSingleton<ScheduleFireQueue>();
+    builder.Services.AddScoped<ScheduleService>();
     // The standing specialist that interprets a check's bundle (CARD-0047 slice 4). Provisioning is
     // idempotent and self-healing, so it is safe to call at startup and again from any check.
     builder.Services.AddScoped<CheckInterpreterProvisioner>();
@@ -544,6 +550,8 @@ try
     builder.Services.AddHostedService<AgentTaskDispatcherHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Orchestration.AgentTaskLandHostedService>();
     builder.Services.AddHostedService<AgentTaskCheckHostedService>();
+    builder.Services.AddHostedService<ScheduleSweepHostedService>();
+    builder.Services.AddHostedService<ScheduleFireHostedService>();
     // One-shot: re-prices tasks costed before CARD-0023, so the per-root ceiling stops reading
     // ~10x-inflated history. No-ops once every row carries the current pricing version.
     builder.Services.AddHostedService<DelegationCostBackfillService>();
@@ -724,6 +732,7 @@ try
     app.MapModelAvailabilityEndpoints();
     app.MapRoutingPinEndpoints();
     app.MapComplexityChainEndpoints();
+    app.MapScheduleEndpoints();
     app.MapAttentionEndpoints();
     app.MapHomeEndpoints();
     app.MapDigestEndpoints();

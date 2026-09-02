@@ -156,6 +156,7 @@ public sealed class SessionMessageQueueService
         Guid sessionId, string body, MessageSendMode mode, CancellationToken ct,
         QueuedMessageOrigin origin = QueuedMessageOrigin.Ui, string? conversationKey = null,
         Guid? sourceTaskId = null, string? contentDigest = null, string? noteHeader = null,
+        Guid? sourceScheduleId = null,
         Action<Guid>? onCreated = null)
     {
         var trimmed = (body ?? string.Empty).Trim();
@@ -323,6 +324,7 @@ public sealed class SessionMessageQueueService
                 Origin = origin,
                 ConversationKey = conversationKey,
                 SourceTaskId = sourceTaskId,
+                SourceScheduleId = sourceScheduleId,
                 ContentDigest = contentDigest,
                 NoteHeader = noteHeader,
             };
@@ -608,6 +610,36 @@ public sealed class SessionMessageQueueService
         await CancelUnderLockAsync(
             sessionId, messageId,
             m => m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts == 0, ct) == true;
+
+    /// <summary>
+    /// Cancel still-Pending copies of a schedule (CARD-0057 D3). One outstanding copy per
+    /// recurring schedule: a daily prompt that missed three days delivers once on boot.
+    /// </summary>
+    public async Task<IReadOnlyList<Guid>> CancelPendingBySourceScheduleAsync(
+        Guid sourceScheduleId, CancellationToken ct)
+    {
+        List<(Guid SessionId, Guid MessageId)> pending;
+        await using (var scope = _scopeFactory.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            pending = (await db.SessionQueuedMessages.AsNoTracking()
+                .Where(m => m.SourceScheduleId == sourceScheduleId
+                    && m.Status == QueuedMessageStatus.Pending)
+                .Select(m => new { m.AgentSessionId, m.Id })
+                .ToListAsync(ct))
+                .Select(m => (m.AgentSessionId, m.Id))
+                .ToList();
+        }
+
+        var canceled = new List<Guid>(pending.Count);
+        foreach (var (sessionId, messageId) in pending)
+        {
+            if (await CancelPendingIfUntypedAsync(sessionId, messageId, ct))
+                canceled.Add(messageId);
+        }
+
+        return canceled;
+    }
 
     /// <summary>
     /// CARD-0091. Cancels a message only if it is still Pending and parked while its session lock
@@ -3087,7 +3119,11 @@ public sealed class SessionMessageQueueService
         return trimmed[..end].ToString();
     }
 
-    private static bool TryGetForbiddenReason(AgentKind kind, string body, out string reason)
+    /// <summary>
+    /// Per-kind body rule (CARD-0137 / CARD-0057). Exposed so a schedule can refuse a Grok-forbidden
+    /// body at create rather than at 09:00.
+    /// </summary>
+    public static bool TryGetForbiddenReason(AgentKind kind, string body, out string reason)
     {
         reason = "";
         var token = FirstCommandToken(body);
