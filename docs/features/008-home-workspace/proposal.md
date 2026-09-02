@@ -84,7 +84,9 @@ in it.
   (`/agents`), new agent. Below a divider, the **Tasks** section (`GET /api/home/tasks`, filtered
   to the selected project's directories) lists Cards and unbound delegations in five groups
   (Needs you · Running · To review · Up next · Done). Bound delegations nest as the card's
-  worker line. See CARD-0002 / feature 010.
+  worker line, and CARD-0031 extends that rail in place: Running items show a progress verdict
+  plus elapsed/last-activity, Up next shows why a queued task has not started (and when a Plan
+  is ready for Code), and Done cards show `TerminalReason`. See CARD-0002 / CARD-0031 / feature 010.
 - **Files center.** `FilesReviewPanel` in `sidebar` layout for the selected agent. This is the
   page's default and dominant surface. Markdown now defaults to **Rendered** everywhere (it used to
   default to Diff when the file had changes); Diff/Raw remain one click away.

@@ -1,6 +1,13 @@
 import { HttpResponse, http } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
-import type { HomeTaskGroup, HomeTaskItemDto } from '../../../api/homeTasks'
+import type {
+  AgentTaskPipelineDto,
+  AgentTaskPipelineQueuedDto,
+  AgentTaskPipelineReadyDto,
+  AgentTaskPipelineStageDto,
+} from '../../../api/agentTasks'
+import type { AttentionItemDto } from '../../../api/attention'
+import type { HomeTaskGroup, HomeTaskItemDto, HomeTaskWorkerDto } from '../../../api/homeTasks'
 import { renderWithProviders, screen, userEvent, waitFor, within } from '../../../test/utils'
 import { server } from '../../../test/mocks/server'
 import { normalizeDir } from '../projectGrouping'
@@ -56,12 +63,112 @@ function item(overrides: Partial<HomeTaskItemDto> = {}): HomeTaskItemDto {
   }
 }
 
+function worker(overrides: Partial<HomeTaskWorkerDto> = {}): HomeTaskWorkerDto {
+  return {
+    taskId: 'aaaaaaaa-0000-0000-0000-000000000006',
+    shortId: 'aaaaaaaa',
+    role: 'Plan',
+    status: 'Dispatched',
+    agentKind: 'ClaudeCode',
+    modelLevel: 'High',
+    agentId: 'agent-1',
+    agentName: 'task-bound',
+    agentSessionId: null,
+    costUsd: 0.11,
+    dispatchedAt: '2026-09-01T10:00:00Z',
+    completedAt: null,
+    ...overrides,
+  }
+}
+
+function attentionItem(overrides: Partial<AttentionItemDto> = {}): AttentionItemDto {
+  return {
+    kind: 'DeadSession',
+    severity: 'Error',
+    taskId: 'aaaaaaaa-0000-0000-0000-000000000006',
+    sessionId: null,
+    agentId: null,
+    messageId: null,
+    cardId: null,
+    title: 'Dead session',
+    headline: 'Dead session',
+    evidence: 'session is gone',
+    sinceUtc: '2026-09-01T10:00:00Z',
+    subtreeCostUsd: null,
+    actions: [],
+    ...overrides,
+  }
+}
+
+function emptyPipeline(): AgentTaskPipelineDto {
+  return {
+    asOf: '2026-09-02T00:00:00Z',
+    recommendationsAreAdvisory: true,
+    maxConcurrentTasks: 6,
+    inFlightAgainstCap: 0,
+    stages: [],
+  }
+}
+
+function stage(overrides: Partial<AgentTaskPipelineStageDto> = {}): AgentTaskPipelineStageDto {
+  return {
+    role: 'Code',
+    recommendedInFlight: 1,
+    inFlightCount: 0,
+    atOrAboveRecommendation: false,
+    inFlight: [],
+    queued: [],
+    blocked: [],
+    ready: [],
+    routingPin: null,
+    ...overrides,
+  }
+}
+
+function queuedRow(overrides: Partial<AgentTaskPipelineQueuedDto> = {}): AgentTaskPipelineQueuedDto {
+  return {
+    taskId: 'bbbbbbbb-0000-0000-0000-000000000007',
+    shortId: 'bbbbbbbb',
+    title: 'queued work',
+    card: null,
+    createdAt: '2026-09-01T11:00:00Z',
+    queueReason: 'sharedCheckoutLease',
+    heldBy: [{ taskId: 'hold-1', shortId: '1a2b3c4d', title: 'in-flight docs pass' }],
+    ...overrides,
+  }
+}
+
+function readyRow(overrides: Partial<AgentTaskPipelineReadyDto> = {}): AgentTaskPipelineReadyDto {
+  return {
+    card: {
+      id: '11111111-0000-0000-0000-000000000001',
+      identifier: 'CARD-0001',
+      title: 'A card',
+    },
+    sourcePlanTaskId: 'cccccccc-0000-0000-0000-000000000003',
+    sourcePlanShortId: 'cccccccc',
+    readySince: '2026-08-26T11:00:00Z',
+    deliverablePath: 'docs/superpowers/plans/example.md',
+    deliverableRef: 'abc',
+    routingPin: null,
+    ...overrides,
+  }
+}
+
 function seed({
   items = [] as HomeTaskItemDto[],
   status = 200,
+  attention = [] as AttentionItemDto[],
+  attentionStatus = 200,
+  pipeline = emptyPipeline() as AgentTaskPipelineDto | null,
+  pipelineStatus = 200,
 }: {
   items?: HomeTaskItemDto[]
   status?: number
+  attention?: AttentionItemDto[]
+  attentionStatus?: number
+  pipeline?: AgentTaskPipelineDto | null
+  pipelineStatus?: number
 } = {}) {
   server.use(
     http.get('/api/home/tasks', () =>
@@ -71,11 +178,18 @@ function seed({
     ),
     http.get('/api/agents', () => HttpResponse.json([])),
     http.get('/api/attention', () =>
-      HttpResponse.json({
-        generatedAt: '2026-09-02T00:00:00Z',
-        runnerConsulted: true,
-        items: [],
-      }),
+      attentionStatus === 200
+        ? HttpResponse.json({
+            generatedAt: '2026-09-02T00:00:00Z',
+            runnerConsulted: true,
+            items: attention,
+          })
+        : new HttpResponse(null, { status: attentionStatus }),
+    ),
+    http.get('/api/agent-tasks/pipeline', () =>
+      pipelineStatus === 200
+        ? HttpResponse.json(pipeline)
+        : new HttpResponse(null, { status: pipelineStatus }),
     ),
   )
 }
@@ -362,5 +476,221 @@ describe('TasksSection', () => {
       expect(target).not.toBeNull()
       expect(target).toHaveTextContent('Finished card')
     })
+  })
+
+  it('keeps a Running item with a Dead session badge under Running', async () => {
+    seed({
+      items: [
+        item({
+          key: 'run',
+          id: 'run',
+          identifier: 'CARD-0002',
+          title: 'Running card',
+          group: 'Running',
+          worker: worker(),
+        }),
+      ],
+      attention: [attentionItem({ kind: 'DeadSession' })],
+    })
+    renderSection()
+
+    await screen.findByText('Running card')
+    expect(screen.getByTestId('task-liveness-DeadSession')).toHaveTextContent('Dead session')
+    expect(within(screen.getByTestId('home-tasks-group-Running')).getByText('1')).toBeInTheDocument()
+    expect(within(screen.getByTestId('home-tasks-group-NeedsHuman')).getByText('0')).toBeInTheDocument()
+    expect(screen.queryByText('Needs you')).toBeInTheDocument()
+  })
+
+  it('shows the queued-delegation lease line naming the holder', async () => {
+    const queuedId = 'bbbbbbbb-0000-0000-0000-000000000007'
+    seed({
+      items: [
+        item({
+          key: `task:${queuedId}`,
+          source: 'Delegation',
+          id: queuedId,
+          identifier: 'bbbbbbbb',
+          title: 'Queued behind checkout',
+          group: 'Next',
+          state: 'Queued',
+          boardId: null,
+          stage: 'Code',
+          role: 'Code',
+          modelLevel: 'High',
+          agentKind: 'ClaudeCode',
+        }),
+      ],
+      pipeline: {
+        ...emptyPipeline(),
+        stages: [stage({ queued: [queuedRow()] })],
+      },
+    })
+    renderSection()
+
+    await screen.findByText('Queued behind checkout')
+    expect(screen.getByTestId(`task-queue-${queuedId}`)).toHaveTextContent(
+      'waiting: shared checkout held by task-1a2b3c4d — in-flight docs pass',
+    )
+  })
+
+  it('shows the ready-card line under Up next', async () => {
+    const cardId = '11111111-0000-0000-0000-000000000001'
+    seed({
+      items: [
+        item({
+          key: `card:${cardId}`,
+          id: cardId,
+          identifier: 'CARD-0001',
+          title: 'Ready for Code',
+          group: 'Next',
+          state: 'Backlog',
+          stage: 'Plan',
+        }),
+      ],
+      pipeline: {
+        ...emptyPipeline(),
+        stages: [stage({ ready: [readyRow()] })],
+      },
+    })
+    renderSection()
+
+    await screen.findByText('Ready for Code')
+    expect(screen.getByTestId(`task-ready-${cardId}`)).toHaveTextContent('ready for Code')
+    expect(screen.getByTestId(`task-ready-read-${cardId}`)).toHaveAttribute(
+      'href',
+      `/plans?${new URLSearchParams({
+        file: 'docs/superpowers/plans/example.md',
+        ref: 'abc',
+        task: 'cccccccc-0000-0000-0000-000000000003',
+      }).toString()}`,
+    )
+  })
+
+  it('degrades a pipeline 500 into no enrichment and no extra error line', async () => {
+    const queuedId = 'bbbbbbbb-0000-0000-0000-000000000007'
+    const cardId = '11111111-0000-0000-0000-000000000001'
+    seed({
+      items: [
+        item({
+          key: 'need',
+          id: 'need',
+          identifier: 'CARD-0001',
+          title: 'Needs a decision',
+          group: 'NeedsHuman',
+          state: 'NeedsDecision',
+          humanReason: 'Decision',
+        }),
+        item({
+          key: 'run',
+          id: 'run',
+          identifier: 'CARD-0002',
+          title: 'Running card',
+          group: 'Running',
+          worker: worker(),
+        }),
+        item({
+          key: 'review',
+          id: 'review',
+          identifier: 'CARD-0003',
+          title: 'Review card',
+          group: 'Review',
+          state: 'Review',
+          humanReason: 'Review',
+        }),
+        item({
+          key: `task:${queuedId}`,
+          source: 'Delegation',
+          id: queuedId,
+          identifier: 'bbbbbbbb',
+          title: 'Queued behind checkout',
+          group: 'Next',
+          state: 'Queued',
+          boardId: null,
+          stage: 'Code',
+          role: 'Code',
+          modelLevel: 'High',
+          agentKind: 'ClaudeCode',
+        }),
+        item({
+          key: `card:${cardId}`,
+          id: cardId,
+          identifier: 'CARD-0033',
+          title: 'Ready for Code',
+          group: 'Next',
+          state: 'Backlog',
+          stage: 'Plan',
+        }),
+        item({
+          key: 'done',
+          id: 'done',
+          identifier: 'CARD-0005',
+          title: 'Finished card',
+          group: 'Done',
+          state: 'Done',
+          terminalReason: 'Closed with a verdict.',
+          completedAt: '2026-09-01T18:00:00Z',
+        }),
+      ],
+      pipelineStatus: 500,
+    })
+    renderSection()
+
+    await screen.findByText('Running card')
+    expect(screen.getByTestId('home-tasks-group-NeedsHuman')).toBeInTheDocument()
+    expect(screen.getByTestId('home-tasks-group-Running')).toBeInTheDocument()
+    expect(screen.getByTestId('home-tasks-group-Review')).toBeInTheDocument()
+    expect(screen.getByTestId('home-tasks-group-Next')).toBeInTheDocument()
+    expect(screen.getByTestId('home-tasks-group-Done')).toBeInTheDocument()
+    expect(screen.queryByTestId(`task-queue-${queuedId}`)).not.toBeInTheDocument()
+    expect(screen.queryByTestId(`task-ready-${cardId}`)).not.toBeInTheDocument()
+    expect(
+      screen.queryByText('Tasks are unavailable — the server did not answer for them.'),
+    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('task-terminal-done')).toHaveTextContent('Closed with a verdict.')
+  })
+
+  it('degrades an attention 500 into no badges and no question line, rail intact', async () => {
+    seed({
+      items: [
+        item({
+          key: 'need',
+          id: 'need',
+          identifier: 'CARD-0001',
+          title: 'Needs a decision',
+          group: 'NeedsHuman',
+          state: 'NeedsDecision',
+          humanReason: 'Decision',
+        }),
+        item({
+          key: 'run',
+          id: 'run',
+          identifier: 'CARD-0002',
+          title: 'Running card',
+          group: 'Running',
+          worker: worker(),
+        }),
+      ],
+      attention: [
+        attentionItem({ kind: 'DeadSession' }),
+        attentionItem({
+          kind: 'CardNeedsDecision',
+          taskId: null,
+          cardId: 'need',
+          evidence: 'Should we ship on Friday?',
+        }),
+      ],
+      attentionStatus: 500,
+    })
+    renderSection()
+
+    await screen.findByText('Running card')
+    expect(screen.getByText('Needs a decision')).toBeInTheDocument()
+    expect(screen.queryByTestId('task-liveness-DeadSession')).not.toBeInTheDocument()
+    expect(screen.queryByText('Should we ship on Friday?')).not.toBeInTheDocument()
+    expect(screen.getByTestId('home-tasks-group-NeedsHuman')).toBeInTheDocument()
+    expect(screen.getByTestId('home-tasks-group-Running')).toBeInTheDocument()
+    expect(
+      screen.queryByText('Tasks are unavailable — the server did not answer for them.'),
+    ).not.toBeInTheDocument()
   })
 })

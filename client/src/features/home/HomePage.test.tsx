@@ -155,6 +155,15 @@ function seed({
   server.use(
     http.get('/api/agents', () => HttpResponse.json(agents)),
     http.get('/api/agent-tasks', () => HttpResponse.json(tasks)),
+    http.get('/api/agent-tasks/pipeline', () =>
+      HttpResponse.json({
+        asOf: '2026-08-17T10:00:00Z',
+        recommendationsAreAdvisory: true,
+        maxConcurrentTasks: 6,
+        inFlightAgainstCap: 0,
+        stages: [],
+      }),
+    ),
     http.get('/api/home/tasks', () =>
       HttpResponse.json({ generatedAt: '2026-08-17T10:00:00Z', items: homeTasks }),
     ),

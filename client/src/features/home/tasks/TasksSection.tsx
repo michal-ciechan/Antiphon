@@ -1,12 +1,22 @@
 import { Anchor, Badge, Box, Group, Loader, Stack, Text } from '@mantine/core'
+import { useInterval } from '@mantine/hooks'
 import { useMemo, useState, type CSSProperties } from 'react'
 import { Link } from 'react-router'
 import { useAgentList, type AgentSummaryDto } from '../../../api/agents'
+import { usePipeline } from '../../../api/agentTasks'
 import { useAttention } from '../../../api/attention'
 import { useHomeTasks, type HomeTaskGroup, type HomeTaskItemDto } from '../../../api/homeTasks'
 import { HomeTaskModal } from './HomeTaskModal'
 import { TaskCard } from './TaskCard'
-import { GROUP_LABEL, GROUP_ORDER, filterByProject, groupItems, questionFor } from './homeTasksModel'
+import {
+  GROUP_LABEL,
+  GROUP_ORDER,
+  filterByProject,
+  groupItems,
+  livenessFor,
+  pipelineRowFor,
+  questionFor,
+} from './homeTasksModel'
 
 const ALWAYS_VISIBLE: ReadonlySet<HomeTaskGroup> = new Set(['NeedsHuman', 'Running'])
 
@@ -33,6 +43,10 @@ export function TasksSection({
   const homeTasks = useHomeTasks()
   const attention = useAttention()
   const agents = useAgentList()
+  // A failed pipeline fetch is "no enrichment" — no second error line. The projection owns the one.
+  const pipeline = usePipeline()
+  const [now, setNow] = useState(() => Date.now())
+  useInterval(() => setNow(Date.now()), 60_000, { autoInvoke: true })
   const [openItem, setOpenItem] = useState<HomeTaskItemDto | null>(null)
 
   const filtered = useMemo(
@@ -118,6 +132,10 @@ export function TasksSection({
                     item={item}
                     question={questionFor(item, attentionItems)}
                     agents={agentList}
+                    liveness={livenessFor(item, attentionItems)}
+                    pipelineRow={pipelineRowFor(item, pipeline.data)}
+                    pipeline={pipeline.data ?? null}
+                    now={now}
                     onOpen={() => setOpenItem(item)}
                     onOpenTask={(taskId) =>
                       setOpenItem({
