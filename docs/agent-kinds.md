@@ -83,7 +83,9 @@ A session's command line is built in layers, and no single file holds the whole 
    In all three cases it is an **argument, never typed**, so it survives compaction and no pty
    delivery ceiling applies; the bound is the command line, guarded by
    `InstructionBundleComposer.EnsureWithinCommandLineBudget` (`Delegation:CommandLineBudgetChars`),
-   which throws rather than truncating.
+   which throws rather than truncating. Composition order is attachments → `ReplyStyle` block →
+   `SystemPromptAppend`; `Normal` composes nothing. A change takes effect at the next launch — the
+   drift badge is informational, not an action.
 4. **Session identity** — appended last, by `AgentSessionService.BuildSessionIdentityArgs`, and
    only for kinds whose `SessionResume` contract is `Supported`. Any pre-existing
    `--session-id` / `-s` / `--resume` / `-r` / `--continue` / `-c` in the profile args is stripped

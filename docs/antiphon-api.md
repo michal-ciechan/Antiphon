@@ -185,7 +185,8 @@ POST   /api/sessions/{id}/resize  |  /resume  |  /kill
 ```
 
 `PATCH /api/agents/{id}` is where `alwaysOn`, `kind`, `tuiProfileId`, `modelId`, `launchEnv`,
-`bundleKeys` and `sessionBackend` are set — and where the herdr pairing gate fires
+`bundleKeys`, `replyStyle`, `systemPromptAppend` and `sessionBackend` are set — style keys on
+`bundleKeys` are 422 — and where the herdr pairing gate fires
 (`409 herdr_refused`) and where the remote-control capability gate fires
 (`409 remote_control_refused` on a kind whose catalog row is not Supported — ClaudeCode only
 today). See [herdr-sessions.md](herdr-sessions.md). `POST /api/agents/{id}/start` and
