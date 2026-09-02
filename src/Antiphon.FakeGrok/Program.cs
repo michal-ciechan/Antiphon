@@ -36,6 +36,9 @@ namespace Antiphon.FakeGrok;
 ///    a submit while open writes the completed update (not a user chunk); Esc does not complete
 ///    the tool. <c>ANTIPHON_FAKE_SUBMIT_WHILE_WORKING=cancel</c> still cancels a later
 ///    submit-while-working.
+///  * Opt-in <c>ANTIPHON_FAKE_REPORT_LINE=1</c> (CARD-0243): a marked submit's
+///    <c>agent_message_chunk</c> ends with <c>[antiphon-report:XXXXXXXX done]</c> so a
+///    capstone-launched delegate honours the brief's closing line. Screen echo is unchanged.
 /// </summary>
 internal static class Program
 {
@@ -73,6 +76,17 @@ internal static class Program
     private static bool QuestionToolEnabled =>
         string.Equals(
             Environment.GetEnvironmentVariable("ANTIPHON_FAKE_QUESTION_TOOL"),
+            "1",
+            StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// CARD-0243: a marked prompt's assistant chunk ends with the closing report token so a
+    /// launched delegate honours the brief. Question-tool and submit-while-working paths stay
+    /// unmarked — those model other measured shapes.
+    /// </summary>
+    private static bool ReportLineEnabled =>
+        string.Equals(
+            Environment.GetEnvironmentVariable("ANTIPHON_FAKE_REPORT_LINE"),
             "1",
             StringComparison.OrdinalIgnoreCase);
 
@@ -417,7 +431,33 @@ internal static class Program
         // integer " for \d+s" regex does NOT match — do not "fix" this to an integer.
         write("Worked for 1.7s\r\n");
         write(IdleTitle);
-        AppendSessionFiles(sessionDir, sessionId, text, $"FAKE response to: {echo}");
+        AppendSessionFiles(sessionDir, sessionId, text, AssistantText(text, echo));
+    }
+
+    /// <summary>
+    /// CARD-0243: when the report-line knob is on, append <c>[antiphon-report:id done]</c> from
+    /// the last task marker in the submitted prompt. Both ends of a spilled-brief pointer carry
+    /// the same id; last-wins matches that pointer shape.
+    /// </summary>
+    private static string AssistantText(string submitted, string echo)
+    {
+        var body = $"FAKE response to: {echo}";
+        if (!ReportLineEnabled)
+            return body;
+        var id = LastTaskMarkerId(submitted);
+        return id is null ? body : $"{body}\n[antiphon-report:{id} done]";
+    }
+
+    private static string? LastTaskMarkerId(string text)
+    {
+        const string prefix = "[antiphon-task:";
+        var start = text.LastIndexOf(prefix, StringComparison.Ordinal);
+        if (start < 0)
+            return null;
+        start += prefix.Length;
+        if (start + 8 > text.Length || text[start + 8] != ']')
+            return null;
+        return text.Substring(start, 8);
     }
 
     private static bool IsCompactCommand(string text) =>

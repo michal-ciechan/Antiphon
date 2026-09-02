@@ -492,6 +492,45 @@ public class AgentTaskCheckSweepTests
         var parent = await verify.AgentTasks.SingleAsync(t => t.Id == parentTask.Id);
         parent.Status.ShouldBe(AgentTaskStatus.Succeeded, "the control has to actually fire");
         parent.Result.ShouldContain("three delegates ran");
+        parent.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
+    }
+
+    /// <summary>
+    /// CARD-0243: the two-step closing-line contract applies to a caller-owned task the same as
+    /// any other live session. Without the token the turn is nudged once and stays Dispatched —
+    /// the pin that keeps the sibling "DOES settle" test from being "fixed" back to an unmarked
+    /// reply.
+    /// </summary>
+    [Test]
+    public async Task the_same_caller_turn_without_the_closing_line_is_nudged_once_not_settled()
+    {
+        var harness = new Harness();
+        var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: -1);
+        var parentTask = await harness.SeedCallerTaskAsync(seed.CallerSessionId);
+
+        await harness.SeedTurnAsync(
+            seed.CallerSessionId,
+            prompt: DelegationReportFormatter.TaskMarker(parentTask.Id) + "\n\nOwn the chunk.",
+            reply: "Chunk owned: three delegates ran, all merged.",
+            closingVerdict: false);
+        await harness.Replies.OnTurnEndAsync(seed.CallerSessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var parent = await verify.AgentTasks.SingleAsync(t => t.Id == parentTask.Id);
+        parent.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        parent.ReportNudgedAt.ShouldNotBeNull();
+
+        var queued = await verify.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == seed.CallerSessionId)
+            .ToListAsync();
+        var nudge = queued.ShouldHaveSingleItem();
+        nudge.Origin.ShouldBe(QueuedMessageOrigin.Delegation);
+        nudge.Status.ShouldBe(QueuedMessageStatus.Pending);
+        nudge.Body.ShouldContain(DelegationReportFormatter.TaskMarker(parentTask.Id));
+        nudge.Body.ShouldContain("closing report line");
+
+        (await harness.NotesToCallerAsync(seed.CallerSessionId)).ShouldBeEmpty(
+            "the nudge must not be mistaken for a check note by this suite's own accounting");
     }
 
     // ---- (b) READ-ONLY -------------------------------------------------------------------------
@@ -1259,9 +1298,16 @@ public class AgentTaskCheckSweepTests
             await db.SaveChangesAsync();
         }
 
-        /// <summary>A complete turn on a session: prompt, reply, end.</summary>
-        public async Task SeedTurnAsync(Guid sessionId, string prompt, string reply)
+        /// <summary>
+        /// A complete turn on a session: prompt, reply, end. CARD-0159: when the prompt carries a
+        /// task marker, append the closing report token unless <paramref name="closingVerdict"/> is
+        /// false (the nudge arm). Copied from
+        /// <c>AgentTaskReplyIntegrationTests.ApplyClosingVerdict</c> — do not share across suites.
+        /// </summary>
+        public async Task SeedTurnAsync(
+            Guid sessionId, string prompt, string reply, bool closingVerdict = true)
         {
+            reply = ApplyClosingVerdict(prompt, reply, closingVerdict);
             await using var db = CreateContext();
             var seq = await db.TranscriptEntries
                 .Where(e => e.AgentSessionId == sessionId)
@@ -1308,6 +1354,26 @@ public class AgentTaskCheckSweepTests
                     CreatedAt = at.AddSeconds(2),
                 });
             await db.SaveChangesAsync();
+        }
+
+        /// <summary>
+        /// CARD-0159: existing settlement tests predate the closing-line contract. Appending the
+        /// matching <c>[antiphon-report:id done]</c> (stripped again at settle) keeps them on the
+        /// marked path. Question reports and tests that pass <paramref name="closingVerdict"/> false
+        /// are left untouched so they exercise the heuristic / nudge arms.
+        /// </summary>
+        private static string ApplyClosingVerdict(string prompt, string reply, bool closingVerdict)
+        {
+            if (!closingVerdict || string.IsNullOrEmpty(reply))
+                return reply;
+            if (AgentTaskReplyService.LooksLikeAQuestion(reply))
+                return reply;
+            if (reply.Contains("[antiphon-report:", StringComparison.Ordinal))
+                return reply;
+            var shortId = DelegationReportFormatter.TryReadTaskMarkerId(prompt);
+            if (shortId is null)
+                return reply;
+            return reply.TrimEnd() + "\n" + DelegationReportFormatter.ReportToken(shortId, "done");
         }
 
         private static AgentSession NewSession(Guid id, SessionStatus status, DateTime at) => new()
