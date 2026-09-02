@@ -97,14 +97,15 @@ is read on writes as well as reads.
 
 ## 2. The surface
 
-Twenty-two endpoint files under `server/Api/Endpoints/`, mapped in `server/Program.cs`. Each row
+Endpoint files under `server/Api/Endpoints/`, mapped in `server/Program.cs`. Each row
 below is a route group; the file named is the authority for its exact bodies.
 
 ### Work items — cards, boards, projects
 
-`CardEndpoints.cs`, `BoardEndpoints.cs`, `ProjectEndpoints.cs`
+`CardEndpoints.cs`, `BoardEndpoints.cs`, `ProjectEndpoints.cs`, `HomeEndpoints.cs`
 
 ```
+GET    /api/home/tasks                       read-only home-rail projection of cards and unbound delegations (CARD-0002). Fleet-global; the client filters by project directory. Bound tasks nest as a card's Worker, never as their own item. No question field — that text is GET /api/attention.
 GET    /api/cards/limits                     title/description/reason/actor length ceilings
 GET    /api/cards/{id}                       one card  (?boardId=&cwd=)
 GET    /api/cards/{id}/thread                card + its plans, tasks and commits (read-only projection)  (?boardId=&cwd=)

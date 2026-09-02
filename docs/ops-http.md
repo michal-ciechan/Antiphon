@@ -37,6 +37,8 @@ header when it is set. Inside a running agent session both are already in the en
 | A board's columns, name to id | GET | `/api/boards/{id}/columns` |
 | A board's cards | GET | `/api/cards?boardId={guid}` |
 | One card | GET | `/api/cards/{id}` — `CARD-0296` resolves; prefer `card.ps1 get` |
+| Home Tasks rail (cards + unbound delegations) | GET | `/api/home/tasks` |
+| What needs a human (fleet-global) | GET | `/api/attention` |
 | A session's screen | GET | `/api/sessions/{id}/buffer` |
 | A session's transcript | GET | `/api/sessions/{id}/transcript?since={sequence}` |
 | Type work into a session | POST | `/api/sessions/{id}/messages` |

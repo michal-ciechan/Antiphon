@@ -305,6 +305,9 @@ try
     // that already exists, and it is scoped because it is one query burst per request.
     builder.Services.AddScoped<AttentionService>();
     builder.Services.AddSingleton<AttentionSummaryCache>();
+    // The home-rail projection over cards and unbound delegations (CARD-0002). Read-only —
+    // bound tasks nest as a card's worker line; stuckness stays AttentionService.
+    builder.Services.AddScoped<HomeTaskService>();
     builder.Services.AddSingleton<IResettableCache>(sp => sp.GetRequiredService<AttentionSummaryCache>());
     builder.Services.AddScoped<DiagnosticsBundleService>();
     // The read-only projection over the plan files in the repo (mobile-thread spec §D1). A
@@ -710,6 +713,7 @@ try
     app.MapModelAvailabilityEndpoints();
     app.MapRoutingPinEndpoints();
     app.MapAttentionEndpoints();
+    app.MapHomeEndpoints();
     app.MapDigestEndpoints();
     app.MapDiagnosticsEndpoints();
     app.MapPlanEndpoints();
