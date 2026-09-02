@@ -376,6 +376,7 @@ public sealed class ProjectSetupService
         new("Normal", "Normal", "No style instruction at all — the model writes the way it does by default."),
         new("Terse", "Terse", "Answer first, one line where one line will do. No preamble, no sign-off."),
         new("Caveman", "Caveman", "Short word. Drop small word. Paths, flags and code still written exactly."),
+        new("Brief", "Brief", "Short bullets, minimum words, only what changes a decision. Paths, flags and code still exact."),
         new("Explanatory", "Explanatory", "Answer first, then the reasoning: alternatives, what it depends on, where it was read."),
     ];
 

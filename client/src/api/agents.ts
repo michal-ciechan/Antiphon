@@ -21,7 +21,7 @@ export type AgentAssignmentPolicy = 'AutoPick' | 'ManualConfirm' | 'Paused'
  * How the agent writes (CARD-0060). `Normal` composes to NOTHING at launch — it is the default and
  * the migration backfill, so choosing it changes an agent's launch arguments by exactly zero bytes.
  */
-export type AgentReplyStyle = 'Normal' | 'Terse' | 'Caveman' | 'Explanatory'
+export type AgentReplyStyle = 'Normal' | 'Terse' | 'Caveman' | 'Brief' | 'Explanatory'
 
 /**
  * Which lane hosts the interactive child (CARD-0160). `PtyHost` is the default — Herdr is opt-in
@@ -67,6 +67,11 @@ export const AGENT_REPLY_STYLE_OPTIONS: Array<{
     value: 'Caveman',
     label: 'Caveman',
     description: 'Short word. Drop small word. Paths, flags and code still written exactly.',
+  },
+  {
+    value: 'Brief',
+    label: 'Brief',
+    description: 'Short bullets, minimum words, only what changes a decision. Paths, flags and code still exact.',
   },
   {
     value: 'Explanatory',

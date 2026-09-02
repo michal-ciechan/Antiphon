@@ -22,4 +22,7 @@ public enum AgentReplyStyle
 
     /// <summary>Show the reasoning, name the alternatives, say what would change the answer.</summary>
     Explanatory = 3,
+
+    /// <summary>Short bullets. Minimum words. Only what changes a decision.</summary>
+    Brief = 4,
 }

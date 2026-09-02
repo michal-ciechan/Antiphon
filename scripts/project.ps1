@@ -6,7 +6,7 @@
 # Verbs:
 #   project.ps1 new       -Dir <path> [-CreateDirectory] [-Name n] [-GitUrl u] [-BaseBranch b] [-BoardName n]
 #                        [-Orchestrator | -Worker | -NoAgent] [-AgentName n] [-Profile <displayName|guid>]
-#                        [-Level Frontier|High|Medium|Low] [-ReplyStyle Normal|Terse|Caveman|Explanatory]
+#                        [-Level Frontier|High|Medium|Low] [-ReplyStyle Normal|Terse|Caveman|Brief|Explanatory]
 #                        [-Bundles a,b] [-PromptFile p] [-RemoteControl] [-Start] [-Json]
 #   project.ps1 readiness <project name|guid> [-Json]
 #   project.ps1 catalog   [-Json]
@@ -39,7 +39,7 @@ param(
     [string]$Profile,
     [ValidateSet('Frontier', 'High', 'Medium', 'Low')]
     [string]$Level,
-    [ValidateSet('Normal', 'Terse', 'Caveman', 'Explanatory')]
+    [ValidateSet('Normal', 'Terse', 'Caveman', 'Brief', 'Explanatory')]
     [string]$ReplyStyle,
     [string[]]$Bundles,
     [string]$PromptFile,
