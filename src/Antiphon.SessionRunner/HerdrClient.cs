@@ -117,16 +117,33 @@ public sealed class HerdrClient
         return DeserializeRequired<HerdrWorkspaceListEnvelope>(result, "workspace.list").Workspaces;
     }
 
-    public async Task<HerdrWorkspaceInfo> WorkspaceCreateAsync(
+    public Task<HerdrWorkspaceCreateResult> WorkspaceCreateAsync(
         string? cwd,
+        string? label,
+        CancellationToken cancellationToken) =>
+        WorkspaceCreateAsync(cwd, env: null, label, cancellationToken);
+
+    public async Task<HerdrWorkspaceCreateResult> WorkspaceCreateAsync(
+        string? cwd,
+        IReadOnlyDictionary<string, string>? env,
         string? label,
         CancellationToken cancellationToken)
     {
         var result = await SendRequestAsync(
             "workspace.create",
-            new HerdrWorkspaceCreateParams(Cwd: cwd, Label: label),
+            new HerdrWorkspaceCreateParams(Cwd: cwd, Label: label, Env: env),
             cancellationToken);
-        return DeserializeRequired<HerdrWorkspaceCreateEnvelope>(result, "workspace.create").Workspace;
+        var envelope = DeserializeRequired<HerdrWorkspaceCreateEnvelope>(result, "workspace.create");
+        if (envelope.Tab is null
+            || envelope.RootPane is null
+            || string.IsNullOrWhiteSpace(envelope.Tab.TabId)
+            || string.IsNullOrWhiteSpace(envelope.RootPane.PaneId))
+        {
+            throw new HerdrProtocolException(
+                "Herdr returned a workspace.create result without tab and root_pane.");
+        }
+
+        return new HerdrWorkspaceCreateResult(envelope.Workspace, envelope.Tab, envelope.RootPane);
     }
 
     public async Task WorkspaceReportMetadataAsync(
@@ -186,6 +203,15 @@ public sealed class HerdrClient
         await SendRequestAsync(
             "pane.rename",
             new HerdrPaneRenameParams(paneId, label),
+            cancellationToken);
+    }
+
+    public async Task TabRenameAsync(string tabId, string? label, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tabId);
+        await SendRequestAsync(
+            "tab.rename",
+            new HerdrTabRenameParams(tabId, label),
             cancellationToken);
     }
 

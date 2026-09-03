@@ -131,10 +131,26 @@ public class HerdrClientTests
         empty.ShouldBeEmpty();
 
         await fake.WaitUntilListeningAsync(cts.Token);
-        var created = await client.WorkspaceCreateAsync(@"C:\src\Antiphon", "probe-ws", cts.Token);
-        // P1: workspace.create returns workspace.workspace_id
+        var createEnv = new Dictionary<string, string> { ["ANTIPHON_LAUNCH_SECRET"] = "tok-ws" };
+        var created = await client.WorkspaceCreateAsync(@"C:\src\Antiphon", createEnv, "probe-ws", cts.Token);
+        // P1: workspace.create returns workspace, tab, and root_pane
         created.WorkspaceId.ShouldBe("w1");
-        created.Label.ShouldBe("probe-ws");
+        created.Workspace.Label.ShouldBe("probe-ws");
+        created.Tab.TabId.ShouldBe("w1:t1");
+        created.RootPane.PaneId.ShouldBe("w1:p1");
+        created.RootPane.Cwd.ShouldBe(@"C:\src\Antiphon");
+        fake.Workspaces[0].Tabs[0].Panes[0].Env!["ANTIPHON_LAUNCH_SECRET"].ShouldBe("tok-ws");
+        var createReq = fake.Requests.Last(r => r.GetProperty("method").GetString() == "workspace.create");
+        createReq.GetProperty("params").GetProperty("cwd").GetString().ShouldBe(@"C:\src\Antiphon");
+        createReq.GetProperty("params").GetProperty("env").GetProperty("ANTIPHON_LAUNCH_SECRET")
+            .GetString().ShouldBe("tok-ws");
+
+        await fake.WaitUntilListeningAsync(cts.Token);
+        await client.TabRenameAsync(created.Tab.TabId, "Agent-A", cts.Token);
+        fake.Workspaces[0].Tabs[0].Label.ShouldBe("Agent-A");
+        var tabRename = fake.Requests.Last(r => r.GetProperty("method").GetString() == "tab.rename");
+        tabRename.GetProperty("params").GetProperty("tab_id").GetString().ShouldBe(created.Tab.TabId);
+        tabRename.GetProperty("params").GetProperty("label").GetString().ShouldBe("Agent-A");
 
         await fake.WaitUntilListeningAsync(cts.Token);
         await client.WorkspaceReportMetadataAsync(
@@ -253,6 +269,24 @@ public class HerdrClientTests
         await fake.WaitUntilListeningAsync(cts.Token);
         await client.TabCloseAsync(tab.TabId, cts.Token);
         fake.Workspaces[0].Tabs.Any(t => t.TabId == tab.TabId).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Workspace_create_without_tab_and_root_pane_is_a_protocol_failure()
+    {
+        var pipeName = NewPipeName();
+        var server = ServeOnceAsync(pipeName, async (request, writer, ct) =>
+        {
+            request.GetProperty("method").GetString().ShouldBe("workspace.create");
+            await WriteLineAsync(writer,
+                $"{{\"id\":\"{request.GetProperty("id").GetString()}\",\"result\":{{\"workspace\":{{\"workspace_id\":\"w1\",\"label\":\"x\",\"number\":1,\"active_tab_id\":\"\",\"pane_count\":0,\"tab_count\":0}}}}}}",
+                ct);
+        });
+
+        var error = await Should.ThrowAsync<HerdrProtocolException>(
+            () => ClientFor(pipeName).WorkspaceCreateAsync(@"C:\src", null, "x", CancellationToken.None));
+        error.Message.ShouldContain("tab and root_pane");
+        await server;
     }
 
     [Test]
