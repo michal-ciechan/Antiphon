@@ -330,9 +330,11 @@ public class HerdrAlwaysOnChannelParityTests
             }
 
             definitionName.ShouldNotBe(agent.Name);
-            var tabCreate = fake.Requests.First(r => r.GetProperty("method").GetString() == "tab.create");
-            tabCreate.GetProperty("params").GetProperty("label").GetString().ShouldBe(agent.Name);
-            tabCreate.GetProperty("params").GetProperty("label").GetString().ShouldNotBe(definitionName);
+            fake.Requests.Any(r => r.GetProperty("method").GetString() == "tab.create")
+                .ShouldBeFalse("CARD-0323: first launch uses workspace.create's root pane");
+            var tabRename = fake.Requests.First(r => r.GetProperty("method").GetString() == "tab.rename");
+            tabRename.GetProperty("params").GetProperty("label").GetString().ShouldBe(agent.Name);
+            tabRename.GetProperty("params").GetProperty("label").GetString().ShouldNotBe(definitionName);
             var paneRename = fake.Requests.First(r => r.GetProperty("method").GetString() == "pane.rename");
             paneRename.GetProperty("params").GetProperty("label").GetString().ShouldBe(agent.Name);
             paneRename.GetProperty("params").GetProperty("label").GetString().ShouldNotBe(definitionName);

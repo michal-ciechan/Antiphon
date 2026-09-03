@@ -464,7 +464,7 @@ public class HerdrAdoptionSweepTests
         await using var runtime = BuildRuntime(settings, fake);
         await StartHerdrSessionAsync(runtime, sessionId, settings.SessionLogPath);
         var paneId = fake.RequireAgentPaneId();
-        CountMethod(fake, "tab.create").ShouldBe(1);
+        CountMethod(fake, "tab.create").ShouldBe(0);
 
         var marked = runtime.SweepVanishedSessions(new StubProbe(alive: false));
         marked.ShouldBe([sessionId]);
@@ -480,7 +480,7 @@ public class HerdrAdoptionSweepTests
         var sidecar = HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId));
         sidecar.ShouldNotBeNull();
         sidecar!.PaneId.ShouldBe(paneId);
-        CountMethod(fake, "tab.create").ShouldBe(1, "relaunch in place must not tab.create");
+        CountMethod(fake, "tab.create").ShouldBe(0, "relaunch in place must not tab.create");
         File.Exists(HerdrLastPane.PathFor(settings.SessionLogPath, sessionId)).ShouldBeFalse();
 
         var typed = fake.Requests
@@ -531,7 +531,7 @@ public class HerdrAdoptionSweepTests
         dto.Status.ShouldBe("Running");
         dto.Pid.ShouldBe(777);
         CountMethod(fake, "pane.send_text").ShouldBe(sendTextBefore, "adopt types nothing");
-        CountMethod(fake, "tab.create").ShouldBe(1);
+        CountMethod(fake, "tab.create").ShouldBe(0);
 
         var sidecar = HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId));
         sidecar.ShouldNotBeNull();
@@ -636,7 +636,7 @@ public class HerdrAdoptionSweepTests
 
         var dto = await StartHerdrSessionAsync(runtime, sessionId, settings.SessionLogPath);
         dto.Status.ShouldBe("Running");
-        CountMethod(fake, "tab.create").ShouldBe(2, "unknown pane falls through to the allocator");
+        CountMethod(fake, "tab.create").ShouldBe(1, "unknown pane falls through to the allocator");
         File.Exists(HerdrLastPane.PathFor(settings.SessionLogPath, sessionId)).ShouldBeFalse();
         var sidecar = HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId));
         sidecar.ShouldNotBeNull();
@@ -674,7 +674,7 @@ public class HerdrAdoptionSweepTests
         var sidecar = HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId));
         sidecar.ShouldNotBeNull();
         sidecar!.PaneId.ShouldBe(paneId);
-        CountMethod(fake, "tab.create").ShouldBe(1);
+        CountMethod(fake, "tab.create").ShouldBe(0);
 
         await runtimeB.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
         DeleteLogRoot(settings.SessionLogPath);
@@ -776,7 +776,7 @@ public class HerdrAdoptionSweepTests
 
         var launchedAgain = await StartHerdrSessionAsync(runtime, sessionId, settings.SessionLogPath);
         launchedAgain.Status.ShouldBe("Running");
-        CountMethod(fake, "tab.create").ShouldBeGreaterThanOrEqualTo(1);
+        CountMethod(fake, "tab.create").ShouldBe(0);
         fake.Requests.Any(r =>
             r.GetProperty("method").GetString() == "pane.split"
             && r.GetProperty("params").GetProperty("target_pane_id").GetString() == pane.PaneId)

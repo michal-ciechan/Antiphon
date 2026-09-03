@@ -4,11 +4,12 @@ using Microsoft.Extensions.Logging;
 namespace Antiphon.SessionRunner;
 
 /// <summary>
-/// Herdr-lane <see cref="ISessionChild"/> (CARD-0160 / CARD-0187). Creates/ensures a workspace,
-/// allocates a quad-tab pane, types a launch script (never <c>agent.start</c>), polls
-/// <c>pane.get.agent</c> for the expected kind, and persists ids in <see cref="HerdrPaneSidecar"/>.
-/// Input passthrough: Enter → <c>pane.send_keys</c>; everything else → <c>pane.send_text</c>.
-/// P3: never calls <c>tab.close</c> — herdr auto-removes empty tabs.
+/// Herdr-lane <see cref="ISessionChild"/> (CARD-0160 / CARD-0187 / CARD-0323). Creates/ensures a
+/// workspace, uses the created root pane on first launch or allocates a quad-tab pane, types a
+/// launch script (never <c>agent.start</c>), polls <c>pane.get.agent</c> for the expected kind,
+/// and persists ids in <see cref="HerdrPaneSidecar"/>. Input passthrough: Enter →
+/// <c>pane.send_keys</c>; everything else → <c>pane.send_text</c>. P3: never calls
+/// <c>tab.close</c> — herdr auto-removes empty tabs.
 /// </summary>
 internal sealed class HerdrPaneChild : ISessionChild
 {
@@ -274,8 +275,8 @@ internal sealed class HerdrPaneChild : ISessionChild
 
         await _client.ConnectAndValidateAsync(ct);
 
-        var workspaceId = await EnsureWorkspaceAsync(opts, ct);
-        var target = await ResolveTargetPaneAsync(workspaceId, opts, request, expectedKind, ct);
+        var ensured = await EnsureWorkspaceAsync(opts, request.Env, ct);
+        var target = await ResolveTargetPaneAsync(ensured.WorkspaceId, opts, request, expectedKind, ct);
 
         if (target.Kind == TargetPaneKind.Adopt)
             return await AdoptInPlaceAsync(request, opts, expectedKind, target, ct);
@@ -283,20 +284,31 @@ internal sealed class HerdrPaneChild : ISessionChild
         string tabId;
         string paneId;
         string sidecarWorkspaceId;
+        string? createdRootTabId = null;
+        var useRootWorkingDirectory = false;
         if (target.Kind == TargetPaneKind.Relaunch)
         {
             tabId = target.TabId;
             paneId = target.PaneId;
             sidecarWorkspaceId = target.WorkspaceId;
         }
+        else if (ensured.CreatedRootTab is not null && ensured.CreatedRootPane is not null)
+        {
+            tabId = ensured.CreatedRootTab.TabId;
+            paneId = ensured.CreatedRootPane.PaneId;
+            sidecarWorkspaceId = ensured.WorkspaceId;
+            createdRootTabId = ensured.CreatedRootTab.TabId;
+            useRootWorkingDirectory = true;
+        }
         else
         {
-            (tabId, paneId) = await AllocatePaneAsync(workspaceId, opts, request, ct);
-            sidecarWorkspaceId = workspaceId;
+            (tabId, paneId) = await AllocatePaneAsync(ensured.WorkspaceId, opts, request, ct);
+            sidecarWorkspaceId = ensured.WorkspaceId;
         }
 
         return await CompleteTypedLaunchAsync(
-            request, opts, expectedKind, sidecarWorkspaceId, tabId, paneId, ct);
+            request, opts, expectedKind, sidecarWorkspaceId, tabId, paneId, ct,
+            createdRootTabId, useRootWorkingDirectory);
     }
 
     private enum TargetPaneKind { Allocate, Relaunch, Adopt }
@@ -528,9 +540,14 @@ internal sealed class HerdrPaneChild : ISessionChild
         string workspaceId,
         string tabId,
         string paneId,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? createdRootTabId = null,
+        bool useRootWorkingDirectory = false)
     {
         _paneId = paneId;
+
+        if (createdRootTabId is not null)
+            await _client.TabRenameAsync(createdRootTabId, opts.PaneTitle, ct);
 
         await _client.PaneRenameAsync(paneId, opts.PaneTitle, ct);
         await _client.PaneReportMetadataAsync(
@@ -542,7 +559,11 @@ internal sealed class HerdrPaneChild : ISessionChild
         var shellPid = await RequirePowerShellShellAsync(paneId, ct);
 
         var scriptPath = HerdrLaunchScript.PathFor(_settings.SessionLogPath, request.SessionId);
-        HerdrLaunchScript.Write(scriptPath, request.Exe, request.Args);
+        HerdrLaunchScript.Write(
+            scriptPath,
+            request.Exe,
+            request.Args,
+            useRootWorkingDirectory ? request.Cwd : null);
 
         var typed = HerdrLaunchScript.TypedCommand(scriptPath);
         await _client.PaneSendTextAsync(paneId, typed, ct);
@@ -888,36 +909,88 @@ internal sealed class HerdrPaneChild : ISessionChild
         }
     }
 
-    private async Task<string> EnsureWorkspaceAsync(HerdrLaunchOptions opts, CancellationToken ct)
+    private sealed record EnsuredWorkspace(
+        string WorkspaceId,
+        bool RefreshesAntiphonWorkspaceToken,
+        HerdrTabInfo? CreatedRootTab = null,
+        HerdrPaneInfo? CreatedRootPane = null);
+
+    private async Task<EnsuredWorkspace> EnsureWorkspaceAsync(
+        HerdrLaunchOptions opts,
+        IReadOnlyDictionary<string, string>? env,
+        CancellationToken ct)
     {
         var listed = await _client.WorkspaceListAsync(ct);
-        var match = listed.FirstOrDefault(w =>
-            w.Tokens is not null
-            && w.Tokens.TryGetValue("antiphon-ws", out var key)
-            && string.Equals(key, opts.WorkspaceKey, StringComparison.Ordinal));
-        match ??= listed.FirstOrDefault(w =>
-            string.Equals(w.Label, opts.WorkspaceLabel, StringComparison.Ordinal)
-            && (opts.WorkspaceCwd is null
-                || string.Equals(w.Tokens?.GetValueOrDefault("cwd"), opts.WorkspaceCwd, StringComparison.OrdinalIgnoreCase)));
-
-        string workspaceId;
-        if (match is not null)
+        var tokenMatch = listed.FirstOrDefault(w => TokenEquals(w, opts.WorkspaceKey));
+        if (tokenMatch is not null)
         {
-            workspaceId = match.WorkspaceId;
-        }
-        else
-        {
-            var created = await _client.WorkspaceCreateAsync(opts.WorkspaceCwd, opts.WorkspaceLabel, ct);
-            workspaceId = created.WorkspaceId;
+            await RefreshAntiphonWorkspaceTokenAsync(tokenMatch.WorkspaceId, opts.WorkspaceKey, ct);
+            return new EnsuredWorkspace(tokenMatch.WorkspaceId, RefreshesAntiphonWorkspaceToken: true);
         }
 
-        // Re-report every launch to refresh any TTL (best-effort identity; sidecar is authoritative).
+        var untaggedLabelMatches = listed
+            .Where(w =>
+                string.Equals(w.Label, opts.WorkspaceLabel, StringComparison.Ordinal)
+                && !HasNonEmptyAntiphonWorkspaceToken(w))
+            .ToList();
+        if (untaggedLabelMatches.Count == 1)
+        {
+            return new EnsuredWorkspace(
+                untaggedLabelMatches[0].WorkspaceId,
+                RefreshesAntiphonWorkspaceToken: false);
+        }
+
+        if (untaggedLabelMatches.Count > 1)
+        {
+            _logger.LogInformation(
+                "Ambiguous untagged Herdr workspaces labelled {Label}: {Candidates}; creating a managed workspace",
+                opts.WorkspaceLabel,
+                string.Join(", ", untaggedLabelMatches.Select(w => $"{w.WorkspaceId}/{w.Label}")));
+        }
+
+        var foreignSameLabel = listed
+            .Where(w =>
+                string.Equals(w.Label, opts.WorkspaceLabel, StringComparison.Ordinal)
+                && HasNonEmptyAntiphonWorkspaceToken(w))
+            .ToList();
+        if (foreignSameLabel.Count > 0)
+        {
+            _logger.LogInformation(
+                "Same-label Herdr workspace(s) tagged to a different key for {Label}: {Candidates}; creating a managed workspace",
+                opts.WorkspaceLabel,
+                string.Join(", ", foreignSameLabel.Select(w =>
+                    $"{w.WorkspaceId}/{w.Label} antiphon-ws={w.Tokens!["antiphon-ws"]}")));
+        }
+
+        var created = await _client.WorkspaceCreateAsync(opts.WorkspaceCwd, env, opts.WorkspaceLabel, ct);
+        await RefreshAntiphonWorkspaceTokenAsync(created.WorkspaceId, opts.WorkspaceKey, ct);
+        return new EnsuredWorkspace(
+            created.WorkspaceId,
+            RefreshesAntiphonWorkspaceToken: true,
+            created.Tab,
+            created.RootPane);
+    }
+
+    private async Task RefreshAntiphonWorkspaceTokenAsync(
+        string workspaceId,
+        string workspaceKey,
+        CancellationToken ct)
+    {
         await _client.WorkspaceReportMetadataAsync(
             workspaceId,
-            new Dictionary<string, string?> { ["antiphon-ws"] = opts.WorkspaceKey },
+            new Dictionary<string, string?> { ["antiphon-ws"] = workspaceKey },
             ct);
-        return workspaceId;
     }
+
+    private static bool HasNonEmptyAntiphonWorkspaceToken(HerdrWorkspaceInfo workspace) =>
+        workspace.Tokens is not null
+        && workspace.Tokens.TryGetValue("antiphon-ws", out var key)
+        && !string.IsNullOrEmpty(key);
+
+    private static bool TokenEquals(HerdrWorkspaceInfo workspace, string workspaceKey) =>
+        workspace.Tokens is not null
+        && workspace.Tokens.TryGetValue("antiphon-ws", out var key)
+        && string.Equals(key, workspaceKey, StringComparison.Ordinal);
 
     private async Task<(string TabId, string PaneId)> AllocatePaneAsync(
         string workspaceId,

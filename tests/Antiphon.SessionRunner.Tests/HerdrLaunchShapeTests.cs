@@ -84,9 +84,11 @@ public class HerdrLaunchShapeTests
             .ShouldBeFalse("CARD-0187: production launch never calls agent.start");
         File.Exists(scriptPath).ShouldBeFalse("script is deleted on success");
 
-        var tabCreate = fake.Requests.First(r => r.GetProperty("method").GetString() == "tab.create");
-        tabCreate.GetProperty("params").GetProperty("env").GetProperty("ANTIPHON_LAUNCH_SECRET")
+        var workspaceCreate = fake.Requests.First(r => r.GetProperty("method").GetString() == "workspace.create");
+        workspaceCreate.GetProperty("params").GetProperty("env").GetProperty("ANTIPHON_LAUNCH_SECRET")
             .GetString().ShouldBe(secret);
+        fake.Requests.Any(r => r.GetProperty("method").GetString() == "tab.create")
+            .ShouldBeFalse("CARD-0323: first launch uses workspace.create's root pane");
 
         await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
         DeleteLogRoot(settings.SessionLogPath);
@@ -392,7 +394,7 @@ public class HerdrLaunchShapeTests
 
         var dto = await StartAsync(runtime, sessionId, settings.SessionLogPath, workspaceKey: workspaceKey);
         dto.Status.ShouldBe("Running");
-        fake.Requests.Count(r => r.GetProperty("method").GetString() == "tab.create").ShouldBe(1);
+        fake.Requests.Count(r => r.GetProperty("method").GetString() == "tab.create").ShouldBe(0);
         HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId))!
             .PaneId.ShouldBe(paneId);
 
@@ -422,7 +424,7 @@ public class HerdrLaunchShapeTests
             runtime, freshId, settings.SessionLogPath,
             workspaceKey: workspaceKey, reusePaneOfSessionId: previousId);
         dto.Status.ShouldBe("Running");
-        fake.Requests.Count(r => r.GetProperty("method").GetString() == "tab.create").ShouldBe(1);
+        fake.Requests.Count(r => r.GetProperty("method").GetString() == "tab.create").ShouldBe(0);
         HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(settings.SessionLogPath, freshId))!
             .PaneId.ShouldBe(paneId);
         File.Exists(HerdrLastPane.PathFor(settings.SessionLogPath, previousId)).ShouldBeFalse();
@@ -473,14 +475,16 @@ public class HerdrLaunchShapeTests
         await using var runtime = BuildRuntime(settings, fake);
         await StartAsync(runtime, sessionId, settings.SessionLogPath);
         var paneId = fake.RequireAgentPaneId();
+        var afterFirst = fake.Requests.Count;
         runtime.SweepVanishedSessions(new DeadProcessProbe());
         fake.ClearDetectedAgent(paneId);
         fake.SetPaneProcessInfo(paneId, shellPid: 1);
 
         await StartAsync(runtime, sessionId, settings.SessionLogPath);
-        fake.Requests.Any(r => r.GetProperty("method").GetString() == "tab.rename").ShouldBeFalse();
-        fake.Requests.Any(r => r.GetProperty("method").GetString() == "pane.split").ShouldBeFalse();
-        fake.Requests.Count(r => r.GetProperty("method").GetString() == "tab.create").ShouldBe(1);
+        var relaunch = fake.Requests.Skip(afterFirst).ToList();
+        relaunch.Any(r => r.GetProperty("method").GetString() == "tab.rename").ShouldBeFalse();
+        relaunch.Any(r => r.GetProperty("method").GetString() == "pane.split").ShouldBeFalse();
+        relaunch.Any(r => r.GetProperty("method").GetString() == "tab.create").ShouldBeFalse();
 
         await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
         DeleteLogRoot(settings.SessionLogPath);

@@ -560,7 +560,7 @@ public class HerdrAttachTests
                     AgentKind: HerdrAgentKinds.Grok)),
             CancellationToken.None);
 
-        Methods(fake).Count(m => m == "tab.create").ShouldBe(1);
+        Methods(fake).Count(m => m == "tab.create").ShouldBe(0);
         Methods(fake).ShouldNotContain("pane.split");
 
         await runtime.KillAsync(launchId, TimeSpan.FromSeconds(2), CancellationToken.None);
