@@ -375,6 +375,144 @@ public class ChannelFollowUpAttachmentTests
         h.Messaging.SentReplies[1].Attachments.ShouldHaveSingleItem().Name.ShouldBe("late.pdf");
     }
 
+    [Test]
+    public async Task A_task_done_turn_without_markers_still_sends_the_undelivered_bundle()
+    {
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var prompt = "[Telegram \"Family\" — Mike 23:31] CARD-0002 cleanup";
+        await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
+        await h.InsertTurnAsync(prompt, "On it.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        var (taskId, files) = await SeedBundleTaskAsync(h, mdCount: 4);
+        var note = "[task 3f4a6029 done] CARD-0002 is Done at 7bd8eba0";
+        await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation, taskId);
+        await h.InsertTurnAsync(note, "CARD-0002 is Done at 7bd8eba0");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.Count.ShouldBe(2);
+        var followUp = h.Messaging.SentReplies[1];
+        followUp.Text.ShouldBe("CARD-0002 is Done at 7bd8eba0");
+        followUp.Attachments.Count.ShouldBe(4);
+        followUp.Attachments.Select(a => a.Name).ShouldBe(files.Select(Path.GetFileName), ignoreOrder: true);
+        (await TaskRowAsync(taskId)).DeliverableDeliveredAt.ShouldNotBeNull();
+    }
+
+    [Test]
+    public async Task Implied_bundle_delivery_is_idempotent_across_re_triggers_and_restart()
+    {
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var prompt = "[Telegram \"Family\" — Mike 23:32] files";
+        await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
+        await h.InsertTurnAsync(prompt, "Ack.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        var (taskId, _) = await SeedBundleTaskAsync(h, mdCount: 2);
+        var note = "[task ab12cd34 done] shipped";
+        var injectionId = await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation, taskId);
+        await h.InsertTurnAsync(note, "Shipped.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        h.Messaging.SentReplies.Count.ShouldBe(2);
+
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await Restarted(h).OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.Count.ShouldBe(2);
+        (await RowAsync(injectionId)).ChannelReplySettledAt.ShouldNotBeNull();
+        (await TaskRowAsync(taskId)).DeliverableDeliveredAt.ShouldNotBeNull();
+    }
+
+    [Test]
+    public async Task Explicit_markers_win_order_and_dedupe_implied_paths()
+    {
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var prompt = "[Telegram \"Family\" — Mike 23:33] pdf please";
+        await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
+        await h.InsertTurnAsync(prompt, "Ack.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        var (taskId, files) = await SeedBundleTaskAsync(h, mdCount: 2, withPdf: true);
+        var pdf = files[0];
+        var note = "[task cd34ef56 done] here";
+        await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation, taskId);
+        await h.InsertTurnAsync(note, $"Here.\n[[attach: {pdf}]]");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        var followUp = h.Messaging.SentReplies[1];
+        followUp.Attachments.Count.ShouldBe(3, "pdf + 2 md, not a duplicate pdf");
+        followUp.Attachments[0].Name.ShouldBe(Path.GetFileName(pdf));
+    }
+
+    [Test]
+    public async Task An_exact_NO_REPLY_without_markers_holds_the_bundle()
+    {
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var prompt = "[Telegram \"Family\" — Mike 23:34] quiet";
+        await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
+        await h.InsertTurnAsync(prompt, "Ack.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        var (taskId, _) = await SeedBundleTaskAsync(h, mdCount: 2);
+        var note = "[task 00ff00ff done] silent";
+        var injectionId = await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation, taskId);
+        await h.InsertTurnAsync(note, "NO_REPLY");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.Count.ShouldBe(1, "NO_REPLY holds; the bundle is not sent");
+        (await RowAsync(injectionId)).ChannelReplySettledAt.ShouldBeNull();
+        (await TaskRowAsync(taskId)).DeliverableDeliveredAt.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task An_over_budget_pdf_is_skipped_with_a_warning_and_sources_still_stamp()
+    {
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var prompt = "[Telegram \"Family\" — Mike 23:35] big pdf";
+        await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
+        await h.InsertTurnAsync(prompt, "Ack.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        var (taskId, files) = await SeedBundleTaskAsync(h, mdCount: 1, withPdf: true, pdfBytes: 15 * 1024 * 1024);
+        var note = "[task big00001 done] spec";
+        await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation, taskId);
+        await h.InsertTurnAsync(note, "The spec.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        var followUp = h.Messaging.SentReplies[1];
+        followUp.Text.ShouldContain("⚠️");
+        followUp.Attachments.ShouldHaveSingleItem().Name.ShouldBe(Path.GetFileName(files[1]));
+        (await TaskRowAsync(taskId)).DeliverableDeliveredAt.ShouldNotBeNull(
+            "sources landed, so the bundle is delivered even though the PDF was over cap");
+    }
+
+    [Test]
+    public async Task All_over_cap_files_send_the_text_but_do_not_stamp()
+    {
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var prompt = "[Telegram \"Family\" — Mike 23:36] huge";
+        await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
+        await h.InsertTurnAsync(prompt, "Ack.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        var (taskId, _) = await SeedBundleTaskAsync(h, mdCount: 0, withPdf: true, pdfBytes: 15 * 1024 * 1024);
+        var note = "[task huge0001 done] spec";
+        await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation, taskId);
+        await h.InsertTurnAsync(note, "The spec.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.Count.ShouldBe(2);
+        var followUp = h.Messaging.SentReplies[1];
+        followUp.Text.ShouldContain("⚠️");
+        followUp.Attachments.ShouldBeEmpty();
+        (await TaskRowAsync(taskId)).DeliverableDeliveredAt.ShouldBeNull();
+    }
+
     private static string WriteFile(BridgeQueueHarness h, string name, byte[] bytes)
     {
         var path = Path.Combine(h.TempRoot, name);
@@ -383,7 +521,7 @@ public class ChannelFollowUpAttachmentTests
     }
 
     private static async Task<Guid> SeedMachineInjectionAsync(
-        BridgeQueueHarness h, string body, QueuedMessageOrigin origin)
+        BridgeQueueHarness h, string body, QueuedMessageOrigin origin, Guid? sourceTaskId = null)
     {
         await using var db = CreateContext();
         var seq = ((await db.SessionQueuedMessages
@@ -399,12 +537,71 @@ public class ChannelFollowUpAttachmentTests
             Status = QueuedMessageStatus.Sent,
             Sequence = seq,
             Origin = origin,
+            SourceTaskId = sourceTaskId,
             CreatedAt = sent,
             SentAt = sent,
             DeliveryAttempts = 1,
         });
         await db.SaveChangesAsync();
         return id;
+    }
+
+    private static async Task<AgentTask> TaskRowAsync(Guid id)
+    {
+        await using var db = CreateContext();
+        return await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == id);
+    }
+
+    /// <summary>PDF first in the returned list when <paramref name="withPdf"/> is set, then the .md copies.</summary>
+    private static async Task<(Guid TaskId, string[] Files)> SeedBundleTaskAsync(
+        BridgeQueueHarness h, int mdCount, bool withPdf = false, int pdfBytes = 64)
+    {
+        var taskId = Guid.NewGuid();
+        var shortId = DelegationReportFormatter.Short(taskId);
+        var bundleDir = Path.Combine(h.TempRoot, ".antiphon", "deliverables", shortId);
+        Directory.CreateDirectory(bundleDir);
+        var files = new List<string>();
+        string? pdfPath = null;
+        if (withPdf)
+        {
+            pdfPath = Path.Combine(bundleDir, $"{shortId}-spec.pdf");
+            var bytes = new byte[pdfBytes];
+            "%PDF-"u8.CopyTo(bytes);
+            File.WriteAllBytes(pdfPath, bytes);
+            files.Add(pdfPath);
+        }
+
+        for (var i = 1; i <= mdCount; i++)
+        {
+            var path = Path.Combine(bundleDir, $"0{i}-doc.md");
+            File.WriteAllText(path, $"# doc {i}\n");
+            files.Add(path);
+        }
+
+        File.WriteAllText(Path.Combine(bundleDir, "render.log"), "ok\n");
+
+        await using var db = CreateContext();
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = taskId,
+            RootTaskId = taskId,
+            Title = "Docs bundle",
+            Goal = "Write the spec.",
+            Kind = AgentTaskKind.Worker,
+            Role = AgentTaskRole.Custom,
+            ModelLevel = AgentModelLevel.Medium,
+            Workspace = WorkspaceMode.Worktree,
+            WorkingDirectory = h.TempRoot,
+            RepoPath = h.TempRoot,
+            Status = AgentTaskStatus.Succeeded,
+            DeliverableBundleDir = bundleDir,
+            DeliverablePdfPath = pdfPath,
+            DeliverableFileCount = mdCount,
+            CreatedAt = DateTime.UtcNow,
+            CompletedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+        return (taskId, files.ToArray());
     }
 
     private sealed class ToggleFailProducer : IAntiphonMessagingProducer

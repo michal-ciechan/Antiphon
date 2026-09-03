@@ -799,9 +799,17 @@ public sealed class ChannelReplyDispatcher
     /// skipped with a note appended to the text so the agent's mistake is visible in the chat.
     /// </summary>
     private (string Text, IReadOnlyList<OutboundAttachment> Attachments) PrepareReplyBody(
-        string responseText, Guid sessionId)
+        string responseText, Guid sessionId, IReadOnlyList<string>? extraPaths = null)
     {
-        var (text, paths) = ChannelContracts.ExtractAttachments(responseText);
+        var (text, explicitPaths) = ChannelContracts.ExtractAttachments(responseText);
+        var paths = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in explicitPaths.Concat(extraPaths ?? []))
+        {
+            if (seen.Add(path))
+                paths.Add(path);
+        }
+
         if (paths.Count == 0)
             return (responseText, []);
 
@@ -1019,9 +1027,7 @@ public sealed class ChannelReplyDispatcher
         if (string.IsNullOrWhiteSpace(responseText))
             return;
 
-        var (_, paths) = ChannelContracts.ExtractAttachments(responseText);
-        if (paths.Count == 0)
-            return;
+        var (_, explicitPaths) = ChannelContracts.ExtractAttachments(responseText);
 
         var normalizedTurn = Normalize(promptText);
 
@@ -1046,11 +1052,23 @@ public sealed class ChannelReplyDispatcher
         var matches = candidates.Where(m => PromptsMatch(Normalize(m.Body), normalizedTurn)).ToList();
         if (matches.Count == 0)
         {
+            if (explicitPaths.Count == 0)
+                return;
             await ReportAttachmentsDroppedAsync(
                 sessionId, userPrompt.Sequence, conversationKey,
                 AlertSeverity.Warning, "UnmatchedHuman", ct);
             return;
         }
+
+        var (impliedPaths, impliedTasks) = await CollectImpliedAttachmentsAsync(db, matches, ct);
+
+        // CARD-0337 S3: an exact NO_REPLY with no explicit markers holds the bundle. The
+        // orchestrator chose silence; S5's Done-time check catches it later.
+        if (ChannelContracts.IsNoReply(responseText) && explicitPaths.Count == 0)
+            return;
+
+        if (explicitPaths.Count == 0 && impliedPaths.Count == 0)
+            return;
 
         if (!TrySplitConversationKey(conversationKey, out var provider, out var conversationId))
         {
@@ -1074,7 +1092,7 @@ public sealed class ChannelReplyDispatcher
 
         await SettleAsync(db, matches, ct);
 
-        var (bodyText, attachments) = PrepareReplyBody(responseText, sessionId);
+        var (bodyText, attachments) = PrepareReplyBody(responseText, sessionId, impliedPaths);
         // A remaining-text of NO_REPLY still sends — the marker is the explicit ask. Empty text
         // (the file IS the follow-up), never a skip.
         if (ChannelContracts.IsNoReply(bodyText))
@@ -1094,6 +1112,8 @@ public sealed class ChannelReplyDispatcher
                 Attachments = attachments,
             };
             await _producer.SendAsync(reply, ct);
+            StampDeliveredBundles(impliedTasks, attachments, _timeProvider.GetUtcNow().UtcDateTime);
+            await db.SaveChangesAsync(ct);
             _logger.LogInformation(
                 "Sent machine-turn follow-up {Kind} reply ({Chars} chars, {AttachmentCount} attachment(s)) "
                 + "to {Provider} conversation {ConversationId} from session {SessionId}",
@@ -1103,11 +1123,63 @@ public sealed class ChannelReplyDispatcher
         {
             foreach (var m in matches)
                 m.ChannelReplySettledAt = null;
+            foreach (var task in impliedTasks)
+                task.DeliverableDeliveredAt = null;
             await db.SaveChangesAsync(CancellationToken.None);
             _logger.LogError(ex,
                 "Producing the machine-turn attachment follow-up for session {SessionId} failed; "
                 + "{Count} injection row(s) returned to unclaimed for the next turn end",
                 sessionId, matches.Count);
+        }
+    }
+
+    /// <summary>
+    /// CARD-0337 S3: undelivered bundle files for matched Delegation rows (PDF first, then sources).
+    /// Check/System rows contribute none. Deduped by full path.
+    /// </summary>
+    private static async Task<(List<string> Paths, List<AgentTask> Tasks)> CollectImpliedAttachmentsAsync(
+        AppDbContext db,
+        IReadOnlyList<SessionQueuedMessage> matches,
+        CancellationToken ct)
+    {
+        var paths = new List<string>();
+        var tasks = new List<AgentTask>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in matches)
+        {
+            if (row.Origin != QueuedMessageOrigin.Delegation || row.SourceTaskId is not Guid taskId)
+                continue;
+            var task = await db.AgentTasks.FirstOrDefaultAsync(t => t.Id == taskId, ct);
+            if (task is null
+                || string.IsNullOrWhiteSpace(task.DeliverableBundleDir)
+                || task.DeliverableDeliveredAt is not null)
+                continue;
+            var files = DeliverableBundleService.ListAttachableFiles(task);
+            if (files.Count == 0)
+                continue;
+            tasks.Add(task);
+            foreach (var file in files)
+            {
+                if (seen.Add(file))
+                    paths.Add(file);
+            }
+        }
+
+        return (paths, tasks);
+    }
+
+    private static void StampDeliveredBundles(
+        IReadOnlyList<AgentTask> impliedTasks,
+        IReadOnlyList<OutboundAttachment> attachments,
+        DateTime now)
+    {
+        var attached = new HashSet<string>(
+            attachments.Select(a => a.Source ?? ""), StringComparer.OrdinalIgnoreCase);
+        foreach (var task in impliedTasks)
+        {
+            var files = DeliverableBundleService.ListAttachableFiles(task);
+            if (files.Any(f => attached.Contains(f)))
+                task.DeliverableDeliveredAt = now;
         }
     }
 
