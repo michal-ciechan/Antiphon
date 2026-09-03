@@ -94,6 +94,15 @@ the agent also works and is what a profile saved before CARD-0182 does (the back
 field on a new revision is what then activates "no argument". An exact model on a blank-field
 profile is 409 `model_argument_unsupported`.
 
+**Launch env the gkp profile needs (CARD-0341).** A gkp launch is refused by the session runner on
+the herdr lane (409 `herdr_gkp_env_missing`, stored as the session's `FailureReason`) unless the
+merged launch env carries `X_LLM_PROJECT` (or the profile passes a literal `--project` value),
+`GROK_BASE_URL`, and a dummy `XAI_API_KEY` (or `GROK_CODE_XAI_API_KEY`); `GROK_CLI_CHAT_PROXY_BASE_URL`
+should be there too or Grok's chat-proxy calls go to its default `cli-chat-proxy.grok.com`. Seed
+them on the project's `DefaultLaunchEnv` (every agent on that board inherits) or the agent's
+`launchEnv`. A `--project $env:X_LLM_PROJECT` argument is resolved to the env value before the
+herdr launch script single-quotes it, so the wrapper sees the project whichever pane it lands in.
+
 ## Key custody
 
 - Default key ring (Windows): `%LOCALAPPDATA%\Antiphon\DataProtection-Keys`

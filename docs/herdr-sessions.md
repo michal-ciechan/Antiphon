@@ -186,7 +186,9 @@ allocator slot.** The allocator only sees live Antiphon panes; operator tabs sta
 
 When Antiphon **creates** a workspace, the first launch uses `workspace.create`'s returned root
 tab and root pane instead of the allocator's `tab.create` branch, then `tab.rename`s that new tab
-to `PaneTitle`. Env is passed on `workspace.create` (same as `tab.create` / `pane.split`); if the
+to `PaneTitle`. Env is passed on `workspace.create` (same as `tab.create` / `pane.split`), **and
+the launch script applies it again itself** (CARD-0341, below) — the herdr-side env only reaches
+a shell herdr creates, never a reused one; if the
 session cwd differs from the workspace cwd, the launch script prepends a quoted
 `Set-Location -LiteralPath`. A later launch into that same owned workspace goes through the
 allocator as usual. Reusing an untagged operator workspace never consumes its existing root: it
@@ -197,8 +199,11 @@ this session id, or `ReusePaneOfSessionId`) → then either relaunch/adopt in pl
 created root tab/pane, or allocate (`tab.create` / `pane.split`, env on both) → `tab.rename` of a
 created root only → `pane.rename` → `pane.report_metadata` → check the
 pane shell is PowerShell → write
-`<SessionLogPath>/herdr/<sessionId:N>.launch.ps1` (UTF-8 with BOM; `'exe' @(args)`, optional
-`Set-Location` prelude on a created root) → type
+`<SessionLogPath>/herdr/<sessionId:N>.launch.ps1` (UTF-8 with BOM; one
+`Remove-Item -LiteralPath 'Env:NAME'` per stale name on a relaunch, one
+`Set-Item -LiteralPath 'Env:NAME' -Value '…'` per launch-env entry in ordinal order, optional
+`Set-Location` prelude on a created root, then `& 'exe' @(args)` with any whole-argument
+`$env:NAME` / `${env:NAME}` token resolved from the launch env before quoting — CARD-0341) → type
 `& '<path>'` via `pane.send_text` + `pane.send_keys ["enter"]` → poll `pane.get` until
 `Agent` matches the expected kind (`claude` / `grok` / `codex`) → `agent.list` → `agent.rename
 <paneId> <slug>` (suffixed `-2`… if a live agent holds it; skipped, Warning, if the list or
@@ -209,13 +214,27 @@ rename fails) → `pane.process_info` for the child pid → write the sidecar �
 | Pane state | Decision |
 |---|---|
 | No last-pane record, or pane unknown to `pane.get` | allocator (today's path) |
-| Empty PowerShell pane that was ours (`Origin = launched`) | **relaunch in place** — type the launch script into that pane; no `tab.create` / `pane.split` / `tab.rename` |
+| Empty PowerShell pane that was ours (`Origin = launched`) | **relaunch in place** — type the launch script into that pane; no `tab.create` / `pane.split` / `tab.rename`. The script re-applies this launch's env and removes the names the previous launch set that this one does not carry (the sidecar / last-pane record keeps `LaunchEnvNames` — names only, never values) |
 | Live process whose argv names **our** session id (`--session-id` / `--resume` / `-s`/`-r`) and `pane.Agent` matches | **adopt in place** — bind the pid, type nothing |
 | Occupied by a different id, no id, a different kind, or more than one foreground process | **refuse** (`pane_occupied`) — never steal, never fall back to the allocator. The last-pane record is kept so a later backoff can retry once the pane is free. Codex never carries a session id in argv, so an occupied Codex pane is always refused. |
 A wrong detected kind, a non-PowerShell shell, or a detection timeout fails the launch
-(existing catch kills then disposes); the script is left in place for diagnosis. A rename
+(existing catch kills then disposes); the script is left in place for diagnosis **with every
+env value rewritten as `<redacted>`** and the `$env:` tokens unresolved (CARD-0341) — a secret
+never outlives a failed launch on disk. A rename
 failure never fails the launch. **Never `agent.start`.** Target the rename by pane id, never
 by name — a name target could resolve to another live agent.
+
+**gkp gate (CARD-0341).** A launch whose arguments name `gkp.ps1` (the local llm-key-proxy Grok
+wrapper) is refused **before herdr is contacted** — nothing allocated, renamed, or typed — unless
+the launch env can route it: a resolvable project (`X_LLM_PROJECT`, or a literal `--project`
+value), `GROK_BASE_URL`, and a dummy key (`XAI_API_KEY` or `GROK_CODE_XAI_API_KEY`). The runner
+answers 409 `herdr_gkp_env_missing` naming the missing facts; the server stores that detail as
+the session's `FailureReason`. Measured reason: a gkp launch typed into a reused pane with none
+of these exits 2 or falls through to real grok.com OAuth / `cli-chat-proxy.grok.com` instead of
+the local proxy. A missing `GROK_CLI_CHAT_PROXY_BASE_URL` is a Warning, not a refusal. The gate
+keys on the wrapper file name, so pool `grok.exe` launches (#28) never trip it. Fix a refusal by
+seeding the names on the agent's `launchEnv` or the project's `DefaultLaunchEnv` — never by
+launching bare `grok.exe`.
 
 **Never call `tab.close`.** Herdr auto-removes empty tabs, and closing one ourselves was measured
 to be the wrong move (probe P3). `KillAsync` also refuses to close a pane that has *unexpected*
