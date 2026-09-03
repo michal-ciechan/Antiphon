@@ -264,8 +264,9 @@ public class AgentWorkspaceProvisionerTests
         var content = scratch.ReadFloor();
         content.ShouldContain("## You are channel-bound (slack \"PredictionMarkets\", telegram \"Family\")");
         content.ShouldContain("[[attach: <absolute path>]]");
+        content.ShouldContain("Your reply to a `[task …]`, `[check …]` or scheduled note is delivered to the chat as a follow-up unless it is exactly `NO_REPLY`");
         content.ShouldContain("A delegate's");
-        content.ShouldContain("is not delivered to the chat");
+        content.ShouldContain("--- deliverable ---");
         content.ShouldContain("Slack renders HTML as a text snippet");
     }
 

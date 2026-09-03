@@ -1,3 +1,6 @@
+using Antiphon.Server.Domain.Enums;
+using Microsoft.Extensions.Options;
+
 namespace Antiphon.Server.Application.Settings;
 
 /// <summary>
@@ -46,4 +49,43 @@ public sealed class ChannelBridgeSettings
     /// per turn (context + current markers). Off = one message per turn (pre-epic behaviour).
     /// </summary>
     public bool BatchingEnabled { get; set; } = true;
+
+    /// <summary>
+    /// CARD-0338: machine-triggered turn origins whose plain text is delivered as a follow-up
+    /// <c>ChannelReply</c> (opt out with exact <c>NO_REPLY</c>). Empty = attachments only (CARD-0250).
+    /// <see cref="QueuedMessageOrigin.Channel"/>, <see cref="QueuedMessageOrigin.Ui"/> and
+    /// <see cref="QueuedMessageOrigin.Supervision"/> are rejected — the main path owns Channel,
+    /// and operator/supervision turns must stay silent. <see cref="QueuedMessageOrigin.System"/>
+    /// is accepted if listed; the default excludes it so READY/housekeeping never reach a chat.
+    /// </summary>
+    public List<QueuedMessageOrigin> MachineTurnTextOrigins { get; set; } =
+    [
+        QueuedMessageOrigin.Delegation,
+        QueuedMessageOrigin.Check,
+        QueuedMessageOrigin.Scheduled,
+    ];
+}
+
+public sealed class ChannelBridgeSettingsValidator : IValidateOptions<ChannelBridgeSettings>
+{
+    private static readonly QueuedMessageOrigin[] Forbidden =
+    [
+        QueuedMessageOrigin.Channel,
+        QueuedMessageOrigin.Ui,
+        QueuedMessageOrigin.Supervision,
+    ];
+
+    public ValidateOptionsResult Validate(string? name, ChannelBridgeSettings settings)
+    {
+        var origins = settings.MachineTurnTextOrigins;
+        if (origins is null)
+            return ValidateOptionsResult.Success;
+        var rejected = origins.Where(o => Forbidden.Contains(o)).Distinct().ToList();
+        if (rejected.Count == 0)
+            return ValidateOptionsResult.Success;
+        return ValidateOptionsResult.Fail(
+            "ChannelBridge:MachineTurnTextOrigins must not include Channel, Ui, or Supervision "
+            + $"(got {string.Join(", ", rejected)}). The main path owns Channel; operator and "
+            + "supervision turns stay silent. Leave the list empty for attachments-only.");
+    }
 }

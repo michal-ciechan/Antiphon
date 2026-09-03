@@ -191,6 +191,9 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("character varying(4000)");
 
+                    b.Property<DateTime?>("HumanNotifiedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<int>("Kind")
                         .HasColumnType("integer");
 

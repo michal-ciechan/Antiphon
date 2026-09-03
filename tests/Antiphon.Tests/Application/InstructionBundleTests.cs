@@ -243,8 +243,11 @@ public class InstructionBundleTests
         DelegationReportFormatter.OrchestratorContract.ShouldContain("CompletedWithoutProgress");
         DelegationReportFormatter.OrchestratorContract.ShouldContain("Do not paste, log, or repeat credentials");
         DelegationReportFormatter.OrchestratorContract.ShouldContain(
-            "If you are channel-bound (Slack/Telegram), the chat does NOT see every turn.");
-        DelegationReportFormatter.OrchestratorContract.ShouldContain("re-emit `[[attach:]]` yourself");
+            "If you are channel-bound (Slack/Telegram), the chat sees two kinds of turn.");
+        DelegationReportFormatter.OrchestratorContract.ShouldContain(
+            "your whole reply is exactly `NO_REPLY`");
+        DelegationReportFormatter.OrchestratorContract.ShouldContain(
+            "A delegate's own `[[attach:]]` reaches only you, as text.");
         // CARD-0296: the pointer at the read-oriented HTTP surface. Without it an orchestrator
         // greps MapGet for routes that do not exist and reads the 404s as a broken server.
         DelegationReportFormatter.OrchestratorContract.ShouldContain("docs/ops-http.md");

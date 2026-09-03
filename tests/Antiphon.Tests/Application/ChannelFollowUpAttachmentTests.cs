@@ -345,8 +345,10 @@ public class ChannelFollowUpAttachmentTests
     }
 
     [Test]
-    public async Task A_first_trigger_without_markers_does_not_claim_so_a_later_batch_still_sends()
+    public async Task A_first_trigger_without_markers_delivers_text_and_trailing_attach_still_follows()
     {
+        // CARD-0338 S1: unmarked Delegation text is claimed and sent; a later [[attach:]] in the
+        // same turn still follows via the _dispatched watermark (DispatchFollowUpAsync).
         await using var h = await CreateHarnessAsync();
         var chatId = await h.BindChannelAsync();
         var prompt = "[Telegram \"Family\" — Mike 10:45] wait for the file";
@@ -363,16 +365,16 @@ public class ChannelFollowUpAttachmentTests
         await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
 
-        h.Messaging.SentReplies.Count.ShouldBe(1);
-        (await RowAsync(injectionId)).ChannelReplySettledAt.ShouldBeNull(
-            "text without markers must not claim, or a later [[attach:]] in the same turn is lost");
+        h.Messaging.SentReplies.Count.ShouldBe(2, "unmarked Delegation text is a follow-up");
+        h.Messaging.SentReplies[1].Text.ShouldBe("Working on the file.");
+        (await RowAsync(injectionId)).ChannelReplySettledAt.ShouldNotBeNull();
 
         await h.InsertTranscriptEntryAsync(
             TranscriptKinds.AssistantText, $"[[attach: {pdf}]]");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
 
-        h.Messaging.SentReplies.Count.ShouldBe(2);
-        h.Messaging.SentReplies[1].Attachments.ShouldHaveSingleItem().Name.ShouldBe("late.pdf");
+        h.Messaging.SentReplies.Count.ShouldBe(3);
+        h.Messaging.SentReplies[2].Attachments.ShouldHaveSingleItem().Name.ShouldBe("late.pdf");
     }
 
     [Test]

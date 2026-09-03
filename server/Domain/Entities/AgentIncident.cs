@@ -28,5 +28,12 @@ public class AgentIncident
     public string? FailureReason { get; set; }
     public DateTime CreatedAt { get; set; }
 
+    /// <summary>
+    /// CARD-0338 S3: when the digest pager sent this incident to DigestEnabled channels.
+    /// Not an acknowledgement — a second loss an hour later is a second page. Backfilled to
+    /// <see cref="CreatedAt"/> on migrate so a deploy never pages history.
+    /// </summary>
+    public DateTime? HumanNotifiedAt { get; set; }
+
     public Agent? Agent { get; set; }
 }

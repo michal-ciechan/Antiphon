@@ -1,3 +1,4 @@
+using Antiphon.Server.Domain.Enums;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Settings;
@@ -10,6 +11,12 @@ public sealed class DigestSettings
     public string TimeZone { get; set; } = "Europe/London";
     public bool WakeOnBlocked { get; set; } = true;
     public bool WakeOnDecision { get; set; } = true;
+    /// <summary>
+    /// CARD-0338 S3: Critical incident kinds that page every DigestEnabled channel once.
+    /// Empty = do not page on incidents. Default is ChannelReplyLost; ProviderCapacity is
+    /// excluded in the notifier (CARD-0281 already notified).
+    /// </summary>
+    public List<AgentIncidentKind> WakeOnIncidentKinds { get; set; } = [AgentIncidentKind.ChannelReplyLost];
     public int SweepSeconds { get; set; } = 60;
     public int MaxChars { get; set; } = 3500;
     public int RowsPerSection { get; set; } = 5;

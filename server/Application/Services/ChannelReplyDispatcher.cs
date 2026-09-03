@@ -148,11 +148,12 @@ public sealed class ChannelReplyDispatcher
             if (_dispatched.ContainsKey(sessionId))
                 await DispatchFollowUpAsync(sessionId, ct);
 
-            // CARD-0250: a later machine-triggered turn (task-done / check-in / system note) that
-            // carries [[attach:]] still reaches the last-known conversation after the ack turn
-            // settled the Channel correlation. Additive; never matches or settles Channel-origin
-            // rows. The main path always wins first claim on the turn.
-            await DispatchMachineTurnAttachmentsAsync(sessionId, ct);
+            // CARD-0250 / CARD-0338: a later machine-triggered turn (task-done / check-in /
+            // scheduled / system note) still reaches the last-known conversation after the ack
+            // turn settled the Channel correlation. Attachments always; plain text for origins
+            // in MachineTurnTextOrigins. Additive; never matches or settles Channel-origin rows.
+            // The main path always wins first claim on the turn.
+            await DispatchMachineTurnFollowUpAsync(sessionId, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -982,18 +983,20 @@ public sealed class ChannelReplyDispatcher
     }
 
     /// <summary>
-    /// CARD-0250: after the Channel-origin match/settle path has had first claim, a later turn
-    /// whose owning prompt is one of Antiphon's own injections (Delegation / Check / System) and
-    /// whose AssistantText carries <c>[[attach:]]</c> is published as a follow-up
-    /// <see cref="ChannelReply"/> to the session's newest Channel-origin conversation.
+    /// CARD-0250 / CARD-0338: after the Channel-origin match/settle path has had first claim, a
+    /// later turn whose owning prompt is one of Antiphon's own injections (Delegation / Check /
+    /// System / Scheduled) is published as a follow-up <see cref="ChannelReply"/> to the session's
+    /// newest Channel-origin conversation. Attachments always; plain text when the matched origin
+    /// is in <see cref="Settings.ChannelBridgeSettings.MachineTurnTextOrigins"/> (opt out with
+    /// exact <c>NO_REPLY</c>).
     ///
     /// Idempotency reuses the injection row's own <see cref="SessionQueuedMessage.ChannelReplySettledAt"/>
     /// as the claim-before-produce marker. <see cref="OpenCorrelations"/> filters
     /// <c>Origin == Channel</c>, so this is invisible to correlation logic and costs no migration.
-    /// A first trigger that sees text without markers does not claim — a marker landing in a later
-    /// transcript batch of the same turn still sends.
+    /// A successful send records the <c>_dispatched</c> watermark so trailing AssistantText of the
+    /// same turn follows via <see cref="DispatchFollowUpAsync"/>.
     /// </summary>
-    private async Task DispatchMachineTurnAttachmentsAsync(Guid sessionId, CancellationToken ct)
+    private async Task DispatchMachineTurnFollowUpAsync(Guid sessionId, CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -1020,7 +1023,7 @@ public sealed class ChannelReplyDispatcher
         if (userPrompt?.Text is not string promptText)
             return;
 
-        var (responseText, _, containsApiErrorStub) =
+        var (responseText, maxTextSeq, containsApiErrorStub) =
             await ExtractTurnResponseAsync(db, sessionId, userPrompt.Sequence, ct);
         if (containsApiErrorStub)
             return;
@@ -1044,7 +1047,8 @@ public sealed class ChannelReplyDispatcher
             .Where(m => m.AgentSessionId == sessionId
                 && (m.Origin == QueuedMessageOrigin.Delegation
                     || m.Origin == QueuedMessageOrigin.Check
-                    || m.Origin == QueuedMessageOrigin.System)
+                    || m.Origin == QueuedMessageOrigin.System
+                    || m.Origin == QueuedMessageOrigin.Scheduled)
                 && m.Status == QueuedMessageStatus.Sent
                 && m.ChannelReplySettledAt == null)
             .OrderBy(m => m.Sequence)
@@ -1067,8 +1071,16 @@ public sealed class ChannelReplyDispatcher
         if (ChannelContracts.IsNoReply(responseText) && explicitPaths.Count == 0)
             return;
 
-        if (explicitPaths.Count == 0 && impliedPaths.Count == 0)
+        var hasAttachments = explicitPaths.Count > 0 || impliedPaths.Count > 0;
+        var deliverText = !hasAttachments && AdmitsMachineTurnText(matches);
+        if (!hasAttachments && !deliverText)
+        {
+            _logger.LogDebug(
+                "Machine-turn follow-up on session {SessionId} held: origin not in "
+                + "MachineTurnTextOrigins and the turn has no attach markers or implied bundle",
+                sessionId);
             return;
+        }
 
         if (!TrySplitConversationKey(conversationKey, out var provider, out var conversationId))
         {
@@ -1086,7 +1098,7 @@ public sealed class ChannelReplyDispatcher
         {
             _logger.LogWarning(
                 "No channel catalog row for {ConversationKey} (session {SessionId}); addressing the "
-                + "machine-turn attachment follow-up by conversation id alone",
+                + "machine-turn follow-up by conversation id alone",
                 conversationKey, sessionId);
         }
 
@@ -1099,6 +1111,7 @@ public sealed class ChannelReplyDispatcher
             bodyText = "";
         var text = Truncate(bodyText);
         var kind = ClassifyKind(bodyText);
+        var target = new ReplyTarget(provider, channel?.ReplyHandle, conversationId);
 
         try
         {
@@ -1114,6 +1127,7 @@ public sealed class ChannelReplyDispatcher
             await _producer.SendAsync(reply, ct);
             StampDeliveredBundles(impliedTasks, attachments, _timeProvider.GetUtcNow().UtcDateTime);
             await db.SaveChangesAsync(ct);
+            _dispatched[sessionId] = new DispatchedTurn(userPrompt.Sequence, maxTextSeq, [target]);
             _logger.LogInformation(
                 "Sent machine-turn follow-up {Kind} reply ({Chars} chars, {AttachmentCount} attachment(s)) "
                 + "to {Provider} conversation {ConversationId} from session {SessionId}",
@@ -1127,10 +1141,18 @@ public sealed class ChannelReplyDispatcher
                 task.DeliverableDeliveredAt = null;
             await db.SaveChangesAsync(CancellationToken.None);
             _logger.LogError(ex,
-                "Producing the machine-turn attachment follow-up for session {SessionId} failed; "
+                "Producing the machine-turn follow-up for session {SessionId} failed; "
                 + "{Count} injection row(s) returned to unclaimed for the next turn end",
                 sessionId, matches.Count);
         }
+    }
+
+    private bool AdmitsMachineTurnText(IReadOnlyList<SessionQueuedMessage> matches)
+    {
+        var origins = _settings.MachineTurnTextOrigins;
+        if (origins is null || origins.Count == 0)
+            return false;
+        return matches.Any(m => origins.Contains(m.Origin));
     }
 
     /// <summary>

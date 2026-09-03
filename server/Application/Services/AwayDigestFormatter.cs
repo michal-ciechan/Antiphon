@@ -1,5 +1,6 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -58,6 +59,77 @@ public static class AwayDigestFormatter
 
     public static string FormatQuiet(AwayDigestDto digest, DateTimeOffset localNow) =>
         $"Quiet since {digest.SinceUtc.ToLocalTime():HH:mm} · {digest.Running.Count} running · nothing needs you";
+
+    /// <summary>
+    /// CARD-0338 S3: phone-sized pager line for a Critical incident on an always-on channel-bound agent.
+    /// </summary>
+    public static string FormatIncidentPing(
+        string agentName,
+        AgentIncidentKind kind,
+        string message,
+        string? failureReason,
+        DateTime sinceUtc,
+        DigestSettings? settings = null,
+        Guid? agentId = null)
+    {
+        var owed = FormatOwedConversation(message);
+        var reason = ShortFailureReason(failureReason, message);
+        var text = $"🔕 {agentName} owed {owed} a reply and never sent it ({reason}). {sinceUtc:HH:mm} UTC.";
+        if (!string.IsNullOrWhiteSpace(settings?.PublicBaseUrl) && agentId is Guid id)
+            text += "\n" + settings.PublicBaseUrl.TrimEnd('/') + "/agents/" + id.ToString("D");
+        return Cap(text, Math.Min(MaxChars, Math.Max(1, settings?.MaxChars ?? MaxChars)));
+    }
+
+    private static string FormatOwedConversation(string message)
+    {
+        const string prefix = "owed ";
+        const string suffix = " was never sent";
+        var start = message.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
+        if (start < 0)
+            return "a chat";
+        start += prefix.Length;
+        var end = message.IndexOf(suffix, start, StringComparison.OrdinalIgnoreCase);
+        if (end < 0)
+            return "a chat";
+        var raw = message[start..end].Trim();
+        if (raw.Length == 0)
+            return "a chat";
+        var parts = raw.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        return string.Join(", ", parts.Select(FormatConversationKey));
+    }
+
+    private static string FormatConversationKey(string key)
+    {
+        var separator = key.IndexOf(':');
+        if (separator <= 0 || separator == key.Length - 1)
+            return key;
+        return $"{key[..separator]} \"{key[(separator + 1)..]}\"";
+    }
+
+    private static string ShortFailureReason(string? failureReason, string message)
+    {
+        if (string.Equals(failureReason, "TurnIncomplete", StringComparison.Ordinal))
+            return "no turn completed within 30 minutes";
+        if (string.Equals(failureReason, "TurnUnmatched", StringComparison.Ordinal))
+            return "a turn completed but was not routed";
+        if (string.Equals(failureReason, "StaleTtl", StringComparison.Ordinal))
+            return "no matching turn completed in time";
+        if (string.Equals(failureReason, "Unroutable", StringComparison.Ordinal))
+            return "the conversation could not be routed";
+
+        const string because = "because ";
+        var start = message.IndexOf(because, StringComparison.OrdinalIgnoreCase);
+        if (start >= 0)
+        {
+            start += because.Length;
+            var end = message.IndexOf('.', start);
+            var clause = (end < 0 ? message[start..] : message[start..end]).Trim();
+            if (clause.Length > 0)
+                return Clean(clause, SentenceChars);
+        }
+
+        return string.IsNullOrWhiteSpace(failureReason) ? "the reply was lost" : Clean(failureReason, SentenceChars);
+    }
 
     private static void AddTasks(List<string> lines, string heading, IReadOnlyList<AwayDigestTaskDto> tasks, string verb, int rows)
     {

@@ -87,6 +87,23 @@ public class AwayDigestFormatterTests
             .ShouldContain("2 running");
     }
 
+    [Test]
+    public void Incident_ping_is_phone_sized_and_carries_the_agent_link()
+    {
+        var agentId = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        var ping = AwayDigestFormatter.FormatIncidentPing(
+            "PM-Orchestrator-Grok",
+            AgentIncidentKind.ChannelReplyLost,
+            "A reply this agent owed slack:D0B1VUH2EAK was never sent: 1 message(s) went unanswered because a matching prompt was recorded but no turn completed within 30 minutes.",
+            "TurnIncomplete",
+            new DateTime(2026, 9, 2, 15, 16, 0, DateTimeKind.Utc),
+            new DigestSettings { PublicBaseUrl = "https://antiphon.example/" },
+            agentId);
+
+        ping.ShouldStartWith("🔕 PM-Orchestrator-Grok owed slack \"D0B1VUH2EAK\" a reply and never sent it (no turn completed within 30 minutes). 15:16 UTC.");
+        ping.ShouldContain("https://antiphon.example/agents/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+    }
+
     private static AwayDigestDto Empty() => new(DateTime.UtcNow.AddHours(-1), DateTime.UtcNow, false, [], [], [], [], [],
         new AwayDigestRunningDto(0, null, null, null), new AwayDigestSpendDto(0, 0, 0), []);
 }

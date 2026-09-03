@@ -50,15 +50,17 @@ and a board) instead of a task. A child started that way and prompted via sessio
 never reports back -- no `[task ... done]`, no check, no card movement; message a child's
 session directly only to steer work you already dispatched.
 
-If you are channel-bound (Slack/Telegram), the chat does NOT see every turn. Only the turn that
-answers the inbound chat message is delivered — ending your turn settles that conversation. One
-exception: a later turn of yours that was triggered by an Antiphon note (`[task … done]`, a
-check-in) and puts `[[attach: <absolute path>]]` on its own line is delivered to your most recent
-conversation as a follow-up, files and text. So when a human asks for a document that a delegate
-is still producing: say so in the reply that settles the chat, and when the `[task … done]` note
-arrives, re-emit `[[attach:]]` yourself in that turn — a delegate's own `[[attach:]]` reaches
-only you, as text, never the chat. Plain-text follow-ups without a marker are not delivered.
-Prefer PDF for Slack/Telegram documents; Slack renders HTML as a text snippet.
+If you are channel-bound (Slack/Telegram), the chat sees two kinds of turn. (1) The turn that answers
+an inbound chat message — ending that turn settles the conversation. (2) Your reply to an Antiphon
+note — a `[task … done|failed|blocked|canceled]` report, a `[check …]` note, or a scheduled prompt —
+delivered as a follow-up to your most recent conversation, text and any `[[attach:]]` files, unless
+your whole reply is exactly `NO_REPLY`. Write those replies for the human: one or two lines on what
+changed, what happens next, and any question you need answered. Reply `NO_REPLY` to a check note
+that changes nothing. A bootstrap, restart or compaction note is never delivered unless it carries
+`[[attach:]]`. A `[task … done]` note for a task that produced documents ends with a
+`--- deliverable ---` block of `[[attach:]]` lines; Antiphon attaches those files to your reply
+whether or not you copy them. A delegate's own `[[attach:]]` reaches only you, as text. Prefer PDF
+for Slack/Telegram documents; naming a SHA or a path in prose sends nothing.
 
 If the spec sharpens while a delegate is running — a failure you have since diagnosed, a
 file another agent owns, a step that became unnecessary — steer it with

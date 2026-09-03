@@ -463,8 +463,10 @@ try
     // Channel bridge: external chats (Telegram via the messaging gateway; more providers later) mapped
     // to agents. The Kafka client + reply dispatcher are always registered (construction is lazy and
     // connection-free); the consuming hosted service only runs when ChannelBridge:Enabled is true.
-    builder.Services.Configure<ChannelBridgeSettings>(
-        builder.Configuration.GetSection(ChannelBridgeSettings.SectionName));
+    builder.Services.AddSingleton<IValidateOptions<ChannelBridgeSettings>, ChannelBridgeSettingsValidator>();
+    builder.Services.AddOptions<ChannelBridgeSettings>()
+        .Bind(builder.Configuration.GetSection(ChannelBridgeSettings.SectionName))
+        .ValidateOnStart();
     builder.Services.AddAntiphonMessaging(builder.Configuration);
     builder.Services.AddScoped<ChatChannelService>();
     builder.Services.AddSingleton<ChannelReplyDispatcher>();
@@ -520,6 +522,7 @@ try
     builder.Services.AddScoped<AwayDigestNotifier>();
     builder.Services.AddScoped<BlockedTaskNotifier>();
     builder.Services.AddScoped<DecisionCardNotifier>();
+    builder.Services.AddScoped<IncidentPageNotifier>();
     builder.Services.AddScoped<CostTrackingService>();
     builder.Services.AddScoped<FeatureStatusService>();
 
