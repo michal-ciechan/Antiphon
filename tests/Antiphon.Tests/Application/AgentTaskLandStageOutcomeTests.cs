@@ -186,6 +186,92 @@ public class AgentTaskLandStageOutcomeTests
         Directory.Exists(task.WorktreePath).ShouldBeFalse();
     }
 
+    [Test]
+    public async Task residue_land_writes_cleanup_failed_and_landed_with_residue_not_refused()
+    {
+        using var repo = new ScratchGitRepo("antiphon-land-so-residue");
+        using var remote = new TemporaryDirectory("antiphon-land-so-reresidue");
+        await ScratchGitRepo.GitInAsync(remote.Path, "init", "--bare");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("remote", "add", "origin", remote.Path);
+        await repo.GitAsync("push", "-u", "origin", "master");
+
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var (land, worktrees) = CreateLand(db, repo);
+        var task = await SeedSucceededWorktreeAsync(db, worktrees, repo);
+
+        await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "the work\n");
+        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "feature.md");
+        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "feature");
+        (await ScratchGitRepo.GitInAsync(repo.Path, "worktree", "lock", task.WorktreePath!)).Ok.ShouldBeTrue();
+
+        await land.RunAsync(task.Id, null, CancellationToken.None);
+
+        var rows = await RowsAsync(db, task.Id);
+        rows.Select(o => (o.Stage, o.Outcome)).ShouldBe([
+            (OrchestrationStage.Rebase, StageOutcomeKind.Clean),
+            (OrchestrationStage.Verify, StageOutcomeKind.Skipped),
+            (OrchestrationStage.Cleanup, StageOutcomeKind.Failed),
+        ]);
+        var events = await db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == task.Id)
+            .Select(e => e.Type)
+            .ToListAsync();
+        events.ShouldContain(AgentTaskEventType.LandedWithResidue);
+        events.ShouldNotContain(AgentTaskEventType.LandRefused);
+        events.ShouldNotContain(AgentTaskEventType.Warning);
+        var outcome = await db.AgentTaskEvents.AsNoTracking()
+            .SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.LandedWithResidue);
+        outcome.Detail.ShouldStartWith("landed ");
+        outcome.Detail.ShouldContain("cleanup incomplete:");
+        (await ScratchGitRepo.GitInAsync(remote.Path, "show", "master:feature.md")).StdOut.ShouldBe("the work\n");
+        Directory.Exists(task.WorktreePath).ShouldBeTrue();
+
+        var queued = await land.RequestAsync(task.Id, null, CancellationToken.None);
+        queued.Status.ShouldBe("queued");
+    }
+
+    [Test]
+    public async Task reland_of_an_already_landed_task_runs_cleanup_only()
+    {
+        using var repo = new ScratchGitRepo("antiphon-land-so-reland");
+        using var remote = new TemporaryDirectory("antiphon-land-so-reremote");
+        await ScratchGitRepo.GitInAsync(remote.Path, "init", "--bare");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("remote", "add", "origin", remote.Path);
+        await repo.GitAsync("push", "-u", "origin", "master");
+
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var (land, worktrees) = CreateLand(db, repo);
+        var task = await SeedSucceededWorktreeAsync(db, worktrees, repo);
+
+        await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "the work\n");
+        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "feature.md");
+        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "feature");
+
+        await land.RunAsync(task.Id, null, CancellationToken.None);
+        Directory.Exists(task.WorktreePath).ShouldBeFalse();
+        var afterFirst = await RowsAsync(db, task.Id);
+        afterFirst.Count.ShouldBe(3);
+
+        await land.RunAsync(task.Id, null, CancellationToken.None);
+
+        var rows = await RowsAsync(db, task.Id);
+        rows.Count.ShouldBe(4);
+        rows[3].Stage.ShouldBe(OrchestrationStage.Cleanup);
+        rows[3].Outcome.ShouldBe(StageOutcomeKind.Clean);
+        rows[3].Detail.ShouldContain("nothing left to clean");
+        var landed = await db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Landed)
+            .OrderByDescending(e => e.At)
+            .FirstAsync();
+        landed.Detail.ShouldContain("nothing left to clean");
+        (await db.AgentTaskEvents.CountAsync(e =>
+            e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.LandRefused)).ShouldBe(0);
+    }
+
     private static async Task<AgentTask> SeedSucceededWorktreeAsync(
         AppDbContext db, DelegationWorktreeService worktrees, ScratchGitRepo repo)
     {

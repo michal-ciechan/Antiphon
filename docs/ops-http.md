@@ -45,6 +45,7 @@ header when it is set. Inside a running agent session both are already in the en
 | Type work into a session | POST | `/api/sessions/{id}/messages` |
 | Schedules for an agent / card | GET | `/api/schedules?agentId=` / `?cardId=` (`scripts/schedule.ps1`) |
 | Kill a session | POST | `/api/sessions/{id}/kill` |
+| Land a succeeded Worktree task | POST | `/api/agent-tasks/{id}/land` (`{ verify?: string }`) — 202 queued. Read `Landed` / `LandedWithResidue` / `LandRefused` on the task. Re-POST retries leftover cleanup. |
 | Live runner sessions / rendered screen | GET | `:17204/sessions`, `:17204/sessions/{id}/snapshot` |
 
 ```powershell

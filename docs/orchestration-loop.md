@@ -45,8 +45,11 @@ this copy exists so AGENTS.md has an owner to route to. A standing orchestrator'
 **Also delegated: the landing mechanics.** For a delegated Worktree task, the orchestrator orders
 the landing with `delegate.ps1 -Land <id>` (optionally `-Verify <filter>`); the server fetches,
 rebases, verifies when required, fast-forwards, pushes, and cleans up. The resulting
-`Landed`/`LandRefused` outcome line is the confirmation. The orchestrator decides the order and
-what a refusal means, but does none of those git operations itself.
+`Landed` / `LandedWithResidue` / `LandRefused` outcome line is the confirmation. `Landed` means
+the target advanced and cleanup finished; `LandedWithResidue` means the target advanced and
+cleanup left a branch or directory (re-run `-Land` to retry cleanup); `LandRefused` means the
+target did not advance. The orchestrator decides the order and what a refusal means, but does
+none of those git operations itself.
 
 Since CARD-0247, a `PreToolUse` hook in this repo nudges at the third consecutive cold source read
 (it never blocks; `ANTIPHON_ORCHESTRATOR=0` silences it for a hacking session) - the hook is the
@@ -330,9 +333,12 @@ pwsh -NoProfile -File scripts/delegate.ps1 -Land <id>
 ```
 
 The server performs the fetch, rebase, conditional build and optional named test, fast-forward,
-push, worktree removal, and branch deletion. Read the resulting `Landed` or `LandRefused` event
-and its outcome line. `Landed` reports the merged SHA, pushed remote ref, and verification result;
-`LandRefused` leaves the branch and worktree in place and names why.
+push, worktree removal, and branch deletion. Read the resulting `Landed`, `LandedWithResidue`, or
+`LandRefused` event and its outcome line. `Landed` reports the merged SHA, pushed remote ref,
+verification result, and `worktree removed`. `LandedWithResidue` keeps the `landed …` prefix and
+ends `cleanup incomplete: <what remains>` — the target advanced; re-run `-Land` to retry
+cleanup. `LandRefused` means the target did not advance (fetch, remote-ahead, rebase, verify,
+fast-forward, or push failed) and leaves the branch and worktree in place naming why.
 
 After `-Land`, the orchestrator's own git involvement is **zero**. Do not re-run `git show`,
 `git diff`, `gh run view`, or tests to double-check a `Landed` outcome. This is the same
@@ -426,8 +432,10 @@ Split by what each part actually is:
 ## 8. Clean up
 
 For delegated Worktree tasks, worktree removal and branch deletion are the `-Land` operation's own
-job. Do not run them as a manual orchestrator step after a `Landed` outcome. A `LandRefused`
-outcome deliberately keeps both so a follow-up delegate can work from the failure.
+job. Do not run them as a manual orchestrator step after a `Landed` outcome. A
+`LandedWithResidue` outcome is the cleanup-retry verb: re-run `-Land` (it short-circuits
+prepare/verify and only retries removal). A `LandRefused` outcome deliberately keeps both so a
+follow-up delegate can work from the failure.
 
 ```powershell
 Get-ChildItem C:\src\Antiphon -Recurse -Depth 3 -Directory |

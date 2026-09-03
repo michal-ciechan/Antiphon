@@ -161,8 +161,10 @@ public enum AgentTaskEventType
     Landed = 21,
 
     /// <summary>
-    /// A requested land operation stopped safely (for example red verification or a moved remote).
-    /// The task branch and worktree are retained so a follow-up delegate can continue from facts.
+    /// A requested land operation stopped because the target did not advance (fetch, remote-ahead,
+    /// rebase, verify, fast-forward, or push failed). The task branch and worktree are retained so
+    /// a follow-up delegate can continue from facts. Cleanup failure after a successful push is
+    /// <see cref="LandedWithResidue"/>, not this.
     /// </summary>
     LandRefused = 22,
 
@@ -172,6 +174,13 @@ public enum AgentTaskEventType
     /// the listed candidates. Appended after shipped 22; do not renumber.
     /// </summary>
     Rerouted = 23,
+
+    /// <summary>
+    /// The target advanced and the push succeeded; the branch and/or directory could not be fully
+    /// removed (CARD-0328). The task stays Succeeded — residue is a fact about the repo. Re-run
+    /// <c>-Land</c> to retry cleanup.
+    /// </summary>
+    LandedWithResidue = 24,
 }
 
 /// <summary>

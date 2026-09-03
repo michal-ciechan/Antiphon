@@ -219,9 +219,41 @@ public class DelegationWorktreeTests
         prepared.BaseMoved.ShouldBeTrue();
         var finalized = await service.FinalizeLandAsync(task, prepared.Target!, CancellationToken.None);
 
-        finalized.Succeeded.ShouldBeTrue(finalized.Detail);
+        finalized.Pushed.ShouldBeTrue(finalized.Detail);
+        finalized.Residue.ShouldBeNull();
         (await ScratchGitRepo.GitInAsync(remote.Path, "show", "master:feature.md")).StdOut.ShouldBe("land me\n");
         Directory.Exists(task.WorktreePath).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task land_with_upstream_set_deletes_the_branch()
+    {
+        using var repo = new ScratchGitRepo("antiphon-land-upstream");
+        using var remote = new TemporaryDirectory("antiphon-land-upstream-remote");
+        await ScratchGitRepo.GitInAsync(remote.Path, "init", "--bare");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("remote", "add", "origin", remote.Path);
+        await repo.GitAsync("push", "-u", "origin", "master");
+
+        var (service, _) = CreateService(repo);
+        var task = NewTask(repo.Path, mergeTarget: null);
+        await service.CreateForTaskAsync(task, CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "land me\n");
+        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "feature.md");
+        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "feature");
+        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "push", "-u", "origin", task.WorktreeBranch!);
+        await repo.CommitFileAsync("README.md", "base advanced\n");
+        await repo.GitAsync("push", "origin", "master");
+
+        var prepared = await service.PrepareLandAsync(task, CancellationToken.None);
+        prepared.Succeeded.ShouldBeTrue();
+        var finalized = await service.FinalizeLandAsync(task, prepared.Target!, CancellationToken.None);
+
+        finalized.Pushed.ShouldBeTrue(finalized.Detail);
+        finalized.Residue.ShouldBeNull();
+        Directory.Exists(task.WorktreePath).ShouldBeFalse();
+        (await ScratchGitRepo.GitInAsync(repo.Path, "show-ref", "--verify", "--quiet", $"refs/heads/{task.WorktreeBranch}"))
+            .Ok.ShouldBeFalse("the rebased branch must be deleted even when its upstream is behind");
     }
 
     [Test]
@@ -282,7 +314,7 @@ public class DelegationWorktreeTests
 
         var finalized = await service.FinalizeLandAsync(task, prepared.Target!, CancellationToken.None);
 
-        finalized.Succeeded.ShouldBeFalse();
+        finalized.Pushed.ShouldBeFalse();
         finalized.Detail.ShouldContain("push");
         Directory.Exists(task.WorktreePath).ShouldBeTrue("a push rejection must not clean up recoverable work");
     }

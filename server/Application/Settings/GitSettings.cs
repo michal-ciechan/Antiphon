@@ -18,4 +18,12 @@ public class GitSettings
     /// inside <c>WorktreeManager</c>. CARD-0220: 30 s killed three adds in five days.
     /// </summary>
     public int WorktreeAddTimeoutSeconds { get; set; } = 180;
+
+    /// <summary>
+    /// Per-command budget for <c>git worktree remove</c> only. Deleting a worktree that still
+    /// holds <c>bin/</c>, <c>obj/</c>, and <c>node_modules</c> is slower than a <c>show-ref</c>;
+    /// every other git command keeps the 30 s constant inside <c>WorktreeManager</c>. CARD-0328:
+    /// 30 s left the registration in place and the land was reported as refused.
+    /// </summary>
+    public int WorktreeRemoveTimeoutSeconds { get; set; } = 300;
 }

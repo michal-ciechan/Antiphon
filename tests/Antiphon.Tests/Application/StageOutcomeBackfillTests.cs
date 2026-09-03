@@ -76,6 +76,23 @@ public class StageOutcomeBackfillTests
     }
 
     [Test]
+    public async Task landed_with_residue_is_rebase_clean_verify_from_head_cleanup_failed()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var (task, _, _) = await SeedLandAsync(db, AgentTaskEventType.LandedWithResidue,
+            "landed feat/x -> master as abc, pushed (origin/master=abc), verify: build OK, cleanup incomplete: directory C:\\trees\\card-task-x still exists");
+
+        await StageOutcomeBackfillService.RunAsync(db, CancellationToken.None);
+
+        (await StagesAsync(db, task.Id)).ShouldBe([
+            (OrchestrationStage.Rebase, StageOutcomeKind.Clean),
+            (OrchestrationStage.Verify, StageOutcomeKind.Clean),
+            (OrchestrationStage.Cleanup, StageOutcomeKind.Failed),
+        ]);
+    }
+
+    [Test]
     public async Task land_refused_could_not_delete_is_verify_unreported_cleanup_failed()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
