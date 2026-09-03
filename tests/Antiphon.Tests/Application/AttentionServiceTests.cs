@@ -916,6 +916,61 @@ public class AttentionServiceTests
             .ShouldNotContain(i => i.Kind == AttentionKind.ModelAvailabilityHold && i.ModelAlias == "grok-4.6");
     }
 
+    [Test]
+    public async Task A_fallback_hold_row_does_not_call_the_retry_a_provider_reset()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var until = DateTime.UtcNow.AddHours(3);
+        until = new DateTime(until.Year, until.Month, until.Day, until.Hour, until.Minute, until.Second, DateTimeKind.Utc);
+        var holdId = await scenario.AddHoldAsync(
+            AgentKind.ClaudeCode, "sonnet", sessionId: session,
+            until: until,
+            reason: "Sonnet per-model cap (no reset stated)",
+            rawText: UsageLimitWallParser.FableModelCapIncidentText);
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.SessionId == session
+            && i.Kind == AttentionKind.ModelAvailabilityHold);
+        item.Severity.ShouldBe(AlertSeverity.Error);
+        item.Headline.ShouldContain("provider gave no reset");
+        item.Headline.ShouldContain("fallback retry");
+        item.Headline.ShouldContain($"{until:yyyy-MM-ddTHH:mm:ssZ}");
+        item.Headline.ShouldNotContain("resets");
+        item.Headline.ShouldContain("dispatch paused for sonnet");
+        item.Actions.ShouldBe([AttentionAction.ClearHold]);
+        item.Evidence.ShouldContain(UsageLimitWallParser.FableModelCapIncidentText);
+        item.Evidence.ShouldContain("disabled until");
+
+        await using (var db = CreateContext())
+        {
+            var row = await db.ModelAvailabilityHolds.SingleAsync(h => h.Id == holdId);
+            row.ClearedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        (await ItemsForAsync(scenario))
+            .ShouldNotContain(i => i.Kind == AttentionKind.ModelAvailabilityHold && i.SessionId == session);
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task A_legacy_null_auto_detected_hold_keeps_the_no_reset_stated_headline()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        await scenario.AddHoldAsync(
+            AgentKind.ClaudeCode, "haiku", sessionId: session,
+            until: null,
+            reason: "Haiku per-model cap (no reset stated)",
+            rawText: UsageLimitWallParser.FableModelCapIncidentText);
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.SessionId == session
+            && i.Kind == AttentionKind.ModelAvailabilityHold);
+        item.Headline.ShouldContain("haiku exhausted (no reset stated)");
+        item.Headline.ShouldNotContain("fallback retry");
+        item.Actions.ShouldBe([AttentionAction.ClearHold]);
+    }
+
     // ---- CARD-0294 S3: UnmarkedWaiting ----------------------------------------------------------
 
     [Test]

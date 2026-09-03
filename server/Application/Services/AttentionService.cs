@@ -1547,27 +1547,36 @@ public sealed class AttentionService
             else if (hold.DisabledUntil is { } until)
             {
                 var remaining = until - now;
-                var zone = ExtractZone(hold.Reason) ?? "UTC";
-                var local = until.ToString("HH:mm");
-                if (hold.Reason.Contains("resets ", StringComparison.Ordinal)
-                    && hold.Reason.Length >= 24)
+                if (hold.Reason.Contains("no reset stated", StringComparison.Ordinal))
                 {
-                    // Reason is "session-limit resets HH:mm Zone".
-                    var resetsAt = hold.Reason.IndexOf("resets ", StringComparison.Ordinal);
-                    if (resetsAt >= 0)
-                    {
-                        var rest = hold.Reason[(resetsAt + "resets ".Length)..];
-                        var parts = rest.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
-                        if (parts.Length >= 1)
-                            local = parts[0];
-                        if (parts.Length >= 2)
-                            zone = parts[1];
-                    }
+                    headline =
+                        $"{alias} exhausted — provider gave no reset; fallback retry {until:yyyy-MM-ddTHH:mm:ssZ} (in {Duration(remaining)}); "
+                        + $"dispatch paused for {alias}";
                 }
+                else
+                {
+                    var zone = ExtractZone(hold.Reason) ?? "UTC";
+                    var local = until.ToString("HH:mm");
+                    if (hold.Reason.Contains("resets ", StringComparison.Ordinal)
+                        && hold.Reason.Length >= 24)
+                    {
+                        // Reason is "session-limit resets HH:mm Zone".
+                        var resetsAt = hold.Reason.IndexOf("resets ", StringComparison.Ordinal);
+                        if (resetsAt >= 0)
+                        {
+                            var rest = hold.Reason[(resetsAt + "resets ".Length)..];
+                            var parts = rest.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                            if (parts.Length >= 1)
+                                local = parts[0];
+                            if (parts.Length >= 2)
+                                zone = parts[1];
+                        }
+                    }
 
-                headline =
-                    $"{alias} exhausted — resets {local} {zone} (in {Duration(remaining)}); "
-                    + $"dispatch paused for {alias}";
+                    headline =
+                        $"{alias} exhausted — resets {local} {zone} (in {Duration(remaining)}); "
+                        + $"dispatch paused for {alias}";
+                }
             }
             else
             {
