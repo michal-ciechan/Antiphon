@@ -154,10 +154,29 @@ describe('TaskDrawer', () => {
 
   it('answers a blocked delegate instead of taking the work back', async () => {
     // The whole point of Blocked: the delegate keeps its context and carries on. A retry would
-    // throw that away and pay for it twice.
+    // throw that away and pay for it twice. The card sits after the badges, before metrics, and a
+    // Blocked task must never wear the "Failed" alert.
     let sent: unknown = undefined
     serve(
-      detail({ status: 'Blocked', completedAt: null }, { result: 'Should I accept negative inputs?' }),
+      detail(
+        { status: 'Blocked', completedAt: null, subtreeCostUsd: 1.37 },
+        {
+          result: 'Findings.\n\nShould I accept negative inputs?',
+          failureReason: null,
+          blocked: {
+            kind: 'Question',
+            round: 1,
+            blockedAt: '2026-08-07T10:12:00Z',
+            question: 'Should I accept negative inputs?',
+            context: 'Findings.',
+            priorRounds: [],
+            progress: null,
+            canAnswer: true,
+            cannotAnswerReason: null,
+            mergeTaskId: null,
+          },
+        },
+      ),
       [
         http.post('/api/agent-tasks/:id/reply', async ({ request }) => {
           sent = await request.json()
@@ -167,13 +186,20 @@ describe('TaskDrawer', () => {
     )
     renderWithProviders(<TaskDrawer taskId={TASK_ID} onClose={() => {}} />)
 
+    const card = await screen.findByTestId('blocked-question-card')
+    expect(card).toBeInTheDocument()
+    expect(screen.queryByText('Failed')).not.toBeInTheDocument()
+    expect(screen.getByTestId('blocked-question')).toHaveTextContent('Should I accept negative inputs?')
+
     await userEvent.type(
       await screen.findByPlaceholderText('e.g. yes, accept negatives'),
       'yes, accept negatives',
     )
-    await userEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Send answer' }))
 
-    await waitFor(() => expect(sent).toEqual({ message: 'yes, accept negatives' }))
+    await waitFor(() =>
+      expect(sent).toEqual({ message: 'yes, accept negatives', origin: 'Web', round: 1 }),
+    )
   })
 
   it('keeps the transcript but hides the dead files link once a task settles', async () => {

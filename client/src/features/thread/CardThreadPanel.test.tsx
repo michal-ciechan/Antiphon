@@ -220,7 +220,7 @@ describe('CardThreadPanel', () => {
     await userEvent.type(screen.getByLabelText('Answer the delegate'), 'yes, keep the migration')
     await userEvent.click(screen.getByRole('button', { name: /Send answer/ }))
 
-    await waitFor(() => expect(replies).toEqual([{ message: 'yes, keep the migration' }]))
+    await waitFor(() => expect(replies).toEqual([{ message: 'yes, keep the migration', origin: 'Web' }]))
   })
 
   it('Approve opens the move confirm: reason prefilled with the plan file, spawn named on an active target', async () => {

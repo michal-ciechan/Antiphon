@@ -44,6 +44,7 @@ export function DelegationsBoard() {
   const [searchParams] = useSearchParams()
   const [selectedId, setSelectedId] = useState<string | null>(searchParams.get('task'))
   const [drawerId, setDrawerId] = useState<string | null>(searchParams.get('task'))
+  // `?answer=1` is the Telegram-ping desktop landing; the card autofocuses on Blocked anyway.
   const [onlyThisRun, setOnlyThisRun] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   // null = nothing toggled yet, so the default applies. Once the user has opened or closed

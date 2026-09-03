@@ -3,31 +3,52 @@ import { notifications } from '@mantine/notifications'
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { TbSend } from 'react-icons/tb'
-import { useReplyToAgentTask } from '../../api/agentTasks'
+import { useAgentTask, useReplyToAgentTask } from '../../api/agentTasks'
 import { attentionKeys } from '../../api/attention'
 import { getApiErrorMessage } from '../../api/client'
+import { BlockedQuestionCard } from '../delegations/BlockedQuestionCard'
 
 /**
  * Answer a blocked delegate without leaving the list (CARD-0035 slice 4; CARD-0033's ask).
  *
- * <p><b>Why in place rather than a link to the drawer.</b> A blocked task is the one condition on
- * this view where the human IS the fix and the fix is two sentences long. Making that a navigation —
- * open the sibling tab, find the drawer, scroll to the answer box — is what turns "I'll just tell
- * it" into "I'll take the work back", and taking the work back throws away everything the delegate
- * has already read. The verb is the same `POST …/reply` the drawer uses; only the distance
- * changed.</p>
- *
- * <p>It posts through <c>useReplyToAgentTask</c> — the shared hook, not a second call site — so the
- * board and any open drawer are invalidated exactly as they are from the drawer's own form. This
- * adds the attention list to that invalidation, because a row that stays after its condition is gone
- * teaches the operator to distrust the whole view.</p>
+ * <p>When the task detail fetch succeeds, this is the compact <c>BlockedQuestionCard</c>. If that
+ * fetch fails, it falls back to the bare box so an answer is never blocked by the context
+ * request.</p>
  */
 export function BlockedReplyRow({
   taskId,
   onDone,
+  evidence,
 }: {
   taskId: string
   /** Called after a successful send — the row collapses the form again. */
+  onDone?: () => void
+  /** Fallback question text when the detail fetch fails. */
+  evidence?: string
+}) {
+  const detail = useAgentTask(taskId)
+
+  if (detail.data?.blocked) {
+    return (
+      <BlockedQuestionCard
+        detail={detail.data}
+        variant="compact"
+        autoFocus
+        onAnswered={onDone}
+      />
+    )
+  }
+
+  return <BareBlockedReply taskId={taskId} evidence={evidence} onDone={onDone} />
+}
+
+function BareBlockedReply({
+  taskId,
+  evidence,
+  onDone,
+}: {
+  taskId: string
+  evidence?: string
   onDone?: () => void
 }) {
   const [answer, setAnswer] = useState('')
@@ -41,7 +62,10 @@ export function BlockedReplyRow({
         onSuccess: () => {
           setAnswer('')
           void queryClient.invalidateQueries({ queryKey: attentionKeys.all })
-          notifications.show({ color: 'green', message: 'Answer sent to the delegate' })
+          notifications.show({
+            color: 'green',
+            message: "Queued for the delegate's next idle moment",
+          })
           onDone?.()
         },
         onError: (error: unknown) =>
@@ -54,6 +78,11 @@ export function BlockedReplyRow({
 
   return (
     <Stack gap={6} data-testid="blocked-reply">
+      {evidence && (
+        <Text size="sm" lineClamp={4} style={{ whiteSpace: 'pre-wrap' }}>
+          {evidence}
+        </Text>
+      )}
       <Text size="xs" c="dimmed">
         Answer the question rather than taking the work back — the delegate keeps its context and
         carries on from where it stopped.

@@ -407,7 +407,7 @@ describe('AttentionPanel', () => {
     )
     await userEvent.click(screen.getByRole('button', { name: 'Send answer' }))
 
-    await waitFor(() => expect(bodies).toEqual([{ message: 'land it on master' }]))
+    await waitFor(() => expect(bodies).toEqual([{ message: 'land it on master', origin: 'Web' }]))
   })
 
   it('leads a past-expected row with reading it, not with retrying it', async () => {

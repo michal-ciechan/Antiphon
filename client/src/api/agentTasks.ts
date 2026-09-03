@@ -157,6 +157,42 @@ export interface AgentTaskEventDto {
   at: string
 }
 
+export type BlockedKind = 'Question' | 'MergeConflict' | 'CostCeiling' | 'RoutingExhausted'
+
+export type AnswerOrigin = 'Web' | 'Cli' | 'Channel'
+
+export interface BlockedRoundDto {
+  round: number
+  question: string
+  askedAt: string
+  answer: string | null
+  answeredAt: string | null
+  answeredVia: AnswerOrigin | null
+}
+
+export interface BlockedProgressDto {
+  branch: string | null
+  commits: string[]
+  changedFiles: number
+  untrackedFiles: number
+  lastCheckDigest: string | null
+  lastCheckAt: string | null
+  unavailable: string | null
+}
+
+export interface BlockedContextDto {
+  kind: BlockedKind
+  round: number
+  blockedAt: string
+  question: string
+  context: string | null
+  priorRounds: BlockedRoundDto[]
+  progress: BlockedProgressDto | null
+  canAnswer: boolean
+  cannotAnswerReason: string | null
+  mergeTaskId: string | null
+}
+
 export interface AgentTaskDetailDto {
   summary: AgentTaskSummaryDto
   goal: string
@@ -170,6 +206,8 @@ export interface AgentTaskDetailDto {
   events: AgentTaskEventDto[]
   /** CARD-0256. Machine-readable class of failureReason when one was assigned. */
   failureCode?: string | null
+  /** CARD-0033. Non-null iff status is Blocked. */
+  blocked?: BlockedContextDto | null
 }
 
 /** Fleet-wide header counters; unlike the board list, these never use its history window. */
@@ -472,8 +510,23 @@ export function useMarkAgentTaskRead() {
 
 /** Answer a Blocked delegate's question. Taking the work back is the failure mode this prevents. */
 export function useReplyToAgentTask() {
-  return useTaskMutation(({ id, message }: { id: string; message: string }) =>
-    apiPost<AgentTaskSummaryDto>(`/agent-tasks/${id}/reply`, { message }),
+  return useTaskMutation(
+    ({
+      id,
+      message,
+      round,
+      origin,
+    }: {
+      id: string
+      message: string
+      round?: number
+      origin?: AnswerOrigin
+    }) =>
+      apiPost<AgentTaskSummaryDto>(`/agent-tasks/${id}/reply`, {
+        message,
+        origin: origin ?? 'Web',
+        ...(round != null ? { round } : {}),
+      }),
   )
 }
 

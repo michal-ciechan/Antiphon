@@ -12,7 +12,6 @@ import {
   Select,
   Stack,
   Text,
-  Textarea,
   Timeline,
   Tooltip,
 } from '@mantine/core'
@@ -24,7 +23,6 @@ import {
   TbFiles,
   TbPlayerStop,
   TbRefresh,
-  TbSend,
   TbTerminal2,
 } from 'react-icons/tb'
 import { getApiErrorMessage } from '../../api/client'
@@ -34,7 +32,6 @@ import {
   useCancelAgentTask,
   useEscalateAgentTask,
   useRetryAgentTask,
-  useReplyToAgentTask,
   useMarkAgentTaskRead,
   useRerouteAgentTask,
   type AgentTaskDetailDto,
@@ -44,6 +41,7 @@ import { useModelAvailability } from '../../api/modelAvailability'
 import { RenderedMarkdown } from '../../shared/RenderedMarkdown'
 import { SelectionComposer, SelectionDelegate } from '../agents/SelectionDelegate'
 import { TierBadge } from './TaskChip'
+import { BlockedQuestionCard } from './BlockedQuestionCard'
 import {
   STATUS_COLOR,
   WORKSPACE_LABEL,
@@ -92,15 +90,18 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
   const retry = useRetryAgentTask()
   const escalate = useEscalateAgentTask()
   const cancel = useCancelAgentTask()
-  const reply = useReplyToAgentTask()
   const reroute = useRerouteAgentTask()
   const availability = useModelAvailability()
   const markRead = useMarkAgentTaskRead()
-  const [answer, setAnswer] = useState('')
   const [selection, setSelection] = useState<string | null>(null)
   const [rerouteKind, setRerouteKind] = useState<string | null>('Grok')
   const [rerouteLevel, setRerouteLevel] = useState<string | null>('Frontier')
+  const [expandedEvent, setExpandedEvent] = useState<number | null>(null)
   const stampedTask = useRef<string | null>(null)
+  const wasBlocked = useRef(Boolean(detail.blocked))
+  if (detail.blocked) wasBlocked.current = true
+  const answeredElsewhere =
+    wasBlocked.current && !detail.blocked && (summary.status === 'Working' || summary.status === 'Dispatched')
 
   const running = summary.status === 'Dispatched' || summary.status === 'Working'
   const settled = summary.status === 'Succeeded' || summary.status === 'Failed' || summary.status === 'Canceled'
@@ -152,6 +153,15 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
           </Badge>
         )}
       </Group>
+
+      {detail.blocked && (
+        <BlockedQuestionCard detail={detail} variant="full" autoFocus />
+      )}
+      {answeredElsewhere && (
+        <Text size="sm" c="dimmed" data-testid="blocked-answered-elsewhere">
+          {answeredViaLine(detail.events)}
+        </Text>
+      )}
 
       <Paper withBorder p="sm">
         <Group gap="xl" wrap="wrap">
@@ -214,20 +224,22 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
         </Group>
       )}
 
-      <Section title="Goal">
-        <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
-          {detail.goal}
-        </Text>
-      </Section>
+      {!detail.blocked && (
+        <Section title="Goal">
+          <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
+            {detail.goal}
+          </Text>
+        </Section>
+      )}
 
-      {detail.failureReason && (
+      {summary.status === 'Failed' && detail.failureReason && (
         <Alert color="danger" icon={<TbAlertTriangle />} title="Failed">
           {detail.failureReason}
         </Alert>
       )}
 
-      {detail.result && (
-        <Section title={summary.status === 'Blocked' ? 'The delegate asked' : 'Report'}>
+      {detail.result && summary.status !== 'Blocked' && (
+        <Section title="Report">
           <SelectionDelegate onCompose={setSelection}>
             <ScrollArea.Autosize mah={320}>
               <RenderedMarkdown>{detail.result}</RenderedMarkdown>
@@ -254,51 +266,28 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
         </Section>
       )}
 
-      {summary.status === 'Blocked' && (
-        <Section title="Answer it">
-          <Text size="xs" c="dimmed" mb="xs">
-            Answer the question rather than taking the work back — the delegate keeps its context and
-            carries on from where it stopped.
-          </Text>
-          <Textarea
-            autosize
-            minRows={2}
-            placeholder="e.g. yes, accept negatives"
-            value={answer}
-            onChange={(event) => setAnswer(event.currentTarget.value)}
-          />
-          <Group justify="flex-end" mt="xs">
-            <Button
-              size="xs"
-              leftSection={<TbSend size={14} />}
-              loading={reply.isPending}
-              disabled={!answer.trim()}
-              onClick={() =>
-                reply.mutate(
-                  { id: summary.id, message: answer.trim() },
-                  {
-                    onSuccess: () => {
-                      setAnswer('')
-                      notifications.show({ color: 'green', message: 'Answer sent to the delegate' })
-                    },
-                    onError: onError('Could not deliver the answer'),
-                  },
-                )
-              }
-            >
-              Send
-            </Button>
-          </Group>
-        </Section>
-      )}
-
       <Section title="Timeline">
         <Timeline active={detail.events.length - 1} bulletSize={12} lineWidth={1}>
           {detail.events.map((event, index) => (
             <Timeline.Item key={`${event.at}-${index}`} title={<Text size="sm">{event.type}</Text>}>
-              <Text size="xs" c="dimmed">
+              <Text
+                size="xs"
+                c="dimmed"
+                lineClamp={expandedEvent === index ? undefined : 3}
+                style={{ whiteSpace: 'pre-wrap' }}
+              >
                 {event.detail}
               </Text>
+              {event.detail.length > 180 && (
+                <Button
+                  size="compact-xs"
+                  variant="subtle"
+                  px={0}
+                  onClick={() => setExpandedEvent((open) => (open === index ? null : index))}
+                >
+                  {expandedEvent === index ? 'show less' : 'show all'}
+                </Button>
+              )}
               <Text size="xs" c="dimmed">
                 {new Date(event.at).toLocaleString()}
               </Text>
@@ -437,6 +426,16 @@ function Metric({ label, value }: { label: string; value: ReactNode }) {
       </Text>
     </Box>
   )
+}
+
+function answeredViaLine(events: AgentTaskDetailDto['events']): string {
+  const replied = [...events].reverse().find((event) => event.type === 'Replied')
+  if (!replied) return 'Answered — the delegate is working'
+  const at = new Date(replied.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const via = /Answered via (\w+)/.exec(replied.detail)?.[1]
+  return via
+    ? `Answered via ${via} at ${at} — the delegate is working`
+    : `Answered at ${at} — the delegate is working`
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {

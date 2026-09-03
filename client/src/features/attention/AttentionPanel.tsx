@@ -447,7 +447,11 @@ function AttentionRowActions({
       </Group>
 
       {replying && item.taskId && (
-        <BlockedReplyRow taskId={item.taskId} onDone={() => setReplying(false)} />
+        <BlockedReplyRow
+          taskId={item.taskId}
+          evidence={item.evidence}
+          onDone={() => setReplying(false)}
+        />
       )}
 
       <Modal
