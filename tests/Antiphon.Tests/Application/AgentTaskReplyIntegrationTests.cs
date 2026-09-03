@@ -1261,6 +1261,38 @@ public class AgentTaskReplyIntegrationTests
     }
 
     [Test]
+    public async Task a_document_task_completion_note_ends_with_the_deliverable_attach_block()
+    {
+        using var workspace = new TempWorkspace();
+        var feature = Path.Combine(workspace.Path, "docs", "features", "001-kalshi-ref-data-downloader");
+        Directory.CreateDirectory(feature);
+        await File.WriteAllTextAsync(Path.Combine(feature, "01-requirements.md"), "# req\n");
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, parentSessionId, t =>
+        {
+            t.Role = AgentTaskRole.Docs;
+            t.RepoPath = workspace.Path;
+        });
+
+        await SeedTurnAsync(
+            sessionId,
+            DelegationReportFormatter.TaskMarker(task.Id),
+            "Wrote `docs/features/001-kalshi-ref-data-downloader/01-requirements.md`.");
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var note = await verify.SessionQueuedMessages.SingleAsync(
+            m => m.AgentSessionId == parentSessionId && m.Origin == QueuedMessageOrigin.Delegation);
+        note.Body.ShouldContain("deliverable=1 md, pdf failed");
+        note.Body.ShouldContain("--- deliverable ---");
+        note.Body.ShouldContain("[[attach: ");
+        note.Body.ShouldContain("01-requirements.md]]");
+        var reportAt = note.Body.IndexOf("Wrote `docs/features", StringComparison.Ordinal);
+        var blockAt = note.Body.IndexOf("--- deliverable ---", StringComparison.Ordinal);
+        blockAt.ShouldBeGreaterThan(reportAt);
+    }
+
+    [Test]
     public async Task a_report_with_no_resolving_markdown_path_leaves_no_deliverable_pointer()
     {
         using var workspace = new TempWorkspace();

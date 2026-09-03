@@ -586,6 +586,47 @@ public class DelegationReportFormatterTests
     }
 
     [Test]
+    public void a_completion_note_carries_deliverable_header_bit_and_attach_block_after_the_report()
+    {
+        var pdf = Path.Combine("C:", "src", "mav-ref", ".antiphon", "deliverables", "3f4a6029",
+            "CARD-0002-001-kalshi-ref-data-downloader.pdf");
+        var md = Path.Combine("C:", "src", "mav-ref", ".antiphon", "deliverables", "3f4a6029",
+            "01-requirements.md");
+        var deliverable = new DelegationReportFormatter.DeliverableNote(
+            "4 md, pdf 212 KB", [pdf, md]);
+
+        var note = DelegationReportFormatter.BuildCompletionNote(
+            NewTask(), Settings, "Rewrote the section.", deliverable: deliverable);
+
+        note.Header.ShouldContain("deliverable=4 md, pdf 212 KB");
+        note.Header.ShouldNotContain("--- deliverable ---");
+        note.Body.ShouldContain("Rewrote the section.");
+        var blockAt = note.Body.IndexOf("--- deliverable ---", StringComparison.Ordinal);
+        blockAt.ShouldBeGreaterThan(note.Body.IndexOf("Rewrote the section.", StringComparison.Ordinal));
+        note.Body.ShouldContain("To send these to your chat, copy the marker lines below into your reply as they are:");
+        note.Body.ShouldContain($"[[attach: {pdf}]]");
+        note.Body.ShouldContain($"[[attach: {md}]]");
+        note.Body.ShouldStartWith(note.Header);
+    }
+
+    [Test]
+    public void the_deliverable_block_survives_an_excerpted_report()
+    {
+        var pdf = Path.Combine("C:", "tmp", "out.pdf");
+        var deliverable = new DelegationReportFormatter.DeliverableNote("1 md, pdf failed", [pdf]);
+        var report = "OPENING-MARKER" + new string('x', 40_000) + "CLOSING-MARKER";
+
+        var note = DelegationReportFormatter.BuildCompletionNote(
+            NewTask(), Settings, report, deliverable: deliverable);
+
+        note.Body.ShouldContain("THIS REPORT IS AN EXCERPT");
+        note.Body.ShouldEndWith($"[[attach: {pdf}]]");
+        var excerptAt = note.Body.IndexOf("THIS REPORT IS AN EXCERPT", StringComparison.Ordinal);
+        var blockAt = note.Body.IndexOf("--- deliverable ---", StringComparison.Ordinal);
+        blockAt.ShouldBeGreaterThan(excerptAt);
+    }
+
+    [Test]
     public void a_sub_orchestrator_brief_asks_for_a_rollup_not_a_relay()
     {
         // Without this clause a sub-orchestrator forwards everything it received and the nesting

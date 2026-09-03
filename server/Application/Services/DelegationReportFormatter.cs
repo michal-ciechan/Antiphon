@@ -348,10 +348,14 @@ public static class DelegationReportFormatter
     /// merges by hand, so being told which live task shares this one's ground is what lets them
     /// pick an order in which the second rebase is trivial. No queue, no lock.
     /// </param>
+    /// <summary>CARD-0337 S2: header bit plus absolute paths to emit as <c>[[attach:]]</c> lines.</summary>
+    public sealed record DeliverableNote(string HeaderBit, IReadOnlyList<string> AttachPaths);
+
     public static Note BuildCompletionNote(
         AgentTask task, DelegationSettings settings, string report, string? workspaceNote = null,
         int? replyInlineMaxChars = null, string? warning = null, string? overlappingRunning = null,
-        string? drift = null, string? reportEvidence = null, string? git = null)
+        string? drift = null, string? reportEvidence = null, string? git = null,
+        DeliverableNote? deliverable = null)
     {
         var header = new StringBuilder();
         header.Append('[').Append("task ").Append(Short(task.Id)).Append(' ')
@@ -374,13 +378,30 @@ public static class DelegationReportFormatter
             bits.Add($"report={reportEvidence.Trim()}");
         if (!string.IsNullOrWhiteSpace(git))
             bits.Add($"git={git.Trim()}");
+        if (deliverable is not null)
+            bits.Add($"deliverable={deliverable.HeaderBit}");
         if (bits.Count > 0) header.Append(' ').Append(string.Join(" · ", bits));
 
         var (body, excerpted) = FitReport(report ?? string.Empty, task, settings, replyInlineMaxChars);
+        if (deliverable is { AttachPaths.Count: > 0 })
+            body = body + "\n\n" + FormatDeliverableBlock(deliverable.AttachPaths);
         var normalizedHeader = header.ToString().ReplaceLineEndings("\n");
         if (!string.IsNullOrWhiteSpace(warning))
             normalizedHeader = $"{normalizedHeader}\n\n{warning.Trim()}".ReplaceLineEndings("\n");
         return new Note($"{normalizedHeader}\n\n{body}".ReplaceLineEndings("\n"), excerpted, normalizedHeader);
+    }
+
+    /// <summary>
+    /// Trailing attach block. Outside <see cref="FitReport"/> so excerpting can never remove it.
+    /// </summary>
+    public static string FormatDeliverableBlock(IReadOnlyList<string> attachPaths)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("--- deliverable ---");
+        sb.AppendLine("To send these to your chat, copy the marker lines below into your reply as they are:");
+        foreach (var path in attachPaths)
+            sb.Append("[[attach: ").Append(path).AppendLine("]]");
+        return sb.ToString().TrimEnd().ReplaceLineEndings("\n");
     }
 
     /// <summary>

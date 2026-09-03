@@ -1492,7 +1492,8 @@ public sealed class AgentTaskReplyService
         var note = DelegationReportFormatter.BuildCompletionNote(
             task, _settings, report, workspaceNote, ReplyInlineMaxChars, warning,
             await DescribeOverlappingRunningAsync(task, ct), drift,
-            ReportEvidenceHeader(task.ReportEvidence), git);
+            ReportEvidenceHeader(task.ReportEvidence), git,
+            DescribeDeliverable(task));
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
@@ -1513,6 +1514,14 @@ public sealed class AgentTaskReplyService
                 ex, "Could not deliver task {ShortId} report to parent session {SessionId}",
                 DelegationReportFormatter.Short(task.Id), parentSession);
         }
+    }
+
+    private static DelegationReportFormatter.DeliverableNote? DescribeDeliverable(AgentTask task)
+    {
+        var bit = DeliverableBundleService.FormatNoteBit(task);
+        if (bit is null)
+            return null;
+        return new DelegationReportFormatter.DeliverableNote(bit, DeliverableBundleService.ListAttachableFiles(task));
     }
 
     /// <summary>
