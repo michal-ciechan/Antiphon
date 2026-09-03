@@ -32,6 +32,13 @@ public class Card
     /// it returns. Surfaced as staleness ("rated Now 12d ago"), never used to decay the rating.
     /// </summary>
     public DateTime? UrgentSince { get; set; }
+
+    /// <summary>
+    /// Dense 1..n order inside the card's (column, rank cell). Null means never placed and sorts
+    /// after every placed card in the cell, then dueAt, then <see cref="CreatedAt"/> (CARD-0098).
+    /// Cleared by a column or axis change; a dueAt change does not clear it.
+    /// </summary>
+    public int? Position { get; set; }
     public string LabelsJson { get; set; } = "[]";
     public CardStatus Status { get; set; } = CardStatus.Backlog;
     public Guid ConcurrencyToken { get; set; } = Guid.NewGuid();

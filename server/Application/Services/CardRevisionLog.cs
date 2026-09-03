@@ -63,6 +63,7 @@ internal static class CardRevisionLog
             Importance = card.Importance,
             Urgency = card.Urgency,
             DueAt = card.DueAt,
+            Position = card.Position,
             LabelsJson = card.LabelsJson,
             Reason = Trimmed(reason),
             EditedBy = Trimmed(editedBy),

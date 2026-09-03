@@ -1464,6 +1464,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<Guid?>("OwnerSessionId")
                         .HasColumnType("uuid");
 
+                    b.Property<int?>("Position")
+                        .HasColumnType("integer");
+
                     b.Property<int>("RevisionCount")
                         .HasColumnType("integer");
 
@@ -1612,6 +1615,9 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<string>("LabelsJson")
                         .HasColumnType("jsonb");
+
+                    b.Property<int?>("Position")
+                        .HasColumnType("integer");
 
                     b.Property<string>("Reason")
                         .HasColumnType("text");

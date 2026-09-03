@@ -61,6 +61,55 @@ public class CardRankingOrderTests
         index.ShouldContain("`now`");
     }
 
+    [Test]
+    public void Same_rank_later_created_with_position_1_sorts_first()
+    {
+        var earlier = new DateTime(2026, 9, 2, 10, 0, 0, DateTimeKind.Utc);
+        var later = earlier.AddHours(2);
+        var older = MakeCard("CARD-0001", CardImportance.Normal, CardUrgency.Normal, earlier);
+        var placed = MakeCard("CARD-0002", CardImportance.Normal, CardUrgency.Normal, later);
+        placed.Position = 1;
+
+        CardRanking.OrderKey(placed, later).ShouldBeLessThan(CardRanking.OrderKey(older, later));
+
+        var column = new BoardColumn
+        {
+            Id = Guid.NewGuid(),
+            StateKey = "backlog",
+            Name = "Backlog",
+            ColumnOrder = 0,
+            CardStatus = CardStatus.Backlog
+        };
+        var project = new Project { Id = Guid.NewGuid(), Name = "P" };
+        var board = new Board
+        {
+            Id = Guid.NewGuid(),
+            Name = "B",
+            Project = project,
+            Columns = { column },
+            Cards = { older, placed }
+        };
+        older.BoardColumnId = column.Id;
+        placed.BoardColumnId = column.Id;
+
+        var dto = BoardService.ToDetailDto(board, includeArchived: false);
+        dto.Columns.Single().Cards.Select(c => c.Identifier).ToArray()
+            .ShouldBe(["CARD-0002", "CARD-0001"]);
+        dto.Columns.Single().Cards[0].Position.ShouldBe(1);
+        dto.Columns.Single().Cards[1].Position.ShouldBeNull();
+    }
+
+    [Test]
+    public void Position_is_ignored_across_different_ranks()
+    {
+        var now = new DateTime(2026, 9, 2, 12, 0, 0, DateTimeKind.Utc);
+        var lowPlaced = MakeCard("CARD-0001", CardImportance.Low, CardUrgency.Normal, now);
+        lowPlaced.Position = 1;
+        var highUnplaced = MakeCard("CARD-0002", CardImportance.High, CardUrgency.Normal, now.AddHours(1));
+
+        CardRanking.OrderKey(highUnplaced, now).ShouldBeLessThan(CardRanking.OrderKey(lowPlaced, now));
+    }
+
     private static Card MakeCard(
         string identifier, CardImportance importance, CardUrgency urgency, DateTime created) =>
         new()

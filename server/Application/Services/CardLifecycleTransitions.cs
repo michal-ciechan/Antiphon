@@ -43,6 +43,7 @@ internal static class CardLifecycleTransitions
         card.BoardColumnId = reviewColumn.Id;
         card.BoardColumn = reviewColumn;
         card.Status = reviewColumn.CardStatus;
+        card.Position = null;
         card.StartedAt ??= utcNow;
         card.CompletedAt = null;
         card.TerminalReason = null;

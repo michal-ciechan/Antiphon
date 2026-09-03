@@ -765,6 +765,7 @@ public sealed class OrchestratorService
                 c.Importance,
                 c.Urgency,
                 c.DueAt,
+                c.Position,
                 c.CreatedAt,
                 c.BoardId,
                 c.Board.MaxConcurrentSessions,
@@ -784,9 +785,7 @@ public sealed class OrchestratorService
                     .FirstOrDefault()))
             .ToListAsync(ct);
         return rows
-            .OrderBy(c => CardRanking.Rank(c.Importance, c.Urgency, c.DueAt, utcNow))
-            .ThenBy(c => CardRanking.DueAtSortKey(c.DueAt))
-            .ThenBy(c => c.CreatedAt)
+            .OrderBy(c => CardRanking.OrderKey(c.Importance, c.Urgency, c.DueAt, c.Position, c.CreatedAt, utcNow))
             .ToList();
     }
 
@@ -1014,6 +1013,7 @@ public sealed class OrchestratorService
         CardImportance Importance,
         CardUrgency Urgency,
         DateTime? DueAt,
+        int? Position,
         DateTime CreatedAt,
         Guid BoardId,
         int BoardMaxConcurrentSessions,

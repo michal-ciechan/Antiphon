@@ -108,6 +108,43 @@ public class OrchestratorServiceIntegrationTests
     }
 
     [Test]
+    public async Task PollTick_dispatches_the_placed_card_ahead_of_an_older_same_rank_card()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var graph = CreateGraph(tempRoot, boardMaxConcurrent: 1);
+            graph.Card.Importance = CardImportance.Normal;
+            graph.Card.Urgency = CardUrgency.Normal;
+            graph.Card.CreatedAt = DateTime.UtcNow.AddMinutes(-10);
+            graph.Card.Position = null;
+            var placed = AddCard(graph, "C98", graph.ActiveColumn);
+            placed.Importance = CardImportance.Normal;
+            placed.Urgency = CardUrgency.Normal;
+            placed.CreatedAt = DateTime.UtcNow;
+            placed.Position = 1;
+            db.Add(graph.Project);
+            await db.SaveChangesAsync();
+
+            var adapter = new FakeAgentProtocolAdapter { PromptOutput = "POS_OK" };
+            await using var harness = BuildHarness(tempRoot, [adapter]);
+
+            var result = await harness.Orchestrator.PollTickAsync(CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            result.Dispatched.ShouldBeGreaterThanOrEqualTo(1);
+            adapter.SentPrompt.ShouldContain(placed.Identifier);
+            adapter.SentPrompt.ShouldNotContain(graph.Card.Identifier);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task Orchestrator_dispatches_eligible_card_through_agent_session_service()
     {
         await using var db = CreateContext();

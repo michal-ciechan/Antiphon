@@ -355,7 +355,10 @@ public sealed class ExternalTrackerSyncService
                 if (labelsChanged)
                     card.LabelsJson = labelsJson;
                 if (importanceChanged)
+                {
                     card.Importance = importedImportance;
+                    card.Position = null;
+                }
                 changed = true;
             }
         }
@@ -396,6 +399,7 @@ public sealed class ExternalTrackerSyncService
             card.BoardColumnId = targetColumn.Id;
             card.BoardColumn = targetColumn;
             card.Status = targetColumn.CardStatus;
+            card.Position = null;
             card.CompletedAt = null;
             card.TerminalReason = isBlocked ? "External tracker blockers are not terminal." : null;
             changed = true;

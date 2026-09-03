@@ -50,6 +50,12 @@ public class CardRevision
     /// <summary>The SUPERSEDED due date.</summary>
     public DateTime? DueAt { get; set; }
 
+    /// <summary>
+    /// The SUPERSEDED position (CARD-0098). Set on a <see cref="CardRevisionKind.ContentEdit"/>
+    /// when a promotion clears it, and on a <see cref="CardRevisionKind.Reorder"/> row.
+    /// </summary>
+    public int? Position { get; set; }
+
     /// <summary>The SUPERSEDED labels, same jsonb shape as <see cref="Card.LabelsJson"/>.</summary>
     public string? LabelsJson { get; set; }
 

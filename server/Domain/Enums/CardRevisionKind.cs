@@ -24,5 +24,12 @@ public enum CardRevisionKind
     /// A terminal close was undone: the row carries the transition AND the superseded
     /// <c>TerminalReason</c>/<c>CompletedAt</c>. Always has a reason.
     /// </summary>
-    Reopen = 4
+    Reopen = 4,
+
+    /// <summary>
+    /// The card was placed inside its rank cell (CARD-0098). The row carries the SUPERSEDED
+    /// <c>Position</c> and, when the drop crossed a cell, the superseded importance/urgency.
+    /// Neighbours that were only renumbered do not get a row.
+    /// </summary>
+    Reorder = 5
 }
