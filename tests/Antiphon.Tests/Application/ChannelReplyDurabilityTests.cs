@@ -1,3 +1,6 @@
+using Antiphon.Messaging;
+using Antiphon.Messaging.Client;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
@@ -6,6 +9,7 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -57,6 +61,173 @@ public class ChannelReplyDurabilityTests
     {
         await using var db = CreateContext();
         return await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == id);
+    }
+
+    private static SessionRunnerTranscriptDto LateConfirmBatch(
+        Guid sessionId, string prompt, string response, bool isApiError = false) =>
+        new(sessionId,
+        [
+            new SessionRunnerTranscriptEvent(
+                sessionId, 1, TranscriptKinds.UserPrompt, "late-confirm-prompt", null, DateTimeOffset.UtcNow,
+                "user", prompt, null, null, null, null, null),
+            new SessionRunnerTranscriptEvent(
+                sessionId, 2, TranscriptKinds.AssistantText, "late-confirm-answer", null, DateTimeOffset.UtcNow,
+                "assistant", response, null, null, null, null, null, IsApiError: isApiError),
+            new SessionRunnerTranscriptEvent(
+                sessionId, 3, TranscriptKinds.TurnEnd, "late-confirm-end", null, DateTimeOffset.UtcNow,
+                "assistant", null, null, null, null, null, TranscriptKinds.StopReasons.EndTurn,
+                IsApiError: isApiError),
+        ], 3);
+
+    private sealed class FailingProducer : IAntiphonMessagingProducer
+    {
+        public Task SendAsync(ChannelReply reply, CancellationToken cancellationToken = default) =>
+            Task.FromException(new InvalidOperationException("CARD-0313 deterministic producer failure"));
+    }
+
+    private sealed class ListLogger<T>(List<string> sink) : ILogger<T>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            lock (sink)
+                sink.Add(formatter(state, exception));
+        }
+    }
+
+    [Test]
+    public async Task A_runtime_batch_redispatches_a_late_confirmed_channel_reply_once()
+    {
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        const string prompt = "[Telegram \"Family\" — Mike 10:10] Please send the real answer";
+        const string answer = "The runtime batch reached the actual answer exactly once.";
+        var baseline = await h.CurrentTranscriptMaxSequenceAsync();
+        var messageId = await h.SeedPendingMessageAsync(
+            prompt,
+            deliveryAttempts: 1,
+            baselineSequence: baseline,
+            origin: QueuedMessageOrigin.Channel,
+            conversationKey: $"telegram:{chatId}");
+        h.Runner.SetTranscript(LateConfirmBatch(h.SessionId, prompt, answer));
+
+        await h.Runtime.SyncTranscriptAsync(h.SessionId, CancellationToken.None);
+
+        var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
+        reply.ConversationId.ShouldBe(chatId);
+        reply.Text.ShouldBe(answer);
+        var row = await RowAsync(messageId);
+        row.Status.ShouldBe(QueuedMessageStatus.Sent);
+        row.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
+        row.ChannelReplySettledAt.ShouldNotBeNull();
+        await using var db = CreateContext();
+        (await db.AgentIncidents.CountAsync(i =>
+            i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.ChannelReplyLost)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task A_failed_late_confirm_recovery_warns_with_the_correlation_and_leaves_it_owed()
+    {
+        var logs = new List<string>();
+        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            AlwaysOn = true,
+            Bridge = new ChannelBridgeSettings { Enabled = true, DebounceWindowMs = 0 },
+            ConfigureServices = services =>
+            {
+                services.AddSingleton<IAntiphonMessagingProducer>(new FailingProducer());
+                services.AddSingleton<ILogger<AgentSessionRuntime>>(
+                    new ListLogger<AgentSessionRuntime>(logs));
+            },
+        });
+        var chatId = await h.BindChannelAsync();
+        var conversationKey = $"telegram:{chatId}";
+        const string prompt = "[Telegram \"Family\" — Mike 10:11] Force the recovery producer failure";
+        const string answer = "This answer must remain owed when publication fails.";
+        var messageId = await h.SeedPendingMessageAsync(
+            prompt,
+            deliveryAttempts: 1,
+            baselineSequence: await h.CurrentTranscriptMaxSequenceAsync(),
+            origin: QueuedMessageOrigin.Channel,
+            conversationKey: conversationKey);
+        h.Runner.SetTranscript(LateConfirmBatch(h.SessionId, prompt, answer));
+
+        await h.Runtime.SyncTranscriptAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.ShouldBeEmpty();
+        var row = await RowAsync(messageId);
+        row.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
+        row.ChannelReplySettledAt.ShouldBeNull();
+        logs.ShouldContain(log => log.Contains("Late-confirmed channel reply was not published after recovery dispatch", StringComparison.Ordinal)
+            && log.Contains(h.SessionId.ToString(), StringComparison.Ordinal)
+            && log.Contains(messageId.ToString(), StringComparison.Ordinal)
+            && log.Contains(conversationKey, StringComparison.Ordinal)
+            && log.Contains(ChannelReplyDispatchOutcome.PublicationFailed.ToString(), StringComparison.Ordinal));
+    }
+
+    [Test]
+    public async Task A_late_confirmed_no_reply_turn_does_not_warn_as_an_unpublished_reply()
+    {
+        var logs = new List<string>();
+        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            AlwaysOn = true,
+            Bridge = new ChannelBridgeSettings { Enabled = true, DebounceWindowMs = 0 },
+            ConfigureServices = services => services.AddSingleton<ILogger<AgentSessionRuntime>>(
+                new ListLogger<AgentSessionRuntime>(logs)),
+        });
+        var chatId = await h.BindChannelAsync();
+        const string prompt = "[Telegram \"Family\" — Mike 10:12] Do not answer this turn";
+        var messageId = await h.SeedPendingMessageAsync(
+            prompt,
+            deliveryAttempts: 1,
+            baselineSequence: await h.CurrentTranscriptMaxSequenceAsync(),
+            origin: QueuedMessageOrigin.Channel,
+            conversationKey: $"telegram:{chatId}");
+        h.Runner.SetTranscript(LateConfirmBatch(h.SessionId, prompt, "NO_REPLY"));
+
+        await h.Runtime.SyncTranscriptAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.ShouldBeEmpty();
+        (await RowAsync(messageId)).ChannelReplySettledAt.ShouldNotBeNull();
+        logs.ShouldNotContain(log => log.Contains(
+            "Late-confirmed channel reply was not published after recovery dispatch", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public async Task A_late_confirmed_api_withheld_turn_does_not_warn_as_an_unpublished_reply()
+    {
+        var logs = new List<string>();
+        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            AlwaysOn = true,
+            Bridge = new ChannelBridgeSettings { Enabled = true, DebounceWindowMs = 0 },
+            ConfigureServices = services => services.AddSingleton<ILogger<AgentSessionRuntime>>(
+                new ListLogger<AgentSessionRuntime>(logs)),
+        });
+        var chatId = await h.BindChannelAsync();
+        const string prompt = "[Telegram \"Family\" — Mike 10:13] Simulate an API-withheld turn";
+        var messageId = await h.SeedPendingMessageAsync(
+            prompt,
+            deliveryAttempts: 1,
+            baselineSequence: await h.CurrentTranscriptMaxSequenceAsync(),
+            origin: QueuedMessageOrigin.Channel,
+            conversationKey: $"telegram:{chatId}");
+        h.Runner.SetTranscript(LateConfirmBatch(
+            h.SessionId, prompt, "API Error: 529 Overloaded", isApiError: true));
+
+        await h.Runtime.SyncTranscriptAsync(h.SessionId, CancellationToken.None);
+
+        (await RowAsync(messageId)).DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
+        logs.ShouldNotContain(log => log.Contains(
+            "Late-confirmed channel reply was not published after recovery dispatch", StringComparison.Ordinal));
     }
 
     // THE regression test. Nothing in this test's setup survives in process memory: the correlation

@@ -37,6 +37,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
     public required FakeAntiphonMessagingClient Messaging { get; init; }
     public required AgentSessionRuntime Runtime { get; init; }
     public required SessionMessageQueueService Queue { get; init; }
+    public required EmptyRunnerClient Runner { get; init; }
     public ChannelReplyDispatcher Dispatcher => Provider.GetRequiredService<ChannelReplyDispatcher>();
 
     public sealed record HarnessOptions
@@ -124,7 +125,8 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         {
             InternalTrackerRepositoryPathPrefix = tempRoot,
         }));
-        services.AddSingleton<ISessionRunnerClient>(new EmptyRunnerClient());
+        var runner = new EmptyRunnerClient();
+        services.AddSingleton<ISessionRunnerClient>(runner);
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionMessageQueueService>();
         services.AddSingleton<ApiErrorRecoveryService>();
@@ -253,6 +255,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             Messaging = messaging,
             Runtime = runtime,
             Queue = provider.GetRequiredService<SessionMessageQueueService>(),
+            Runner = runner,
         };
     }
 
@@ -536,10 +539,16 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         }
     }
 
-    // All sessions in these tests are runtime-registered fakes; the runner client only ever needs
-    // to answer "no runner-hosted sessions" for ListLiveSessions and the supervisor's ctor.
+    // All sessions in these tests are runtime-registered fakes. Most only need the empty ListAsync
+    // answer; SyncTranscriptAsync regressions can seed one runner snapshot without adding a second
+    // fake client or bypassing the runtime's production batch path.
     internal sealed class EmptyRunnerClient : ISessionRunnerClient
     {
+        private readonly Dictionary<Guid, SessionRunnerTranscriptDto> _transcripts = [];
+
+        public void SetTranscript(SessionRunnerTranscriptDto transcript) =>
+            _transcripts[transcript.SessionId] = transcript;
+
         public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
 
@@ -555,8 +564,10 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct)
             => throw new NotSupportedException();
 
-        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)
-            => throw new NotSupportedException();
+        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
+            Task.FromResult(_transcripts.TryGetValue(sessionId, out var transcript)
+                ? transcript
+                : new SessionRunnerTranscriptDto(sessionId, [], 0));
 
         public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
             => throw new NotSupportedException();

@@ -877,15 +877,17 @@ public class SessionMessageQueueDeliveryVerificationTests
         const string body = "the delegation brief that actually went in";
 
         var floor = await h.CurrentTranscriptMaxSequenceAsync();
-        await h.SeedPendingMessageAsync(body, deliveryAttempts: 1, baselineSequence: floor);
+        var messageId = await h.SeedPendingMessageAsync(body, deliveryAttempts: 1, baselineSequence: floor);
         // It really did land — the first attempt's confirmation was simply blind.
         await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, body);
         await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
 
-        await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        var result = await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
 
         h.Adapter.Inputs.ShouldBeEmpty("late-confirmed: nothing may be typed, not even an Enter");
         h.Adapter.SubmittedBodies.ShouldBeEmpty();
+        result.LateConfirmedMessageIds.ShouldHaveSingleItem().ShouldBe(messageId);
+        result.LateConfirmedChannelMessageIds.ShouldBeEmpty("this is a delegation/UI row, not a channel correlation");
 
         await using var db = CreateContext();
         var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);

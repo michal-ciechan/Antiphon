@@ -486,11 +486,55 @@ public sealed class AgentSessionRuntime
 
             var queue = scope.ServiceProvider.GetService<SessionMessageQueueService>();
             if (queue is not null)
-                await queue.OnTurnEndAsync(sessionId, ct);
+            {
+                var queueResult = await queue.OnTurnEndAsync(sessionId, ct);
+                if (channelReplies is not null && queueResult.LateConfirmedChannelMessageIds.Count > 0)
+                {
+                    // The first pass intentionally runs before queue delivery. A row promoted from
+                    // Pending to Sent by the queue afterwards was therefore invisible to it; run
+                    // the same durable dispatcher once more, now that this exact row is eligible.
+                    var dispatchResult = await channelReplies.OnTurnEndAsync(sessionId, ct);
+                    await WarnOnUnpublishedLateConfirmedChannelRepliesAsync(
+                        sessionId, queueResult.LateConfirmedChannelMessageIds, dispatchResult, ct);
+                }
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "Failed to flush message queue on idle for session {SessionId}", sessionId);
+        }
+    }
+
+    private async Task WarnOnUnpublishedLateConfirmedChannelRepliesAsync(
+        Guid sessionId,
+        IReadOnlySet<Guid> lateConfirmedChannelMessageIds,
+        ChannelReplyDispatchResult dispatchResult,
+        CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var rows = await db.SessionQueuedMessages
+            .AsNoTracking()
+            .Where(m => m.AgentSessionId == sessionId
+                && lateConfirmedChannelMessageIds.Contains(m.Id))
+            .Select(m => new { m.Id, m.ConversationKey, m.ChannelReplySettledAt })
+            .ToListAsync(ct);
+
+        foreach (var row in rows)
+        {
+            var outcome = dispatchResult.OutcomeFor(row.Id);
+            if (outcome is ChannelReplyDispatchOutcome.Published
+                or ChannelReplyDispatchOutcome.IntentionallyWithheld
+                || row.ChannelReplySettledAt is not null)
+            {
+                continue;
+            }
+
+            _logger.LogWarning(
+                "Late-confirmed channel reply was not published after recovery dispatch: session {SessionId}, "
+                + "queue message/correlation {QueueMessageId}, conversation {ConversationKey}, dispatch outcome "
+                + "{DispatchOutcome}. The correlation remains owed for the existing loss/TTL path.",
+                sessionId, row.Id, row.ConversationKey, outcome);
         }
     }
 

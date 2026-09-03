@@ -15,6 +15,11 @@ using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
+/// <summary>Late-confirmation evidence produced while processing one turn-end boundary.</summary>
+public sealed record SessionQueueTurnEndResult(
+    IReadOnlySet<Guid> LateConfirmedMessageIds,
+    IReadOnlySet<Guid> LateConfirmedChannelMessageIds);
+
 /// <summary>
 /// Manages messages queued to a live agent session. "Send now" delivers immediately; "wait until idle"
 /// holds the message until the agent reaches a turn-end (<c>stop_reason: end_turn</c>), then delivers the
@@ -852,9 +857,10 @@ public sealed class SessionMessageQueueService
     /// Called when a session reaches a turn-end (idle). Delivers the next queued message if any; otherwise
     /// the agent has completely finished, so broadcast <c>SessionFinished</c>.
     /// </summary>
-    public async Task OnTurnEndAsync(Guid sessionId, CancellationToken ct)
+    public async Task<SessionQueueTurnEndResult> OnTurnEndAsync(Guid sessionId, CancellationToken ct)
     {
         FlushResult flush;
+        var lateConfirmed = new LateConfirmCollector();
         var sem = GetLock(sessionId);
         await sem.WaitAsync(ct);
         try
@@ -863,7 +869,7 @@ public sealed class SessionMessageQueueService
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             // Cancel-not-strand: a Supervision /compact that sat through a turn must not fire now.
             await CancelPendingSupervisionLockedAsync(db, sessionId, "turn-end", ct);
-            flush = await DeliverNextLockedAsync(db, sessionId, ct);
+            flush = await DeliverNextLockedAsync(db, sessionId, ct, lateConfirmed);
         }
         finally
         {
@@ -880,6 +886,8 @@ public sealed class SessionMessageQueueService
             // queue view changed. A failed flush is NOT "finished".
             await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
         }
+
+        return lateConfirmed.ToResult();
     }
 
     /// <summary>
@@ -1125,7 +1133,11 @@ public sealed class SessionMessageQueueService
     // coalesces into one delivery under the batch markers (OpenClaw's 'collect' model): a run of 1
     // is literally today's behaviour; UI/System messages and conversation changes break the run, so
     // cross-origin FIFO order is preserved and operator messages keep 1:1 turns.
-    private async Task<FlushResult> DeliverNextLockedAsync(AppDbContext db, Guid sessionId, CancellationToken ct)
+    private async Task<FlushResult> DeliverNextLockedAsync(
+        AppDbContext db,
+        Guid sessionId,
+        CancellationToken ct,
+        LateConfirmCollector? lateConfirmed = null)
     {
         // CARD-0161: resolve ceilings once per flush for this session (herdr vs pty).
         var ceilings = await CeilingsForSessionAsync(db, sessionId, ct);
@@ -1154,7 +1166,8 @@ public sealed class SessionMessageQueueService
         var interrupted = await LoadInterruptedSentRunAsync(db, sessionId, ct);
         if (interrupted.Count > 0)
         {
-            var recovered = await RecoverDeliveryRunLockedAsync(db, sessionId, interrupted, ct, ceilings);
+            var recovered = await RecoverDeliveryRunLockedAsync(
+                db, sessionId, interrupted, ct, ceilings, lateConfirmed);
             if (recovered != FlushResult.Nothing)
                 return recovered;
             if (interrupted.Any(m => m.Status == QueuedMessageStatus.Sent))
@@ -1174,6 +1187,7 @@ public sealed class SessionMessageQueueService
         // did and the matcher was blind (ingestion stall, a fork, a text transform) — and only the
         // transcript can tell them apart. Automatic retry is safe BECAUSE the retry looks first.
         var late = await LateConfirmAttemptedMessagesAsync(db, sessionId, pending, ct);
+        lateConfirmed?.Record(late);
         if (late.Handled > 0)
             pending = pending.Where(m => m.Status == QueuedMessageStatus.Pending).ToList();
 
@@ -1469,6 +1483,8 @@ public sealed class SessionMessageQueueService
 
         var confirmed = 0;
         var truncated = 0;
+        var confirmedMessageIds = new List<Guid>();
+        var confirmedChannelMessageIds = new List<Guid>();
         var tolerance = TimeSpan.FromSeconds(
             Math.Max(0, _verification.UnobservableBaselineConfirmClockToleranceSeconds));
         foreach (var m in pending)
@@ -1518,6 +1534,9 @@ public sealed class SessionMessageQueueService
             m.DeliveryVerdict = DeliveryVerdict.LateConfirmed;
             m.DeliveryVerdictAt = m.SentAt;
             confirmed++;
+            confirmedMessageIds.Add(m.Id);
+            if (m.Origin == QueuedMessageOrigin.Channel)
+                confirmedChannelMessageIds.Add(m.Id);
             _logger.LogInformation(
                 "Message {MessageId} on session {SessionId} late-confirmed: its body became a UserPrompt "
                 + "record after attempt {Attempt} (baseline {Baseline}), so it is marked Sent and the "
@@ -1529,7 +1548,7 @@ public sealed class SessionMessageQueueService
         if (confirmed > 0)
             await db.SaveChangesAsync(ct);
 
-        return new LateConfirmCounts(confirmed, truncated);
+        return new LateConfirmCounts(confirmed, truncated, confirmedMessageIds, confirmedChannelMessageIds);
     }
 
     private static async Task RevertRunAsync(AppDbContext db, IReadOnlyList<SessionQueuedMessage> run)
@@ -1579,12 +1598,14 @@ public sealed class SessionMessageQueueService
         Guid sessionId,
         IReadOnlyList<SessionQueuedMessage> run,
         CancellationToken ct,
-        PtyDeliveryCeilings ceilings)
+        PtyDeliveryCeilings ceilings,
+        LateConfirmCollector? lateConfirmed = null)
     {
         if (run.Count == 0)
             return FlushResult.Nothing;
 
         var late = await LateConfirmAttemptedMessagesAsync(db, sessionId, run, ct);
+        lateConfirmed?.Record(late);
         var remaining = run
             .Where(m => m.Status == QueuedMessageStatus.Sent && m.DeliveryVerdict == null)
             .ToList();
@@ -1882,9 +1903,27 @@ public sealed class SessionMessageQueueService
         }
     }
 
-    private readonly record struct LateConfirmCounts(int Confirmed, int Truncated)
+    private sealed class LateConfirmCollector
     {
-        public static LateConfirmCounts Empty { get; } = new(0, 0);
+        private readonly HashSet<Guid> _messageIds = [];
+        private readonly HashSet<Guid> _channelMessageIds = [];
+
+        public void Record(LateConfirmCounts result)
+        {
+            _messageIds.UnionWith(result.ConfirmedMessageIds);
+            _channelMessageIds.UnionWith(result.ConfirmedChannelMessageIds);
+        }
+
+        public SessionQueueTurnEndResult ToResult() => new(_messageIds, _channelMessageIds);
+    }
+
+    private readonly record struct LateConfirmCounts(
+        int Confirmed,
+        int Truncated,
+        IReadOnlyList<Guid> ConfirmedMessageIds,
+        IReadOnlyList<Guid> ConfirmedChannelMessageIds)
+    {
+        public static LateConfirmCounts Empty { get; } = new(0, 0, [], []);
         public int Handled => Confirmed + Truncated;
     }
 

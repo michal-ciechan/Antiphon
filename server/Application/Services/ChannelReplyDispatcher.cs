@@ -13,6 +13,37 @@ using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
+/// <summary>The result of one pass over durable channel-reply correlations.</summary>
+public enum ChannelReplyDispatchOutcome
+{
+    NotPublished,
+    Published,
+    IntentionallyWithheld,
+    PublicationFailed,
+}
+
+/// <summary>
+/// Correlation-level outcome data for a dispatcher pass. The runtime uses this only when a queue
+/// boundary late-confirms a Channel row after the normal dispatcher-first pass.
+/// </summary>
+public sealed record ChannelReplyDispatchResult(
+    IReadOnlySet<Guid> PublishedCorrelationIds,
+    IReadOnlySet<Guid> IntentionallyWithheldCorrelationIds,
+    IReadOnlySet<Guid> FailedCorrelationIds)
+{
+    public static ChannelReplyDispatchResult Empty { get; } = new(
+        new HashSet<Guid>(), new HashSet<Guid>(), new HashSet<Guid>());
+
+    public ChannelReplyDispatchOutcome OutcomeFor(Guid correlationId) =>
+        PublishedCorrelationIds.Contains(correlationId)
+            ? ChannelReplyDispatchOutcome.Published
+            : IntentionallyWithheldCorrelationIds.Contains(correlationId)
+                ? ChannelReplyDispatchOutcome.IntentionallyWithheld
+                : FailedCorrelationIds.Contains(correlationId)
+                    ? ChannelReplyDispatchOutcome.PublicationFailed
+                    : ChannelReplyDispatchOutcome.NotPublished;
+}
+
 /// <summary>
 /// Routes an agent's turn output back down the external channel that asked for it. When a session
 /// completes a turn (<c>TurnEnd</c>/<c>end_turn</c>, observed by <see cref="AgentSessionRuntime"/>),
@@ -137,11 +168,12 @@ public sealed class ChannelReplyDispatcher
     /// Called on every completed turn. Cheap for sessions with no channel correlations (one indexed
     /// count), and the only path that can turn an agent's turn into a chat reply.
     /// </summary>
-    public async Task OnTurnEndAsync(Guid sessionId, CancellationToken ct)
+    public async Task<ChannelReplyDispatchResult> OnTurnEndAsync(Guid sessionId, CancellationToken ct)
     {
+        var result = ChannelReplyDispatchResult.Empty;
         try
         {
-            await DispatchAsync(sessionId, ct);
+            result = await DispatchAsync(sessionId, ct);
 
             // Trailing text for an already-answered turn (stop marker mid-stream) goes out as a
             // follow-up. No-op unless this session's last dispatched turn is still the live one.
@@ -159,6 +191,8 @@ public sealed class ChannelReplyDispatcher
         {
             _logger.LogWarning(ex, "Failed to dispatch channel reply for session {SessionId}", sessionId);
         }
+
+        return result;
     }
 
     /// <summary>
@@ -182,7 +216,7 @@ public sealed class ChannelReplyDispatcher
         }
     }
 
-    private async Task DispatchAsync(Guid sessionId, CancellationToken ct)
+    private async Task<ChannelReplyDispatchResult> DispatchAsync(Guid sessionId, CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -194,7 +228,7 @@ public sealed class ChannelReplyDispatcher
             .OrderBy(m => m.Sequence)
             .ToListAsync(ct);
         if (open.Count == 0)
-            return;
+            return ChannelReplyDispatchResult.Empty;
 
         // The turn that just finished: latest TurnEnd, its owning prompt, and the assistant text
         // in between. CARD-0154: a channel message typed into a busy composer lands as
@@ -215,7 +249,7 @@ public sealed class ChannelReplyDispatcher
             _logger.LogDebug(
                 "Session {SessionId} owes {Count} channel reply/replies but its transcript has no TurnEnd yet",
                 sessionId, open.Count);
-            return;
+            return ChannelReplyDispatchResult.Empty;
         }
 
         var userPrompt = await TranscriptTurnWindow.FindOwningPromptAsync(db, sessionId, endSeq, ct);
@@ -225,7 +259,7 @@ public sealed class ChannelReplyDispatcher
                 "Session {SessionId} owes {Count} channel reply/replies but the turn ending at seq {EndSeq} "
                 + "has no preceding UserPrompt or QueuedUserPrompt to match",
                 sessionId, open.Count, endSeq);
-            return;
+            return ChannelReplyDispatchResult.Empty;
         }
 
         // Extract the response BEFORE consuming any correlations: Claude sometimes writes the
@@ -250,14 +284,15 @@ public sealed class ChannelReplyDispatcher
         {
             await HandleApiErrorWithholdAsync(
                 db, sessionId, userPrompt.Sequence, open, ct);
-            return;
+            return new ChannelReplyDispatchResult(
+                new HashSet<Guid>(), open.Select(m => m.Id).ToHashSet(), new HashSet<Guid>());
         }
 
         if (string.IsNullOrWhiteSpace(responseText))
         {
             _logger.LogDebug(
                 "Turn on session {SessionId} has no assistant text yet; correlations stay pending", sessionId);
-            return;
+            return ChannelReplyDispatchResult.Empty;
         }
 
         // Only answer turns WE started: match the turn's prompt against the queued bodies still owed
@@ -279,7 +314,7 @@ public sealed class ChannelReplyDispatcher
                 + "correlation(s) still owed a reply for {Conversations}. They stay owed; if no turn ever "
                 + "matches them the TTL sweep raises a ChannelReplyLost incident.",
                 sessionId, userPrompt.Sequence, open.Count, DescribeConversations(open));
-            return;
+            return ChannelReplyDispatchResult.Empty;
         }
 
         // Resolve the reply target from the row itself — the whole CARD-0067 fix. ConversationKey is
@@ -312,6 +347,7 @@ public sealed class ChannelReplyDispatcher
             targets.Add(new ReplyTarget(provider, channel?.ReplyHandle, conversationId));
         }
 
+        var failed = unroutable.Select(m => m.Id).ToHashSet();
         if (unroutable.Count > 0)
         {
             // The turn was answered and there is nowhere to send it. That is a lost reply, not a
@@ -320,7 +356,8 @@ public sealed class ChannelReplyDispatcher
             await ReportLostAsync(sessionId, unroutable, LossReason.Unroutable, ct);
             matches = matches.Except(unroutable).ToList();
             if (matches.Count == 0)
-                return;
+                return new ChannelReplyDispatchResult(
+                    new HashSet<Guid>(), new HashSet<Guid>(), failed);
         }
 
         // CLAIM BEFORE SENDING. Marking settled first is what makes a restart safe in the other
@@ -342,7 +379,8 @@ public sealed class ChannelReplyDispatcher
             _logger.LogInformation(
                 "Silent turn (NO_REPLY) on session {SessionId}; {Count} correlation(s) settled without a reply",
                 sessionId, matches.Count);
-            return;
+            return new ChannelReplyDispatchResult(
+                new HashSet<Guid>(), matches.Select(m => m.Id).ToHashSet(), failed);
         }
 
         var (bodyText, attachments) = PrepareReplyBody(responseText, sessionId);
@@ -382,7 +420,13 @@ public sealed class ChannelReplyDispatcher
             _logger.LogError(ex,
                 "Producing the channel reply for session {SessionId} failed; {Count} correlation(s) returned to "
                 + "owed for the next turn end", sessionId, matches.Count);
+            failed.UnionWith(matches.Select(m => m.Id));
         }
+
+        return new ChannelReplyDispatchResult(
+            failed.Count == 0 ? matches.Select(m => m.Id).ToHashSet() : new HashSet<Guid>(),
+            new HashSet<Guid>(),
+            failed);
     }
 
     /// <summary>
