@@ -356,7 +356,8 @@ switch ($PSCmdlet.ParameterSetName) {
             if ($null -eq $firstLine) { $firstLine = '' } else { $firstLine = $firstLine.Trim() }
             if ($firstLine.Length -gt 80) {
                 Write-Output (('WARNING: no -Title; the goal''s first line is {0} characters and will become the ' `
-                    + 'check-header/board title (server clamp 300). Pass -Title with 2-5 words (max 80).') -f $firstLine.Length)
+                    + 'check-header/board title (server clamp 300) until antiphon-diagnose replaces it, if enabled. ' `
+                    + 'Pass -Title with 2-5 words (max 80).') -f $firstLine.Length)
             }
         }
 
@@ -465,6 +466,9 @@ switch ($PSCmdlet.ParameterSetName) {
         else {
             Write-Output ("queued task {0} ({1} {2} on {3}{4}){5}{6}" -f `
                     $created.shortId, $body.kind.ToLower(), $body.role.ToLower(), $created.modelLevel, $kindNote, $routing, $cardNote)
+            if ($created.titleDiagnosisQueued) {
+                Write-Output '  title: pending (antiphon-diagnose will set it from the goal; pass -Title to set it yourself)'
+            }
             if ($created.routing -and $created.routing.candidates) {
                 $all = @($created.routing.candidates)
                 $chosen = $all | Where-Object { $_.outcome -eq 'chosen' } | Select-Object -First 1

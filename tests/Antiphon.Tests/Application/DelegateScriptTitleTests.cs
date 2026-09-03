@@ -101,6 +101,47 @@ public sealed class DelegateScriptTitleTests
         body.RootElement.GetProperty("title").GetString().ShouldBe("short");
     }
 
+    [Test]
+    public async Task titleDiagnosisQueued_true_prints_title_pending()
+    {
+        using var server = new StubApi(
+            """
+            {"id":"11111111-1111-1111-1111-111111111111","shortId":"11111111",
+             "status":"Queued","modelLevel":"High","warning":null,"agentKind":"ClaudeCode",
+             "titleDiagnosisQueued":true}
+            """);
+        var run = await RunDelegateAsync(server, "-Role", "Code", "-Goal", new string('x', 90));
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        run.Output.ShouldContain("title: pending");
+        run.Output.ShouldContain("WARNING");
+    }
+
+    [Test]
+    public async Task titleDiagnosisQueued_false_does_not_print_title_pending()
+    {
+        using var server = new StubApi(
+            """
+            {"id":"11111111-1111-1111-1111-111111111111","shortId":"11111111",
+             "status":"Queued","modelLevel":"High","warning":null,"agentKind":"ClaudeCode",
+             "titleDiagnosisQueued":false}
+            """);
+        var run = await RunDelegateAsync(server, "-Role", "Code", "-Goal", new string('x', 90));
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        run.Output.ShouldNotContain("title: pending");
+    }
+
+    [Test]
+    public async Task an_absent_titleDiagnosisQueued_does_not_print_title_pending()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(server, "-Role", "Code", "-Goal", "run the suite");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        run.Output.ShouldNotContain("title: pending");
+    }
+
     private static Task<(int ExitCode, string Output)> RunDelegateAsync(StubApi server, params string[] args) =>
         DelegateScriptRunner.RunAsync(server.BaseUrl, args);
 
@@ -109,9 +150,15 @@ public sealed class DelegateScriptTitleTests
         private readonly HttpListener _listener = new();
         private readonly CancellationTokenSource _cts = new();
         private readonly Task _pump;
+        private readonly string _responseJson;
 
-        public StubApi()
+        public StubApi(string? responseJson = null)
         {
+            _responseJson = responseJson ??
+                """
+                {"id":"11111111-1111-1111-1111-111111111111","shortId":"11111111",
+                 "status":"Queued","modelLevel":"High","warning":null,"agentKind":"ClaudeCode"}
+                """;
             var port = FreePort();
             BaseUrl = $"http://localhost:{port}/";
             _listener.Prefixes.Add(BaseUrl);
@@ -140,11 +187,7 @@ public sealed class DelegateScriptTitleTests
                     if (!string.IsNullOrWhiteSpace(raw)) LastBody = JsonDocument.Parse(raw);
                 }
 
-                var payload = Encoding.UTF8.GetBytes(
-                    """
-                    {"id":"11111111-1111-1111-1111-111111111111","shortId":"11111111",
-                     "status":"Queued","modelLevel":"High","warning":null,"agentKind":"ClaudeCode"}
-                    """);
+                var payload = Encoding.UTF8.GetBytes(_responseJson);
                 context.Response.StatusCode = 201;
                 context.Response.ContentType = "application/json";
                 await context.Response.OutputStream.WriteAsync(payload);

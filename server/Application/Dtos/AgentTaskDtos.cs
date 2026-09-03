@@ -369,7 +369,13 @@ public sealed record AgentTaskCreatedDto(
     /// <summary>CARD-0090. The complexity tier that chose kind/level, when one did.</summary>
     TaskComplexity? Complexity = null,
     /// <summary>CARD-0090. The walk that produced kind/level (or exhausted the chain).</summary>
-    ComplexityRoutingDto? Routing = null);
+    ComplexityRoutingDto? Routing = null,
+    /// <summary>
+    /// CARD-0352 S3. True when create stored the Goal-first-line fallback and handed the
+    /// task to antiphon-diagnose to replace the title. <c>delegate.ps1</c> prints
+    /// <c>title: pending</c>. Creation never waits on the seat.
+    /// </summary>
+    bool TitleDiagnosisQueued = false);
 
 /// <summary>
 /// One running task a newly created task overlaps, and what the dispatcher will do about it.

@@ -411,6 +411,11 @@ export interface AgentTaskCreatedDto {
    * (CARD-0020 S1). Optional: a server that predates the field simply omits it.
    */
   noReplyRouting?: boolean
+  /**
+   * CARD-0352. True when create stored the Goal-first-line fallback and queued antiphon-diagnose
+   * to replace the title. Optional: a server that predates the field simply omits it.
+   */
+  titleDiagnosisQueued?: boolean
 }
 
 /** Role → tier, mirroring the server's default RolePolicy. Shown next to each role in the picker. */
