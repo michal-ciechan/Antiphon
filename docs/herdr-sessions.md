@@ -124,6 +124,22 @@ detection. `PaneTitle` and `AgentSlug` are independent: tab `PM-Orchestrator-Gro
 `herdr agent get pm-orchestrator-grok`. Null `AgentSlug` means do not rename (old-server compat,
 or a session with no owning agent).
 
+Workspace matching (CARD-0323) is token-first, then one untagged exact label:
+
+1. A workspace whose `tokens["antiphon-ws"]` exactly equals `WorkspaceKey` — Antiphon-owned
+   identity, even if a human later changed the label. That match also re-reports the token
+   (best-effort TTL refresh).
+2. Otherwise, **exactly one** workspace whose `Label` equals `WorkspaceLabel` **and which has no
+   non-empty `antiphon-ws` token**. That is an operator-visible placement match, not ownership.
+   Antiphon places a new tab there and **never** writes `antiphon-ws` to it, now or on later
+   launches.
+3. Otherwise create a workspace: no label match, two or more untagged same-label candidates, or a
+   same-label workspace already tagged to a different key.
+
+There is no cwd-token fallback and no live-pane-cwd heuristic. Exact label is useful only when
+unique; ambiguity creates a new managed workspace. A reused operator workspace is not evidence
+that Antiphon owns its other tabs, panes, or processes.
+
 Renaming an agent in Antiphon mid-life does not rename its live herdr agent or tab; the next
 launch does. Herdr forgets the agent name when that occupant exits.
 
@@ -165,13 +181,24 @@ Antiphon tab that has fewer than 4 live Antiphon panes; if none has a free slot,
 | 4 | `tab.create` |
 
 **Operator tabs — tabs with no Antiphon panes — are never split into.** Gaps left by stopped panes
-are not reflowed; the next launch refills them.
+are not reflowed; the next launch refills them. **An existing workspace root pane is not an
+allocator slot.** The allocator only sees live Antiphon panes; operator tabs stay unsplittable.
+
+When Antiphon **creates** a workspace, the first launch uses `workspace.create`'s returned root
+tab and root pane instead of the allocator's `tab.create` branch, then `tab.rename`s that new tab
+to `PaneTitle`. Env is passed on `workspace.create` (same as `tab.create` / `pane.split`); if the
+session cwd differs from the workspace cwd, the launch script prepends a quoted
+`Set-Location -LiteralPath`. A later launch into that same owned workspace goes through the
+allocator as usual. Reusing an untagged operator workspace never consumes its existing root: it
+runs ordinary `tab.create` in that workspace.
 
 Launch sequence: ensure workspace → **resolve the target pane** (CARD-0224: last-pane record for
-this session id, or `ReusePaneOfSessionId`) → then either relaunch/adopt in place or allocate
-(`tab.create` / `pane.split`, env on both) → `pane.rename` → `pane.report_metadata` → check the
+this session id, or `ReusePaneOfSessionId`) → then either relaunch/adopt in place, use a freshly
+created root tab/pane, or allocate (`tab.create` / `pane.split`, env on both) → `tab.rename` of a
+created root only → `pane.rename` → `pane.report_metadata` → check the
 pane shell is PowerShell → write
-`<SessionLogPath>/herdr/<sessionId:N>.launch.ps1` (UTF-8 with BOM; `'exe' @(args)`) → type
+`<SessionLogPath>/herdr/<sessionId:N>.launch.ps1` (UTF-8 with BOM; `'exe' @(args)`, optional
+`Set-Location` prelude on a created root) → type
 `& '<path>'` via `pane.send_text` + `pane.send_keys ["enter"]` → poll `pane.get` until
 `Agent` matches the expected kind (`claude` / `grok` / `codex`) → `agent.list` → `agent.rename
 <paneId> <slug>` (suffixed `-2`… if a live agent holds it; skipped, Warning, if the list or
