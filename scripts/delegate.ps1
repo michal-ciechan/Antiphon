@@ -9,6 +9,9 @@
 #
 # ASCII-only on purpose: daemon/agent scripts must parse under Windows PowerShell 5.1, which reads
 # a no-BOM .ps1 as CP1252 and mangles non-ASCII characters.
+#
+# CARD-0147: create is sequential-by-default. A 409 concurrency_limit names the occupants and
+# the cap; re-send with -IgnoreConcurrencyLimit only when the user asked for parallel work.
 [CmdletBinding(DefaultParameterSetName = 'Create')]
 param(
     [Parameter(ParameterSetName = 'Create', Position = 0)]
@@ -119,6 +122,13 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [switch]$IgnoreModelDisabled,
 
+    # Bypass the CARD-0147 create-time 409 concurrency_limit. Queues this one task past the
+    # fleet/role in-flight cap (default 3 absolute, 1 per named role). One-shot: it does
+    # not raise Delegation:MaxConcurrentTasks, and the dispatcher still skips past 6.
+    # Use only when the user asked for parallel work this turn.
+    [Parameter(ParameterSetName = 'Create')]
+    [switch]$IgnoreConcurrencyLimit,
+
     # Record this dispatch's Role/Card/Kind/Level as a HUMAN, REQUIRED routing pin (CARD-0305), so
     # the next create against this card+stage runs the same way without being told again. Refused
     # without a card: a stage-wide pin changes routing for EVERY card and must be written
@@ -206,6 +216,12 @@ param(
     [Parameter(ParameterSetName = 'ListAreas', Mandatory = $true)]
     [switch]$ListAreas,
 
+    # CARD-0147 S3: cross-reference git worktree list (feat/card-task-*) against each task's
+    # live status. Detection only - never prune, remove, or fail a task. Run this when a
+    # concurrency_limit 409 names stuck occupants, or proactively before a wide dispatch.
+    [Parameter(ParameterSetName = 'WorktreeHealth', Mandatory = $true)]
+    [switch]$WorktreeHealth,
+
     [Parameter(ParameterSetName = 'ListAreas')]
     [string]$AreasDir
 )
@@ -242,6 +258,24 @@ function Invoke-Antiphon {
 }
 
 switch ($PSCmdlet.ParameterSetName) {
+    'WorktreeHealth' {
+        $report = Invoke-Antiphon -Method POST -Path '/api/agent-tasks/worktree-health' -Body @{}
+        $count = 0
+        if ($null -ne $report.findingCount) { $count = [int]$report.findingCount }
+        elseif ($report.findings) { $count = @($report.findings).Count }
+        if ($count -eq 0) {
+            Write-Output 'No stuck feat/card-task-* worktrees.'
+            return
+        }
+        Write-Output ("{0} stuck feat/card-task-* finding(s) (detection only; nothing pruned):" -f $count)
+        foreach ($finding in $report.findings) {
+            $severity = if ($finding.severity) { $finding.severity } else { 'Error' }
+            $short = if ($finding.shortId) { $finding.shortId } else { '-' }
+            Write-Output ("  [{0}] {1}  task {2}  {3}" -f $severity, $finding.branch, $short, $finding.detail)
+        }
+        return
+    }
+
     'ListAreas' {
         $dir = if ($AreasDir) { $AreasDir } else { (Get-Location).Path }
         $map = Invoke-Antiphon -Method GET -Path "/api/agent-tasks/areas?directory=$([uri]::EscapeDataString($dir))"
@@ -410,6 +444,7 @@ switch ($PSCmdlet.ParameterSetName) {
         if ($IgnoreSubscriptionQuota) { $body['ignoreSubscriptionQuota'] = $true }
         if ($AllowUnauthenticatedProvider) { $body['allowUnauthenticatedProvider'] = $true }
         if ($IgnoreModelDisabled) { $body['ignoreModelDisabled'] = $true }
+        if ($IgnoreConcurrencyLimit) { $body['ignoreConcurrencyLimit'] = $true }
         if ($IgnoreRoutingPin) { $body['ignoreRoutingPin'] = $true }
         if ($Complexity) { $body['complexity'] = $Complexity }
         if ($RefuseIfExhausted) { $body['refuseIfExhausted'] = $true }

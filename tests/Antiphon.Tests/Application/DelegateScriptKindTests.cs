@@ -381,6 +381,56 @@ public sealed class DelegateScriptKindTests
             .ShouldBeFalse("the flag is sent only when chosen, matching -IgnoreSubscriptionQuota");
     }
 
+    [Test]
+    public async Task IgnoreConcurrencyLimit_sends_ignoreConcurrencyLimit_true()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(
+            server, "-Role", "Test", "-Goal", "run in parallel", "-IgnoreConcurrencyLimit");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.GetProperty("ignoreConcurrencyLimit").GetBoolean().ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task an_omitted_IgnoreConcurrencyLimit_sends_no_ignoreConcurrencyLimit_at_all()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(server, "-Role", "Test", "-Goal", "run the suite");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.TryGetProperty("ignoreConcurrencyLimit", out _)
+            .ShouldBeFalse("the flag is sent only when chosen, matching -IgnoreSubscriptionQuota");
+    }
+
+    [Test]
+    public async Task WorktreeHealth_posts_and_prints_findings_without_pruning()
+    {
+        using var server = new StubApi(mode: StubApi.Mode.WorktreeHealth);
+        var run = await RunDelegateAsync(server, "-WorktreeHealth");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        server.LastPath.ShouldBe("/api/agent-tasks/worktree-health");
+        server.LastMethod.ShouldBe("POST");
+        run.Output.ShouldContain("feat/card-task-aabbccdd");
+        run.Output.ShouldContain("detection only");
+        run.Output.ShouldContain("nothing pruned");
+        run.Output.ShouldNotContain("worktree remove");
+    }
+
+    [Test]
+    public async Task WorktreeHealth_with_no_findings_says_so()
+    {
+        using var server = new StubApi(mode: StubApi.Mode.WorktreeHealthEmpty);
+        var run = await RunDelegateAsync(server, "-WorktreeHealth");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        server.LastPath.ShouldBe("/api/agent-tasks/worktree-health");
+        run.Output.ShouldContain("No stuck feat/card-task-* worktrees.");
+    }
+
     // ---- harness -------------------------------------------------------------------------------
 
     // The script runner itself lives in DelegateScriptRunner so S6's end-to-end test invokes
@@ -437,10 +487,14 @@ public sealed class DelegateScriptKindTests
         private readonly CancellationTokenSource _cts = new();
         private readonly Task _pump;
         private readonly string _agentKind;
+        private readonly Mode _mode;
 
-        public StubApi(string agentKind = "ClaudeCode")
+        public enum Mode { Create, WorktreeHealth, WorktreeHealthEmpty }
+
+        public StubApi(string agentKind = "ClaudeCode", Mode mode = Mode.Create)
         {
             _agentKind = agentKind;
+            _mode = mode;
             var port = FreePort();
             BaseUrl = $"http://localhost:{port}/";
             _listener.Prefixes.Add(BaseUrl);
@@ -454,6 +508,8 @@ public sealed class DelegateScriptKindTests
 
         public string? LastPath { get; private set; }
 
+        public string? LastMethod { get; private set; }
+
         public int RequestCount { get; private set; }
 
         private async Task PumpAsync()
@@ -466,18 +522,42 @@ public sealed class DelegateScriptKindTests
 
                 RequestCount++;
                 LastPath = context.Request.Url?.PathAndQuery;
+                LastMethod = context.Request.HttpMethod;
                 using (var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8))
                 {
                     var raw = await reader.ReadToEndAsync();
                     if (!string.IsNullOrWhiteSpace(raw)) LastBody = JsonDocument.Parse(raw);
                 }
 
-                var payload = Encoding.UTF8.GetBytes(
-                    $$"""
-                    {"id":"11111111-1111-1111-1111-111111111111","shortId":"11111111",
-                     "status":"Queued","modelLevel":"High","warning":null,"agentKind":"{{_agentKind}}"}
-                    """);
-                context.Response.StatusCode = 201;
+                byte[] payload;
+                if (_mode == Mode.WorktreeHealth)
+                {
+                    payload = Encoding.UTF8.GetBytes(
+                        """
+                        {"findingCount":1,"findings":[{"id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                         "repoPath":"C:\\repo","branch":"feat/card-task-aabbccdd","path":"C:\\trees\\gone",
+                         "taskId":"aabbccdd-0000-0000-0000-000000000001","shortId":"aabbccdd",
+                         "shape":"LockedMissing","detail":"locked initializing; directory gone",
+                         "severity":"Error","firstSeenAt":"2026-09-03T12:00:00Z",
+                         "lastSeenAt":"2026-09-03T12:00:00Z"}]}
+                        """);
+                    context.Response.StatusCode = 200;
+                }
+                else if (_mode == Mode.WorktreeHealthEmpty)
+                {
+                    payload = Encoding.UTF8.GetBytes("""{"findingCount":0,"findings":[]}""");
+                    context.Response.StatusCode = 200;
+                }
+                else
+                {
+                    payload = Encoding.UTF8.GetBytes(
+                        $$"""
+                        {"id":"11111111-1111-1111-1111-111111111111","shortId":"11111111",
+                         "status":"Queued","modelLevel":"High","warning":null,"agentKind":"{{_agentKind}}"}
+                        """);
+                    context.Response.StatusCode = 201;
+                }
+
                 context.Response.ContentType = "application/json";
                 await context.Response.OutputStream.WriteAsync(payload);
                 context.Response.Close();
