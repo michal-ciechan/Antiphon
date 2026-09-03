@@ -29,7 +29,7 @@ public sealed class ComplexityChainScriptTests
 
         run.ExitCode.ShouldBe(0, run.Output);
         server.LastMethod.ShouldBe("PUT");
-        server.LastPath.ShouldBe("/api/complexity-chains/Hard");
+        server.LastPath.ShouldBe("/api/complexity-chains/any/Hard");
         var body = server.LastBody.ShouldNotBeNull();
         body.RootElement.GetProperty("provenance").GetString().ShouldBe("Human");
         body.RootElement.GetProperty("reason").GetString().ShouldBe("plan-grade work");
@@ -75,8 +75,44 @@ public sealed class ComplexityChainScriptTests
 
         run.ExitCode.ShouldBe(0, run.Output);
         server.LastMethod.ShouldBe("DELETE");
-        server.LastPath.ShouldBe("/api/complexity-chains/Hard");
+        server.LastPath.ShouldBe("/api/complexity-chains/any/Hard");
         run.Output.ShouldContain("cleared Hard");
+    }
+
+    [Test]
+    public async Task Set_Role_Plan_puts_the_three_segment_cell_path()
+    {
+        using var server = new StubApi();
+        var run = await RunAsync(
+            server, "set", "-Role", "Plan", "-Complexity", "Hard",
+            "-Candidates", "ClaudeCode/Frontier,Codex/Frontier");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        server.LastMethod.ShouldBe("PUT");
+        server.LastPath.ShouldBe("/api/complexity-chains/Plan/Hard");
+    }
+
+    [Test]
+    public async Task Get_Role_Plan_hits_the_role_query()
+    {
+        using var server = new StubApi();
+        var run = await RunAsync(server, "get", "-Role", "Plan");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        server.LastMethod.ShouldBe("GET");
+        server.LastPath.ShouldBe("/api/complexity-chains?role=Plan");
+    }
+
+    [Test]
+    public async Task Clear_Role_Plan_deletes_the_cell()
+    {
+        using var server = new StubApi();
+        var run = await RunAsync(server, "clear", "-Role", "Plan", "-Complexity", "Hard");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        server.LastMethod.ShouldBe("DELETE");
+        server.LastPath.ShouldBe("/api/complexity-chains/Plan/Hard");
+        run.Output.ShouldContain("cleared Plan/Hard");
     }
 
     [Test]

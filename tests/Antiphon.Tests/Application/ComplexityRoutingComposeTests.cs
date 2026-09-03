@@ -145,6 +145,21 @@ public sealed class ComplexityRoutingComposeTests
     }
 
     [Test]
+    public void Pin_plus_chain_source_strips_a_leading_pin_role_from_the_chain_label()
+    {
+        var pin = Pin(RoutingPinStrength.Preferred, AgentKind.Grok, AgentModelLevel.Frontier, cardId: Guid.NewGuid());
+        var chain = new[]
+        {
+            Pair(AgentKind.ClaudeCode, AgentModelLevel.Frontier, RoutingCandidates.OriginChain),
+        };
+
+        var list = RoutingCandidates.Compose(
+            Decision(pin, "CARD-0301"), chain, "Plan/Hard", null, null, Resolve);
+
+        list.Source.ShouldBe("pin+chain:CARD-0301 Plan/Hard");
+    }
+
+    [Test]
     public void Passing_an_empty_chain_does_not_append_role_policy()
     {
         var pin = Pin(RoutingPinStrength.Preferred, AgentKind.Codex, AgentModelLevel.Frontier);
