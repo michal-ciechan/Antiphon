@@ -463,6 +463,158 @@ public class SessionMessageQueueGrokPtyIntegrationTests
     }
 
     /// <summary>
+    /// CARD-0342: a swallowed Grok Enter that only redraws must not settle as screen-only Sent.
+    /// The row reverts Pending with NoSubmitOutput, and the shared stranded recovery presses
+    /// Enter only — never a second body write.
+    /// </summary>
+    [Test]
+    public async Task Swallowed_enter_redraw_is_NoSubmitOutput_then_Enter_only_recovery()
+    {
+        if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
+        if (!File.Exists(FakeGrokExe))
+            throw new SkipTestException($"fakegrok.exe not staged at {FakeGrokExe} — build the solution first");
+
+        const string body = "GROK-0342 swallowed enter body that must not settle as screen Sent";
+
+        var sessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-fake-grok-pty-{Guid.NewGuid():N}");
+        var client = new DirectSessionRunnerClient(sessionLogPath, ptyBackend: PinnedBackend);
+
+        var services = new ServiceCollection();
+        services.AddDbContext<AppDbContext>(options =>
+            options.UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
+            {
+                npgsql.MigrationsAssembly("Antiphon.Server");
+                npgsql.SetPostgresVersion(16, 0);
+            }));
+        var eventBus = new MockEventBus();
+        services.AddSingleton(eventBus);
+        services.AddSingleton<IEventBus>(eventBus);
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<IOptions<AgentSessionSettings>>(Options.Create(new AgentSessionSettings()));
+        services.AddSingleton<IOptions<SupervisionSettings>>(Options.Create(new SupervisionSettings
+        {
+            DeliveryVerification = new DeliveryVerificationSettings
+            {
+                PollIntervalMs = 200,
+                TranscriptConfirmTimeoutSeconds = 8,
+                ReEnterIntervalSeconds = 2,
+                PostFailureConfirmGraceSeconds = 1,
+                StrandedAgeSeconds = 0,
+            },
+        }));
+        services.AddSingleton<ISessionRunnerClient>(client);
+        services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<SessionMessageQueueService>();
+        services.AddLogging();
+        await using var provider = services.BuildServiceProvider();
+
+        var sessionId = Guid.NewGuid();
+        var cwd = Path.Combine(Path.GetTempPath(), $"antiphon-fake-grok-cwd-{sessionId:N}");
+        var grokHome = Path.Combine(Path.GetTempPath(), $"antiphon-fake-grok-home-{sessionId:N}");
+        Directory.CreateDirectory(cwd);
+        using var pump = new CancellationTokenSource();
+        Task? pumping = null;
+
+        var spec = new AgentLaunchSpec(
+            DefinitionName: "fakegrok",
+            Kind: AgentKind.Grok,
+            Exe: FakeGrokExe,
+            Args: ["--session-id", sessionId.ToString("D"), "--cwd", cwd],
+            Env: new Dictionary<string, string>
+            {
+                ["GROK_HOME"] = grokHome,
+                ["ANTIPHON_FAKE_SWALLOW_ENTER"] = "3",
+            },
+            Cwd: cwd,
+            Cols: 120,
+            Rows: 30);
+
+        try
+        {
+            await client.StartAsync(sessionId, spec, CancellationToken.None);
+            (await WaitForRawAsync(client, sessionId, s => s.Contains("Fake Grok ready"), TimeSpan.FromSeconds(15)))
+                .ShouldBeTrue("fake Grok should reach readiness");
+
+            await using (var scope = provider.CreateAsyncScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var now = DateTime.UtcNow;
+                db.AgentSessions.Add(new AgentSession
+                {
+                    Id = sessionId, CardId = null, DefinitionName = "fakegrok",
+                    AgentKind = AgentKind.Grok, Status = SessionStatus.Running,
+                    Cwd = cwd, Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now,
+                });
+                await db.SaveChangesAsync();
+            }
+
+            pumping = PumpRunnerTranscriptAsync(client, sessionId, seedSequence: 0, pump.Token);
+
+            var queue = provider.GetRequiredService<SessionMessageQueueService>();
+            await queue.EnqueueAsync(
+                sessionId, body, MessageSendMode.WhenIdle, CancellationToken.None,
+                QueuedMessageOrigin.Delegation);
+
+            var afterFirst = await client.GetSnapshotAsync(sessionId, CancellationToken.None);
+            var firstRaw = afterFirst.RawOutput ?? string.Empty;
+            firstRaw.ShouldContain("SWALLOWED-ENTER", customMessage: "the three confirm Enters must be swallowed");
+            CountOccurrences(firstRaw, body).ShouldBe(1, customMessage: "the body is typed once during the first attempt");
+
+            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+            {
+                var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == sessionId);
+                message.Status.ShouldBe(QueuedMessageStatus.Pending,
+                    "redraw-only output must not settle as Sent. Screen:\n" + firstRaw);
+                message.DeliveryVerdict.ShouldBe(DeliveryVerdict.NoSubmitOutput);
+            }
+
+            await queue.FlushStrandedQueuesAsync(CancellationToken.None);
+
+            var submitted = await WaitForRawAsync(
+                client, sessionId, s => s.Contains("SUBMITTED:" + body.Replace("\n", "")),
+                TimeSpan.FromSeconds(15));
+            submitted.ShouldBeTrue("Enter-only recovery must submit the held composer");
+
+            var afterRecovery = await client.GetSnapshotAsync(sessionId, CancellationToken.None);
+            var recoveryRaw = afterRecovery.RawOutput ?? string.Empty;
+            CountOccurrences(recoveryRaw, body).ShouldBe(2,
+                customMessage: "type echo plus SUBMITTED; a retype would be a third copy. Screen:\n" + recoveryRaw);
+
+            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+            {
+                var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == sessionId);
+                message.Status.ShouldBe(QueuedMessageStatus.Sent);
+                message.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+                message.DeliveryAttempts.ShouldBe(1, "Enter-only finishes the original attempt");
+            }
+        }
+        finally
+        {
+            pump.Cancel();
+            if (pumping is not null)
+                await pumping;
+            try { await client.KillAsync(sessionId, CancellationToken.None); } catch { /* best effort */ }
+            await client.DisposeAsync();
+            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+            {
+                await db.SessionQueuedMessages.Where(m => m.AgentSessionId == sessionId).ExecuteDeleteAsync();
+                await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).ExecuteDeleteAsync();
+                await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
+            }
+            try { Directory.Delete(cwd, recursive: true); } catch { /* best effort */ }
+            try { Directory.Delete(grokHome, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        var count = 0;
+        for (var i = 0; (i = haystack.IndexOf(needle, i, StringComparison.Ordinal)) >= 0; i += needle.Length)
+            count++;
+        return count;
+    }
+
+    /// <summary>
     /// The runner→server ingestion stand-in: poll the runtime's transcript snapshot (fed by the
     /// real <c>GrokTranscriptTailer</c>) and persist unseen entries as <c>TranscriptEntry</c> rows,
     /// offset past the seed row exactly the way arrival-ordered ingestion stacks new rows.

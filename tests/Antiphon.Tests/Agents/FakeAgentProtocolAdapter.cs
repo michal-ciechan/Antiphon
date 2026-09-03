@@ -117,6 +117,17 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     public IReadOnlyList<string> Inputs => _inputs;
 
     /// <summary>
+    /// Put <paramref name="body"/> in the composer without recording a queue write. Used to
+    /// pin CARD-0340 S3 Enter-only recovery: the stranded sweep must press Enter and never
+    /// re-type a body that is already on screen.
+    /// </summary>
+    public void PrimeComposer(string body)
+    {
+        _composer.Clear();
+        _composer.Append(StripBracketedPasteMarkers(body));
+    }
+
+    /// <summary>
     /// CARD-0186 S3: throw this from <see cref="SendInputAsync"/> before any composer work —
     /// models a 503 herdr_unreachable from the runner.
     /// </summary>

@@ -60,6 +60,16 @@ public class SessionQueuedMessage
     public DateTime? LastDeliveryStartedAt { get; set; }
 
     /// <summary>
+    /// Durable outcome of the most recent attempt (CARD-0340 S3 / CARD-0342). Cleared when a
+    /// fresh body is stamped <see cref="QueuedMessageStatus.Sent"/>; persisted before every
+    /// revert or park. Null on a <c>Sent</c> row means the process did not live to judge.
+    /// </summary>
+    public DeliveryVerdict? DeliveryVerdict { get; set; }
+
+    /// <summary>When <see cref="DeliveryVerdict"/> was recorded.</summary>
+    public DateTime? DeliveryVerdictAt { get; set; }
+
+    /// <summary>
     /// The transcript <c>Sequence</c> floor captured just before the most recent attempt typed —
     /// null when the session had no transcript to observe. The anti-duplicate keystone: before any
     /// path re-types a previously attempted message it re-runs the prompt matcher over

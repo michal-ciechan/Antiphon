@@ -60,4 +60,34 @@ public class SubmitEvidenceTests
             "• Working (0s • esc to interrupt)",
             Body).ShouldBeFalse();
     }
+
+    [Test]
+    public void Grok_emptied_composer_is_positive_submit_evidence()
+    {
+        SubmitEvidence.IsPositive(
+            SubmitEvidenceKind.Grok,
+            $"› {Body}",
+            "› grok",
+            Body).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Grok_working_indicator_with_body_still_visible_is_not_positive_submit_evidence()
+    {
+        SubmitEvidence.IsPositive(
+            SubmitEvidenceKind.Grok,
+            $"› {Body}",
+            $"› {Body}\n• Working (0s • esc to interrupt)",
+            Body).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Grok_body_still_visible_is_not_positive_submit_evidence()
+    {
+        SubmitEvidence.IsPositive(
+            SubmitEvidenceKind.Grok,
+            $"› {Body}",
+            $"› {Body}\nredraw frame",
+            Body).ShouldBeFalse();
+    }
 }

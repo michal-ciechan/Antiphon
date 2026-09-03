@@ -105,7 +105,7 @@ public static class ProviderContractCatalog
             HasScreenFallback: true),
         DeliveryVerification: new DeliveryVerificationContract(
             AgentTuiCapabilityState.Supported,
-            "Composer echo measured on grok 1.0.5 (CARD-0080 S1: typed and pasted bodies render) plus transcript-confirmed delivery against ACP UserPrompt rows."),
+            "Composer echo measured on grok 1.0.5 (CARD-0080 S1: typed and pasted bodies render) plus transcript-confirmed delivery against ACP UserPrompt rows. A final Sent requires a matching UserPrompt or a sustained composer departure (head gone for PostEvidenceSettleMs of consecutive snapshots, still gone at the unobservable deadline). Sequence advance, startup redraw, MCP (0/2), quiet, and a raw OSC title are not submit evidence (CARD-0342). A body still visible at that deadline is NoSubmitOutput and stays retryable."),
         SessionResume: new SessionResumeContract(
             AgentTuiCapabilityState.Supported,
             "Sessions resume by conversation identity (--session-id); AgentSessionService allows resume."),
