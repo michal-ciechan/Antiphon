@@ -12,7 +12,7 @@
 [CmdletBinding(DefaultParameterSetName = 'Create')]
 param(
     [Parameter(ParameterSetName = 'Create', Position = 0)]
-    [ValidateSet('Plan', 'Code', 'Review', 'Debug', 'Coverage', 'Docs', 'Commit', 'Test', 'Deploy', 'Merge', 'Custom')]
+    [ValidateSet('Investigate', 'Plan', 'TestDesign', 'Code', 'Review', 'Debug', 'Coverage', 'Docs', 'Commit', 'Test', 'Deploy', 'Merge', 'Custom')]
     [string]$Role = 'Custom',
 
     [Parameter(ParameterSetName = 'Create')]

@@ -299,7 +299,9 @@ public sealed class DelegationSettings
     /// <summary>Role → tier and per-role timeouts. Missing roles fall back to <see cref="DefaultLevel"/>.</summary>
     public Dictionary<string, RolePolicyEntry> RolePolicy { get; set; } = new(StringComparer.OrdinalIgnoreCase)
     {
+        ["Investigate"] = new() { Level = AgentModelLevel.High, EscalateTo = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
         ["Plan"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
+        ["TestDesign"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
         ["Code"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
         ["Review"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
         // EscalateTo stays for the manual ladder (/escalate); EscalateAfterMinutes is deliberately

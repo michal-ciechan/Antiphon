@@ -26,7 +26,9 @@ public class AgentTaskServiceIntegrationTests
     // ---- the tier ladder ------------------------------------------------------------------
 
     [Test]
+    [Arguments(AgentTaskRole.Investigate, AgentModelLevel.High)]
     [Arguments(AgentTaskRole.Plan, AgentModelLevel.Frontier)]
+    [Arguments(AgentTaskRole.TestDesign, AgentModelLevel.Frontier)]
     [Arguments(AgentTaskRole.Code, AgentModelLevel.Frontier)]
     [Arguments(AgentTaskRole.Review, AgentModelLevel.Frontier)]
     [Arguments(AgentTaskRole.Debug, AgentModelLevel.High)]
@@ -78,10 +80,26 @@ public class AgentTaskServiceIntegrationTests
         ((int)level).ShouldBeLessThanOrEqualTo((int)AgentModelLevel.High);
     }
 
+    [Test]
+    public void IsStage_is_investigate_plan_test_design_code_review()
+    {
+        foreach (var role in Enum.GetValues<AgentTaskRole>())
+        {
+            var expected = role is AgentTaskRole.Investigate
+                or AgentTaskRole.Plan
+                or AgentTaskRole.TestDesign
+                or AgentTaskRole.Code
+                or AgentTaskRole.Review;
+            AgentTaskRoles.IsStage(role).ShouldBe(expected, role.ToString());
+        }
+    }
+
     // ---- CARD-0304 advisory in-flight recommendations --------------------------------------
 
     [Test]
+    [Arguments(AgentTaskRole.Investigate)]
     [Arguments(AgentTaskRole.Plan)]
+    [Arguments(AgentTaskRole.TestDesign)]
     [Arguments(AgentTaskRole.Code)]
     [Arguments(AgentTaskRole.Review)]
     [Arguments(AgentTaskRole.Debug)]

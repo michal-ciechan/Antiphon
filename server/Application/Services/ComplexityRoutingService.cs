@@ -26,7 +26,9 @@ public sealed class ComplexityRoutingService
     /// </summary>
     public static readonly AgentTaskRole[] RoutableRoles =
     [
+        AgentTaskRole.Investigate,
         AgentTaskRole.Plan,
+        AgentTaskRole.TestDesign,
         AgentTaskRole.Code,
         AgentTaskRole.Review,
         AgentTaskRole.Debug,

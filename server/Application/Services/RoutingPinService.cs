@@ -527,6 +527,13 @@ public sealed class RoutingPinService
                 + "is no stage to pin. Pin the role whose work you mean (Plan, Code, Debug, ...).");
         }
 
+        if (!ComplexityRoutingService.RoutableRoles.Contains(role))
+        {
+            throw new ValidationException(
+                nameof(PutRoutingPinRequest.Role),
+                $"'{role}' is not a task role.");
+        }
+
         return role;
     }
 

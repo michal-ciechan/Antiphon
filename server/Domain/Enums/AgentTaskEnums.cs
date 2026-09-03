@@ -63,6 +63,16 @@ public enum AgentTaskRole
     /// by hand: the diagnose worker creates these, pinned to the standing diagnose seat.
     /// </summary>
     Diagnose = 13,
+
+    /// <summary>
+    /// Diagnose a card's root cause (CARD-0146). A pipeline stage: evidence only, no fix design.
+    /// </summary>
+    Investigate = 14,
+
+    /// <summary>
+    /// Write the verification design for a plan (CARD-0146). A pipeline stage at Plan tier.
+    /// </summary>
+    TestDesign = 15,
 }
 
 public enum AgentTaskStatus
@@ -302,6 +312,18 @@ public static class AgentTaskRoles
 {
     public static bool IsSpecialist(AgentTaskRole role) =>
         role is AgentTaskRole.Check or AgentTaskRole.Distill or AgentTaskRole.Diagnose;
+
+    /// <summary>
+    /// Pipeline stages (CARD-0146). Helpers (Debug, Test, Coverage, Docs, Commit, Deploy, Merge,
+    /// Custom) and specialists are not stages. Keys the handoff block, stage bundles, and ready
+    /// projection once those slices land.
+    /// </summary>
+    public static bool IsStage(AgentTaskRole role) =>
+        role is AgentTaskRole.Investigate
+            or AgentTaskRole.Plan
+            or AgentTaskRole.TestDesign
+            or AgentTaskRole.Code
+            or AgentTaskRole.Review;
 
     /// <summary>
     /// EF-translatable "not a specialist" predicate. A method call does not translate; this

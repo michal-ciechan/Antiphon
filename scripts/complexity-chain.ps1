@@ -30,7 +30,7 @@ param(
     [ValidateSet('Hard', 'Medium', 'Easy')]
     [string]$Complexity,
 
-    [ValidateSet('Plan', 'Code', 'Review', 'Debug', 'Coverage', 'Docs', 'Commit', 'Test', 'Deploy', 'Merge', 'Custom', 'Any')]
+    [ValidateSet('Investigate', 'Plan', 'TestDesign', 'Code', 'Review', 'Debug', 'Coverage', 'Docs', 'Commit', 'Test', 'Deploy', 'Merge', 'Custom', 'Any')]
     [string]$Role,
 
     # Kind/Level pairs, comma-separated, e.g. ClaudeCode/Frontier,Codex/Frontier,Grok/Frontier

@@ -205,6 +205,43 @@ public class ComplexityChainServiceTests
     }
 
     [Test]
+    public async Task A_TestDesign_Hard_cell_round_trips()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var service = Service(db);
+
+        var written = await service.UpsertAsync(
+            AgentTaskRole.TestDesign,
+            TaskComplexity.Hard,
+            Put(Human: true, Reason: "TestDesign/Hard") with
+            {
+                Candidates = [new(AgentKind.ClaudeCode, AgentModelLevel.Frontier)],
+            },
+            null,
+            CancellationToken.None);
+
+        written.Role.ShouldBe(AgentTaskRole.TestDesign);
+        written.Complexity.ShouldBe(TaskComplexity.Hard);
+        written.ResolvedFrom.ShouldBe("role");
+        written.Candidates.ShouldHaveSingleItem();
+        written.Candidates[0].AgentKind.ShouldBe(AgentKind.ClaudeCode);
+
+        var loaded = await service.GetAsync(
+            AgentTaskRole.TestDesign, TaskComplexity.Hard, CancellationToken.None);
+        loaded.Role.ShouldBe(AgentTaskRole.TestDesign);
+        loaded.Complexity.ShouldBe(TaskComplexity.Hard);
+        loaded.ResolvedFrom.ShouldBe("role");
+        loaded.Source.ShouldBe("pin");
+        loaded.Candidates.ShouldHaveSingleItem();
+        loaded.Candidates[0].AgentKind.ShouldBe(AgentKind.ClaudeCode);
+
+        var stored = await db.ComplexityChains.AsNoTracking().SingleAsync(c => c.ClearedAt == null);
+        stored.Role.ShouldBe(AgentTaskRole.TestDesign);
+        stored.Complexity.ShouldBe(TaskComplexity.Hard);
+    }
+
+    [Test]
     public async Task List_always_returns_three_tiers()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
