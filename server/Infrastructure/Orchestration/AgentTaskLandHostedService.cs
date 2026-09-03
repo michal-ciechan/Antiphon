@@ -2,7 +2,10 @@ using Antiphon.Server.Application.Services;
 
 namespace Antiphon.Server.Infrastructure.Orchestration;
 
-/// <summary>Runs explicit land operations off the request thread.</summary>
+/// <summary>
+/// Drains <see cref="AgentTaskLandQueue"/> and runs each land (CARD-0331). Retry and Held
+/// re-pick belong to <see cref="AgentTaskLandSweepHostedService"/>; this reader never sleeps.
+/// </summary>
 public sealed class AgentTaskLandHostedService : BackgroundService
 {
     private readonly AgentTaskLandQueue _queue;
@@ -21,16 +24,42 @@ public sealed class AgentTaskLandHostedService : BackgroundService
                 try
                 {
                     await using var scope = _scopes.CreateAsyncScope();
-                    var result = await scope.ServiceProvider.GetRequiredService<AgentTaskLandService>()
-                        .RunAsync(request.TaskId, request.VerifyFilter, stoppingToken);
-                    if (result == LandRunResult.Held)
+                    var lands = scope.ServiceProvider.GetRequiredService<AgentTaskLandService>();
+                    try
                     {
-                        await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
-                        _queue.TryEnqueue(request.TaskId, request.VerifyFilter);
+                        await lands.RunAsync(request.TaskId, request.VerifyFilter, stoppingToken);
+                    }
+                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                    {
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Land operation failed for task {TaskId}", request.TaskId);
+                        try
+                        {
+                            await lands.FailAsync(request.TaskId, ex, stoppingToken);
+                        }
+                        catch (Exception failEx) when (failEx is not OperationCanceledException)
+                        {
+                            _logger.LogWarning(failEx,
+                                "Could not persist land failure for task {TaskId}; the sweep will retry",
+                                request.TaskId);
+                        }
                     }
                 }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
-                catch (Exception ex) { _logger.LogWarning(ex, "Land operation failed for task {TaskId}", request.TaskId); }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Land operation failed for task {TaskId}", request.TaskId);
+                }
+                finally
+                {
+                    _queue.Release(request.TaskId);
+                }
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }

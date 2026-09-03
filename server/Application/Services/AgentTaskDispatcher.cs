@@ -2365,7 +2365,7 @@ public sealed class AgentTaskDispatcher
                 && t.Workspace == WorkspaceMode.Worktree
                 && (t.Status == AgentTaskStatus.Succeeded || t.Status == AgentTaskStatus.Blocked)
                 && t.WorktreeBranch != null)
-            .Select(t => new { t.Id, t.WorktreeBranch, t.RepoPath, t.WorktreePath })
+            .Select(t => new { t.Id, t.WorktreeBranch, t.RepoPath, t.WorktreePath, t.LandRequestedAt })
             .ToListAsync(ct);
         if (siblings.Count == 0)
             return SiblingBaseGuard.Proceed;
@@ -2376,15 +2376,6 @@ public sealed class AgentTaskDispatcher
             .ToList();
         if (sameRepo.Count == 0)
             return SiblingBaseGuard.Proceed;
-
-        var siblingIds = sameRepo.Select(s => s.Id).ToList();
-        var landEvents = await _db.AgentTaskEvents.AsNoTracking()
-            .Where(e => siblingIds.Contains(e.AgentTaskId)
-                && (e.Type == AgentTaskEventType.LandRequested
-                    || e.Type == AgentTaskEventType.Landed
-                    || e.Type == AgentTaskEventType.LandRefused))
-            .Select(e => new { e.AgentTaskId, e.Type, e.At })
-            .ToListAsync(ct);
 
         var cardIdentifier = await _db.Cards.AsNoTracking()
             .Where(c => c.Id == task.CardId)
@@ -2412,8 +2403,7 @@ public sealed class AgentTaskDispatcher
                 described?.CommitsAbove ?? 0,
                 described?.Subject ?? "");
 
-            if (IsSiblingLandInFlight(landEvents.Where(e => e.AgentTaskId == sibling.Id)
-                    .Select(e => (e.Type, e.At))))
+            if (sibling.LandRequestedAt is not null)
             {
                 hold ??= unlanded;
                 continue;
@@ -2426,20 +2416,6 @@ public sealed class AgentTaskDispatcher
             ? new SiblingBaseGuard(hold, [])
             : new SiblingBaseGuard(null, warnings);
     }
-
-    /// <summary>
-    /// Latest LandRequested/Landed/LandRefused is LandRequested (a Shared-writer Held after
-    /// that request leaves the latest land event unchanged). A refused land lifts the hold
-    /// into the warn arm.
-    /// </summary>
-    private static bool IsSiblingLandInFlight(IEnumerable<(AgentTaskEventType Type, DateTime At)> events) =>
-        events
-            .Where(e => e.Type is AgentTaskEventType.LandRequested
-                or AgentTaskEventType.Landed
-                or AgentTaskEventType.LandRefused)
-            .OrderByDescending(e => e.At)
-            .Select(e => (AgentTaskEventType?)e.Type)
-            .FirstOrDefault() == AgentTaskEventType.LandRequested;
 
     private async Task WarnUnlandedSiblingsAsync(
         AgentTask task, IReadOnlyList<UnlandedSibling> siblings, CancellationToken ct)

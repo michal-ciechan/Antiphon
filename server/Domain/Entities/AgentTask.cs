@@ -251,6 +251,28 @@ public class AgentTask
     public int CheckCount { get; set; }
 
     /// <summary>
+    /// A land is wanted and has not reached an outcome (CARD-0331). Non-null is the durable
+    /// queue; the in-process channel is only a hand-off. Cleared with every terminal land
+    /// outcome; kept through <c>Conflicted</c> until the Merge delegate resolves the parent.
+    /// </summary>
+    public DateTime? LandRequestedAt { get; set; }
+
+    /// <summary>The <c>-Verify</c> filter to use when this request runs. Cleared with <see cref="LandRequestedAt"/>.</summary>
+    public string? LandVerifyFilter { get; set; }
+
+    /// <summary>
+    /// When the current attempt passed the Shared-writer gate and started git work.
+    /// Null while queued or held. Nulled by the sweep when it records an interrupted attempt.
+    /// </summary>
+    public DateTime? LandStartedAt { get; set; }
+
+    /// <summary>
+    /// How many times this request started git work. Reset by <c>RequestAsync</c>; left in
+    /// place after the outcome.
+    /// </summary>
+    public int LandAttempt { get; set; }
+
+    /// <summary>
     /// UNCACHED input tokens only. The three input counters are kept apart because they are priced
     /// apart — a cache read is ~0.1x this, a cache write 1.25x (CARD-0023). Anything showing a
     /// human "tokens in" wants the sum of all three, not this alone.

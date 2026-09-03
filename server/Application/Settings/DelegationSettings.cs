@@ -489,6 +489,18 @@ public sealed class DelegationSettings
     public bool CheckEnabled { get; set; } = true;
 
     /// <summary>
+    /// How often the land sweep re-enqueues pending <c>LandRequestedAt</c> rows this process
+    /// does not hold (CARD-0331). Also the Held retry cadence. Floor 1, ceiling 60.
+    /// </summary>
+    public int LandSweepSeconds { get; set; } = 5;
+
+    /// <summary>
+    /// Started-and-interrupted git attempts on one land request before the sweep refuses
+    /// (CARD-0331). Held passes do not count. Floor 1, ceiling 10.
+    /// </summary>
+    public int LandMaxAttempts { get; set; } = 3;
+
+    /// <summary>
     /// <see cref="AgentTask.ExpectedDurationMinutes"/> for a caller that declared nothing. Ten
     /// minutes is roughly the median delegated task here, so an undeclared task still gets one
     /// early check instead of silence.
@@ -828,6 +840,16 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
     public ValidateOptionsResult Validate(string? name, DelegationSettings options)
     {
         var failures = new List<string>();
+        if (options.LandSweepSeconds is < 1 or > 60)
+        {
+            failures.Add("Delegation:LandSweepSeconds must be between 1 and 60.");
+        }
+
+        if (options.LandMaxAttempts is < 1 or > 10)
+        {
+            failures.Add("Delegation:LandMaxAttempts must be between 1 and 10.");
+        }
+
         foreach (var (role, entry) in options.RolePolicy)
         {
             if (entry.RecommendedInFlight is { } value && value <= 0)

@@ -1288,6 +1288,9 @@ public sealed class AgentTaskReplyService
 
         conflicted.Status = AgentTaskStatus.Succeeded;
         conflicted.FailureReason = null;
+        conflicted.LandRequestedAt = null;
+        conflicted.LandVerifyFilter = null;
+        conflicted.LandStartedAt = null;
         conflicted.ConcurrencyToken = Guid.NewGuid();
         db.AgentTaskEvents.Add(NewEvent(
             conflicted.Id, AgentTaskEventType.Merged,

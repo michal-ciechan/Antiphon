@@ -4,9 +4,11 @@ using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -24,6 +26,7 @@ public sealed class AgentTaskLandService
     private readonly SessionMessageQueueService _messages;
     private readonly IEventBus _eventBus;
     private readonly TimeProvider _clock;
+    private readonly DelegationSettings _settings;
     private readonly ILogger<AgentTaskLandService> _logger;
 
     public AgentTaskLandService(
@@ -34,6 +37,7 @@ public sealed class AgentTaskLandService
         SessionMessageQueueService messages,
         IEventBus eventBus,
         TimeProvider clock,
+        IOptions<DelegationSettings> settings,
         ILogger<AgentTaskLandService> logger)
     {
         _db = db;
@@ -43,6 +47,7 @@ public sealed class AgentTaskLandService
         _messages = messages;
         _eventBus = eventBus;
         _clock = clock;
+        _settings = settings.Value;
         _logger = logger;
     }
 
@@ -56,32 +61,64 @@ public sealed class AgentTaskLandService
         if (task.Status != AgentTaskStatus.Succeeded)
             throw new ConflictException($"Task {DelegationReportFormatter.Short(task.Id)} must have succeeded before it can land.");
 
-        var latestRequest = await _db.AgentTaskEvents
-            .Where(e => e.AgentTaskId == taskId && (e.Type == AgentTaskEventType.LandRequested
-                || e.Type == AgentTaskEventType.Landed
-                || e.Type == AgentTaskEventType.LandRefused
-                || e.Type == AgentTaskEventType.LandedWithResidue))
-            .OrderByDescending(e => e.At).Select(e => e.Type).FirstOrDefaultAsync(ct);
-        if (latestRequest == AgentTaskEventType.LandRequested)
-            throw new ConflictException($"Task {DelegationReportFormatter.Short(task.Id)} already has a land operation queued.");
+        var shortId = DelegationReportFormatter.Short(task.Id);
+        if (_queue.IsActive(taskId))
+        {
+            var requested = task.LandRequestedAt?.ToString("u") ?? "unknown";
+            var state = task.LandStartedAt is null
+                ? ", queued"
+                : $", started {task.LandStartedAt:u}, attempt {task.LandAttempt}";
+            throw new ConflictException(
+                $"Task {shortId} land is running in this server: requested {requested}{state}. Wait for its outcome event.");
+        }
 
         var now = _clock.GetUtcNow().UtcDateTime;
+        var filter = ClipFilter(verifyFilter);
+        var previous = task.LandRequestedAt;
+        task.LandRequestedAt = now;
+        task.LandVerifyFilter = filter;
+        task.LandStartedAt = null;
+        task.LandAttempt = 0;
+        task.ConcurrencyToken = Guid.NewGuid();
         _db.AgentTaskEvents.Add(Event(task.Id, AgentTaskEventType.LandRequested,
-            string.IsNullOrWhiteSpace(verifyFilter)
+            filter is null
                 ? "Land requested (build verification only when rebase replays commits)."
-                : $"Land requested with test filter: {verifyFilter.Trim()}", now));
+                : $"Land requested with test filter: {filter}", now));
+        var status = "queued";
+        if (previous is not null)
+        {
+            _db.AgentTaskEvents.Add(Event(task.Id, AgentTaskEventType.Warning,
+                $"Previous land request at {previous:u} was not running (server restarted); replaced by this request.",
+                now));
+            status = "requeued";
+        }
+
         await _db.SaveChangesAsync(ct);
-        _queue.TryEnqueue(taskId, verifyFilter?.Trim());
+        // false means a concurrent request won the race a moment ago; the row is set and the
+        // winner will run it.
+        _queue.TryEnqueue(taskId, filter);
         await PublishAsync(task, ct);
-        return new LandRequestResult(task.Id, "queued");
+        return new LandRequestResult(task.Id, status);
     }
 
     /// <summary>Run one background land request. A Shared-writer hold leaves the request pending.</summary>
     public async Task<LandRunResult> RunAsync(Guid taskId, string? verifyFilter, CancellationToken ct)
     {
         var task = await _db.AgentTasks.SingleOrDefaultAsync(t => t.Id == taskId, ct);
-        if (task is null || task.Status != AgentTaskStatus.Succeeded || task.Workspace != WorkspaceMode.Worktree)
+        if (task is null)
             return LandRunResult.Complete;
+        if (task.LandRequestedAt is null)
+            return LandRunResult.Complete;
+        if (task.Status == AgentTaskStatus.Blocked)
+            return LandRunResult.Complete;
+        if (task.Status != AgentTaskStatus.Succeeded || task.Workspace != WorkspaceMode.Worktree)
+        {
+            ClearPending(task);
+            await _db.SaveChangesAsync(ct);
+            return LandRunResult.Complete;
+        }
+
+        var filter = task.LandVerifyFilter ?? verifyFilter;
 
         if (await _worktrees.IsAlreadyLandedAsync(task, ct))
             return await CleanupAlreadyLandedAsync(task, ct);
@@ -89,11 +126,10 @@ public sealed class AgentTaskLandService
         var holder = await FindSharedWriterAsync(task, ct);
         if (holder is not null)
         {
-            var requestedAt = await _db.AgentTaskEvents.Where(e => e.AgentTaskId == task.Id
-                    && e.Type == AgentTaskEventType.LandRequested)
-                .OrderByDescending(e => e.At).Select(e => (DateTime?)e.At).FirstOrDefaultAsync(ct);
             var alreadyHeld = await _db.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == task.Id
-                && e.Type == AgentTaskEventType.Held && requestedAt != null && e.At >= requestedAt, ct);
+                && e.Type == AgentTaskEventType.Held
+                && task.LandRequestedAt != null
+                && e.At >= task.LandRequestedAt, ct);
             if (!alreadyHeld)
             {
                 _db.AgentTaskEvents.Add(Event(task.Id, AgentTaskEventType.Held,
@@ -104,6 +140,12 @@ public sealed class AgentTaskLandService
             }
             return LandRunResult.Held;
         }
+
+        var now = _clock.GetUtcNow().UtcDateTime;
+        task.LandStartedAt = now;
+        task.LandAttempt += 1;
+        task.ConcurrencyToken = Guid.NewGuid();
+        await _db.SaveChangesAsync(ct);
 
         var rebaseWatch = Stopwatch.StartNew();
         var prepared = await _worktrees.PrepareLandAsync(task, ct);
@@ -137,7 +179,7 @@ public sealed class AgentTaskLandService
 
         var verifyWatch = Stopwatch.StartNew();
         var verification = prepared.BaseMoved
-            ? await VerifyAsync(task.WorktreePath!, verifyFilter, ct)
+            ? await VerifyAsync(task.WorktreePath!, filter, ct)
             : LandVerification.Success("build skipped (base unchanged)");
         var verifySeconds = prepared.BaseMoved ? ElapsedSeconds(verifyWatch) : 0;
         Record(task, OrchestrationStage.Rebase, StageOutcomeKind.Clean, rebaseSeconds);
@@ -234,6 +276,7 @@ public sealed class AgentTaskLandService
         foreach (var warning in warnings)
             _db.AgentTaskEvents.Add(Event(task.Id, AgentTaskEventType.Warning, warning, now));
         _db.AgentTaskEvents.Add(Event(task.Id, type, outcome, now));
+        ClearPending(task);
         await _db.SaveChangesAsync(ct);
         await DeliverAsync(task, outcome, ct);
         await PublishAsync(task, ct);
@@ -318,16 +361,97 @@ public sealed class AgentTaskLandService
             && ScopeResolver.KeyFor(t.RepoPath, t.WorkingDirectory) == key);
     }
 
-    private async Task RefuseAsync(AgentTask task, string detail, CancellationToken ct)
+    /// <summary>
+    /// Re-enqueue pending lands this process does not hold. Runs immediately at boot and every
+    /// <see cref="DelegationSettings.LandSweepSeconds"/>.
+    /// </summary>
+    public async Task SweepAsync(CancellationToken ct)
     {
-        var line = $"land refused: {detail}";
-        _db.AgentTaskEvents.Add(Event(task.Id, AgentTaskEventType.LandRefused, line, _clock.GetUtcNow().UtcDateTime));
+        var stale = await _db.AgentTasks
+            .Where(t => t.LandRequestedAt != null
+                && t.Status != AgentTaskStatus.Succeeded
+                && t.Status != AgentTaskStatus.Blocked)
+            .ToListAsync(ct);
+        foreach (var row in stale)
+            ClearPending(row);
+        if (stale.Count > 0)
+            await _db.SaveChangesAsync(ct);
+
+        var pending = await _db.AgentTasks
+            .Where(t => t.LandRequestedAt != null
+                && t.Status == AgentTaskStatus.Succeeded
+                && t.Workspace == WorkspaceMode.Worktree)
+            .ToListAsync(ct);
+        var maxAttempts = Math.Clamp(_settings.LandMaxAttempts, 1, 10);
+        foreach (var row in pending)
+        {
+            if (_queue.IsActive(row.Id))
+                continue;
+            if (row.LandAttempt >= maxAttempts)
+            {
+                var last = row.LandStartedAt?.ToString("u") ?? "unknown";
+                await RefuseAsync(row,
+                    $"land interrupted {row.LandAttempt} times without finishing (last started {last}); not retried automatically — run -Land again",
+                    ct);
+                continue;
+            }
+
+            if (row.LandStartedAt is not null)
+            {
+                _db.AgentTaskEvents.Add(Event(row.Id, AgentTaskEventType.Warning,
+                    $"Land attempt {row.LandAttempt} started {row.LandStartedAt:u} did not finish (server restarted); re-running.",
+                    _clock.GetUtcNow().UtcDateTime));
+                row.LandStartedAt = null;
+                row.ConcurrencyToken = Guid.NewGuid();
+                await _db.SaveChangesAsync(ct);
+            }
+
+            _queue.TryEnqueue(row.Id, row.LandVerifyFilter);
+        }
+    }
+
+    /// <summary>
+    /// Drain-side failure: <c>RunAsync</c> threw. Writes <c>LandRefused</c>, keeps the branch,
+    /// clears the pending request. If this write itself throws the row stays pending for the sweep.
+    /// </summary>
+    public async Task FailAsync(Guid taskId, Exception exception, CancellationToken ct)
+    {
+        var task = await _db.AgentTasks.SingleOrDefaultAsync(t => t.Id == taskId, ct);
+        if (task is null)
+            return;
+        await PersistRefusalAsync(task, $"land failed: {exception.Message}", exception.Message, ct);
+    }
+
+    private async Task RefuseAsync(AgentTask task, string detail, CancellationToken ct) =>
+        await PersistRefusalAsync(task, $"land refused: {detail}", detail, ct);
+
+    private async Task PersistRefusalAsync(AgentTask task, string line, string warningDetail, CancellationToken ct)
+    {
+        var now = _clock.GetUtcNow().UtcDateTime;
+        _db.AgentTaskEvents.Add(Event(task.Id, AgentTaskEventType.LandRefused, line, now));
         _db.AgentTaskEvents.Add(Event(task.Id, AgentTaskEventType.Warning,
-            $"Land refused; branch {task.WorktreeBranch} and worktree {task.WorktreePath} were kept. {detail}",
-            _clock.GetUtcNow().UtcDateTime));
+            $"Land refused; branch {task.WorktreeBranch} and worktree {task.WorktreePath} were kept. {warningDetail}",
+            now));
+        ClearPending(task);
         await _db.SaveChangesAsync(ct);
         await DeliverAsync(task, line, ct);
         await PublishAsync(task, ct);
+    }
+
+    private static void ClearPending(AgentTask task)
+    {
+        task.LandRequestedAt = null;
+        task.LandVerifyFilter = null;
+        task.LandStartedAt = null;
+        task.ConcurrencyToken = Guid.NewGuid();
+    }
+
+    private static string? ClipFilter(string? verifyFilter)
+    {
+        if (string.IsNullOrWhiteSpace(verifyFilter))
+            return null;
+        var trimmed = verifyFilter.Trim();
+        return trimmed.Length <= 400 ? trimmed : trimmed[..400];
     }
 
     private async Task DeliverAsync(AgentTask task, string body, CancellationToken ct)

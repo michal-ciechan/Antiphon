@@ -551,6 +551,7 @@ try
     builder.Services.AddHostedService<OrchestratorTickHostedService>();
     builder.Services.AddHostedService<AgentTaskDispatcherHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Orchestration.AgentTaskLandHostedService>();
+    builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Orchestration.AgentTaskLandSweepHostedService>();
     builder.Services.AddHostedService<AgentTaskCheckHostedService>();
     builder.Services.AddHostedService<ScheduleSweepHostedService>();
     builder.Services.AddHostedService<ScheduleFireHostedService>();

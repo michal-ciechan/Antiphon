@@ -140,6 +140,20 @@ public class AgentTaskServiceIntegrationTests
     }
 
     [Test]
+    public void land_sweep_settings_reject_out_of_range_values()
+    {
+        var tooFast = new DelegationSettings { LandSweepSeconds = 0 };
+        var sweep = new DelegationSettingsValidator().Validate(null, tooFast);
+        sweep.Failed.ShouldBeTrue();
+        sweep.Failures.ShouldContain(f => f.Contains("LandSweepSeconds"));
+
+        var tooMany = new DelegationSettings { LandMaxAttempts = 11 };
+        var attempts = new DelegationSettingsValidator().Validate(null, tooMany);
+        attempts.Failed.ShouldBeTrue();
+        attempts.Failures.ShouldContain(f => f.Contains("LandMaxAttempts"));
+    }
+
+    [Test]
     public void recommended_in_flight_accepts_null_and_positive_values()
     {
         var settings = new DelegationSettings();
