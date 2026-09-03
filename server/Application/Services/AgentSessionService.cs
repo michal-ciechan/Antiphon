@@ -10,6 +10,7 @@ using Antiphon.Server.Domain.ValueObjects;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -858,23 +859,39 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     }
 
     /// <summary>
-    /// Isolated KillAsync leaves the caller's tracker holding a stale Running session. Reload
-    /// (or detach) so a later SaveChanges on that context cannot write the old status back.
+    /// Isolated KillAsync leaves the caller's tracker holding a stale Running session and any
+    /// still-StreamingTurn RunAttempt. Reload (or detach) so a later SaveChanges on that
+    /// context cannot write the old status / phase back (CARD-0319 leftover, CARD-0336).
     /// </summary>
     private async Task SyncTrackedSessionAfterIsolatedKillAsync(Guid sessionId, CancellationToken ct)
     {
-        var tracked = _db.ChangeTracker.Entries<AgentSession>()
+        var session = _db.ChangeTracker.Entries<AgentSession>()
             .FirstOrDefault(e => e.Entity.Id == sessionId);
-        if (tracked is null)
-            return;
+        if (session is not null)
+            await ReloadOrDetachAfterIsolatedKillAsync(session, sessionId, "session", ct);
 
+        foreach (var attempt in _db.ChangeTracker.Entries<RunAttempt>()
+            .Where(e => e.Entity.AgentSessionId == sessionId)
+            .ToList())
+        {
+            await ReloadOrDetachAfterIsolatedKillAsync(attempt, sessionId, "run attempt", ct);
+        }
+    }
+
+    private async Task ReloadOrDetachAfterIsolatedKillAsync<TEntity>(
+        EntityEntry<TEntity> tracked,
+        Guid sessionId,
+        string what,
+        CancellationToken ct)
+        where TEntity : class
+    {
         try
         {
             await tracked.ReloadAsync(ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogDebug(ex, "Detaching stale session {SessionId} after isolated kill", sessionId);
+            _logger.LogDebug(ex, "Detaching stale {What} for session {SessionId} after isolated kill", what, sessionId);
             tracked.State = EntityState.Detached;
         }
     }
