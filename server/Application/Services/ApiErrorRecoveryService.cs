@@ -7,7 +7,6 @@ using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
@@ -89,7 +88,7 @@ public sealed class ApiErrorRecoveryService
 
         var now = UtcNow();
         var row = await BuildNewRowAsync(
-            db, sessionId, stubSequence, stubUuid, apiErrorClass, apiErrorStatus, errorText, now, ct);
+            db, scope.ServiceProvider, sessionId, stubSequence, stubUuid, apiErrorClass, apiErrorStatus, errorText, now, ct);
         db.ApiErrorRecoveries.Add(row);
 
         var older = await db.ApiErrorRecoveries
@@ -284,6 +283,7 @@ public sealed class ApiErrorRecoveryService
 
     private async Task<ApiErrorRecovery> BuildNewRowAsync(
         AppDbContext db,
+        IServiceProvider services,
         Guid sessionId,
         long stubSequence,
         string? stubUuid,
@@ -314,7 +314,10 @@ public sealed class ApiErrorRecoveryService
         }
 
         if (classification == ApiErrorClassification.Wall)
-            return await ApplyWallAsync(db, row, sessionId, errorText, now, ct);
+        {
+            var availability = services.GetRequiredService<ModelAvailability>();
+            return await ApplyWallAsync(db, availability, row, sessionId, errorText, now, ct);
+        }
 
         var interval = ApiErrorRetrySchedule.Interval(1, classification);
         row.NextAttemptAt = interval is TimeSpan gap ? now + gap : null;
@@ -322,13 +325,15 @@ public sealed class ApiErrorRecoveryService
     }
 
     /// <summary>
-    /// CARD-0022: two Wall subclasses. SessionLimit gets one resume at reset+2min.
-    /// ModelCap (and unparseable reset) writes a hold with <c>DisabledUntil = null</c> and
-    /// never the 30-minute WallPrompt. Parse-null (no alias at all) keeps
+    /// CARD-0022 / CARD-0335: two Wall subclasses. SessionLimit gets one resume at reset+2min.
+    /// ModelCap (and unparseable reset) writes a timed hold at now +
+    /// <see cref="ApiErrorRecoverySettings.ModelCapFallbackHoldHours"/> and never the 30-minute
+    /// WallPrompt. Parse-null (no alias at all) keeps
     /// <see cref="WallUnparsedFailureReason"/> and still does not enter the 30-minute ladder.
     /// </summary>
     private async Task<ApiErrorRecovery> ApplyWallAsync(
         AppDbContext db,
+        ModelAvailability availability,
         ApiErrorRecovery row,
         Guid sessionId,
         string? errorText,
@@ -351,10 +356,9 @@ public sealed class ApiErrorRecoveryService
             return row;
         }
 
-        DateTime? disabledUntil = wall.ResetAt is { } reset
+        var disabledUntil = wall.ResetAt is { } reset
             ? reset + ModelAvailability.SessionLimitResumePadding
-            : null;
-        var availability = new ModelAvailability(db, _time, NullLogger<ModelAvailability>.Instance);
+            : now + TimeSpan.FromHours(_settings.EffectiveModelCapFallbackHoldHours);
         var session = await db.AgentSessions.AsNoTracking()
             .FirstOrDefaultAsync(s => s.Id == sessionId, ct);
         var kind = session?.AgentKind ?? AgentKind.ClaudeCode;
@@ -380,9 +384,9 @@ public sealed class ApiErrorRecoveryService
             return row;
         }
 
-        if (wall.Kind == UsageLimitWallKind.SessionLimit && disabledUntil is { } until)
+        if (wall.Kind == UsageLimitWallKind.SessionLimit)
         {
-            row.NextAttemptAt = until;
+            row.NextAttemptAt = disabledUntil;
             return row;
         }
 

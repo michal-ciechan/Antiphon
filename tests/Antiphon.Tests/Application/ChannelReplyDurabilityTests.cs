@@ -469,7 +469,8 @@ public class ChannelReplyDurabilityTests
             x => x.SourceSessionId == h.SessionId && x.ClearedAt == null);
         hold.Kind.ShouldBe(AgentKind.Grok);
         hold.ModelAlias.ShouldBe("grok-4.6");
-        hold.DisabledUntil.ShouldBeNull();
+        hold.DisabledUntil.ShouldNotBeNull();
+        hold.DisabledUntil!.Value.ShouldBe(DateTime.UtcNow.AddHours(6), TimeSpan.FromSeconds(15));
 
         var beforeSweep = h.Messaging.SentReplies.Count;
         var abandoned = await h.Dispatcher.SweepStaleCorrelationsAsync(CancellationToken.None);

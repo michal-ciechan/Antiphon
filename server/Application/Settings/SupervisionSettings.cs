@@ -144,6 +144,16 @@ public sealed class ApiErrorRecoverySettings
     public int WallDeathCap { get; set; } = 3;
 
     /// <summary>
+    /// Fallback hold duration in hours for an AutoDetected wall whose source text does not
+    /// state a reset (CARD-0335). Default 6. Malformed or non-positive configuration clamps to 1.
+    /// </summary>
+    public int ModelCapFallbackHoldHours { get; set; } = 6;
+
+    /// <summary>Clamped <see cref="ModelCapFallbackHoldHours"/> used by recovery and the availability reader.</summary>
+    public int EffectiveModelCapFallbackHoldHours =>
+        ModelCapFallbackHoldHours > 0 ? ModelCapFallbackHoldHours : 1;
+
+    /// <summary>
     /// Enqueued WhenIdle on a Transient / Unknown death. Same shape as
     /// <c>AgentSessionSettings.ResumeContinuePrompt</c>.
     /// </summary>

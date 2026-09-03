@@ -159,12 +159,17 @@ public class ApiErrorRecoveryServiceTests
     }
 
     [Test]
-    public async Task Fable_5_stub_writes_an_open_ended_hold_and_does_not_enqueue()
+    public async Task Fable_5_stub_writes_a_fallback_hold_and_does_not_enqueue()
     {
-        await using var h = await CreateHarnessAsync();
+        var now = TruncateUtcNow();
+        var time = new FakeTimeProvider(now);
+        await using var h = await BridgeQueueHarness.CreateAsync(
+            new BridgeQueueHarness.HarnessOptions { AlwaysOn = true, TimeProvider = time });
         await SeedStubAsync(h.SessionId, "rate_limit", 429, UsageLimitWallParser.FableModelCapIncidentText);
 
-        await SweepAsync(h);
+        var settings = FastSettings();
+        settings.ModelCapFallbackHoldHours = 3;
+        await SweepAsync(h, settings, time);
 
         await using var db = CreateContext();
         var row = await db.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == h.SessionId);
@@ -175,16 +180,21 @@ public class ApiErrorRecoveryServiceTests
         var hold = await db.ModelAvailabilityHolds.SingleAsync(
             x => x.SourceSessionId == h.SessionId && x.ClearedAt == null);
         hold.ModelAlias.ShouldBe("fable");
-        hold.DisabledUntil.ShouldBeNull();
+        hold.Kind.ShouldBe(AgentKind.ClaudeCode);
+        hold.DisabledUntil.ShouldBe(now.UtcDateTime.AddHours(3));
         hold.Source.ShouldBe(ModelAvailabilitySource.AutoDetected);
 
         (await SupervisionMessagesAsync(h.SessionId)).ShouldBeEmpty();
+        await db.ModelAvailabilityHolds.Where(x => x.Id == hold.Id).ExecuteDeleteAsync();
     }
 
     [Test]
-    public async Task Grok_402_stub_writes_an_open_ended_hold_for_grok_4_6_and_never_enqueues()
+    public async Task Grok_402_stub_writes_a_fallback_hold_for_grok_4_6_and_never_enqueues()
     {
-        await using var h = await CreateHarnessAsync();
+        var now = TruncateUtcNow();
+        var time = new FakeTimeProvider(now);
+        await using var h = await BridgeQueueHarness.CreateAsync(
+            new BridgeQueueHarness.HarnessOptions { AlwaysOn = true, TimeProvider = time });
         await using (var stamp = CreateContext())
         {
             await stamp.AgentSessions.Where(s => s.Id == h.SessionId)
@@ -199,7 +209,9 @@ public class ApiErrorRecoveryServiceTests
             402,
             "API error (status 402 Payment Required): Grok Build usage balance exhausted");
 
-        await SweepAsync(h);
+        var settings = FastSettings();
+        settings.ModelCapFallbackHoldHours = 3;
+        await SweepAsync(h, settings, time);
 
         await using var db = CreateContext();
         var row = await db.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == h.SessionId);
@@ -211,7 +223,7 @@ public class ApiErrorRecoveryServiceTests
             x => x.SourceSessionId == h.SessionId && x.ClearedAt == null);
         hold.Kind.ShouldBe(AgentKind.Grok);
         hold.ModelAlias.ShouldBe("grok-4.6");
-        hold.DisabledUntil.ShouldBeNull();
+        hold.DisabledUntil.ShouldBe(now.UtcDateTime.AddHours(3));
         hold.Source.ShouldBe(ModelAvailabilitySource.AutoDetected);
         hold.Reason.ShouldContain("provider capacity");
         hold.Reason.ShouldContain("HTTP 402");
@@ -442,6 +454,12 @@ public class ApiErrorRecoveryServiceTests
             .ShouldHaveSingleItem();
         incident.SessionId.ShouldBe(h.SessionId);
         incident.Message.ShouldContain("timed resume");
+    }
+
+    private static DateTimeOffset TruncateUtcNow()
+    {
+        var n = DateTime.UtcNow;
+        return new DateTimeOffset(n.Year, n.Month, n.Day, n.Hour, n.Minute, n.Second, TimeSpan.Zero);
     }
 
     private static ApiErrorRecoverySettings FastSettings() => new()

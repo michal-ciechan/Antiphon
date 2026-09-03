@@ -1,19 +1,23 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// Reader, AutoDetected writer (CARD-0022), and Manual writer (CARD-0309) for
+/// Reader, AutoDetected writer (CARD-0022 / CARD-0335), and Manual writer (CARD-0309) for
 /// <see cref="ModelAvailabilityHold"/>. Held if an active row exists for
 /// <c>(kind, alias)</c> OR <c>(kind, *)</c> AND
 /// (<see cref="ModelAvailabilityHold.DisabledUntil"/> is null OR <c>now &lt; DisabledUntil</c>).
-/// Auto-resume is by construction: a sweep (and lazy check on read) sets
+/// AutoDetected holds are always timed; a legacy AutoDetected null is materialized to
+/// <c>HitAt + ModelCapFallbackHoldHours</c> on sweep or lazy read. Manual null stays
+/// open-ended. Auto-resume is by construction: a sweep (and lazy check on read) sets
 /// <see cref="ModelAvailabilityHold.ClearedAt"/> when <c>DisabledUntil &lt;= now</c>.
 ///
 /// <para>Outrank: one active row per key. A Manual row outranks AutoDetected — AutoDetected may
@@ -32,12 +36,21 @@ public sealed class ModelAvailability
     private readonly AppDbContext _db;
     private readonly TimeProvider _time;
     private readonly ILogger<ModelAvailability> _logger;
+    private readonly TimeSpan _modelCapFallbackHold;
 
-    public ModelAvailability(AppDbContext db, TimeProvider time, ILogger<ModelAvailability> logger)
+    public ModelAvailability(
+        AppDbContext db,
+        TimeProvider time,
+        ILogger<ModelAvailability> logger,
+        IOptions<SupervisionSettings>? settings = null)
     {
         _db = db;
         _time = time;
         _logger = logger;
+        var hours = settings is null
+            ? 6
+            : settings.Value.ApiErrorRecovery.EffectiveModelCapFallbackHoldHours;
+        _modelCapFallbackHold = TimeSpan.FromHours(hours);
     }
 
     public async Task<bool> IsHeldAsync(AgentKind kind, string alias, CancellationToken ct)
@@ -90,35 +103,44 @@ public sealed class ModelAvailability
 
     /// <summary>
     /// Minute-pass + lazy-read clearer. Sets <c>ClearedAt = now</c> when a timed hold has elapsed.
-    /// No Hangfire job.
+    /// Also materializes a legacy AutoDetected/null row to <c>HitAt + fallback</c> and clears it
+    /// in the same save when that timestamp has elapsed. No Hangfire job.
     /// </summary>
     public Task<int> SweepExpiredAsync(CancellationToken ct) => SweepExpiredAsync(UtcNow(), ct);
 
     public async Task<int> SweepExpiredAsync(DateTime now, CancellationToken ct)
     {
-        var expired = await _db.ModelAvailabilityHolds
-            .Where(h => h.ClearedAt == null && h.DisabledUntil != null && h.DisabledUntil <= now)
+        var rows = await _db.ModelAvailabilityHolds
+            .Where(h => h.ClearedAt == null && (
+                (h.DisabledUntil != null && h.DisabledUntil <= now)
+                || (h.DisabledUntil == null && h.Source == ModelAvailabilitySource.AutoDetected)))
             .ToListAsync(ct);
-        if (expired.Count == 0)
+        if (rows.Count == 0)
             return 0;
 
-        foreach (var row in expired)
-            row.ClearedAt = now;
+        var cleared = 0;
+        foreach (var row in rows)
+        {
+            NormalizeLegacyAutoDetected(row, now, out var expired);
+            if (expired)
+                cleared++;
+        }
+
         await _db.SaveChangesAsync(ct);
-        return expired.Count;
+        return cleared;
     }
 
     /// <summary>
-    /// CARD-0022 AutoDetected writer. Upserts the active row for <c>(kind, alias)</c>.
-    /// If an active Manual hold exists, evidence fields refresh and <c>DisabledUntil</c> /
-    /// <c>Source</c> stay put (CARD-0309 outrank). Never writes alias <c>*</c>.
-    /// Never keys on a stub <c>&lt;synthetic&gt;</c> model id — the caller must pass a
-    /// canonical alias.
+    /// CARD-0022 / CARD-0335 AutoDetected writer. Upserts the active row for <c>(kind, alias)</c>
+    /// with a required <paramref name="disabledUntil"/>. If an active Manual hold exists, evidence
+    /// fields refresh and <c>DisabledUntil</c> / <c>Source</c> stay put (CARD-0309 outrank). Never
+    /// writes alias <c>*</c>. Never keys on a stub <c>&lt;synthetic&gt;</c> model id — the caller
+    /// must pass a canonical alias.
     /// </summary>
     public async Task<ModelAvailabilityHold> UpsertAutoDetectedAsync(
         AgentKind kind,
         string alias,
-        DateTime? disabledUntil,
+        DateTime disabledUntil,
         string reason,
         string? rawText,
         Guid? sourceSessionId,
@@ -155,7 +177,7 @@ public sealed class ModelAvailability
             await _db.SaveChangesAsync(ct);
             _logger.LogInformation(
                 "Paused {Kind}/{Alias} until {Until} ({Reason})",
-                kind, canonical, (object?)disabledUntil ?? "(cleared manually)", row.Reason);
+                kind, canonical, disabledUntil, row.Reason);
             return row;
         }
 
@@ -328,12 +350,10 @@ public sealed class ModelAvailability
         var dirty = false;
         foreach (var row in rows)
         {
-            if (row.DisabledUntil is { } until && until <= now)
-            {
-                row.ClearedAt = now;
+            if (NormalizeLegacyAutoDetected(row, now, out var expired))
                 dirty = true;
+            if (expired)
                 continue;
-            }
 
             live ??= row;
             // A specific alias hold and a kind-wide hold can both be active; either is enough.
@@ -344,6 +364,30 @@ public sealed class ModelAvailability
         if (dirty)
             await _db.SaveChangesAsync(ct);
         return live;
+    }
+
+    /// <summary>
+    /// Materialize a legacy AutoDetected/null row to <c>HitAt + fallback</c> and clear it when
+    /// that timestamp has elapsed. A Manual null is left untouched. Returns whether the row was
+    /// mutated.
+    /// </summary>
+    private bool NormalizeLegacyAutoDetected(ModelAvailabilityHold row, DateTime now, out bool expired)
+    {
+        var mutated = false;
+        if (row.DisabledUntil is null && row.Source == ModelAvailabilitySource.AutoDetected)
+        {
+            row.DisabledUntil = row.HitAt + _modelCapFallbackHold;
+            mutated = true;
+        }
+
+        expired = row.DisabledUntil is { } until && until <= now;
+        if (expired)
+        {
+            row.ClearedAt = now;
+            mutated = true;
+        }
+
+        return mutated;
     }
 
     private async Task<IReadOnlyList<string>> ListAvailableAsync(DateTime now, CancellationToken ct)
