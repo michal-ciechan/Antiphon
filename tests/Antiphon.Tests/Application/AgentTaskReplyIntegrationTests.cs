@@ -976,12 +976,15 @@ public class AgentTaskReplyIntegrationTests
         var agentId = await SeedAgentAsync(workspace.Path, $"delegate-{Guid.NewGuid():N}"[..20]);
         var (first, sessionId) = await SeedDispatchedTaskAsync(
             workspace.Path, configure: t => t.AgentId = agentId);
-        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        var service = CreateService(timeProvider: clock);
 
         await SeedSplitTurnAsync(
             sessionId, DelegationReportFormatter.TaskMarker(first.Id),
             narration: "Reading the spec now.", finalMessage: null);
+        // Grace is measured from TurnEnd.CreatedAt (real clock) against the fake provider.
+        // Starting the fake clock after the seed, then advancing past FinalMessageGraceSeconds,
+        // is what makes the first OnTurnEnd a nudge rather than CARD-0046 deferral (CARD-0336).
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var service = CreateService(timeProvider: clock);
         clock.Advance(TimeSpan.FromSeconds(121));
         await SettleTextlessAfterNudgeAsync(service, sessionId, first.Id);
 
@@ -990,6 +993,7 @@ public class AgentTaskReplyIntegrationTests
         await SeedSplitTurnAsync(
             sessionId, DelegationReportFormatter.TaskMarker(second.Id),
             narration: "Reading the other spec now.", finalMessage: null);
+        clock.Advance(TimeSpan.FromSeconds(121));
         await SettleTextlessAfterNudgeAsync(service, sessionId, second.Id);
 
         await using var verify = CreateContext();
@@ -3433,6 +3437,28 @@ public class AgentTaskReplyIntegrationTests
             dispatchedAt.AddMinutes(3));
     }
 
+    /// <summary>
+    /// CARD-0336: OnTurnEnd enqueues the closing-line nudge (the row is the ask) but the reply
+    /// harness's root-scoped AppDbContext does not flush ReportNudgeMessageId. Bind the id from
+    /// the queued Delegation row so CARD-0248's deliver-then-later-boundary path is real.
+    /// </summary>
+    private static async Task BindEnqueuedNudgeIdAsync(Guid sessionId, Guid taskId)
+    {
+        await using var db = CreateContext();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+        if (task.ReportNudgeMessageId is not null)
+            return;
+        var msg = await db.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == sessionId && m.Origin == QueuedMessageOrigin.Delegation)
+            .OrderByDescending(m => m.CreatedAt)
+            .FirstOrDefaultAsync();
+        msg.ShouldNotBeNull(
+            "first OnTurnEnd must enqueue the closing-line nudge so CARD-0248 has a message id");
+        task.ReportNudgeMessageId = msg.Id;
+        task.ReportNudgedAt ??= DateTime.UtcNow;
+        await db.SaveChangesAsync();
+    }
+
     private static async Task MarkNudgeDeliveredAsync(Guid taskId, DateTime sentAt)
     {
         await using var db = CreateContext();
@@ -3452,6 +3478,7 @@ public class AgentTaskReplyIntegrationTests
         AgentTaskReplyService service, Guid sessionId, Guid taskId)
     {
         await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+        await BindEnqueuedNudgeIdAsync(sessionId, taskId);
         var sentAt = DateTime.UtcNow.AddMinutes(-10);
         await MarkNudgeDeliveredAsync(taskId, sentAt);
         await using (var db = CreateContext())
