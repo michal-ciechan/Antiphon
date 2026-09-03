@@ -811,6 +811,10 @@ public class AppDbContext : DbContext
             // PtyHost from the INSERT. Migration column default backfills existing rows; model never
             // relies on it (same shape as ReplyStyle / ModelLevel).
             entity.Property(a => a.SessionBackend).IsRequired();
+            // CARD-0334. Nullable: null means Auto. No HasDefaultValue — Auto is 0, and a
+            // database default would make EF omit an explicit Auto from INSERT (same trap as
+            // ReplyStyle / ModelLevel). Existing rows stay null, which IS Auto.
+            entity.Property(a => a.PolicyRefreshMode);
             // Unlike the two above, a default IS wanted here — ClaudeCode is 1, not 0, so the EF
             // sentinel (default(AgentKind) == Raw) can never collide with a legitimately chosen
             // value, and the column default is what states the FACT that every pre-CARD-0084 agent
@@ -1094,6 +1098,10 @@ public class AppDbContext : DbContext
             // whole catalog stamped at once is a few hundred characters, and a column that could
             // grow without limit would be a composed-text store by accident.
             entity.Property(s => s.ComposedBundleStamp).HasMaxLength(2000);
+            // CARD-0334 S1. Same bound as the bundle stamp; the default file list is a few
+            // hundred characters. PolicyNotifiedStamp holds both lines concatenated, so 4000.
+            entity.Property(s => s.InstructionFileStamp).HasMaxLength(2000);
+            entity.Property(s => s.PolicyNotifiedStamp).HasMaxLength(4000);
 
             entity.HasIndex(s => s.DelegationTokenHash)
                 .HasDatabaseName("IX_AgentSessions_DelegationTokenHash");

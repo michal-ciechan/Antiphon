@@ -575,6 +575,52 @@ public class AgentSystemPromptLaunchTests
     }
 
     [Test]
+    public async Task A_standing_launch_records_the_instruction_file_stamp_and_clears_file_drift()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        var cwd = Path.Combine(h.TempRoot, "workspace");
+        await File.WriteAllTextAsync(Path.Combine(cwd, "AGENTS.md"), "You are the floor.\n");
+        await SetPreambleAsync(h, Template);
+        await EndSessionAsync(h, SessionStatus.Failed);
+
+        var started = await StartAsync(h, fresh: true);
+
+        var expected = InstructionFileStamps.Compute(cwd, PolicyRefreshSettings.DefaultInstructionFiles);
+        await using var db = CreateContext();
+        var session = await db.AgentSessions.AsNoTracking()
+            .SingleAsync(s => s.Id == Guid.Parse(started.PersistentSessionId!));
+        session.InstructionFileStamp.ShouldBe(expected.StampLine);
+        session.InstructionFileStamp.ShouldNotBeNullOrEmpty();
+        session.InstructionFileStamp!.ShouldContain("AGENTS.md v");
+        started.PolicyDrift.ShouldNotBeNull();
+        started.PolicyDrift!.Files.ShouldBeEmpty();
+        started.BundlesOutOfDate.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task An_edited_instruction_file_shows_as_file_drift_without_bundle_drift()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        var cwd = Path.Combine(h.TempRoot, "workspace");
+        await File.WriteAllTextAsync(Path.Combine(cwd, "AGENTS.md"), "floor v1\n");
+        await SetPreambleAsync(h, Template);
+        await EndSessionAsync(h, SessionStatus.Failed);
+        var started = await StartAsync(h, fresh: true);
+        started.BundlesOutOfDate.ShouldBeFalse();
+        started.PolicyDrift!.Files.ShouldBeEmpty();
+
+        await File.WriteAllTextAsync(Path.Combine(cwd, "AGENTS.md"), "floor v2\n");
+
+        using var scope = h.Provider.CreateScope();
+        var detail = await scope.ServiceProvider.GetRequiredService<AgentService>()
+            .GetByIdAsync(h.AgentId, CancellationToken.None);
+        detail.BundlesOutOfDate.ShouldBeFalse();
+        detail.PolicyDrift.ShouldNotBeNull();
+        detail.PolicyDrift!.Bundles.ShouldBeEmpty();
+        detail.PolicyDrift.Files.ShouldBe(["AGENTS.md"]);
+    }
+
+    [Test]
     public async Task An_agent_with_no_attachments_and_no_style_records_an_empty_stamp_not_a_null_one()
     {
         // "" and null are different answers and the difference is load-bearing: "" says this launch
@@ -587,9 +633,10 @@ public class AgentSystemPromptLaunchTests
         var started = await StartAsync(h, fresh: true);
 
         await using var db = CreateContext();
-        (await db.AgentSessions.AsNoTracking()
-                .SingleAsync(s => s.Id == Guid.Parse(started.PersistentSessionId!)))
-            .ComposedBundleStamp.ShouldBe(string.Empty);
+        var row = await db.AgentSessions.AsNoTracking()
+            .SingleAsync(s => s.Id == Guid.Parse(started.PersistentSessionId!));
+        row.ComposedBundleStamp.ShouldBe(string.Empty);
+        row.InstructionFileStamp.ShouldBe(string.Empty);
         started.BundlesOutOfDate.ShouldBeFalse();
     }
 

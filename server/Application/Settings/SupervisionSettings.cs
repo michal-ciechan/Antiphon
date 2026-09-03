@@ -32,6 +32,51 @@ public sealed class SupervisionSettings
     public OrchestratorInvestigationSettings OrchestratorInvestigation { get; set; } = new();
     public AppHostWatchdogStateSettings AppHostWatchdogState { get; set; } = new();
     public QueuedInputWatchSettings QueuedInputWatch { get; set; } = new();
+    /// <summary>
+    /// CARD-0334: idle-boundary relaunch / notify when a live session's bundles or instruction
+    /// files have drifted from the repo. S1 records the stamp and exposes the DTO; S2 sweeps.
+    /// </summary>
+    public PolicyRefreshSettings PolicyRefresh { get; set; } = new();
+}
+
+/// <summary>
+/// Cadence and file list for live policy refresh (CARD-0334). IdleMinutes and CooldownMinutes
+/// are operator dials — 2 / 30 is the shipped starting point, not a load-bearing invariant.
+/// </summary>
+public sealed class PolicyRefreshSettings
+{
+    public const int DefaultIdleMinutes = 2;
+    public const int DefaultCooldownMinutes = 30;
+
+    public static readonly string[] DefaultInstructionFiles =
+    [
+        "CLAUDE.md",
+        "AGENTS.md",
+        "docs/orchestration-loop.md",
+        "docs/agent-card-lifecycle.md",
+        "docs/ops-http.md",
+        ".claude/skills/antiphon-delegate/SKILL.md",
+    ];
+
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// Transcript-idle floor before a relaunch or notify. Default 2. Operator-tunable; validator
+    /// requires ≥ 1.
+    /// </summary>
+    public int IdleMinutes { get; set; } = DefaultIdleMinutes;
+
+    /// <summary>
+    /// Minimum gap between policy actions on one agent. Default 30. Operator-tunable; validator
+    /// requires ≥ 5.
+    /// </summary>
+    public int CooldownMinutes { get; set; } = DefaultCooldownMinutes;
+
+    /// <summary>
+    /// Relative paths under the agent's cwd to stamp at launch. Missing files are omitted from
+    /// the stamp, not an error. A plan or spec commit outside this list does not trigger drift.
+    /// </summary>
+    public string[] InstructionFiles { get; set; } = [..DefaultInstructionFiles];
 }
 
 /// <summary>

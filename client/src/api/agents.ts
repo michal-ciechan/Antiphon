@@ -180,8 +180,14 @@ export interface AgentSummaryDto {
    * The live session was launched with instruction bundles the repo has since moved on from — an
    * edited bundle file, an attachment added or removed, a changed reply style (CARD-0058).
    * Informational only: the agent picks the new ones up at its next launch and nothing forces that.
+   * Derived as `policyDrift.bundles.length > 0` when the fuller drift DTO is present.
    */
   bundlesOutOfDate?: boolean
+  /**
+   * Bundle keys and instruction-file paths that have drifted from the live session's recorded
+   * stamps (CARD-0334). Absent on an older server — fall back to `bundlesOutOfDate`.
+   */
+  policyDrift?: PolicyDriftDto | null
   /**
    * Per-agent auto-compact overrides (CARD-0082). Null / omitted = use the installation
    * ContextCompactionSettings value.
@@ -196,6 +202,15 @@ export interface AgentSummaryDto {
    * profile's kind; without one it is the row's own truth. Absent on an older server response.
    */
   kind?: AgentKind
+}
+
+export type PolicyRefreshMode = 'Auto' | 'Relaunch' | 'Notify' | 'Off'
+
+export interface PolicyDriftDto {
+  bundles: string[]
+  files: string[]
+  mode?: PolicyRefreshMode
+  lastRefreshedAt?: string | null
 }
 
 export interface AgentSupervisionDto {

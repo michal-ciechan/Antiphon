@@ -620,22 +620,23 @@ function ReplyStyleBadge({ agent }: { agent: AgentSummaryDto }) {
 }
 
 /**
- * The running session was launched with instruction bundles the repo has since moved on from
- * (CARD-0058) — an edited bundle file, an attachment added or removed, a changed reply style.
- *
- * Deliberately quiet and deliberately inert: the agent picks the new instructions up at its NEXT
- * launch, and nothing here offers to make that happen now. Typing bundles into a live session is
- * exactly what this design does not do — the staleness is bounded and the badge is here to make it
- * visible, not to trigger a fix.
+ * The running session was launched with standing instructions the repo has since moved on from
+ * (CARD-0058 bundles, CARD-0334 instruction files). Deliberately quiet and deliberately inert
+ * until S3's refresh action: the agent picks the new instructions up at its NEXT launch, and
+ * nothing here offers to make that happen now.
  */
 function BundleDriftBadge({ agent }: { agent: AgentSummaryDto }) {
-  if (!agent.bundlesOutOfDate) return null
+  const bundles = agent.policyDrift?.bundles ?? []
+  const files = agent.policyDrift?.files ?? []
+  const names = [...bundles, ...files]
+  const hasDrift = names.length > 0 || !!agent.bundlesOutOfDate
+  if (!hasDrift) return null
+
+  const what = names.length > 0 ? names.join(', ') : 'instruction bundles'
+  const label = `Running with older standing instructions (${what}). It restarts with the current ones at its next launch.`
 
   return (
-    <Tooltip
-      label="Running with older instruction bundles. It restarts with the current ones at its next launch."
-      withArrow
-    >
+    <Tooltip label={label} withArrow>
       <Badge size="sm" color="yellow" variant="light" leftSection={<TbRefreshAlert size={12} />}>
         bundles
       </Badge>

@@ -173,7 +173,10 @@ try
     // a human dryRun then a manual sync must land before anyone turns committing on.
     builder.Services.Configure<CardFileSyncSettings>(builder.Configuration.GetSection(CardFileSyncSettings.SectionName));
     builder.Services.Configure<ParkedMessageSweepSettings>(builder.Configuration.GetSection("ParkedMessages"));
-    builder.Services.Configure<SupervisionSettings>(builder.Configuration.GetSection("Supervision"));
+    builder.Services.AddSingleton<IValidateOptions<SupervisionSettings>, SupervisionSettingsValidator>();
+    builder.Services.AddOptions<SupervisionSettings>()
+        .Bind(builder.Configuration.GetSection("Supervision"))
+        .ValidateOnStart();
     builder.Services.Configure<SubscriptionUsageMonitoringSettings>(
         builder.Configuration.GetSection("SubscriptionUsageMonitoring"));
     builder.Services.AddSingleton<IValidateOptions<SubscriptionQuotaGateSettings>, SubscriptionQuotaGateSettingsValidator>();
