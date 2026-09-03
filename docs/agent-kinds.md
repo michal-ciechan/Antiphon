@@ -269,6 +269,12 @@ the whole session (reads must share write/delete), and is flushed per update.
   (tab navigation and bar polarity unmeasured), so Grok stays behind `IncludeDegradedProviders`.
 - There is **no measured manual compaction command.** `RefocusCompact` is `Unknown`, and the
   idle-compaction sweep therefore never types `/compact` into Grok.
+- Queue delivery is **not** proven by a redraw. A Grok `Sent` requires a matching `UserPrompt` or
+  a sustained composer departure (head gone for `PostEvidenceSettleMs` of consecutive snapshots,
+  still gone at the unobservable deadline). Sequence advance, startup redraw, MCP `(0/2)`, quiet,
+  and a raw OSC title are not submit evidence. A body still visible at that deadline is
+  `NoSubmitOutput` and stays retryable via Enter-only recovery (CARD-0342, sharing CARD-0340 S3's
+  persisted verdict). The named/card-launch `SendPromptAsync` path is unchanged.
 
 ## 6. Codex (OpenAI codex-cli)
 

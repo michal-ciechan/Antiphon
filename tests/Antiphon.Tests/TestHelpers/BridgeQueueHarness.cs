@@ -383,7 +383,12 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         Guid? sessionId = null,
         int deliveryAttempts = 0,
         long? baselineSequence = null,
-        DateTime? createdAtUtc = null)
+        DateTime? createdAtUtc = null,
+        QueuedMessageOrigin origin = QueuedMessageOrigin.Ui,
+        QueuedMessageStatus status = QueuedMessageStatus.Pending,
+        DeliveryVerdict? deliveryVerdict = null,
+        DateTime? lastDeliveryStartedAt = null,
+        string? conversationKey = null)
     {
         var sid = sessionId ?? SessionId;
         await using var db = CreateContext();
@@ -392,17 +397,25 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             .Where(m => m.AgentSessionId == sid)
             .MaxAsync(m => (long?)m.Sequence)) ?? 0) + 1;
         var id = Guid.NewGuid();
+        var created = createdAtUtc ?? DateTime.UtcNow - TimeSpan.FromMinutes(5);
+        var started = lastDeliveryStartedAt
+            ?? (deliveryAttempts > 0 ? DateTime.UtcNow - TimeSpan.FromMinutes(4) : null);
         db.SessionQueuedMessages.Add(new SessionQueuedMessage
         {
             Id = id,
             AgentSessionId = sid,
             Body = body,
-            Status = QueuedMessageStatus.Pending,
+            Status = status,
             Sequence = seq,
-            CreatedAt = createdAtUtc ?? DateTime.UtcNow - TimeSpan.FromMinutes(5),
+            CreatedAt = created,
+            SentAt = status == QueuedMessageStatus.Sent ? started ?? created : null,
+            Origin = origin,
+            ConversationKey = conversationKey,
             DeliveryAttempts = deliveryAttempts,
-            LastDeliveryStartedAt = deliveryAttempts > 0 ? DateTime.UtcNow - TimeSpan.FromMinutes(4) : null,
+            LastDeliveryStartedAt = started,
             LastDeliveryBaselineSequence = baselineSequence,
+            DeliveryVerdict = deliveryVerdict,
+            DeliveryVerdictAt = deliveryVerdict is null ? null : started ?? created,
         });
         await db.SaveChangesAsync();
         return id;

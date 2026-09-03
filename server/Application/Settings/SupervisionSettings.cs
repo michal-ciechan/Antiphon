@@ -312,6 +312,14 @@ public sealed class DeliveryVerificationSettings
     public int UnobservableBaselineConfirmClockToleranceSeconds { get; set; } = 30;
 
     /// <summary>
+    /// CARD-0340 S3 / CARD-0342. The stranded sweep recovers a <c>Sent</c> row with a null
+    /// verdict (interrupted confirm) and a Pending <see cref="DeliveryVerdict.NoSubmitOutput"/>
+    /// only when <c>LastDeliveryStartedAt</c> is inside this window, so pre-migration rows age
+    /// out. Default 60 minutes.
+    /// </summary>
+    public int InterruptedAttemptWindowMinutes { get; set; } = 60;
+
+    /// <summary>
     /// How many times a queued message may be typed into a terminal before it PARKS for a human
     /// (CARD-0055). A parked message stays Pending and visible in the queue UI, where cancel and
     /// re-enqueue already exist, but no automatic path picks it up again — an unbounded retry loop

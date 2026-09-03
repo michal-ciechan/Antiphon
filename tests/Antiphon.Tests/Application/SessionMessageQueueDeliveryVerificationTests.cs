@@ -682,6 +682,91 @@ public class SessionMessageQueueDeliveryVerificationTests
         receipt.LastDelivery!.ConfirmedBy.ShouldBe(DeliveryConfirmedBy.Screen);
     }
 
+    [Test]
+    public async Task Grok_unobservable_redraw_with_body_visible_is_NoSubmitOutput_not_Sent()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: false);
+        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        h.Adapter.SwallowSubmits = 99;
+        h.Adapter.SubmitAck = "\nStarting session\nMCP (0/2)";
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "grok body that stays in the composer after a redraw",
+            MessageSendMode.WhenIdle, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBe([
+            "grok body that stays in the composer after a redraw", "\r", "\r", "\r"]);
+        await using var db = CreateContext();
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        message.Status.ShouldBe(QueuedMessageStatus.Pending);
+        message.DeliveryVerdict.ShouldBe(DeliveryVerdict.NoSubmitOutput);
+        message.SentAt.ShouldBeNull();
+        (await db.AgentIncidents.AnyAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryUnverified))
+            .ShouldBeFalse("redraw-only output must not certify Sent / DeliveryUnverified");
+    }
+
+    [Test]
+    public async Task Grok_unobservable_transient_empty_frame_does_not_latch_emptied_composer()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: false);
+        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        h.Adapter.SwallowSubmits = 99;
+        h.Adapter.SubmitAck = "";
+        h.Adapter.EmptyComposerSnapshotsAfterEnter = 1;
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "grok body that flickers empty then returns",
+            MessageSendMode.WhenIdle, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBe([
+            "grok body that flickers empty then returns", "\r", "\r", "\r"]);
+        await using var db = CreateContext();
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        message.Status.ShouldBe(QueuedMessageStatus.Pending);
+        message.DeliveryVerdict.ShouldBe(DeliveryVerdict.NoSubmitOutput);
+        (await db.AgentIncidents.AnyAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryUnverified))
+            .ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Grok_unobservable_sustained_composer_departure_confirms_by_screen()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: false);
+        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        h.Adapter.OnSubmitted = _ => Task.CompletedTask;
+        h.Adapter.SubmitAck = "";
+
+        var receipt = await h.Queue.EnqueueAsync(
+            h.SessionId, "grok body that leaves the composer without a transcript",
+            MessageSendMode.Now, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBe(["grok body that leaves the composer without a transcript", "\r"]);
+        receipt.LastDelivery!.ConfirmedBy.ShouldBe(DeliveryConfirmedBy.Screen);
+        await using var db = CreateContext();
+        (await db.AgentIncidents.AnyAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryUnverified))
+            .ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task Grok_matching_UserPrompt_still_wins_as_transcript_proof()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: false);
+        await SetKindAsync(h.SessionId, AgentKind.Grok);
+
+        var receipt = await h.Queue.EnqueueAsync(
+            h.SessionId, "grok body confirmed by a matching UserPrompt row",
+            MessageSendMode.Now, CancellationToken.None);
+
+        receipt.LastDelivery!.ConfirmedBy.ShouldBe(DeliveryConfirmedBy.Transcript);
+        await using var db = CreateContext();
+        (await db.AgentIncidents.AnyAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryUnverified))
+            .ShouldBeFalse();
+    }
+
     // CARD-0201: the mirror of the test above, and the distinction it turns on. The same
     // pre-first-turn session (zero transcript rows, so CARD-0164's unobservable-baseline loop),
     // but the submitted prompt DOES land as a TIMESTAMPED UserPrompt row — the shape a bound

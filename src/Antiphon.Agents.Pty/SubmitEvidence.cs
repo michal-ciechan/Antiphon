@@ -17,11 +17,15 @@ public static class SubmitEvidence
         string screenNow,
         string body)
     {
-        if (kind != SubmitEvidenceKind.Codex)
-            return false;
-
-        return CodexWorkingIndicator.IsVisible(screenNow)
-            || IsEmptiedComposer(screenBeforeSubmit, screenNow, body);
+        return kind switch
+        {
+            SubmitEvidenceKind.Codex =>
+                CodexWorkingIndicator.IsVisible(screenNow)
+                || IsEmptiedComposer(screenBeforeSubmit, screenNow, body),
+            SubmitEvidenceKind.Grok =>
+                IsEmptiedComposer(screenBeforeSubmit, screenNow, body),
+            _ => false,
+        };
     }
 
     public static bool IsEmptiedComposer(
@@ -36,4 +40,5 @@ public enum SubmitEvidenceKind
 {
     Standard,
     Codex,
+    Grok,
 }

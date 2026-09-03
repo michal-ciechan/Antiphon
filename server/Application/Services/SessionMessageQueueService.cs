@@ -459,6 +459,7 @@ public sealed class SessionMessageQueueService
             row.DeliveryAttempts = 1;
             row.LastDeliveryStartedAt = now;
             row.LastDeliveryBaselineSequence = nowBaseline.Observable ? nowBaseline.MaxSequence : null;
+            ClearAttemptVerdict(row);
             await db.SaveChangesAsync(ct);
 
             outcome = await DeliverAsync(sessionId, nowBody, ct, nowBaseline);
@@ -486,12 +487,18 @@ public sealed class SessionMessageQueueService
                 row.DeliveryAttempts = 0;
                 row.LastDeliveryStartedAt = null;
                 row.LastDeliveryBaselineSequence = null;
+                ClearAttemptVerdict(row);
                 await db.SaveChangesAsync(ct);
                 throw new ConflictException(
                     $"Agent session '{sessionId}' cannot accept input because herdr is unreachable; try again when it is back.");
             }
 
-            if (outcome.Verdict != DeliveryVerdict.Delivered)
+            if (outcome.Verdict == DeliveryVerdict.Delivered)
+            {
+                StampAttemptVerdict([row], DeliveryVerdict.Delivered, UtcNow());
+                await db.SaveChangesAsync(ct);
+            }
+            else
             {
                 await HandleDeliveryFailureAsync(sessionId, [row.Id], outcome.Verdict, ct);
                 await using var verifyScope = _scopeFactory.CreateAsyncScope();
@@ -751,6 +758,7 @@ public sealed class SessionMessageQueueService
             message.DeliveryAttempts++;
             message.LastDeliveryStartedAt = UtcNow();
             message.LastDeliveryBaselineSequence = baseline.Observable ? baseline.MaxSequence : null;
+            ClearAttemptVerdict(message);
             await db.SaveChangesAsync(ct);
             var outcome = await DeliverAsync(sessionId, sendNowBody, ct, baseline);
             if (outcome.Verdict == DeliveryVerdict.ForbiddenBody)
@@ -774,6 +782,9 @@ public sealed class SessionMessageQueueService
                     "Message delivery could not be verified — the terminal did not accept it "
                     + $"({Describe(outcome.Verdict)}). The message has been returned to the queue.");
             }
+
+            StampAttemptVerdict([message], DeliveryVerdict.Delivered, UtcNow());
+            await db.SaveChangesAsync(ct);
         }
         finally
         {
@@ -829,7 +840,10 @@ public sealed class SessionMessageQueueService
     /// </summary>
     public async Task<int> FlushStrandedQueuesAsync(CancellationToken ct)
     {
-        var cutoff = UtcNow() - TimeSpan.FromSeconds(_verification.StrandedAgeSeconds);
+        var now = UtcNow();
+        var cutoff = now - TimeSpan.FromSeconds(_verification.StrandedAgeSeconds);
+        var interruptedAge = now - InterruptedAttemptAge;
+        var interruptedFloor = now - InterruptedAttemptWindow;
 
         List<Guid> candidates;
         await using (var scope = _scopeFactory.CreateAsyncScope())
@@ -848,7 +862,27 @@ public sealed class SessionMessageQueueService
                 .Select(m => m.AgentSessionId)
                 .Distinct()
                 .ToListAsync(ct);
-            if (pendingSessionIds.Count == 0)
+
+            // CARD-0340 S3: Sent + null verdict, old enough that this process did not live to
+            // judge. CARD-0342: Pending NoSubmitOutput (known Grok body-still-visible) inside
+            // the same bounded window, without waiting for CreatedAt to age.
+            var recoverySessionIds = await db.SessionQueuedMessages
+                .AsNoTracking()
+                .Where(m => m.DeliveryAttempts < maxAttempts
+                    && m.LastDeliveryStartedAt != null
+                    && m.LastDeliveryStartedAt >= interruptedFloor
+                    && (
+                        (m.Status == QueuedMessageStatus.Sent
+                            && m.DeliveryVerdict == null
+                            && m.LastDeliveryStartedAt <= interruptedAge)
+                        || (m.Status == QueuedMessageStatus.Pending
+                            && m.DeliveryVerdict == DeliveryVerdict.NoSubmitOutput)))
+                .Select(m => m.AgentSessionId)
+                .Distinct()
+                .ToListAsync(ct);
+
+            var scopedSessionIds = pendingSessionIds.Union(recoverySessionIds).ToList();
+            if (scopedSessionIds.Count == 0)
                 return 0;
 
             // Always-on agents' sessions: their composer is guaranteed fresh after a
@@ -858,36 +892,34 @@ public sealed class SessionMessageQueueService
             // prompt forever (live miss 2026-08-09, CARD-0003). A stranded-then-reverted brief is
             // safe to re-type: a transport failure never reached the terminal, and a verification
             // failure withheld the submitting Enter.
-            var keys = pendingSessionIds.Select(id => id.ToString("D")).ToList();
+            var keys = scopedSessionIds.Select(id => id.ToString("D")).ToList();
             var alwaysOnKeys = await db.Agents
                 .AsNoTracking()
                 .Where(a => a.AlwaysOn && a.PersistentSessionId != null && keys.Contains(a.PersistentSessionId))
                 .Select(a => a.PersistentSessionId!)
                 .ToListAsync(ct);
-            var delegationSessionIds = await db.SessionQueuedMessages
+            var machineOriginSessionIds = await db.SessionQueuedMessages
                 .AsNoTracking()
-                .Where(m => m.Status == QueuedMessageStatus.Pending
-                    && m.CreatedAt <= cutoff
+                .Where(m => scopedSessionIds.Contains(m.AgentSessionId)
                     && m.DeliveryAttempts < maxAttempts
-                    && m.Origin == QueuedMessageOrigin.Delegation)
-                .Select(m => m.AgentSessionId)
-                .Distinct()
-                .ToListAsync(ct);
-            // Supervision is the same shape as Delegation for the watchdog: no human is watching
-            // an auto-compact, and unclaimed sessions are not AlwaysOn, so without this arm a
-            // failed-under-cap compact on an unclaimed session would sit Pending forever.
-            var supervisionSessionIds = await db.SessionQueuedMessages
-                .AsNoTracking()
-                .Where(m => m.Status == QueuedMessageStatus.Pending
-                    && m.CreatedAt <= cutoff
-                    && m.DeliveryAttempts < maxAttempts
-                    && m.Origin == QueuedMessageOrigin.Supervision)
+                    && (m.Origin == QueuedMessageOrigin.Delegation
+                        || m.Origin == QueuedMessageOrigin.Supervision)
+                    && (
+                        (m.Status == QueuedMessageStatus.Pending && m.CreatedAt <= cutoff)
+                        || (m.Status == QueuedMessageStatus.Sent
+                            && m.DeliveryVerdict == null
+                            && m.LastDeliveryStartedAt != null
+                            && m.LastDeliveryStartedAt <= interruptedAge
+                            && m.LastDeliveryStartedAt >= interruptedFloor)
+                        || (m.Status == QueuedMessageStatus.Pending
+                            && m.DeliveryVerdict == DeliveryVerdict.NoSubmitOutput
+                            && m.LastDeliveryStartedAt != null
+                            && m.LastDeliveryStartedAt >= interruptedFloor)))
                 .Select(m => m.AgentSessionId)
                 .Distinct()
                 .ToListAsync(ct);
             candidates = alwaysOnKeys.Select(Guid.Parse)
-                .Union(delegationSessionIds)
-                .Union(supervisionSessionIds)
+                .Union(machineOriginSessionIds)
                 .ToList();
         }
 
@@ -1043,13 +1075,6 @@ public sealed class SessionMessageQueueService
     // cross-origin FIFO order is preserved and operator messages keep 1:1 turns.
     private async Task<FlushResult> DeliverNextLockedAsync(AppDbContext db, Guid sessionId, CancellationToken ct)
     {
-        var pending = await db.SessionQueuedMessages
-            .Where(m => m.AgentSessionId == sessionId && m.Status == QueuedMessageStatus.Pending)
-            .OrderBy(m => m.Sequence)
-            .ToListAsync(ct);
-        if (pending.Count == 0)
-            return FlushResult.Nothing;
-
         // CARD-0161: resolve ceilings once per flush for this session (herdr vs pty).
         var ceilings = await CeilingsForSessionAsync(db, sessionId, ct);
 
@@ -1073,6 +1098,23 @@ public sealed class SessionMessageQueueService
                 sessionId, pendingMeta.Pending);
             return FlushResult.Nothing;
         }
+
+        var interrupted = await LoadInterruptedSentRunAsync(db, sessionId, ct);
+        if (interrupted.Count > 0)
+        {
+            var recovered = await RecoverDeliveryRunLockedAsync(db, sessionId, interrupted, ct, ceilings);
+            if (recovered != FlushResult.Nothing)
+                return recovered;
+            if (interrupted.Any(m => m.Status == QueuedMessageStatus.Sent))
+                return FlushResult.Nothing;
+        }
+
+        var pending = await db.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == sessionId && m.Status == QueuedMessageStatus.Pending)
+            .OrderBy(m => m.Sequence)
+            .ToListAsync(ct);
+        if (pending.Count == 0)
+            return FlushResult.Nothing;
 
         // THE anti-duplicate keystone (CARD-0055 D3): nothing may re-type a message that has been
         // typed before without first asking the transcript whether it actually went in. A delivery
@@ -1229,6 +1271,23 @@ public sealed class SessionMessageQueueService
             sessionId, composed, head.Id.ToString("D"), channelEnvelope, db, ct, ceilings);
         var spilled = !ReferenceEquals(body, composed) && body != composed;
 
+        // CARD-0340 S3 / CARD-0342: a previously typed body still standing in the composer gets
+        // Enter only. Never re-type, and never treat a missing snapshot as an empty composer.
+        if (run.Any(m => m.DeliveryAttempts > 0))
+        {
+            if (!_runtime.TryGetLiveSnapshot(sessionId, out var retrySnap))
+            {
+                _logger.LogInformation(
+                    "Deferring redelivery to session {SessionId}: rendered snapshot is unavailable, "
+                    + "so the composer cannot be shown empty",
+                    sessionId);
+                return FlushResult.Nothing;
+            }
+
+            if (ComposerDeliveryEvidence.HeadFragmentIsVisible(retrySnap.RenderedScreen, body))
+                return await EnterOnlyConfirmLockedAsync(db, sessionId, run, body, ct, ceilings);
+        }
+
         // Stamped BEFORE a byte is typed, and deliberately NOT undone by the revert on failure: the
         // attempt happened, and the baseline is what the next attempt's late-confirm reads. A crash
         // between here and the write costs one attempt, which is the safe direction to be wrong in.
@@ -1241,6 +1300,7 @@ public sealed class SessionMessageQueueService
             m.DeliveryAttempts++;
             m.LastDeliveryStartedAt = now;
             m.LastDeliveryBaselineSequence = baseline.Observable ? baseline.MaxSequence : null;
+            ClearAttemptVerdict(m);
             if (spilled)
                 m.Body = body;
         }
@@ -1276,7 +1336,11 @@ public sealed class SessionMessageQueueService
         }
 
         if (outcome.Verdict == DeliveryVerdict.Delivered)
+        {
+            StampAttemptVerdict(run, DeliveryVerdict.Delivered, UtcNow());
+            await db.SaveChangesAsync(ct);
             return FlushResult.Delivered;
+        }
 
         if (outcome.Verdict == DeliveryVerdict.BackendUnreachable)
         {
@@ -1290,6 +1354,7 @@ public sealed class SessionMessageQueueService
                     m.DeliveryAttempts--;
                 m.LastDeliveryStartedAt = null;
                 m.LastDeliveryBaselineSequence = null;
+                ClearAttemptVerdict(m);
             }
 
             await db.SaveChangesAsync(ct);
@@ -1398,6 +1463,8 @@ public sealed class SessionMessageQueueService
 
             m.Status = QueuedMessageStatus.Sent;
             m.SentAt = UtcNow();
+            m.DeliveryVerdict = DeliveryVerdict.LateConfirmed;
+            m.DeliveryVerdictAt = m.SentAt;
             confirmed++;
             _logger.LogInformation(
                 "Message {MessageId} on session {SessionId} late-confirmed: its body became a UserPrompt "
@@ -1422,6 +1489,181 @@ public sealed class SessionMessageQueueService
         }
         // Not the caller's token: when the revert is racing shutdown, completing it is the point.
         await db.SaveChangesAsync(CancellationToken.None);
+    }
+
+    private async Task<List<SessionQueuedMessage>> LoadInterruptedSentRunAsync(
+        AppDbContext db, Guid sessionId, CancellationToken ct)
+    {
+        var now = UtcNow();
+        var ageFloor = now - InterruptedAttemptAge;
+        var windowFloor = now - InterruptedAttemptWindow;
+        var rows = await db.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == sessionId
+                && m.Status == QueuedMessageStatus.Sent
+                && m.DeliveryVerdict == null
+                && m.LastDeliveryStartedAt != null
+                && m.LastDeliveryStartedAt <= ageFloor
+                && m.LastDeliveryStartedAt >= windowFloor)
+            .OrderBy(m => m.Sequence)
+            .ToListAsync(ct);
+        if (rows.Count == 0)
+            return rows;
+
+        var head = rows[0];
+        return rows
+            .Where(m => m.LastDeliveryStartedAt == head.LastDeliveryStartedAt
+                && m.Origin == head.Origin
+                && m.ConversationKey == head.ConversationKey)
+            .ToList();
+    }
+
+    /// <summary>
+    /// CARD-0340 S3 / CARD-0342 shared recovery: transcript first, then Enter-only if the
+    /// composed body is still on screen, otherwise revert a <c>Sent</c> run to Pending with
+    /// attempts kept. Never claims the composer is empty when a snapshot cannot be read.
+    /// </summary>
+    private async Task<FlushResult> RecoverDeliveryRunLockedAsync(
+        AppDbContext db,
+        Guid sessionId,
+        IReadOnlyList<SessionQueuedMessage> run,
+        CancellationToken ct,
+        PtyDeliveryCeilings ceilings)
+    {
+        if (run.Count == 0)
+            return FlushResult.Nothing;
+
+        var late = await LateConfirmAttemptedMessagesAsync(db, sessionId, run, ct);
+        var remaining = run
+            .Where(m => m.Status == QueuedMessageStatus.Sent && m.DeliveryVerdict == null)
+            .ToList();
+        if (remaining.Count == 0)
+        {
+            if (late.Confirmed > 0)
+                return FlushResult.LateConfirmed;
+            return late.Truncated > 0 ? FlushResult.Failed : FlushResult.Nothing;
+        }
+
+        var body = ReconstructRunBody(remaining);
+        if (!_runtime.TryGetLiveSnapshot(sessionId, out var snapshot))
+        {
+            _logger.LogInformation(
+                "Leaving interrupted delivery on session {SessionId} untouched: rendered snapshot "
+                + "is unavailable, so the composer cannot be shown empty",
+                sessionId);
+            return FlushResult.Nothing;
+        }
+
+        if (ComposerDeliveryEvidence.HeadFragmentIsVisible(snapshot.RenderedScreen, body))
+            return await EnterOnlyConfirmLockedAsync(db, sessionId, remaining, body, ct, ceilings);
+
+        foreach (var message in remaining.Where(m => m.Status == QueuedMessageStatus.Sent))
+        {
+            message.Status = QueuedMessageStatus.Pending;
+            message.SentAt = null;
+        }
+
+        await db.SaveChangesAsync(ct);
+        _logger.LogInformation(
+            "Reverted {Count} interrupted Sent message(s) on session {SessionId} to Pending "
+            + "(attempts kept); the body is not on screen so the ordinary path may re-type",
+            remaining.Count, sessionId);
+        return FlushResult.Nothing;
+    }
+
+    private async Task<FlushResult> EnterOnlyConfirmLockedAsync(
+        AppDbContext db,
+        Guid sessionId,
+        IReadOnlyList<SessionQueuedMessage> run,
+        string body,
+        CancellationToken ct,
+        PtyDeliveryCeilings ceilings)
+    {
+        var kind = await TryGetSessionKindAsync(sessionId, ct);
+        var head = run[0];
+        var observable = head.LastDeliveryBaselineSequence is not null;
+        var baseline = new TranscriptBaseline(observable, head.LastDeliveryBaselineSequence ?? 0);
+        DateTime? unobservableFrom = null;
+        if (!observable && head.LastDeliveryStartedAt is { } started)
+        {
+            unobservableFrom = started - TimeSpan.FromSeconds(
+                Math.Max(0, _verification.UnobservableBaselineConfirmClockToleranceSeconds));
+        }
+
+        if (!_runtime.TryGetLiveSnapshot(sessionId, out var before))
+            return FlushResult.Nothing;
+
+        var submitBaseline = await SettlePostEvidenceAsync(sessionId, ct);
+        try
+        {
+            await _runtime.SendInputAsync(sessionId, "\r", ct);
+        }
+        catch (Exception ex) when (IsHerdrUnreachable(ex))
+        {
+            return FlushResult.Nothing;
+        }
+
+        _logger.LogInformation(
+            "Enter-only recovery for {Count} message(s) on session {SessionId}: the body head is "
+            + "visible on screen, so nothing is re-typed",
+            run.Count, sessionId);
+
+        DeliveryOutcome outcome;
+        try
+        {
+            outcome = await WaitForTranscriptConfirmAsync(
+                sessionId, body, baseline, submitBaseline.Sequence, before.RenderedScreen, kind,
+                ct, ceilings, unobservableFrom);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Enter-only recovery for session {SessionId} threw; leaving {Count} message(s) for a later sweep",
+                sessionId, run.Count);
+            return FlushResult.Nothing;
+        }
+
+        var ids = run.Select(m => m.Id).ToList();
+        if (outcome.Verdict == DeliveryVerdict.Delivered)
+        {
+            var now = UtcNow();
+            foreach (var message in run)
+            {
+                message.Status = QueuedMessageStatus.Sent;
+                message.SentAt ??= now;
+                message.DeliveryVerdict = DeliveryVerdict.Delivered;
+                message.DeliveryVerdictAt = now;
+            }
+
+            await db.SaveChangesAsync(ct);
+            return FlushResult.Delivered;
+        }
+
+        if (outcome.Verdict == DeliveryVerdict.Truncated)
+        {
+            await HandleTruncationAsync(sessionId, ids, body, outcome.RecordText, ct);
+            return FlushResult.Failed;
+        }
+
+        if (outcome.Verdict == DeliveryVerdict.BackendUnreachable)
+            return FlushResult.Nothing;
+
+        await HandleDeliveryFailureAsync(sessionId, ids, outcome.Verdict, ct);
+        return FlushResult.Failed;
+    }
+
+    private static string ReconstructRunBody(IReadOnlyList<SessionQueuedMessage> run)
+    {
+        if (run.Count == 1)
+            return run[0].Body;
+        if (run.All(m => m.Body == run[0].Body))
+            return run[0].Body;
+        return ChannelPromptFormat.FormatBatch(
+            run.Take(run.Count - 1).Select(m => m.Body).ToList(), run[^1].Body);
     }
 
     // The transport-failure sibling of HandleDeliveryFailureAsync: records the incident (visible on
@@ -1552,18 +1794,6 @@ public sealed class SessionMessageQueueService
         }
     }
 
-    private enum DeliveryVerdict
-    {
-        Delivered,
-        NoComposerEvidence,
-        NoSubmitOutput,
-        NoTranscriptRecord,
-        Truncated,
-        ForbiddenBody,
-        LocalCommandNotAccepted,
-        BackendUnreachable,
-    }
-
     /// <summary>
     /// Result of <see cref="TypeLocalCommandAsync"/> — the shared core of the poll transport and
     /// the local-command arm of <see cref="DeliverAsync"/>. Callers own Esc-before/after,
@@ -1618,8 +1848,34 @@ public sealed class SessionMessageQueueService
         DeliveryVerdict.ForbiddenBody => "the body is forbidden for this agent kind",
         DeliveryVerdict.LocalCommandNotAccepted => "the local TUI command was not accepted by the composer",
         DeliveryVerdict.BackendUnreachable => "herdr is unreachable",
+        DeliveryVerdict.LateConfirmed => "late-confirmed by a matching UserPrompt",
         _ => "delivered",
     };
+
+    private TimeSpan InterruptedAttemptAge =>
+        TimeSpan.FromSeconds(
+            Math.Max(0, _verification.TranscriptConfirmTimeoutSeconds)
+            + Math.Max(0, _verification.PostFailureConfirmGraceSeconds)
+            + Math.Max(0, _verification.UnobservableBaselineConfirmClockToleranceSeconds));
+
+    private TimeSpan InterruptedAttemptWindow =>
+        TimeSpan.FromMinutes(Math.Max(0, _verification.InterruptedAttemptWindowMinutes));
+
+    private static void ClearAttemptVerdict(SessionQueuedMessage message)
+    {
+        message.DeliveryVerdict = null;
+        message.DeliveryVerdictAt = null;
+    }
+
+    private static void StampAttemptVerdict(
+        IEnumerable<SessionQueuedMessage> run, DeliveryVerdict verdict, DateTime at)
+    {
+        foreach (var message in run)
+        {
+            message.DeliveryVerdict = verdict;
+            message.DeliveryVerdictAt = at;
+        }
+    }
 
     /// <summary>
     /// What the session's transcript looked like the instant before we typed. <see cref="Observable"/>
@@ -1983,21 +2239,23 @@ public sealed class SessionMessageQueueService
                 sawSequenceAdvance = true;
             }
 
-            if (kind == AgentKind.Codex)
+            if (kind is AgentKind.Codex or AgentKind.Grok)
             {
                 if (_runtime.TryGetLiveSnapshot(sessionId, out var snapshot))
                 {
                     var screenNow = snapshot.RenderedScreen;
-                    if (CodexWorkingIndicator.IsVisible(screenNow))
+                    if (kind == AgentKind.Codex && CodexWorkingIndicator.IsVisible(screenNow))
                     {
                         workingLatched = true;
                         sawPositiveSubmit = true;
                     }
                     else if (!workingLatched)
                     {
-                        // CARD-0299: do not latch emptied-composer on a single poll. A mid-redraw
-                        // empty/ghost/MCP-spinner frame used to suppress every re-Enter and take
-                        // degraded Sent at 30s while the durable last frame still held the body.
+                        // CARD-0299 / CARD-0342: do not latch emptied-composer on a single poll.
+                        // A mid-redraw empty/ghost/MCP-spinner frame used to suppress every
+                        // re-Enter and take degraded Sent at 30s while the durable last frame
+                        // still held the body. Grok has no measured Working indicator; sequence
+                        // advance stays diagnostic and cannot make this true.
                         if (SubmitEvidence.IsEmptiedComposer(screenBeforeSubmit, screenNow, body))
                         {
                             emptiedSince ??= UtcNow();
@@ -2013,8 +2271,8 @@ public sealed class SessionMessageQueueService
             }
             else if (!sawPositiveSubmit)
             {
-                // Claude and Grok retain the existing advance-based screen fallback. The
-                // baseline is now settled before Enter, so their proof is strictly stronger.
+                // Claude retains the existing advance-based screen fallback. The baseline is
+                // now settled before Enter, so that proof is strictly stronger than a raw redraw.
                 sawPositiveSubmit = sawSequenceAdvance;
             }
 
@@ -2026,7 +2284,7 @@ public sealed class SessionMessageQueueService
                     // transient empty snapshot must not have certified Sent if the body is
                     // still standing in the composer. Working-indicator stays immediate
                     // positive — do not unlatch it when the body is also still echoed.
-                    if (kind == AgentKind.Codex
+                    if (kind is AgentKind.Codex or AgentKind.Grok
                         && !workingLatched
                         && _runtime.TryGetLiveSnapshot(sessionId, out var deadlineSnap)
                         && ComposerDeliveryEvidence.HeadFragmentIsVisible(
@@ -2442,6 +2700,8 @@ public sealed class SessionMessageQueueService
                     }
 
                     message.DeliveryAttempts = Math.Max(message.DeliveryAttempts, MaxAttempts);
+                    message.DeliveryVerdict = DeliveryVerdict.Truncated;
+                    message.DeliveryVerdictAt = UtcNow();
                 }
             }
 
@@ -2536,6 +2796,8 @@ public sealed class SessionMessageQueueService
                     }
 
                     message.DeliveryAttempts = Math.Max(message.DeliveryAttempts, MaxAttempts);
+                    message.DeliveryVerdict = DeliveryVerdict.ForbiddenBody;
+                    message.DeliveryVerdictAt = UtcNow();
                 }
             }
 
@@ -2689,6 +2951,13 @@ public sealed class SessionMessageQueueService
                 }
 
                 var reverting = messages.Where(m => m.Status == QueuedMessageStatus.Sent).ToList();
+                var verdictAt = UtcNow();
+                foreach (var message in messages)
+                {
+                    message.DeliveryVerdict = verdict;
+                    message.DeliveryVerdictAt = verdictAt;
+                }
+
                 foreach (var message in reverting)
                 {
                     message.Status = QueuedMessageStatus.Pending;
