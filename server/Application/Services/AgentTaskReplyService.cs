@@ -10,6 +10,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
@@ -2278,19 +2279,70 @@ public sealed class AgentTaskReplyService
 
         var queue = services.GetRequiredService<SessionMessageQueueService>();
         Guid? createdId = null;
-        await queue.EnqueueAsync(
-            sessionId, body, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation,
-            onCreated: id => createdId = id);
-        if (createdId is Guid messageId)
+        try
         {
-            task.ReportNudgeMessageId = messageId;
-            task.ConcurrencyToken = Guid.NewGuid();
-            await db.SaveChangesAsync(ct);
+            await queue.EnqueueAsync(
+                sessionId, body, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation,
+                onCreated: id => createdId = id);
         }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // CARD-0336: onCreated can fire before a later GetQueue/Publish throw. The row is
+            // real; settle-anyway needs its id.
+            _logger.LogWarning(
+                ex, "Task {ShortId}: closing-line nudge enqueue failed after recording the ask", shortId);
+        }
+
+        try
+        {
+            // Isolated save so a caller's still-dirty tracker cannot swallow the id
+            // (CARD-0319 leftover, CARD-0336).
+            await StampNudgeRowAsync(db, task, createdId, now, turn.Boundary?.Sequence, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex, "Task {ShortId}: could not stamp ReportNudgeMessageId after the closing-line enqueue", shortId);
+        }
+
         _logger.LogInformation(
             "Task {ShortId}: nudged once for the closing report line", shortId);
 
         await EnqueueParentWaitingNoteAsync(services, task, shortId, ct);
+    }
+
+    private async Task StampNudgeRowAsync(
+        AppDbContext callerDb, AgentTask task, Guid? createdId, DateTime now, long? boundarySequence,
+        CancellationToken ct)
+    {
+        var options = callerDb.GetService<IDbContextOptions>() as DbContextOptions<AppDbContext>
+            ?? throw new InvalidOperationException(
+                "AppDbContext is not configured with DbContextOptions<AppDbContext>.");
+        await using var isolated = new AppDbContext(options);
+        var row = await isolated.AgentTasks.SingleAsync(t => t.Id == task.Id, ct);
+        row.ReportNudgedAt ??= now;
+        if (boundarySequence is long seq)
+            row.ReportNudgedSequence ??= seq;
+        if (createdId is null)
+        {
+            createdId = await isolated.SessionQueuedMessages.AsNoTracking()
+                .Where(m => m.AgentSessionId == task.AgentSessionId
+                    && m.Origin == QueuedMessageOrigin.Delegation)
+                .OrderByDescending(m => m.CreatedAt)
+                .Select(m => (Guid?)m.Id)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        if (createdId is Guid messageId)
+        {
+            row.ReportNudgeMessageId = messageId;
+            task.ReportNudgeMessageId = messageId;
+        }
+
+        row.ConcurrencyToken = Guid.NewGuid();
+        task.ReportNudgedAt = row.ReportNudgedAt;
+        task.ReportNudgedSequence = row.ReportNudgedSequence;
+        await isolated.SaveChangesAsync(ct);
     }
 
     /// <summary>
