@@ -493,6 +493,39 @@ public sealed class AgentTaskDispatcher
                 continue;
             }
 
+            // CARD-0215: a card-bound Worktree task branches from merge-target-or-HEAD, never a
+            // sibling. Hold while that sibling's land is in flight; otherwise dispatch with a
+            // warning so a superseded plan cannot block Execute.
+            IReadOnlyList<UnlandedSibling>? siblingWarnings = null;
+            if (task.Workspace == WorkspaceMode.Worktree
+                && task.CardId is not null
+                && task.WorktreePath is null)
+            {
+                var siblingGuard = await EvaluateCardSiblingBaseAsync(task, ct);
+                if (siblingGuard.Hold is { } heldSibling)
+                {
+                    if (everHeld.Add(task.Id))
+                    {
+                        _db.AgentTaskEvents.Add(new AgentTaskEvent
+                        {
+                            Id = Guid.NewGuid(),
+                            AgentTaskId = task.Id,
+                            Type = AgentTaskEventType.Held,
+                            Detail = heldSibling.HoldDetail,
+                            At = UtcNow(),
+                        });
+                        await _db.SaveChangesAsync(ct);
+                        _logger.LogInformation(
+                            "Task {ShortId} held: {Detail}",
+                            DelegationReportFormatter.Short(task.Id), heldSibling.HoldDetail);
+                    }
+
+                    continue;
+                }
+
+                siblingWarnings = siblingGuard.Warnings.Count == 0 ? null : siblingGuard.Warnings;
+            }
+
             try
             {
                 if (await DispatchOneAsync(task, ct))
@@ -526,6 +559,9 @@ public sealed class AgentTaskDispatcher
 
                         await _db.SaveChangesAsync(ct);
                     }
+
+                    if (siblingWarnings is not null)
+                        await WarnUnlandedSiblingsAsync(task, siblingWarnings, ct);
 
                     // The other half of the transition: a task that was held and now runs.
                     if (everHeld.Contains(task.Id))
@@ -2281,6 +2317,165 @@ public sealed class AgentTaskDispatcher
                     || s.Status == SessionStatus.Starting
                     || s.Status == SessionStatus.Running),
             ct);
+    }
+
+    private sealed record UnlandedSibling(
+        Guid TaskId,
+        string Branch,
+        string BaseRef,
+        string CardIdentifier,
+        string Tip,
+        int CommitsAbove,
+        string Subject)
+    {
+        public string ShortId => DelegationReportFormatter.Short(TaskId);
+
+        public string HoldDetail =>
+            $"held: {CardIdentifier}'s kept branch {Branch} (task {ShortId}) is landing and is not yet in {BaseRef}";
+
+        public string WarningDetail(Guid newTaskId)
+        {
+            var commits = CommitsAbove == 1
+                ? $"1 commit: '{Subject}'"
+                : $"{CommitsAbove} commits: '{Subject}'";
+            return $"task {DelegationReportFormatter.Short(newTaskId)} branched from {BaseRef} without "
+                + $"{CardIdentifier}'s kept branch {Branch} ({Tip}, {commits}). "
+                + $"Land {ShortId} first, or expect its commits to be absent from this branch.";
+        }
+    }
+
+    private sealed record SiblingBaseGuard(UnlandedSibling? Hold, IReadOnlyList<UnlandedSibling> Warnings)
+    {
+        public static SiblingBaseGuard Proceed { get; } = new(null, []);
+    }
+
+    /// <summary>
+    /// CARD-0215: same-card kept Worktree branches whose tip is not an ancestor of this task's
+    /// dispatch base. Succeeded and Blocked both count — a conflicted land leaves the branch
+    /// kept, which is the one most likely to be forgotten.
+    /// </summary>
+    private async Task<SiblingBaseGuard> EvaluateCardSiblingBaseAsync(AgentTask task, CancellationToken ct)
+    {
+        if (task.RepoPath is null || !Directory.Exists(task.RepoPath) || task.CardId is null)
+            return SiblingBaseGuard.Proceed;
+
+        var siblings = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.Id != task.Id
+                && t.CardId == task.CardId
+                && t.Workspace == WorkspaceMode.Worktree
+                && (t.Status == AgentTaskStatus.Succeeded || t.Status == AgentTaskStatus.Blocked)
+                && t.WorktreeBranch != null)
+            .Select(t => new { t.Id, t.WorktreeBranch, t.RepoPath, t.WorktreePath })
+            .ToListAsync(ct);
+        if (siblings.Count == 0)
+            return SiblingBaseGuard.Proceed;
+
+        var sameRepo = siblings
+            .Where(s => DelegationWorktreeService.SharesRepo(task.RepoPath, s.RepoPath)
+                || DelegationWorktreeService.SharesRepo(task.RepoPath, s.WorktreePath))
+            .ToList();
+        if (sameRepo.Count == 0)
+            return SiblingBaseGuard.Proceed;
+
+        var siblingIds = sameRepo.Select(s => s.Id).ToList();
+        var landEvents = await _db.AgentTaskEvents.AsNoTracking()
+            .Where(e => siblingIds.Contains(e.AgentTaskId)
+                && (e.Type == AgentTaskEventType.LandRequested
+                    || e.Type == AgentTaskEventType.Landed
+                    || e.Type == AgentTaskEventType.LandRefused))
+            .Select(e => new { e.AgentTaskId, e.Type, e.At })
+            .ToListAsync(ct);
+
+        var cardIdentifier = await _db.Cards.AsNoTracking()
+            .Where(c => c.Id == task.CardId)
+            .Select(c => c.Identifier)
+            .FirstOrDefaultAsync(ct) ?? "the card";
+        var baseRef = task.MergeTargetRef ?? "HEAD";
+        UnlandedSibling? hold = null;
+        var warnings = new List<UnlandedSibling>();
+
+        foreach (var sibling in sameRepo)
+        {
+            var branch = sibling.WorktreeBranch!;
+            if (!await _worktrees.KeptBranchExistsAsync(task.RepoPath, branch, ct))
+                continue;
+            if (await _worktrees.IsAncestorOfBaseAsync(task.RepoPath, branch, baseRef, ct))
+                continue;
+
+            var described = await _worktrees.DescribeKeptBranchAsync(task.RepoPath, branch, baseRef, ct);
+            var unlanded = new UnlandedSibling(
+                sibling.Id,
+                branch,
+                baseRef,
+                cardIdentifier,
+                described?.Tip ?? "unknown",
+                described?.CommitsAbove ?? 0,
+                described?.Subject ?? "");
+
+            if (IsSiblingLandInFlight(landEvents.Where(e => e.AgentTaskId == sibling.Id)
+                    .Select(e => (e.Type, e.At))))
+            {
+                hold ??= unlanded;
+                continue;
+            }
+
+            warnings.Add(unlanded);
+        }
+
+        return hold is not null
+            ? new SiblingBaseGuard(hold, [])
+            : new SiblingBaseGuard(null, warnings);
+    }
+
+    /// <summary>
+    /// Latest LandRequested/Landed/LandRefused is LandRequested (a Shared-writer Held after
+    /// that request leaves the latest land event unchanged). A refused land lifts the hold
+    /// into the warn arm.
+    /// </summary>
+    private static bool IsSiblingLandInFlight(IEnumerable<(AgentTaskEventType Type, DateTime At)> events) =>
+        events
+            .Where(e => e.Type is AgentTaskEventType.LandRequested
+                or AgentTaskEventType.Landed
+                or AgentTaskEventType.LandRefused)
+            .OrderByDescending(e => e.At)
+            .Select(e => (AgentTaskEventType?)e.Type)
+            .FirstOrDefault() == AgentTaskEventType.LandRequested;
+
+    private async Task WarnUnlandedSiblingsAsync(
+        AgentTask task, IReadOnlyList<UnlandedSibling> siblings, CancellationToken ct)
+    {
+        var warnedAt = UtcNow();
+        foreach (var sibling in siblings)
+        {
+            var detail = sibling.WarningDetail(task.Id);
+            _db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(),
+                AgentTaskId = task.Id,
+                Type = AgentTaskEventType.Warning,
+                Detail = detail,
+                At = warnedAt,
+            });
+
+            if (task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is Guid parentSession)
+            {
+                try
+                {
+                    await _queue.EnqueueAsync(
+                        parentSession, detail, MessageSendMode.WhenIdle, ct,
+                        QueuedMessageOrigin.Delegation, $"task:{task.Id:N}", task.Id);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "Could not deliver unlanded-sibling warning of task {ShortId} to parent session {SessionId}",
+                        DelegationReportFormatter.Short(task.Id), parentSession);
+                }
+            }
+        }
+
+        await _db.SaveChangesAsync(ct);
     }
 
     private async Task<bool> DispatchOneAsync(AgentTask task, CancellationToken ct)

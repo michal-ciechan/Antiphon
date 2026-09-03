@@ -158,6 +158,11 @@ public sealed class AgentTaskLandService
             return LandRunResult.Complete;
         }
 
+        // CARD-0215: probe same-card kept branches against the rebased HEAD before the
+        // worktree is removed. Warn, do not refuse — a superseded plan is a legitimate state.
+        var (unlandedMarker, unlandedWarnings) = await CollectUnlandedSiblingsAsync(
+            task, task.WorktreePath!, ct);
+
         var cleanupWatch = Stopwatch.StartNew();
         var finalized = await _worktrees.FinalizeLandAsync(task, prepared.Target!, ct);
         var cleanupSeconds = ElapsedSeconds(cleanupWatch);
@@ -178,14 +183,16 @@ public sealed class AgentTaskLandService
                 finalized.Residue);
             var residueOutcome = $"landed {prepared.Branch} -> {prepared.Target} as {finalized.Sha}, pushed "
                 + $"(origin/{prepared.Target}={finalized.Sha}), verify: {verify}, cleanup incomplete: {finalized.Residue}";
-            await SettleLandedAsync(task, AgentTaskEventType.LandedWithResidue, residueOutcome, ct);
+            await SettleLandedAsync(task, AgentTaskEventType.LandedWithResidue,
+                AppendUnlandedMarker(residueOutcome, unlandedMarker), unlandedWarnings, ct);
             return LandRunResult.Complete;
         }
 
         Record(task, OrchestrationStage.Cleanup, StageOutcomeKind.Clean, cleanupSeconds);
         var outcome = $"landed {prepared.Branch} -> {prepared.Target} as {finalized.Sha}, pushed "
             + $"(origin/{prepared.Target}={finalized.Sha}), verify: {verify}, worktree removed";
-        await SettleLandedAsync(task, AgentTaskEventType.Landed, outcome, ct);
+        await SettleLandedAsync(task, AgentTaskEventType.Landed,
+            AppendUnlandedMarker(outcome, unlandedMarker), unlandedWarnings, ct);
         return LandRunResult.Complete;
     }
 
@@ -204,7 +211,7 @@ public sealed class AgentTaskLandService
                 "nothing left to clean");
             var outcome = $"landed {branch} -> {target} as {sha}, pushed "
                 + $"(origin/{target}={sha}), nothing left to clean";
-            await SettleLandedAsync(task, AgentTaskEventType.Landed, outcome, ct);
+            await SettleLandedAsync(task, AgentTaskEventType.Landed, outcome, [], ct);
             return LandRunResult.Complete;
         }
 
@@ -212,17 +219,77 @@ public sealed class AgentTaskLandService
             cleaned.Removal.Residue ?? "cleanup incomplete");
         var residueOutcome = $"landed {branch} -> {target} as {sha}, pushed "
             + $"(origin/{target}={sha}), cleanup incomplete: {cleaned.Removal.Residue}";
-        await SettleLandedAsync(task, AgentTaskEventType.LandedWithResidue, residueOutcome, ct);
+        await SettleLandedAsync(task, AgentTaskEventType.LandedWithResidue, residueOutcome, [], ct);
         return LandRunResult.Complete;
     }
 
     private async Task SettleLandedAsync(
-        AgentTask task, AgentTaskEventType type, string outcome, CancellationToken ct)
+        AgentTask task,
+        AgentTaskEventType type,
+        string outcome,
+        IReadOnlyList<string> warnings,
+        CancellationToken ct)
     {
-        _db.AgentTaskEvents.Add(Event(task.Id, type, outcome, _clock.GetUtcNow().UtcDateTime));
+        var now = _clock.GetUtcNow().UtcDateTime;
+        foreach (var warning in warnings)
+            _db.AgentTaskEvents.Add(Event(task.Id, AgentTaskEventType.Warning, warning, now));
+        _db.AgentTaskEvents.Add(Event(task.Id, type, outcome, now));
         await _db.SaveChangesAsync(ct);
         await DeliverAsync(task, outcome, ct);
         await PublishAsync(task, ct);
+    }
+
+    private static string AppendUnlandedMarker(string outcome, string? marker) =>
+        marker is null ? outcome : $"{outcome}, {marker}";
+
+    /// <summary>
+    /// Same-card kept Worktree branches whose tip is not an ancestor of the rebased HEAD
+    /// (CARD-0215). Branch gone = already landed; not an ancestor = stranded, warn.
+    /// </summary>
+    private async Task<(string? Marker, IReadOnlyList<string> Warnings)> CollectUnlandedSiblingsAsync(
+        AgentTask task, string rebasedHeadRepo, CancellationToken ct)
+    {
+        if (task.CardId is null || task.RepoPath is null || !Directory.Exists(rebasedHeadRepo))
+            return (null, []);
+
+        var siblings = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.Id != task.Id
+                && t.CardId == task.CardId
+                && t.Workspace == WorkspaceMode.Worktree
+                && (t.Status == AgentTaskStatus.Succeeded || t.Status == AgentTaskStatus.Blocked)
+                && t.WorktreeBranch != null)
+            .Select(t => new { t.Id, t.WorktreeBranch, t.RepoPath, t.WorktreePath })
+            .ToListAsync(ct);
+        if (siblings.Count == 0)
+            return (null, []);
+
+        var cardIdentifier = await _db.Cards.AsNoTracking()
+            .Where(c => c.Id == task.CardId)
+            .Select(c => c.Identifier)
+            .FirstOrDefaultAsync(ct) ?? "the card";
+
+        var tokens = new List<string>();
+        var warnings = new List<string>();
+        foreach (var sibling in siblings)
+        {
+            var branch = sibling.WorktreeBranch!;
+            if (!DelegationWorktreeService.SharesRepo(task.RepoPath, sibling.RepoPath)
+                && !DelegationWorktreeService.SharesRepo(task.RepoPath, sibling.WorktreePath))
+                continue;
+            if (!await _worktrees.KeptBranchExistsAsync(task.RepoPath, branch, ct))
+                continue;
+            if (await _worktrees.IsAncestorOfBaseAsync(rebasedHeadRepo, branch, "HEAD", ct))
+                continue;
+
+            var shortId = DelegationReportFormatter.Short(sibling.Id);
+            tokens.Add($"{shortId}:{branch}");
+            warnings.Add(
+                $"{cardIdentifier}'s kept branch {branch} (task {shortId}) is not an ancestor of the rebased HEAD.");
+        }
+
+        return tokens.Count == 0
+            ? (null, [])
+            : ($"unlanded-sibling={string.Join(",", tokens)}", warnings);
     }
 
     private async Task<AgentTask?> FindSharedWriterAsync(AgentTask task, CancellationToken ct)

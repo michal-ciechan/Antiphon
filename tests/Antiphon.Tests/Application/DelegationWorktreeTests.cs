@@ -47,6 +47,37 @@ public class DelegationWorktreeTests
     }
 
     [Test]
+    public async Task two_top_level_worktree_tasks_on_one_card_both_branch_from_repo_head()
+    {
+        using var repo = new ScratchGitRepo();
+        await repo.CommitFileAsync("README.md", "base\n");
+        var masterHead = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+
+        var (service, _) = CreateService(repo);
+        var cardId = Guid.NewGuid();
+        var first = NewTask(repo.Path, mergeTarget: null);
+        first.CardId = cardId;
+        var second = NewTask(repo.Path, mergeTarget: null);
+        second.CardId = cardId;
+
+        await service.CreateForTaskAsync(first, CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(first.WorktreePath!, "plan.md"), "the plan\n");
+        (await ScratchGitRepo.GitInAsync(first.WorktreePath!, "add", "plan.md")).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(first.WorktreePath!, "commit", "-m", "docs(plan): CARD-0215"))
+            .Ok.ShouldBeTrue();
+        var firstCommit = (await ScratchGitRepo.GitInAsync(first.WorktreePath!, "rev-parse", "HEAD"))
+            .StdOut.Trim();
+        firstCommit.ShouldNotBe(masterHead);
+
+        await service.CreateForTaskAsync(second, CancellationToken.None);
+        (await ScratchGitRepo.GitInAsync(second.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim()
+            .ShouldBe(masterHead);
+        (await ScratchGitRepo.GitInAsync(
+            second.WorktreePath!, "merge-base", "--is-ancestor", firstCommit, "HEAD"))
+            .Ok.ShouldBeFalse("a sibling Worktree task branches from HEAD, never from the first task's commit");
+    }
+
+    [Test]
     public async Task a_locked_registration_whose_directory_is_gone_is_healed_and_the_task_dispatches()
     {
         using var repo = new ScratchGitRepo();

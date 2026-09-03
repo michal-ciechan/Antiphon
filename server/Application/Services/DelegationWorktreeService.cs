@@ -178,6 +178,56 @@ public sealed class DelegationWorktreeService
         return local.Ok;
     }
 
+    /// <summary>
+    /// True when <paramref name="branch"/> still exists as a local head in <paramref name="repo"/>.
+    /// Branch existence is the durable "not landed" signal: FinalizeLand deletes the branch.
+    /// </summary>
+    public async Task<bool> KeptBranchExistsAsync(string repo, string branch, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(branch) || !Directory.Exists(repo))
+            return false;
+        var exists = await GitAsync(repo, ct, "show-ref", "--verify", "--quiet", $"refs/heads/{branch}");
+        return exists.Ok;
+    }
+
+    /// <summary>
+    /// True when <paramref name="branch"/> is an ancestor of <paramref name="baseRef"/>
+    /// (<c>git merge-base --is-ancestor</c>). A missing ref is not an ancestor.
+    /// </summary>
+    public async Task<bool> IsAncestorOfBaseAsync(
+        string repo, string branch, string baseRef, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(branch) || string.IsNullOrWhiteSpace(baseRef)
+            || !Directory.Exists(repo))
+            return false;
+        var result = await GitAsync(repo, ct, "merge-base", "--is-ancestor", branch, baseRef);
+        return result.Ok;
+    }
+
+    /// <summary>Tip, commit count, and subject of <paramref name="branch"/> above <paramref name="baseRef"/>.</summary>
+    public async Task<KeptBranchInfo?> DescribeKeptBranchAsync(
+        string repo, string branch, string baseRef, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(branch) || !Directory.Exists(repo))
+            return null;
+        var tip = await GitAsync(repo, ct, "rev-parse", "--short", branch);
+        if (!tip.Ok)
+            return null;
+        var count = await GitAsync(repo, ct, "rev-list", "--count", $"{baseRef}..{branch}");
+        _ = int.TryParse(count.StdOut.Trim(), out var commits);
+        var subject = await GitAsync(repo, ct, "log", "-1", "--format=%s", branch);
+        return new KeptBranchInfo(tip.StdOut.Trim(), commits, subject.StdOut.Trim());
+    }
+
+    /// <summary>RepoPath equal-or-within, either direction — two worktrees of one checkout share refs.</summary>
+    internal static bool SharesRepo(string? left, string? right) =>
+        !string.IsNullOrWhiteSpace(left)
+        && !string.IsNullOrWhiteSpace(right)
+        && (DelegationWorkspaceResolver.IsWithinRoot(left, right)
+            || DelegationWorkspaceResolver.IsWithinRoot(right, left));
+
+    public sealed record KeptBranchInfo(string Tip, int CommitsAbove, string Subject);
+
     /// <summary>Retry worktree/branch cleanup after a successful land (CARD-0328).</summary>
     public async Task<LandCleanup> CleanupAlreadyLandedAsync(AgentTask task, CancellationToken ct)
     {
@@ -205,8 +255,9 @@ public sealed class DelegationWorktreeService
 
     /// <summary>
     /// Create the task's worktree and record its coordinates on the row. Branches from the merge
-    /// target when one is set — the rebase-back is then linear — and from HEAD otherwise. A
-    /// leftover worktree from a previous attempt of the SAME task is adopted, not an error.
+    /// target when one is set — the rebase-back is then linear — and from HEAD otherwise. Never
+    /// from a sibling task's branch (CARD-0215). A leftover worktree from a previous attempt of
+    /// the SAME task is adopted, not an error.
     /// </summary>
     public async Task CreateForTaskAsync(AgentTask task, CancellationToken ct)
     {

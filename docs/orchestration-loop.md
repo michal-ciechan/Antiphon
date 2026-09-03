@@ -77,10 +77,14 @@ pick a card
 Landing (fetch, rebase, verify, fast-forward, push, worktree removal, branch deletion) is the
 `-Land` operation's job, not a manual step — see §5.
 
-A finished Plan or Docs deliverable sitting in a worktree is invisible. Cherry-pick or copy it onto
-master and push as soon as the task reports — do not wait for the task to formally settle. Two
-2026-08-10 cases (the CARD-0002 design doc and the CARD-0001 fix) sat unmerged for 9 hours before
-anyone noticed.
+A Worktree task branches from its merge target, or from master HEAD when none is set — never from
+a sibling task's branch (CARD-0215). Land a Plan with `delegate.ps1 -Land <id>` before dispatching
+Execute, so the plan commit is on master and the build worktree contains it. The dispatcher holds
+Execute while that plan's land is in flight, and warns (a `Warning` event plus a WhenIdle note
+naming the branch and tip) when the plan branch is simply not landed. A `Landed` line carrying
+`unlanded-sibling=` means a same-card branch is still stranded; land or drop it. Two 2026-08-10
+cases (the CARD-0002 design doc and the CARD-0001 fix) sat unmerged for 9 hours before anyone
+noticed.
 
 ### Picking
 
@@ -338,7 +342,10 @@ push, worktree removal, and branch deletion. Read the resulting `Landed`, `Lande
 verification result, and `worktree removed`. `LandedWithResidue` keeps the `landed …` prefix and
 ends `cleanup incomplete: <what remains>` — the target advanced; re-run `-Land` to retry
 cleanup. `LandRefused` means the target did not advance (fetch, remote-ahead, rebase, verify,
-fast-forward, or push failed) and leaves the branch and worktree in place naming why.
+fast-forward, or push failed) and leaves the branch and worktree in place naming why. A `Landed`
+line that also carries `unlanded-sibling=<id>:<branch>` (comma-separated if several) means a
+same-card kept branch is not an ancestor of the rebased HEAD — land or drop that sibling; the
+server warns rather than refusing.
 
 After `-Land`, the orchestrator's own git involvement is **zero**. Do not re-run `git show`,
 `git diff`, `gh run view`, or tests to double-check a `Landed` outcome. This is the same

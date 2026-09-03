@@ -272,8 +272,81 @@ public class AgentTaskLandStageOutcomeTests
             e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.LandRefused)).ShouldBe(0);
     }
 
+    [Test]
+    public async Task land_warns_when_a_same_card_kept_branch_is_not_an_ancestor()
+    {
+        using var repo = new ScratchGitRepo("antiphon-land-sib-warn");
+        using var remote = new TemporaryDirectory("antiphon-land-sib-wremote");
+        await ScratchGitRepo.GitInAsync(remote.Path, "init", "--bare");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("remote", "add", "origin", remote.Path);
+        await repo.GitAsync("push", "-u", "origin", "master");
+
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var (land, worktrees) = CreateLand(db, repo);
+        var card = await SeedCardAsync(db);
+        var sibling = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
+        await File.WriteAllTextAsync(Path.Combine(sibling.WorktreePath!, "plan.md"), "the plan\n");
+        await ScratchGitRepo.GitInAsync(sibling.WorktreePath!, "add", "plan.md");
+        await ScratchGitRepo.GitInAsync(sibling.WorktreePath!, "commit", "-m", "docs(plan): CARD-0215");
+
+        var build = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
+        await File.WriteAllTextAsync(Path.Combine(build.WorktreePath!, "feature.md"), "the work\n");
+        await ScratchGitRepo.GitInAsync(build.WorktreePath!, "add", "feature.md");
+        await ScratchGitRepo.GitInAsync(build.WorktreePath!, "commit", "-m", "feature");
+
+        await land.RunAsync(build.Id, null, CancellationToken.None);
+
+        var landed = await db.AgentTaskEvents.AsNoTracking()
+            .SingleAsync(e => e.AgentTaskId == build.Id && e.Type == AgentTaskEventType.Landed);
+        landed.Detail.ShouldContain(
+            $"unlanded-sibling={DelegationReportFormatter.Short(sibling.Id)}:{sibling.WorktreeBranch}");
+        var warning = await db.AgentTaskEvents.AsNoTracking()
+            .SingleAsync(e => e.AgentTaskId == build.Id && e.Type == AgentTaskEventType.Warning);
+        warning.Detail.ShouldContain(sibling.WorktreeBranch!);
+        warning.Detail.ShouldContain(DelegationReportFormatter.Short(sibling.Id));
+    }
+
+    [Test]
+    public async Task land_is_silent_when_the_sibling_was_landed_first()
+    {
+        using var repo = new ScratchGitRepo("antiphon-land-sib-first");
+        using var remote = new TemporaryDirectory("antiphon-land-sib-fremote");
+        await ScratchGitRepo.GitInAsync(remote.Path, "init", "--bare");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("remote", "add", "origin", remote.Path);
+        await repo.GitAsync("push", "-u", "origin", "master");
+
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var (land, worktrees) = CreateLand(db, repo);
+        var card = await SeedCardAsync(db);
+        var sibling = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
+        await File.WriteAllTextAsync(Path.Combine(sibling.WorktreePath!, "plan.md"), "the plan\n");
+        await ScratchGitRepo.GitInAsync(sibling.WorktreePath!, "add", "plan.md");
+        await ScratchGitRepo.GitInAsync(sibling.WorktreePath!, "commit", "-m", "docs(plan): CARD-0215");
+
+        await land.RunAsync(sibling.Id, null, CancellationToken.None);
+        (await db.AgentTaskEvents.CountAsync(e =>
+            e.AgentTaskId == sibling.Id && e.Type == AgentTaskEventType.Landed)).ShouldBe(1);
+
+        var build = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
+        await File.WriteAllTextAsync(Path.Combine(build.WorktreePath!, "feature.md"), "the work\n");
+        await ScratchGitRepo.GitInAsync(build.WorktreePath!, "add", "feature.md");
+        await ScratchGitRepo.GitInAsync(build.WorktreePath!, "commit", "-m", "feature");
+
+        await land.RunAsync(build.Id, null, CancellationToken.None);
+
+        var landed = await db.AgentTaskEvents.AsNoTracking()
+            .SingleAsync(e => e.AgentTaskId == build.Id && e.Type == AgentTaskEventType.Landed);
+        landed.Detail.ShouldNotContain("unlanded-sibling=");
+        (await db.AgentTaskEvents.CountAsync(e =>
+            e.AgentTaskId == build.Id && e.Type == AgentTaskEventType.Warning)).ShouldBe(0);
+    }
+
     private static async Task<AgentTask> SeedSucceededWorktreeAsync(
-        AppDbContext db, DelegationWorktreeService worktrees, ScratchGitRepo repo)
+        AppDbContext db, DelegationWorktreeService worktrees, ScratchGitRepo repo, Guid? cardId = null)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -287,6 +360,7 @@ public class AgentTaskLandStageOutcomeTests
             Workspace = WorkspaceMode.Worktree,
             WorkingDirectory = repo.Path,
             RepoPath = repo.Path,
+            CardId = cardId,
             Status = AgentTaskStatus.Succeeded,
             ReplyTo = AgentTaskReplyTo.None,
             CreatedAt = DateTime.UtcNow,
@@ -333,6 +407,53 @@ public class AgentTaskLandStageOutcomeTests
             TimeProvider.System,
             NullLogger<AgentTaskLandService>.Instance);
         return (land, worktrees);
+    }
+
+    private static async Task<Card> SeedCardAsync(AppDbContext db)
+    {
+        var now = DateTime.UtcNow;
+        var project = new Project
+        {
+            Id = Guid.NewGuid(),
+            Name = $"land-sib-{Guid.NewGuid():N}",
+            GitRepositoryUrl = "https://example.test/land-sib.git",
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        var board = new Board
+        {
+            Id = Guid.NewGuid(),
+            ProjectId = project.Id,
+            Name = $"CARD-0215 land {Guid.NewGuid():N}",
+            MaxConcurrentSessions = 1,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        var column = new BoardColumn
+        {
+            Id = Guid.NewGuid(),
+            BoardId = board.Id,
+            StateKey = "backlog",
+            Name = "Backlog",
+            ColumnOrder = 0,
+            CardStatus = CardStatus.Backlog,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        var card = new Card
+        {
+            Id = Guid.NewGuid(),
+            BoardId = board.Id,
+            BoardColumnId = column.Id,
+            Identifier = "CARD-0215",
+            Title = "CARD-0215 ancestry",
+            Description = "Land sibling probe.",
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        db.AddRange(project, board, column, card);
+        await db.SaveChangesAsync();
+        return card;
     }
 
     private static async Task SeedBuildableAsync(ScratchGitRepo repo)
