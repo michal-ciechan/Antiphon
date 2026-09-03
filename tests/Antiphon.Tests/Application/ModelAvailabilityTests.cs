@@ -1,11 +1,14 @@
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -255,6 +258,160 @@ public class ModelAvailabilityTests
         }
     }
 
+    [Test]
+    public async Task A_fresh_fallback_timestamp_blocks_until_expiry_then_IsHeld_clears_it()
+    {
+        var id = Guid.NewGuid();
+        var now = new DateTimeOffset(2026, 9, 3, 12, 0, 0, TimeSpan.Zero);
+        var time = new FakeTimeProvider(now);
+        await using var db = CreateContext();
+        try
+        {
+            await db.ModelAvailabilityHolds
+                .Where(h => h.Kind == AgentKind.ClaudeCode && h.ModelAlias == "fable" && h.ClearedAt == null)
+                .ExecuteDeleteAsync();
+            var availability = Service(db, time);
+            var written = await availability.UpsertAutoDetectedAsync(
+                AgentKind.ClaudeCode,
+                "fable",
+                now.UtcDateTime.AddHours(3),
+                "Fable 5 per-model cap (no reset stated)",
+                UsageLimitWallParser.FableModelCapIncidentText,
+                sourceSessionId: null,
+                sourceTaskId: null,
+                CancellationToken.None);
+            id = written.Id;
+
+            (await availability.IsHeldAsync(AgentKind.ClaudeCode, "fable", CancellationToken.None))
+                .ShouldBeTrue();
+
+            time.Advance(TimeSpan.FromHours(3));
+            (await availability.IsHeldAsync(AgentKind.ClaudeCode, "fable", CancellationToken.None))
+                .ShouldBeFalse();
+
+            await using var verify = CreateContext();
+            (await verify.ModelAvailabilityHolds.SingleAsync(h => h.Id == id)).ClearedAt.ShouldNotBeNull();
+        }
+        finally
+        {
+            await db.ModelAvailabilityHolds.Where(h => h.Id == id).ExecuteDeleteAsync();
+        }
+    }
+
+    [Test]
+    public async Task An_old_auto_detected_null_row_is_materialized_and_cleared()
+    {
+        var id = Guid.NewGuid();
+        var now = new DateTimeOffset(2026, 9, 3, 18, 0, 0, TimeSpan.Zero);
+        var hitAt = new DateTime(2026, 9, 3, 12, 0, 0, DateTimeKind.Utc);
+        var time = new FakeTimeProvider(now);
+        var settings = Options.Create(new SupervisionSettings
+        {
+            ApiErrorRecovery = new ApiErrorRecoverySettings { ModelCapFallbackHoldHours = 4 },
+        });
+        await using var db = CreateContext();
+        try
+        {
+            await ReplaceHoldAsync(db, new ModelAvailabilityHold
+            {
+                Id = id,
+                Kind = AgentKind.ClaudeCode,
+                ModelAlias = "fable",
+                Source = ModelAvailabilitySource.AutoDetected,
+                DisabledUntil = null,
+                HitAt = hitAt,
+                Reason = "Fable 5 per-model cap (no reset stated)",
+            });
+
+            var availability = Service(db, time, settings);
+            (await availability.IsHeldAsync(AgentKind.ClaudeCode, "fable", CancellationToken.None))
+                .ShouldBeFalse();
+
+            await using var verify = CreateContext();
+            var row = await verify.ModelAvailabilityHolds.SingleAsync(h => h.Id == id);
+            row.DisabledUntil.ShouldBe(hitAt.AddHours(4));
+            row.ClearedAt.ShouldNotBeNull();
+        }
+        finally
+        {
+            await db.ModelAvailabilityHolds.Where(h => h.Id == id).ExecuteDeleteAsync();
+        }
+    }
+
+    [Test]
+    public async Task Sweep_materializes_a_recent_auto_detected_null_without_clearing_it()
+    {
+        var id = Guid.NewGuid();
+        var now = new DateTimeOffset(2026, 9, 3, 12, 0, 0, TimeSpan.Zero);
+        var hitAt = now.UtcDateTime;
+        var time = new FakeTimeProvider(now);
+        await using var db = CreateContext();
+        try
+        {
+            await ReplaceHoldAsync(db, new ModelAvailabilityHold
+            {
+                Id = id,
+                Kind = AgentKind.ClaudeCode,
+                ModelAlias = "fable",
+                Source = ModelAvailabilitySource.AutoDetected,
+                DisabledUntil = null,
+                HitAt = hitAt,
+                Reason = "Fable 5 per-model cap (no reset stated)",
+            });
+
+            var availability = Service(db, time);
+            (await availability.SweepExpiredAsync(CancellationToken.None)).ShouldBe(0);
+            (await availability.IsHeldAsync(AgentKind.ClaudeCode, "fable", CancellationToken.None))
+                .ShouldBeTrue();
+
+            await using var verify = CreateContext();
+            var row = await verify.ModelAvailabilityHolds.SingleAsync(h => h.Id == id);
+            row.DisabledUntil.ShouldBe(hitAt.AddHours(6));
+            row.ClearedAt.ShouldBeNull();
+        }
+        finally
+        {
+            await db.ModelAvailabilityHolds.Where(h => h.Id == id).ExecuteDeleteAsync();
+        }
+    }
+
+    [Test]
+    public async Task An_open_ended_manual_null_row_remains_held()
+    {
+        var id = Guid.NewGuid();
+        var now = new DateTimeOffset(2026, 9, 3, 18, 0, 0, TimeSpan.Zero);
+        var time = new FakeTimeProvider(now);
+        await using var db = CreateContext();
+        try
+        {
+            await ReplaceHoldAsync(db, new ModelAvailabilityHold
+            {
+                Id = id,
+                Kind = AgentKind.ClaudeCode,
+                ModelAlias = "fable",
+                Source = ModelAvailabilitySource.Manual,
+                DisabledUntil = null,
+                HitAt = new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc),
+                Reason = "manual hold",
+            });
+
+            var availability = Service(db, time);
+            (await availability.IsHeldAsync(AgentKind.ClaudeCode, "fable", CancellationToken.None))
+                .ShouldBeTrue();
+            (await availability.SweepExpiredAsync(CancellationToken.None)).ShouldBe(0);
+
+            await using var verify = CreateContext();
+            var row = await verify.ModelAvailabilityHolds.SingleAsync(h => h.Id == id);
+            row.DisabledUntil.ShouldBeNull();
+            row.ClearedAt.ShouldBeNull();
+            row.Source.ShouldBe(ModelAvailabilitySource.Manual);
+        }
+        finally
+        {
+            await db.ModelAvailabilityHolds.Where(h => h.Id == id).ExecuteDeleteAsync();
+        }
+    }
+
     private static async Task ReplaceHoldAsync(AppDbContext db, ModelAvailabilityHold hold)
     {
         await db.ModelAvailabilityHolds
@@ -264,8 +421,9 @@ public class ModelAvailabilityTests
         await db.SaveChangesAsync();
     }
 
-    private static ModelAvailability Service(AppDbContext db) =>
-        new(db, TimeProvider.System, NullLogger<ModelAvailability>.Instance);
+    private static ModelAvailability Service(
+        AppDbContext db, TimeProvider? time = null, IOptions<SupervisionSettings>? settings = null) =>
+        new(db, time ?? TimeProvider.System, NullLogger<ModelAvailability>.Instance, settings);
 
     private static ModelAvailabilityHold Hold(Guid id, string alias, DateTime? until) => new()
     {

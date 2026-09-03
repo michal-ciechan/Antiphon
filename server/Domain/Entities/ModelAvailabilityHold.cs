@@ -22,7 +22,11 @@ public class ModelAvailabilityHold
 
     public ModelAvailabilitySource Source { get; set; }
 
-    /// <summary>UTC. Null = until cleared (per-model cap, or an open-ended manual hold).</summary>
+    /// <summary>
+    /// UTC. Null = until cleared (an open-ended Manual hold). AutoDetected holds are timed
+    /// (CARD-0335); a legacy AutoDetected null is materialized to HitAt + fallback on sweep or
+    /// lazy read.
+    /// </summary>
     public DateTime? DisabledUntil { get; set; }
 
     public DateTime HitAt { get; set; }
