@@ -325,7 +325,7 @@ DELETE /api/schedules/{id}
 POST   /api/schedules/{id}/fire-now          bypasses grace, does not advance recurrence
 ```
 
-`CreateScheduleRequest` / `ScheduleDto` live in `server/Application/Dtos/ScheduleDtos.cs`. `kind: Prompt` enqueues WhenIdle onto a standing agent. `kind: Card` moves a card (`Start=None` bookkeeping, `Release` lifts the auto-dispatch hold, `Spawn` launches now). `Release`/`Spawn` without `acceptSpend: true` is 422 `spend_unacknowledged` with the preview embedded. Repeat is `Once` / `Interval` / `Daily` — no cron. Enums are names. Long prompt text belongs in `-PromptFile` on the script, never inline. Card create: `schedule.ps1 new -Card … -To … -Start … -AcceptSpend`.
+`CreateScheduleRequest` / `ScheduleDto` live in `server/Application/Dtos/ScheduleDtos.cs`. `kind: Prompt` enqueues WhenIdle onto a standing agent. `kind: Card` moves a card (`Start=None` bookkeeping, `Release` lifts the auto-dispatch hold, `Spawn` launches now). `Release`/`Spawn` without `acceptSpend: true` is 422 `spend_unacknowledged` with the preview embedded. Repeat is `Once` / `Interval` / `Daily` — no cron. Enums are names. Long prompt text belongs in `-PromptFile` on the script, never inline. Card create: `schedule.ps1 new -Card … -To … -Start … -AcceptSpend`. `cardId` on create/preview/list is identifier-or-guid (`CARD-nnnn`, `card-51`, `#51`, `51`, or the guid), resolved by `CardService.ResolveCardIdAsync`.
 
 ### Runner profiles and credentials
 

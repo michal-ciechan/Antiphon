@@ -22,6 +22,8 @@
 #
 # -Agent defaults to $env:ANTIPHON_AGENT_ID so a standing agent can schedule itself in one line.
 # A pool delegate is refused as a target (the server names the candidates).
+# -Card takes CARD-nnnn, card-51, #51, 51, or the guid - the same forms card.ps1 accepts.
+# There is no id to look up first; the server resolves it. A 409 lists every candidate.
 [CmdletBinding(DefaultParameterSetName = 'Verb')]
 param(
     [Parameter(ParameterSetName = 'Verb', Position = 0, Mandatory = $true)]
@@ -121,6 +123,9 @@ function Invoke-Antiphon {
                 foreach ($prop in $parsed.errors.PSObject.Properties) {
                     foreach ($msg in @($prop.Value)) { $lines += ("  {0}: {1}" -f $prop.Name, $msg) }
                 }
+            }
+            foreach ($c in @($parsed.candidates)) {
+                $lines += ("  {0}  {1}  {2}  {3}" -f $c.boardName, $c.id, $c.status, $c.title)
             }
             Write-Error ("Antiphon {0} {1} failed: {2}" -f $Method, $Path, ($lines -join [Environment]::NewLine))
         }
@@ -251,8 +256,8 @@ switch ($Verb) {
         if (-not [string]::IsNullOrWhiteSpace($agentRef) -and ($agentRef -match '^[0-9a-fA-F-]{36}$')) {
             $qs += ("agentId={0}" -f $agentRef)
         }
-        if (-not [string]::IsNullOrWhiteSpace($Card) -and ($Card -match '^[0-9a-fA-F-]{36}$')) {
-            $qs += ("cardId={0}" -f $Card)
+        if (-not [string]::IsNullOrWhiteSpace($Card)) {
+            $qs += ("cardId={0}" -f [uri]::EscapeDataString($Card.Trim()))
         }
         $path = '/api/schedules'
         if ($qs.Count -gt 0) { $path = $path + '?' + ($qs -join '&') }

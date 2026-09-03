@@ -11,12 +11,18 @@ public static class ScheduleEndpoints
 
         group.MapGet("/", async (
             Guid? agentId,
-            Guid? cardId,
+            string? cardId,
             Guid? boardId,
             bool? enabled,
             ScheduleService schedules,
             CancellationToken ct) =>
-            Results.Ok(new ScheduleListDto(await schedules.ListAsync(agentId, cardId, boardId, enabled, ct))));
+        {
+            Guid? resolvedCardId = null;
+            if (!string.IsNullOrWhiteSpace(cardId))
+                resolvedCardId = await schedules.ResolveCardIdForScheduleAsync(cardId, ct);
+            return Results.Ok(new ScheduleListDto(
+                await schedules.ListAsync(agentId, resolvedCardId, boardId, enabled, ct)));
+        });
 
         group.MapGet("/{id:guid}", async (
             Guid id,

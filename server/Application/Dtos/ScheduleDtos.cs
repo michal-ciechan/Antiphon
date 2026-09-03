@@ -17,7 +17,7 @@ public sealed record CreateScheduleRequest(
     int? DaysOfWeek = null,
     int? MissedGraceMinutes = null,
     string? CreatedBy = null,
-    Guid? CardId = null,
+    string? CardId = null,
     CardStatus? TargetStatus = null,
     ScheduleStart Start = ScheduleStart.None,
     bool AcceptSpend = false);

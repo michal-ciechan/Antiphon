@@ -3,7 +3,9 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
@@ -123,6 +125,97 @@ public class ScheduleEndpointsTests
     }
 
     [Test]
+    public async Task preview_resolves_each_card_identifier_form_to_the_seeded_guid()
+    {
+        using var client = _factory.CreateClient();
+        var (cardId, identifier) = await SeedCardWithUnusedIdentifierAsync();
+        var number = int.Parse(identifier["CARD-".Length..]);
+        string[] forms =
+        [
+            identifier,
+            $"card-{number}",
+            $"#{number}",
+            number.ToString(),
+            cardId.ToString(),
+        ];
+
+        foreach (var form in forms)
+        {
+            var response = await client.PostAsJsonAsync("/api/schedules/preview", new
+            {
+                name = "card ident",
+                kind = "Card",
+                repeat = "Once",
+                cardId = form,
+                targetStatus = "InProgress",
+                fireAt = DateTime.UtcNow.AddHours(1),
+            }, Json);
+            response.StatusCode.ShouldBe(HttpStatusCode.OK, $"'{form}' should preview");
+            var body = await response.Content.ReadFromJsonAsync<SchedulePreviewDto>(Json);
+            body.ShouldNotBeNull();
+            body.Target.CardId.ShouldBe(cardId, $"'{form}' names {identifier}");
+        }
+    }
+
+    [Test]
+    public async Task preview_garbage_card_id_is_422_keyed_on_CardId()
+    {
+        using var client = _factory.CreateClient();
+        var response = await client.PostAsJsonAsync("/api/schedules/preview", new
+        {
+            name = "garbage card",
+            kind = "Card",
+            repeat = "Once",
+            cardId = "not-a-card",
+            targetStatus = "InProgress",
+            fireAt = DateTime.UtcNow.AddHours(1),
+        }, Json);
+        response.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>(Json);
+        problem.GetProperty("errors").TryGetProperty("CardId", out _).ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task preview_unknown_guid_is_422_not_404()
+    {
+        using var client = _factory.CreateClient();
+        var response = await client.PostAsJsonAsync("/api/schedules/preview", new
+        {
+            name = "missing card",
+            kind = "Card",
+            repeat = "Once",
+            cardId = Guid.NewGuid().ToString(),
+            targetStatus = "InProgress",
+            fireAt = DateTime.UtcNow.AddHours(1),
+        }, Json);
+        response.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
+        ((int)response.StatusCode).ShouldNotBe(404);
+    }
+
+    [Test]
+    public async Task list_filters_by_card_identifier()
+    {
+        using var client = _factory.CreateClient();
+        var (cardId, identifier) = await SeedCardWithUnusedIdentifierAsync();
+        var created = await client.PostAsJsonAsync("/api/schedules", new
+        {
+            name = "list by ident",
+            kind = "Card",
+            repeat = "Once",
+            cardId = identifier,
+            targetStatus = "InProgress",
+            fireAt = DateTime.UtcNow.AddHours(1),
+        }, Json);
+        created.EnsureSuccessStatusCode();
+
+        var list = await client.GetFromJsonAsync<ScheduleListDto>(
+            $"/api/schedules?cardId={Uri.EscapeDataString(identifier)}", Json);
+        list.ShouldNotBeNull();
+        list.Schedules.ShouldNotBeEmpty();
+        list.Schedules.ShouldAllBe(s => s.CardId == cardId);
+    }
+
+    [Test]
     public async Task preview_writes_nothing()
     {
         using var client = _factory.CreateClient();
@@ -198,10 +291,30 @@ public class ScheduleEndpointsTests
         return (await response.Content.ReadFromJsonAsync<ScheduleDto>(Json))!;
     }
 
-    private async Task<Guid> SeedCardAsync()
+    private async Task<Guid> SeedCardAsync() => (await SeedCardWithIdentifierAsync($"SCD-{Guid.NewGuid():N}"[..12])).Id;
+
+    private async Task<(Guid Id, string Identifier)> SeedCardWithUnusedIdentifierAsync()
+        => await SeedCardWithIdentifierAsync(await NextUnusedIdentifierAsync());
+
+    /// <summary>A <c>CARD-nnnn</c> no row in the shared database holds. See CARD-0326.</summary>
+    private async Task<string> NextUnusedIdentifierAsync()
     {
         using var scope = _factory.Services.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<Antiphon.Server.Infrastructure.Data.AppDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            var candidate = $"CARD-{Random.Shared.Next(4_000, 9_999):0000}";
+            if (!await db.Cards.AnyAsync(c => c.Identifier == candidate))
+                return candidate;
+        }
+
+        throw new InvalidOperationException("No unused CARD-nnnn identifier available.");
+    }
+
+    private async Task<(Guid Id, string Identifier)> SeedCardWithIdentifierAsync(string identifier)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var now = DateTime.UtcNow;
         var project = new Antiphon.Server.Domain.Entities.Project
         {
@@ -237,7 +350,7 @@ public class ScheduleEndpointsTests
             Id = Guid.NewGuid(),
             BoardId = board.Id,
             BoardColumnId = column.Id,
-            Identifier = $"SCD-{Guid.NewGuid():N}"[..12],
+            Identifier = identifier,
             Title = "Scheduled card",
             Status = CardStatus.Backlog,
             CreatedAt = now,
@@ -245,7 +358,7 @@ public class ScheduleEndpointsTests
         };
         db.AddRange(project, board, column, card);
         await db.SaveChangesAsync();
-        return card.Id;
+        return (card.Id, identifier);
     }
 
     private static async Task<int> ListCountAsync(HttpClient client, Guid agentId)

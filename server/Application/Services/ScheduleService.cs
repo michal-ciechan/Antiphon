@@ -31,6 +31,7 @@ public sealed class ScheduleService
     private readonly SessionMessageQueueService _messages;
     private readonly AgentSessionRuntime _runtime;
     private readonly IScheduledCardActions _cards;
+    private readonly CardService? _cardService;
     private readonly IEventBus _eventBus;
     private readonly OrchestratorControlState _orchestrator;
     private readonly TimeProvider _time;
@@ -49,7 +50,8 @@ public sealed class ScheduleService
         TimeProvider time,
         IOptions<ScheduleSettings> settings,
         IOptions<DigestSettings> digest,
-        ILogger<ScheduleService> logger)
+        ILogger<ScheduleService> logger,
+        CardService? cardService = null)
     {
         _db = db;
         _queue = queue;
@@ -62,6 +64,7 @@ public sealed class ScheduleService
         _settings = settings.Value;
         _digest = digest.Value;
         _logger = logger;
+        _cardService = cardService;
     }
 
     private DateTime UtcNow() => _time.GetUtcNow().UtcDateTime;
@@ -812,12 +815,14 @@ public sealed class ScheduleService
     private async Task ApplyCardFieldsAsync(
         Schedule row, CreateScheduleRequest request, bool persist, CancellationToken ct)
     {
-        if (request.CardId is not Guid cardId)
+        if (string.IsNullOrWhiteSpace(request.CardId))
         {
             throw new ValidationException(
                 nameof(CreateScheduleRequest.CardId),
                 "CardId is required for a card schedule.");
         }
+
+        var cardId = await ResolveCardIdForScheduleAsync(request.CardId, ct);
 
         var target = request.TargetStatus
             ?? throw new ValidationException(
@@ -849,6 +854,30 @@ public sealed class ScheduleService
         {
             row.SpendAcceptedAt = UtcNow();
             row.SpendAcceptedBy = TrimTo(request.CreatedBy, MaxCreatedByLength) ?? "operator";
+        }
+    }
+
+    /// <summary>
+    /// Resolves a schedule <c>cardId</c> body/query field. Garbage stays 422 keyed on
+    /// <c>CardId</c>; an unknown guid/identifier is also 422 (the resource is the schedule);
+    /// an ambiguous identifier stays 409 <c>card_identifier_ambiguous</c>.
+    /// </summary>
+    internal async Task<Guid> ResolveCardIdForScheduleAsync(string raw, CancellationToken ct)
+    {
+        try
+        {
+            if (_cardService is null)
+                throw new InvalidOperationException("CardService is required to resolve a schedule cardId.");
+            return await _cardService.ResolveCardIdAsync(raw, ct);
+        }
+        catch (ValidationException ex)
+        {
+            var message = ex.Errors.SelectMany(e => e.Value).FirstOrDefault() ?? ex.Message;
+            throw new ValidationException(nameof(CreateScheduleRequest.CardId), message);
+        }
+        catch (NotFoundException ex)
+        {
+            throw new ValidationException(nameof(CreateScheduleRequest.CardId), ex.Message);
         }
     }
 
