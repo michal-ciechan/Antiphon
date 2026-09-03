@@ -814,6 +814,8 @@ public sealed class AgentTaskCheckService
             bits.Add(task.Title.Trim().ReplaceLineEndings(" "));
         bits.Add($"captured {DelegateCheckProbe.Stamp(facts.At)}");
         bits.Add($"{FormatAge(facts.Task.Age)} elapsed (expected {facts.Task.ExpectedDurationMinutes}m)");
+        if (facts.Task.RepliedAt > facts.Task.DispatchedAt)
+            bits.Add($"after reply (dispatched {FormatAge(facts.At - facts.Task.DispatchedAt!.Value)} ago)");
         if (facts.Session is { } session)
         {
             bits.Add($"session {session.Status} · {(session.Working ? "working" : "idle")}");

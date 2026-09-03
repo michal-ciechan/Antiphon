@@ -96,6 +96,25 @@ public class DelegateCheckProbeTests
     }
 
     [Test]
+    public async Task age_counts_from_the_latest_reply_not_dispatch()
+    {
+        var seed = await SeedAsync(dispatchedMinutesAgo: 144);
+        await using (var db = CreateContext())
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == seed.Task.Id);
+            row.RepliedAt = DateTime.UtcNow.AddSeconds(-34);
+            await db.SaveChangesAsync();
+            seed = seed with { Task = row };
+        }
+
+        var facts = await Probe().GatherAsync(seed.Task, CancellationToken.None);
+
+        facts.Task.Age!.Value.TotalMinutes.ShouldBeLessThan(1);
+        facts.Task.RepliedAt.ShouldNotBeNull();
+        DelegateCheckProbe.RenderDigest(facts).ShouldContain("replied=");
+    }
+
+    [Test]
     public async Task the_task_facts_carry_the_age_against_the_declared_duration_and_the_check_number()
     {
         var seed = await SeedAsync(dispatchedMinutesAgo: 42, expectedMinutes: 15, checkCount: 2);

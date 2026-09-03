@@ -271,6 +271,7 @@ public class ModelLevelAliasDisplayTests
                 Attempt: 1,
                 MaxAttempts: 2,
                 DispatchedAt: new DateTime(2026, 8, 18, 8, 50, 0, DateTimeKind.Utc),
+                RepliedAt: null,
                 Age: TimeSpan.FromMinutes(10),
                 ExpectedDurationMinutes: 20,
                 CheckNumber: 1,

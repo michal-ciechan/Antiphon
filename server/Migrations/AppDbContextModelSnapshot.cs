@@ -584,6 +584,12 @@ namespace Antiphon.Server.Migrations
                     b.Property<DateTime?>("RecoveredAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTime?>("RepliedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long?>("RepliedAtSequence")
+                        .HasColumnType("bigint");
+
                     b.Property<int>("ReplyTo")
                         .HasColumnType("integer");
 

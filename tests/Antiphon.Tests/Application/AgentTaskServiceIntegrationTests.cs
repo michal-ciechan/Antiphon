@@ -1169,7 +1169,10 @@ public class AgentTaskServiceIntegrationTests
             AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Failed, level: AgentModelLevel.Medium);
 
         await using var db = CreateContext();
-        (await db.AgentTasks.SingleAsync(t => t.Id == task.Id)).RecoveredAt = DateTime.UtcNow;
+        var prior = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        prior.RecoveredAt = DateTime.UtcNow;
+        prior.RepliedAt = DateTime.UtcNow;
+        prior.RepliedAtSequence = 3;
         await db.SaveChangesAsync();
         var summary = await CreateService(db).RetryAsync(task.Id, CancellationToken.None);
 
@@ -1177,6 +1180,10 @@ public class AgentTaskServiceIntegrationTests
         summary.ModelLevel.ShouldBe(AgentModelLevel.Medium, "a retry is the same work, not a bigger model");
         summary.Attempt.ShouldBe(2);
         summary.RecoveredAt.ShouldBeNull("a new attempt cannot inherit the prior settlement's provenance");
+        summary.RepliedAt.ShouldBeNull();
+        var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
+        stored.RepliedAt.ShouldBeNull();
+        stored.RepliedAtSequence.ShouldBeNull();
     }
 
     [Test]

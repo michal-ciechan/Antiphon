@@ -85,6 +85,122 @@ public class AgentTaskSettlementRaceTests
     }
 
     [Test]
+    public async Task an_answered_blocked_task_is_not_re_blocked_by_the_stale_boundary()
+    {
+        using var workspace = new TempWorkspace();
+        await using var provider = BuildHarness();
+
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        const string stale = "Should I continue?";
+        var (task, sessionId) = await SeedBlockedTaskAsync(
+            workspace.Path, parentSessionId, "blocked", stale);
+
+        await provider.GetRequiredService<AgentTaskReplyService>()
+            .AnswerAsync(task.Id, "proceed", CancellationToken.None);
+
+        await using (var afterReply = CreateContext())
+        {
+            var working = await afterReply.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            working.Status.ShouldBe(AgentTaskStatus.Working);
+            working.RepliedAtSequence.ShouldBe(3);
+            working.RepliedAt.ShouldNotBeNull();
+        }
+
+        for (var i = 0; i < 2; i++)
+        {
+            await using var sweep = provider.CreateAsyncScope();
+            await sweep.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
+                .SettleDeferredReportsAsync(CancellationToken.None);
+        }
+
+        await provider.GetRequiredService<AgentTaskReplyService>()
+            .OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Working);
+        stored.Result.ShouldBe(stale);
+        (await verify.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Blocked))
+            .ShouldBe(1);
+        (await verify.SessionQueuedMessages.CountAsync(
+            m => m.AgentSessionId == parentSessionId && m.Origin == QueuedMessageOrigin.Delegation))
+            .ShouldBe(0);
+        var replyRow = await verify.SessionQueuedMessages.SingleAsync(
+            m => m.AgentSessionId == sessionId && m.Origin == QueuedMessageOrigin.Delegation);
+        replyRow.Status.ShouldBe(QueuedMessageStatus.Pending);
+    }
+
+    [Test]
+    public async Task the_answer_turn_settles_the_task_and_delivers_one_done_note()
+    {
+        using var workspace = new TempWorkspace();
+        await using var provider = BuildHarness();
+
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var (task, sessionId) = await SeedBlockedTaskAsync(
+            workspace.Path, parentSessionId, "blocked", "Should I continue?");
+
+        await provider.GetRequiredService<AgentTaskReplyService>()
+            .AnswerAsync(task.Id, "proceed", CancellationToken.None);
+
+        const string report = "Finished after the reply.";
+        await SeedAnswerTurnAsync(sessionId, task.Id, "proceed", report);
+
+        await using (var sweep = provider.CreateAsyncScope())
+        {
+            await sweep.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
+                .SettleDeferredReportsAsync(CancellationToken.None);
+        }
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.Result.ShouldBe(report);
+        settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
+        (await verify.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Completed))
+            .ShouldBe(1);
+        var queued = await verify.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == parentSessionId && m.Origin == QueuedMessageOrigin.Delegation)
+            .ToListAsync();
+        queued.Count.ShouldBe(1);
+        queued[0].Body.ShouldContain($"[task {DelegationReportFormatter.Short(task.Id)} done]");
+    }
+
+    [Test]
+    public async Task a_stale_done_boundary_after_a_conflict_reply_does_not_re_succeed()
+    {
+        using var workspace = new TempWorkspace();
+        await using var provider = BuildHarness();
+
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        const string staleDone = "Landed the slice.";
+        var (task, sessionId) = await SeedBlockedTaskAsync(
+            workspace.Path, parentSessionId, "done", staleDone, AgentTaskEventType.Conflicted);
+
+        await provider.GetRequiredService<AgentTaskReplyService>()
+            .AnswerAsync(task.Id, "rebase onto master", CancellationToken.None);
+
+        for (var i = 0; i < 2; i++)
+        {
+            await using var sweep = provider.CreateAsyncScope();
+            await sweep.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
+                .SettleDeferredReportsAsync(CancellationToken.None);
+        }
+
+        await provider.GetRequiredService<AgentTaskReplyService>()
+            .OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Working);
+        (await verify.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Completed))
+            .ShouldBeFalse();
+    }
+
+    [Test]
     public async Task worktree_pool_settle_delivers_parent_note_when_kill_savechanges_races_retire()
     {
         using var workspace = new TempWorkspace();
@@ -353,10 +469,55 @@ public class AgentTaskSettlementRaceTests
         return sessionId;
     }
 
-    private static async Task SeedMarkedTurnAsync(Guid sessionId, Guid taskId, string report)
+    private static async Task<(AgentTask Task, Guid SessionId)> SeedBlockedTaskAsync(
+        string workingDirectory, Guid parentSessionId, string verdict, string resultText,
+        AgentTaskEventType blockType = AgentTaskEventType.Blocked)
+    {
+        var (task, sessionId) = await SeedSharedTaskAsync(workingDirectory, parentSessionId);
+        await using var db = CreateContext();
+        var stored = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status = AgentTaskStatus.Blocked;
+        stored.Result = resultText;
+        stored.CompletedAt = DateTime.UtcNow;
+        db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = task.Id,
+            Type = blockType,
+            Detail = blockType == AgentTaskEventType.Conflicted
+                ? "Rebase conflicted."
+                : "Delegate asked: Should I continue?",
+            At = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+        await SeedMarkedTurnAsync(sessionId, task.Id, resultText, verdict);
+        return (stored, sessionId);
+    }
+
+    private static async Task SeedAnswerTurnAsync(Guid sessionId, Guid taskId, string answer, string report)
+    {
+        var prompt = DelegationReportFormatter.TaskMarker(taskId) + "\n\n" + answer;
+        var body = report.TrimEnd() + "\n" + DelegationReportFormatter.ReportToken(taskId, "done");
+        await using var db = CreateContext();
+        var seq = await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == sessionId)
+            .MaxAsync(t => (long?)t.Sequence) ?? 0;
+        if (seq < 4)
+            seq = 4;
+
+        db.TranscriptEntries.Add(NewEntry(sessionId, ++seq, TranscriptKinds.UserPrompt, prompt));
+        db.TranscriptEntries.Add(NewEntry(sessionId, ++seq, TranscriptKinds.AssistantText, body));
+        var end = NewEntry(sessionId, ++seq, TranscriptKinds.TurnEnd, null);
+        end.StopReason = TranscriptKinds.StopReasons.EndTurn;
+        db.TranscriptEntries.Add(end);
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedMarkedTurnAsync(
+        Guid sessionId, Guid taskId, string report, string verdict = "done")
     {
         var prompt = DelegationReportFormatter.TaskMarker(taskId) + "\n\nDo the thing.";
-        var body = report.TrimEnd() + "\n" + DelegationReportFormatter.ReportToken(taskId, "done");
+        var body = report.TrimEnd() + "\n" + DelegationReportFormatter.ReportToken(taskId, verdict);
         await using var db = CreateContext();
         var seq = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId)

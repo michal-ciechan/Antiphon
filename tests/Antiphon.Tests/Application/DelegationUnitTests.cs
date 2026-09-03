@@ -322,6 +322,17 @@ public class DelegationReportFormatterTests
     }
 
     [Test]
+    public void the_completion_note_measures_duration_from_the_latest_reply()
+    {
+        var task = NewTask();
+        task.RepliedAt = task.CompletedAt!.Value.AddSeconds(-34);
+        var note = DelegationReportFormatter.BuildCompletionNote(task, Settings, "Rewrote the section.");
+
+        note.Body.ShouldContain("34s since reply");
+        note.Body.ShouldContain("4m12 since dispatch");
+    }
+
+    [Test]
     public void the_completion_note_identifies_the_agent_tier_duration_and_cost()
     {
         // "the final message is replied back with some information of the agent that finished" —

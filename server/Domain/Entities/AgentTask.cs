@@ -345,6 +345,27 @@ public class AgentTask
     public Guid? ReportNudgeMessageId { get; set; }
 
     /// <summary>
+    /// When the caller last answered this task (CARD-0348) — the At of the newest Replied event,
+    /// on the row so the elapsed clocks (check header, completion note, status DTO) read it without
+    /// a timeline query. Stamped by both reply paths. Null until the first reply; cleared by
+    /// RequeueAsync because it describes this attempt only.
+    /// </summary>
+    public DateTime? RepliedAt { get; set; }
+
+    /// <summary>
+    /// Transcript high-water mark (max TranscriptEntries.Sequence on the delegate's session) at the
+    /// moment a Blocked task was answered (CARD-0348). The answer starts a NEW turn; until it ends
+    /// the session's newest TurnEnd is the boundary the block was settled from, and settlement
+    /// walking back from it re-Blocked the row on the stale report within one 5 s tick. Settlement
+    /// refuses any turn whose PROMPT is at or below this — the prompt, not the boundary, so a
+    /// promptless boundary (restart marker) cannot walk back to the old brief either. Stamped only
+    /// by the Blocked → Working reply; the in-turn question-tool reply leaves it null because that
+    /// turn's prompt is legitimately older than the reply. Cleared by RequeueAsync: sequences are
+    /// per session.
+    /// </summary>
+    public long? RepliedAtSequence { get; set; }
+
+    /// <summary>
     /// HEAD SHA of the task worktree at creation (CARD-0159 S3). The no-merge-target base for
     /// <c>git=N commits, M files</c> on the completion header, and the same base
     /// <c>DelegateCheckProbe</c> uses so the check digest and the header agree. Null on legacy

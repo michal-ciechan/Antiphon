@@ -268,6 +268,13 @@ and cannot write to the delegate at all.
 note still arrives separately, and a check note can never be mistaken for it or settle anything
 (see `.claude/skills/antiphon-delegate/SKILL.md`).
 
+**Elapsed counts from the latest reply (CARD-0348).** The check header's `elapsed` bit and the
+duration on a completion note use `max(DispatchedAt, RepliedAt)`. When a reply reset the clock, the
+header adds `after reply (dispatched … ago)` and the completion note carries both `since reply` and
+`since dispatch`. An orchestrator judging a stall reads `elapsed` together with `last activity` —
+`elapsed` after a reply is "how long since we answered", not "how long since dispatch". This is not
+`AgentSession.LaunchResumedAt` (CARD-0340's interrupted-launch clock).
+
 **A Check-role task settles Succeeded when it has produced a reading (CARD-0302).** `LOOKS STUCK` /
 `BLOCKED` in that reading is evidence on the **checked** task (its Check event / parent `[check …]`
 note), never the Check row's own `Status`. The interpreter's job is the reading; finishing it is

@@ -155,6 +155,8 @@ export interface AgentTaskSummaryDto {
   reportEvidence?: AgentTaskReportEvidence
   /** CARD-0090. Set when kind/level was chosen by a complexity chain. */
   complexity?: 'Hard' | 'Medium' | 'Easy' | null
+  /** When the caller last answered this task (CARD-0348). Null until the first reply. */
+  repliedAt?: string | null
 }
 
 export interface AgentTaskEventDto {

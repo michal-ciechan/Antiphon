@@ -1137,6 +1137,31 @@ public class AgentTaskDeliveryWatchdogTests
     // ---- CARD-0288 S2: marked report already in the transcript re-hands on the 5 s tick ---------
 
     [Test]
+    public async Task arm_0_skips_a_boundary_at_or_below_the_reply_watermark()
+    {
+        var logs = new List<string>();
+        var (harness, _) = CreateHarness(
+            logs: logs,
+            settings: new DelegationSettings { ReportSweepRehandSeconds = 0 });
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 5);
+        await SeedMarkedReportTurnAsync(task.AgentSessionId!.Value, task.Id, storedMinutesAgo: 0);
+        await using (var db = CreateContext())
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            row.RepliedAtSequence = 3;
+            await db.SaveChangesAsync();
+        }
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+
+        (await ReadTaskAsync(task.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
+        logs.ShouldNotContain(l =>
+            l.Contains(DelegationReportFormatter.Short(task.Id), StringComparison.Ordinal)
+            && l.Contains("re-invoking settlement", StringComparison.Ordinal));
+        await RetireSeededTaskAsync(task);
+    }
+
+    [Test]
     public async Task a_marked_report_already_in_the_transcript_settles_on_the_first_sweep()
     {
         var logs = new List<string>();

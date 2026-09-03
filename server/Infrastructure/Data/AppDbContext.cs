@@ -1490,6 +1490,11 @@ public class AppDbContext : DbContext
             // CARD-0248. Null on every existing row (legacy nudge, no boundary recorded).
             entity.Property(t => t.ReportNudgedSequence).IsRequired(false);
             entity.Property(t => t.ReportNudgeMessageId).IsRequired(false);
+            // CARD-0348. Null on every existing row: no backfill (overlay vs Blocked-reply
+            // cannot be told apart from Replied events, and pre-deploy replies are past the
+            // 0.4–4 s window in which the stale re-settle fires).
+            entity.Property(t => t.RepliedAt).IsRequired(false);
+            entity.Property(t => t.RepliedAtSequence).IsRequired(false);
             // CARD-0299 S2. Zero on every pre-existing row.
             entity.Property(t => t.BootWedgeRelaunchCount).IsRequired().HasDefaultValue(0);
             // CARD-0090. Null on every pre-existing row: kind/level was not chosen by a chain.

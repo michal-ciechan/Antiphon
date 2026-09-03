@@ -1872,6 +1872,7 @@ public sealed class AgentTaskDispatcher
                 t.Role,
                 t.ReportNudgedAt,
                 t.ReportNudgedSequence,
+                t.RepliedAtSequence,
             })
             .ToListAsync(ct);
         var sessions = openTasks.Select(t => t.SessionId).Distinct().ToList();
@@ -1929,6 +1930,15 @@ public sealed class AgentTaskDispatcher
 
                 if (markedTaskId is Guid tid)
                 {
+                    var marked = sessionTasks.First(t => t.Id == tid);
+                    if (marked.RepliedAtSequence is long replyWatermark && end.Sequence <= replyWatermark)
+                    {
+                        _logger.LogDebug(
+                            "Task {ShortId}: marked report at boundary {Sequence} predates the reply watermark #{Watermark}; not re-handing",
+                            DelegationReportFormatter.Short(tid), end.Sequence, replyWatermark);
+                        continue;
+                    }
+
                     if (_sweepMarks is not null
                         && !_sweepMarks.ShouldHandOff(sessionId, end.Sequence, lastEntryAt: null, now, rehandSeconds))
                     {

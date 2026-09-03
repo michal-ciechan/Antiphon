@@ -43,6 +43,11 @@ public class AgentTaskAnswerTests
         var replied = await db.AgentTaskEvents.SingleAsync(e =>
             e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Replied);
         replied.Detail.ShouldBe("Answered via Web (round 1): yes, continue");
+        stored.RepliedAt.ShouldBe(replied.At);
+        var maxSeq = await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == h.SessionId)
+            .MaxAsync(t => t.Sequence);
+        stored.RepliedAtSequence.ShouldBe(maxSeq);
     }
 
     [Test]

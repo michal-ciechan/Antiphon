@@ -77,8 +77,10 @@ public class AgentTaskReplyOverlayTests
         queued.Origin.ShouldBe(QueuedMessageOrigin.Delegation);
         queued.Body.ShouldBe(answer);
         queued.Body.ShouldNotContain(DelegationReportFormatter.TaskMarker(task.Id));
-        (await db.AgentTasks.SingleAsync(t => t.Id == task.Id))
-            .Status.ShouldBe(AgentTaskStatus.Working, "overlay reply is not a state change");
+        var stored = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Working, "overlay reply is not a state change");
+        stored.RepliedAt.ShouldNotBeNull();
+        stored.RepliedAtSequence.ShouldBeNull();
     }
 
     [Test]

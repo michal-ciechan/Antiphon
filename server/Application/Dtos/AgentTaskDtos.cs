@@ -220,7 +220,12 @@ public sealed record AgentTaskSummaryDto(
     /// <summary>
     /// CARD-0090. Non-null when this task's kind/level was chosen by a complexity chain.
     /// </summary>
-    TaskComplexity? Complexity = null);
+    TaskComplexity? Complexity = null,
+    /// <summary>
+    /// When the caller last answered this task (CARD-0348). Null until the first reply.
+    /// Trailing so no positional constructor call moves.
+    /// </summary>
+    DateTime? RepliedAt = null);
 
 /// <summary>Fleet-wide counters for the delegations board, independent of its history window.</summary>
 public sealed record AgentTaskListSummaryDto(

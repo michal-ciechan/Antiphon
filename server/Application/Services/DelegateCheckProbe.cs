@@ -90,6 +90,7 @@ public sealed class DelegateCheckProbe
         int Attempt,
         int MaxAttempts,
         DateTime? DispatchedAt,
+        DateTime? RepliedAt,
         TimeSpan? Age,
         int ExpectedDurationMinutes,
         /// <summary>
@@ -224,7 +225,8 @@ public sealed class DelegateCheckProbe
             task.Attempt,
             task.MaxAttempts,
             task.DispatchedAt,
-            task.DispatchedAt is { } from ? now - from : null,
+            task.RepliedAt,
+            AgentTaskResumeClock.ActiveSince(task) is { } from ? now - from : null,
             task.ExpectedDurationMinutes,
             Math.Max(1, task.CheckCount),
             !string.IsNullOrWhiteSpace(task.Result),
@@ -441,8 +443,10 @@ public sealed class DelegateCheckProbe
           .AppendLine();
         sb.Append("  dispatched=")
           .Append(task.DispatchedAt is { } at ? at.ToString("u") : "never")
-          .Append(" elapsed=").Append(Duration(task.Age))
-          .Append(" expected=").Append(task.ExpectedDurationMinutes).Append('m')
+          .Append(" elapsed=").Append(Duration(task.Age));
+        if (task.RepliedAt is { } replied)
+            sb.Append(" replied=").Append(replied.ToString("u"));
+        sb.Append(" expected=").Append(task.ExpectedDurationMinutes).Append('m')
           .Append(" check#").Append(task.CheckNumber)
           .AppendLine();
         if (task.HasResult)

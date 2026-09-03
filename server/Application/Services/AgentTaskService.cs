@@ -1431,6 +1431,10 @@ public sealed class AgentTaskService
         // This field describes the current settlement only. A retry is a fresh attempt on the
         // same row, so it must not inherit the previous attempt's recovery provenance.
         task.RecoveredAt = null;
+        // CARD-0348: attempt-scoped. Sequences are per session — a stale watermark from the
+        // old session would refuse the new session's first hundred rows.
+        task.RepliedAt = null;
+        task.RepliedAtSequence = null;
         task.ConcurrencyToken = Guid.NewGuid();
         // A new attempt gets a new check schedule: the old NextCheckAt was measured from a dispatch
         // that no longer exists, and the previous attempt's checks are not this one's budget.
@@ -1792,7 +1796,8 @@ public sealed class AgentTaskService
                     ? identifier
                     : null,
             task.ReportEvidence,
-            task.Complexity);
+            task.Complexity,
+            task.RepliedAt);
     }
 
     private static string FormatComplexityCreatedDetail(ComplexityRoutingService.Walk walk)

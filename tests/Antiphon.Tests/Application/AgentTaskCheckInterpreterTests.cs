@@ -136,6 +136,27 @@ public class AgentTaskCheckInterpreterTests
         var header = note.Split('\n')[0];
         header.ShouldContain("no session");
         header.ShouldNotContain("last activity");
+        header.ShouldNotContain("after reply");
+    }
+
+    [Test]
+    public void a_check_header_after_a_reply_names_both_clocks()
+    {
+        using var h = new Harness();
+        var task = HeaderTask();
+        var now = DateTime.UtcNow;
+        var facts = HeaderFacts(
+            withSession: false,
+            sinceLastEntry: null,
+            at: now,
+            dispatchedAt: now - TimeSpan.FromHours(2) - TimeSpan.FromMinutes(24),
+            repliedAt: now - TimeSpan.FromSeconds(34),
+            taskAge: TimeSpan.FromSeconds(34));
+        var note = h.Checks.BuildNote(task, facts, digest: "CAPTURED — digest body");
+
+        var header = note.Split('\n')[0];
+        header.ShouldContain("elapsed (expected ");
+        header.ShouldContain("after reply (dispatched 2h24m ago)");
     }
 
     /// <summary>
@@ -618,9 +639,15 @@ public class AgentTaskCheckInterpreterTests
         NextCheckAt = DateTime.UtcNow.AddMinutes(10),
     };
 
-    private static DelegateCheckProbe.CheckFacts HeaderFacts(bool withSession, TimeSpan? sinceLastEntry)
+    private static DelegateCheckProbe.CheckFacts HeaderFacts(
+        bool withSession,
+        TimeSpan? sinceLastEntry,
+        DateTime? at = null,
+        DateTime? dispatchedAt = null,
+        DateTime? repliedAt = null,
+        TimeSpan? taskAge = null)
     {
-        var now = DateTime.UtcNow;
+        var now = at ?? DateTime.UtcNow;
         var task = new DelegateCheckProbe.CheckTaskFacts(
             HeaderTask().Id,
             DelegationReportFormatter.Short(HeaderTask().Id),
@@ -633,8 +660,9 @@ public class AgentTaskCheckInterpreterTests
             Settled: false,
             Attempt: 1,
             MaxAttempts: 3,
-            DispatchedAt: now.AddMinutes(-11),
-            Age: TimeSpan.FromMinutes(11),
+            DispatchedAt: dispatchedAt ?? now.AddMinutes(-11),
+            RepliedAt: repliedAt,
+            Age: taskAge ?? TimeSpan.FromMinutes(11),
             ExpectedDurationMinutes: 10,
             CheckNumber: 3,
             HasResult: false,

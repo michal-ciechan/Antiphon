@@ -371,7 +371,17 @@ public static class DelegationReportFormatter
         if (!string.IsNullOrWhiteSpace(task.Title)) bits.Add(task.Title.Trim());
         bits.Add(ModelLevelAliases.For(task.AgentKind, task.ModelLevel));
         if (task.DispatchedAt is { } started && task.CompletedAt is { } finished)
-            bits.Add(FormatDuration(finished - started));
+        {
+            if (task.RepliedAt is { } replied && replied > started)
+            {
+                bits.Add($"{FormatDuration(finished - replied)} since reply");
+                bits.Add($"{FormatDuration(finished - started)} since dispatch");
+            }
+            else
+            {
+                bits.Add(FormatDuration(finished - started));
+            }
+        }
         if (task.CostUsd > 0) bits.Add($"${task.CostUsd:0.000}");
         if (!string.IsNullOrWhiteSpace(workspaceNote)) bits.Add(workspaceNote.Trim());
         if (!string.IsNullOrWhiteSpace(overlappingRunning))

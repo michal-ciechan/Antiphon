@@ -131,6 +131,14 @@ public sealed class AgentTaskReplyService
 
             if (turn.Report is not string report)
             {
+                if (turn.PreReplyBoundary)
+                {
+                    _logger.LogDebug(
+                        "Session {SessionId}: newest boundary predates task {ShortId}'s reply watermark #{Watermark}; waiting for the answer turn",
+                        sessionId, DelegationReportFormatter.Short(task.Id), task.RepliedAtSequence);
+                    return;
+                }
+
                 if (turn.UncorrelatedReport)
                 {
                     // A finished-looking turn we cannot attribute. Left at Debug this printed
@@ -306,7 +314,12 @@ public sealed class AgentTaskReplyService
             }
 
             var now = UtcNow();
+            var watermark = await db.TranscriptEntries.AsNoTracking()
+                .Where(t => t.AgentSessionId == blockedSessionId)
+                .MaxAsync(t => (long?)t.Sequence, ct) ?? 0;
             task.Status = AgentTaskStatus.Working;
+            task.RepliedAt = now;
+            task.RepliedAtSequence = watermark;
             task.ConcurrencyToken = Guid.NewGuid();
             var repliedDetail = BlockedQuestion.RepliedEventDetail(origin, currentRound, message.Trim());
             if (!string.IsNullOrEmpty(repliedDetailPrefix))
@@ -343,9 +356,11 @@ public sealed class AgentTaskReplyService
                     + "or reply while an ask_user_question popup is open to answer in-turn.");
             }
 
+            var now = UtcNow();
+            task.RepliedAt = now;
             db.AgentTaskEvents.Add(NewEvent(
                 taskId, AgentTaskEventType.Replied,
-                "Caller answered an in-turn question-tool popup.", UtcNow()));
+                "Caller answered an in-turn question-tool popup.", now));
             await db.SaveChangesAsync(ct);
 
             // Same turn as the brief: type the answer only. Prefixing the task marker would fail
@@ -1688,6 +1703,10 @@ public sealed class AgentTaskReplyService
     /// delivery gate can require the boundary to post-date the nudge's SentAt. Null on the
     /// static Nothing / Deferred values, which never reach ClassifyReportAsync.
     /// </param>
+    /// <param name="PreReplyBoundary">
+    /// The newest boundary belongs to a turn that predates the caller's reply; not a verdict,
+    /// wait for the answer turn (CARD-0348).
+    /// </param>
     private readonly record struct TurnOutcome(
         string? Report,
         bool UncorrelatedReport,
@@ -1697,7 +1716,8 @@ public sealed class AgentTaskReplyService
         int AbandonedSubagents = 0,
         ApiErrorStubFacts? ApiErrorStub = null,
         InterruptedFacts? Interrupted = null,
-        BoundaryFacts? Boundary = null)
+        BoundaryFacts? Boundary = null,
+        bool PreReplyBoundary = false)
     {
         public static readonly TurnOutcome Nothing = new(null, false);
         public static readonly TurnOutcome Deferred = new(null, false, DeferredForFinalMessage: true);
@@ -1750,6 +1770,15 @@ public sealed class AgentTaskReplyService
         var prompt = span.TurnPrompts.LastOrDefault(p => p.Sequence < turnEnd);
         if (prompt?.Text is not string promptText)
             return TurnOutcome.Nothing;
+
+        // CARD-0348: the answer to a Blocked task starts a NEW turn. Until it ends, the newest
+        // boundary is the one the block was settled from, and arm 0 re-handed it within one tick —
+        // re-Blocking the row on the stale report, after which the real done report could never
+        // settle (a571d6c1, 42bb5ffb, fbd37f59). On the PROMPT, not the boundary: a boundary with no
+        // new prompt in front of it (a restart marker) walks back to the old brief and would re-settle
+        // it too.
+        if (task.RepliedAtSequence is long replyWatermark && prompt.Sequence <= replyWatermark)
+            return new TurnOutcome(null, false, PreReplyBoundary: true);
 
         var nextPrompt = span.TurnPrompts.FirstOrDefault(p => p.Sequence > prompt.Sequence)?.Sequence;
 
@@ -2514,7 +2543,8 @@ public sealed class AgentTaskReplyService
         if (turn.Interrupted is not null
             || turn.ApiErrorStub is not null
             || turn.DeferredForFinalMessage
-            || turn.UncorrelatedReport)
+            || turn.UncorrelatedReport
+            || turn.PreReplyBoundary)
             return;
         if (turn.Report is null && turn.Boundary is null)
             return;
