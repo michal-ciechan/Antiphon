@@ -78,11 +78,15 @@ inherited layer by default; this is the one caller environment the server cannot
 stored agent/task layers. `-EnvOverride` wins name-by-name, and `-NoInheritEnv` opts out of that
 client-side snapshot without disabling the server-side fallback.
 
-**Then** two things happen, in this order:
+**Then** three things happen, in this order:
 
-1. **Kind defaults are applied** (`ApplyClaudeEnvironmentDefaults`, `ApplyGrokEnvironmentDefaults`)
+1. **Profile argv whole-token `$env:NAME` / `${env:NAME}` is expanded** against that merged
+   dictionary (CARD-0345). ExtraArgs are not expanded — the caller already resolved those.
+   Unknown names stay literal; a present empty value becomes an empty string. Kind defaults do
+   not feed this pass.
+2. **Kind defaults are applied** (`ApplyClaudeEnvironmentDefaults`, `ApplyGrokEnvironmentDefaults`)
    — but only for keys nobody has set. See [agent-kinds.md](agent-kinds.md) §4/§5 for the values.
-2. **`{{key:NAME}}` placeholders are resolved** over the fully-merged result. This is deliberately
+3. **`{{key:NAME}}` placeholders are resolved** over the fully-merged result. This is deliberately
    last, so a placeholder works identically whichever layer contributed the value.
 
 ## 3. `{{key:NAME}}` — API key placeholders
