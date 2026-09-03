@@ -366,6 +366,31 @@ public class AgentBundleAttachmentTests
         composition.ExtraEnv.ShouldNotContainKey("ANTIPHON_ORCHESTRATOR");
     }
 
+    [Test]
+    [Category("Integration")]
+    public async Task ComposeForAgentAsync_stamps_instruction_files_that_exist_under_cwd()
+    {
+        var cwd = Path.Combine(Path.GetTempPath(), $"antiphon-compose-stamp-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(cwd);
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(cwd, "AGENTS.md"), "You are the floor.\n");
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            var agent = await AddAgentAsync(db, cwd);
+
+            var composition = await ComposeAsync(db, agent);
+
+            var expected = InstructionFileStamps.Compute(cwd, PolicyRefreshSettings.DefaultInstructionFiles);
+            composition.InstructionFileStamp.ShouldBe(expected.StampLine);
+            composition.InstructionFileStamp.ShouldNotBeNullOrEmpty();
+            composition.InstructionFileStamp!.ShouldContain("AGENTS.md v");
+        }
+        finally
+        {
+            Directory.Delete(cwd, recursive: true);
+        }
+    }
+
     private static Task<AgentLaunchComposition> ComposeAsync(AppDbContext db, Agent agent)
     {
         var registry = new AgentRegistry(new OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
@@ -384,7 +409,7 @@ public class AgentBundleAttachmentTests
         return composer.ComposeForAgentAsync(agent, CancellationToken.None);
     }
 
-    private static async Task<Agent> AddAgentAsync(AppDbContext db)
+    private static async Task<Agent> AddAgentAsync(AppDbContext db, string? workingDirectory = null)
     {
         var name = $"bundle-{Guid.NewGuid():N}"[..20];
         var agent = new Agent
@@ -392,7 +417,7 @@ public class AgentBundleAttachmentTests
             Id = Guid.NewGuid(),
             Name = name,
             Slug = name,
-            WorkingDirectory = "C:\\tmp",
+            WorkingDirectory = workingDirectory ?? "C:\\tmp",
             Details = string.Empty,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow,

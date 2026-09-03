@@ -95,6 +95,21 @@ public class AgentSession
     /// </summary>
     public string? ComposedBundleStamp { get; set; }
 
+    /// <summary>
+    /// The standing instruction files this session was LAUNCHED against, as one stamp line —
+    /// <c>"AGENTS.md v1a2b3c4d, docs/orchestration-loop.md v9e8d7c6b"</c> (CARD-0334 S1). Same
+    /// shape and hash rule as <see cref="ComposedBundleStamp"/>. Null is no evidence (Herdr
+    /// attach, card/delegate launches, pre-column rows) and never drift; empty string means
+    /// the launch path ran and none of the listed files existed under cwd.
+    /// </summary>
+    public string? InstructionFileStamp { get; set; }
+
+    /// <summary>
+    /// Last Notify-lane drift the session was told about (CARD-0334 S3). Dedupe key: current
+    /// composed stamp line + file stamp line, ≤ 4000. Null until S3 writes it.
+    /// </summary>
+    public string? PolicyNotifiedStamp { get; set; }
+
     public Card Card { get; set; } = null!;
     public Worktree? Worktree { get; set; }
     public AgentTuiProfileRevision? TuiProfileRevision { get; set; }

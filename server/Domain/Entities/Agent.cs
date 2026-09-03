@@ -64,6 +64,13 @@ public class Agent
     public SessionBackend SessionBackend { get; set; } = SessionBackend.PtyHost;
 
     /// <summary>
+    /// Per-agent override of the policy-refresh lane (CARD-0334). Null means
+    /// <see cref="PolicyRefreshMode.Auto"/> (AlwaysOn ClaudeCode relaunches at idle; others
+    /// are notified). S3 owns the PATCH / settings-modal writer; S1 only stores the column.
+    /// </summary>
+    public PolicyRefreshMode? PolicyRefreshMode { get; set; }
+
+    /// <summary>
     /// Per-agent override of <c>ContextCompactionSettings.Enabled</c> (CARD-0082).
     /// Null = use the installation default. The first override an operator wants is "off for this one".
     /// </summary>

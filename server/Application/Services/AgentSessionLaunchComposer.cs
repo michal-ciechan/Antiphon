@@ -20,19 +20,22 @@ public sealed class AgentSessionLaunchComposer
     private readonly AgentRegistry _agentRegistry;
     private readonly AgentTuiLaunchResolver? _launchResolver;
     private readonly ILogger<AgentSessionLaunchComposer> _logger;
+    private readonly PolicyRefreshSettings _policyRefresh;
 
     public AgentSessionLaunchComposer(
         AppDbContext db,
         IOptions<DelegationSettings> delegationSettings,
         AgentRegistry agentRegistry,
         ILogger<AgentSessionLaunchComposer> logger,
-        AgentTuiLaunchResolver? launchResolver = null)
+        AgentTuiLaunchResolver? launchResolver = null,
+        IOptions<SupervisionSettings>? supervisionSettings = null)
     {
         _db = db;
         _delegationSettings = delegationSettings.Value;
         _agentRegistry = agentRegistry;
         _logger = logger;
         _launchResolver = launchResolver;
+        _policyRefresh = supervisionSettings?.Value.PolicyRefresh ?? new PolicyRefreshSettings();
     }
 
     public async Task<AgentLaunchComposition> ComposeForAgentAsync(Agent agent, CancellationToken ct)
@@ -97,7 +100,11 @@ public sealed class AgentSessionLaunchComposer
             }
         }
 
-        return new AgentLaunchComposition(extraEnv, extraArgs, delegationTokenHash, composedStamp);
+        var instructionFileStamp = InstructionFileStamps
+            .Compute(agent.WorkingDirectory, _policyRefresh.InstructionFiles ?? PolicyRefreshSettings.DefaultInstructionFiles)
+            .StampLine;
+        return new AgentLaunchComposition(
+            extraEnv, extraArgs, delegationTokenHash, composedStamp, instructionFileStamp);
     }
 
     public async Task<AgentKind?> PeekProfileKindAsync(Agent agent, CancellationToken ct)
@@ -133,4 +140,5 @@ public sealed record AgentLaunchComposition(
     IReadOnlyDictionary<string, string> ExtraEnv,
     IReadOnlyList<string> ExtraArgs,
     string DelegationTokenHash,
-    string? ComposedStamp);
+    string? ComposedStamp,
+    string? InstructionFileStamp = null);

@@ -220,4 +220,24 @@ describe('bundle drift badge', () => {
     await screen.findByText('Current Claude')
     expect(screen.getAllByText('bundles')).toHaveLength(1)
   })
+
+  it('marks file-only drift from policyDrift even when bundlesOutOfDate is false', async () => {
+    server.use(
+      ...handlers([
+        {
+          ...agent,
+          id: 'agent-1',
+          name: 'File drifted',
+          bundlesOutOfDate: false,
+          policyDrift: { bundles: [], files: ['AGENTS.md'] },
+        },
+        { ...agent, id: 'agent-2', name: 'Current Claude' },
+      ]),
+    )
+
+    renderWithProviders(<AgentsPage />)
+
+    await screen.findByText('Current Claude')
+    expect(screen.getAllByText('bundles')).toHaveLength(1)
+  })
 })

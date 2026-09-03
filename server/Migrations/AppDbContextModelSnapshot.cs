@@ -90,6 +90,9 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
+                    b.Property<int?>("PolicyRefreshMode")
+                        .HasColumnType("integer");
+
                     b.Property<DateTime?>("PoolIdleSince")
                         .HasColumnType("timestamp with time zone");
 
@@ -298,6 +301,10 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)");
 
+                    b.Property<string>("InstructionFileStamp")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
                     b.Property<DateTime>("LastSeenAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -306,6 +313,10 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<DateTime?>("LaunchResumedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PolicyNotifiedStamp")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
 
                     b.Property<int>("Rows")
                         .HasColumnType("integer");

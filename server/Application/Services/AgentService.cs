@@ -37,6 +37,7 @@ public sealed class AgentService
     private readonly ContextWindowSettings _contextWindow;
     private readonly ISessionRunnerClient? _runnerClient;
     private readonly SessionRunnerSettings _runnerSettings;
+    private readonly PolicyRefreshSettings _policyRefresh;
 
     public AgentService(
         AppDbContext db,
@@ -50,7 +51,8 @@ public sealed class AgentService
         AgentWorkspaceProvisioner? workspace = null,
         IOptions<ContextWindowSettings>? contextWindow = null,
         ISessionRunnerClient? runnerClient = null,
-        IOptions<SessionRunnerSettings>? runnerSettings = null)
+        IOptions<SessionRunnerSettings>? runnerSettings = null,
+        IOptions<SupervisionSettings>? supervision = null)
     {
         _db = db;
         _workflowRunFactory = workflowRunFactory;
@@ -62,6 +64,7 @@ public sealed class AgentService
         _contextWindow = contextWindow?.Value ?? new ContextWindowSettings();
         _runnerClient = runnerClient;
         _runnerSettings = runnerSettings?.Value ?? new SessionRunnerSettings();
+        _policyRefresh = supervision?.Value.PolicyRefresh ?? new PolicyRefreshSettings();
     }
 
     public async Task<IReadOnlyList<AgentSummaryDto>> GetAllAsync(CancellationToken ct)
@@ -96,7 +99,7 @@ public sealed class AgentService
                 live?.Dto,
                 supervision.GetValueOrDefault(a.Id),
                 live is { Dto.Status: SessionStatus.Running } && working.GetValueOrDefault(live.Dto.Id),
-                IsOutOfDate(live, Compose(a, attachments.GetValueOrDefault(a.Id, [])))));
+                DriftOf(a, live, Compose(a, attachments.GetValueOrDefault(a.Id, [])))));
         }
         return result;
     }
@@ -111,14 +114,26 @@ public sealed class AgentService
 
     /// <summary>
     /// Drift: the live session was launched carrying something other than what the repo composes
-    /// now. No live session, or a session with no recorded stamp, is NO EVIDENCE — never drift.
-    /// CARD-0213: an attached operator pane writes <c>ComposedBundleStamp = null</c> on purpose
-    /// (the process's bundle is the operator's); null here is "unknown", not out of date.
+    /// now (bundles) or than the instruction files under cwd (CARD-0334). No live session, or a
+    /// session with no recorded stamp, is NO EVIDENCE — never drift. CARD-0213: an attached
+    /// operator pane writes both stamps null on purpose; null here is "unknown", not out of date.
     /// </summary>
-    private static bool IsOutOfDate(LiveSession? live, ComposedInstructions current) =>
-        live is not null
-        && live.BundleStamp is not null
-        && InstructionBundleComposer.IsOutOfDate(live.BundleStamp, current);
+    private PolicyDrift DriftOf(Agent agent, LiveSession? live, ComposedInstructions current)
+    {
+        var mode = agent.PolicyRefreshMode ?? PolicyRefreshMode.Auto;
+        if (live is null)
+            return PolicyDrift.None with { Mode = mode };
+
+        var files = InstructionFileStamps.Compute(
+            agent.WorkingDirectory,
+            _policyRefresh.InstructionFiles ?? PolicyRefreshSettings.DefaultInstructionFiles);
+        return PolicyDrift.Of(
+            live.BundleStamp,
+            current.StampLine,
+            live.FileStamp,
+            files.StampLine,
+            mode);
+    }
 
     /// <summary>
     /// The transcript-derived "mid-turn right now" signal for a live session — what the agent
@@ -211,12 +226,11 @@ public sealed class AgentService
     }
 
     /// <summary>
-    /// A live session as the DTO layer needs it, plus the one thing the DTO does not carry: the
-    /// bundle stamp its launch recorded (CARD-0058 slice 6). Kept off
-    /// <see cref="AgentSessionSummaryDto"/> deliberately — the stamp is an input to a comparison the
-    /// server makes, not a fact the client has any use for.
+    /// A live session as the DTO layer needs it, plus the stamps its launch recorded (CARD-0058
+    /// slice 6, CARD-0334 S1). Kept off <see cref="AgentSessionSummaryDto"/> deliberately — the
+    /// stamps are inputs to a comparison the server makes, not facts the client has any use for.
     /// </summary>
-    private sealed record LiveSession(AgentSessionSummaryDto Dto, string? BundleStamp);
+    private sealed record LiveSession(AgentSessionSummaryDto Dto, string? BundleStamp, string? FileStamp);
 
     // Loads the live (Starting/Running/Stopping) AgentSession for each agent's persistent session id,
     // keyed by session id. Stale/ended sessions are excluded so the UI only offers to open a real terminal.
@@ -257,7 +271,8 @@ public sealed class AgentService
                     null,
                     null,
                     s.TerminationSource),
-                s.ComposedBundleStamp))
+                s.ComposedBundleStamp,
+                s.InstructionFileStamp))
             .ToListAsync(ct);
 
         var fullness = await SessionContextUsage.LoadFullnessAsync(
@@ -1064,8 +1079,9 @@ public sealed class AgentService
 
     private static AgentSummaryDto ToSummaryDto(
         Agent agent, AgentSessionSummaryDto? liveSession, AgentSupervisionDto? supervision,
-        bool working = false, bool bundlesOutOfDate = false)
+        bool working = false, PolicyDrift? policyDrift = null)
     {
+        policyDrift ??= PolicyDrift.None;
         var (configured, liveSelection) = MapTuiSelection(agent, liveSession);
         return new AgentSummaryDto(
             agent.Id,
@@ -1097,15 +1113,16 @@ public sealed class AgentService
             liveSelection,
             agent.ReplyStyle,
             agent.SessionBackend,
-            bundlesOutOfDate,
+            policyDrift.Bundles.Count > 0,
             agent.AutoCompactEnabled,
             agent.AutoCompactIdleMinutes,
             agent.AutoCompactContextPercent,
             AgentLaunchEnv.Parse(agent.LaunchEnvJson),
-            agent.Kind);
+            agent.Kind,
+            policyDrift);
     }
 
-    private static AgentDetailDto ToDetailDto(
+    private AgentDetailDto ToDetailDto(
         Agent agent, AgentSessionSummaryDto? liveSession, AgentSupervisionDto? supervision = null,
         bool working = false, LiveSession? live = null, IReadOnlyList<string>? attachedKeys = null)
     {
@@ -1129,6 +1146,7 @@ public sealed class AgentService
         var (configured, liveSelection) = MapTuiSelection(agent, liveSession);
         var keys = attachedKeys ?? [];
         var composed = Compose(agent, keys);
+        var drift = DriftOf(agent, live, composed);
 
         return new AgentDetailDto(
             agent.Id,
@@ -1163,13 +1181,14 @@ public sealed class AgentService
             // What the NEXT launch will carry, composed the same way AgentControlService composes it
             // — recomputed per request rather than stored, so the list can never drift from the repo.
             composed.Stamps,
-            IsOutOfDate(live, composed),
+            drift.Bundles.Count > 0,
             keys,
             agent.AutoCompactEnabled,
             agent.AutoCompactIdleMinutes,
             agent.AutoCompactContextPercent,
             AgentLaunchEnv.Parse(agent.LaunchEnvJson),
-            agent.Kind);
+            agent.Kind,
+            drift);
     }
 
     private static (AgentTuiConfiguredSelectionDto? Configured, AgentTuiLiveSessionSelectionDto? Live)

@@ -67,7 +67,10 @@ public sealed record AgentSummaryDto(
     // CARD-0139. WHICH AGENT PROGRAM this row is. Read-only on the wire: with a TuiProfileId
     // attached this equals that profile's Kind (CARD-0138 D1); without one it is the row's own
     // truth. Default-valued so existing construction sites need no change.
-    AgentKind Kind = AgentKind.ClaudeCode);
+    AgentKind Kind = AgentKind.ClaudeCode,
+    // CARD-0334 S1. Bundle keys and instruction-file paths that have drifted from the live
+    // session's recorded stamps. BundlesOutOfDate is Bundles.Count > 0 for compatibility.
+    PolicyDrift? PolicyDrift = null);
 
 public sealed record AgentDetailDto(
     Guid Id,
@@ -121,7 +124,89 @@ public sealed record AgentDetailDto(
     // resolved here — this is what the operator typed, and a resolved value must never reach a DTO.
     IReadOnlyDictionary<string, string>? LaunchEnv = null,
     // CARD-0139. See AgentSummaryDto.Kind.
-    AgentKind Kind = AgentKind.ClaudeCode);
+    AgentKind Kind = AgentKind.ClaudeCode,
+    // CARD-0334 S1. See AgentSummaryDto.PolicyDrift.
+    PolicyDrift? PolicyDrift = null);
+
+/// <summary>
+/// What of a live session's standing instructions the repo has moved past (CARD-0334).
+/// Null on either recorded stamp is no evidence for that input and never drift.
+/// <see cref="Bundles"/> are bundle keys; <see cref="Files"/> are relative paths.
+/// </summary>
+public sealed record PolicyDrift(
+    IReadOnlyList<string> Bundles,
+    IReadOnlyList<string> Files,
+    PolicyRefreshMode Mode = PolicyRefreshMode.Auto,
+    DateTime? LastRefreshedAt = null)
+{
+    public static PolicyDrift None { get; } = new([], []);
+
+    public bool HasDrift => Bundles.Count > 0 || Files.Count > 0;
+
+    /// <summary>
+    /// Diff the live session's recorded stamps against a composition recomputed now.
+    /// A null launched stamp is no evidence (CARD-0213 attached panes, pre-column rows) and
+    /// never contributes keys; an empty string is a real "this launch carried nothing".
+    /// </summary>
+    public static PolicyDrift Of(
+        string? launchedBundleStamp,
+        string currentBundleStamp,
+        string? launchedFileStamp,
+        string currentFileStamp,
+        PolicyRefreshMode mode = PolicyRefreshMode.Auto,
+        DateTime? lastRefreshedAt = null) =>
+        new(
+            DiffKeys(launchedBundleStamp, currentBundleStamp),
+            DiffKeys(launchedFileStamp, currentFileStamp),
+            mode,
+            lastRefreshedAt);
+
+    internal static IReadOnlyList<string> DiffKeys(string? launchedStamp, string currentStamp)
+    {
+        if (launchedStamp is null)
+            return [];
+
+        var launched = ParseStampLine(launchedStamp);
+        var current = ParseStampLine(currentStamp);
+        if (launched.Count == 0 && current.Count == 0)
+            return [];
+
+        var drifted = new List<string>();
+        foreach (var key in current.Keys)
+        {
+            if (!launched.TryGetValue(key, out var version)
+                || !string.Equals(version, current[key], StringComparison.Ordinal))
+            {
+                drifted.Add(key);
+            }
+        }
+
+        foreach (var key in launched.Keys)
+        {
+            if (!current.ContainsKey(key))
+                drifted.Add(key);
+        }
+
+        return drifted;
+    }
+
+    internal static Dictionary<string, string> ParseStampLine(string stampLine)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (string.IsNullOrEmpty(stampLine))
+            return result;
+
+        foreach (var part in stampLine.Split(", ", StringSplitOptions.RemoveEmptyEntries))
+        {
+            var split = part.LastIndexOf(" v", StringComparison.Ordinal);
+            if (split <= 0 || split + 2 >= part.Length)
+                continue;
+            result[part[..split]] = part[(split + 2)..];
+        }
+
+        return result;
+    }
+}
 
 /// <summary>
 /// One attachable bundle from the catalog (CARD-0058). The catalog is CODE — markdown files in the
