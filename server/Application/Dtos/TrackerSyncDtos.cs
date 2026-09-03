@@ -55,13 +55,21 @@ public enum TrackerSyncChangeKind
 /// <summary>
 /// CARD-0171: one itemised change from a bidirectional run. <paramref name="CardIdentifier"/> is
 /// the card's human identifier (CARD-0171); <paramref name="ExternalKey"/> the tracker's own key
-/// (<c>#14</c>).
+/// (<c>#14</c>). CARD-0346 adds an optional label delta; both lists stay null unless this item
+/// is a <see cref="TrackerSyncChangeKind.LabelsChanged"/> whose GitHub write succeeded.
 /// </summary>
 public sealed record TrackerSyncChange(
     TrackerSyncChangeKind Kind,
     string CardIdentifier,
     string ExternalKey,
-    string? Url);
+    string? Url)
+{
+    /// <summary>CARD-0346: labels added on this issue, sorted and de-duplicated.</summary>
+    public IReadOnlyList<string>? Added { get; init; }
+
+    /// <summary>CARD-0346: labels removed on this issue, sorted and de-duplicated.</summary>
+    public IReadOnlyList<string>? Removed { get; init; }
+}
 
 /// <summary>
 /// CARD-0171: the outcome of announcing one board's changes. <paramref name="Sent"/> false always

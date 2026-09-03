@@ -233,8 +233,16 @@ public sealed class TrackerBidirectionalSyncService
     }
 
     /// <summary>CARD-0171: an itemised change, addressed by the card and its tracker key.</summary>
-    private static TrackerSyncChange Change(TrackerSyncChangeKind kind, ExternalIssueRef issueRef) =>
-        new(kind, issueRef.Card.Identifier, issueRef.ExternalKey, issueRef.Url);
+    private static TrackerSyncChange Change(
+        TrackerSyncChangeKind kind,
+        ExternalIssueRef issueRef,
+        IReadOnlyList<string>? added = null,
+        IReadOnlyList<string>? removed = null) =>
+        new(kind, issueRef.Card.Identifier, issueRef.ExternalKey, issueRef.Url)
+        {
+            Added = added,
+            Removed = removed
+        };
 
     private async Task<int> PullCommentsAsync(
         Board board,
@@ -474,6 +482,8 @@ public sealed class TrackerBidirectionalSyncService
 
         var currentLabels = current.Labels.ToList();
         var changed = 0;
+        IReadOnlyList<string>? added = null;
+        IReadOnlyList<string>? removed = null;
 
         if (issueRef.Origin == ExternalIssueOrigin.AntiphonExport)
         {
@@ -488,6 +498,10 @@ public sealed class TrackerBidirectionalSyncService
             var desiredSet = desired.ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (!currentSet.SetEquals(desiredSet))
             {
+                // CARD-0346: compute the case-insensitive remote→desired delta before writing;
+                // attach it only after ReplaceLabelsAsync succeeds.
+                added = SortedUnique(desiredSet.Where(l => !currentSet.Contains(l)));
+                removed = SortedUnique(currentSet.Where(l => !desiredSet.Contains(l)));
                 await tracker.ReplaceLabelsAsync(config, issueRef.ExternalId, desired, ct);
                 changed++;
             }
@@ -495,6 +509,8 @@ public sealed class TrackerBidirectionalSyncService
         else
         {
             // Import-origin: managed prefixes via sub-resource only.
+            var addedList = new List<string>();
+            var removedList = new List<string>();
             var staleManaged = currentLabels
                 .Where(TrackerSyncMarkers.IsManagedLabel)
                 .Where(l => !string.Equals(l, desiredStatus, StringComparison.OrdinalIgnoreCase)
@@ -505,12 +521,20 @@ public sealed class TrackerBidirectionalSyncService
             {
                 await tracker.RemoveLabelAsync(config, issueRef.ExternalId, stale, ct);
                 changed++;
+                removedList.Add(stale);
             }
 
             if (!currentLabels.Any(l => string.Equals(l, desiredStatus, StringComparison.OrdinalIgnoreCase)))
             {
                 await tracker.AddLabelsAsync(config, issueRef.ExternalId, [desiredStatus], ct);
                 changed++;
+                addedList.Add(desiredStatus);
+            }
+
+            if (changed > 0)
+            {
+                added = SortedUnique(addedList);
+                removed = SortedUnique(removedList);
             }
         }
 
@@ -518,12 +542,18 @@ public sealed class TrackerBidirectionalSyncService
         {
             issueRef.LastOutboundSyncedAt = utcNow;
             // One change per ISSUE that had any label write, while the counter keeps counting
-            // writes as it always has.
-            changes.Add(Change(TrackerSyncChangeKind.LabelsChanged, issueRef));
+            // writes as it always has. Delta is attached only after the GitHub write(s) succeeded.
+            changes.Add(Change(TrackerSyncChangeKind.LabelsChanged, issueRef, added, removed));
         }
 
         return changed;
     }
+
+    private static List<string> SortedUnique(IEnumerable<string> labels) =>
+        labels
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(l => l, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
     private async Task<int> SyncStateAsync(
         IBidirectionalIssueTracker tracker,

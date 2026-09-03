@@ -713,6 +713,9 @@ public class TrackerBidirectionalSyncTests
             // One LabelsChanged per ISSUE that had any label write, while the counter counts writes.
             first.Changes.Count(c => c.Kind == TrackerSyncChangeKind.LabelsChanged).ShouldBe(1);
             first.LabelsChanged.ShouldBeGreaterThanOrEqualTo(1);
+            var labelChange = first.Changes.Single(c => c.Kind == TrackerSyncChangeKind.LabelsChanged);
+            labelChange.Added.ShouldBe(["status:backlog"]);
+            labelChange.Removed.ShouldBeEmpty();
             // Every change names the card and its tracker key. The identifier is read back off the
             // card AFTER the run: the read-side upsert rewrites an import-origin card's identifier
             // to the tracker's own key, so the pre-run value is not what the message would carry.
@@ -727,6 +730,104 @@ public class TrackerBidirectionalSyncTests
             second.Changes.ShouldBeEmpty();
             second.ExternalReopens.ShouldBe(0);
             second.IssuesPulled.ShouldBeGreaterThanOrEqualTo(1);
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Export_label_replace_attaches_the_sorted_set_delta_after_the_write()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
+        try
+        {
+            var graph = await SeedLinkedBoardAsync(db, tempRoot, clock, origin: ExternalIssueOrigin.AntiphonExport);
+            graph.Card.LabelsJson = """["backend"]""";
+            graph.Card.ExternalIssueRef!.LastOutboundSyncedAt = clock.GetUtcNow().UtcDateTime;
+            graph.Card.ExternalIssueRef.Url = "https://github.test/acme/app/1";
+            await db.SaveChangesAsync();
+
+            var fake = new FakeBidirectionalTracker(TrackerKind.GitHubIssues)
+            {
+                Candidates = [Issue("acme/app#1", "open", "Title", "Body", ["frontend", "status:active"])]
+            };
+            var sut = NewSut(db, fake, clock);
+            var first = (await sut.RunAsync(graph.Board.Id, CancellationToken.None)).Boards.Single();
+
+            fake.ReplaceLabelCalls.ShouldBe(1);
+            var delta = first.Changes.Single(c => c.Kind == TrackerSyncChangeKind.LabelsChanged);
+            delta.Added.ShouldBe(["backend", "status:backlog"]);
+            delta.Removed.ShouldBe(["frontend", "status:active"]);
+
+            fake.ClearWriteCounters();
+            var second = (await sut.RunAsync(graph.Board.Id, CancellationToken.None)).Boards.Single();
+            second.Changes.ShouldNotContain(c => c.Kind == TrackerSyncChangeKind.LabelsChanged);
+            fake.ReplaceLabelCalls.ShouldBe(0);
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Import_label_delta_records_stale_removal_and_status_add()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
+        try
+        {
+            var graph = await SeedLinkedBoardAsync(db, tempRoot, clock);
+            var fake = new FakeBidirectionalTracker(TrackerKind.GitHubIssues)
+            {
+                Candidates = [Issue("acme/app#1", "open", "Title", "Body", ["status:done", "backend"])]
+            };
+            var sut = NewSut(db, fake, clock);
+            var result = (await sut.RunAsync(graph.Board.Id, CancellationToken.None)).Boards.Single();
+
+            fake.RemoveLabelCalls.ShouldBe(1);
+            fake.AddLabelCalls.ShouldBe(1);
+            var delta = result.Changes.Single(c => c.Kind == TrackerSyncChangeKind.LabelsChanged);
+            delta.Added.ShouldBe(["status:backlog"]);
+            delta.Removed.ShouldBe(["status:done"]);
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Case_insensitive_label_steady_state_records_no_delta()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
+        try
+        {
+            var graph = await SeedLinkedBoardAsync(db, tempRoot, clock, origin: ExternalIssueOrigin.AntiphonExport);
+            graph.Card.LabelsJson = """["backend"]""";
+            graph.Card.ExternalIssueRef!.LastOutboundSyncedAt = clock.GetUtcNow().UtcDateTime;
+            graph.Card.ExternalIssueRef.Url = "https://github.test/acme/app/1";
+            await db.SaveChangesAsync();
+
+            var fake = new FakeBidirectionalTracker(TrackerKind.GitHubIssues)
+            {
+                Candidates = [Issue("acme/app#1", "open", "Title", "Body", ["Backend", "STATUS:BACKLOG"])]
+            };
+            var sut = NewSut(db, fake, clock);
+            var result = (await sut.RunAsync(graph.Board.Id, CancellationToken.None)).Boards.Single();
+
+            result.Changes.ShouldNotContain(c => c.Kind == TrackerSyncChangeKind.LabelsChanged);
+            result.LabelsChanged.ShouldBe(0);
+            fake.ReplaceLabelCalls.ShouldBe(0);
+            fake.AddLabelCalls.ShouldBe(0);
+            fake.RemoveLabelCalls.ShouldBe(0);
         }
         finally
         {
