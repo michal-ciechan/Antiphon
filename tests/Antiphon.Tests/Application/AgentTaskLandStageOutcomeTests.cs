@@ -52,6 +52,7 @@ public class AgentTaskLandStageOutcomeTests
             (OrchestrationStage.Cleanup, StageOutcomeKind.Clean, StageOutcomeSource.Server),
         ]);
         rows.Single(o => o.Stage == OrchestrationStage.Verify).Detail.ShouldContain("build OK");
+        await AssertPendingClearedAsync(db, task.Id, attempt: 1);
     }
 
     [Test]
@@ -86,6 +87,10 @@ public class AgentTaskLandStageOutcomeTests
         rows[0].Ref.ShouldNotBe("merge task cap reached");
         (await db.AgentTasks.CountAsync(t => t.ParentTaskId == task.Id && t.Role == AgentTaskRole.Merge))
             .ShouldBe(1);
+        var blocked = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
+        blocked.Status.ShouldBe(AgentTaskStatus.Blocked);
+        blocked.LandRequestedAt.ShouldNotBeNull();
+        blocked.LandAttempt.ShouldBe(1);
     }
 
     [Test]
@@ -120,6 +125,7 @@ public class AgentTaskLandStageOutcomeTests
             (OrchestrationStage.Cleanup, StageOutcomeKind.Failed),
         ]);
         rows.Single(o => o.Stage == OrchestrationStage.Cleanup).Detail.ShouldContain("push");
+        await AssertPendingClearedAsync(db, task.Id, attempt: 1);
     }
 
     [Test]
@@ -154,6 +160,7 @@ public class AgentTaskLandStageOutcomeTests
         verify.Detail.ShouldContain("build failed");
         verify.Ref.ShouldBe(task.WorktreePath);
         Directory.Exists(task.WorktreePath).ShouldBeTrue();
+        await AssertPendingClearedAsync(db, task.Id, attempt: 1);
     }
 
     [Test]
@@ -184,6 +191,7 @@ public class AgentTaskLandStageOutcomeTests
             (OrchestrationStage.Cleanup, StageOutcomeKind.Clean),
         ]);
         Directory.Exists(task.WorktreePath).ShouldBeFalse();
+        await AssertPendingClearedAsync(db, task.Id, attempt: 1);
     }
 
     [Test]
@@ -227,6 +235,7 @@ public class AgentTaskLandStageOutcomeTests
         outcome.Detail.ShouldContain("cleanup incomplete:");
         (await ScratchGitRepo.GitInAsync(remote.Path, "show", "master:feature.md")).StdOut.ShouldBe("the work\n");
         Directory.Exists(task.WorktreePath).ShouldBeTrue();
+        await AssertPendingClearedAsync(db, task.Id, attempt: 1);
 
         var queued = await land.RequestAsync(task.Id, null, CancellationToken.None);
         queued.Status.ShouldBe("queued");
@@ -255,6 +264,11 @@ public class AgentTaskLandStageOutcomeTests
         Directory.Exists(task.WorktreePath).ShouldBeFalse();
         var afterFirst = await RowsAsync(db, task.Id);
         afterFirst.Count.ShouldBe(3);
+        await AssertPendingClearedAsync(db, task.Id, attempt: 1);
+
+        var row = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        row.LandRequestedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
 
         await land.RunAsync(task.Id, null, CancellationToken.None);
 
@@ -270,6 +284,7 @@ public class AgentTaskLandStageOutcomeTests
         landed.Detail.ShouldContain("nothing left to clean");
         (await db.AgentTaskEvents.CountAsync(e =>
             e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.LandRefused)).ShouldBe(0);
+        await AssertPendingClearedAsync(db, task.Id, attempt: 1);
     }
 
     [Test]
@@ -345,6 +360,50 @@ public class AgentTaskLandStageOutcomeTests
             e.AgentTaskId == build.Id && e.Type == AgentTaskEventType.Warning)).ShouldBe(0);
     }
 
+    [Test]
+    public async Task a_held_land_leaves_started_at_and_attempt_untouched()
+    {
+        using var repo = new ScratchGitRepo("antiphon-land-so-held");
+        using var remote = new TemporaryDirectory("antiphon-land-so-hremote");
+        await ScratchGitRepo.GitInAsync(remote.Path, "init", "--bare");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("remote", "add", "origin", remote.Path);
+        await repo.GitAsync("push", "-u", "origin", "master");
+
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var (land, worktrees) = CreateLand(db, repo);
+        var task = await SeedSucceededWorktreeAsync(db, worktrees, repo);
+        await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "land me\n");
+        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "feature.md");
+        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "feature");
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = Guid.NewGuid(),
+            RootTaskId = Guid.NewGuid(),
+            Title = "shared writer",
+            Goal = "Writing in the main checkout.",
+            Kind = AgentTaskKind.Worker,
+            Role = AgentTaskRole.Code,
+            Workspace = WorkspaceMode.Shared,
+            WorkingDirectory = repo.Path,
+            RepoPath = repo.Path,
+            Status = AgentTaskStatus.Working,
+            ReplyTo = AgentTaskReplyTo.None,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+
+        var result = await land.RunAsync(task.Id, null, CancellationToken.None);
+
+        result.ShouldBe(LandRunResult.Held);
+        var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
+        stored.LandRequestedAt.ShouldNotBeNull();
+        stored.LandStartedAt.ShouldBeNull();
+        stored.LandAttempt.ShouldBe(0);
+        (await db.StageOutcomes.CountAsync(o => o.SubjectTaskId == task.Id)).ShouldBe(0);
+    }
+
     private static async Task<AgentTask> SeedSucceededWorktreeAsync(
         AppDbContext db, DelegationWorktreeService worktrees, ScratchGitRepo repo, Guid? cardId = null)
     {
@@ -365,6 +424,7 @@ public class AgentTaskLandStageOutcomeTests
             ReplyTo = AgentTaskReplyTo.None,
             CreatedAt = DateTime.UtcNow,
             CompletedAt = DateTime.UtcNow,
+            LandRequestedAt = DateTime.UtcNow,
         };
         await worktrees.CreateForTaskAsync(task, CancellationToken.None);
         db.AgentTasks.Add(task);
@@ -405,6 +465,7 @@ public class AgentTaskLandStageOutcomeTests
             null!,
             new MockEventBus(),
             TimeProvider.System,
+            Options.Create(new DelegationSettings()),
             NullLogger<AgentTaskLandService>.Instance);
         return (land, worktrees);
     }
@@ -472,6 +533,15 @@ public class AgentTaskLandStageOutcomeTests
             "namespace LandProbe; public static class Marker { public static int Value => 1; }\n");
         await repo.GitAsync("add", ".");
         await repo.GitAsync("commit", "-m", "buildable");
+    }
+
+    private static async Task AssertPendingClearedAsync(AppDbContext db, Guid taskId, int attempt)
+    {
+        var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        stored.LandRequestedAt.ShouldBeNull();
+        stored.LandVerifyFilter.ShouldBeNull();
+        stored.LandStartedAt.ShouldBeNull();
+        stored.LandAttempt.ShouldBe(attempt);
     }
 
     private static async Task<List<StageOutcome>> RowsAsync(AppDbContext db, Guid taskId) =>

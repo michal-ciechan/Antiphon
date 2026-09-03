@@ -1761,6 +1761,7 @@ public sealed class AgentTaskService
             task.TokensIn, task.CacheReadTokens, task.CacheCreationTokens, task.TokensOut,
             task.CostUsd, task.CostPricingVersion, subtreeCost, childCount,
             task.ExpectedDurationMinutes, task.NextCheckAt, task.CheckCount,
+            task.LandRequestedAt, task.LandStartedAt, task.LandAttempt,
             task.CardId,
             task.CardId is Guid cardId && cardIdentifiers is not null
                 && cardIdentifiers.TryGetValue(cardId, out var identifier)

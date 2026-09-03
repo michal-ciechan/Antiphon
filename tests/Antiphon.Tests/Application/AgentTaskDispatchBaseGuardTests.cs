@@ -32,14 +32,7 @@ public class AgentTaskDispatchBaseGuardTests
         await using var db = CreateContext(schema);
         var card = await SeedCardAsync(db, "CARD-0215");
         var sibling = await SeedKeptSiblingAsync(db, repo, card.Id, commitMessage: "docs(plan): CARD-0215");
-        db.AgentTaskEvents.Add(new AgentTaskEvent
-        {
-            Id = Guid.NewGuid(),
-            AgentTaskId = sibling.Id,
-            Type = AgentTaskEventType.LandRequested,
-            Detail = "Land requested",
-            At = DateTime.UtcNow.AddMinutes(-1),
-        });
+        sibling.LandRequestedAt = DateTime.UtcNow.AddMinutes(-1);
         var parentSessionId = Guid.NewGuid();
         await SeedParentSessionAsync(db, parentSessionId);
         var task = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, parentSessionId);
@@ -62,14 +55,8 @@ public class AgentTaskDispatchBaseGuardTests
         heldEvents[0].Detail.ShouldContain(DelegationReportFormatter.Short(sibling.Id));
         heldEvents[0].Detail.ShouldContain("is landing");
 
-        db.AgentTaskEvents.Add(new AgentTaskEvent
-        {
-            Id = Guid.NewGuid(),
-            AgentTaskId = sibling.Id,
-            Type = AgentTaskEventType.Landed,
-            Detail = "landed",
-            At = DateTime.UtcNow,
-        });
+        var heldSibling = await db.AgentTasks.SingleAsync(t => t.Id == sibling.Id, ct);
+        heldSibling.LandRequestedAt = null;
         await db.SaveChangesAsync(ct);
         await repo.GitAsync("merge", "--ff-only", sibling.WorktreeBranch!);
 
@@ -156,6 +143,44 @@ public class AgentTaskDispatchBaseGuardTests
             e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Held, ct)).ShouldBe(0);
         (await db.AgentTaskEvents.CountAsync(
             e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning, ct)).ShouldBe(0);
+    }
+
+    [Test]
+    [Timeout(30_000)]
+    public async Task a_stranded_request_row_with_a_null_column_only_warns(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("card0215-stranded");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var card = await SeedCardAsync(db, "CARD-0215");
+        var sibling = await SeedKeptSiblingAsync(db, repo, card.Id, commitMessage: "docs(plan): CARD-0215");
+        db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = sibling.Id,
+            Type = AgentTaskEventType.LandRequested,
+            Detail = "Land requested",
+            At = DateTime.UtcNow.AddMinutes(-1),
+        });
+        var parentSessionId = Guid.NewGuid();
+        await SeedParentSessionAsync(db, parentSessionId);
+        var task = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, parentSessionId);
+        await db.SaveChangesAsync(ct);
+
+        await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot);
+        await using var scope = provider.CreateAsyncScope();
+        var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+        await dispatcher.TickAsync(ct);
+
+        db.ChangeTracker.Clear();
+        var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
+        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        (await db.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Held, ct)).ShouldBe(0);
+        var warning = await db.AgentTaskEvents.AsNoTracking()
+            .SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning, ct);
+        warning.Detail.ShouldContain(sibling.WorktreeBranch!);
     }
 
     private static async Task<AgentTask> SeedKeptSiblingAsync(

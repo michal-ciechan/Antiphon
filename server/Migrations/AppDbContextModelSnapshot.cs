@@ -491,6 +491,21 @@ namespace Antiphon.Server.Migrations
                     b.Property<int>("Kind")
                         .HasColumnType("integer");
 
+                    b.Property<int>("LandAttempt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<DateTime?>("LandRequestedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LandStartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LandVerifyFilter")
+                        .HasMaxLength(400)
+                        .HasColumnType("character varying(400)");
+
                     b.Property<DateTime?>("LastPolledResultAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -626,6 +641,10 @@ namespace Antiphon.Server.Migrations
 
                     b.HasIndex("CardId")
                         .HasDatabaseName("IX_AgentTasks_CardId");
+
+                    b.HasIndex("LandRequestedAt")
+                        .HasDatabaseName("IX_AgentTasks_LandRequestedAt")
+                        .HasFilter("\"LandRequestedAt\" IS NOT NULL");
 
                     b.HasIndex("ParentTaskId")
                         .HasDatabaseName("IX_AgentTasks_ParentTaskId");

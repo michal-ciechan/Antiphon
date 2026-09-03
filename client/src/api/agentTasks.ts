@@ -140,6 +140,12 @@ export interface AgentTaskSummaryDto {
   /** When the next scheduled check-in is due; null means this task is never checked. */
   nextCheckAt: string | null
   checkCount: number
+  /** A land is wanted and has not reached an outcome (CARD-0331). */
+  landRequestedAt?: string | null
+  /** When the current land attempt started git work. Null while queued or held. */
+  landStartedAt?: string | null
+  /** How many times this land request started git work. */
+  landAttempt?: number
   /** The card this task's work is against (CARD-0040); null when nothing bound. */
   cardId?: string | null
   /** The bound card's identifier, denormalised at read time. */

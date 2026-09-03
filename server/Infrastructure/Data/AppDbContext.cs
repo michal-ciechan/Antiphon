@@ -1465,6 +1465,12 @@ public class AppDbContext : DbContext
             // a task dispatched before this migration is never retro-armed.
             entity.Property(t => t.ExpectedDurationMinutes).IsRequired().HasDefaultValue(10);
             entity.Property(t => t.CheckCount).IsRequired().HasDefaultValue(0);
+            // CARD-0331. Pre-existing rows start with a null request (D5: no backfill of stranded
+            // LandRequested events). LandAttempt is informational after an outcome.
+            entity.Property(t => t.LandRequestedAt).IsRequired(false);
+            entity.Property(t => t.LandVerifyFilter).HasMaxLength(400);
+            entity.Property(t => t.LandStartedAt).IsRequired(false);
+            entity.Property(t => t.LandAttempt).IsRequired().HasDefaultValue(0);
             // CARD-0159. Pre-existing rows are Legacy (0); new settlements always write a
             // non-Legacy class. WorktreeBaseSha is the no-target git-facts base.
             entity.Property(t => t.ReportEvidence).IsRequired().HasDefaultValue(AgentTaskReportEvidence.Legacy);
@@ -1490,6 +1496,10 @@ public class AppDbContext : DbContext
             // CARD-0304: latest Plan per card and later/open Code suppression for pipeline readiness.
             entity.HasIndex(t => new { t.CardId, t.Role, t.CreatedAt })
                 .HasDatabaseName("IX_AgentTasks_CardId_Role_CreatedAt");
+            // CARD-0331: the land sweep touches only pending rows.
+            entity.HasIndex(t => t.LandRequestedAt)
+                .HasFilter("\"LandRequestedAt\" IS NOT NULL")
+                .HasDatabaseName("IX_AgentTasks_LandRequestedAt");
 
             // Self-reference: deleting a parent must NOT cascade a whole subtree away — the tree is
             // the audit trail. Restrict forces an explicit decision instead.

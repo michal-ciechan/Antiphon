@@ -2572,6 +2572,9 @@ public class AgentTaskReplyIntegrationTests
                 MergeTargetRef = "master",
                 Status = AgentTaskStatus.Blocked,
                 FailureReason = "Rebase onto master conflicted in 1 file(s).",
+                LandRequestedAt = DateTime.UtcNow.AddMinutes(-5),
+                LandStartedAt = DateTime.UtcNow.AddMinutes(-4),
+                LandAttempt = 1,
                 CreatedAt = DateTime.UtcNow,
             });
             await db.SaveChangesAsync();
@@ -2594,6 +2597,9 @@ public class AgentTaskReplyIntegrationTests
         var parent = await verify.AgentTasks.SingleAsync(t => t.Id == conflictedId);
         parent.Status.ShouldBe(AgentTaskStatus.Succeeded, "the conflict it was blocked on no longer exists");
         parent.FailureReason.ShouldBeNull();
+        parent.LandRequestedAt.ShouldBeNull("the Merge delegate finished the land");
+        parent.LandStartedAt.ShouldBeNull();
+        parent.LandAttempt.ShouldBe(1);
     }
 
     private static async Task CreateWorktreeForAsync(TestScopeFactory factory, AgentTask seeded)

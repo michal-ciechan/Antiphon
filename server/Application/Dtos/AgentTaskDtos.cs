@@ -189,6 +189,12 @@ public sealed record AgentTaskSummaryDto(
     /// <summary>When the next scheduled check-in is due; null means this task is never checked.</summary>
     DateTime? NextCheckAt,
     int CheckCount,
+    /// <summary>A land is wanted and has not reached an outcome (CARD-0331). Null when none is pending.</summary>
+    DateTime? LandRequestedAt = null,
+    /// <summary>When the current land attempt started git work. Null while queued or held.</summary>
+    DateTime? LandStartedAt = null,
+    /// <summary>How many times this land request started git work.</summary>
+    int LandAttempt = 0,
     /// <summary>The card this task's work is against (CARD-0040); null when nothing bound.</summary>
     Guid? CardId = null,
     /// <summary>Denormalised at read time so a row can name its card without a second request.</summary>

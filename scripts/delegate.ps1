@@ -258,9 +258,10 @@ switch ($PSCmdlet.ParameterSetName) {
     'Land' {
         $body = @{}
         if ($Verify) { $body['verify'] = $Verify }
-        Invoke-Antiphon -Method POST -Path "/api/agent-tasks/$Land/land" -Body $body | Out-Null
+        $result = Invoke-Antiphon -Method POST -Path "/api/agent-tasks/$Land/land" -Body $body
         $suffix = if ($Verify) { " with test filter '$Verify'" } else { '' }
-        Write-Output "Queued land for task $Land$suffix. The outcome will be delivered to the caller session."
+        $word = if ($result.status -eq 'requeued') { 'Requeued land' } else { 'Queued land' }
+        Write-Output "$word for task $Land$suffix. The outcome will be delivered to the caller session."
         return
     }
 
