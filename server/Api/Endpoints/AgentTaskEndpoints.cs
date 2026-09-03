@@ -126,6 +126,20 @@ public static class AgentTaskEndpoints
                 ct));
         });
 
+        // CARD-0294 S1: replay the standing authority given at dispatch as the answer.
+        // Body is optional — omitted origin is Web, matching /reply.
+        tasks.MapPost("/{id}/continue", async (
+            string id,
+            ContinueAgentTaskRequest? request,
+            AgentTaskService service,
+            AgentTaskReplyService replies,
+            CancellationToken ct) =>
+        {
+            var taskId = await service.ResolveTaskIdAsync(id, ct);
+            return Results.Ok(await replies.ContinueWithAuthorityAsync(
+                taskId, request?.Origin ?? AnswerOrigin.Web, ct));
+        });
+
         // Steer a RUNNING delegate without cancelling it (CARD-0062). Same body shape as reply;
         // unlike reply it never changes status — a Queued task's brief is amended in place, a
         // running one gets the message WhenIdle, and a settled one is refused.

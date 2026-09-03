@@ -183,6 +183,8 @@ public static class DelegationReportFormatter
         }
 
         var inlineMax = replyInlineMaxChars ?? settings.ReplyInlineMaxChars;
+        if (!string.IsNullOrWhiteSpace(task.StandingAuthority))
+            sb.AppendLine(BlockedNote.StandingAuthorityBlock(task.StandingAuthority.Trim())).AppendLine();
         // CARD-0302: Check briefs must not offer `blocked` as this Check task's status. The
         // generic done|blocked|failed paragraph is the wrong vocabulary for an interpretation.
         sb.Append(task.Role == AgentTaskRole.Check

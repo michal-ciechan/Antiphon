@@ -37,9 +37,16 @@ internal static class BlockedContextBuilder
                 .FirstOrDefault()
             : null;
 
+        var authority = string.IsNullOrWhiteSpace(task.StandingAuthority)
+            ? null
+            : task.StandingAuthority.Trim();
+        var canContinue = kind == BlockedKind.Question && canAnswer && authority is not null;
+        var reason = kind == BlockedKind.Question ? BlockedNote.ReasonWord(task.ReportEvidence) : null;
+
         return new BlockedContextDto(
             kind, round, blockedAt, question, context, prior, progress,
-            canAnswer, cannotAnswer, mergeTaskId);
+            canAnswer, cannotAnswer, mergeTaskId,
+            reason, authority, canContinue, task.AutoContinuedAt);
     }
 
     public static BlockedKind Classify(AgentTask task, IReadOnlyList<AgentTaskEventDto> events)
@@ -69,6 +76,8 @@ internal static class BlockedContextBuilder
     {
         if (!string.IsNullOrWhiteSpace(task.FailureReason))
             return task.FailureReason;
+        if (task.ReportEvidence == AgentTaskReportEvidence.UnmarkedWaiting)
+            return BlockedNote.ExtractAsks(task.Result);
         if (BlockedQuestion.TryExtract(task.Result, out var question, out _))
             return question;
         return task.Result ?? "The delegate is blocked and gave no reason.";
@@ -84,6 +93,12 @@ internal static class BlockedContextBuilder
     {
         if (kind != BlockedKind.Question)
             return (task.FailureReason ?? task.Result ?? "The delegate is blocked.", null);
+
+        if (task.ReportEvidence == AgentTaskReportEvidence.UnmarkedWaiting)
+        {
+            var asks = BlockedNote.ExtractAsks(task.Result);
+            return (asks, BlockedNote.ContextBeforeAsks(task.Result, asks));
+        }
 
         if (BlockedQuestion.TryExtract(task.Result, out var question, out var context))
             return (question, context);

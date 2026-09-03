@@ -138,6 +138,8 @@ export type AttentionAction =
   | 'OpenCard'
   /** CARD-0309: DELETE /api/model-availability/{kind}/{alias}. */
   | 'ClearHold'
+  /** CARD-0294 S1: POST /api/agent-tasks/{id}/continue. */
+  | 'Continue'
 
 export interface AttentionItemDto {
   kind: AttentionKind

@@ -585,6 +585,86 @@ public class AgentTaskServiceIntegrationTests
                 new CreateAgentTaskRequest(Goal: "   "), ManualCaller(workspace.Path), CancellationToken.None));
     }
 
+    [Test]
+    public async Task authority_lands_on_the_row_trimmed_and_in_the_brief()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db);
+        using var workspace = new TempWorkspace();
+
+        var created = await service.CreateAsync(
+            NewRequest("do the remaining epics") with
+            {
+                Authority = "  start the remaining Coesite downloader epics one after another  ",
+            },
+            ManualCaller(workspace.Path),
+            CancellationToken.None);
+
+        var stored = await db.AgentTasks.SingleAsync(t => t.Id == created.Id);
+        stored.StandingAuthority.ShouldBe("start the remaining Coesite downloader epics one after another");
+        stored.AutoContinueOnWait.ShouldBeFalse();
+
+        var brief = DelegationReportFormatter.BuildBrief(stored, new DelegationSettings());
+        brief.ShouldContain("--- standing authority from your caller ---");
+        brief.ShouldContain("\"start the remaining Coesite downloader epics one after another\"");
+        var contractAt = brief.IndexOf("--- how to report back ---", StringComparison.Ordinal);
+        brief.IndexOf("--- standing authority from your caller ---", StringComparison.Ordinal)
+            .ShouldBeLessThan(contractAt);
+    }
+
+    [Test]
+    public async Task authority_over_2000_characters_is_422()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db);
+        using var workspace = new TempWorkspace();
+
+        var ex = await Should.ThrowAsync<ValidationException>(
+            () => service.CreateAsync(
+                NewRequest("do the remaining epics") with { Authority = new string('x', 2001) },
+                ManualCaller(workspace.Path),
+                CancellationToken.None));
+        ex.Errors.ShouldContainKey("Authority");
+    }
+
+    [Test]
+    public async Task auto_continue_without_authority_is_422()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db);
+        using var workspace = new TempWorkspace();
+
+        var ex = await Should.ThrowAsync<ValidationException>(
+            () => service.CreateAsync(
+                NewRequest("do the remaining epics") with { AutoContinue = true },
+                ManualCaller(workspace.Path),
+                CancellationToken.None));
+        ex.Code.ShouldBe("auto_continue_needs_authority");
+    }
+
+    [Test]
+    public async Task a_merge_child_copies_authority_not_the_auto_continue_flag()
+    {
+        using var workspace = new TempWorkspace();
+        var parent = await SeedTaskAsync(AgentTaskKind.Worker, workspace.Path);
+
+        await using var db = CreateContext();
+        var conflicted = await db.AgentTasks.SingleAsync(t => t.Id == parent.Id);
+        conflicted.WorktreePath = workspace.Path;
+        conflicted.WorktreeBranch = "feat/card-task-x";
+        conflicted.MergeTargetRef = "master";
+        conflicted.StandingAuthority = "start the remaining epics";
+        conflicted.AutoContinueOnWait = true;
+        await db.SaveChangesAsync();
+
+        var merge = await CreateService(db).CreateMergeTaskAsync(
+            conflicted, ["conflicted.cs"], CancellationToken.None);
+
+        merge.ShouldNotBeNull();
+        merge!.StandingAuthority.ShouldBe("start the remaining epics");
+        merge.AutoContinueOnWait.ShouldBeFalse();
+    }
+
     // ---- projection ------------------------------------------------------------------------
 
     [Test]

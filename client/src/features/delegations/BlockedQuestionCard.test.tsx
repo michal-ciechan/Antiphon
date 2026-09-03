@@ -155,6 +155,31 @@ describe('BlockedQuestionCard', () => {
     expect(screen.getByRole('link', { name: /Merge task 88888888/ })).toBeInTheDocument()
   })
 
+  it('renders the authority quote and posts to /continue', async () => {
+    const bodies: unknown[] = []
+    server.use(
+      http.post(`/api/agent-tasks/${TASK_ID}/continue`, async ({ request }) => {
+        bodies.push(await request.json())
+        return HttpResponse.json({ id: TASK_ID, status: 'Working' })
+      }),
+    )
+    renderWithProviders(
+      <BlockedQuestionCard
+        detail={detail({
+          authority: 'start the remaining Coesite downloader epics one after another',
+          canContinue: true,
+        })}
+        variant="full"
+      />,
+    )
+
+    expect(screen.getByTestId('blocked-continue')).toHaveTextContent(
+      'start the remaining Coesite downloader epics one after another',
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Continue with authority' }))
+    await waitFor(() => expect(bodies).toEqual([{ origin: 'Web' }]))
+  })
+
   it('replaces the box with the ceiling reason for a cost block', () => {
     renderWithProviders(
       <BlockedQuestionCard

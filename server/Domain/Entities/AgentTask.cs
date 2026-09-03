@@ -359,6 +359,25 @@ public class AgentTask
     /// </summary>
     public int BootWedgeRelaunchCount { get; set; }
 
+    /// <summary>
+    /// CARD-0294 S1. The caller's own words for what this task is already authorised to do,
+    /// trimmed, at most 2 000 characters. Null when none was given at dispatch. Injected into
+    /// the child's brief and replayed by <c>POST …/continue</c>.
+    /// </summary>
+    public string? StandingAuthority { get; set; }
+
+    /// <summary>
+    /// CARD-0294 S3's switch, stored with S1's migration so there is one schema change. Default
+    /// false. The fire-once auto-continue is a follow-on; this column is only copied at create.
+    /// </summary>
+    public bool AutoContinueOnWait { get; set; }
+
+    /// <summary>
+    /// CARD-0294 S3. When auto-continue last fired on this task. Null until then. Shown on a
+    /// later Block so the parent can see the once-only stamp was already used.
+    /// </summary>
+    public DateTime? AutoContinuedAt { get; set; }
+
     public Card? Card { get; set; }
     public AgentTask? ParentTask { get; set; }
     public ICollection<AgentTask> Children { get; set; } = new List<AgentTask>();

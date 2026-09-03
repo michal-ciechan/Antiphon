@@ -156,9 +156,22 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [switch]$NoInheritEnv,
 
+    # CARD-0294 S1: the caller's own words for what this task is already authorised to do.
+    # Injected into the child's brief so it does not stop to ask for a go-ahead this already
+    # grants, and replayed by -Continue. Long text goes through -AuthorityFile.
+    [Parameter(ParameterSetName = 'Create')]
+    [string]$Authority,
+
+    [Parameter(ParameterSetName = 'Create')]
+    [string]$AuthorityFile,
+
     # Answer a blocked delegate's question: -Reply <taskId> "your answer"
     [Parameter(ParameterSetName = 'Reply', Mandatory = $true)]
     [string]$Reply,
+
+    # Replay the standing authority given at dispatch as the answer: -Continue <taskId>
+    [Parameter(ParameterSetName = 'Continue', Mandatory = $true)]
+    [string]$Continue,
 
     # Steer a RUNNING delegate without cancelling it: -Refine <taskId> "your message". Delivered
     # between its turns; a still-queued task gets the message folded into its brief instead. Use
@@ -291,6 +304,14 @@ switch ($PSCmdlet.ParameterSetName) {
         return
     }
 
+    'Continue' {
+        Invoke-Antiphon -Method POST -Path "/api/agent-tasks/$Continue/continue" -Body @{
+            origin = 'Cli'
+        } | Out-Null
+        Write-Output "Continued task $Continue with its standing authority. It will resume and report back."
+        return
+    }
+
     'Refine' {
         if ([string]::IsNullOrWhiteSpace($Message)) {
             Write-Error 'Pass the message as the first argument: delegate.ps1 -Refine <taskId> "your message"'
@@ -364,6 +385,23 @@ switch ($PSCmdlet.ParameterSetName) {
         if ($Complexity) { $body['complexity'] = $Complexity }
         if ($RefuseIfExhausted) { $body['refuseIfExhausted'] = $true }
         if ($EnvOverride -and $EnvOverride.Count -gt 0) { $body['launchEnvOverride'] = $EnvOverride }
+        $authorityText = $null
+        if (-not [string]::IsNullOrWhiteSpace($AuthorityFile)) {
+            if (-not [string]::IsNullOrWhiteSpace($Authority)) {
+                Write-Error 'Pass -Authority or -AuthorityFile, not both.'
+                exit 1
+            }
+            if (-not (Test-Path -LiteralPath $AuthorityFile)) {
+                Write-Error "-AuthorityFile '$AuthorityFile' does not exist."
+                exit 1
+            }
+            $authorityText = Get-Content -LiteralPath $AuthorityFile -Raw -Encoding UTF8
+            if ($null -eq $authorityText) { $authorityText = '' }
+        }
+        elseif (-not [string]::IsNullOrWhiteSpace($Authority)) {
+            $authorityText = $Authority
+        }
+        if (-not [string]::IsNullOrWhiteSpace($authorityText)) { $body['authority'] = $authorityText }
         if (-not $NoInheritEnv) {
             $inheritedLlmEnv = @{}
             foreach ($name in @('X_LLM_PROJECT', 'X_LLM_KEY')) {

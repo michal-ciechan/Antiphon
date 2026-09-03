@@ -49,6 +49,7 @@ export type AgentTaskReportEvidence =
   | 'QuestionHeuristic'
   | 'FinalMessageMissing'
   | 'Exempt'
+  | 'UnmarkedWaiting'
 
 export type WorkspaceMode = 'Shared' | 'Worktree' | 'ReadOnly'
 
@@ -165,7 +166,7 @@ export interface AgentTaskEventDto {
 
 export type BlockedKind = 'Question' | 'MergeConflict' | 'CostCeiling' | 'RoutingExhausted'
 
-export type AnswerOrigin = 'Web' | 'Cli' | 'Channel'
+export type AnswerOrigin = 'Web' | 'Cli' | 'Channel' | 'Authority'
 
 export interface BlockedRoundDto {
   round: number
@@ -197,6 +198,14 @@ export interface BlockedContextDto {
   canAnswer: boolean
   cannotAnswerReason: string | null
   mergeTaskId: string | null
+  /** CARD-0294 S2. Vocabulary word: marked-blocked / question-line / waiting-unmarked. */
+  reason?: string | null
+  /** CARD-0294 S1. Standing authority given at dispatch. */
+  authority?: string | null
+  /** CARD-0294 S1. True when -Continue can replay the authority. */
+  canContinue?: boolean
+  /** CARD-0294 S3. When auto-continue already fired. */
+  autoContinuedAt?: string | null
 }
 
 export interface AgentTaskDetailDto {
@@ -214,6 +223,10 @@ export interface AgentTaskDetailDto {
   failureCode?: string | null
   /** CARD-0033. Non-null iff status is Blocked. */
   blocked?: BlockedContextDto | null
+  /** CARD-0294 S1. The caller's standing authority, or null when none was given. */
+  standingAuthority?: string | null
+  /** CARD-0294 S3's stored switch. The fire-once auto-continue is a follow-on. */
+  autoContinueOnWait?: boolean
 }
 
 /** Fleet-wide header counters; unlike the board list, these never use its history window. */
@@ -363,6 +376,10 @@ export interface CreateAgentTaskRequest {
    * for the hold to clear. Start never honours this flag.
    */
   ignoreModelDisabled?: boolean
+  /** CARD-0294 S1. The caller's own words for what this task is already authorised to do. */
+  authority?: string | null
+  /** CARD-0294 S3's switch; refused without authority. */
+  autoContinue?: boolean
 }
 
 export interface AgentTaskCreatedDto {
@@ -545,6 +562,13 @@ export function useReplyToAgentTask() {
         origin: origin ?? 'Web',
         ...(round != null ? { round } : {}),
       }),
+  )
+}
+
+/** CARD-0294 S1: replay the standing authority given at dispatch as the answer. */
+export function useContinueAgentTask() {
+  return useTaskMutation(({ id, origin }: { id: string; origin?: AnswerOrigin }) =>
+    apiPost<AgentTaskSummaryDto>(`/agent-tasks/${id}/continue`, { origin: origin ?? 'Web' }),
   )
 }
 

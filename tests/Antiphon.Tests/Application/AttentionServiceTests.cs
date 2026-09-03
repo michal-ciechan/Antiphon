@@ -166,6 +166,27 @@ public class AttentionServiceTests
         item.Evidence.ShouldNotContain(findings[..80]);
         item.Headline.ShouldBe("Blocked — waiting on a human answer.");
         item.Actions.ShouldContain(AttentionAction.Reply);
+        item.Actions.ShouldNotContain(AttentionAction.Continue);
+    }
+
+    [Test]
+    public async Task a_blocked_question_with_standing_authority_offers_continue_first()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Blocked, dispatchedMinutesAgo: 20,
+            result: "Please approve this design and I'll begin the recorded TDD cycles.",
+            standingAuthority: "start the remaining Coesite downloader epics one after another");
+        await scenario.AddTaskEventAsync(task, AgentTaskEventType.Blocked,
+            "Turn ended without `[antiphon-report:…]`; asked once and the session stayed idle. Waiting on a human.",
+            minutesAgo: 5);
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.TaskId == task);
+
+        item.Actions[0].ShouldBe(AttentionAction.Continue);
+        item.Actions.ShouldContain(AttentionAction.Reply);
+        item.Evidence.ShouldBe("Please approve this design and I'll begin the recorded TDD cycles.");
     }
 
     [Test]
@@ -2438,7 +2459,8 @@ public class AttentionServiceTests
             Guid? parentSessionId = null,
             Guid? agentId = null,
             DateTime? reportNudgedAt = null,
-            AgentTaskRole role = AgentTaskRole.Code)
+            AgentTaskRole role = AgentTaskRole.Code,
+            string? standingAuthority = null)
         {
             var id = Guid.NewGuid();
             var dispatched = DateTime.UtcNow.AddMinutes(-dispatchedMinutesAgo);
@@ -2469,6 +2491,7 @@ public class AttentionServiceTests
                 DispatchedAt = neverDispatched ? null : dispatched,
                 CompletedAt = completedMinutesAgo is { } done ? DateTime.UtcNow.AddMinutes(-done) : null,
                 ReportNudgedAt = reportNudgedAt,
+                StandingAuthority = standingAuthority,
             });
             await db.SaveChangesAsync();
             _tasks.Add(id);

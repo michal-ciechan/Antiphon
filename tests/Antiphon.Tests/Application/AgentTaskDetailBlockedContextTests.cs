@@ -39,9 +39,42 @@ public class AgentTaskDetailBlockedContextTests
         blocked.Context.ShouldBe("Added Fizz(int).");
         blocked.CanAnswer.ShouldBeTrue();
         blocked.CannotAnswerReason.ShouldBeNull();
+        blocked.CanContinue.ShouldBeFalse();
+        blocked.Reason.ShouldBeNull("ReportEvidence is Legacy on a seeded row without a settlement class");
         blocked.PriorRounds.ShouldBeEmpty();
         blocked.Progress.ShouldNotBeNull();
         blocked.Progress!.Unavailable.ShouldBe(DelegateCheckProbe.SharedWorkspaceUnattributableExplanation);
+
+        await DeleteAsync(task.Id);
+    }
+
+    [Test]
+    public async Task an_unmarked_waiting_block_uses_the_asks_line_not_the_whole_narration()
+    {
+        using var workspace = new TempWorkspace();
+        var sessionId = Guid.NewGuid();
+        const string ask = "Please approve this design and I'll begin the recorded TDD cycles.";
+        var task = await SeedAsync(
+            workspace.Path,
+            AgentTaskStatus.Blocked,
+            sessionId: sessionId,
+            result: $"I'll start by reading the spec.\n\n{ask}",
+            standingAuthority: "start the remaining Coesite downloader epics one after another",
+            reportEvidence: AgentTaskReportEvidence.UnmarkedWaiting);
+        await AddEventAsync(task.Id, AgentTaskEventType.Blocked,
+            "Turn ended without `[antiphon-report:…]`; asked once and the session stayed idle. Waiting on a human.");
+
+        await using var db = CreateContext();
+        var detail = await CreateService(db).GetAsync(task.Id, CancellationToken.None);
+
+        var blocked = detail.Blocked.ShouldNotBeNull();
+        blocked.Kind.ShouldBe(BlockedKind.Question);
+        blocked.Question.ShouldBe(ask);
+        blocked.Context.ShouldBe("I'll start by reading the spec.");
+        blocked.Reason.ShouldBe("waiting-unmarked");
+        blocked.Authority.ShouldBe("start the remaining Coesite downloader epics one after another");
+        blocked.CanContinue.ShouldBeTrue();
+        detail.StandingAuthority.ShouldBe("start the remaining Coesite downloader epics one after another");
 
         await DeleteAsync(task.Id);
     }
@@ -184,7 +217,9 @@ public class AgentTaskDetailBlockedContextTests
         string? result = null,
         string? failureReason = null,
         AgentTask? parent = null,
-        AgentTaskRole role = AgentTaskRole.Docs)
+        AgentTaskRole role = AgentTaskRole.Docs,
+        string? standingAuthority = null,
+        AgentTaskReportEvidence reportEvidence = AgentTaskReportEvidence.Legacy)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -204,6 +239,8 @@ public class AgentTaskDetailBlockedContextTests
             AgentSessionId = sessionId,
             Result = result,
             FailureReason = failureReason,
+            StandingAuthority = standingAuthority,
+            ReportEvidence = reportEvidence,
             CreatedAt = DateTime.UtcNow,
             DispatchedAt = DateTime.UtcNow,
         };

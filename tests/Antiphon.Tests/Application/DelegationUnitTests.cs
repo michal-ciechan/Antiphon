@@ -411,6 +411,62 @@ public class DelegationReportFormatterTests
     }
 
     [Test]
+    public void a_brief_carries_standing_authority_only_when_set()
+    {
+        var withAuthority = NewTask();
+        withAuthority.StandingAuthority = "start the remaining Coesite downloader epics one after another";
+        var brief = DelegationReportFormatter.BuildBrief(withAuthority, Settings);
+        var contractAt = brief.IndexOf("--- how to report back ---", StringComparison.Ordinal);
+        var authorityAt = brief.IndexOf("--- standing authority from your caller ---", StringComparison.Ordinal);
+        authorityAt.ShouldBeGreaterThan(0);
+        authorityAt.ShouldBeLessThan(contractAt);
+        brief.ShouldContain("\"start the remaining Coesite downloader epics one after another\"");
+        brief.ShouldContain("Do not stop to ask for approval that this already grants.");
+
+        DelegationReportFormatter.BuildBrief(NewTask(), Settings)
+            .ShouldNotContain("--- standing authority from your caller ---");
+    }
+
+    [Test]
+    public void a_blocked_question_note_puts_reason_asks_authority_and_next_outside_the_excerpt()
+    {
+        var task = NewTask();
+        task.Status = AgentTaskStatus.Blocked;
+        task.ReportEvidence = AgentTaskReportEvidence.UnmarkedWaiting;
+        task.StandingAuthority = "start the remaining Coesite downloader epics one after another";
+        const string ask = "Please approve this design and I'll begin the recorded TDD cycles.";
+        var report = "OPENING-MARKER\n" + new string('x', 40_000) + "\n" + ask;
+        var bits = BlockedNote.Format(task, report, Settings);
+        var note = DelegationReportFormatter.BuildCompletionNote(
+            task, Settings, report, warning: bits);
+
+        note.Header.ShouldContain("reason: waiting-unmarked");
+        note.Header.ShouldContain($"asks: {ask}");
+        note.Header.ShouldContain("authority: \"start the remaining Coesite downloader epics one after another\"");
+        note.Header.ShouldContain("-Continue 7f3a2b91");
+        note.Body.ShouldStartWith(note.Header);
+        note.Body.ShouldContain("THIS REPORT IS AN EXCERPT");
+        var excerptAt = note.Body.IndexOf("THIS REPORT IS AN EXCERPT", StringComparison.Ordinal);
+        note.Body.IndexOf("reason: waiting-unmarked", StringComparison.Ordinal).ShouldBeLessThan(excerptAt);
+        note.Body.IndexOf($"asks: {ask}", StringComparison.Ordinal).ShouldBeLessThan(excerptAt);
+    }
+
+    [Test]
+    public void a_blocked_note_without_authority_names_reply_not_continue()
+    {
+        var task = NewTask();
+        task.Status = AgentTaskStatus.Blocked;
+        task.ReportEvidence = AgentTaskReportEvidence.QuestionHeuristic;
+        var bits = BlockedNote.Format(task, "Should I accept negatives?", Settings);
+
+        bits.ShouldContain("reason: question-line");
+        bits.ShouldContain("asks: Should I accept negatives?");
+        bits.ShouldContain("authority: none given at dispatch");
+        bits.ShouldContain("-Reply 7f3a2b91");
+        bits.ShouldNotContain("-Continue");
+    }
+
+    [Test]
     [Arguments(AgentTaskRole.Plan)]
     [Arguments(AgentTaskRole.Docs)]
     [Arguments(AgentTaskRole.Code)]
@@ -1119,6 +1175,30 @@ public class DelegationQuestionDetectionTests
             "Please approve this design and I'll begin the recorded TDD cycles.")
             .ShouldBeFalse();
     }
+
+    [Test]
+    public void asks_uses_the_extracted_question_when_a_trailing_mark_exists()
+    {
+        BlockedNote.ExtractAsks("Added Fizz(int).\n\nShould I accept negatives?")
+            .ShouldBe("Should I accept negatives?");
+    }
+
+    [Test]
+    public void asks_uses_the_last_non_empty_line_when_there_is_no_question_mark()
+    {
+        BlockedNote.ExtractAsks(
+            "Please approve this design and I'll begin the recorded TDD cycles.")
+            .ShouldBe("Please approve this design and I'll begin the recorded TDD cycles.");
+    }
+
+    [Test]
+    public void asks_is_capped_at_240_characters()
+    {
+        var line = new string('q', 300) + "?";
+        var asks = BlockedNote.ExtractAsks(line);
+        asks.Length.ShouldBe(240);
+        asks.ShouldBe(line[..240]);
+    }
 }
 
 [Category("Unit")]
@@ -1146,6 +1226,22 @@ public class UnmarkedWaitingContractTests
     public void unmarked_waiting_minutes_default_is_five()
     {
         new DelegationSettings().UnmarkedWaitingMinutes.ShouldBe(5);
+    }
+
+    [Test]
+    public void answer_origin_authority_is_appended_as_three()
+    {
+        ((int)AnswerOrigin.Channel).ShouldBe(2);
+        ((int)AnswerOrigin.Authority).ShouldBe(3);
+    }
+
+    [Test]
+    public void attention_action_continue_is_appended_after_clear_hold()
+    {
+        ((int)AttentionAction.ClearHold).ShouldBe(10);
+        ((int)AttentionAction.Continue).ShouldBe(11);
+        Enum.GetValues<AttentionAction>().Max(v => (int)v).ShouldBe(11,
+            "CARD-0294 S1 must append Continue after ClearHold=10; do not renumber");
     }
 }
 

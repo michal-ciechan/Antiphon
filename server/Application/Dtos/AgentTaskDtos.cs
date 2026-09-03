@@ -128,7 +128,19 @@ public sealed record CreateAgentTaskRequest(
     /// True queues the task; the dispatcher still fails it if the store is empty at launch.
     /// For the operator who is about to run <c>grok login</c> and wants the task queued.
     /// </summary>
-    bool AllowUnauthenticatedProvider = false);
+    bool AllowUnauthenticatedProvider = false,
+    /// <summary>
+    /// CARD-0294 S1. The caller's own words for what this task is already authorised to do.
+    /// Trimmed, at most 2 000 characters. Injected into the child's brief so it does not stop
+    /// to ask for a go-ahead this already grants, and replayed by <c>POST …/continue</c>.
+    /// </summary>
+    string? Authority = null,
+    /// <summary>
+    /// CARD-0294 S3's switch, accepted at create so the column is filled. Requires
+    /// <see cref="Authority"/>. The fire-once auto-continue is a follow-on; a 422
+    /// <c>auto_continue_needs_authority</c> refuses the flag without authority.
+    /// </summary>
+    bool AutoContinue = false);
 
 public sealed record AgentTaskSummaryDto(
     Guid Id,
@@ -239,7 +251,11 @@ public sealed record AgentTaskDetailDto(
     /// question, prior Q&amp;A rounds, and a bounded git progress snapshot. Null on every other
     /// status so non-Blocked drawers are unchanged.
     /// </summary>
-    BlockedContextDto? Blocked = null);
+    BlockedContextDto? Blocked = null,
+    /// <summary>CARD-0294 S1. The caller's standing authority, or null when none was given.</summary>
+    string? StandingAuthority = null,
+    /// <summary>CARD-0294 S3's stored switch. The fire-once auto-continue is a follow-on.</summary>
+    bool AutoContinueOnWait = false);
 
 /// <summary>Why a task is Blocked — CARD-0033. RoutingExhausted is CARD-0090, added after the original three.</summary>
 public enum BlockedKind
@@ -256,6 +272,8 @@ public enum AnswerOrigin
     Web = 0,
     Cli = 1,
     Channel = 2,
+    /// <summary>CARD-0294 S3: the harness replayed standing authority. Appended after Channel; do not renumber.</summary>
+    Authority = 3,
 }
 
 /// <summary>Projection of a Blocked task: the question, isolated from the report that preceded it.</summary>
@@ -269,7 +287,18 @@ public sealed record BlockedContextDto(
     BlockedProgressDto? Progress,
     bool CanAnswer,
     string? CannotAnswerReason,
-    Guid? MergeTaskId);
+    Guid? MergeTaskId,
+    /// <summary>CARD-0294 S2. Vocabulary word: <c>marked-blocked</c> / <c>question-line</c> / <c>waiting-unmarked</c>. Null on non-question blocks.</summary>
+    string? Reason = null,
+    /// <summary>CARD-0294 S1. The standing authority given at dispatch, or null.</summary>
+    string? Authority = null,
+    /// <summary>CARD-0294 S1. True when this is a question the parent can answer with <c>-Continue</c>.</summary>
+    bool CanContinue = false,
+    /// <summary>CARD-0294 S3. When auto-continue already fired, so a later Block shows it was used.</summary>
+    DateTime? AutoContinuedAt = null);
+
+/// <summary>POST /api/agent-tasks/{id}/continue (CARD-0294 S1).</summary>
+public sealed record ContinueAgentTaskRequest(AnswerOrigin? Origin = null);
 
 public sealed record BlockedRoundDto(
     int Round,

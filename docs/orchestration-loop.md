@@ -165,6 +165,14 @@ is exhausted the task is **Blocked** (or 409 `routing_exhausted` with `-RefuseIf
 `delegate.ps1 -Reroute <id> -Kind … -Level …`, Cancel, or by clearing a hold. Auto-resume onto
 an already-listed candidate when capacity returns is executing the instruction, not a new guess.
 
+**A Blocked-on-question child (CARD-0294 S1+S2).** The parent `[task … blocked]` note carries
+`reason:` / `asks:` / `authority:` / `next:` above the body, outside the excerpt window. If
+`authority:` names something, `delegate.ps1 -Continue <id>` is the one action that replays it;
+otherwise `-Reply` if you can answer, else put `asks:` in your chat reply now — never `NO_REPLY`
+a blocked note. Dispatch with `-Authority "<the user's own words>"` whenever the user has
+pre-approved a sequence. Auto-continue, the 5-minute bound-chat notice, and the unmarked
+zero-progress Block are follow-on slices of the same card.
+
 The best single result of this period came from a `Debug` agent; the cheapest useful one was a haiku
 check at **$0.12**.
 

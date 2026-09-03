@@ -275,7 +275,8 @@ public sealed class AgentTaskReplyService
         AnswerAsync(taskId, message, AnswerOrigin.Web, round: null, ct);
 
     public async Task<AgentTaskSummaryDto> AnswerAsync(
-        Guid taskId, string message, AnswerOrigin origin, int? round, CancellationToken ct)
+        Guid taskId, string message, AnswerOrigin origin, int? round, CancellationToken ct,
+        string? repliedDetailPrefix = null)
     {
         if (string.IsNullOrWhiteSpace(message))
             throw new ValidationException(nameof(message), "A reply message is required.");
@@ -307,10 +308,13 @@ public sealed class AgentTaskReplyService
             var now = UtcNow();
             task.Status = AgentTaskStatus.Working;
             task.ConcurrencyToken = Guid.NewGuid();
+            var repliedDetail = BlockedQuestion.RepliedEventDetail(origin, currentRound, message.Trim());
+            if (!string.IsNullOrEmpty(repliedDetailPrefix))
+                repliedDetail = repliedDetailPrefix + repliedDetail;
             db.AgentTaskEvents.Add(NewEvent(
                 taskId,
                 AgentTaskEventType.Replied,
-                BlockedQuestion.RepliedEventDetail(origin, currentRound, message.Trim()),
+                repliedDetail,
                 now));
             await db.SaveChangesAsync(ct);
 
@@ -355,6 +359,55 @@ public sealed class AgentTaskReplyService
         }
 
         throw new ConflictException($"Task {DelegationReportFormatter.Short(taskId)} is not waiting for an answer.");
+    }
+
+    /// <summary>
+    /// CARD-0294 S1: replay the standing authority given at dispatch as the answer to a
+    /// Blocked-on-question task. Merge conflicts, cost ceilings and routing exhaustion are
+    /// not answered this way.
+    /// </summary>
+    public async Task<AgentTaskSummaryDto> ContinueWithAuthorityAsync(
+        Guid taskId, AnswerOrigin origin, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var task = await db.AgentTasks.AsNoTracking().FirstOrDefaultAsync(t => t.Id == taskId, ct)
+            ?? throw new NotFoundException(nameof(AgentTask), taskId);
+
+        if (task.Status != AgentTaskStatus.Blocked)
+        {
+            throw new ConflictException(
+                $"Task {DelegationReportFormatter.Short(taskId)} is not blocked.",
+                "not_blocked");
+        }
+
+        var events = await db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == taskId)
+            .OrderBy(e => e.At)
+            .Select(e => new AgentTaskEventDto(e.Type, e.ModelLevel, e.Detail, e.At))
+            .ToListAsync(ct);
+        var kind = BlockedContextBuilder.Classify(task, events);
+        if (kind != BlockedKind.Question)
+        {
+            throw new ConflictException(
+                $"Task {DelegationReportFormatter.Short(taskId)} is not waiting on a question. Use -Reply only when it is, or resolve the {kind} another way.",
+                "not_a_question");
+        }
+
+        if (string.IsNullOrWhiteSpace(task.StandingAuthority))
+        {
+            throw new ConflictException(
+                $"Task {DelegationReportFormatter.Short(taskId)} has no standing authority. Answer it with -Reply instead.",
+                "no_authority");
+        }
+
+        return await AnswerAsync(
+            taskId,
+            BlockedNote.ContinueMessage(task.StandingAuthority.Trim()),
+            origin,
+            round: null,
+            ct,
+            BlockedNote.RepliedContinuePrefix);
     }
 
     /// <summary>
@@ -1489,6 +1542,12 @@ public sealed class AgentTaskReplyService
         if (task.ReplyTo != AgentTaskReplyTo.Session || task.ParentSessionId is not Guid parentSession)
             return;
 
+        if (BlockedNote.IsQuestionBlock(task))
+        {
+            var bits = BlockedNote.Format(task, report, _settings);
+            warning = string.IsNullOrWhiteSpace(warning) ? bits : warning.Trim() + "\n\n" + bits;
+        }
+
         var note = DelegationReportFormatter.BuildCompletionNote(
             task, _settings, report, workspaceNote, ReplyInlineMaxChars, warning,
             await DescribeOverlappingRunningAsync(task, ct), drift,
@@ -2393,6 +2452,8 @@ public sealed class AgentTaskReplyService
         var body =
             $"[task {shortId} waiting] Child ended a turn without the closing report line; asked once for "
             + $"`{done}` (or `blocked` / `failed`). Session is idle. Reply after it Blocks, or Refine now.";
+        if (!string.IsNullOrWhiteSpace(task.StandingAuthority))
+            body += "\n" + BlockedNote.WaitingNoteAuthorityLine(task);
         try
         {
             var queue = services.GetRequiredService<SessionMessageQueueService>();

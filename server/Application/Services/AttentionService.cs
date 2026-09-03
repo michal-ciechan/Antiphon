@@ -295,9 +295,14 @@ public sealed class AttentionService
                 BlockedKind.CostCeiling => "Blocked — run cost ceiling reached.",
                 _ => "Blocked — waiting on a human answer.",
             };
+            var canContinue = kind == BlockedKind.Question
+                && task.AgentSessionId is not null
+                && !string.IsNullOrWhiteSpace(task.StandingAuthority);
             var actions = kind == BlockedKind.CostCeiling
                 ? new[] { AttentionAction.Cancel, AttentionAction.Escalate }
-                : new[] { AttentionAction.Reply, AttentionAction.Cancel, AttentionAction.Escalate };
+                : canContinue
+                    ? new[] { AttentionAction.Continue, AttentionAction.Reply, AttentionAction.Cancel, AttentionAction.Escalate }
+                    : new[] { AttentionAction.Reply, AttentionAction.Cancel, AttentionAction.Escalate };
 
             items.Add(new AttentionItemDto(
                 AttentionKind.BlockedQuestion,

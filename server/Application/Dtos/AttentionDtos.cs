@@ -260,6 +260,12 @@ public enum AttentionAction
     /// <see cref="AttentionKind.ModelAvailabilityHold"/> rows that carry kind+alias.
     /// </summary>
     ClearHold = 10,
+
+    /// <summary>
+    /// CARD-0294 S1: replay the task's standing authority as the answer —
+    /// <c>POST /api/agent-tasks/{id}/continue</c>. Appended after shipped 10; do not renumber.
+    /// </summary>
+    Continue = 11,
 }
 
 /// <summary>
