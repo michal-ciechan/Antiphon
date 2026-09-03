@@ -55,6 +55,7 @@ public sealed class StageOutcomeBackfillService : BackgroundService
                 e.Type == AgentTaskEventType.LandRequested
                 || e.Type == AgentTaskEventType.Landed
                 || e.Type == AgentTaskEventType.LandRefused
+                || e.Type == AgentTaskEventType.LandedWithResidue
                 || e.Type == AgentTaskEventType.Conflicted))
             .OrderBy(e => e.At)
             .ThenBy(e => e.Id)
@@ -105,6 +106,7 @@ public sealed class StageOutcomeBackfillService : BackgroundService
                     && e.Id != request.Id
                     && (e.Type == AgentTaskEventType.Landed
                         || e.Type == AgentTaskEventType.LandRefused
+                        || e.Type == AgentTaskEventType.LandedWithResidue
                         || e.Type == AgentTaskEventType.Conflicted));
                 if (outcome is null)
                     continue;
@@ -161,6 +163,28 @@ public sealed class StageOutcomeBackfillService : BackgroundService
                 Row(taskId, cardId, OrchestrationStage.Verify, StageOutcomeKind.Clean, durationSeconds,
                     JoinDetail(Head(outcome.Detail, "verify:"), detailFlag), eventRef, outcome.At),
                 Row(taskId, cardId, OrchestrationStage.Cleanup, StageOutcomeKind.Clean, durationSeconds, detailFlag, eventRef, outcome.At),
+            ],
+            AgentTaskEventType.LandedWithResidue when ContainsInsensitive(outcome.Detail, "build skipped") =>
+            [
+                Row(taskId, cardId, OrchestrationStage.Rebase, StageOutcomeKind.Clean, durationSeconds, detailFlag, eventRef, outcome.At),
+                Row(taskId, cardId, OrchestrationStage.Verify, StageOutcomeKind.Skipped, durationSeconds, detailFlag, eventRef, outcome.At),
+                Row(taskId, cardId, OrchestrationStage.Cleanup, StageOutcomeKind.Failed, durationSeconds,
+                    JoinDetail(outcome.Detail, detailFlag), eventRef, outcome.At),
+            ],
+            AgentTaskEventType.LandedWithResidue when ContainsInsensitive(outcome.Detail, "build OK") =>
+            [
+                Row(taskId, cardId, OrchestrationStage.Rebase, StageOutcomeKind.Clean, durationSeconds, detailFlag, eventRef, outcome.At),
+                Row(taskId, cardId, OrchestrationStage.Verify, StageOutcomeKind.Clean, durationSeconds,
+                    JoinDetail(Head(outcome.Detail, "verify:"), detailFlag), eventRef, outcome.At),
+                Row(taskId, cardId, OrchestrationStage.Cleanup, StageOutcomeKind.Failed, durationSeconds,
+                    JoinDetail(outcome.Detail, detailFlag), eventRef, outcome.At),
+            ],
+            AgentTaskEventType.LandedWithResidue =>
+            [
+                Row(taskId, cardId, OrchestrationStage.Rebase, StageOutcomeKind.Clean, durationSeconds, detailFlag, eventRef, outcome.At),
+                Row(taskId, cardId, OrchestrationStage.Verify, StageOutcomeKind.Unreported, durationSeconds, detailFlag, eventRef, outcome.At),
+                Row(taskId, cardId, OrchestrationStage.Cleanup, StageOutcomeKind.Failed, durationSeconds,
+                    JoinDetail(outcome.Detail, detailFlag), eventRef, outcome.At),
             ],
             AgentTaskEventType.LandRefused when ContainsInsensitive(outcome.Detail, "could not delete") =>
             [

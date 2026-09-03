@@ -58,7 +58,9 @@ public sealed class AgentTaskLandService
 
         var latestRequest = await _db.AgentTaskEvents
             .Where(e => e.AgentTaskId == taskId && (e.Type == AgentTaskEventType.LandRequested
-                || e.Type == AgentTaskEventType.Landed || e.Type == AgentTaskEventType.LandRefused))
+                || e.Type == AgentTaskEventType.Landed
+                || e.Type == AgentTaskEventType.LandRefused
+                || e.Type == AgentTaskEventType.LandedWithResidue))
             .OrderByDescending(e => e.At).Select(e => e.Type).FirstOrDefaultAsync(ct);
         if (latestRequest == AgentTaskEventType.LandRequested)
             throw new ConflictException($"Task {DelegationReportFormatter.Short(task.Id)} already has a land operation queued.");
@@ -80,6 +82,9 @@ public sealed class AgentTaskLandService
         var task = await _db.AgentTasks.SingleOrDefaultAsync(t => t.Id == taskId, ct);
         if (task is null || task.Status != AgentTaskStatus.Succeeded || task.Workspace != WorkspaceMode.Worktree)
             return LandRunResult.Complete;
+
+        if (await _worktrees.IsAlreadyLandedAsync(task, ct))
+            return await CleanupAlreadyLandedAsync(task, ct);
 
         var holder = await FindSharedWriterAsync(task, ct);
         if (holder is not null)
@@ -156,7 +161,7 @@ public sealed class AgentTaskLandService
         var cleanupWatch = Stopwatch.StartNew();
         var finalized = await _worktrees.FinalizeLandAsync(task, prepared.Target!, ct);
         var cleanupSeconds = ElapsedSeconds(cleanupWatch);
-        if (!finalized.Succeeded)
+        if (!finalized.Pushed)
         {
             Record(task, OrchestrationStage.Cleanup, StageOutcomeKind.Failed, cleanupSeconds,
                 finalized.Detail ?? "Land finalization failed.");
@@ -164,17 +169,60 @@ public sealed class AgentTaskLandService
             return LandRunResult.Complete;
         }
 
-        Record(task, OrchestrationStage.Cleanup, StageOutcomeKind.Clean, cleanupSeconds);
         var verify = prepared.BaseMoved
             ? verification.Description
             : "build skipped (base unchanged)";
+        if (finalized.Residue is not null)
+        {
+            Record(task, OrchestrationStage.Cleanup, StageOutcomeKind.Failed, cleanupSeconds,
+                finalized.Residue);
+            var residueOutcome = $"landed {prepared.Branch} -> {prepared.Target} as {finalized.Sha}, pushed "
+                + $"(origin/{prepared.Target}={finalized.Sha}), verify: {verify}, cleanup incomplete: {finalized.Residue}";
+            await SettleLandedAsync(task, AgentTaskEventType.LandedWithResidue, residueOutcome, ct);
+            return LandRunResult.Complete;
+        }
+
+        Record(task, OrchestrationStage.Cleanup, StageOutcomeKind.Clean, cleanupSeconds);
         var outcome = $"landed {prepared.Branch} -> {prepared.Target} as {finalized.Sha}, pushed "
             + $"(origin/{prepared.Target}={finalized.Sha}), verify: {verify}, worktree removed";
-        _db.AgentTaskEvents.Add(Event(task.Id, AgentTaskEventType.Landed, outcome, _clock.GetUtcNow().UtcDateTime));
+        await SettleLandedAsync(task, AgentTaskEventType.Landed, outcome, ct);
+        return LandRunResult.Complete;
+    }
+
+    private async Task<LandRunResult> CleanupAlreadyLandedAsync(AgentTask task, CancellationToken ct)
+    {
+        var cleanupWatch = Stopwatch.StartNew();
+        var cleaned = await _worktrees.CleanupAlreadyLandedAsync(task, ct);
+        var cleanupSeconds = ElapsedSeconds(cleanupWatch);
+        var sha = cleaned.Sha ?? "unknown";
+        var branch = task.WorktreeBranch ?? "(branch)";
+        var target = cleaned.Target;
+
+        if (cleaned.Removal.IsClean)
+        {
+            Record(task, OrchestrationStage.Cleanup, StageOutcomeKind.Clean, cleanupSeconds,
+                "nothing left to clean");
+            var outcome = $"landed {branch} -> {target} as {sha}, pushed "
+                + $"(origin/{target}={sha}), nothing left to clean";
+            await SettleLandedAsync(task, AgentTaskEventType.Landed, outcome, ct);
+            return LandRunResult.Complete;
+        }
+
+        Record(task, OrchestrationStage.Cleanup, StageOutcomeKind.Failed, cleanupSeconds,
+            cleaned.Removal.Residue ?? "cleanup incomplete");
+        var residueOutcome = $"landed {branch} -> {target} as {sha}, pushed "
+            + $"(origin/{target}={sha}), cleanup incomplete: {cleaned.Removal.Residue}";
+        await SettleLandedAsync(task, AgentTaskEventType.LandedWithResidue, residueOutcome, ct);
+        return LandRunResult.Complete;
+    }
+
+    private async Task SettleLandedAsync(
+        AgentTask task, AgentTaskEventType type, string outcome, CancellationToken ct)
+    {
+        _db.AgentTaskEvents.Add(Event(task.Id, type, outcome, _clock.GetUtcNow().UtcDateTime));
         await _db.SaveChangesAsync(ct);
         await DeliverAsync(task, outcome, ct);
         await PublishAsync(task, ct);
-        return LandRunResult.Complete;
     }
 
     private async Task<AgentTask?> FindSharedWriterAsync(AgentTask task, CancellationToken ct)

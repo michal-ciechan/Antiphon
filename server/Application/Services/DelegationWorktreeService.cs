@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
@@ -79,7 +80,7 @@ public sealed class DelegationWorktreeService
         IReadOnlyList<string> ConflictFiles);
 
     /// <summary>The fast-forward/push/cleanup half of an explicit land operation.</summary>
-    public sealed record LandFinalization(bool Succeeded, string? Sha, string? Detail);
+    public sealed record LandFinalization(bool Pushed, string? Sha, string? Detail, string? Residue = null);
 
     /// <summary>
     /// Fetch and rebase a kept task branch for an explicit land. This deliberately shares the
@@ -149,19 +150,57 @@ public sealed class DelegationWorktreeService
             return new(false, null, $"git push origin {target} rejected: {push.StdErr.Trim()}");
 
         var sha = await GitAsync(repo, ct, "rev-parse", target);
-        await RemoveQuietlyAsync(repo, worktree, ct);
-        var deleted = await GitAsync(repo, ct, "branch", "-d", branch);
-        if (!deleted.Ok)
-        {
-            // WorktreeManager may already prune the merged branch as part of RemoveAsync. That is
-            // the requested cleanup, not a post-push refusal. A still-present branch is unusual
-            // and is surfaced rather than silently called clean.
-            var exists = await GitAsync(repo, ct, "show-ref", "--verify", "--quiet", $"refs/heads/{branch}");
-            if (exists.Ok)
-                return new(false, sha.StdOut.Trim(), $"Landed and pushed, but could not delete {branch}: {deleted.StdErr.Trim()}");
-        }
+        var removal = await RemoveQuietlyAsync(repo, worktree, target, ct);
+        return new(true, sha.StdOut.Trim(), null, removal.IsClean ? null : removal.Residue);
+    }
 
-        return new(true, sha.StdOut.Trim(), null);
+    /// <summary>
+    /// True when the task branch is gone, or is already an ancestor of the pushed target — a
+    /// second <c>-Land</c> should only retry cleanup (CARD-0328).
+    /// </summary>
+    public async Task<bool> IsAlreadyLandedAsync(AgentTask task, CancellationToken ct)
+    {
+        if (task.WorktreeBranch is not { } branch || task.RepoPath is not { } repo)
+            return false;
+        if (!Directory.Exists(repo))
+            return false;
+
+        var exists = await GitAsync(repo, ct, "show-ref", "--verify", "--quiet", $"refs/heads/{branch}");
+        if (!exists.Ok)
+            return true;
+
+        var target = task.MergeTargetRef ?? "master";
+        await GitAsync(repo, ct, "fetch", "origin");
+        var remote = await GitAsync(repo, ct, "merge-base", "--is-ancestor", branch, $"origin/{target}");
+        if (remote.Ok)
+            return true;
+        var local = await GitAsync(repo, ct, "merge-base", "--is-ancestor", branch, target);
+        return local.Ok;
+    }
+
+    /// <summary>Retry worktree/branch cleanup after a successful land (CARD-0328).</summary>
+    public async Task<LandCleanup> CleanupAlreadyLandedAsync(AgentTask task, CancellationToken ct)
+    {
+        var target = task.MergeTargetRef ?? "master";
+        var sha = await TryRevParseAsync(task.RepoPath, $"origin/{target}", ct)
+            ?? await TryRevParseAsync(task.RepoPath, target, ct);
+
+        if (task.WorktreePath is not { } worktree || task.RepoPath is not { } repo)
+            return new LandCleanup(WorktreeRemoval.Clean, target, sha);
+
+        var removal = await RemoveQuietlyAsync(repo, worktree, target, ct);
+        return new LandCleanup(removal, target, sha);
+    }
+
+    public sealed record LandCleanup(WorktreeRemoval Removal, string Target, string? Sha);
+
+    private async Task<string?> TryRevParseAsync(string? repo, string rev, CancellationToken ct)
+    {
+        if (repo is null || !Directory.Exists(repo))
+            return null;
+        var result = await GitAsync(repo, ct, "rev-parse", rev);
+        var sha = result.StdOut.Trim();
+        return result.Ok && sha.Length > 0 ? sha : null;
     }
 
     /// <summary>
@@ -343,7 +382,7 @@ public sealed class DelegationWorktreeService
         var ahead = await GitAsync(worktree, ct, "rev-list", "--count", $"{target}..HEAD");
         if (ahead.Ok && ahead.StdOut.Trim() == "0")
         {
-            await RemoveQuietlyAsync(repo, worktree, ct);
+            await RemoveQuietlyAsync(repo, worktree, target, ct);
             return new MergeOutcome(MergeResult.NothingToMerge, [], null);
         }
 
@@ -368,8 +407,11 @@ public sealed class DelegationWorktreeService
         if (advanced is { } failure)
             return new MergeOutcome(MergeResult.Failed, [], failure);
 
-        await RemoveQuietlyAsync(repo, worktree, ct);
-        return new MergeOutcome(MergeResult.Merged, [], $"{branch} → {target}");
+        var removal = await RemoveQuietlyAsync(repo, worktree, target, ct);
+        var detail = $"{branch} → {target}";
+        if (!removal.IsClean && removal.Residue is not null)
+            detail += $"; cleanup incomplete: {removal.Residue}";
+        return new MergeOutcome(MergeResult.Merged, [], detail);
     }
 
     /// <summary>
@@ -463,17 +505,19 @@ public sealed class DelegationWorktreeService
         return null;
     }
 
-    private async Task RemoveQuietlyAsync(string repo, string worktree, CancellationToken ct)
+    private async Task<WorktreeRemoval> RemoveQuietlyAsync(
+        string repo, string worktree, string? mergedInto, CancellationToken ct)
     {
         try
         {
-            await _worktrees.RemoveAsync(repo, worktree, ct);
+            return await _worktrees.TryRemoveAsync(repo, worktree, mergedInto, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // The janitor's TTL prune is the backstop; a lingering merged worktree costs disk, not
             // correctness.
             _logger.LogWarning(ex, "Could not remove merged worktree {Path}; the janitor will", worktree);
+            return new WorktreeRemoval(false, !Directory.Exists(worktree), false, ex.Message);
         }
     }
 

@@ -268,6 +268,112 @@ public class WorktreeManagerGitIntegrationTests
     }
 
     [Test]
+    public async Task WorktreeManager_try_remove_deletes_a_merged_branch_whose_upstream_is_behind()
+    {
+        await GitTestEnvironment.SkipIfGitUnavailableAsync();
+        var env = await GitTestEnvironment.CreateAsync();
+        var remotePath = Path.Combine(env.TempRoot, "remote.git");
+
+        try
+        {
+            Directory.CreateDirectory(remotePath);
+            await GitTestEnvironment.RunGitAsync(remotePath, "init", "--bare");
+            await GitTestEnvironment.RunGitAsync(env.RepoPath, "remote", "add", "origin", remotePath);
+            var head = (await GitTestEnvironment.RunGitAsync(env.RepoPath, "rev-parse", "--abbrev-ref", "HEAD")).Trim();
+            await GitTestEnvironment.RunGitAsync(env.RepoPath, "push", "-u", "origin", head);
+
+            var manager = BuildManager(env.WorktreeRoot);
+            var worktree = await manager.CreateAsync(env.RepoPath, "E03-010", "HEAD", CancellationToken.None);
+            await File.WriteAllTextAsync(Path.Combine(worktree.Path, "feature.md"), "land me\n");
+            await GitTestEnvironment.RunGitAsync(worktree.Path, "add", "feature.md");
+            await GitTestEnvironment.RunGitAsync(worktree.Path, "commit", "-m", "feature");
+            await GitTestEnvironment.RunGitAsync(worktree.Path, "push", "-u", "origin", worktree.Branch);
+
+            await File.WriteAllTextAsync(Path.Combine(env.RepoPath, "README.md"), "base advanced\n");
+            await GitTestEnvironment.RunGitAsync(env.RepoPath, "add", "README.md");
+            await GitTestEnvironment.RunGitAsync(env.RepoPath, "commit", "-m", "advance");
+            await GitTestEnvironment.RunGitAsync(worktree.Path, "rebase", head);
+            await GitTestEnvironment.RunGitAsync(env.RepoPath, "merge", "--ff-only", worktree.Branch);
+
+            var removal = await manager.TryRemoveAsync(
+                env.RepoPath, worktree.Path, mergedInto: head, CancellationToken.None);
+
+            removal.IsClean.ShouldBeTrue(removal.Residue);
+            Directory.Exists(worktree.Path).ShouldBeFalse();
+            (await GitTestEnvironment.RunGitAsync(env.RepoPath, "branch", "--list", worktree.Branch))
+                .ShouldBe(string.Empty);
+        }
+        finally
+        {
+            env.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task WorktreeManager_try_remove_keeps_an_unmerged_branch_and_names_the_ahead_count()
+    {
+        await GitTestEnvironment.SkipIfGitUnavailableAsync();
+        var env = await GitTestEnvironment.CreateAsync();
+
+        try
+        {
+            var manager = BuildManager(env.WorktreeRoot);
+            var worktree = await manager.CreateAsync(env.RepoPath, "E03-011", "HEAD", CancellationToken.None);
+            await File.WriteAllTextAsync(Path.Combine(worktree.Path, "ahead.md"), "unique\n");
+            await GitTestEnvironment.RunGitAsync(worktree.Path, "add", "ahead.md");
+            await GitTestEnvironment.RunGitAsync(worktree.Path, "commit", "-m", "ahead");
+            var head = (await GitTestEnvironment.RunGitAsync(env.RepoPath, "rev-parse", "--abbrev-ref", "HEAD")).Trim();
+
+            var removal = await manager.TryRemoveAsync(
+                env.RepoPath, worktree.Path, mergedInto: head, CancellationToken.None);
+
+            removal.IsClean.ShouldBeFalse();
+            removal.DirectoryGone.ShouldBeTrue();
+            removal.BranchDeleted.ShouldBeFalse();
+            removal.Residue.ShouldNotBeNull();
+            removal.Residue.ShouldContain("commit(s) not on");
+            removal.Residue.ShouldContain(head);
+            Directory.Exists(worktree.Path).ShouldBeFalse();
+            (await GitTestEnvironment.RunGitAsync(env.RepoPath, "branch", "--list", worktree.Branch))
+                .ShouldContain(worktree.Branch);
+        }
+        finally
+        {
+            env.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task WorktreeManager_try_remove_reports_directory_residue_when_a_file_is_held()
+    {
+        await GitTestEnvironment.SkipIfGitUnavailableAsync();
+        var env = await GitTestEnvironment.CreateAsync();
+
+        try
+        {
+            var manager = BuildManager(env.WorktreeRoot);
+            var worktree = await manager.CreateAsync(env.RepoPath, "E03-012", "HEAD", CancellationToken.None);
+            var heldPath = Path.Combine(worktree.Path, "held.bin");
+            await File.WriteAllTextAsync(heldPath, new string('x', 4096));
+            using var held = new FileStream(heldPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+
+            var head = (await GitTestEnvironment.RunGitAsync(env.RepoPath, "rev-parse", "--abbrev-ref", "HEAD")).Trim();
+            var removal = await manager.TryRemoveAsync(
+                env.RepoPath, worktree.Path, mergedInto: head, CancellationToken.None);
+
+            removal.IsClean.ShouldBeFalse();
+            removal.DirectoryGone.ShouldBeFalse();
+            Directory.Exists(worktree.Path).ShouldBeTrue();
+            removal.Residue.ShouldNotBeNull();
+            removal.Residue.ShouldContain("directory");
+        }
+        finally
+        {
+            env.Dispose();
+        }
+    }
+
+    [Test]
     public async Task WorktreeManager_create_throws_when_branch_or_path_exists()
     {
         await GitTestEnvironment.SkipIfGitUnavailableAsync();
@@ -305,6 +411,43 @@ public class WorktreeManagerGitIntegrationTests
             pruned.ShouldBe(1);
             Directory.Exists(worktree.Path).ShouldBeFalse();
             (await GitTestEnvironment.RunGitAsync(env.RepoPath, "branch", "--list", "feat/card-E03-005"))
+                .ShouldBe(string.Empty);
+        }
+        finally
+        {
+            env.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task WorktreeJanitor_retries_residue_before_the_ttl()
+    {
+        await GitTestEnvironment.SkipIfGitUnavailableAsync();
+        var env = await GitTestEnvironment.CreateAsync();
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 5, 1, 12, 0, 0, TimeSpan.Zero));
+
+        try
+        {
+            var manager = BuildManager(env.WorktreeRoot, clock, staleAfterDays: 7);
+            var worktree = await manager.CreateAsync(env.RepoPath, "E03-013", "HEAD", CancellationToken.None);
+            await GitTestEnvironment.RunGitAsync(env.RepoPath, "worktree", "lock", worktree.Path);
+
+            var first = await manager.TryRemoveAsync(
+                env.RepoPath, worktree.Path, mergedInto: null, CancellationToken.None);
+            first.IsClean.ShouldBeFalse();
+            first.Residue.ShouldNotBeNull();
+            first.Residue.ShouldContain("locked");
+
+            clock.SetUtcNow(new DateTimeOffset(2026, 5, 1, 12, 1, 0, TimeSpan.Zero));
+            (await manager.PruneStaleAsync(CancellationToken.None)).ShouldBe(0);
+            Directory.Exists(worktree.Path).ShouldBeTrue();
+
+            await GitTestEnvironment.RunGitAsync(env.RepoPath, "worktree", "unlock", worktree.Path);
+            var pruned = await manager.PruneStaleAsync(CancellationToken.None);
+
+            pruned.ShouldBe(1);
+            Directory.Exists(worktree.Path).ShouldBeFalse();
+            (await GitTestEnvironment.RunGitAsync(env.RepoPath, "branch", "--list", "feat/card-E03-013"))
                 .ShouldBe(string.Empty);
         }
         finally

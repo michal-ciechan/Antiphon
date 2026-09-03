@@ -219,6 +219,13 @@ GET    /api/agent-tasks/summary              fleet-wide counters (active, blocke
 POST   /api/agent-tasks/{id}/cancel  |  /retry  |  /escalate
 POST   /api/agent-tasks/{id}/reply           answer a Blocked delegate's question
 POST   /api/agent-tasks/{id}/refine          steer a running delegate without cancelling it
+POST   /api/agent-tasks/{id}/land            queue an explicit land of a Succeeded Worktree
+                                             task (`{ verify?: string }`). 202; git runs in
+                                             the background. Outcomes: `Landed` (pushed and
+                                             cleaned), `LandedWithResidue` (pushed, cleanup
+                                             left a branch/directory — re-POST to retry
+                                             cleanup), `LandRefused` (target did not
+                                             advance). 409 if a land is already queued.
 GET    /api/agent-tasks/areas?directory=     the repo's named areas (antiphon.areas.json)
 GET    /api/agent-tasks/pipeline             fleet-wide advisory in-flight / queued / blocked / ready snapshot. Queued queueReason is one of sharedCheckoutLease, concurrencyCap, routingPinNotBefore, awaitingDispatch.
 ```

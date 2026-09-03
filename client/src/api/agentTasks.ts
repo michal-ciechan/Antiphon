@@ -71,6 +71,16 @@ export type AgentTaskEventType =
   | 'Check'
   /** The caller refined the task mid-flight (CARD-0062) — what the delegate was told and when. */
   | 'Refined'
+  | 'ApiErrorDeferred'
+  | 'NoteShrunk'
+  | 'HumanNotified'
+  | 'Held'
+  | 'ScopeDrift'
+  | 'LandRequested'
+  | 'Landed'
+  | 'LandRefused'
+  | 'Rerouted'
+  | 'LandedWithResidue'
 
 export interface AgentTaskSummaryDto {
   id: string
