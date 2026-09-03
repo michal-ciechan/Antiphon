@@ -22,6 +22,13 @@ public sealed class DelegationSettings
     public int MaxConcurrentTasks { get; set; } = 6;
 
     /// <summary>
+    /// CARD-0147: absolute create-time cap on non-specialist tasks in Queued, Dispatched, or
+    /// Working. Distinct from <see cref="MaxConcurrentTasks"/> (the dispatcher process ceiling).
+    /// Must be a positive integer; there is always an absolute cap.
+    /// </summary>
+    public int MaxOpenTasks { get; set; } = 3;
+
+    /// <summary>
     /// Backstop only. Nesting is INTENDED (orchestrator → sub-orchestrator → worker is depth 2 and
     /// ordinary), so depth is a poor runaway guard — <see cref="MaxCostUsdPerRoot"/> is the real one.
     /// </summary>
@@ -801,10 +808,12 @@ public sealed class DelegationSettings
         public AgentKind? Kind { get; set; }
 
         /// <summary>
-        /// Advisory in-flight recommendation for this role (CARD-0304). Global, not per-board.
-        /// Null means unbounded. A configured value must be positive. This never refuses task
-        /// creation or changes <see cref="DelegationSettings.MaxConcurrentTasks"/> dispatch —
-        /// the pipeline endpoint only reports whether the current in-flight count is at or over it.
+        /// In-flight recommendation for this role (CARD-0304 / CARD-0147). Global, not per-board.
+        /// Null means unbounded. A configured value must be positive. Create refuses when this
+        /// role's open (Queued/Dispatched/Working) count meets the number, unless
+        /// <c>ignoreConcurrencyLimit</c>. Does not change <see cref="DelegationSettings.MaxConcurrentTasks"/>
+        /// dispatch — the pipeline endpoint still reports whether the current in-flight count is
+        /// at or over it.
         /// </summary>
         public int? RecommendedInFlight { get; set; } = 1;
     }
@@ -929,6 +938,11 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
         if (options.LandMaxAttempts is < 1 or > 10)
         {
             failures.Add("Delegation:LandMaxAttempts must be between 1 and 10.");
+        }
+
+        if (options.MaxOpenTasks <= 0)
+        {
+            failures.Add("Delegation:MaxOpenTasks must be a positive integer.");
         }
 
         foreach (var (role, entry) in options.RolePolicy)

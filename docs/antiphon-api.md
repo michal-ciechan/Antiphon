@@ -49,7 +49,7 @@ localhost dev tool only. If Antiphon ever becomes multi-user, gate this behind a
 
 - `code` is present when the exception carried a **stable machine-readable code**. `conflict` and
   `validation_failed` are the generic ones; the specific ones worth branching on are
-  `herdr_refused`, `remote_control_refused`, `subscription_quota_low`, `provider_sign_in_required`, `card_identifier_ambiguous`, `channel_disabled`, `profile_not_found`,
+  `herdr_refused`, `remote_control_refused`, `subscription_quota_low`, `provider_sign_in_required`, `concurrency_limit`, `card_identifier_ambiguous`, `channel_disabled`, `profile_not_found`,
   `profile_resolution_unavailable`, `profile_revision_conflict`.
 - `errors` is present on validation failures (422), keyed by field.
 - Additional keys may be spliced in from an exception's `Extensions`.
@@ -255,13 +255,21 @@ API and is fully commented in place. The fields that change behaviour most: `rol
 (`Worker` / `Orchestrator`), `modelLevel`, `agentKind` (ClaudeCode / Grok / Codex — see
 [agent-kinds.md](agent-kinds.md)), `workspace`, `workingDirectory`, `scope`, `followUpOnTask`,
 `expectedMinutes`, `envOverride`, `ignoreSubscriptionQuota`, `ignoreModelDisabled`,
-`ignoreRoutingPin`, `authority` (CARD-0294 standing authority, ≤ 2000 chars; `autoContinue`
+`ignoreRoutingPin`, `ignoreConcurrencyLimit` (CARD-0147; omits the create-time fleet/role cap for this request only), `authority` (CARD-0294 standing authority, ≤ 2000 chars; `autoContinue`
 without it is 422 `auto_continue_needs_authority`).
 
 > `POST /api/agent-tasks` can refuse with **409 `subscription_quota_low`** (CARD-0136). That is a
 > launch refusal, not a warning attached to a launch that already happened. Retry with
 > `ignoreSubscriptionQuota: true`, or pick another `agentKind`/agent. The dispatcher never refuses;
 > it only records an informational warning.
+>
+> It can also refuse with **409 `concurrency_limit`** (CARD-0147) when a new non-specialist task
+> would push the fleet past `Delegation:MaxOpenTasks` (default 3) or that role past
+> `RolePolicy[role].RecommendedInFlight` (default 1). Queued, Dispatched and Working count; Blocked
+> does not; specialists and live follow-ups are exempt. The `concurrency` extension names the axis,
+> the occupants, and `override: "ignoreConcurrencyLimit"`. Retry with `ignoreConcurrencyLimit: true`
+> if the user asked for parallel work this turn — that records a Warning and still does not raise
+> `MaxConcurrentTasks`.
 >
 > It can also refuse with **409 `provider_sign_in_required`** (CARD-0324) for a registry-Grok
 > create whose `GROK_HOME` has no usable `auth.json`. The problem-details extension carries

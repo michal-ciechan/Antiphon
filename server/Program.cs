@@ -296,6 +296,7 @@ try
     // malformed map degrades to "no names known").
     builder.Services.AddSingleton<AreaMapLoader>();
     builder.Services.AddScoped<DelegationWorktreeService>();
+    builder.Services.AddScoped<DelegationOpenGate>();
     builder.Services.AddScoped<AgentTaskService>();
     builder.Services.AddScoped<AgentTaskPipelineStatusService>();
     builder.Services.AddSingleton<AgentTaskLandQueue>();
