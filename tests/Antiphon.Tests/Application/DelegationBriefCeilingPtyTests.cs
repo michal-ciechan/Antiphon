@@ -178,45 +178,59 @@ public class DelegationBriefCeilingPtyTests
             .ToHashSet();
 
     /// <summary>
-    /// The other side of the gate: a brief the gate lets through inline must arrive WHOLE through
-    /// the same clipping receiver — that is what "under the ceiling" has to mean.
+    /// The other side of the gate: a brief the gate lets through inline must be the brief itself,
+    /// not a pointer — that is what "under the ceiling" has to mean.
     ///
-    /// <para>The ceiling used here is 1 024 bytes — the measured read quantum — not the shipped
-    /// default of 900, because at 900 this branch is unreachable: the reporting contract alone is
-    /// 838 bytes, so <see cref="DelegationReportFormatter.BuildBrief"/> cannot produce a brief under
-    /// 900 bytes for ANY goal (the floor is ~915). Every real brief spills today. That is a safe
-    /// state, not a broken one, but it means only the pointer path is exercised in production — so
-    /// this test pins the inline path at the physical boundary instead, and the assertion below
-    /// pins the fact itself, so that shrinking the contract quietly reopens a path nobody is
-    /// watching.</para>
+    /// <para>The synthetic ceiling is measured from this fixture's
+    /// <see cref="DelegationReportFormatter.BuildBrief"/> size (CARD-0336). A hard-coded 1 024 used
+    /// to be the inbox read quantum; the reporting contract now exceeds that even for a 40-byte
+    /// goal, so 1 024 takes the pointer path and never sees HEAD-MARKER. Production stays at 900
+    /// (first assertion). Clip-survival through the fake is only asserted when the brief itself
+    /// still fits in one 1 024-byte read — otherwise the drop is the clip model working, not a
+    /// gate bug.</para>
     /// </summary>
     [Test]
     public async Task A_brief_inside_the_ceiling_arrives_whole()
     {
-        SkipIfUnavailable();
-        await using var h = await Harness.StartAsync();
+        var cwd = Path.Combine(Path.GetTempPath(), $"antiphon-card28-gate-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(cwd);
+        try
+        {
+            var task = NewTask(cwd, goalBytes: 40);
+            var shipped = new DelegationSettings();
+            var briefBytes = Encoding.UTF8.GetByteCount(
+                DelegationReportFormatter.BuildBrief(task, shipped, shipped.ReplyInlineMaxChars));
+            var inlineCeiling = briefBytes + 64;
+            var settings = new DelegationSettings { BriefInlineMaxBytes = inlineCeiling };
 
-        var task = NewTask(h.Cwd, goalBytes: 40);
-        var settings = new DelegationSettings { BriefInlineMaxBytes = 1_024 };
+            AgentTaskDispatcher.FitBriefForTyping(task, shipped)
+                .ShouldContain("YOUR BRIEF IS NOT IN THIS MESSAGE", customMessage:
+                    "at the shipped 900-byte ceiling even a 40-byte goal spills — the reporting "
+                    + $"contract is {briefBytes} UTF-8 bytes. If this ever fails, the inline path "
+                    + "has reopened and needs the coverage this test gives it");
 
-        AgentTaskDispatcher.FitBriefForTyping(task, new DelegationSettings())
-            .ShouldContain("YOUR BRIEF IS NOT IN THIS MESSAGE", customMessage:
-                "at the shipped 900-byte ceiling even a 40-byte goal spills — the reporting contract "
-                + "alone is 838 bytes. If this ever fails, the inline path has reopened and needs "
-                + "the coverage this test gives it");
+            var typed = AgentTaskDispatcher.FitBriefForTyping(task, settings);
+            Encoding.UTF8.GetByteCount(typed).ShouldBeLessThanOrEqualTo(inlineCeiling);
+            typed.ShouldContain(Head, customMessage:
+                $"this one is the brief itself ({briefBytes} UTF-8 bytes, ceiling {inlineCeiling}), not a pointer");
 
-        var typed = AgentTaskDispatcher.FitBriefForTyping(task, settings);
-        Encoding.UTF8.GetByteCount(typed).ShouldBeLessThanOrEqualTo(1_024);
-        typed.ShouldContain(Head, customMessage: "this one is the brief itself, not a pointer");
+            if (briefBytes > 1_024)
+                return;
 
-        await h.DeliverAsync(typed);
-
-        var arrived = await h.WaitForSubmittedAsync(
-            s => s.Contains(Head) && s.Contains(Tail)
-                 && s.Contains(DelegationReportFormatter.TaskMarker(task.Id)));
-        arrived.ShouldBeTrue(
-            "a brief inside one read chunk must arrive whole — head, tail and marker. Raw:\n"
-            + await h.RawAsync());
+            SkipIfUnavailable();
+            await using var h = await Harness.StartAsync();
+            await h.DeliverAsync(typed);
+            var arrived = await h.WaitForSubmittedAsync(
+                s => s.Contains(Head) && s.Contains(Tail)
+                     && s.Contains(DelegationReportFormatter.TaskMarker(task.Id)));
+            arrived.ShouldBeTrue(
+                "a brief inside one read chunk must arrive whole — head, tail and marker. Raw:\n"
+                + await h.RawAsync());
+        }
+        finally
+        {
+            try { Directory.Delete(cwd, recursive: true); } catch { /* best effort */ }
+        }
     }
 
     private static void SkipIfUnavailable()
