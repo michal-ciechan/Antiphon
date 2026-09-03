@@ -361,4 +361,40 @@ public class PromptSubmissionMatchTests
         log.MatchesRecordedInput("Implement CARD-0006 slice one").ShouldBeFalse();
         log.MatchesRecordedInput("continue").ShouldBeFalse("below MinMatchChars: C4 refuses, it never guesses");
     }
+
+    [Test]
+    public void A_prefix_of_19_chars_distinguishes_two_otherwise_identical_long_prompts()
+    {
+        var ritual = new string('x', 195);
+        var candidateA = "[session aaaaaaaa] " + ritual;
+        var candidateB = "[session bbbbbbbb] " + ritual;
+
+        var logA = new SessionInputLog();
+        logA.Append(candidateA);
+        var logB = new SessionInputLog();
+        logB.Append(candidateB);
+
+        logA.MatchesRecordedInput(candidateA).ShouldBeTrue();
+        logA.MatchesRecordedInput(candidateB).ShouldBeFalse();
+        logB.MatchesRecordedInput(candidateB).ShouldBeTrue();
+        logB.MatchesRecordedInput(candidateA).ShouldBeFalse();
+    }
+
+    [Test]
+    public void A_suffix_past_the_head_window_does_not()
+    {
+        // Trap: a suffix on a ≥200-char shared prefix is invisible to C4. Delivery must prefix.
+        var shared = new string('x', PromptSubmissionMatch.MatchWindowChars);
+        var candidateA = shared + " [session aaaaaaaa]";
+        var candidateB = shared + " [session bbbbbbbb]";
+
+        var logA = new SessionInputLog();
+        logA.Append(candidateA);
+        var logB = new SessionInputLog();
+        logB.Append(candidateB);
+
+        logA.MatchesRecordedInput(candidateB).ShouldBeTrue(
+            "suffix sits past MatchWindowChars; C4 cannot tell the two apart");
+        logB.MatchesRecordedInput(candidateA).ShouldBeTrue();
+    }
 }

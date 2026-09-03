@@ -2130,6 +2130,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         if (string.IsNullOrWhiteSpace(body))
             return;
 
+        body = ChannelPreamble.WithSessionTag(body, sessionId);
+
         var yieldToChannel = await _db.SessionQueuedMessages.AnyAsync(
             m => m.AgentSessionId == sessionId
                 && m.Origin == QueuedMessageOrigin.Channel
