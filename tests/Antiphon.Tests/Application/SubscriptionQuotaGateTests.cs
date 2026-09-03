@@ -179,14 +179,17 @@ public sealed class SubscriptionQuotaGateTests
     [NotInParallel]
     public async Task Dispatch_records_an_informational_warning_and_never_refuses_on_a_low_reading()
     {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         using var workspace = new TempWorkspace();
-        var task = await SeedQueuedCodexTaskAsync(workspace.Path);
-        await SeedUsageSampleAsync(AgentKind.Codex, "Codex", remaining: 3, hoursToReset: 36);
+        var (agentId, _) = await SeedWarmCodexAgentAsync(schema.ConnectionString, workspace.Path);
+        var task = await SeedQueuedCodexTaskAsync(schema.ConnectionString, workspace.Path, agentId);
+        await SeedUsageSampleAsync(schema.ConnectionString, AgentKind.Codex, "Codex", remaining: 3, hoursToReset: 36);
+        await DrainOtherQueuedAsync(schema.ConnectionString, task.Id);
 
-        var dispatcher = CreateDispatchHarness();
+        var dispatcher = CreateDispatchHarness(schema.ConnectionString);
         await dispatcher.TickAsync(CancellationToken.None);
 
-        await using var verify = CreateContext();
+        await using var verify = CreateContext(schema.ConnectionString);
         var dispatched = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
         dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
         dispatched.FailureReason.ShouldBeNull();
@@ -207,9 +210,11 @@ public sealed class SubscriptionQuotaGateTests
             ObservedAt: Now - age,
             Age: age);
 
-    private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
+    private static AppDbContext CreateContext(string connectionString) =>
+        new(TestDbFixture.CreateDbContextOptions(connectionString));
 
-    private static async Task<AgentTask> SeedQueuedCodexTaskAsync(string directory)
+    private static async Task<AgentTask> SeedQueuedCodexTaskAsync(
+        string connectionString, string directory, Guid pinnedAgentId)
     {
         var id = Guid.NewGuid();
         var now = DateTime.UtcNow;
@@ -225,21 +230,77 @@ public sealed class SubscriptionQuotaGateTests
             Workspace = WorkspaceMode.Shared,
             WorkingDirectory = directory,
             Status = AgentTaskStatus.Queued,
+            AgentId = pinnedAgentId,
             ReplyTo = AgentTaskReplyTo.None,
             ExpectedDurationMinutes = 10,
             CreatedAt = now,
         };
-        await using var db = CreateContext();
+        await using var db = CreateContext(connectionString);
         db.AgentTasks.Add(task);
         await db.SaveChangesAsync();
         return task;
     }
 
+    private static async Task<(Guid AgentId, Guid SessionId)> SeedWarmCodexAgentAsync(
+        string connectionString, string directory)
+    {
+        var sessionId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        await using var db = CreateContext(connectionString);
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = sessionId,
+            DefinitionName = "codex",
+            AgentKind = AgentKind.Codex,
+            Status = SessionStatus.Running,
+            Cwd = directory,
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = now,
+            StartedAt = now,
+            LastSeenAt = now,
+        });
+        db.Agents.Add(new Agent
+        {
+            Id = agentId,
+            Name = $"task-{agentId:N}"[..13],
+            Slug = $"task-{agentId:N}"[..13],
+            WorkingDirectory = directory,
+            Details = "Warm Codex pool delegate.",
+            Status = AgentStatus.Idle,
+            Kind = AgentKind.Codex,
+            ModelLevel = AgentModelLevel.Medium,
+            IsPoolDelegate = true,
+            PoolIdleSince = now.AddMinutes(-3),
+            PersistentSessionId = sessionId.ToString("D"),
+            CreatedAt = now,
+            UpdatedAt = now,
+        });
+        await db.SaveChangesAsync();
+        return (agentId, sessionId);
+    }
+
+    private static async Task DrainOtherQueuedAsync(string connectionString, params Guid[] keep)
+    {
+        await using var db = CreateContext(connectionString);
+        var leftovers = await db.AgentTasks
+            .Where(t => t.Status == AgentTaskStatus.Queued && !keep.Contains(t.Id))
+            .ToListAsync();
+        foreach (var leftover in leftovers)
+        {
+            leftover.Status = AgentTaskStatus.Canceled;
+            leftover.CompletedAt = DateTime.UtcNow;
+        }
+
+        await db.SaveChangesAsync();
+    }
+
     private static async Task SeedUsageSampleAsync(
-        AgentKind provider, string key, double remaining, int hoursToReset)
+        string connectionString, AgentKind provider, string key, double remaining, int hoursToReset)
     {
         var now = DateTime.UtcNow;
-        await using var db = CreateContext();
+        await using var db = CreateContext(connectionString);
         db.SubscriptionUsageSamples.Add(new SubscriptionUsageSample
         {
             Id = Guid.NewGuid(),
@@ -257,11 +318,11 @@ public sealed class SubscriptionQuotaGateTests
         await db.SaveChangesAsync();
     }
 
-    private static AgentTaskDispatcher CreateDispatchHarness()
+    private static AgentTaskDispatcher CreateDispatchHarness(string connectionString)
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
+        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString));
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton(Options.Create(new SupervisionSettings()));

@@ -431,22 +431,15 @@ public sealed class AgentTaskDispatcher
             // CARD-0090: a chain-chosen task re-walks instead of sitting Held on a snapshot
             // alias the operator already listed a fallback for. A Required pin is never
             // rerouted by a tick.
-            if (_modelAvailability is not null || _quotaGate is not null)
+            // CARD-0336: a subscription-quota verdict is a dispatch warning, not a skip. Create
+            // is the refuse; Tick used to treat Evaluate's warning as quotaRefuse and leave the
+            // task Queued with a model-hold event.
+            if (_modelAvailability is not null)
             {
                 var alias = await ResolveDispatchAliasAsync(task, ct);
-                var modelHeld = _modelAvailability is not null
-                    && await _modelAvailability.IsHeldAsync(task.AgentKind, alias, ct);
-                var quotaRefuse = false;
-                if (!modelHeld && _quotaGate is not null)
-                {
-                    var verdict = await _quotaGate.EvaluateAsync(
-                        task.AgentKind,
-                        SubscriptionUsageKey.For(null, task.AgentKind),
-                        ct);
-                    quotaRefuse = verdict is not null;
-                }
+                var modelHeld = await _modelAvailability.IsHeldAsync(task.AgentKind, alias, ct);
 
-                if (modelHeld || quotaRefuse)
+                if (modelHeld)
                 {
                     if (task.Complexity is not null
                         && _complexityRouting is not null
@@ -2471,6 +2464,28 @@ public sealed class AgentTaskDispatcher
 
         var now = UtcNow();
 
+        // CARD-0136 / CARD-0336: a low reading warns on every dispatch path (reuse and spawn).
+        // Create-time is the refuse; Tick must not skip the task for the same verdict.
+        if (_quotaGate is not null)
+        {
+            Agent? owner = null;
+            if (claimed.AgentId is Guid oid)
+                owner = await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == oid, ct);
+            var quota = await _quotaGate.EvaluateAsync(
+                claimed.AgentKind, SubscriptionUsageKey.For(owner, claimed.AgentKind), ct);
+            if (quota is not null)
+            {
+                _db.AgentTaskEvents.Add(new AgentTaskEvent
+                {
+                    Id = Guid.NewGuid(),
+                    AgentTaskId = claimed.Id,
+                    Type = AgentTaskEventType.Warning,
+                    Detail = SubscriptionQuotaPolicy.FormatDispatchWarning(quota),
+                    At = now,
+                });
+            }
+        }
+
         // Reuse before spawn: a warm delegate already sitting in this directory takes the task
         // without a cold start. Shared tasks only — a worktree task's directory doesn't exist yet.
         if (claimed.Workspace == WorkspaceMode.Shared)
@@ -2511,26 +2526,6 @@ public sealed class AgentTaskDispatcher
         {
             await transaction.CommitAsync(ct);
             return false;
-        }
-
-        if (_quotaGate is not null)
-        {
-            Agent? owner = null;
-            if (claimed.AgentId is Guid oid)
-                owner = await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == oid, ct);
-            var quota = await _quotaGate.EvaluateAsync(
-                program.Kind, SubscriptionUsageKey.For(owner, program.Kind), ct);
-            if (quota is not null)
-            {
-                _db.AgentTaskEvents.Add(new AgentTaskEvent
-                {
-                    Id = Guid.NewGuid(),
-                    AgentTaskId = claimed.Id,
-                    Type = AgentTaskEventType.Warning,
-                    Detail = SubscriptionQuotaPolicy.FormatDispatchWarning(quota),
-                    At = now,
-                });
-            }
         }
 
         // Isolation is real, not declarative: a Worktree task gets its own `git worktree add`
