@@ -15,6 +15,8 @@
 #         test-raw-check-interpreter : exe is cmd.exe AND cwd is -CheckInterpreterDir
 #                                      (AntiphonWebAppFactory's test-raw definition, launched
 #                                      by CheckInterpreterProvisioner at host startup)
+#         test-raw-diagnose          : exe is cmd.exe AND cwd is -DiagnoseDir
+#                                      (same test-raw definition, launched by DiagnoseProvisioner)
 #         kind-test-temp-dir         : cwd is under %TEMP%\antiphon-kind-test*
 #                                      (AgentTaskAgentKindTests, dispatched by a factory host
 #                                      before the shared-schema isolation of 2026-08-20)
@@ -47,6 +49,8 @@ param(
     [string]$SessionLogPath = 'C:\logs\antiphon\session-runner',
 
     [string]$CheckInterpreterDir = 'C:\logs\antiphon\check-interpreter',
+
+    [string]$DiagnoseDir = 'C:\logs\antiphon\diagnose',
 
     [string]$PgContainer = 'antiphon-postgres',
     [string]$PgUser = 'antiphon',
@@ -168,9 +172,10 @@ $verdicts = foreach ($m in $manifests) {
     if ($m.Exited) { $reasons.Add('R4 manifest records an exit (host is lingering, will leave on its own)') }
 
     $isCheckInterp = ($m.ExeLeaf -ieq 'cmd.exe') -and ($m.Cwd -ieq $CheckInterpreterDir)
+    $isDiagnose = ($m.ExeLeaf -ieq 'cmd.exe') -and ($m.Cwd -ieq $DiagnoseDir)
     $isKindTest = $m.Cwd -match '\\antiphon-kind-test[^\\]*$'
-    if ($isCheckInterp) {
-        $rule = 'test-raw-check-interpreter'
+    if ($isCheckInterp -or $isDiagnose) {
+        $rule = if ($isDiagnose) { 'test-raw-diagnose' } else { 'test-raw-check-interpreter' }
         if ($null -ne $child -and $child.Name -ne 'cmd.exe') { $reasons.Add("R3 child is $($child.Name), expected cmd.exe") }
         $ansi = Get-Item $m.AnsiLog -ErrorAction SilentlyContinue
         if ($null -eq $ansi) { $reasons.Add('R6 ansi log missing') }

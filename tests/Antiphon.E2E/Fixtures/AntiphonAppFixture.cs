@@ -572,7 +572,9 @@ public class AntiphonAppFixture
                     ["Agents:DefaultDefinition"] = "e2e-raw",
                     ["Agents:Definitions:e2e-raw:Kind"] = "Raw",
                     ["Agents:Definitions:e2e-raw:Exe"] = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
-                    ["SessionRunner:BaseUrl"] = _sessionRunnerBaseUrl
+                    ["SessionRunner:BaseUrl"] = _sessionRunnerBaseUrl,
+                    ["Delegation:DiagnoseEnabled"] = "false",
+                    ["Delegation:DiagnoseWorkingDirectory"] = Path.Combine(_workspacePath, "diagnose"),
                 };
 
                 if (_diagnosticsDirectory is not null)

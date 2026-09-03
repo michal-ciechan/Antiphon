@@ -578,6 +578,87 @@ public sealed class DelegationSettings
     /// </summary>
     public int CheckInterpreterMaxBacklog { get; set; } = 2;
 
+    // ── The diagnose seat: a standing specialist agent (CARD-0352) ─────────────────────────────
+    //
+    // Titles untitled tasks and labels unlabelled cards. Every failure mode degrades to today's
+    // behaviour (the raw fallback title, the unlabelled card), so none of these knobs can break
+    // create or the board. DiagnoseEnabled is the switch to reach for if the seat misbehaves.
+
+    /// <summary>
+    /// Off and neither job runs: no seat, no queue, no ledger row. Title create and card
+    /// create stay byte-identical to today.
+    /// </summary>
+    public bool DiagnoseEnabled { get; set; } = true;
+
+    /// <summary>Job 1: replace a long Goal-fallback title after create. Nested under <see cref="DiagnoseEnabled"/>.</summary>
+    public bool DiagnoseTitleEnabled { get; set; } = true;
+
+    /// <summary>Job 2: the periodic unlabelled-card sweep. Nested under <see cref="DiagnoseEnabled"/>.</summary>
+    public bool DiagnoseSweepEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Apply writes the labels; Shadow runs the seat and writes the ledger only. Default Apply —
+    /// until CARD-0332 routes on the labels, a wrong one costs a human edit.
+    /// </summary>
+    public DiagnoseLabelMode DiagnoseLabelMode { get; set; } = DiagnoseLabelMode.Apply;
+
+    /// <summary>
+    /// Slug AND name of the standing specialist. The provisioner finds it by this exact slug, so
+    /// changing it provisions a SECOND agent rather than renaming the first — delete the old row.
+    /// </summary>
+    public string DiagnoseAgentSlug { get; set; } = "antiphon-diagnose";
+
+    /// <summary>
+    /// The specialist's own scratch working directory. Null derives it: the first
+    /// <see cref="AllowedRoots"/> entry plus <c>\.antiphon\diagnose</c>, or — when no roots are
+    /// configured — a directory under the system temp path. A distinct cwd is the CARD-0006
+    /// mitigation by construction, same as the check interpreter.
+    /// </summary>
+    public string? DiagnoseWorkingDirectory { get; set; }
+
+    /// <summary>
+    /// How long a diagnose request waits for an answer. Longer than the interpreter's 60 s
+    /// because a cold first launch after deploy is the expected p90, and a dropped title is
+    /// cosmetic rather than a missed check-in.
+    /// </summary>
+    public int DiagnoseWaitSeconds { get; set; } = 90;
+
+    /// <summary>
+    /// At or above this many unfinished Diagnose rows on the seat, a new request is dropped
+    /// (titles) or retried next tick (cards). One specialist, serial drainer.
+    /// </summary>
+    public int DiagnoseMaxBacklog { get; set; } = 2;
+
+    /// <summary>UTC-day cap on Diagnose-role spend. Crossing it writes <c>DegradedBudget</c> and creates no row.</summary>
+    public decimal DiagnoseDailyBudgetUsd { get; set; } = 2.00m;
+
+    /// <summary>
+    /// A Goal-fallback title this long or shorter already *is* a title (CARD-0351's CLI warning
+    /// threshold). Only longer fallbacks are queued for replacement.
+    /// </summary>
+    public int DiagnoseTitleMinFallbackChars { get; set; } = 80;
+
+    /// <summary>Sweep period. Floored at 1 minute by the hosted service.</summary>
+    public int DiagnoseSweepMinutes { get; set; } = 10;
+
+    /// <summary>Cards enqueued per sweep tick.</summary>
+    public int DiagnoseSweepBatch { get; set; } = 5;
+
+    /// <summary>A <c>Diagnoses</c> row newer than this excludes the card from the next sweep.</summary>
+    public int DiagnoseRetryHours { get; set; } = 24;
+
+    /// <summary>
+    /// This many non-<c>Applied</c> rows newer than the card's <c>UpdatedAt</c> exclude it until
+    /// the card is edited (an edited card earns a fresh attempt).
+    /// </summary>
+    public int DiagnoseMaxAttemptsPerCard { get; set; } = 3;
+
+    /// <summary>
+    /// Card description budget in the LABELS brief. Head + tail, with an elision marker.
+    /// Live open cards fit in one brief today (p90 ~6 715, max ~8 412).
+    /// </summary>
+    public int DiagnoseMaxInputChars { get; set; } = 12_000;
+
     /// <summary>A sub-orchestrator decomposes, which is expensive thinking — never below this.</summary>
     public AgentModelLevel MinOrchestratorLevel { get; set; } = AgentModelLevel.High;
 
@@ -898,4 +979,13 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(failures);
     }
+}
+
+/// <summary>
+/// CARD-0352 job 2: whether a successful card diagnosis writes labels or only the ledger.
+/// </summary>
+public enum DiagnoseLabelMode
+{
+    Apply = 0,
+    Shadow = 1,
 }

@@ -87,6 +87,9 @@ public static class InstructionBundles
     /// <summary>The check interpreter's contract, moved here from <c>CheckInterpretation</c>.</summary>
     public const string CheckInterpreter = "check-interpreter";
 
+    /// <summary>The diagnose seat's contract (CARD-0352): titles a task or labels a card.</summary>
+    public const string Diagnose = "diagnose";
+
     /// <summary>
     /// The reply-style blocks (CARD-0060), one per <see cref="AgentReplyStyle"/> value. Resolved
     /// through <see cref="AgentReplyStyles"/> rather than named directly — the map from enum to key

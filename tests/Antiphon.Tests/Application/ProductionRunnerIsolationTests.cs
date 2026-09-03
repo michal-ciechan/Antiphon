@@ -75,4 +75,24 @@ public class ProductionRunnerIsolationTests
         (await db.Agents.AnyAsync(a => a.Slug == slug)).ShouldBeFalse(
             $"the check interpreter '{slug}' must not be provisioned in a test host");
     }
+
+    [Test]
+    public async Task The_diagnose_seat_is_off_and_its_directory_is_not_the_production_one()
+    {
+        using var client = _factory.CreateClient();
+        (await client.GetAsync("/api/version")).StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var delegation = _factory.Services.GetRequiredService<IOptions<DelegationSettings>>().Value;
+        delegation.DiagnoseEnabled.ShouldBeFalse(
+            "starting the diagnose seat is the same launch leak as the check interpreter (CARD-0352)");
+        DiagnoseProvisioner.ResolveWorkingDirectory(delegation)
+            .ShouldNotBe(@"C:\logs\antiphon\diagnose",
+                "a test host that re-enables diagnose must still not share the production directory");
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var slug = DiagnoseProvisioner.Slug(delegation);
+        (await db.Agents.AnyAsync(a => a.Slug == slug)).ShouldBeFalse(
+            $"the diagnose seat '{slug}' must not be provisioned in a test host");
+    }
 }

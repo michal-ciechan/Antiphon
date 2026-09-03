@@ -364,7 +364,8 @@ if ($tuiBits.Count -gt 0) {
 $conventionDirs = @(
     'C:\Antiphon\worktrees',
     'C:\logs\antiphon\session-runner',
-    'C:\logs\antiphon\check-interpreter'
+    'C:\logs\antiphon\check-interpreter',
+    'C:\logs\antiphon\diagnose'
 )
 foreach ($dir in $conventionDirs) {
     if (Test-Path -LiteralPath $dir) {

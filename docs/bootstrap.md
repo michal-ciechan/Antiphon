@@ -90,6 +90,7 @@ tracked configs assume them; they are outside the repo on purpose):
 C:\Antiphon\worktrees
 C:\logs\antiphon\session-runner
 C:\logs\antiphon\check-interpreter
+C:\logs\antiphon\diagnose
 ```
 
 `src/Antiphon.SessionRunner/appsettings.json` sets

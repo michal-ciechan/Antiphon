@@ -132,7 +132,8 @@
   },
   "Delegation": {
     "MaxCostUsdPerRoot": 200.00,
-    "CheckInterpreterWorkingDirectory": "C:\\logs\\antiphon\\check-interpreter"
+    "CheckInterpreterWorkingDirectory": "C:\\logs\\antiphon\\check-interpreter",
+    "DiagnoseWorkingDirectory": "C:\\logs\\antiphon\\diagnose"
   },
   "ChannelBridge": {
     "Enabled": false,

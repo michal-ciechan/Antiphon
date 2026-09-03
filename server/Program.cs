@@ -313,6 +313,9 @@ try
     // The standing specialist that interprets a check's bundle (CARD-0047 slice 4). Provisioning is
     // idempotent and self-healing, so it is safe to call at startup and again from any check.
     builder.Services.AddScoped<CheckInterpreterProvisioner>();
+    // The standing specialist that titles untitled tasks and labels unlabelled cards (CARD-0352).
+    // Same substrate as the check interpreter; the hosted drainers land in S3/S4.
+    builder.Services.AddScoped<DiagnoseProvisioner>();
     // The "what is stuck" projection (CARD-0035). Read-only — every verb it names is an endpoint
     // that already exists, and it is scoped because it is one query burst per request.
     builder.Services.AddScoped<AttentionService>();

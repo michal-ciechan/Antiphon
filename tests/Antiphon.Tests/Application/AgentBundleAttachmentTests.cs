@@ -39,7 +39,7 @@ public class AgentBundleAttachmentTests
     {
         var attachable = InstructionBundles.Attachable.Select(b => b.Key).ToList();
 
-        attachable.ShouldBe(["board-api", "check-interpreter", "delegate-basics", "orchestrator"]);
+        attachable.ShouldBe(["board-api", "check-interpreter", "delegate-basics", "diagnose", "orchestrator"]);
         attachable.ShouldContain(
             InstructionBundles.BoardApi,
             "the whole point of the slice: board-api is on no role, so an attachment is the only way "

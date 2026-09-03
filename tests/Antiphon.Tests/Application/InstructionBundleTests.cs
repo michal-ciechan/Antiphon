@@ -51,7 +51,7 @@ public class InstructionBundleTests
         // added, renamed or accidentally embedded shows up HERE rather than in an agent's system
         // prompt. Adding a bundle is meant to cost this one line.
         InstructionBundles.All.Keys.Order().ShouldBe([
-            "board-api", "check-interpreter", "delegate-basics", "orchestrator",
+            "board-api", "check-interpreter", "delegate-basics", "diagnose", "orchestrator",
             // One per AgentReplyStyle value (CARD-0060), style-normal included — see AgentReplyStyles
             // for why the one that is never composed still ships as a file.
             "style-brief", "style-caveman", "style-explanatory", "style-normal", "style-terse",
@@ -235,6 +235,30 @@ public class InstructionBundleTests
     }
 
     [Test]
+    public void the_diagnose_contract_forwards_to_its_bundle_with_the_pinned_hard_rules()
+    {
+        Diagnosis.Contract.ShouldBe(InstructionBundles.TextOf(InstructionBundles.Diagnose));
+        Diagnosis.Contract.ShouldNotContain(
+            "[bundle:", customMessage: "the forward is the TEXT — a header on the reconciled agent row "
+            + "would be a behaviour change, and DiagnoseProvisionerTests would say so");
+        Diagnosis.Contract.ShouldContain($"contract v{Diagnosis.ContractVersion}");
+        Diagnosis.Contract.ShouldStartWith("You are the Antiphon DIAGNOSE agent (contract v");
+        Diagnosis.Contract.Length.ShouldBeLessThanOrEqualTo(3_000);
+        Diagnosis.Contract.ShouldContain(
+            "NEVER change, judge, summarise or restate the work. You name it or you label it.");
+        Diagnosis.Contract.ShouldContain(
+            "NEVER invent a CARD id, a number or a name that is not in the request. Copy or omit.");
+        Diagnosis.Contract.ShouldContain(
+            "USE NO TOOLS. You have none, and a tool call is refused before it runs.");
+        Diagnosis.Contract.ShouldContain("the request is the whole input.");
+        Diagnosis.Contract.ShouldContain(
+            "Exactly one physical line before the closing line: no preamble, no bullets, no");
+        Diagnosis.Contract.ShouldContain("explanation, no sign-off, no second option.");
+        Diagnosis.TitleFormatReminder.ShouldContain("never `blocked`");
+        Diagnosis.LabelsFormatReminder.ShouldContain("never `blocked`");
+    }
+
+    [Test]
     public void the_orchestrator_contract_forwards_to_its_bundle_with_its_text_intact()
     {
         DelegationReportFormatter.OrchestratorContract
@@ -304,12 +328,13 @@ public class InstructionBundleTests
         // (orchestrator 5 143) plus catalog growth since: 18 426 composed, 61% of the budget.
         // Re-measured 2026-09-03 after CARD-0339's v4 one-line check-interpreter contract
         // (check-interpreter 2 323) plus catalog growth since: 20 376 composed, 68% of the budget.
-        // That is what makes 30 000 a runaway stop rather than a working constraint, and it is why
-        // the guard can afford to THROW instead of truncating. The assertion is a headroom bound
-        // rather than the exact number so ordinary prose edits do not fail it — an order-of-magnitude
-        // growth does. /2 (15 000) was crossed by CARD-0017; 2/3 (20 000) was crossed by this
-        // planned v4 expansion; 3/4 still sits far under the 30 000 throw and would still catch a
-        // doubling.
+        // Re-measured 2026-09-03 after CARD-0352's diagnose bundle (diagnose 2 245) plus catalog
+        // growth since: 22 987 composed, 77% of the budget. That is what makes 30 000 a runaway
+        // stop rather than a working constraint, and it is why the guard can afford to THROW
+        // instead of truncating. The assertion is a headroom bound rather than the exact number
+        // so ordinary prose edits do not fail it — an order-of-magnitude growth does. /2 (15 000)
+        // was crossed by CARD-0017; 2/3 (20 000) by CARD-0339; 3/4 (22 500) by this catalog
+        // addition; 4/5 still sits under the 30 000 throw and would still catch a doubling.
         var budget = new DelegationSettings().CommandLineBudgetChars;
         var everything = InstructionBundles.All.Keys.Order().ToList();
 
@@ -319,7 +344,7 @@ public class InstructionBundleTests
         var detail = string.Join(", ", composed.Bundles.Select(b => $"{b.Stamp} {b.Text.Length}"))
             + $", telegram-preset {ChannelPreamble.TelegramPresetTemplate.Length}"
             + $" => composed {composed.Text.Length} chars against a budget of {budget}";
-        composed.Text.Length.ShouldBeLessThan(budget * 3 / 4, detail);
+        composed.Text.Length.ShouldBeLessThan(budget * 4 / 5, detail);
         // And it fits with every other launch argument beside it, which is what the guard measures.
         Should.NotThrow(() => InstructionBundleComposer.EnsureWithinCommandLineBudget(
             composed,

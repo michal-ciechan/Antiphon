@@ -48,6 +48,7 @@ public class ProductionRunnerGuard
 
     public const string BaseUrlEnvVar = "SessionRunner__BaseUrl";
     public const string CheckInterpreterEnvVar = "Delegation__CheckInterpreterEnabled";
+    public const string DiagnoseEnvVar = "Delegation__DiagnoseEnabled";
     public const string HangfireServerEnabledEnvVar = "Hangfire__ServerEnabled";
 
     /// <summary>What this process inherited, kept so the log can name it.</summary>
@@ -59,10 +60,11 @@ public class ProductionRunnerGuard
         InheritedBaseUrl = Environment.GetEnvironmentVariable(BaseUrlEnvVar);
         Environment.SetEnvironmentVariable(BaseUrlEnvVar, DeadRunnerBaseUrl);
         Environment.SetEnvironmentVariable(CheckInterpreterEnvVar, "false");
+        Environment.SetEnvironmentVariable(DiagnoseEnvVar, "false");
         Environment.SetEnvironmentVariable(HangfireServerEnabledEnvVar, "false");
         Console.WriteLine(
-            $"[CARD-0204] {BaseUrlEnvVar}={DeadRunnerBaseUrl} and {CheckInterpreterEnvVar}=false for "
-            + "every Program boot in this assembly (inherited "
+            $"[CARD-0204] {BaseUrlEnvVar}={DeadRunnerBaseUrl}, {CheckInterpreterEnvVar}=false and "
+            + $"{DiagnoseEnvVar}=false for every Program boot in this assembly (inherited "
             + $"{BaseUrlEnvVar}='{InheritedBaseUrl ?? "<unset>"}') - test hosts never launch on the "
             + "production session-runner.");
         Console.WriteLine(
@@ -179,6 +181,9 @@ public class ProductionRunnerGuardTests
                 + $"(this process inherited '{ProductionRunnerGuard.InheritedBaseUrl ?? "<unset>"}')");
         Environment.GetEnvironmentVariable(ProductionRunnerGuard.CheckInterpreterEnvVar)
             .ShouldBe("false");
+        Environment.GetEnvironmentVariable(ProductionRunnerGuard.DiagnoseEnvVar)
+            .ShouldBe("false",
+                "CARD-0352: DiagnoseProvisioner must not start antiphon-diagnose on a Program boot in this assembly");
         Environment.GetEnvironmentVariable(ProductionRunnerGuard.HangfireServerEnabledEnvVar)
             .ShouldBe("false",
                 "CARD-0298: AddHangfireServer must not run in a Program boot in this assembly");
