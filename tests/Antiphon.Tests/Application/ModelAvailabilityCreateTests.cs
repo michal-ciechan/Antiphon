@@ -238,14 +238,38 @@ public class ModelAvailabilityCreateTests
     [Test]
     public async Task Open_ended_hold_sentence_names_the_per_model_cap()
     {
+        var hold = new ModelAvailabilityHold
+        {
+            Id = Guid.NewGuid(),
+            Kind = AgentKind.ClaudeCode,
+            ModelAlias = "fable",
+            Source = ModelAvailabilitySource.AutoDetected,
+            DisabledUntil = null,
+            HitAt = DateTime.UtcNow,
+            Reason = "Fable 5 per-model cap (no reset stated)",
+        };
+
+        var message = ModelDisabledException.FormatRefusal(hold, ["opus"]);
+        message.ShouldContain("fable is disabled (per-model cap, no reset stated)");
+    }
+
+    [Test]
+    public async Task Fallback_hold_sentence_names_a_bounded_retry_not_a_provider_reset()
+    {
         var holdId = Guid.NewGuid();
+        var until = DateTime.UtcNow.AddHours(3);
+        until = new DateTime(until.Year, until.Month, until.Day, until.Hour, until.Minute, 0, DateTimeKind.Utc);
         await using var db = CreateContext();
-        await SeedHoldAsync(db, holdId, "fable", until: null);
+        await SeedHoldAsync(db, holdId, "fable", until, reason: "Fable 5 per-model cap (no reset stated)");
         try
         {
             var ex = await Should.ThrowAsync<ModelDisabledException>(
                 () => Service(db).RequireAsync(AgentKind.ClaudeCode, "fable", CancellationToken.None));
-            ex.Message.ShouldContain("fable is disabled (per-model cap, no reset stated)");
+            ex.Message.ShouldContain($"fable is disabled until {until:yyyy-MM-ddTHH:mm:ssZ} (per-model cap, fallback retry)");
+            ex.Message.ShouldNotContain("session-limit");
+            var extension = ex.Extensions.ShouldNotBeNull()["modelAvailability"]
+                .ShouldBeOfType<ModelAvailabilityProblemDto>();
+            extension.DisabledUntil.ShouldBe(until);
         }
         finally
         {
@@ -255,7 +279,7 @@ public class ModelAvailabilityCreateTests
 
     private static async Task SeedHoldAsync(
         AppDbContext db, Guid id, string alias, DateTime? until, bool manual = false,
-        AgentKind kind = AgentKind.ClaudeCode)
+        AgentKind kind = AgentKind.ClaudeCode, string? reason = null)
     {
         await db.ModelAvailabilityHolds
             .Where(h => h.Kind == kind && h.ModelAlias == alias && h.ClearedAt == null)
@@ -268,11 +292,11 @@ public class ModelAvailabilityCreateTests
             Source = manual ? ModelAvailabilitySource.Manual : ModelAvailabilitySource.AutoDetected,
             DisabledUntil = until,
             HitAt = DateTime.UtcNow,
-            Reason = manual
+            Reason = reason ?? (manual
                 ? "manual hold"
                 : until is null
                     ? "Fable 5 per-model cap (no reset stated)"
-                    : "session-limit resets 18:10 Europe/London",
+                    : "session-limit resets 18:10 Europe/London"),
         });
         await db.SaveChangesAsync();
     }

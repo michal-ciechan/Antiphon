@@ -61,6 +61,8 @@ public sealed class ModelDisabledException : HttpException
         ModelAvailabilitySource.Manual when hold.DisabledUntil is null => "manual, no re-enable time",
         ModelAvailabilitySource.Manual => "manual",
         _ when hold.DisabledUntil is null => "per-model cap, no reset stated",
+        _ when hold.Reason.Contains("no reset stated", StringComparison.Ordinal) =>
+            "per-model cap, fallback retry",
         _ => "session-limit",
     };
 
