@@ -405,6 +405,14 @@ namespace Antiphon.Server.Migrations
                     b.Property<int>("Attempt")
                         .HasColumnType("integer");
 
+                    b.Property<bool>("AutoContinueOnWait")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<DateTime?>("AutoContinuedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<int>("BootWedgeRelaunchCount")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("integer")
@@ -616,6 +624,10 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<int?>("Stage")
                         .HasColumnType("integer");
+
+                    b.Property<string>("StandingAuthority")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
 
                     b.Property<int>("Status")
                         .HasColumnType("integer");

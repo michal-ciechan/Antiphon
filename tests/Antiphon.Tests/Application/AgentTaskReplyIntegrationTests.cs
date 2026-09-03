@@ -1,3 +1,5 @@
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -209,6 +211,28 @@ public class AgentTaskReplyIntegrationTests
         parentNote.Body.ShouldContain($"[task {shortId} waiting]");
         parentNote.Body.ShouldNotContain($"[task {shortId} done]");
         parentNote.Status.ShouldBe(QueuedMessageStatus.Pending);
+        parentNote.Body.ShouldNotContain("authority on file");
+    }
+
+    [Test]
+    public async Task the_waiting_note_names_authority_only_when_it_is_set()
+    {
+        using var workspace = new TempWorkspace();
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, parentSessionId, t =>
+            t.StandingAuthority = "start the remaining Coesite downloader epics one after another");
+        const string narration = "Please approve this design and I'll begin the recorded TDD cycles.";
+        var shortId = DelegationReportFormatter.Short(task.Id);
+
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id), narration, closingVerdict: false);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var parentNote = await verify.SessionQueuedMessages.SingleAsync(
+            m => m.AgentSessionId == parentSessionId);
+        parentNote.Body.ShouldContain($"[task {shortId} waiting]");
+        parentNote.Body.ShouldContain($"authority on file — `-Continue {shortId}`");
     }
 
     [Test]
@@ -442,6 +466,161 @@ public class AgentTaskReplyIntegrationTests
         settled.Status.ShouldBe(AgentTaskStatus.Blocked);
         settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
         settled.Result.ShouldBe(report);
+    }
+
+    [Test]
+    public async Task continue_replays_standing_authority_on_a_question_block()
+    {
+        using var workspace = new TempWorkspace();
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        const string authority = "start the remaining Coesite downloader epics one after another";
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, parentSessionId, t =>
+            t.StandingAuthority = authority);
+        const string report = "Added Fizz(int).\n\nBuzz throws on negatives — should Fizz match that?";
+
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), report);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        var summary = await CreateService().ContinueWithAuthorityAsync(
+            task.Id, AnswerOrigin.Cli, CancellationToken.None);
+
+        summary.Status.ShouldBe(AgentTaskStatus.Working);
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Working);
+        var queued = (await verify.SessionQueuedMessages
+                .Where(m => m.AgentSessionId == sessionId && m.Status == QueuedMessageStatus.Pending)
+                .ToListAsync())
+            .Single(m => m.Body.Contains(DelegationReportFormatter.TaskMarker(task.Id))
+                && m.Body.Contains(authority));
+        queued.Body.ShouldContain(BlockedNote.ContinueMessage(authority));
+        var replied = await verify.AgentTaskEvents.SingleAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Replied);
+        replied.Detail.ShouldStartWith("continued with standing authority — ");
+        replied.Detail.ShouldContain("Answered via Cli");
+
+        var parentNote = await verify.SessionQueuedMessages.SingleAsync(
+            m => m.AgentSessionId == parentSessionId && m.SourceTaskId == task.Id
+                && m.ConversationKey == $"task:{task.RootTaskId:N}");
+        parentNote.Body.ShouldContain("reason: question-line");
+        parentNote.Body.ShouldContain("asks: Buzz throws on negatives — should Fizz match that?");
+        parentNote.Body.ShouldContain($"authority: \"{authority}\"");
+        parentNote.Body.ShouldContain($"-Continue {DelegationReportFormatter.Short(task.Id)}");
+    }
+
+    [Test]
+    public async Task continue_refuses_a_task_that_is_not_blocked()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, _) = await SeedDispatchedTaskAsync(workspace.Path, configure: t =>
+            t.StandingAuthority = "go ahead");
+
+        var refused = await Should.ThrowAsync<ConflictException>(() =>
+            CreateService().ContinueWithAuthorityAsync(task.Id, AnswerOrigin.Web, CancellationToken.None));
+        refused.Code.ShouldBe("not_blocked");
+    }
+
+    [Test]
+    public async Task continue_refuses_a_merge_conflict()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, _) = await SeedDispatchedTaskAsync(workspace.Path, configure: t =>
+        {
+            t.StandingAuthority = "go ahead";
+            t.Status = AgentTaskStatus.Blocked;
+            t.FailureReason = "Rebase onto master conflicted in 2 file(s).";
+        });
+        await using (var db = CreateContext())
+        {
+            db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(),
+                AgentTaskId = task.Id,
+                Type = AgentTaskEventType.Conflicted,
+                Detail = "Conflicts: a.cs, b.cs",
+                At = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var refused = await Should.ThrowAsync<ConflictException>(() =>
+            CreateService().ContinueWithAuthorityAsync(task.Id, AnswerOrigin.Web, CancellationToken.None));
+        refused.Code.ShouldBe("not_a_question");
+    }
+
+    [Test]
+    public async Task continue_refuses_when_there_is_no_authority()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+        await SeedTurnAsync(
+            sessionId,
+            DelegationReportFormatter.TaskMarker(task.Id),
+            "Added Fizz(int).\n\nBuzz throws on negatives — should Fizz match that?");
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        var refused = await Should.ThrowAsync<ConflictException>(() =>
+            CreateService().ContinueWithAuthorityAsync(task.Id, AnswerOrigin.Web, CancellationToken.None));
+        refused.Code.ShouldBe("no_authority");
+        refused.Message.ShouldContain("-Reply");
+    }
+
+    [Test]
+    public async Task unmarked_waiting_parent_note_carries_the_structured_blocked_lines()
+    {
+        using var workspace = new TempWorkspace();
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        const string authority = "start the remaining Coesite downloader epics one after another";
+        const string narration = "Please approve this design and I'll begin the recorded TDD cycles.";
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, parentSessionId, t =>
+            t.StandingAuthority = authority);
+
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id), narration, closingVerdict: false);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        await using (var db = CreateContext())
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            row.ReportNudgedAt = DateTime.UtcNow.AddMinutes(-6);
+            await db.SaveChangesAsync();
+        }
+
+        await CreateService().BlockUnmarkedWaitingAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var shortId = DelegationReportFormatter.Short(task.Id);
+        var parentNote = await verify.SessionQueuedMessages.SingleAsync(
+            m => m.AgentSessionId == parentSessionId
+                && m.ConversationKey == $"task:{task.RootTaskId:N}");
+        parentNote.Body.ShouldContain($"[task {shortId} blocked]");
+        parentNote.Body.ShouldContain("reason: waiting-unmarked");
+        parentNote.Body.ShouldContain($"asks: {narration}");
+        parentNote.Body.ShouldContain($"authority: \"{authority}\"");
+        parentNote.Body.ShouldContain($"-Continue {shortId}");
+    }
+
+    [Test]
+    public async Task a_marked_blocked_parent_note_uses_reason_marked_blocked()
+    {
+        using var workspace = new TempWorkspace();
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, parentSessionId);
+        const string report = "Need a decision on the retry bound.";
+
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id),
+            report + "\n" + DelegationReportFormatter.ReportToken(task.Id, "blocked"),
+            closingVerdict: false);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var parentNote = await verify.SessionQueuedMessages.SingleAsync(
+            m => m.AgentSessionId == parentSessionId && m.SourceTaskId == task.Id);
+        parentNote.Body.ShouldContain("reason: marked-blocked");
+        parentNote.Body.ShouldContain($"asks: {report}");
+        parentNote.Body.ShouldContain("authority: none given at dispatch");
+        parentNote.Body.ShouldContain("-Reply");
+        parentNote.Body.ShouldNotContain("-Continue");
     }
 
     [Test]

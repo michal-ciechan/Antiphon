@@ -131,6 +131,24 @@ public sealed class AgentTaskService
         if (string.IsNullOrWhiteSpace(request.Goal))
             throw new ValidationException(nameof(request.Goal), "A goal is required.");
 
+        var standingAuthority = string.IsNullOrWhiteSpace(request.Authority)
+            ? null
+            : request.Authority.Trim();
+        if (standingAuthority is { Length: > BlockedNote.AuthorityMaxChars })
+        {
+            throw new ValidationException(
+                nameof(request.Authority),
+                $"Standing authority must be at most {BlockedNote.AuthorityMaxChars} characters (got {standingAuthority.Length}).");
+        }
+
+        if (request.AutoContinue && standingAuthority is null)
+        {
+            throw new ValidationException(
+                nameof(request.AutoContinue),
+                "AutoContinue requires Authority — the flag names what to replay, and there is nothing to replay without it.",
+                "auto_continue_needs_authority");
+        }
+
         var launchEnvOverride = AgentLaunchEnv.ValidateOverride(
             request.LaunchEnvOverride, "launchEnvOverride");
         var suppliedInheritedLlmEnv = AgentLaunchEnv.ValidateOverride(
@@ -667,6 +685,8 @@ public sealed class AgentTaskService
             // Stored RESOLVED — the row always carries a number, so nothing downstream has to know
             // whether the caller declared one. NextCheckAt stays null until dispatch.
             ExpectedDurationMinutes = expectedMinutes,
+            StandingAuthority = standingAuthority,
+            AutoContinueOnWait = request.AutoContinue && standingAuthority is not null,
         };
 
         var repeatOf = await FindLaunchFailureRepeatAsync(
@@ -1137,7 +1157,8 @@ public sealed class AgentTaskService
         return new AgentTaskDetailDto(
             ToSummary(task, family, await LoadCardIdentifiersAsync([task], ct)), task.Goal, task.Result,
             task.ResultFilePath, task.DeliverablePath, task.DeliverableRef,
-            task.FailureReason, task.MergeTargetRef, events, task.FailureCode, blocked);
+            task.FailureReason, task.MergeTargetRef, events, task.FailureCode, blocked,
+            task.StandingAuthority, task.AutoContinueOnWait);
     }
 
     /// <summary>Record the first operator read; repeat opens deliberately preserve that timestamp.</summary>
@@ -1571,6 +1592,9 @@ public sealed class AgentTaskService
             CreatedAt = now,
             TokenHash = tokenHash,
             ExpectedDurationMinutes = Math.Clamp(_settings.DefaultExpectedMinutes, 1, 1440),
+            // CARD-0294 S1: a conflict resolver has no approval wait to skip.
+            StandingAuthority = conflicted.StandingAuthority,
+            AutoContinueOnWait = false,
         };
 
         _db.AgentTasks.Add(task);

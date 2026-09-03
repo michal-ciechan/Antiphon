@@ -20,6 +20,7 @@ import { Link } from 'react-router'
 import {
   agentTaskKeys,
   useCancelAgentTask,
+  useContinueAgentTask,
   useEscalateAgentTask,
   useReplyToAgentTask,
   useRetryAgentTask,
@@ -174,6 +175,7 @@ function ReplySection({
   const [typedAtRound, setTypedAtRound] = useState<number | null>(null)
   const roundWhenOpened = useRef(blocked.round)
   const reply = useReplyToAgentTask()
+  const cont = useContinueAgentTask()
   const cancel = useCancelAgentTask()
   const escalate = useEscalateAgentTask()
   const retry = useRetryAgentTask()
@@ -268,8 +270,54 @@ function ReplySection({
     )
   }
 
+  const continueWithAuthority = () => {
+    if (!blocked.canContinue) return
+    cont.mutate(
+      { id: summary.id, origin: 'Web' },
+      {
+        onSuccess: () => {
+          void queryClient.invalidateQueries({ queryKey: attentionKeys.all })
+          notifications.show({
+            color: 'green',
+            message: "Queued for the delegate's next idle moment",
+          })
+          onAnswered?.()
+        },
+        onError: (error: unknown) => {
+          void queryClient.invalidateQueries({ queryKey: agentTaskKeys.detail(summary.id) })
+          notifications.show({
+            color: 'red',
+            message: getApiErrorMessage(error, 'Could not continue with authority'),
+          })
+        },
+      },
+    )
+  }
+
   return (
     <Stack gap={6} data-testid="blocked-reply">
+      {blocked.canContinue && blocked.authority && (
+        <Stack gap={6} data-testid="blocked-continue">
+          <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
+            Standing authority
+          </Text>
+          <Text
+            size="sm"
+            fs="italic"
+            style={{ whiteSpace: 'pre-wrap', borderLeft: '3px solid var(--mantine-color-default-border)', paddingLeft: 10 }}
+          >
+            {blocked.authority}
+          </Text>
+          <Button
+            size="xs"
+            variant="light"
+            loading={cont.isPending}
+            onClick={continueWithAuthority}
+          >
+            Continue with authority
+          </Button>
+        </Stack>
+      )}
       {questionChanged && (
         <Text size="xs" c="warning">
           The question changed since you started — check it still fits

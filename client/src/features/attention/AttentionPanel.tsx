@@ -24,6 +24,7 @@ import { TbAlertCircle, TbChecks, TbChevronDown, TbChevronRight, TbRefresh } fro
 import { useNavigate } from 'react-router'
 import {
   useCancelAgentTask,
+  useContinueAgentTask,
   useEscalateAgentTask,
   useRetryAgentTask,
 } from '../../api/agentTasks'
@@ -308,6 +309,7 @@ const ACTION_LABEL: Record<AttentionAction, string> = {
   OpenAgent: 'Open agent',
   OpenCard: 'Open card',
   ClearHold: 'Clear hold',
+  Continue: 'Continue with authority',
 }
 
 /** Verbs that destroy work. Colour is the only warning a one-click button gets. */
@@ -351,6 +353,7 @@ function AttentionRowActions({
   const retry = useRetryAgentTask()
   const cancel = useCancelAgentTask()
   const escalate = useEscalateAgentTask()
+  const cont = useContinueAgentTask()
   const sendNow = useMutation({
     mutationFn: () => sendQueuedMessageNow(item.sessionId!, item.messageId!),
   })
@@ -364,6 +367,7 @@ function AttentionRowActions({
     retry.isPending ||
     cancel.isPending ||
     escalate.isPending ||
+    cont.isPending ||
     sendNow.isPending ||
     dropMessage.isPending ||
     kill.isPending ||
@@ -376,6 +380,12 @@ function AttentionRowActions({
     switch (action) {
       case 'Reply':
         setReplying((open) => !open)
+        return
+      case 'Continue':
+        cont.mutate(
+          { id: item.taskId! },
+          settle('Continued with standing authority', 'Could not continue with authority'),
+        )
         return
       case 'Retry':
         retry.mutate(item.taskId!, settle('Task retried', 'Could not retry the task'))
@@ -418,7 +428,13 @@ function AttentionRowActions({
   // A verb whose subject the row does not carry cannot be offered — the server names the actions and
   // the ids separately, so this is the one place they are checked against each other.
   const usable = item.actions.filter((action) => {
-    if (action === 'Reply' || action === 'Retry' || action === 'Cancel' || action === 'Escalate')
+    if (
+      action === 'Reply' ||
+      action === 'Retry' ||
+      action === 'Cancel' ||
+      action === 'Escalate' ||
+      action === 'Continue'
+    )
       return item.taskId !== null
     if (action === 'SendNow' || action === 'CancelMessage')
       return item.sessionId !== null && item.messageId !== null

@@ -84,6 +84,8 @@ A sub-orchestrator defaults to `Plan` and never runs below opus.
 | `-Card <id>` | which CARD this work is against — `CARD-0040`, `card-40`, `#40`, `40`, or the guid. Omitted, the server derives it: your own task's card, else the first `CARD-nnnn` in `-Title` |
 | `-ExpectAbout <minutes>` | how long the work should honestly take (1-1440) — schedules the first automatic check-in. Defaults to 10 when omitted |
 | `-NoInheritEnv` | do not forward this shell's `X_LLM_PROJECT` / `X_LLM_KEY`; server-side stored-env inheritance remains the fallback |
+| `-Authority "<text>"` | the caller's own words for what this task is already authorised to do. Injected into the child's brief so it does not stop to ask for a go-ahead this already grants. Long text: `-AuthorityFile <path>` |
+| `-Continue <taskId>` | replay that standing authority as the answer to a Blocked-on-question task. One action; the child resumes and reports back |
 
 **LLM project routing follows the caller by default.** `delegate.ps1` forwards the live shell's
 `X_LLM_PROJECT` and `X_LLM_KEY` into the child's inherited routing layer, because the server cannot
@@ -245,8 +247,11 @@ automatically — see "What the delegate is told" below; don't type them into `-
   > the response's `stop_reason`, so a bare `TurnEnd` arrived up to 1.2 s before the report and
   > settlement fired on it. See `docs/superpowers/specs/2026-08-14-card-0046-settlement-final-message.md`
   > and CARD-0046. The guidance above is still worth scoping, but it was never the bug.
-- **A delegate that asks a question comes back blocked.** Answer it — don't take the work back:
+- **A delegate that asks a question comes back blocked.** The `[task … blocked]` note carries
+  `reason:` / `asks:` / `authority:` / `next:`. If `authority:` names something, `-Continue` is
+  the one action; otherwise answer it — don't take the work back:
   ```powershell
+  pwsh -NoProfile -File scripts/delegate.ps1 -Continue <taskId>
   pwsh -NoProfile -File scripts/delegate.ps1 -Reply <taskId> "yes, accept negatives"
   ```
 - **A running delegate can be steered without cancelling it** (CARD-0062). A spec that sharpens

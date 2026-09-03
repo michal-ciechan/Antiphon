@@ -188,6 +188,45 @@ public sealed class DelegateScriptKindTests
     }
 
     [Test]
+    public async Task Authority_is_posted_as_authority()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(
+            server, "-Role", "Code", "-Goal", "do the remaining epics",
+            "-Authority", "start the remaining Coesite downloader epics one after another");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.GetProperty("authority").GetString()
+            .ShouldBe("start the remaining Coesite downloader epics one after another");
+    }
+
+    [Test]
+    public async Task an_omitted_Authority_sends_nothing_at_all()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(server, "-Role", "Code", "-Goal", "do the remaining epics");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.TryGetProperty("authority", out _)
+            .ShouldBeFalse("an omitted -Authority must leave the request exactly as it was before the flag existed");
+    }
+
+    [Test]
+    public async Task Continue_posts_to_continue_and_prints_the_success_line()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(server, "-Continue", "1234abcd");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        server.LastPath.ShouldBe("/api/agent-tasks/1234abcd/continue");
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.GetProperty("origin").GetString().ShouldBe("Cli");
+        run.Output.ShouldContain("Continued task 1234abcd with its standing authority.");
+    }
+
+    [Test]
     public async Task IgnoreSubscriptionQuota_sends_ignoreSubscriptionQuota_true()
     {
         using var server = new StubApi();

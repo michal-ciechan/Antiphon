@@ -98,6 +98,7 @@ internal static class BlockedQuestion
             nameof(AnswerOrigin.Web) => AnswerOrigin.Web,
             nameof(AnswerOrigin.Cli) => AnswerOrigin.Cli,
             nameof(AnswerOrigin.Channel) => AnswerOrigin.Channel,
+            nameof(AnswerOrigin.Authority) => AnswerOrigin.Authority,
             _ => null,
         };
         var colon = rest.IndexOf(": ", StringComparison.Ordinal);

@@ -1497,6 +1497,10 @@ public class AppDbContext : DbContext
             // CARD-0272. Null on every pre-existing row: S2 fills these at create.
             entity.Property(t => t.Stage).IsRequired(false);
             entity.Property(t => t.FollowUpOfTaskId).IsRequired(false);
+            // CARD-0294 S1. Null / false on every pre-existing row: no standing authority.
+            entity.Property(t => t.StandingAuthority).HasMaxLength(2000);
+            entity.Property(t => t.AutoContinueOnWait).IsRequired().HasDefaultValue(false);
+            entity.Property(t => t.AutoContinuedAt).IsRequired(false);
 
             entity.HasIndex(t => new { t.RootTaskId, t.CreatedAt }).HasDatabaseName("IX_AgentTasks_RootTaskId_CreatedAt");
             entity.HasIndex(t => t.Status).HasDatabaseName("IX_AgentTasks_Status");

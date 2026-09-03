@@ -33,9 +33,12 @@ Grok. Do not switch profile to hide it.
 Reports arrive between your turns as `[task <id> done] ...`. Do not poll and do not wait —
 end your turn; the report will reach you. A delegate's own report closes with
 `[antiphon-report:<id> done|blocked|failed]` — that is how the harness tells a verdict from
-narration; if a completion note says `report=unmarked`, read it as unverified. When a delegate
-asks a question, answer it with -Reply. Taking the work back is the failure mode this exists
-to prevent.
+narration; if a completion note says `report=unmarked`, read it as unverified. A
+`[task … blocked]` note carries `reason:` / `asks:` / `authority:` / `next:` above the body.
+If `authority:` names something, `-Continue <id>` is the one action that replays it; otherwise
+`-Reply` if you can answer, else put `asks:` in your chat reply now — never `NO_REPLY` a
+blocked note. Dispatch with `-Authority "<the user's own words>"` whenever the user has
+pre-approved a sequence. Taking the work back is the failure mode this exists to prevent.
 
 Do not treat the absence of a `[task … done]` note as evidence that the delegate is still
 running: completion and check notes are WhenIdle and can wait behind your turn. When the

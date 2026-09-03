@@ -217,7 +217,10 @@ GET    /api/agent-tasks/{id}                 {id} accepts the 8-char short id.
                                              Blocked tasks include `blocked`
                                              (`BlockedContextDto`): kind, round,
                                              isolated question, prior rounds,
-                                             canAnswer.
+                                             canAnswer, plus CARD-0294 `reason`,
+                                             `authority`, `canContinue`.
+                                             Detail also exposes `standingAuthority`
+                                             and `autoContinueOnWait`.
 GET    /api/agent-tasks/summary              fleet-wide counters (active, blocked, runs,
                                              totalCostUsd, byStatus), independent of the list window
 POST   /api/agent-tasks/{id}/cancel  |  /retry  |  /escalate
@@ -227,6 +230,13 @@ POST   /api/agent-tasks/{id}/reply           answer a Blocked delegate's questio
                                              guard, 409 if the question moved on),
                                              optional `origin` (`Web` default;
                                              `delegate.ps1` sends `Cli`).
+POST   /api/agent-tasks/{id}/continue        replay the standing authority given at
+                                             dispatch as the answer (CARD-0294 S1).
+                                             Body `{ origin?: "Web"|"Cli" }`
+                                             (default Web). 409 `not_blocked` /
+                                             `not_a_question` / `no_authority`.
+                                             Returns `AgentTaskSummaryDto` like
+                                             `/reply`.
 POST   /api/agent-tasks/{id}/refine          steer a running delegate without cancelling it
 POST   /api/agent-tasks/{id}/land            queue an explicit land of a Succeeded Worktree
                                              task (`{ verify?: string }`). 202; git runs in
@@ -244,7 +254,8 @@ API and is fully commented in place. The fields that change behaviour most: `rol
 (`Worker` / `Orchestrator`), `modelLevel`, `agentKind` (ClaudeCode / Grok / Codex — see
 [agent-kinds.md](agent-kinds.md)), `workspace`, `workingDirectory`, `scope`, `followUpOnTask`,
 `expectedMinutes`, `envOverride`, `ignoreSubscriptionQuota`, `ignoreModelDisabled`,
-`ignoreRoutingPin`.
+`ignoreRoutingPin`, `authority` (CARD-0294 standing authority, ≤ 2000 chars; `autoContinue`
+without it is 422 `auto_continue_needs_authority`).
 
 > `POST /api/agent-tasks` can refuse with **409 `subscription_quota_low`** (CARD-0136). That is a
 > launch refusal, not a warning attached to a launch that already happened. Retry with
