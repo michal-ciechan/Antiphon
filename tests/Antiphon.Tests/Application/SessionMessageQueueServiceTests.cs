@@ -533,6 +533,99 @@ public class SessionMessageQueueServiceTests
         }
     }
 
+    [Test]
+    public async Task Channel_and_scheduled_rows_stay_pending_behind_a_terminal_capacity_recovery()
+    {
+        var h = await CreateHarnessAsync();
+        try
+        {
+            await SeedTerminalCapacityRecoveryAsync(h.SessionId);
+
+            await h.Queue.EnqueueAsync(
+                h.SessionId, "channel body", MessageSendMode.WhenIdle, CancellationToken.None,
+                origin: QueuedMessageOrigin.Channel, conversationKey: "telegram:-1001");
+            await h.Queue.EnqueueAsync(
+                h.SessionId, "scheduled body", MessageSendMode.WhenIdle, CancellationToken.None,
+                origin: QueuedMessageOrigin.Scheduled);
+
+            h.Adapter.SentInput.ShouldBeEmpty("Channel/Scheduled must not be typed into a dead session");
+
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            var rows = await db.SessionQueuedMessages
+                .Where(m => m.AgentSessionId == h.SessionId)
+                .OrderBy(m => m.Sequence)
+                .ToListAsync();
+            rows.Count.ShouldBe(2);
+            rows.ShouldAllBe(m => m.Status == QueuedMessageStatus.Pending);
+            rows.ShouldAllBe(m => m.NoteHeader == "Held");
+        }
+        finally
+        {
+            await h.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task Supervision_rows_still_deliver_behind_a_terminal_capacity_recovery()
+    {
+        var h = await CreateHarnessAsync();
+        try
+        {
+            await SeedTerminalCapacityRecoveryAsync(h.SessionId);
+
+            await h.Queue.EnqueueAsync(
+                h.SessionId, "please resume", MessageSendMode.WhenIdle, CancellationToken.None,
+                origin: QueuedMessageOrigin.Supervision);
+
+            h.Adapter.SentInput.ShouldContain("please resume");
+        }
+        finally
+        {
+            await h.DisposeAsync();
+        }
+    }
+
+    private static async Task SeedTerminalCapacityRecoveryAsync(Guid sessionId)
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        var now = DateTime.UtcNow;
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(),
+            AgentSessionId = sessionId,
+            Sequence = 1,
+            Kind = TranscriptKinds.UserPrompt,
+            Text = "hello",
+            CreatedAt = now,
+        });
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(),
+            AgentSessionId = sessionId,
+            Sequence = 2,
+            Kind = TranscriptKinds.TurnEnd,
+            StopReason = TranscriptKinds.StopReasons.Error,
+            Text = "usage balance exhausted",
+            IsApiError = true,
+            ApiErrorClass = "payment_required",
+            ApiErrorStatus = 402,
+            CreatedAt = now,
+        });
+        db.ApiErrorRecoveries.Add(new ApiErrorRecovery
+        {
+            Id = Guid.NewGuid(),
+            AgentSessionId = sessionId,
+            StubSequence = 2,
+            Classification = ApiErrorClassification.Wall,
+            ApiErrorClass = "payment_required",
+            ApiErrorStatus = 402,
+            DetectedAt = now,
+            ResolvedAt = now,
+            ResolvedReason = ApiErrorRecoveryReasons.WallModelPaused,
+        });
+        await db.SaveChangesAsync();
+    }
+
     private static async Task SeedPendingMessageAsync(
         Guid sessionId, string body, long sequence, int attempts, QueuedMessageOrigin origin)
     {

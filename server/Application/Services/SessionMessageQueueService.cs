@@ -1177,6 +1177,10 @@ public sealed class SessionMessageQueueService
         if (changedShrunk)
             await db.SaveChangesAsync(ct);
 
+        pending = await ApplyCapacityHoldAsync(db, sessionId, pending, ct);
+        if (pending.Count == 0)
+            return FlushResult.Nothing;
+
         var head = pending[0];
         var run = new List<SessionQueuedMessage> { head };
 
@@ -2953,6 +2957,66 @@ public sealed class SessionMessageQueueService
         await dispatcher.RelaunchWedgedAsync(task.Id, sessionId, ct);
         pending?.Forget(task.Id);
         return true;
+    }
+
+    /// <summary>
+    /// CARD-0281: Channel and Scheduled rows stay Pending behind a terminal provider-capacity
+    /// recovery (WallModelPaused / WallParked / NeedsHuman / UnknownExhausted / WallUnparsed)
+    /// newer than the last UserPrompt. Supervision and Ui still deliver — an operator's
+    /// typed /login or a human resume is what un-sticks it.
+    /// </summary>
+    private async Task<List<SessionQueuedMessage>> ApplyCapacityHoldAsync(
+        AppDbContext db, Guid sessionId, List<SessionQueuedMessage> pending, CancellationToken ct)
+    {
+        var held = pending
+            .Where(m => m.Origin is QueuedMessageOrigin.Channel or QueuedMessageOrigin.Scheduled)
+            .ToList();
+        if (held.Count == 0)
+            return pending;
+
+        if (!await HasTerminalCapacityHoldAsync(db, sessionId, ct))
+            return pending;
+
+        var stamped = false;
+        foreach (var message in held)
+        {
+            if (string.IsNullOrEmpty(message.NoteHeader))
+            {
+                message.NoteHeader = "Held";
+                stamped = true;
+            }
+        }
+
+        if (stamped)
+        {
+            await db.SaveChangesAsync(ct);
+            _logger.LogWarning(
+                "Holding {Count} Channel/Scheduled queue row(s) on session {SessionId}: "
+                + "terminal provider-capacity recovery is in effect",
+                held.Count, sessionId);
+        }
+
+        return pending
+            .Where(m => m.Origin is not (QueuedMessageOrigin.Channel or QueuedMessageOrigin.Scheduled))
+            .ToList();
+    }
+
+    internal static async Task<bool> HasTerminalCapacityHoldAsync(
+        AppDbContext db, Guid sessionId, CancellationToken ct)
+    {
+        var lastPromptSeq = await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt)
+            .MaxAsync(t => (long?)t.Sequence, ct) ?? 0;
+
+        return await db.ApiErrorRecoveries
+            .AnyAsync(r => r.AgentSessionId == sessionId
+                && r.StubSequence > lastPromptSeq
+                && r.ResolvedReason != null
+                && (r.ResolvedReason == ApiErrorRecoveryReasons.WallModelPaused
+                    || r.ResolvedReason == ApiErrorRecoveryReasons.WallParked
+                    || r.ResolvedReason == ApiErrorRecoveryReasons.NeedsHuman
+                    || r.ResolvedReason == ApiErrorRecoveryReasons.UnknownExhausted
+                    || r.ResolvedReason == ApiErrorRecoveryService.WallUnparsedFailureReason), ct);
     }
 
     // Internal so the agent list/detail can surface the SAME working signal on agent cards —

@@ -79,12 +79,42 @@ public class ApiErrorClassifierTests
     }
 
     [Test]
-    public void Http_400_stays_on_its_existing_unknown_path()
+    public void Http_400_needs_a_human()
     {
         ApiErrorClassifier
             .Classify("invalid_request_error", 400, "The model is not supported")
-            .ShouldBe(ApiErrorClassification.Unknown);
-        ApiErrorClassifier.Classify(null, 400, null).ShouldBe(ApiErrorClassification.Unknown);
+            .ShouldBe(ApiErrorClassification.NeedsHuman);
+        ApiErrorClassifier.Classify(null, 400, null).ShouldBe(ApiErrorClassification.NeedsHuman);
+    }
+
+    [Test]
+    public void Http_402_is_a_wall()
+    {
+        ApiErrorClassifier
+            .Classify("payment_required", 402, "Grok Build usage balance exhausted")
+            .ShouldBe(ApiErrorClassification.Wall);
+        ApiErrorClassifier.Classify(null, 402, null).ShouldBe(ApiErrorClassification.Wall);
+    }
+
+    [Test]
+    public void Http_403_with_capacity_vocabulary_is_a_wall()
+    {
+        ApiErrorClassifier
+            .Classify("forbidden", 403,
+                "permission-denied: team has exhausted its credits or reached its monthly spending limit")
+            .ShouldBe(ApiErrorClassification.Wall);
+        ApiErrorClassifier
+            .Classify(null, 403, "usage balance exhausted")
+            .ShouldBe(ApiErrorClassification.Wall);
+    }
+
+    [Test]
+    public void Http_403_without_capacity_vocabulary_needs_a_human()
+    {
+        ApiErrorClassifier
+            .Classify("forbidden", 403, "permission denied: not allowed to access this resource")
+            .ShouldBe(ApiErrorClassification.NeedsHuman);
+        ApiErrorClassifier.Classify(null, 403, "nope").ShouldBe(ApiErrorClassification.NeedsHuman);
     }
 
     [Test]

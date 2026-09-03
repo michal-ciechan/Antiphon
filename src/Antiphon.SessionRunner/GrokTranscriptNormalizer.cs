@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.SessionRunner;
@@ -30,9 +31,16 @@ namespace Antiphon.SessionRunner;
 /// becomes one <c>ToolResult</c> (CARD-0241). Completed updates of other tools stay skipped
 /// so command output does not flood the transcript.</item>
 /// <item><c>turn_completed</c> → <c>TurnEnd</c> carrying <c>stop_reason</c> verbatim
-/// (<c>end_turn</c>; <c>cancelled</c> for Esc — explicitly marked, so none of Claude's
-/// interrupt/compaction marker predicates are needed for Grok) and the usage block when present
-/// (a cancelled stop has none). <c>prompt_id</c> rides as ApiCallId.</item>
+/// (<c>end_turn</c>; <c>cancelled</c> for Esc; <c>error</c> for an API death — CARD-0281).
+/// On <c>stop_reason=error</c>, <c>agent_result</c> is parsed into
+/// <c>IsApiError</c>/<c>ApiErrorStatus</c>/<c>ApiErrorClass</c>/<c>Text</c> (bounded, Codex
+/// shape). No synthetic AssistantText stub: the diagnostic lives on the TurnEnd. The usage
+/// block is carried when present (a cancelled stop has none). <c>prompt_id</c> rides as
+/// ApiCallId.</item>
+/// <item><c>retry_state</c> is skipped. A <c>type=failed</c> row duplicates
+/// <c>agent_result</c> on the following <c>turn_completed</c>; a <c>type=retrying</c> row is
+/// Grok's internal 5xx ladder (up to 15 attempts) and must not become a stub — a stub per
+/// retry would park a healthy session at WallDeathCap.</item>
 /// <item><c>auto_compact_completed</c> → one usage-bearing <c>CompactBoundary</c> (CARD-0157):
 /// Text is <c>Context compacted (auto): tokens {before} -&gt; {after}</c> (never
 /// <c>(manual)</c> — housekeeping to every working rule; Grok writes no user chunk and no
@@ -56,6 +64,12 @@ public sealed class GrokTranscriptNormalizer
     private const string TruncationMarker = "…[truncated]";
     private const int CompletedPromptIdsKept = 64;
     private const int ToolCallMetaKept = 64;
+    /// <summary>CARD-0286/CARD-0281: same 600-char bound Codex uses so a TurnEnd never carries a secret-sized payload.</summary>
+    private const int MaxApiErrorDiagnosticChars = 600;
+
+    private static readonly Regex ApiErrorPattern = new(
+        @"^API error \(status (\d{3})\s*([^)]*)\):\s*(.*)$",
+        RegexOptions.CultureInvariant | RegexOptions.Singleline | RegexOptions.Compiled);
 
     private sealed class PendingTurn
     {
@@ -347,21 +361,78 @@ public sealed class GrokTranscriptNormalizer
         }
 
         // stop_reason verbatim: "end_turn" normally, "cancelled" for an Esc interrupt (which
-        // carries no usage). Either way the turn is OVER — cancelled is still a turn end.
+        // carries no usage), "error" for an API death (CARD-0281). Either way the turn is OVER.
         // ApiCallId is the LAST segment's id when we segmented; otherwise the promptId (legacy).
         var turnApiCallId = promptId is not null
             && _lastSegmentId.TryGetValue(promptId, out var lastSeg)
             && lastSeg is not null
                 ? lastSeg
                 : promptId;
+        var stopReason = GetString(update, "stop_reason");
+        bool? isApiError = null;
+        string? apiErrorClass = null;
+        int? apiErrorStatus = null;
+        string? diagnostic = null;
+        if (string.Equals(stopReason, TranscriptKinds.StopReasons.Error, StringComparison.Ordinal))
+        {
+            (isApiError, apiErrorClass, apiErrorStatus, diagnostic) =
+                ReadApiError(GetString(update, "agent_result"));
+        }
+
         parts.Add(new TranscriptPart(
-            TranscriptKinds.TurnEnd, uuid, null, ts, "assistant", null, null, null, null, null,
-            GetString(update, "stop_reason"),
+            TranscriptKinds.TurnEnd, uuid, null, ts, "assistant", diagnostic, null, null, null, null,
+            stopReason,
             ApiCallId: turnApiCallId,
             InputTokens: inTok, OutputTokens: outTok,
             CacheReadTokens: cacheRead, CacheCreationTokens: cacheCreate,
+            IsApiError: isApiError, ApiErrorClass: apiErrorClass, ApiErrorStatus: apiErrorStatus,
             Model: model, ModelCalls: modelCalls));
         return parts;
+    }
+
+    /// <summary>
+    /// CARD-0281: parse <c>agent_result</c> on an error TurnEnd. Grammar is stable across
+    /// 402/400/404: <c>API error (status &lt;code&gt; &lt;reason phrase&gt;): &lt;detail&gt;</c>.
+    /// No match still stamps <c>IsApiError=true</c> so the classifier's Unknown arm is the
+    /// designed fallback.
+    /// </summary>
+    private static (bool IsApiError, string? Class, int? Status, string? Diagnostic) ReadApiError(
+        string? agentResult)
+    {
+        if (string.IsNullOrWhiteSpace(agentResult))
+            return (true, null, null, null);
+
+        var match = ApiErrorPattern.Match(agentResult.Trim());
+        if (!match.Success)
+            return (true, null, null, BoundDiagnostic(agentResult));
+
+        int? status = int.TryParse(match.Groups[1].Value, out var code) ? code : null;
+        var cls = SnakeCase(match.Groups[2].Value);
+        var detail = BoundDiagnostic(match.Groups[3].Value);
+        return (true, string.IsNullOrEmpty(cls) ? null : cls, status, detail);
+    }
+
+    private static string SnakeCase(string phrase)
+    {
+        var sb = new StringBuilder(phrase.Length);
+        foreach (var ch in phrase.Trim())
+        {
+            if (char.IsLetterOrDigit(ch))
+                sb.Append(char.ToLowerInvariant(ch));
+            else if (sb.Length > 0 && sb[^1] != '_')
+                sb.Append('_');
+        }
+        return sb.ToString().Trim('_');
+    }
+
+    private static string? BoundDiagnostic(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return null;
+        var trimmed = text.Trim();
+        return trimmed.Length <= MaxApiErrorDiagnosticChars
+            ? trimmed
+            : trimmed[..MaxApiErrorDiagnosticChars] + "…";
     }
 
     private void CloseCurrentSegment(List<TranscriptPart> parts, string? promptId)

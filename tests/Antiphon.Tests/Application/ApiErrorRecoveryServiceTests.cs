@@ -182,6 +182,46 @@ public class ApiErrorRecoveryServiceTests
     }
 
     [Test]
+    public async Task Grok_402_stub_writes_an_open_ended_hold_for_grok_4_6_and_never_enqueues()
+    {
+        await using var h = await CreateHarnessAsync();
+        await using (var stamp = CreateContext())
+        {
+            await stamp.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u
+                    .SetProperty(s => s.AgentKind, AgentKind.Grok)
+                    .SetProperty(s => s.EffectiveModelId, "grok-4.6"));
+        }
+
+        await SeedStubAsync(
+            h.SessionId,
+            "payment_required",
+            402,
+            "API error (status 402 Payment Required): Grok Build usage balance exhausted");
+
+        await SweepAsync(h);
+
+        await using var db = CreateContext();
+        var row = await db.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == h.SessionId);
+        row.Classification.ShouldBe(ApiErrorClassification.Wall);
+        row.ResolvedReason.ShouldBe(ApiErrorRecoveryReasons.WallModelPaused);
+        row.NextAttemptAt.ShouldBeNull();
+
+        var hold = await db.ModelAvailabilityHolds.SingleAsync(
+            x => x.SourceSessionId == h.SessionId && x.ClearedAt == null);
+        hold.Kind.ShouldBe(AgentKind.Grok);
+        hold.ModelAlias.ShouldBe("grok-4.6");
+        hold.DisabledUntil.ShouldBeNull();
+        hold.Source.ShouldBe(ModelAvailabilitySource.AutoDetected);
+        hold.Reason.ShouldContain("provider capacity");
+        hold.Reason.ShouldContain("HTTP 402");
+
+        (await SupervisionMessagesAsync(h.SessionId)).ShouldBeEmpty();
+
+        await db.ModelAvailabilityHolds.Where(x => x.Id == hold.Id).ExecuteDeleteAsync();
+    }
+
+    [Test]
     public async Task Auto_detected_writer_does_not_shorten_a_manual_DisabledUntil()
     {
         await using var h = await CreateHarnessAsync();

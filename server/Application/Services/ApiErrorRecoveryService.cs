@@ -475,9 +475,14 @@ public sealed class ApiErrorRecoveryService
             severity = AlertSeverity.Warning;
             failureReason = ApiErrorRecoveryReasons.WallModelPaused;
             var quoted = QuoteError(errorText);
+            var session = await db.AgentSessions.AsNoTracking()
+                .FirstOrDefaultAsync(s => s.Id == row.AgentSessionId, ct);
+            var kind = session?.AgentKind ?? AgentKind.ClaudeCode;
+            var alias = await ResolveFallbackAliasAsync(db, row.AgentSessionId, ct) ?? "unknown";
+            var statusBit = row.ApiErrorStatus is int s ? $" HTTP {s}" : "";
             message =
-                $"Session {row.AgentSessionId} hit a per-model usage cap (no reset stated); "
-                + $"dispatch is paused for that model until cleared. {quoted}";
+                $"{kind} {alias}: session {row.AgentSessionId} hit a per-model usage cap{statusBit} "
+                + $"(no reset stated); dispatch is paused for that model until cleared. {quoted}";
         }
         else if (row.Classification == ApiErrorClassification.Wall
             && row.ResolvedReason == WallUnparsedFailureReason)

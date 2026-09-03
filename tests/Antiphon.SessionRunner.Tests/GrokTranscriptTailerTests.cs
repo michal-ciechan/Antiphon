@@ -599,6 +599,119 @@ public class GrokTranscriptTailerTests
         }
     }
 
+    [Test]
+    public void Error_402_fixture_stamps_IsApiError_status_class_text_and_usage()
+    {
+        var parts = NormalizeFixture("grok-api-error-402.jsonl");
+        var end = parts.ShouldHaveSingleItem();
+        end.Kind.ShouldBe(TranscriptKinds.TurnEnd);
+        end.StopReason.ShouldBe(TranscriptKinds.StopReasons.Error);
+        end.IsApiError.ShouldBe(true);
+        end.ApiErrorStatus.ShouldBe(402);
+        end.ApiErrorClass.ShouldBe("payment_required");
+        end.Text.ShouldBe("Grok Build usage balance exhausted");
+        end.InputTokens.ShouldBe(18747424);
+        end.Model.ShouldBe("grok-4.6-build");
+        end.ModelCalls.ShouldBe(103);
+        parts.ShouldNotContain(p => p.Kind == TranscriptKinds.AssistantText);
+    }
+
+    [Test]
+    public void Error_403_fixture_stamps_IsApiError_with_forbidden_class()
+    {
+        // Wording unverified — pinned from the card text until the other deployment's
+        // updates.jsonl row is copied in. Parser keys on status 403 + reason phrase.
+        var parts = NormalizeFixture("grok-api-error-403.jsonl");
+        var end = parts.ShouldHaveSingleItem();
+        end.Kind.ShouldBe(TranscriptKinds.TurnEnd);
+        end.IsApiError.ShouldBe(true);
+        end.ApiErrorStatus.ShouldBe(403);
+        end.ApiErrorClass.ShouldBe("forbidden");
+        end.Text.ShouldContain("exhausted its credits");
+        end.Model.ShouldBe("grok-4.6-build");
+    }
+
+    [Test]
+    public void Unparseable_agent_result_still_stamps_IsApiError_with_null_class_and_status()
+    {
+        var n = new GrokTranscriptNormalizer();
+        var row =
+            """{"timestamp":1,"method":"_x.ai/session/update","params":{"sessionId":"x","update":{"sessionUpdate":"turn_completed","prompt_id":"p","stop_reason":"error","agent_result":"something the grammar does not match"},"_meta":{"eventId":"x-1","agentTimestampMs":1}}}""";
+        var end = n.Normalize(row).ShouldHaveSingleItem();
+        end.IsApiError.ShouldBe(true);
+        end.ApiErrorClass.ShouldBeNull();
+        end.ApiErrorStatus.ShouldBeNull();
+        end.Text.ShouldBe("something the grammar does not match");
+        end.StopReason.ShouldBe(TranscriptKinds.StopReasons.Error);
+    }
+
+    [Test]
+    public void Retrying_retry_state_rows_emit_nothing()
+    {
+        var n = new GrokTranscriptNormalizer();
+        var retrying =
+            """{"timestamp":1,"method":"_x.ai/session/update","params":{"sessionId":"x","update":{"sessionUpdate":"retry_state","type":"retrying","attempt":3,"max_retries":15,"reason":"API error (status 500 Internal Server Error): The model is currently at capacity"},"_meta":{"eventId":"x-1","agentTimestampMs":1}}}""";
+        n.Normalize(retrying).ShouldBeEmpty();
+    }
+
+    [Test]
+    public void Failed_retry_state_rows_emit_nothing()
+    {
+        var n = new GrokTranscriptNormalizer();
+        var failed =
+            """{"timestamp":1,"method":"_x.ai/session/update","params":{"sessionId":"x","update":{"sessionUpdate":"retry_state","type":"failed","error_type":"api","message":"API error (status 402 Payment Required): Grok Build usage balance exhausted"},"_meta":{"eventId":"x-1","agentTimestampMs":1}}}""";
+        n.Normalize(failed).ShouldBeEmpty("failed duplicates agent_result on the following turn_completed");
+    }
+
+    [Test]
+    public void End_turn_rows_still_have_null_IsApiError()
+    {
+        var n = new GrokTranscriptNormalizer();
+        var parts = new List<TranscriptPart>();
+        foreach (var row in new[] { UserChunkRow, AgentChunkRow, TurnCompletedRow })
+            parts.AddRange(n.Normalize(row));
+
+        var end = parts.Single(p => p.Kind == TranscriptKinds.TurnEnd);
+        end.StopReason.ShouldBe("end_turn");
+        end.IsApiError.ShouldBeNull();
+        end.ApiErrorClass.ShouldBeNull();
+        end.ApiErrorStatus.ShouldBeNull();
+        end.Text.ShouldBeNull();
+    }
+
+    [Test]
+    public void Error_agent_result_is_bounded_to_600_chars()
+    {
+        var n = new GrokTranscriptNormalizer();
+        var longDetail = new string('x', 800);
+        var agentResult = $"API error (status 402 Payment Required): {longDetail}";
+        var escaped = agentResult.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        var row =
+            "{\"timestamp\":1,\"method\":\"_x.ai/session/update\",\"params\":{\"sessionId\":\"x\","
+            + "\"update\":{\"sessionUpdate\":\"turn_completed\",\"prompt_id\":\"p\",\"stop_reason\":\"error\","
+            + "\"agent_result\":\"" + escaped + "\"},\"_meta\":{\"eventId\":\"x-1\",\"agentTimestampMs\":1}}}";
+        var end = n.Normalize(row).ShouldHaveSingleItem();
+        end.Text.ShouldNotBeNull();
+        end.Text!.Length.ShouldBe(601); // 600 + ellipsis
+        end.Text.ShouldEndWith("…");
+        end.ApiErrorStatus.ShouldBe(402);
+    }
+
+    private static List<TranscriptPart> NormalizeFixture(string fileName)
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "Fixtures", fileName);
+        File.Exists(path).ShouldBeTrue($"fixture missing at {path}");
+        var n = new GrokTranscriptNormalizer();
+        var parts = new List<TranscriptPart>();
+        foreach (var line in File.ReadAllLines(path))
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+            parts.AddRange(n.Normalize(line));
+        }
+        return parts;
+    }
+
     private static (string Dir, string Path) TempUpdatesPath()
     {
         var dir = Path.Combine(Path.GetTempPath(), $"antiphon-grok-tailer-{Guid.NewGuid():N}");

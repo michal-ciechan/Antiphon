@@ -5,6 +5,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
@@ -429,6 +430,95 @@ public class AgentSessionRuntimeTests
         await db.Agents.Where(a => a.Id == agentId).ExecuteDeleteAsync();
         await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
     }
+
+    [Test]
+    public void Error_stop_reason_is_an_idle_boundary_stop_sequence_is_not()
+    {
+        // CARD-0281: Grok's API-error TurnEnd is an idle boundary so dispatch runs on the
+        // tailer poll. Claude's stubs are stop_sequence and must not gain this arm.
+        AgentSessionRuntime.IsTurnBoundary(TurnEndEvent(TranscriptKinds.StopReasons.Error))
+            .ShouldBeTrue();
+        AgentSessionRuntime.IsTurnBoundary(TurnEndEvent(TranscriptKinds.StopReasons.EndTurn))
+            .ShouldBeTrue();
+        AgentSessionRuntime.IsTurnBoundary(TurnEndEvent(TranscriptKinds.StopReasons.Cancelled))
+            .ShouldBeTrue();
+        AgentSessionRuntime.IsTurnBoundary(TurnEndEvent("stop_sequence"))
+            .ShouldBeFalse("Claude API-error stubs stay on the AssistantText arrival path");
+    }
+
+    [Test]
+    public async Task Error_turn_end_is_acted_on_once_replay_dedups()
+    {
+        var sessionId = Guid.NewGuid();
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+        {
+            db.AgentSessions.Add(new Antiphon.Server.Domain.Entities.AgentSession
+            {
+                Id = sessionId,
+                DefinitionName = "grok",
+                AgentKind = AgentKind.Grok,
+                Status = SessionStatus.Running,
+                Cwd = Path.GetTempPath(),
+                Cols = 120,
+                Rows = 30,
+                CreatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var logPath = Path.Combine(Path.GetTempPath(), $"antiphon-runtime-error-boundary-{Guid.NewGuid():N}");
+        var services = new ServiceCollection();
+        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
+        {
+            npgsql.MigrationsAssembly("Antiphon.Server");
+            npgsql.SetPostgresVersion(16, 0);
+        }));
+        await using var provider = services.BuildServiceProvider();
+        var runtime = new AgentSessionRuntime(
+            new MockEventBus(),
+            Options.Create(new AgentSessionSettings { SessionLogPath = logPath }),
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            TimeProvider.System,
+            NullLogger<AgentSessionRuntime>.Instance);
+
+        try
+        {
+            var first = TurnEndEvent(TranscriptKinds.StopReasons.Error, sessionId, uuid: "error-uuid-1");
+            await runtime.ObserveTranscriptAsync(first, CancellationToken.None);
+            await runtime.ObserveTranscriptAsync(first with { Sequence = 99 }, CancellationToken.None);
+
+            await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            var rows = await verify.TranscriptEntries
+                .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.TurnEnd)
+                .ToListAsync();
+            rows.ShouldHaveSingleItem("replay of the same uuid must not persist a second TurnEnd");
+            rows[0].StopReason.ShouldBe(TranscriptKinds.StopReasons.Error);
+        }
+        finally
+        {
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).ExecuteDeleteAsync();
+            await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
+            DeleteDirectoryBestEffort(logPath);
+        }
+    }
+
+    private static SessionRunnerTranscriptEvent TurnEndEvent(
+        string stopReason, Guid? sessionId = null, string? uuid = null) =>
+        new(
+            sessionId ?? Guid.NewGuid(),
+            Sequence: 1,
+            Kind: TranscriptKinds.TurnEnd,
+            Uuid: uuid ?? Guid.NewGuid().ToString("N"),
+            ParentUuid: null,
+            Timestamp: DateTimeOffset.UtcNow,
+            Role: "assistant",
+            Text: null,
+            ToolName: null,
+            ToolInput: null,
+            ToolUseId: null,
+            ToolIsError: null,
+            StopReason: stopReason);
 
     private static SessionRunnerTranscriptEvent TranscriptEvent(
         Guid sessionId, long sequence, string kind, string uuid, string text) =>

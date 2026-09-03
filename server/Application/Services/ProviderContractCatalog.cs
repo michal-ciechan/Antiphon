@@ -116,10 +116,10 @@ public static class ProviderContractCatalog
             UsageAccounting: ProviderUsageAccounting.TurnSumInclusiveCache,
             SelfReportedCeilingTokens: 500_000),
         UsageLimitSignal: new UsageLimitSignalContract(
-            AgentTuiCapabilityState.Unknown,
-            "pending CARD-0083 S1 survey",
-            UsageLimitSignalForm.Unknown,
-            StatesResetTime: null),
+            AgentTuiCapabilityState.Supported,
+            "Grok writes API errors on turn_completed.agent_result (measured 402 Payment Required — 'Grok Build usage balance exhausted', CARD-0281). Structural field; the 402 text states no reset time.",
+            UsageLimitSignalForm.StructuralField,
+            StatesResetTime: false),
         Compaction: new CompactionContract(
             AgentTuiCapabilityState.Supported,
             "Grok emits explicit compaction_checkpoint and auto_compact_completed rows (measured 1.0.5). session_recap is a recap/summary, not compaction (CARD-0080 S1). auto_compact_completed is ingested as a usage-bearing (auto) CompactBoundary (CARD-0157); compaction_checkpoint stays skipped (no token payload).",

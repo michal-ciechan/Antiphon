@@ -1,6 +1,7 @@
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -127,7 +128,20 @@ public sealed class ChannelBridgeService : BackgroundService
             return;
         }
 
-        var sessionId = await EnsureAgentSessionAsync(agentId, ct);
+        Guid? sessionId;
+        try
+        {
+            sessionId = await EnsureAgentSessionAsync(agentId, ct);
+        }
+        catch (ModelDisabledException ex)
+        {
+            _logger.LogWarning(
+                "Channel {ChannelId} is bound to agent {AgentId} whose model is held; message {MessageId} not routed",
+                channel.Id, agentId, message.ChannelMessageId);
+            await NotifyHeldAgentInboundAsync(channel, message, agentId, ex, ct);
+            await RaiseBridgeDropAlertAsync(channel, agentId, ct);
+            return;
+        }
         if (sessionId is not Guid liveSessionId)
         {
             _logger.LogWarning(
@@ -283,6 +297,76 @@ public sealed class ChannelBridgeService : BackgroundService
             original = "attachment" + (attachment.Kind == AttachmentKind.Image ? ".jpg" : ".bin");
         var stamp = _timeProvider.GetUtcNow().UtcDateTime.ToString("yyyyMMdd-HHmmss");
         return $"{stamp}-{message.ChannelMessageId}-{index}-{original}";
+    }
+
+    /// <summary>
+    /// CARD-0281: a held model is not a consume-loop crash. One Critical ChannelReplyLost /
+    /// ProviderCapacity incident per hold episode, plus the same capacity notice the withhold
+    /// path sends, then today's drop path.
+    /// </summary>
+    private async Task NotifyHeldAgentInboundAsync(
+        ChatChannel channel, ChannelMessage message, Guid agentId, ModelDisabledException ex,
+        CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var already = await db.AgentIncidents.AsNoTracking().AnyAsync(
+                i => i.AgentId == agentId
+                    && i.Kind == AgentIncidentKind.ChannelReplyLost
+                    && i.FailureReason == "ProviderCapacity"
+                    && i.CreatedAt >= ex.Hold.HitAt, ct);
+            if (!already)
+            {
+                var supervisor = scope.ServiceProvider.GetService<AgentSupervisorService>();
+                if (supervisor is not null)
+                {
+                    var noticeWhy =
+                        $"the {ex.Hold.Kind} provider is held ({ex.Hold.ModelAlias}); no fallback declared";
+                    await supervisor.RecordIncidentAsync(
+                        agentId,
+                        null,
+                        AgentIncidentKind.ChannelReplyLost,
+                        AlertSeverity.Critical,
+                        ColumnText.Clip(
+                            $"A reply this agent owed {channel.Provider}:{message.Conversation.Id} was never sent "
+                            + $"because {noticeWhy}. Someone in that chat asked a question and got silence.",
+                            AgentIncident.MessageMaxLength),
+                        failureReason: "ProviderCapacity",
+                        ct: ct);
+                    await db.SaveChangesAsync(ct);
+                }
+            }
+
+            var channels = scope.ServiceProvider.GetService<ChatChannelService>();
+            if (channels is null)
+                return;
+            var notice = ProviderCapacityNotice.Format(
+                ex.Hold.Kind,
+                ex.Hold.ModelAlias,
+                status: null,
+                reasonPhrase: ex.Hold.Reason,
+                fallbackDeclared: false);
+            try
+            {
+                await channels.SendAsync(
+                    channel.Id,
+                    notice,
+                    new ChannelSendOptions(ReplyHandle: channel.ReplyHandle ?? message.ReplyHandle),
+                    ct);
+            }
+            catch (ConflictException cex) when (cex.Code == "channel_disabled")
+            {
+                _logger.LogWarning(
+                    "Provider-capacity notice not sent: channel {ChannelId} is disabled", channel.Id);
+            }
+        }
+        catch (Exception notifyEx) when (notifyEx is not OperationCanceledException)
+        {
+            _logger.LogWarning(notifyEx,
+                "Held-agent inbound notice for channel {ChannelId} failed", channel.Id);
+        }
     }
 
     private async Task RaiseBridgeDropAlertAsync(ChatChannel channel, Guid agentId, CancellationToken ct)

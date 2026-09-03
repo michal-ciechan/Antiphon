@@ -412,7 +412,7 @@ public sealed class ProviderContractCatalogTests
     [Test]
     public void UsageLimitSignal_unsurveyed_kinds_stay_Unknown_pending_S1()
     {
-        foreach (var kind in new[] { AgentKind.Grok, AgentKind.Codex, AgentKind.OpenCode })
+        foreach (var kind in new[] { AgentKind.Codex, AgentKind.OpenCode })
         {
             var axis = ProviderContractCatalog.For(kind).UsageLimitSignal;
             axis.State.ShouldBe(AgentTuiCapabilityState.Unknown);
@@ -420,6 +420,17 @@ public sealed class ProviderContractCatalogTests
             axis.StatesResetTime.ShouldBeNull();
             axis.Reason.ShouldBe("pending CARD-0083 S1 survey");
         }
+    }
+
+    [Test]
+    public void Grok_usage_limit_is_structural_on_agent_result_and_states_no_reset()
+    {
+        var axis = ProviderContractCatalog.For(AgentKind.Grok).UsageLimitSignal;
+        axis.State.ShouldBe(AgentTuiCapabilityState.Supported);
+        axis.Form.ShouldBe(UsageLimitSignalForm.StructuralField);
+        axis.StatesResetTime.ShouldBe(false);
+        axis.Reason.ShouldContain("agent_result");
+        axis.Reason.ShouldContain("402");
     }
 
     [Test]

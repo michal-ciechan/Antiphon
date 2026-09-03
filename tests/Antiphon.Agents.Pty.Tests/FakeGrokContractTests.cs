@@ -378,6 +378,145 @@ public class FakeGrokContractTests
         }
     }
 
+    /// <summary>
+    /// CARD-0281 S0: the armed turn writes the measured Grok API-error pair (retry_state failed
+    /// + turn_completed stop_reason=error with agent_result) and no agent_message_chunk. The
+    /// next turn answers normally.
+    /// </summary>
+    [Test]
+    public async Task An_armed_payment_required_turn_writes_the_measured_error_pair()
+    {
+        SkipIfUnavailable();
+        var home = Path.Combine(Path.GetTempPath(), $"fakegrok-home-{Guid.NewGuid():N}");
+        var cwd = Path.Combine(Path.GetTempPath(), $"fakegrok-cwd-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(cwd);
+        var sessionId = Guid.NewGuid().ToString("D");
+        try
+        {
+            await using var runner = await LaunchReadyFakeAsync(
+                env: new Dictionary<string, string>
+                {
+                    ["GROK_HOME"] = home,
+                    ["ANTIPHON_FAKE_API_ERROR"] = "payment_required",
+                },
+                args: ["--cwd", cwd, "--session-id", sessionId]);
+
+            await runner.WriteAsync("doomed turn\r");
+            (await runner.WaitForOutputAsync(
+                    s => s.Contains("usage balance exhausted"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue("the dead turn renders the 402 text, not a FAKE response");
+
+            var sessionDir = Path.Combine(home, "sessions", Uri.EscapeDataString(Path.GetFullPath(cwd)), sessionId);
+            var updatesPath = Path.Combine(sessionDir, "updates.jsonl");
+            var text = await WaitForUpdatesAsync(
+                updatesPath,
+                "\"sessionUpdate\":\"retry_state\"",
+                "\"type\":\"failed\"",
+                "\"error_type\":\"api\"",
+                "\"stop_reason\":\"error\"",
+                "\"agent_result\":",
+                "usage balance exhausted",
+                "user_message_chunk");
+            text.ShouldNotContain("agent_message_chunk");
+            text.ShouldNotContain("\"stop_reason\":\"end_turn\"");
+
+            await runner.WriteAsync("Continue\r");
+            (await runner.WaitForOutputAsync(
+                    s => s.Contains("FAKE response to: Continue"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue("a turn after the armed one must answer normally");
+            var after = await WaitForUpdatesAsync(updatesPath, "\"stop_reason\":\"end_turn\"");
+            after.ShouldContain("\"stop_reason\":\"end_turn\"");
+
+            await runner.KillAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            try { Directory.Delete(home, true); } catch { /* best effort */ }
+            try { Directory.Delete(cwd, true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
+    public async Task Permission_denied_emits_the_unverified_403_card_wording()
+    {
+        SkipIfUnavailable();
+        var home = Path.Combine(Path.GetTempPath(), $"fakegrok-home-{Guid.NewGuid():N}");
+        var cwd = Path.Combine(Path.GetTempPath(), $"fakegrok-cwd-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(cwd);
+        var sessionId = Guid.NewGuid().ToString("D");
+        try
+        {
+            await using var runner = await LaunchReadyFakeAsync(
+                env: new Dictionary<string, string>
+                {
+                    ["GROK_HOME"] = home,
+                    ["ANTIPHON_FAKE_API_ERROR"] = "permission_denied",
+                },
+                args: ["--cwd", cwd, "--session-id", sessionId]);
+
+            await runner.WriteAsync("doomed\r");
+            (await runner.WaitForOutputAsync(
+                    s => s.Contains("status 403") || s.Contains("permission-denied"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue("the 403 card wording should reach the screen");
+
+            var sessionDir = Path.Combine(home, "sessions", Uri.EscapeDataString(Path.GetFullPath(cwd)), sessionId);
+            var updatesPath = Path.Combine(sessionDir, "updates.jsonl");
+            var text = await WaitForUpdatesAsync(
+                updatesPath,
+                "\"stop_reason\":\"error\"",
+                "status 403 Forbidden",
+                "monthly spending limit");
+            text.ShouldContain("\"type\":\"failed\"");
+
+            await runner.KillAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            try { Directory.Delete(home, true); } catch { /* best effort */ }
+            try { Directory.Delete(cwd, true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
+    public async Task Server_error_mode_writes_a_500_failed_pair()
+    {
+        SkipIfUnavailable();
+        var home = Path.Combine(Path.GetTempPath(), $"fakegrok-home-{Guid.NewGuid():N}");
+        var cwd = Path.Combine(Path.GetTempPath(), $"fakegrok-cwd-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(cwd);
+        var sessionId = Guid.NewGuid().ToString("D");
+        try
+        {
+            await using var runner = await LaunchReadyFakeAsync(
+                env: new Dictionary<string, string>
+                {
+                    ["GROK_HOME"] = home,
+                    ["ANTIPHON_FAKE_API_ERROR"] = "server_error",
+                },
+                args: ["--cwd", cwd, "--session-id", sessionId]);
+
+            await runner.WriteAsync("doomed\r");
+            (await runner.WaitForOutputAsync(
+                    s => s.Contains("currently at capacity"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue();
+
+            var sessionDir = Path.Combine(home, "sessions", Uri.EscapeDataString(Path.GetFullPath(cwd)), sessionId);
+            var updatesPath = Path.Combine(sessionDir, "updates.jsonl");
+            var text = await WaitForUpdatesAsync(
+                updatesPath,
+                "\"stop_reason\":\"error\"",
+                "status 500 Internal Server Error");
+            text.ShouldContain("\"type\":\"failed\"");
+
+            await runner.KillAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            try { Directory.Delete(home, true); } catch { /* best effort */ }
+            try { Directory.Delete(cwd, true); } catch { /* best effort */ }
+        }
+    }
+
     [Test]
     public async Task Question_tool_submit_while_open_writes_completed_update_and_no_user_chunk()
     {

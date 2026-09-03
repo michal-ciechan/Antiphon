@@ -3,13 +3,12 @@ using Antiphon.Server.Domain.Enums;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// Pure classifier for API-error stubs (CARD-0072): no clock, no DB, no session. Input is the
-/// stub's carried evidence — <c>TranscriptEntry.ApiErrorClass</c>/<c>ApiErrorStatus</c>/<c>Text</c>
+/// Pure classifier for API-error stubs (CARD-0072 / CARD-0281): no clock, no DB, no session. Input
+/// is the stub's carried evidence — <c>TranscriptEntry.ApiErrorClass</c>/<c>ApiErrorStatus</c>/<c>Text</c>
 /// — and classification keys on the STRUCTURAL class first (Claude Code's own error plumbing,
-/// stable across the whole measured record), falling back to the HTTP status only when the class is
-/// missing or unrecognized. The error TEXT is deliberately not a classification input: the reset
-/// time inside a Wall stub's text is consumed by <c>UsageLimitResetParser</c> (S4), and a parse
-/// failure there degrades the RESPONSE (§D3), not the class.
+/// stable across the whole measured record), falling back to the HTTP status when the class is
+/// missing or unrecognized. The error TEXT is used for the 403 capacity vocabulary gate
+/// (CARD-0281): a 403 that looks like a spending/credits wall is Wall, otherwise NeedsHuman.
 /// </summary>
 public static class ApiErrorClassifier
 {
@@ -20,9 +19,8 @@ public static class ApiErrorClassifier
     /// </summary>
     /// <param name="apiErrorClass">The stub's raw top-level <c>error</c> value.</param>
     /// <param name="apiErrorStatus">The stub's <c>apiErrorStatus</c>, when present.</param>
-    /// <param name="text">The stub's error text. Unused today — accepted so the whole of the
-    /// stub's evidence flows through one seam and a future text-informed distinction (§6.5's
-    /// longer-period cap) lands here rather than at every call site.</param>
+    /// <param name="text">The stub's error text. Used for the 403 capacity vocabulary gate
+    /// (CARD-0281); otherwise consumed by <c>UsageLimitWallParser</c> for reset/alias, not class.</param>
     public static ApiErrorClassification Classify(string? apiErrorClass, int? apiErrorStatus, string? text)
     {
         switch (apiErrorClass)
@@ -40,6 +38,11 @@ public static class ApiErrorClassifier
         return apiErrorStatus switch
         {
             429 => ApiErrorClassification.Wall,
+            402 => ApiErrorClassification.Wall,
+            403 => UsageLimitWallParser.LooksLikeCapacity(text)
+                ? ApiErrorClassification.Wall
+                : ApiErrorClassification.NeedsHuman,
+            400 => ApiErrorClassification.NeedsHuman,
             401 => ApiErrorClassification.NeedsHuman,
             >= 500 => ApiErrorClassification.Transient,
             _ => ApiErrorClassification.Unknown,

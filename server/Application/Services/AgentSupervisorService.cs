@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -219,10 +220,29 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             refreshed.LastAttemptAt = now;
             refreshed.UpdatedAt = UtcNow();
 
-            await RecordIncidentAsync(
-                agent.Id, null, AgentIncidentKind.StartFailure, AlertSeverity.Error,
-                $"Start attempt {attemptNumber} failed: {ex.Message} — next retry {refreshed.NextRestartAt:u} (backing off {Describe(delay)}).",
-                ct: ct);
+            if (ex is ModelDisabledException held)
+            {
+                var holdKey = held.Hold.Id.ToString("D");
+                var already = await _db.AgentIncidents.AsNoTracking().AnyAsync(
+                    i => i.AgentId == agent.Id
+                        && i.Kind == AgentIncidentKind.StartFailure
+                        && i.FailureReason == holdKey, ct);
+                if (!already)
+                {
+                    await RecordIncidentAsync(
+                        agent.Id, null, AgentIncidentKind.StartFailure, AlertSeverity.Error,
+                        $"held: {held.Hold.ModelAlias} is disabled (per-model cap); no fallback declared — next retry {refreshed.NextRestartAt:u} (backing off {Describe(delay)}).",
+                        failureReason: holdKey,
+                        ct: ct);
+                }
+            }
+            else
+            {
+                await RecordIncidentAsync(
+                    agent.Id, null, AgentIncidentKind.StartFailure, AlertSeverity.Error,
+                    $"Start attempt {attemptNumber} failed: {ex.Message} — next retry {refreshed.NextRestartAt:u} (backing off {Describe(delay)}).",
+                    ct: ct);
+            }
             await EscalateIfTierCrossedAsync(agent, refreshed, delay, ct);
 
             _logger.LogWarning(ex,

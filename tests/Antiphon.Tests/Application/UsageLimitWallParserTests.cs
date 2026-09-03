@@ -115,6 +115,37 @@ public class UsageLimitWallParserTests
     }
 
     [Test]
+    public void LooksLikeCapacity_matches_grok_vocabulary_and_the_card_text()
+    {
+        UsageLimitWallParser.LooksLikeCapacity("Grok Build usage balance exhausted").ShouldBeTrue();
+        UsageLimitWallParser.LooksLikeCapacity("out of credits or over your spending limit").ShouldBeTrue();
+        UsageLimitWallParser.LooksLikeCapacity("usage limit reached").ShouldBeTrue();
+        UsageLimitWallParser.LooksLikeCapacity("team has exhausted its credits or reached its monthly spending limit")
+            .ShouldBeTrue();
+        UsageLimitWallParser.LooksLikeCapacity("permission denied: not allowed").ShouldBeFalse();
+        UsageLimitWallParser.LooksLikeCapacity(null).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Grok_402_format_reason_is_the_capacity_form()
+    {
+        var wall = UsageLimitWallParser.Parse(
+            SummerAfternoonUtc,
+            "API error (status 402 Payment Required): Grok Build usage balance exhausted",
+            "grok-4.6");
+
+        wall.ShouldNotBeNull();
+        wall!.Kind.ShouldBe(UsageLimitWallKind.ModelCap);
+        wall.ModelAlias.ShouldBe("grok-4.6");
+        wall.ResetAt.ShouldBeNull();
+        var reason = UsageLimitWallParser.FormatReason(wall);
+        reason.ShouldContain("grok-4.6 provider capacity");
+        reason.ShouldContain("HTTP 402 Payment Required");
+        reason.ShouldContain("usage balance exhausted");
+        reason.ShouldContain("no reset stated");
+    }
+
+    [Test]
     public void Twenty_four_hour_reset_form_parses()
     {
         var wall = UsageLimitWallParser.Parse(

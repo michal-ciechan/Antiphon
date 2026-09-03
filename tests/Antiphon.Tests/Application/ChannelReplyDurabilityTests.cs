@@ -417,4 +417,107 @@ public class ChannelReplyDurabilityTests
         incident.Message.ShouldContain($"prompt seq {promptSeq}");
         incident.Message.ShouldContain("Give me message to Phil");
     }
+
+    [Test]
+    public async Task A_terminal_grok_402_sends_one_notice_settles_and_skips_ttl()
+    {
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var conversationKey = $"telegram:{chatId}";
+        var prompt = "[Telegram \"Family\" — Mike 10:00] what is the market doing";
+
+        await using (var stamp = CreateContext())
+        {
+            await stamp.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u
+                    .SetProperty(s => s.AgentKind, AgentKind.Grok)
+                    .SetProperty(s => s.EffectiveModelId, "grok-4.6"));
+        }
+
+        var messageId = await h.SeedChannelCorrelationAsync(prompt, conversationKey);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, prompt);
+        await h.InsertTranscriptEntryAsync(
+            TranscriptKinds.TurnEnd,
+            "Grok Build usage balance exhausted",
+            stopReason: TranscriptKinds.StopReasons.Error,
+            isApiError: true,
+            apiErrorClass: "payment_required",
+            apiErrorStatus: 402);
+
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        var notice = h.Messaging.SentReplies.Where(r => r.ConversationId == chatId).ShouldHaveSingleItem();
+        notice.Text.ShouldNotBeNull();
+        notice.Text.ShouldContain("can't answer right now");
+        notice.Text.ShouldContain("Grok");
+        notice.Text.ShouldContain("HTTP 402");
+        notice.Text.ShouldContain("Your message is kept");
+        notice.Text.ShouldNotContain("Bearer");
+        notice.ReplyHandle.ShouldBe(chatId);
+        (await RowAsync(messageId)).ChannelReplySettledAt.ShouldNotBeNull();
+        (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(0);
+
+        await using var db = CreateContext();
+        var incident = (await db.AgentIncidents
+                .Where(i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.ChannelReplyLost)
+                .ToListAsync())
+            .ShouldHaveSingleItem();
+        incident.FailureReason.ShouldBe("ProviderCapacity");
+        incident.Severity.ShouldBe(AlertSeverity.Critical);
+
+        var hold = await db.ModelAvailabilityHolds.SingleAsync(
+            x => x.SourceSessionId == h.SessionId && x.ClearedAt == null);
+        hold.Kind.ShouldBe(AgentKind.Grok);
+        hold.ModelAlias.ShouldBe("grok-4.6");
+        hold.DisabledUntil.ShouldBeNull();
+
+        var beforeSweep = h.Messaging.SentReplies.Count;
+        var abandoned = await h.Dispatcher.SweepStaleCorrelationsAsync(CancellationToken.None);
+        _ = abandoned;
+        h.Messaging.SentReplies.Skip(beforeSweep)
+            .Where(r => r.ConversationId == chatId && r.Text != null
+                && r.Text.StartsWith(ChannelReplyDispatcher.LostReplyNoticePrefix, StringComparison.Ordinal))
+            .ShouldBeEmpty("TTL must not send the contradictory 'no turn completed' notice");
+
+        await db.ModelAvailabilityHolds.Where(x => x.Id == hold.Id).ExecuteDeleteAsync();
+    }
+
+    [Test]
+    public async Task A_capacity_notice_scrubs_bearer_tokens_and_urls()
+    {
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var prompt = "[Telegram \"Family\" — Mike 10:05] ping";
+
+        await using (var stamp = CreateContext())
+        {
+            await stamp.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u
+                    .SetProperty(s => s.AgentKind, AgentKind.Grok)
+                    .SetProperty(s => s.EffectiveModelId, "grok-4.6"));
+        }
+
+        await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, prompt);
+        await h.InsertTranscriptEntryAsync(
+            TranscriptKinds.TurnEnd,
+            "API error (status 402 Payment Required): usage balance exhausted Bearer xai-secretvalue https://api.x.ai/v1/fail",
+            stopReason: TranscriptKinds.StopReasons.Error,
+            isApiError: true,
+            apiErrorClass: "payment_required",
+            apiErrorStatus: 402);
+
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        var notice = h.Messaging.SentReplies.Where(r => r.ConversationId == chatId).ShouldHaveSingleItem();
+        notice.Text.ShouldNotBeNull();
+        notice.Text.ShouldNotContain("xai-secretvalue");
+        notice.Text.ShouldNotContain("https://api.x.ai");
+        notice.Text.ShouldNotContain("Bearer xai");
+
+        await using var db = CreateContext();
+        await db.ModelAvailabilityHolds
+            .Where(x => x.SourceSessionId == h.SessionId)
+            .ExecuteDeleteAsync();
+    }
 }

@@ -321,6 +321,11 @@ public static class TranscriptKinds
     {
         public const string EndTurn = "end_turn";
         public const string Cancelled = "cancelled";
+        /// <summary>
+        /// Grok API-error TurnEnd (CARD-0281). Claude never emits it (its stubs are
+        /// <c>stop_sequence</c>); Codex synthesizes <see cref="EndTurn"/>.
+        /// </summary>
+        public const string Error = "error";
     }
 
     /// <summary>

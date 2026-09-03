@@ -42,6 +42,12 @@ namespace Antiphon.FakeGrok;
 ///  * Opt-in <c>ANTIPHON_FAKE_SIGN_IN=1</c> (CARD-0324): paint Grok 1.0.13's OAuth
 ///    device-approval screen, ignore every key except <c>ctrl+q</c>, and exit 0 after
 ///    <c>ANTIPHON_FAKE_SIGN_IN_EXIT_MS</c> (default 3000).
+///  * Opt-in <c>ANTIPHON_FAKE_API_ERROR=payment_required|permission_denied|server_error</c>
+///    (CARD-0281): the armed turn writes the measured Grok API-error pair — a
+///    <c>retry_state</c> <c>type: failed</c> row then <c>turn_completed</c> with
+///    <c>stop_reason: error</c> and the same text in <c>agent_result</c> — and no
+///    <c>agent_message_chunk</c>. <c>ANTIPHON_FAKE_API_ERROR_AFTER_TURNS=N</c> (default 1)
+///    kills the Nth submitted turn only; later turns respond normally.
 /// </summary>
 internal static class Program
 {
@@ -194,6 +200,16 @@ internal static class Program
 
         return 0;
     }
+
+    /// <summary>
+    /// CARD-0281 S0: which API-error class kills a turn. Read once — the values never change
+    /// mid-run. Same env names as FakeClaude so a harness can arm either fake the same way.
+    /// </summary>
+    private static readonly string? ApiErrorMode =
+        Environment.GetEnvironmentVariable("ANTIPHON_FAKE_API_ERROR") is { Length: > 0 } m ? m : null;
+    private static readonly int ApiErrorAfterTurns =
+        int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_FAKE_API_ERROR_AFTER_TURNS"), out var n) && n > 0 ? n : 1;
+    private static int _apiTurnCount;
 
     private static int Main(string[] args)
     {
@@ -506,6 +522,20 @@ internal static class Program
             write("Compaction completed\r\n");
             write(IdleTitle);
             AppendCompactFiles(sessionDir, sessionId);
+            return;
+        }
+
+        // CARD-0281: the armed turn dies on an API-error pair INSTEAD of answering. The prompt
+        // is still recorded (the API call happened and failed); retry_state failed + error
+        // turn_completed land, and there is no agent_message_chunk — Grok stamps the diagnostic
+        // on the TurnEnd itself.
+        _apiTurnCount++;
+        if (ApiErrorMode is not null && _apiTurnCount == ApiErrorAfterTurns)
+        {
+            var errorText = ApiErrorMessage(ApiErrorMode);
+            write(errorText + "\r\n");
+            write(IdleTitle);
+            AppendApiErrorTurn(sessionDir, sessionId, text, errorText);
             return;
         }
 
@@ -826,6 +856,92 @@ internal static class Program
             // Session files are test plumbing; a write failure must not kill the TUI contract.
         }
     }
+
+    /// <summary>
+    /// CARD-0281: the measured Grok API-error pair. User chunk (the prompt was recorded), then
+    /// <c>retry_state type=failed</c>, then <c>turn_completed stop_reason=error</c> with
+    /// <c>agent_result</c> and usage. No <c>agent_message_chunk</c> — the diagnostic lives on
+    /// the TurnEnd, the Codex way.
+    /// </summary>
+    private static void AppendApiErrorTurn(
+        string sessionDir, string sessionId, string user, string errorText)
+    {
+        try
+        {
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var promptId = Guid.NewGuid().ToString("D");
+            var promptIndex = _promptCounter++;
+            var updates = Path.Combine(sessionDir, "updates.jsonl");
+            object Meta() => new { eventId = $"{sessionId}-{++_eventCounter}", agentTimestampMs = nowMs };
+            AppendShared(updates, JsonSerializer.Serialize(new
+            {
+                timestamp = now,
+                method = "session/update",
+                @params = new
+                {
+                    sessionId,
+                    update = new
+                    {
+                        sessionUpdate = "user_message_chunk",
+                        content = new { type = "text", text = user },
+                        _meta = new { modelId = "grok-4.6", promptIndex }
+                    },
+                    _meta = Meta()
+                }
+            }));
+            AppendShared(updates, JsonSerializer.Serialize(new
+            {
+                timestamp = now,
+                method = "_x.ai/session/update",
+                @params = new
+                {
+                    sessionId,
+                    update = new
+                    {
+                        sessionUpdate = "retry_state",
+                        type = "failed",
+                        error_type = "api",
+                        message = errorText
+                    },
+                    _meta = Meta()
+                }
+            }));
+            AppendShared(updates, JsonSerializer.Serialize(new
+            {
+                timestamp = now,
+                method = "_x.ai/session/update",
+                @params = new
+                {
+                    sessionId,
+                    update = new
+                    {
+                        sessionUpdate = "turn_completed",
+                        prompt_id = promptId,
+                        stop_reason = "error",
+                        agent_result = errorText,
+                        usage = BuildTurnUsage()
+                    },
+                    _meta = Meta()
+                }
+            }));
+        }
+        catch
+        {
+            // Session files are test plumbing; a write failure must not kill the TUI contract.
+        }
+    }
+
+    private static string ApiErrorMessage(string mode) => mode.ToLowerInvariant() switch
+    {
+        "payment_required" =>
+            "API error (status 402 Payment Required): Grok Build usage balance exhausted",
+        "permission_denied" =>
+            "API error (status 403 Forbidden): permission-denied: team has exhausted its credits or reached its monthly spending limit",
+        "server_error" =>
+            "API error (status 500 Internal Server Error): The model is currently at capacity",
+        _ => $"API error (status 500 Internal Server Error): {mode}",
+    };
 
     private static void AppendTurnCompleted(
         string sessionDir, string sessionId, string? promptId, string stopReason, bool withUsage)

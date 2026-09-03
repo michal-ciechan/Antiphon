@@ -54,6 +54,25 @@ public static partial class UsageLimitWallParser
             raw);
     }
 
+    /// <summary>
+    /// CARD-0281: Grok's own credit-limit vocabulary (from the 1.0.13 binary) plus the card's
+    /// "exhausted credits" / "monthly spending limit". Applied only to a stub that already
+    /// carries <c>IsApiError=true</c> and (for the 403 arm) HTTP 403.
+    /// </summary>
+    public static bool LooksLikeCapacity(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+        var raw = text.AsSpan();
+        return ContainsIgnoreCase(raw, "spending-limit")
+            || ContainsIgnoreCase(raw, "spending limit")
+            || ContainsIgnoreCase(raw, "out of credits")
+            || ContainsIgnoreCase(raw, "usage balance exhausted")
+            || ContainsIgnoreCase(raw, "usage limit reached")
+            || ContainsIgnoreCase(raw, "exhausted credits")
+            || ContainsIgnoreCase(raw, "monthly spending limit");
+    }
+
     public static string FormatReason(UsageLimitWall wall)
     {
         if (wall.Kind == UsageLimitWallKind.SessionLimit && wall.ResetAt is { } at)
@@ -65,6 +84,19 @@ public static partial class UsageLimitWallParser
             return $"session-limit resets {local:HH:mm} {zoneLabel}";
         }
 
+        if (TryReadApiErrorStatus(wall.RawText, out var status, out var phrase, out var detail)
+            && (status is 402 or 403 || LooksLikeCapacity(wall.RawText)))
+        {
+            var statusBit = status is int s
+                ? $"HTTP {s}{(string.IsNullOrEmpty(phrase) ? "" : " " + phrase)}"
+                : "capacity";
+            var clipped = string.IsNullOrWhiteSpace(detail) ? "no reset stated" : $"{detail}; no reset stated";
+            return $"{wall.ModelAlias} provider capacity ({statusBit}: {clipped})";
+        }
+
+        if (LooksLikeCapacity(wall.RawText))
+            return $"{wall.ModelAlias} provider capacity (no reset stated)";
+
         var label = wall.ModelAlias switch
         {
             ModelAlias.Fable => "Fable 5",
@@ -75,6 +107,33 @@ public static partial class UsageLimitWallParser
         };
         return $"{label} per-model cap (no reset stated)";
     }
+
+    private static bool TryReadApiErrorStatus(
+        string? text, out int? status, out string? phrase, out string? detail)
+    {
+        status = null;
+        phrase = null;
+        detail = null;
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+        var match = ApiErrorStatusRegex().Match(text);
+        if (!match.Success)
+            return false;
+        status = int.TryParse(match.Groups[1].Value, out var code) ? code : null;
+        phrase = match.Groups[2].Value.Trim();
+        detail = match.Groups[3].Value.Trim();
+        if (detail.Length > 80)
+            detail = detail[..80].Trim();
+        return status is not null;
+    }
+
+    private static bool ContainsIgnoreCase(ReadOnlySpan<char> haystack, string needle) =>
+        haystack.Contains(needle, StringComparison.OrdinalIgnoreCase);
+
+    [GeneratedRegex(
+        @"API error \(status (\d{3})\s*([^)]*)\):\s*(.*)$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex ApiErrorStatusRegex();
 
     private static string? ExtractModelAlias(string text)
     {

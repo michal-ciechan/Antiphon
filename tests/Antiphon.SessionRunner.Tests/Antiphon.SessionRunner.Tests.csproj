@@ -31,6 +31,8 @@
     <!-- Real Codex rollouts captured 2026-08-20 (codex-cli 0.147.0) — see
          CodexTranscriptNormalizerTests for provenance and the one documented reduction. -->
     <Content Include="Fixtures\codex-*.jsonl" CopyToOutputDirectory="PreserveNewest" />
+    <!-- CARD-0281 S0: measured Grok 402 pair + unverified 403 card wording. -->
+    <Content Include="Fixtures\grok-*.jsonl" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

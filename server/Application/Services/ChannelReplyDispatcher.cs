@@ -61,6 +61,11 @@ public sealed class ChannelReplyDispatcher
 
         /// <summary>A matching prompt, TurnEnd and AssistantText exist, but dispatch never settled the row.</summary>
         TurnUnmatched,
+
+        /// <summary>
+        /// CARD-0281: a terminal provider-capacity/auth wall killed the turn. Raised now, not at TTL.
+        /// </summary>
+        ProviderCapacity,
     }
 
     /// <summary>
@@ -242,11 +247,8 @@ public sealed class ChannelReplyDispatcher
         // ChannelReplyLost incident is the designed backstop (no second timeout here).
         if (containsApiErrorStub)
         {
-            _logger.LogWarning(
-                "Turn on session {SessionId} (prompt seq {PromptSeq}) was killed by an API error; withholding "
-                + "the channel reply for the whole turn. {Count} correlation(s) stay owed for a resumed turn, "
-                + "with the TTL sweep as the backstop.",
-                sessionId, userPrompt.Sequence, open.Count);
+            await HandleApiErrorWithholdAsync(
+                db, sessionId, userPrompt.Sequence, open, ct);
             return;
         }
 
@@ -380,6 +382,136 @@ public sealed class ChannelReplyDispatcher
                 "Producing the channel reply for session {SessionId} failed; {Count} correlation(s) returned to "
                 + "owed for the next turn end", sessionId, matches.Count);
         }
+    }
+
+    /// <summary>
+    /// CARD-0281 / CARD-0071: a turn killed by the API is never published as a chat reply.
+    /// Retryable classes stay owed for a resumed turn. Terminal classes send one capacity
+    /// notice per conversation, settle the rows, and raise ChannelReplyLost/ProviderCapacity
+    /// now so the TTL sweep cannot send the contradictory "no turn completed" sentence.
+    /// </summary>
+    private async Task HandleApiErrorWithholdAsync(
+        AppDbContext db,
+        Guid sessionId,
+        long promptSeq,
+        IReadOnlyList<SessionQueuedMessage> open,
+        CancellationToken ct)
+    {
+        var stub = await FindApiErrorStubAsync(db, sessionId, promptSeq, ct);
+        ApiErrorRecovery? recovery = null;
+        if (stub is not null)
+        {
+            await using var recoveryScope = _scopeFactory.CreateAsyncScope();
+            var recoveryService = recoveryScope.ServiceProvider.GetService<ApiErrorRecoveryService>();
+            if (recoveryService is not null)
+            {
+                recovery = await recoveryService.EnsureAdoptedAsync(
+                    sessionId, stub.Sequence, stub.Uuid, stub.ApiErrorClass, stub.ApiErrorStatus,
+                    stub.Text, ct, raiseIncident: true);
+            }
+        }
+
+        if (recovery is null || recovery.ResolvedAt is null)
+        {
+            _logger.LogWarning(
+                "Turn on session {SessionId} (prompt seq {PromptSeq}) was killed by an API error; withholding "
+                + "the channel reply for the whole turn. {Count} correlation(s) stay owed for a resumed turn, "
+                + "with the TTL sweep as the backstop.",
+                sessionId, promptSeq, open.Count);
+            return;
+        }
+
+        var session = await db.AgentSessions.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == sessionId, ct);
+        var kind = session?.AgentKind ?? AgentKind.ClaudeCode;
+        var alias = ModelAlias.Normalize(kind, session?.EffectiveModelId)
+            ?? ModelLevelAliases.For(kind, AgentModelLevel.High);
+        var notice = ProviderCapacityNotice.Format(
+            kind,
+            alias,
+            stub?.ApiErrorStatus ?? recovery.ApiErrorStatus,
+            ReasonPhraseOf(stub?.ApiErrorClass ?? recovery.ApiErrorClass),
+            fallbackDeclared: false,
+            detail: stub?.Text ?? recovery.ApiErrorClass);
+
+        await NotifyCapacityAsync(db, open, notice, ct);
+        await SettleAsync(db, open, ct);
+        await ReportLostAsync(sessionId, open, LossReason.ProviderCapacity, ct);
+        _logger.LogWarning(
+            "Turn on session {SessionId} (prompt seq {PromptSeq}) died on a terminal API error "
+            + "({Reason}); {Count} correlation(s) settled with a provider-capacity notice.",
+            sessionId, promptSeq, recovery.ResolvedReason, open.Count);
+    }
+
+    private async Task NotifyCapacityAsync(
+        AppDbContext db,
+        IReadOnlyList<SessionQueuedMessage> open,
+        string notice,
+        CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var channels = scope.ServiceProvider.GetService<ChatChannelService>();
+        if (channels is null)
+            return;
+
+        foreach (var key in open
+                     .Select(m => m.ConversationKey)
+                     .Where(k => !string.IsNullOrWhiteSpace(k))
+                     .Distinct(StringComparer.Ordinal))
+        {
+            if (!TrySplitConversationKey(key!, out var provider, out var conversationId))
+                continue;
+
+            var channel = await db.ChatChannels.AsNoTracking()
+                .FirstOrDefaultAsync(c => c.Provider == provider && c.ExternalId == conversationId, ct);
+            if (channel is null)
+            {
+                _logger.LogWarning(
+                    "Provider-capacity notice not sent: no catalog row for {ConversationKey}", key);
+                continue;
+            }
+
+            try
+            {
+                await channels.SendAsync(
+                    channel.Id,
+                    notice,
+                    new ChannelSendOptions(ReplyHandle: channel.ReplyHandle),
+                    ct);
+            }
+            catch (ConflictException ex) when (ex.Code == "channel_disabled")
+            {
+                _logger.LogWarning(
+                    "Provider-capacity notice not sent: channel {ChannelId} ({ConversationKey}) is disabled",
+                    channel.Id, key);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Provider-capacity notice to {ConversationKey} failed", key);
+            }
+        }
+    }
+
+    private static string? ReasonPhraseOf(string? apiErrorClass)
+    {
+        if (string.IsNullOrWhiteSpace(apiErrorClass))
+            return null;
+        return apiErrorClass.Replace('_', ' ');
+    }
+
+    private static async Task<TranscriptEntry?> FindApiErrorStubAsync(
+        AppDbContext db, Guid sessionId, long promptSeq, CancellationToken ct)
+    {
+        var nextPromptSeq = await TranscriptTurnWindow.FindNextTurnOpeningPromptSeqAsync(
+            db, sessionId, promptSeq, ct);
+        var query = db.TranscriptEntries
+            .Where(t => t.AgentSessionId == sessionId
+                && t.IsApiError == true
+                && t.Kind == TranscriptKinds.TurnEnd
+                && t.Sequence > promptSeq);
+        if (nextPromptSeq is long cap)
+            query = query.Where(t => t.Sequence < cap);
+        return await query.OrderByDescending(t => t.Sequence).FirstOrDefaultAsync(ct);
     }
 
     /// <summary>The durable consume marker — see <see cref="SessionQueuedMessage.ChannelReplySettledAt"/>.</summary>
@@ -523,6 +655,8 @@ public sealed class ChannelReplyDispatcher
                 $"a matching prompt was recorded but no turn completed within {_settings.PendingReplyTtlMinutes} minutes",
             LossReason.TurnUnmatched =>
                 $"a turn completed (prompt seq {unmatchedPrompt?.Sequence}, {assistantChars} chars) but the dispatcher did not route it",
+            LossReason.ProviderCapacity =>
+                "the provider refused the request (capacity/auth wall)",
             _ => $"no turn matching the message completed within {_settings.PendingReplyTtlMinutes} minutes",
         };
         var oldest = lost.Min(m => m.SentAt ?? m.CreatedAt);
@@ -592,7 +726,9 @@ public sealed class ChannelReplyDispatcher
             // (every AlertMinSeverity is null today; filling one would dump every Critical into
             // Family). Unroutable has nowhere to send. A send failure is a Warning, never a
             // failed sweep — the incident has already committed.
-            if (reason != LossReason.Unroutable)
+            // ProviderCapacity already sent its own notice at withhold time; do not follow
+            // with the contradictory "no turn completed" sentence.
+            if (reason is not LossReason.Unroutable and not LossReason.ProviderCapacity)
                 await NotifyOriginatingConversationsAsync(scope.ServiceProvider, lost, why, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -637,7 +773,11 @@ public sealed class ChannelReplyDispatcher
 
             try
             {
-                await channels.SendAsync(channel.Id, text, ct);
+                await channels.SendAsync(
+                    channel.Id,
+                    text,
+                    new ChannelSendOptions(ReplyHandle: channel.ReplyHandle),
+                    ct);
             }
             catch (ConflictException ex) when (ex.Code == "channel_disabled")
             {
@@ -1083,10 +1223,23 @@ public sealed class ChannelReplyDispatcher
     private static async Task<(string? Text, long MaxSeq, bool ContainsApiErrorStub)> ExtractTurnResponseAsync(
         AppDbContext db, Guid sessionId, long promptSeq, CancellationToken ct)
     {
-        var (_, entries) = await QueryTurnWindowAsync(db, sessionId, promptSeq, afterSeq: promptSeq, ct);
+        var (nextPromptSeq, entries) = await QueryTurnWindowAsync(db, sessionId, promptSeq, afterSeq: promptSeq, ct);
 
         var maxSeq = entries.Count > 0 ? entries[^1].Sequence : promptSeq;
         var containsStub = entries.Any(t => TranscriptKinds.IsApiErrorStub(t.Kind, t.IsApiError));
+        if (!containsStub)
+        {
+            // Grok/Codex stamp the diagnostic on the TurnEnd itself — no AssistantText stub.
+            var turnEndQuery = db.TranscriptEntries
+                .Where(t => t.AgentSessionId == sessionId
+                    && t.Kind == TranscriptKinds.TurnEnd
+                    && t.IsApiError == true
+                    && t.Sequence > promptSeq);
+            if (nextPromptSeq is long cap)
+                turnEndQuery = turnEndQuery.Where(t => t.Sequence < cap);
+            containsStub = await turnEndQuery.AnyAsync(ct);
+        }
+
         var joined = string.Join("\n\n", entries
             .Where(t => !TranscriptKinds.IsApiErrorStub(t.Kind, t.IsApiError))
             .Select(t => t.Text)

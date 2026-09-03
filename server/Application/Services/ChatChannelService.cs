@@ -114,6 +114,7 @@ public sealed class ChatChannelService
             {
                 Channel = channel.Provider,
                 ConversationId = channel.ExternalId,
+                ReplyHandle = options?.ReplyHandle,
                 Text = text,
                 ReplyToMessageId = options?.ReplyToMessageId,
                 RawOverrides = rawOverrides,
@@ -184,4 +185,7 @@ public sealed class ChatChannelService
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
 }
 
-public sealed record ChannelSendOptions(bool Silent = false, string? ReplyToMessageId = null);
+public sealed record ChannelSendOptions(
+    bool Silent = false,
+    string? ReplyToMessageId = null,
+    string? ReplyHandle = null);

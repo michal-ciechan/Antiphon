@@ -750,6 +750,86 @@ public class ChannelBridgeTests
         h.Messaging.SentReplies.ShouldBeEmpty();
     }
 
+    [Test]
+    public async Task Held_agent_without_fallback_sends_notice_and_does_not_throw()
+    {
+        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            AlwaysOn = true,
+            Bridge = new ChannelBridgeSettings
+            {
+                Enabled = true,
+                DebounceWindowMs = 0,
+                AgentStartTimeoutSeconds = 5,
+            },
+            ConfigureServices = s =>
+            {
+                s.AddScoped<ModelAvailability>();
+                s.AddSingleton<ChannelInboundDebouncer>();
+            },
+        });
+        var chatId = await h.BindChannelAsync();
+        var holdIds = new List<Guid>();
+
+        await using (var db = BridgeQueueHarness.CreateContext())
+        {
+            await db.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Stopped));
+            foreach (var kind in new[] { AgentKind.Raw, AgentKind.ClaudeCode, AgentKind.Grok, AgentKind.Codex })
+            {
+                var id = Guid.NewGuid();
+                holdIds.Add(id);
+                db.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
+                {
+                    Id = id,
+                    Kind = kind,
+                    ModelAlias = ModelAlias.KindWide,
+                    Source = ModelAvailabilitySource.AutoDetected,
+                    DisabledUntil = null,
+                    HitAt = DateTime.UtcNow,
+                    Reason = "provider capacity (HTTP 402 Payment Required: usage balance exhausted; no reset stated)",
+                });
+            }
+            await db.SaveChangesAsync();
+        }
+
+        try
+        {
+            var bridge = new ChannelBridgeService(
+                h.Messaging,
+                h.Queue,
+                h.Provider.GetRequiredService<ChannelInboundDebouncer>(),
+                h.EventBus,
+                h.Provider.GetRequiredService<IServiceScopeFactory>(),
+                h.Provider.GetRequiredService<IOptions<ChannelBridgeSettings>>(),
+                h.Provider.GetRequiredService<TimeProvider>(),
+                NullLogger<ChannelBridgeService>.Instance);
+
+            var msg = TelegramText(chatId, "hello from the held model", title: "Family");
+            await bridge.HandleInboundAsync(msg, CancellationToken.None);
+
+            var notice = h.Messaging.SentReplies.Where(r => r.ConversationId == chatId)
+                .ShouldHaveSingleItem();
+            notice.Text.ShouldNotBeNull();
+            notice.Text.ShouldContain("can't answer right now");
+            notice.Text.ShouldContain("Your message is kept");
+            h.Adapter.SentInput.ShouldBeEmpty("a held agent must not be typed into");
+            (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(0);
+
+            await using var verify = BridgeQueueHarness.CreateContext();
+            (await verify.AgentIncidents.AnyAsync(i =>
+                    i.AgentId == h.AgentId
+                    && i.Kind == AgentIncidentKind.ChannelReplyLost
+                    && i.FailureReason == "ProviderCapacity"))
+                .ShouldBeTrue();
+        }
+        finally
+        {
+            await using var db = BridgeQueueHarness.CreateContext();
+            await db.ModelAvailabilityHolds.Where(x => holdIds.Contains(x.Id)).ExecuteDeleteAsync();
+        }
+    }
+
     // ---------- harness ----------
 
     private static ChannelMessage TelegramText(

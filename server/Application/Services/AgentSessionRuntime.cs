@@ -348,7 +348,7 @@ public sealed class AgentSessionRuntime
 
     /// <summary>A transcript entry that means "the agent stopped and is waiting" (see the callers of
     /// <see cref="FlushQueueOnIdleAsync"/> for why the interrupt marker counts).</summary>
-    private static bool IsTurnBoundary(SessionRunnerTranscriptEvent entry) =>
+    internal static bool IsTurnBoundary(SessionRunnerTranscriptEvent entry) =>
         (entry.Kind == TranscriptKinds.TurnEnd && entry.StopReason == TranscriptKinds.StopReasons.EndTurn)
         // Grok's Esc interrupt is an EXPLICIT turn_completed with stop_reason "cancelled"
         // (measured 1.0.5, CARD-0080 S1) — the structured analog of Claude's "[Request
@@ -357,6 +357,11 @@ public sealed class AgentSessionRuntime
         // as a stop_reason, so this arm cannot change Claude behaviour. CARD-0159: this stays
         // an idle boundary (the queue must flush) but is never a report boundary.
         || (entry.Kind == TranscriptKinds.TurnEnd && entry.StopReason == TranscriptKinds.StopReasons.Cancelled)
+        // Grok's API-error TurnEnd (CARD-0281): stop_reason "error" with IsApiError stamped on
+        // the row. Claude never emits it (stubs are stop_sequence); Codex synthesizes end_turn.
+        // Without this arm the dispatchers wait for the next 60s sweep and the channel user
+        // hears nothing for 30 minutes.
+        || (entry.Kind == TranscriptKinds.TurnEnd && entry.StopReason == TranscriptKinds.StopReasons.Error)
         || TranscriptKinds.IsInterruptPrompt(entry.Kind, entry.Text);
 
     /// <summary>

@@ -53,6 +53,63 @@ public class ModelAvailabilityCreateTests
     }
 
     [Test]
+    public async Task Create_Grok_against_a_grok_4_6_hold_is_409_model_disabled()
+    {
+        var holdId = Guid.NewGuid();
+        using var workspace = new TempWorkspace();
+        await using var db = CreateContext();
+        await SeedHoldAsync(db, holdId, "grok-4.6", until: null, kind: AgentKind.Grok);
+        try
+        {
+            var ex = await Should.ThrowAsync<ModelDisabledException>(() =>
+                CreateService(db).CreateAsync(
+                    new CreateAgentTaskRequest(
+                        "plan on grok",
+                        Role: AgentTaskRole.Plan,
+                        AgentKind: AgentKind.Grok),
+                    new AgentTaskService.Caller(null, null, workspace.Path),
+                    CancellationToken.None));
+
+            ex.Code.ShouldBe("model_disabled");
+            ex.StatusCode.ShouldBe(409);
+            ex.Message.ShouldContain("grok-4.6 is disabled");
+        }
+        finally
+        {
+            await db.ModelAvailabilityHolds.Where(h => h.Id == holdId).ExecuteDeleteAsync();
+        }
+    }
+
+    [Test]
+    public async Task Create_Claude_succeeds_while_grok_4_6_is_held()
+    {
+        var holdId = Guid.NewGuid();
+        using var workspace = new TempWorkspace();
+        await using var db = CreateContext();
+        await SeedHoldAsync(db, holdId, "grok-4.6", until: null, kind: AgentKind.Grok);
+        Guid createdId = Guid.Empty;
+        try
+        {
+            var created = await CreateService(db).CreateAsync(
+                new CreateAgentTaskRequest("plan the work", Role: AgentTaskRole.Plan),
+                new AgentTaskService.Caller(null, null, workspace.Path),
+                CancellationToken.None);
+            createdId = created.Id;
+            created.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+            created.Status.ShouldBe(AgentTaskStatus.Queued);
+        }
+        finally
+        {
+            if (createdId != Guid.Empty)
+            {
+                await db.AgentTaskEvents.Where(e => e.AgentTaskId == createdId).ExecuteDeleteAsync();
+                await db.AgentTasks.Where(t => t.Id == createdId).ExecuteDeleteAsync();
+            }
+            await db.ModelAvailabilityHolds.Where(h => h.Id == holdId).ExecuteDeleteAsync();
+        }
+    }
+
+    [Test]
     public async Task Create_Grok_succeeds_while_fable_is_held()
     {
         var holdId = Guid.NewGuid();
@@ -197,15 +254,16 @@ public class ModelAvailabilityCreateTests
     }
 
     private static async Task SeedHoldAsync(
-        AppDbContext db, Guid id, string alias, DateTime? until, bool manual = false)
+        AppDbContext db, Guid id, string alias, DateTime? until, bool manual = false,
+        AgentKind kind = AgentKind.ClaudeCode)
     {
         await db.ModelAvailabilityHolds
-            .Where(h => h.Kind == AgentKind.ClaudeCode && h.ModelAlias == alias && h.ClearedAt == null)
+            .Where(h => h.Kind == kind && h.ModelAlias == alias && h.ClearedAt == null)
             .ExecuteDeleteAsync();
         db.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
         {
             Id = id,
-            Kind = AgentKind.ClaudeCode,
+            Kind = kind,
             ModelAlias = alias,
             Source = manual ? ModelAvailabilitySource.Manual : ModelAvailabilitySource.AutoDetected,
             DisabledUntil = until,
