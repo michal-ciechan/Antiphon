@@ -48,6 +48,7 @@ public class ProcessSpawnLimitTests
             typeof(ClaudeLocalCommandCanaryTests),
             typeof(ClaudeInterruptCanaryTests),
             typeof(ClaudeTrustPromptCanaryTests),
+            typeof(OrchestratorWorkspaceLayoutCanaryTests),
             typeof(ClaudeRemoteControlMenuCanaryTests),
             typeof(ClaudeRemoteControlAtStartupCanaryTests),
             typeof(ClaudeSubmitConfirmCanaryTests),
