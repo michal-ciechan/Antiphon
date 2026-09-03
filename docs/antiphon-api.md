@@ -258,6 +258,11 @@ API and is fully commented in place. The fields that change behaviour most: `rol
 `ignoreRoutingPin`, `authority` (CARD-0294 standing authority, ≤ 2000 chars; `autoContinue`
 without it is 422 `auto_continue_needs_authority`).
 
+`role` is `AgentTaskRole`. Dispatchable: `Investigate`, `Plan`, `TestDesign`, `Code`, `Review`,
+`Debug`, `Coverage`, `Docs`, `Commit`, `Test`, `Deploy`, `Merge`, `Custom`. Specialists `Check`,
+`Distill`, `Diagnose` stay hidden unless `includeChecks`. Pipeline stages (CARD-0146) are
+`Investigate`, `Plan`, `TestDesign`, `Code`, `Review`.
+
 > `POST /api/agent-tasks` can refuse with **409 `subscription_quota_low`** (CARD-0136). That is a
 > launch refusal, not a warning attached to a launch that already happened. Retry with
 > `ignoreSubscriptionQuota: true`, or pick another `agentKind`/agent. The dispatcher never refuses;

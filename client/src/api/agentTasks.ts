@@ -40,6 +40,10 @@ export type AgentTaskRole =
    * `includeChecks` is asked for. Absent from AGENT_TASK_ROLES.
    */
   | 'Diagnose'
+  /** Diagnose a card's root cause (CARD-0146). A pipeline stage. */
+  | 'Investigate'
+  /** Write the verification design for a plan (CARD-0146). A pipeline stage at Plan tier. */
+  | 'TestDesign'
 
 export type AgentTaskStatus =
   | 'Queued'
@@ -425,7 +429,9 @@ export const AGENT_TASK_ROLES: Array<{
   use: string
   level: AgentModelLevel
 }> = [
+  { value: 'Investigate', label: 'Investigate', use: 'measure, reproduce, confirm a mechanism', level: 'High' },
   { value: 'Plan', label: 'Plan', use: 'decompose, design, choose an approach', level: 'Frontier' },
+  { value: 'TestDesign', label: 'Test design', use: 'name the assertions and positive controls', level: 'Frontier' },
   { value: 'Code', label: 'Code', use: 'write or change code', level: 'Frontier' },
   { value: 'Review', label: 'Review', use: 'judge whether logic is correct', level: 'Frontier' },
   { value: 'Debug', label: 'Debug', use: 'find out why something is broken', level: 'High' },

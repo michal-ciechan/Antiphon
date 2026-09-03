@@ -30,7 +30,7 @@ param(
     [ValidateSet('get', 'set', 'clear')]
     [string]$Verb = 'get',
 
-    [ValidateSet('Plan', 'Code', 'Review', 'Debug', 'Coverage', 'Docs', 'Commit', 'Test', 'Deploy', 'Merge', 'Custom')]
+    [ValidateSet('Investigate', 'Plan', 'TestDesign', 'Code', 'Review', 'Debug', 'Coverage', 'Docs', 'Commit', 'Test', 'Deploy', 'Merge', 'Custom')]
     [string]$Role,
 
     [string]$Card,
