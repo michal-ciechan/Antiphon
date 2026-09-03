@@ -241,7 +241,9 @@ public class AgentTaskCardBindingTests
     }
 
     [Test]
-    public async Task a_check_task_never_binds_even_when_its_title_names_a_card()
+    [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Diagnose)]
+    public async Task a_specialist_task_never_binds_even_when_its_title_names_a_card(AgentTaskRole role)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
@@ -252,7 +254,7 @@ public class AgentTaskCardBindingTests
         var created = await CreateService(db, workspace).CreateAsync(
             Request(workspace.Path) with
             {
-                Role = AgentTaskRole.Check,
+                Role = role,
                 Title = "CARD-0040 check #1 on task 242a7647",
             },
             Manual(workspace.Path),
@@ -260,6 +262,29 @@ public class AgentTaskCardBindingTests
 
         (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id)).CardId.ShouldBeNull();
         created.CardIdentifier.ShouldBeNull();
+    }
+
+    [Test]
+    [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Diagnose)]
+    public async Task specialist_rows_are_hidden_from_the_list_unless_asked(AgentTaskRole role)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+
+        var created = await CreateService(db, workspace).CreateAsync(
+            Request(workspace.Path) with { Role = role, Title = "specialist furniture" },
+            Manual(workspace.Path),
+            CancellationToken.None);
+
+        var hidden = await CreateService(db, workspace)
+            .ListAsync(null, null, includeChecks: false, CancellationToken.None);
+        hidden.ShouldNotContain(t => t.Id == created.Id);
+
+        var shown = await CreateService(db, workspace)
+            .ListAsync(null, null, includeChecks: true, CancellationToken.None);
+        shown.ShouldContain(t => t.Id == created.Id);
     }
 
     [Test]

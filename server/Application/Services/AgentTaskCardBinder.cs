@@ -85,9 +85,10 @@ internal static class AgentTaskCardBinder
     public static async Task<AgentTaskCardBinding> BindAsync(
         AppDbContext db, string? explicitCard, Context context, CancellationToken ct)
     {
-        // Rule 4, checked first: a check-in interpretation is about a task. Binding one would put
-        // a card into In Progress because somebody asked how another task was doing.
-        if (context.Role == AgentTaskRole.Check)
+        // Rule 4, checked first: a specialist row is about a task (or a card it was handed), not
+        // work that should move a card. Binding one would put a card into In Progress because
+        // furniture asked a question.
+        if (AgentTaskRoles.IsSpecialist(context.Role))
             return AgentTaskCardBinding.None;
 
         if (!string.IsNullOrWhiteSpace(explicitCard))

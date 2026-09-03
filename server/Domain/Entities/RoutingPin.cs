@@ -22,7 +22,7 @@ public class RoutingPin
 
     public Card? Card { get; set; }
 
-    /// <summary>Never <see cref="AgentTaskRole.Check"/> — a check row is about a task, not a card.</summary>
+    /// <summary>Never a specialist role — those rows are furniture, not a card stage.</summary>
     public AgentTaskRole Role { get; set; }
 
     public RoutingPinProvenance Provenance { get; set; }

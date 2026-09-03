@@ -382,11 +382,13 @@ public class InstructionBundleTests
     }
 
     [Test]
-    public void a_check_task_carries_nothing()
+    [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Diagnose)]
+    public void a_specialist_task_carries_nothing(AgentTaskRole role)
     {
-        // The standing check interpreter has no tools and a deny-all hook: "commit and push each
+        // A standing specialist has no tools and a deny-all hook: "commit and push each
         // slice" is an instruction it cannot obey, and its own contract already rides its agent row.
-        InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Check).ShouldBeEmpty();
+        InstructionBundles.ForDelegate(AgentTaskKind.Worker, role).ShouldBeEmpty();
     }
 
     [Test]

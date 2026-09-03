@@ -57,6 +57,13 @@ public static class CheckInterpretation
         + "Check task's `done` token after the reading; never `blocked`.";
 
     /// <summary>
+    /// Stderr the deny-all hook feeds back when a tool is refused. The JSON wrapper lives on
+    /// <see cref="SpecialistSpec"/> so Distill / Diagnose seats share the same shape.
+    /// </summary>
+    public const string DenyHookStderr =
+        "This session is the Antiphon check interpreter: it reads a fact bundle and answers in prose. It has no tools. Answer from the bundle alone.";
+
+    /// <summary>
     /// A deny-all <c>PreToolUse</c> hook — the hard half of "use no tools". Same mechanism as
     /// <c>DelegationWorktreeService.ArmDenyHookAsync</c>, matcher widened from the edit tools to
     /// everything, and written to <c>.claude/settings.json</c> in a scratch directory this
@@ -66,26 +73,11 @@ public static class CheckInterpretation
     /// invocable identically from cmd or sh, whichever shell runs the hook. Exit code 2 is what
     /// makes Claude Code feed the stderr line back to the model instead of silently dropping it.</para>
     /// </summary>
-    public const string DenyAllToolsSettingsJson = """
-        {
-          "hooks": {
-            "PreToolUse": [
-              {
-                "matcher": "*",
-                "hooks": [
-                  {
-                    "type": "command",
-                    "command": "powershell -NoProfile -Command \"[Console]::Error.WriteLine('This session is the Antiphon check interpreter: it reads a fact bundle and answers in prose. It has no tools. Answer from the bundle alone.'); exit 2\""
-                  }
-                ]
-              }
-            ]
-          }
-        }
-        """;
+    public static string DenyAllToolsSettingsJson =>
+        SpecialistSpec.BuildDenyAllToolsSettingsJson(DenyHookStderr);
 
     /// <summary>Where the hook file goes, relative to the specialist's working directory.</summary>
-    public const string DenyHookRelativePath = ".claude/settings.json";
+    public const string DenyHookRelativePath = SpecialistSpec.DenyHookRelativePath;
 
     /// <summary>
     /// The per-check brief: the bundle, and the reminder of what to do with it. Nothing else —

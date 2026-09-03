@@ -72,13 +72,7 @@ public sealed class AgentTaskCheckService
     private readonly ILogger<AgentTaskCheckService> _logger;
     private readonly PtyDeliveryProfile? _ptyProfile;
     private readonly CheckInterpreterProvisioner? _interpreter;
-    private readonly IAlertService? _alerts;
-
-    /// <summary>
-    /// A burst of due checks against a dead specialist is one outage, not one incident per
-    /// check (CARD-0079). The window is the "one minute" the plan names.
-    /// </summary>
-    private static readonly TimeSpan InterpreterUnavailableDedupWindow = TimeSpan.FromMinutes(1);
+    private readonly SpecialistTaskRunner _runner;
 
     public AgentTaskCheckService(
         AppDbContext db,
@@ -95,7 +89,8 @@ public sealed class AgentTaskCheckService
         CheckInterpreterProvisioner? interpreter = null,
         // Optional so a harness that wires no alerting still delivers the digest. The incident is
         // the record; the alert is what reaches someone.
-        IAlertService? alerts = null)
+        IAlertService? alerts = null,
+        SpecialistTaskRunner? runner = null)
     {
         _db = db;
         _probe = probe;
@@ -106,7 +101,7 @@ public sealed class AgentTaskCheckService
         _logger = logger;
         _ptyProfile = ptyProfile;
         _interpreter = interpreter;
-        _alerts = alerts;
+        _runner = runner ?? new SpecialistTaskRunner(db, timeProvider, logger, alerts);
     }
 
     /// <summary>What one check did — for the worker's logging and for the tests.</summary>
@@ -343,9 +338,6 @@ public sealed class AgentTaskCheckService
             : text[..InterpretationDetailChars] + "…";
     }
 
-    /// <summary>How often the wait re-reads the interpretation task's row (CARD-0047 §1.1).</summary>
-    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
-
     /// <param name="Text">The specialist's reading, or null — in which case the digest ships.</param>
     /// <param name="DegradedReason">
     /// Rendered into the note as <c>(unverified digest — &lt;reason&gt;)</c>. Null AND a null
@@ -383,93 +375,40 @@ public sealed class AgentTaskCheckService
         if (_interpreter is null || !_settings.CheckInterpreterEnabled)
             return Interpretation.NotWiredIn;
 
-        Domain.Entities.Agent? specialist;
-        try
+        var spec = CheckInterpreterProvisioner.Spec(_settings);
+        var wait = TimeSpan.FromSeconds(Math.Max(1, _settings.CheckInterpreterWaitSeconds));
+        var run = await _runner.RunAsync(
+            spec,
+            CheckInterpretation.BuildTitle(task, facts.Task.CheckNumber),
+            CheckInterpretation.BuildGoal(task, facts.Task.CheckNumber, digest),
+            wait,
+            _settings.CheckInterpreterMaxBacklog,
+            _interpreter.EnsureAsync,
+            ct,
+            createdDetail: $"Interpretation of check #{facts.Task.CheckNumber} on task "
+                + $"{DelegationReportFormatter.Short(task.Id)}.");
+
+        var shortId = run.RunTaskId is Guid id ? DelegationReportFormatter.Short(id) : null;
+        var line = shortId is null ? null : $"interpreter: task {shortId}, ${run.CostUsd:0.0000}";
+
+        return run.Outcome switch
         {
-            specialist = await _interpreter.EnsureAsync(ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogWarning(ex, "Could not provision the check interpreter for task {ShortId}",
-                DelegationReportFormatter.Short(task.Id));
-            const string reason = "interpreter unavailable: could not be provisioned";
-            await RaiseInterpreterUnavailableAsync(specialist: null, reason, ct);
-            return Interpretation.Degraded(reason);
-        }
-
-        if (specialist is null)
-            return Interpretation.NotWiredIn;
-
-        // Depth policy. There is ONE specialist and many delegates can come due together; past this
-        // bound a check degrades IMMEDIATELY rather than waiting its full budget behind a pile.
-        var backlog = await _db.AgentTasks.CountAsync(
-            t => t.AgentId == specialist.Id
-                && t.Role == AgentTaskRole.Check
-                && (t.Status == AgentTaskStatus.Queued
-                    || t.Status == AgentTaskStatus.Dispatched
-                    || t.Status == AgentTaskStatus.Working),
-            ct);
-        if (backlog >= Math.Max(1, _settings.CheckInterpreterMaxBacklog))
-        {
-            _logger.LogInformation(
-                "Check on task {ShortId} degraded: {Backlog} interpretation(s) already pending",
-                DelegationReportFormatter.Short(task.Id), backlog);
-            return Interpretation.Degraded("interpreter busy");
-        }
-
-        AgentTask interpretation;
-        try
-        {
-            interpretation = await CreateInterpretationTaskAsync(task, specialist, facts, digest, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogWarning(ex, "Could not queue an interpretation for task {ShortId}",
-                DelegationReportFormatter.Short(task.Id));
-            const string reason = "interpreter unavailable: the interpretation could not be queued";
-            await RaiseInterpreterUnavailableAsync(specialist, reason, ct);
-            return Interpretation.Degraded(reason);
-        }
-
-        var shortId = DelegationReportFormatter.Short(interpretation.Id);
-        var settled = await WaitForInterpretationAsync(interpretation.Id, ct);
-
-        if (settled is null)
-        {
-            // Out of budget. Still Queued means it never reached the specialist and never will be
-            // worth anything — cancel it. Already Dispatched means the spend is committed: let it
-            // finish and settle onto its OWN row, where its late text is recorded and never
-            // delivered as a second note about a check the caller has already read.
-            await CancelIfStillQueuedAsync(interpretation.Id, ct);
-            _logger.LogInformation(
-                "Check on task {ShortId} degraded: interpretation {InterpretationId} did not settle "
-                + "within {Seconds}s", DelegationReportFormatter.Short(task.Id), shortId,
-                _settings.CheckInterpreterWaitSeconds);
-            var timeoutReason =
-                $"interpreter unavailable: no reading within {_settings.CheckInterpreterWaitSeconds}s";
-            await RaiseInterpreterUnavailableAsync(specialist, timeoutReason, ct);
-            return Interpretation.Degraded(
-                timeoutReason,
-                $"interpreter: task {shortId}, timed out");
-        }
-
-        var line = $"interpreter: task {shortId}, ${settled.CostUsd:0.0000}";
-
-        if (settled.Status is AgentTaskStatus.Failed or AgentTaskStatus.Canceled)
-        {
-            const string failedReason = "interpreter unavailable: the interpretation failed";
-            await RaiseInterpreterUnavailableAsync(specialist, failedReason, ct);
-            return Interpretation.Degraded(failedReason, line);
-        }
-
-        if (string.IsNullOrWhiteSpace(settled.Result))
-        {
-            const string emptyReason = "interpreter unavailable: the interpretation was empty";
-            await RaiseInterpreterUnavailableAsync(specialist, emptyReason, ct);
-            return Interpretation.Degraded(emptyReason, line);
-        }
-
-        return new Interpretation(settled.Result, null, line);
+            SpecialistRunOutcome.Disabled => Interpretation.NotWiredIn,
+            SpecialistRunOutcome.Busy => Interpretation.Degraded("interpreter busy"),
+            SpecialistRunOutcome.ProvisionFailed => Interpretation.Degraded(
+                "interpreter unavailable: could not be provisioned"),
+            SpecialistRunOutcome.QueueFailed => Interpretation.Degraded(
+                "interpreter unavailable: the interpretation could not be queued"),
+            SpecialistRunOutcome.Timeout => Interpretation.Degraded(
+                $"interpreter unavailable: no reading within {_settings.CheckInterpreterWaitSeconds}s",
+                shortId is null ? null : $"interpreter: task {shortId}, timed out"),
+            SpecialistRunOutcome.Failed => Interpretation.Degraded(
+                "interpreter unavailable: the interpretation failed", line),
+            SpecialistRunOutcome.Empty => Interpretation.Degraded(
+                "interpreter unavailable: the interpretation was empty", line),
+            SpecialistRunOutcome.Succeeded => new Interpretation(run.Result, null, line),
+            _ => Interpretation.Degraded("interpreter unavailable: the interpretation failed", line),
+        };
     }
 
     /// <summary>
@@ -479,164 +418,7 @@ public sealed class AgentTaskCheckService
     /// incident. Observability must never be able to break the check; the digest still ships.
     /// </summary>
     internal static string InterpreterUnavailableDedupKey(Guid agentId) =>
-        $"delegation:{AgentIncidentKind.CheckInterpreterUnavailable}:{agentId}";
-
-    private async Task RaiseInterpreterUnavailableAsync(
-        Domain.Entities.Agent? specialist, string reason, CancellationToken ct)
-    {
-        try
-        {
-            var agent = specialist;
-            if (agent is null)
-            {
-                var slug = CheckInterpreterProvisioner.Slug(_settings);
-                agent = await _db.Agents.AsNoTracking()
-                    .FirstOrDefaultAsync(a => a.Slug == slug, ct);
-            }
-
-            if (agent is null)
-                return;
-
-            var now = _timeProvider.GetUtcNow().UtcDateTime;
-            var windowStart = now - InterpreterUnavailableDedupWindow;
-            var already = await _db.AgentIncidents.AnyAsync(
-                i => i.AgentId == agent.Id
-                    && i.Kind == AgentIncidentKind.CheckInterpreterUnavailable
-                    && i.CreatedAt >= windowStart,
-                ct);
-            if (already)
-                return;
-
-            Guid? sessionId = Guid.TryParse(agent.PersistentSessionId, out var parsed)
-                ? parsed
-                : null;
-            var message =
-                $"Check interpreter '{agent.Slug}' could not read a check ({reason}). "
-                + "The caller received the deterministic digest instead.";
-
-            _db.AgentIncidents.Add(new AgentIncident
-            {
-                Id = Guid.NewGuid(),
-                AgentId = agent.Id,
-                SessionId = sessionId,
-                Kind = AgentIncidentKind.CheckInterpreterUnavailable,
-                Severity = AlertSeverity.Warning,
-                Message = message,
-                CreatedAt = now,
-            });
-            await _db.SaveChangesAsync(ct);
-
-            if (_alerts is null)
-                return;
-
-            await _alerts.RaiseAsync(
-                new AlertRaise(
-                    AlertSeverity.Warning,
-                    Source: "delegation",
-                    Title: $"Check interpreter unavailable ({agent.Slug})",
-                    Detail: message,
-                    DedupKey: InterpreterUnavailableDedupKey(agent.Id),
-                    AgentId: agent.Id,
-                    SessionId: sessionId),
-                ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogError(ex, "Could not record a check-interpreter-unavailable incident");
-        }
-    }
-
-    /// <summary>
-    /// The interpretation task row, built directly rather than through <c>AgentTaskService.CreateAsync</c>:
-    /// there is no delegate caller to authorise, no allowed-root to resolve, and no fan-out budget
-    /// this should consume.
-    ///
-    /// <para>It is its OWN root (<c>RootTaskId = Id</c>, no parent, depth 0) so its cost sums into
-    /// nobody's tree and the per-root ceiling keeps meaning "what the delegated work cost". Nesting
-    /// it under the checked task was considered and rejected: it would need a role carve-out inside
-    /// the budget query, and a carve-out inside a spending ceiling is the kind of exception that
-    /// rots (§1.6).</para>
-    ///
-    /// <para><c>ReplyTo = None</c> is load-bearing three ways: no completion note is delivered
-    /// anywhere, no check is armed on it, and the check sweep's filter never sees it.</para>
-    /// </summary>
-    private async Task<AgentTask> CreateInterpretationTaskAsync(
-        AgentTask task, Domain.Entities.Agent specialist, DelegateCheckProbe.CheckFacts facts,
-        string digest, CancellationToken ct)
-    {
-        var now = _timeProvider.GetUtcNow().UtcDateTime;
-        var id = Guid.NewGuid();
-        var interpretation = new AgentTask
-        {
-            Id = id,
-            RootTaskId = id,
-            ParentTaskId = null,
-            ParentSessionId = null,
-            Depth = 0,
-            Title = CheckInterpretation.BuildTitle(task, facts.Task.CheckNumber),
-            Goal = CheckInterpretation.BuildGoal(task, facts.Task.CheckNumber, digest),
-            Kind = AgentTaskKind.Worker,
-            Role = AgentTaskRole.Check,
-            ModelLevel = AgentModelLevel.Low,
-            Workspace = WorkspaceMode.Shared,
-            WorkingDirectory = specialist.WorkingDirectory,
-            AgentId = specialist.Id,
-            AgentName = specialist.Name,
-            // Not ephemeral: the ephemeral flag is what deletes an agent row when its task settles,
-            // and deleting the standing specialist after one check would be the opposite of standing.
-            Ephemeral = false,
-            ReplyTo = AgentTaskReplyTo.None,
-            Status = AgentTaskStatus.Queued,
-            CreatedAt = now,
-        };
-        _db.AgentTasks.Add(interpretation);
-        _db.AgentTaskEvents.Add(new AgentTaskEvent
-        {
-            Id = Guid.NewGuid(),
-            AgentTaskId = id,
-            Type = AgentTaskEventType.Created,
-            ModelLevel = AgentModelLevel.Low,
-            Detail = $"Interpretation of check #{facts.Task.CheckNumber} on task "
-                + $"{DelegationReportFormatter.Short(task.Id)}.",
-            At = now,
-        });
-        await _db.SaveChangesAsync(ct);
-        return interpretation;
-    }
-
-    /// <summary>
-    /// Poll the interpretation task's row until it settles or the budget runs out. Null means the
-    /// budget ran out (or the row vanished) — the caller degrades.
-    ///
-    /// <para><c>Blocked</c> counts as an answer: it means the settlement path's question-detector
-    /// read a trailing question mark in the specialist's prose, which is a plausible way for a
-    /// perfectly good "AMBIGUOUS — the bundle does not say whether..." to end. The text is there;
-    /// throwing it away over punctuation would be worse than delivering it.</para>
-    /// </summary>
-    private async Task<AgentTask?> WaitForInterpretationAsync(Guid interpretationId, CancellationToken ct)
-    {
-        var deadline = _timeProvider.GetUtcNow()
-            + TimeSpan.FromSeconds(Math.Max(1, _settings.CheckInterpreterWaitSeconds));
-
-        while (true)
-        {
-            // AsNoTracking on purpose: the dispatcher and the settlement path write this row from
-            // OTHER scopes, and a tracked read would keep handing back the snapshot this context
-            // added — the poll would then never see it settle.
-            var row = await _db.AgentTasks.AsNoTracking()
-                .FirstOrDefaultAsync(t => t.Id == interpretationId, ct);
-            if (row is null)
-                return null;
-            if (AgentTaskService.IsSettled(row.Status) || row.Status == AgentTaskStatus.Blocked)
-                return row;
-
-            var remaining = deadline - _timeProvider.GetUtcNow();
-            if (remaining <= TimeSpan.Zero)
-                return null;
-
-            await Task.Delay(remaining < PollInterval ? remaining : PollInterval, _timeProvider, ct);
-        }
-    }
+        SpecialistTaskRunner.UnavailableDedupKey(AgentIncidentKind.CheckInterpreterUnavailable, agentId);
 
     /// <summary>
     /// CARD-0302 S3: a Check-role row that already has a reading must not sit <c>Blocked</c>.
@@ -676,41 +458,6 @@ public sealed class AgentTaskCheckService
 
         await db.SaveChangesAsync(ct);
         return rows.Count;
-    }
-
-    /// <summary>
-    /// Withdraw an interpretation nobody will read — but only while it is still Queued. A Dispatched
-    /// one has already been typed at the specialist, and cancelling that would stop a session
-    /// mid-turn for a note that has already gone out.
-    /// </summary>
-    private async Task CancelIfStillQueuedAsync(Guid interpretationId, CancellationToken ct)
-    {
-        try
-        {
-            var now = _timeProvider.GetUtcNow().UtcDateTime;
-            var rows = await _db.AgentTasks
-                .Where(t => t.Id == interpretationId && t.Status == AgentTaskStatus.Queued)
-                .ExecuteUpdateAsync(
-                    s => s.SetProperty(t => t.Status, AgentTaskStatus.Canceled)
-                          .SetProperty(t => t.CompletedAt, now)
-                          .SetProperty(t => t.FailureReason, "The check that asked for it stopped waiting.")
-                          .SetProperty(t => t.ConcurrencyToken, Guid.NewGuid()),
-                    ct);
-            if (rows > 0)
-            {
-                _logger.LogDebug(
-                    "Interpretation {ShortId} cancelled — it never left the queue",
-                    DelegationReportFormatter.Short(interpretationId));
-            }
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            // Tidying, not correctness: an un-cancelled queued interpretation dispatches, answers
-            // into its own row, and is never delivered. The note has already gone out either way.
-            _logger.LogWarning(
-                ex, "Could not cancel the timed-out interpretation {ShortId}",
-                DelegationReportFormatter.Short(interpretationId));
-        }
     }
 
     /// <summary>The prefix every check note starts with — nothing else in the system emits it.</summary>

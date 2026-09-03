@@ -643,6 +643,32 @@ public class DelegationReportFormatterTests
     }
 
     [Test]
+    public void a_diagnose_role_brief_asks_for_done_and_never_offers_blocked()
+    {
+        var task = NewTask();
+        task.Role = AgentTaskRole.Diagnose;
+
+        var brief = DelegationReportFormatter.BuildBrief(task, Settings);
+        brief.ShouldContain(DelegationReportFormatter.ReportToken(task.Id, "done"));
+        brief.ShouldContain(DelegationReportFormatter.ReportToken(task.Id, "failed"));
+        brief.ShouldNotContain(DelegationReportFormatter.ReportToken(task.Id, "blocked"));
+        brief.ShouldContain("Never emit a `blocked` report token");
+        brief.ShouldContain("exactly one physical line in the request's grammar");
+    }
+
+    [Test]
+    public void a_diagnose_role_pointer_does_not_reintroduce_the_blocked_token()
+    {
+        var task = NewTask();
+        task.Role = AgentTaskRole.Diagnose;
+        var pointer = DelegationReportFormatter.BuildBriefPointer(
+            task, Settings, spillPath: null, fullLength: 5_203);
+        pointer.ShouldContain(DelegationReportFormatter.ReportToken(task.Id, "done"));
+        pointer.ShouldNotContain(DelegationReportFormatter.ReportToken(task.Id, "blocked"));
+        pointer.ShouldContain("Never emit a `blocked` report token");
+    }
+
+    [Test]
     public void a_completion_note_header_carries_report_and_git()
     {
         var note = DelegationReportFormatter.BuildCompletionNote(

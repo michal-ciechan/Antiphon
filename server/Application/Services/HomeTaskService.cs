@@ -91,7 +91,8 @@ public sealed class HomeTaskService
     private async Task<Dictionary<Guid, List<BoundRow>>> LoadBoundTasksAsync(CancellationToken ct)
     {
         var rows = await _db.AgentTasks.AsNoTracking()
-            .Where(t => t.CardId != null && t.Role != AgentTaskRole.Check)
+            .Where(t => t.CardId != null)
+            .Where(AgentTaskRoles.NotSpecialist)
             .Select(t => new BoundRow(
                 t.CardId!.Value,
                 t.Id,
@@ -148,7 +149,8 @@ public sealed class HomeTaskService
 
     private async Task<List<TaskRow>> LoadUnboundTasksAsync(DateTime doneSince, CancellationToken ct) =>
         await _db.AgentTasks.AsNoTracking()
-            .Where(t => t.CardId == null && t.Role != AgentTaskRole.Check)
+            .Where(t => t.CardId == null)
+            .Where(AgentTaskRoles.NotSpecialist)
             .Where(t => (t.Status != AgentTaskStatus.Succeeded
                          && t.Status != AgentTaskStatus.Failed
                          && t.Status != AgentTaskStatus.Canceled)

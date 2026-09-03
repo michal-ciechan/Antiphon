@@ -27,8 +27,8 @@ public static class AgentTaskEndpoints
             return Results.Created($"/api/agent-tasks/{created.Id}", created);
         });
 
-        // includeChecks defaults false: the interpretation tasks behind check-ins (CARD-0047) are
-        // machinery, one per interpreted check, and the board is for delegated work.
+        // includeChecks defaults false: specialist rows (Check, Distill, Diagnose) are
+        // machinery, not delegated work, and the board is for the latter.
         tasks.MapGet("/", async (
             Guid? rootId,
             DateTime? since,

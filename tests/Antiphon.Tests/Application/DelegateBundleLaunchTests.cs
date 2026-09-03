@@ -63,14 +63,16 @@ public class DelegateBundleLaunchTests
     }
 
     [Test]
-    public void a_check_task_launches_with_no_system_prompt_at_all()
+    [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Diagnose)]
+    public void a_specialist_task_launches_with_no_system_prompt_at_all(AgentTaskRole role)
     {
-        // The standing check interpreter has no tools and a deny-all PreToolUse hook, and its own
+        // A standing specialist has no tools and a deny-all PreToolUse hook, and its own
         // contract is reconciled onto its agent row. "Commit and push each slice" is an instruction it
         // cannot obey — and it would arrive on the path nobody watches, because the dispatcher only
         // builds a launch spec for a pinned agent when that agent's session is NOT already up.
         var (dispatcher, _) = CreateHarness();
-        var task = TaskFor(AgentTaskKind.Worker, AgentTaskRole.Check);
+        var task = TaskFor(AgentTaskKind.Worker, role);
 
         var args = ArgsOf(dispatcher, task);
 
@@ -177,13 +179,15 @@ public class DelegateBundleLaunchTests
     }
 
     [Test]
-    public void a_check_task_still_launches_with_nothing_even_when_its_agent_carries_attachments()
+    [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Diagnose)]
+    public void a_specialist_task_still_launches_with_nothing_even_when_its_agent_carries_attachments(AgentTaskRole role)
     {
-        // The check interpreter is the agent most likely to be PINNED, and therefore the one most
+        // A standing specialist is the agent most likely to be PINNED, and therefore the one most
         // likely to have an attachment. The carve-out is about what it can obey — no tools, a
         // deny-all PreToolUse hook — not about which map the instruction came through.
         var (dispatcher, _) = CreateHarness();
-        var task = TaskFor(AgentTaskKind.Worker, AgentTaskRole.Check);
+        var task = TaskFor(AgentTaskKind.Worker, role);
 
         ArgsOf(dispatcher, task, [InstructionBundles.BoardApi]).ShouldNotContain("--append-system-prompt");
     }
@@ -238,7 +242,7 @@ public class DelegateBundleLaunchTests
         Kind = kind,
         Role = role,
         // Check is haiku work; the others do not matter here beyond being a resolvable alias.
-        ModelLevel = role == AgentTaskRole.Check ? AgentModelLevel.Low : AgentModelLevel.High,
+        ModelLevel = AgentTaskRoles.IsSpecialist(role) ? AgentModelLevel.Low : AgentModelLevel.High,
         Status = AgentTaskStatus.Queued,
         Goal = "make the composed launch arguments observable",
         WorkingDirectory = Path.GetTempPath(),

@@ -160,17 +160,17 @@ public static class InstructionBundles
     public static IReadOnlyList<string> ForDelegate(
         AgentTaskKind kind, AgentTaskRole role, IReadOnlyList<string>? attachedBundleKeys = null)
     {
-        // STRUCTURAL CARVE-OUT, not incidental. A Check task is pinned to the standing check
-        // interpreter, whose own contract is reconciled onto its row and rendered by
-        // AgentControlService; it has no tools and a deny-all PreToolUse hook that refuses every one.
-        // Handing it "commit and push each slice" would be an impossible instruction, and it would
-        // reach it on exactly the path nobody watches: the dispatcher only builds a launch spec for a
-        // pinned agent when that agent's session is NOT already up.
+        // STRUCTURAL CARVE-OUT, not incidental. A specialist task is pinned to a standing seat
+        // whose own contract is reconciled onto its row and rendered by AgentControlService; it
+        // has no tools and a deny-all PreToolUse hook that refuses every one. Handing it "commit
+        // and push each slice" would be an impossible instruction, and it would reach it on
+        // exactly the path nobody watches: the dispatcher only builds a launch spec for a pinned
+        // agent when that agent's session is NOT already up.
         //
-        // Attachments do NOT reopen it. Being pinned is exactly what makes the interpreter the agent
+        // Attachments do NOT reopen it. Being pinned is exactly what makes the seat the agent
         // most likely to have some, and the carve-out is about what it can OBEY, not about where the
         // instruction came from.
-        if (role == AgentTaskRole.Check)
+        if (AgentTaskRoles.IsSpecialist(role))
             return [];
 
         // A sub-orchestrator is a delegate too — it gets the delegate rules AND its own contract. The

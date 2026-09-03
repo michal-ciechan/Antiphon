@@ -1,4 +1,7 @@
-﻿namespace Antiphon.Server.Domain.Enums;
+﻿using System.Linq.Expressions;
+using Antiphon.Server.Domain.Entities;
+
+namespace Antiphon.Server.Domain.Enums;
 
 /// <summary>
 /// The one structural choice made when delegating: a <see cref="Worker"/> does a piece of work and
@@ -48,6 +51,18 @@ public enum AgentTaskRole
     /// recurse.</para>
     /// </summary>
     Check = 11,
+
+    /// <summary>
+    /// Distill a settled report (CARD-0330). Reserved here so CARD-0352 can treat Distill as a
+    /// specialist without waiting for that card to land. Not a role anyone delegates by hand.
+    /// </summary>
+    Distill = 12,
+
+    /// <summary>
+    /// Title an untitled task or label an unlabelled card (CARD-0352). Not a role anyone delegates
+    /// by hand: the diagnose worker creates these, pinned to the standing diagnose seat.
+    /// </summary>
+    Diagnose = 13,
 }
 
 public enum AgentTaskStatus
@@ -181,6 +196,18 @@ public enum AgentTaskEventType
     /// <c>-Land</c> to retry cleanup.
     /// </summary>
     LandedWithResidue = 24,
+
+    /// <summary>
+    /// A settled report was distilled (CARD-0330). Reserved so CARD-0352 can land the specialist
+    /// substrate without colliding on the next event number.
+    /// </summary>
+    Distilled = 25,
+
+    /// <summary>
+    /// The diagnose seat applied a title or labels (CARD-0352). Never a state change of the
+    /// diagnosed work — the event names what was written and which diagnose task produced it.
+    /// </summary>
+    Diagnosed = 26,
 }
 
 /// <summary>
@@ -222,7 +249,10 @@ public enum AgentTaskReportEvidence
     /// <summary>CARD-0046: the turn-ending response never wrote its own text; settled on the join.</summary>
     FinalMessageMissing = 4,
 
-    /// <summary><see cref="AgentTaskRole.Check"/> — the nudge is skipped; the check interpreter has its own format.</summary>
+    /// <summary>
+    /// A specialist row (<see cref="AgentTaskRole.Check"/>, Distill, Diagnose) — the nudge is
+    /// skipped; the standing seat has its own format.
+    /// </summary>
     Exempt = 5,
 
     /// <summary>
@@ -261,4 +291,25 @@ public enum AgentTaskFailureCode
     /// progress, not a guess about why the delegate stopped.
     /// </summary>
     CompletedWithoutProgress = 2,
+}
+
+/// <summary>
+/// Standing-specialist roles (CARD-0330 D3 / CARD-0352 D2). Check, Distill, and Diagnose are
+/// Antiphon furniture, not somebody's delegated work: hidden from the board unless asked, outside
+/// the process cap, never card-bound, never armed for a check, never compacted on reuse.
+/// </summary>
+public static class AgentTaskRoles
+{
+    public static bool IsSpecialist(AgentTaskRole role) =>
+        role is AgentTaskRole.Check or AgentTaskRole.Distill or AgentTaskRole.Diagnose;
+
+    /// <summary>
+    /// EF-translatable "not a specialist" predicate. A method call does not translate; this
+    /// expression does. Inline the three-way comparison only when combining with other predicates
+    /// in a single lambda.
+    /// </summary>
+    public static readonly Expression<Func<AgentTask, bool>> NotSpecialist =
+        t => t.Role != AgentTaskRole.Check
+            && t.Role != AgentTaskRole.Distill
+            && t.Role != AgentTaskRole.Diagnose;
 }

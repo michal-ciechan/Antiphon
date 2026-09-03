@@ -128,7 +128,8 @@ public class AgentTask
     ///
     /// <para>Set once at creation, in precedence order: an explicit <c>Card</c> on the request; the
     /// parent / followed-up / conflicted task's binding; the FIRST <c>CARD-nnnn</c> in the title.
-    /// <see cref="AgentTaskRole.Check"/> rows are never bound - they are about a task, not a card.
+    /// Specialist rows (Check, Distill, Diagnose) are never bound — they are about a task (or a
+    /// card they were handed), not work that should move a card.
     /// Null is normal and never an error: the task runs, the card simply does not move.</para>
     ///
     /// <para>The FK is <c>ON DELETE SET NULL</c>. Cards are archived rather than deleted, but a

@@ -1057,12 +1057,10 @@ public sealed class AgentTaskService
     internal static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, string> RawTokens = new();
 
     /// <param name="includeChecks">
-    /// Show <see cref="AgentTaskRole.Check"/> rows — the interpretation tasks the check worker
-    /// creates, one per interpreted check-in (CARD-0047 §1.1.1). Off by default, and the default is
-    /// SERVER-side on purpose: none of them is anybody's delegated work, and a busy fleet would
-    /// otherwise bury the board under them. Correlation survives the hiding both ways — the
-    /// interpretation's title names the checked task, and the checked task's <c>Check</c> event
-    /// names the interpretation's short id and cost.
+    /// Show specialist rows (Check, Distill, Diagnose) — machinery the standing seats create, not
+    /// anybody's delegated work. Off by default, and the default is SERVER-side on purpose: a busy
+    /// fleet would otherwise bury the board under them. The query-string name is kept from
+    /// CARD-0047; it now hides every specialist role.
     /// </param>
     public Task<IReadOnlyList<AgentTaskSummaryDto>> ListAsync(
         Guid? rootId, AgentTaskStatus? status, bool includeChecks, CancellationToken ct) =>
@@ -1086,7 +1084,7 @@ public sealed class AgentTaskService
             var requested = statuses.ToArray();
             query = query.Where(t => requested.Contains(t.Status));
         }
-        if (!includeChecks) query = query.Where(t => t.Role != AgentTaskRole.Check);
+        if (!includeChecks) query = query.Where(AgentTaskRoles.NotSpecialist);
 
         // AgentTask has no mutable UpdatedAt column. A settled row's CompletedAt is its final
         // state transition, and every not-yet-settled state is retained irrespective of age.
@@ -1103,10 +1101,10 @@ public sealed class AgentTaskService
         return tasks.Select(t => ToSummary(t, tasks, cardIdentifiers)).ToList();
     }
 
-    /// <summary>Fleet counters for the board header. Check interpretation machinery stays hidden.</summary>
+    /// <summary>Fleet counters for the board header. Specialist machinery stays hidden.</summary>
     public async Task<AgentTaskListSummaryDto> GetListSummaryAsync(CancellationToken ct)
     {
-        var tasks = _db.AgentTasks.AsNoTracking().Where(t => t.Role != AgentTaskRole.Check);
+        var tasks = _db.AgentTasks.AsNoTracking().Where(AgentTaskRoles.NotSpecialist);
         var byStatus = await tasks
             .GroupBy(t => t.Status)
             .Select(group => new { Status = group.Key, Count = group.Count() })
@@ -2041,14 +2039,14 @@ public sealed class AgentTaskService
     /// nobody is reading.
     ///
     /// <para>Mirrors the tick's arms exactly — the pair-weighted policy, D3's undeclared shared
-    /// writers, ReadOnly and Check outside the lease — so the answer here and the event the task
+    /// writers, ReadOnly and specialists outside the lease — so the answer here and the event the task
     /// earns cannot disagree. Never throws: an overlap listing that broke a create would be a
     /// bookkeeping field refusing a launch.</para>
     /// </summary>
     private async Task<IReadOnlyList<ScopeOverlapDto>?> FindScopeOverlapsAsync(
         AgentTask task, CancellationToken ct)
     {
-        if (task.Workspace == WorkspaceMode.ReadOnly || task.Role == AgentTaskRole.Check)
+        if (task.Workspace == WorkspaceMode.ReadOnly || AgentTaskRoles.IsSpecialist(task.Role))
             return null;
 
         try
@@ -2060,8 +2058,8 @@ public sealed class AgentTaskService
             var running = await _db.AgentTasks.AsNoTracking()
                 .Where(t => t.Id != task.Id
                     && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
-                    && t.Workspace != WorkspaceMode.ReadOnly
-                    && t.Role != AgentTaskRole.Check)
+                    && t.Workspace != WorkspaceMode.ReadOnly)
+                .Where(AgentTaskRoles.NotSpecialist)
                 .Select(t => new
                 {
                     t.Id, t.Title, t.WorkingDirectory, t.RepoPath, t.Scope, t.Workspace, t.WorktreeBranch,

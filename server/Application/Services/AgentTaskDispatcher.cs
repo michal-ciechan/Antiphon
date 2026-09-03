@@ -277,9 +277,9 @@ public sealed class AgentTaskDispatcher
             async ct2 => resumedRoutingBlocked = await ResumeRoutingBlockedAsync(ct2),
             ct);
 
-        var active = await _db.AgentTasks.CountAsync(
-            t => t.Role != AgentTaskRole.Check
-                && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working), ct);
+        var active = await _db.AgentTasks
+            .Where(AgentTaskRoles.NotSpecialist)
+            .CountAsync(t => t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working, ct);
 
         var queued = await _db.AgentTasks
             .Where(t => t.Status == AgentTaskStatus.Queued)
@@ -304,8 +304,8 @@ public sealed class AgentTaskDispatcher
         // nothing, and write nothing.
         var busyScopes = await _db.AgentTasks
             .Where(t => (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
-                && t.Workspace != WorkspaceMode.ReadOnly
-                && t.Role != AgentTaskRole.Check)
+                && t.Workspace != WorkspaceMode.ReadOnly)
+            .Where(AgentTaskRoles.NotSpecialist)
             .Select(t => new
             {
                 t.Id, t.Title, t.WorkingDirectory, t.RepoPath, t.Scope, t.Workspace, t.WorktreeBranch,
@@ -350,7 +350,7 @@ public sealed class AgentTaskDispatcher
         {
             ct.ThrowIfCancellationRequested();
 
-            if (task.Role != AgentTaskRole.Check
+            if (!AgentTaskRoles.IsSpecialist(task.Role)
                 && active + dispatchedAgainstCap >= _settings.MaxConcurrentTasks)
             {
                 skippedConcurrency++;
@@ -405,7 +405,7 @@ public sealed class AgentTaskDispatcher
             // 200 Queued for exactly this — the pin is why the work exists — so the wait belongs
             // here, ahead of the fleet-hold skip below. Two clocks, two counters, two sentences:
             // "not before" is this card's, "is held" is CARD-0022/0309's.
-            if (_routingPins is not null && task.Role != AgentTaskRole.Check)
+            if (_routingPins is not null && !AgentTaskRoles.IsSpecialist(task.Role))
             {
                 var pin = await _routingPins.FindActiveAsync(task.CardId, task.Role, ct)
                     ?? await _routingPins.FindActiveAsync(null, task.Role, ct);
@@ -532,7 +532,7 @@ public sealed class AgentTaskDispatcher
                 if (await DispatchOneAsync(task, ct))
                 {
                     dispatched++;
-                    if (task.Role != AgentTaskRole.Check)
+                    if (!AgentTaskRoles.IsSpecialist(task.Role))
                         dispatchedAgainstCap++;
                     if (inLease)
                     {
@@ -2013,7 +2013,7 @@ public sealed class AgentTaskDispatcher
                 var blockedWaiting = false;
                 foreach (var candidate in waitingTasks)
                 {
-                    if (candidate.Role == AgentTaskRole.Check)
+                    if (AgentTaskRoles.IsSpecialist(candidate.Role))
                         continue;
                     if (candidate.ReportNudgedAt is not DateTime nudgedAt)
                         continue;
@@ -2100,11 +2100,11 @@ public sealed class AgentTaskDispatcher
                 && t.NextCheckAt != null
                 && t.NextCheckAt <= now
                 && t.ReplyTo == AgentTaskReplyTo.Session
-                && t.ParentSessionId != null
-                // RECURSION GUARD, the other half of the one in ArmFirstCheck: nothing arms
-                // NextCheckAt on an interpretation task, and nothing selects one either. Checks
-                // that checked checks would create an interpretation per interpretation.
-                && t.Role != AgentTaskRole.Check)
+                && t.ParentSessionId != null)
+            // RECURSION GUARD, the other half of the one in ArmFirstCheck: nothing arms
+            // NextCheckAt on an interpretation task, and nothing selects one either. Checks
+            // that checked checks would create an interpretation per interpretation.
+            .Where(AgentTaskRoles.NotSpecialist)
             .OrderBy(t => t.NextCheckAt)
             .ToListAsync(ct);
 
@@ -2160,8 +2160,8 @@ public sealed class AgentTaskDispatcher
                 && t.NextCheckAt != null
                 && t.NextCheckAt <= now
                 && t.ReplyTo == AgentTaskReplyTo.Session
-                && t.ParentSessionId != null
-                && t.Role != AgentTaskRole.Check)
+                && t.ParentSessionId != null)
+            .Where(AgentTaskRoles.NotSpecialist)
             .OrderBy(t => t.NextCheckAt)
             .ToListAsync(ct);
         if (due.Count == 0)
@@ -2930,7 +2930,7 @@ public sealed class AgentTaskDispatcher
     {
         if (!_settings.CheckEnabled || task.ReplyTo != AgentTaskReplyTo.Session)
             return;
-        if (task.Role == AgentTaskRole.Check)
+        if (AgentTaskRoles.IsSpecialist(task.Role))
             return;
 
         task.NextCheckAt = now + CheckSchedule.NextInterval(
@@ -2947,7 +2947,7 @@ public sealed class AgentTaskDispatcher
         // already declines it — this one is structural rather than incidental, because a future
         // change that gave interpretations a reply route would otherwise silently arm checks ON
         // checks, and each of those would create another interpretation task, forever.
-        if (claimed.Role == AgentTaskRole.Check)
+        if (AgentTaskRoles.IsSpecialist(claimed.Role))
             return;
 
         var expected = Math.Clamp(claimed.ExpectedDurationMinutes, 1, 1440);
@@ -3840,11 +3840,11 @@ public sealed class AgentTaskDispatcher
             .Select(s => (AgentKind?)s.AgentKind)
             .FirstOrDefaultAsync(ct);
 
-        // A Check task NEVER compacts its session. Every interpretation is its own root, so the
+        // A specialist task NEVER compacts its session. Every run is its own root, so the
         // "unrelated work" test is true of every single one — and it is exactly wrong here: the
         // specialist's work is homogeneous, and the accumulated experience of reading bundles is
         // the whole reason it is a standing agent rather than a fresh Claude per check.
-        var unrelated = task.Role != AgentTaskRole.Check
+        var unrelated = !AgentTaskRoles.IsSpecialist(task.Role)
             && previousRoot is not null && previousRoot != task.RootTaskId;
 
         var compact = sessionKind is AgentKind kind

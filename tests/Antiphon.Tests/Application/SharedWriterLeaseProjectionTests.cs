@@ -46,6 +46,8 @@ public class SharedWriterLeaseProjectionTests
             .ShouldBeFalse();
         SharedWriterLeaseProjection.Participates(WorkspaceMode.Shared, AgentTaskRole.Check)
             .ShouldBeFalse();
+        SharedWriterLeaseProjection.Participates(WorkspaceMode.Shared, AgentTaskRole.Diagnose)
+            .ShouldBeFalse();
         SharedWriterLeaseProjection.Participates(WorkspaceMode.Shared, AgentTaskRole.Code)
             .ShouldBeTrue();
     }

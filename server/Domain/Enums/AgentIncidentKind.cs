@@ -466,4 +466,14 @@ public enum AgentIncidentKind
     /// the Error arm with full notes.
     /// </summary>
     LaunchInterruptedByRestart = 46,
+
+    /// <summary>
+    /// The standing diagnose seat could not produce a title or labels — it could not be
+    /// provisioned or queued, it did not answer within the wait budget, or the settled
+    /// diagnose row was failed/empty (CARD-0352). Warning; not raised for backlog (load, not a
+    /// dead specialist). Deduped per specialist so a burst is one incident, not one per request.
+    /// Next free after <see cref="LaunchInterruptedByRestart"/>; CARD-0330 takes 48 if it lands
+    /// second.
+    /// </summary>
+    DiagnoseUnavailable = 47,
 }

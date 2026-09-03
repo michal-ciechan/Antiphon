@@ -74,7 +74,7 @@ public sealed class CardWorkTransitionService
                 && (c.Status == CardStatus.Backlog
                     || c.Status == CardStatus.InProgress
                     || c.Status == CardStatus.Review)
-                && _db.AgentTasks.Any(t => t.CardId == c.Id && t.Role != AgentTaskRole.Check))
+                && _db.AgentTasks.Where(AgentTaskRoles.NotSpecialist).Any(t => t.CardId == c.Id))
             .Select(c => new { c.Id, c.Identifier, c.Status, c.UpdatedAt })
             .ToListAsync(ct);
         if (candidates.Count == 0)
@@ -83,7 +83,8 @@ public sealed class CardWorkTransitionService
         var cardIds = candidates.Select(c => c.Id).ToList();
 
         var tasks = await _db.AgentTasks.AsNoTracking()
-            .Where(t => t.CardId != null && cardIds.Contains(t.CardId!.Value) && t.Role != AgentTaskRole.Check)
+            .Where(t => t.CardId != null && cardIds.Contains(t.CardId!.Value))
+            .Where(AgentTaskRoles.NotSpecialist)
             .Select(t => new
             {
                 t.Id,
