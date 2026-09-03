@@ -540,6 +540,15 @@ describe('queueReasonFor', () => {
     expect(queueReasonFor(queued, pipe)?.line).toBe('queued — next dispatch tick')
   })
 
+  it('names the sibling whose land is in flight', () => {
+    const { pipe, item: queued } = queuedPipeline('siblingLandInFlight', {
+      heldBy: [holder({ shortId: 'dddddddd', title: 'plan sibling landing' })],
+    })
+    expect(queueReasonFor(queued, pipe)?.line).toBe(
+      'waiting: a sibling is landing (task-dddddddd — plan sibling landing)',
+    )
+  })
+
   it('returns null for a card whose worker is not queued', () => {
     const pipe = pipeline({
       stages: [stage({ queued: [queuedRow({ taskId: 'someone-else' })] })],

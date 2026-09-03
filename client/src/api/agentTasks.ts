@@ -228,6 +228,7 @@ export interface AgentTaskListSummaryDto {
 /** Why a queued pipeline row has not dispatched (CARD-0304 / CARD-0031). */
 export type AgentTaskPipelineQueueReason =
   | 'sharedCheckoutLease'
+  | 'siblingLandInFlight'
   | 'concurrencyCap'
   | 'routingPinNotBefore'
   | 'awaitingDispatch'
@@ -269,6 +270,10 @@ export interface AgentTaskPipelineInFlightDto {
   agentName: string | null
   dispatchedAt: string | null
   lastActivityAt: string
+  /** CARD-0301. Absent on a server that predates S1. */
+  agentKind?: AgentKind
+  modelLevel?: AgentModelLevel
+  workspace?: WorkspaceMode
 }
 
 export interface AgentTaskPipelineQueuedDto {
@@ -279,6 +284,10 @@ export interface AgentTaskPipelineQueuedDto {
   createdAt: string
   queueReason: AgentTaskPipelineQueueReason
   heldBy: AgentTaskPipelineHolderDto[]
+  /** CARD-0301. Absent on a server that predates S1. */
+  agentKind?: AgentKind
+  modelLevel?: AgentModelLevel
+  workspace?: WorkspaceMode
 }
 
 export interface AgentTaskPipelineBlockedDto {
@@ -287,6 +296,9 @@ export interface AgentTaskPipelineBlockedDto {
   title: string
   card: AgentTaskPipelineCardRefDto | null
   createdAt: string
+  /** CARD-0301. Absent on a server that predates S1. */
+  agentKind?: AgentKind
+  modelLevel?: AgentModelLevel
   /** CARD-0090: this Blocked row is routing-exhausted, not a question. */
   routingExhausted?: boolean
 }
