@@ -2,7 +2,7 @@ using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Dtos;
 
-/// <summary>PUT /api/complexity-chains/{complexity} (CARD-0090).</summary>
+/// <summary>PUT /api/complexity-chains/{role}/{complexity} (CARD-0090, CARD-0332). Role and complexity are route segments.</summary>
 public sealed record PutComplexityChainRequest(
     IReadOnlyList<ComplexityCandidateRequest> Candidates,
     RoutingPinProvenance Provenance = RoutingPinProvenance.Auto,
@@ -31,9 +31,19 @@ public sealed record ComplexityChainDto(
     string Source,
     string? Reason,
     DateTime? NotAfter,
-    DateTime? UpdatedAt);
+    DateTime? UpdatedAt,
+    /// <summary>Null = any-role row. Set on a cell and on the <c>?role=</c> effective view.</summary>
+    AgentTaskRole? Role = null,
+    /// <summary>
+    /// <c>role</c> (this cell), <c>any</c> (any-role row), <c>config</c> (settings default),
+    /// <c>none</c> (empty — a <c>-Complexity</c> dispatch will Block until set).
+    /// </summary>
+    string ResolvedFrom = "none");
 
-public sealed record ComplexityChainListDto(IReadOnlyList<ComplexityChainDto> Chains);
+public sealed record ComplexityChainListDto(
+    IReadOnlyList<ComplexityChainDto> Chains,
+    IReadOnlyList<AgentTaskRole>? Roles = null,
+    IReadOnlyList<string>? Complexities = null);
 
 /// <summary>
 /// The walk as a DTO: 200 create body, 409 <c>routing_exhausted</c> extension, Blocked event.
@@ -52,7 +62,9 @@ public sealed record ComplexityRoutingDto(
     string Source,
     IReadOnlyList<ComplexityCandidateOutcomeDto> Candidates,
     IReadOnlyList<string> Available,
-    bool Walked);
+    bool Walked,
+    AgentTaskRole Role = default,
+    AgentTaskRole? ChainRole = null);
 
 public sealed record ComplexityCandidateOutcomeDto(
     AgentKind AgentKind,

@@ -7,17 +7,20 @@
 # no-BOM .ps1 as CP1252 and mangles non-ASCII characters.
 #
 # Verbs:
-#   complexity-chain.ps1 get   [-Json]
-#   complexity-chain.ps1 set   -Complexity Hard -Candidates ClaudeCode/Frontier,Codex/Frontier,Grok/Frontier
+#   complexity-chain.ps1 get   [-Role Plan] [-Json]
+#   complexity-chain.ps1 set   [-Role Plan|Any] -Complexity Hard -Candidates ClaudeCode/Frontier,Codex/Frontier
 #                              [-Provenance Human|Auto] [-Reason r] [-NotAfter 2026-09-05T00:00:00Z]
-#   complexity-chain.ps1 clear -Complexity Hard
+#   complexity-chain.ps1 clear [-Role Plan|Any] -Complexity Hard
 #
-# GRAIN. One active chain per Hard/Medium/Easy. Config defaults (Delegation:ComplexityChains) fill
-# a tier with no row and ship EMPTY until a human sets them. Auto never overwrites Human
-# (409 complexity_chain_human).
+# GRAIN. One active chain per (Role?, Hard/Medium/Easy). Role omitted or Any writes the any-role
+# row. A walk on (role, complexity) reads the cell, then the any-role row, then the config default,
+# then Blocked. Config defaults (Delegation:ComplexityChains) fill a tier with no row and ship
+# EMPTY until a human sets them. Auto never overwrites Human (409 complexity_chain_human), and an
+# Auto cell write is refused when the any-role row is Human.
 #
 # -Candidates is Kind/Level pairs, comma-separated, order preserved. This is not a routing-pin.ps1
-# verb: that script is card+stage grain and this is neither.
+# verb: that script is card+stage grain and this is neither. The script always uses the
+# three-segment path (/any/Hard or /Plan/Hard); the two-segment alias exists for CARD-0090 callers.
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
@@ -26,6 +29,9 @@ param(
 
     [ValidateSet('Hard', 'Medium', 'Easy')]
     [string]$Complexity,
+
+    [ValidateSet('Plan', 'Code', 'Review', 'Debug', 'Coverage', 'Docs', 'Commit', 'Test', 'Deploy', 'Merge', 'Custom', 'Any')]
+    [string]$Role,
 
     # Kind/Level pairs, comma-separated, e.g. ClaudeCode/Frontier,Codex/Frontier,Grok/Frontier
     [string]$Candidates,
@@ -49,6 +55,11 @@ $api = $api.TrimEnd('/')
 $headers = @{}
 if (-not [string]::IsNullOrWhiteSpace($env:ANTIPHON_TASK_TOKEN)) {
     $headers['X-Antiphon-Task-Token'] = $env:ANTIPHON_TASK_TOKEN
+}
+
+function Get-RoleSegment {
+    if ([string]::IsNullOrWhiteSpace($Role) -or $Role -eq 'Any') { return 'any' }
+    return $Role
 }
 
 function Invoke-Antiphon {
@@ -133,24 +144,50 @@ function Format-Candidate {
     '{0}/{1} ({2}) {3}' -f $Candidate.agentKind, $Candidate.modelLevel, $Candidate.alias, $state
 }
 
-function Format-ChainLine {
+function Get-ChainLabel {
     param($Chain)
-    $source = $Chain.source
-    $prov = if ($null -ne $Chain.provenance -and $Chain.provenance -ne '') { $Chain.provenance } else { 'none' }
+    if ($null -ne $Chain.role -and $Chain.role -ne '') {
+        return ('{0}/{1}' -f $Chain.role, $Chain.complexity)
+    }
+    return $Chain.complexity
+}
+
+function Format-ChainLine {
+    param($Chain, [switch]$Effective)
+    $label = Get-ChainLabel -Chain $Chain
     $cands = @($Chain.candidates)
     $bits = @()
     foreach ($c in $cands) { $bits += (Format-Candidate -Candidate $c) }
+    if ($Effective) {
+        $from = $Chain.resolvedFrom
+        $marker = switch ($from) {
+            'role' { '(own)' }
+            'any' { '(via any)' }
+            'config' { '(via config)' }
+            default { '(empty)' }
+        }
+        $list = if ($bits.Count -eq 0) {
+            if ($from -eq 'none' -or [string]::IsNullOrWhiteSpace($from)) { '(empty - Blocked until set)' } else { '(empty)' }
+        }
+        else { $bits -join ' -> ' }
+        return '{0}  {1}  {2}' -f $label, $marker, $list
+    }
+
+    $source = $Chain.source
+    $prov = if ($null -ne $Chain.provenance -and $Chain.provenance -ne '') { $Chain.provenance } else { 'none' }
     $list = if ($bits.Count -eq 0) { '(empty)' } else { $bits -join ' -> ' }
     $extra = @()
     if ($Chain.notAfter) { $extra += ("notAfter " + $Chain.notAfter) }
     if ($Chain.reason) { $extra += $Chain.reason }
     $suffix = if ($extra.Count -gt 0) { '  ' + ($extra -join ', ') } else { '' }
-    '{0}  {1}/{2}  {3}{4}' -f $Chain.complexity, $source, $prov, $list, $suffix
+    '{0}  {1}/{2}  {3}{4}' -f $label, $source, $prov, $list, $suffix
 }
 
 switch ($Verb) {
     'get' {
-        $result = Invoke-Antiphon -Method GET -Path '/api/complexity-chains'
+        $effective = -not [string]::IsNullOrWhiteSpace($Role) -and $Role -ne 'Any'
+        $path = if ($effective) { '/api/complexity-chains?role={0}' -f $Role } else { '/api/complexity-chains' }
+        $result = Invoke-Antiphon -Method GET -Path $path
         if ($Json) {
             $result | ConvertTo-Json -Depth 8
             break
@@ -160,7 +197,9 @@ switch ($Verb) {
             Write-Output 'No complexity chains.'
             break
         }
-        foreach ($chain in $chains) { Write-Output ('  ' + (Format-ChainLine -Chain $chain)) }
+        foreach ($chain in $chains) {
+            Write-Output ('  ' + (Format-ChainLine -Chain $chain -Effective:$effective))
+        }
     }
     'set' {
         if ([string]::IsNullOrWhiteSpace($Complexity)) {
@@ -177,7 +216,8 @@ switch ($Verb) {
         if (-not [string]::IsNullOrWhiteSpace($NotAfter)) { $body['notAfter'] = $NotAfter }
         if (-not [string]::IsNullOrWhiteSpace($Reason)) { $body['reason'] = $Reason }
 
-        $chain = Invoke-Antiphon -Method PUT -Path ("/api/complexity-chains/{0}" -f $Complexity) -Body $body
+        $path = '/api/complexity-chains/{0}/{1}' -f (Get-RoleSegment), $Complexity
+        $chain = Invoke-Antiphon -Method PUT -Path $path -Body $body
         if ($Json) {
             $chain | ConvertTo-Json -Depth 8
             break
@@ -189,7 +229,9 @@ switch ($Verb) {
             Write-Error 'clear requires -Complexity Hard|Medium|Easy.'
             exit 1
         }
-        Invoke-Antiphon -Method DELETE -Path ("/api/complexity-chains/{0}" -f $Complexity) -NoContent
-        Write-Output ("cleared {0} (config default applies again)" -f $Complexity)
+        $seg = Get-RoleSegment
+        Invoke-Antiphon -Method DELETE -Path ('/api/complexity-chains/{0}/{1}' -f $seg, $Complexity) -NoContent
+        $label = if ($seg -eq 'any') { $Complexity } else { '{0}/{1}' -f $seg, $Complexity }
+        Write-Output ("cleared {0} (config default applies again)" -f $label)
     }
 }

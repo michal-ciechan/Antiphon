@@ -154,6 +154,16 @@ public static class RoutingCandidates
                 ? pinBit["pin:".Length..]
                 : pinBit;
             var chainTail = chainLabel ?? "chain";
+            // CARD-0332 D5: the chain label is "Plan/Hard" when a role cell answered, "Hard"
+            // when the any-role row or config did. The pin already names the role, so drop a
+            // leading "{pinRole}/" to keep pin+chain:CARD-0301 Plan/Hard either way.
+            if (pin.Pin is { } applied)
+            {
+                var prefix = $"{applied.Role}/";
+                if (chainTail.StartsWith(prefix, StringComparison.Ordinal))
+                    chainTail = chainTail[prefix.Length..];
+            }
+
             return $"pin+chain:{pinTail}/{chainTail}";
         }
 

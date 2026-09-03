@@ -20,6 +20,32 @@ public sealed class ComplexityRoutingService
     public const string RoutingExhaustedPrefix = "routing exhausted: ";
     public const int MaxCandidates = 8;
 
+    /// <summary>
+    /// Roles that may own a chain cell. Check/Distill/Diagnose are seat-pinned and refused.
+    /// Order is the grid-row order CARD-0333 renders.
+    /// </summary>
+    public static readonly AgentTaskRole[] RoutableRoles =
+    [
+        AgentTaskRole.Plan,
+        AgentTaskRole.Code,
+        AgentTaskRole.Review,
+        AgentTaskRole.Debug,
+        AgentTaskRole.Coverage,
+        AgentTaskRole.Docs,
+        AgentTaskRole.Commit,
+        AgentTaskRole.Test,
+        AgentTaskRole.Deploy,
+        AgentTaskRole.Merge,
+        AgentTaskRole.Custom,
+    ];
+
+    public static readonly TaskComplexity[] Tiers =
+    [
+        TaskComplexity.Hard,
+        TaskComplexity.Medium,
+        TaskComplexity.Easy,
+    ];
+
     private readonly AppDbContext _db;
     private readonly DelegationSettings _settings;
     private readonly TimeProvider _time;
@@ -53,8 +79,13 @@ public sealed class ComplexityRoutingService
         IReadOnlyList<CandidateOutcome> Outcomes,
         RoutingCandidates.Candidate? Chosen,
         IReadOnlyList<string> Available,
-        bool Walked)
+        bool Walked,
+        AgentTaskRole Role = default,
+        AgentTaskRole? ChainRole = null)
     {
+        /// <summary><c>Plan/Hard</c> when a role cell answered; <c>Hard</c> for any-role or config.</summary>
+        public string CellLabel => ChainRole is { } r ? $"{r}/{Complexity}" : $"{Complexity}";
+
         public ComplexityRoutingDto ToDto() => new(
             Complexity,
             ChainProvenance,
@@ -68,15 +99,17 @@ public sealed class ComplexityRoutingService
                 o.Reason,
                 o.Candidate.Origin)).ToList(),
             Available,
-            Walked);
+            Walked,
+            Role,
+            ChainRole);
 
         public string ExhaustedSentence()
         {
             if (Outcomes.Count == 0)
             {
                 return RoutingExhaustedPrefix
-                    + $"{Complexity} chain is empty (no active row and no config default). "
-                    + "Set one with complexity-chain.ps1 set.";
+                    + $"{Role}/{Complexity} chain is empty (no {Role}/{Complexity} row, no any-role {Complexity} row, no config default). "
+                    + $"Set one with complexity-chain.ps1 set -Role {Role} -Complexity {Complexity}, or set -Complexity {Complexity} for every role.";
             }
 
             var bits = Outcomes.Select(o =>
@@ -85,7 +118,7 @@ public sealed class ComplexityRoutingService
                 return $"{o.Candidate.Alias} {why}";
             });
             return RoutingExhaustedPrefix
-                + $"{Complexity} chain — {string.Join("; ", bits)}";
+                + $"{CellLabel} chain — {string.Join("; ", bits)}";
         }
 
         public string SkippedWarning()
@@ -123,11 +156,12 @@ public sealed class ComplexityRoutingService
         bool ignoreSubscriptionQuota,
         CancellationToken ct)
     {
-        var loaded = await LoadChainAsync(complexity, ct);
+        var loaded = await LoadChainAsync(role, complexity, ct);
+        var chainLabel = loaded.ChainRole is null ? complexity.ToString() : $"{role}/{complexity}";
         var composed = RoutingCandidates.Compose(
             pin,
             loaded.Candidates,
-            complexity.ToString(),
+            chainLabel,
             requestKind: null,
             requestLevel: null,
             (k, l) => ResolveAgainstRolePolicy(taskKind, role, k, l));
@@ -149,6 +183,8 @@ public sealed class ComplexityRoutingService
             ChainProvenance = loaded.Provenance,
             ChainSource = loaded.ChainSource,
             Walked = composed.Walked,
+            Role = role,
+            ChainRole = loaded.ChainRole,
         };
     }
 
@@ -198,20 +234,20 @@ public sealed class ComplexityRoutingService
     public async Task<(
         IReadOnlyList<RoutingCandidates.Candidate> Candidates,
         RoutingPinProvenance? Provenance,
-        string ChainSource)> LoadChainAsync(TaskComplexity complexity, CancellationToken ct)
+        string ChainSource,
+        AgentTaskRole? ChainRole,
+        string ResolvedFrom)> LoadChainAsync(
+        AgentTaskRole role,
+        TaskComplexity complexity,
+        CancellationToken ct)
     {
-        var row = await FindActiveAsync(complexity, ct);
-        if (row is not null)
-        {
-            var fromRow = row.ParseCandidates()
-                .Select(p => new RoutingCandidates.Candidate(
-                    p.AgentKind,
-                    p.ModelLevel,
-                    ModelLevelAliases.For(p.AgentKind, p.ModelLevel),
-                    RoutingCandidates.OriginChain))
-                .ToList();
-            return (fromRow, row.Provenance, "pin");
-        }
+        var cell = await FindActiveAsync(role, complexity, ct);
+        if (cell is not null)
+            return (FromRow(cell), cell.Provenance, "pin", role, "role");
+
+        var any = await FindActiveAsync(role: null, complexity, ct);
+        if (any is not null)
+            return (FromRow(any), any.Provenance, "pin", null, "any");
 
         if (_settings.ComplexityChains.TryGetValue(complexity.ToString(), out var config)
             && config.Count > 0)
@@ -223,16 +259,23 @@ public sealed class ComplexityRoutingService
                     ModelLevelAliases.For(p.Kind, p.Level),
                     RoutingCandidates.OriginChain))
                 .ToList();
-            return (fromConfig, RoutingPinProvenance.Auto, "config");
+            return (fromConfig, RoutingPinProvenance.Auto, "config", null, "config");
         }
 
-        return ([], null, "config");
+        return ([], null, "config", null, "none");
     }
 
-    public async Task<ComplexityChain?> FindActiveAsync(TaskComplexity complexity, CancellationToken ct)
+    /// <summary>Any-role row for <paramref name="complexity"/> (CARD-0090 signature).</summary>
+    public Task<ComplexityChain?> FindActiveAsync(TaskComplexity complexity, CancellationToken ct) =>
+        FindActiveAsync(role: null, complexity, ct);
+
+    public async Task<ComplexityChain?> FindActiveAsync(
+        AgentTaskRole? role,
+        TaskComplexity complexity,
+        CancellationToken ct)
     {
         var rows = await _db.ComplexityChains
-            .Where(c => c.ClearedAt == null && c.Complexity == complexity)
+            .Where(c => c.ClearedAt == null && c.Complexity == complexity && c.Role == role)
             .ToListAsync(ct);
         if (rows.Count == 0)
             return null;
@@ -256,6 +299,57 @@ public sealed class ComplexityRoutingService
             await _db.SaveChangesAsync(ct);
         return live;
     }
+
+    public async Task<IReadOnlyList<ComplexityChain>> ListLiveCellsAsync(CancellationToken ct)
+    {
+        var rows = await _db.ComplexityChains
+            .Where(c => c.ClearedAt == null && c.Role != null)
+            .ToListAsync(ct);
+        if (rows.Count == 0)
+            return [];
+
+        var now = UtcNow();
+        var live = new List<ComplexityChain>(rows.Count);
+        var dirty = false;
+        foreach (var row in rows)
+        {
+            if (row.NotAfter is { } notAfter && notAfter <= now)
+            {
+                row.ClearedAt = now;
+                dirty = true;
+                continue;
+            }
+
+            live.Add(row);
+        }
+
+        if (dirty)
+            await _db.SaveChangesAsync(ct);
+
+        var roleOrder = new Dictionary<AgentTaskRole, int>(RoutableRoles.Length);
+        for (var i = 0; i < RoutableRoles.Length; i++)
+            roleOrder[RoutableRoles[i]] = i;
+        var complexityOrder = new Dictionary<TaskComplexity, int>
+        {
+            [TaskComplexity.Hard] = 0,
+            [TaskComplexity.Medium] = 1,
+            [TaskComplexity.Easy] = 2,
+        };
+
+        return live
+            .OrderBy(c => c.Role is { } r && roleOrder.TryGetValue(r, out var ri) ? ri : int.MaxValue)
+            .ThenBy(c => complexityOrder.GetValueOrDefault(c.Complexity, int.MaxValue))
+            .ToList();
+    }
+
+    private static IReadOnlyList<RoutingCandidates.Candidate> FromRow(ComplexityChain row) =>
+        row.ParseCandidates()
+            .Select(p => new RoutingCandidates.Candidate(
+                p.AgentKind,
+                p.ModelLevel,
+                ModelLevelAliases.For(p.AgentKind, p.ModelLevel),
+                RoutingCandidates.OriginChain))
+            .ToList();
 
     public RoutingCandidates.Candidate ResolveAgainstRolePolicy(
         AgentTaskKind taskKind,

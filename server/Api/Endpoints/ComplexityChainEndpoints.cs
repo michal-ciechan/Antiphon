@@ -8,17 +8,43 @@ namespace Antiphon.Server.Api.Endpoints;
 public static class ComplexityChainEndpoints
 {
     /// <summary>
-    /// Per-complexity fallback chains (CARD-0090). Own group, not hung off routing-pins: that
-    /// script is card+stage grain and this is neither.
+    /// Per-(role, complexity) fallback chains (CARD-0090, CARD-0332). Own group, not hung off
+    /// routing-pins: that script is card+stage grain and this is neither. Two-segment
+    /// PUT/DELETE /{complexity} is the any-role alias of /any/{complexity}.
     /// </summary>
     public static void MapComplexityChainEndpoints(this WebApplication app)
     {
         var group = app.MapGroup("/api/complexity-chains").WithTags("ComplexityChains");
 
         group.MapGet("/", async (
+            string? role,
             ComplexityChainService chains,
             CancellationToken ct) =>
-            Results.Ok(await chains.ListAsync(ct)));
+            Results.Ok(await chains.ListAsync(ParseRole(role, required: false), ct)));
+
+        group.MapPut("/{role}/{complexity}", async (
+            string role,
+            string complexity,
+            PutComplexityChainRequest request,
+            HttpContext http,
+            ComplexityChainService chains,
+            AgentTaskService tasks,
+            CancellationToken ct) =>
+        {
+            var caller = await AgentTaskEndpoints.ResolvePollingCallerAsync(http, tasks, ct);
+            return Results.Ok(await chains.UpsertAsync(
+                ParseRole(role, required: true), ParseComplexity(complexity), request, caller?.Task?.Id, ct));
+        });
+
+        group.MapDelete("/{role}/{complexity}", async (
+            string role,
+            string complexity,
+            ComplexityChainService chains,
+            CancellationToken ct) =>
+        {
+            await chains.ClearAsync(ParseRole(role, required: true), ParseComplexity(complexity), ct);
+            return Results.NoContent();
+        });
 
         group.MapPut("/{complexity}", async (
             string complexity,
@@ -30,7 +56,7 @@ public static class ComplexityChainEndpoints
         {
             var caller = await AgentTaskEndpoints.ResolvePollingCallerAsync(http, tasks, ct);
             return Results.Ok(await chains.UpsertAsync(
-                ParseComplexity(complexity), request, caller?.Task?.Id, ct));
+                role: null, ParseComplexity(complexity), request, caller?.Task?.Id, ct));
         });
 
         group.MapDelete("/{complexity}", async (
@@ -38,7 +64,7 @@ public static class ComplexityChainEndpoints
             ComplexityChainService chains,
             CancellationToken ct) =>
         {
-            await chains.ClearAsync(ParseComplexity(complexity), ct);
+            await chains.ClearAsync(role: null, ParseComplexity(complexity), ct);
             return Results.NoContent();
         });
     }
@@ -55,5 +81,36 @@ public static class ComplexityChainEndpoints
         }
 
         return complexity;
+    }
+
+    /// <summary>
+    /// <c>any</c> (case-insensitive) or omitted → null. Check/Distill/Diagnose → 422.
+    /// </summary>
+    internal static AgentTaskRole? ParseRole(string? value, bool required)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            if (required)
+            {
+                throw new ValidationException(
+                    "role",
+                    "'' is not a task role.");
+            }
+
+            return null;
+        }
+
+        if (string.Equals(value, "any", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        if (!Enum.TryParse<AgentTaskRole>(value, ignoreCase: true, out var role) || !Enum.IsDefined(role))
+        {
+            throw new ValidationException(
+                "role",
+                $"'{value}' is not a task role.");
+        }
+
+        ComplexityChainService.ValidateCellRole(role);
+        return role;
     }
 }

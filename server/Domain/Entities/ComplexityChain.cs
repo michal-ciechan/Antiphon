@@ -5,10 +5,11 @@ using Antiphon.Server.Domain.Enums;
 namespace Antiphon.Server.Domain.Entities;
 
 /// <summary>
-/// Ordered (kind, level) fallback list for one <see cref="TaskComplexity"/> (CARD-0090).
-/// Active = <see cref="ClearedAt"/> is null. One active row per complexity; config defaults
-/// fill a tier with no row. Provenance is overwrite protection, same rule as
-/// <see cref="RoutingPin"/>: Auto never replaces Human.
+/// Ordered (kind, level) fallback list for one (Role?, Complexity) cell (CARD-0090, CARD-0332).
+/// Active = <see cref="ClearedAt"/> is null. One active row per (Role?, Complexity); a role
+/// cell outranks the any-role row as a whole; config fills a complexity with neither.
+/// Provenance is overwrite protection, same rule as <see cref="RoutingPin"/>: Auto never
+/// replaces Human.
 /// </summary>
 public class ComplexityChain
 {
@@ -21,6 +22,11 @@ public class ComplexityChain
     public Guid Id { get; set; }
 
     public TaskComplexity Complexity { get; set; }
+
+    /// <summary>
+    /// Null = any role (CARD-0090's row). A non-null value is one cell of the matrix.
+    /// </summary>
+    public AgentTaskRole? Role { get; set; }
 
     /// <summary>
     /// Ordered complete pairs, enum member names on disk:

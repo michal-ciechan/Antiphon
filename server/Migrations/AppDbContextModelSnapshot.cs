@@ -2013,6 +2013,9 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(400)
                         .HasColumnType("character varying(400)");
 
+                    b.Property<int?>("Role")
+                        .HasColumnType("integer");
+
                     b.Property<Guid?>("SourceTaskId")
                         .HasColumnType("uuid");
 
@@ -2021,10 +2024,11 @@ namespace Antiphon.Server.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Complexity")
+                    b.HasIndex("Role", "Complexity")
                         .IsUnique()
-                        .HasDatabaseName("IX_ComplexityChains_Complexity_Active")
-                        .HasFilter("\"ClearedAt\" IS NULL");
+                        .HasDatabaseName("IX_ComplexityChains_Role_Complexity_Active")
+                        .HasFilter("\"ClearedAt\" IS NULL")
+                        .HasAnnotation("Npgsql:NullsDistinct", false);
 
                     b.ToTable("ComplexityChains", (string)null);
                 });

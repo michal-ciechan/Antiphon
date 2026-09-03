@@ -1668,16 +1668,20 @@ public class AppDbContext : DbContext
             entity.ToTable("ComplexityChains");
             entity.HasKey(c => c.Id);
             entity.Property(c => c.Complexity).IsRequired();
+            entity.Property(c => c.Role);
             entity.Property(c => c.CandidatesJson).IsRequired().HasMaxLength(1000);
             entity.Property(c => c.Provenance).IsRequired();
             entity.Property(c => c.Reason).IsRequired().HasMaxLength(400);
             entity.Property(c => c.CreatedAt).IsRequired();
             entity.Property(c => c.UpdatedAt).IsRequired();
 
-            entity.HasIndex(c => c.Complexity)
+            // NULLS NOT DISTINCT: Postgres treats NULL as distinct in a unique index, so
+            // without this two any-role (Role IS NULL) rows of the same complexity could coexist.
+            entity.HasIndex(c => new { c.Role, c.Complexity })
                 .IsUnique()
                 .HasFilter("\"ClearedAt\" IS NULL")
-                .HasDatabaseName("IX_ComplexityChains_Complexity_Active");
+                .HasDatabaseName("IX_ComplexityChains_Role_Complexity_Active")
+                .HasAnnotation("Npgsql:NullsDistinct", false);
         });
 
         modelBuilder.Entity<Schedule>(entity =>
