@@ -1,5 +1,6 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -25,7 +26,7 @@ namespace Antiphon.Server.Application.Services;
 /// but must not shorten <c>DisabledUntil</c> or demote <c>Source</c> back to AutoDetected.
 /// Manual PUT converts an AutoDetected row in place.</para>
 /// </summary>
-public sealed class ModelAvailability
+public sealed class ModelAvailability : IModelAvailability
 {
     /// <summary>Applied by the recovery writer, not the parser (CARD-0022 S2).</summary>
     public static readonly TimeSpan SessionLimitResumePadding = TimeSpan.FromMinutes(2);

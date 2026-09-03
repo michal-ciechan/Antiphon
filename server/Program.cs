@@ -314,8 +314,11 @@ try
     // idempotent and self-healing, so it is safe to call at startup and again from any check.
     builder.Services.AddScoped<CheckInterpreterProvisioner>();
     // The standing specialist that titles untitled tasks and labels unlabelled cards (CARD-0352).
-    // Same substrate as the check interpreter; the hosted drainers land in S3/S4.
+    // Same substrate as the check interpreter. Job 1 (auto-title) drains DiagnoseQueue; job 2
+    // (auto-label) lands in S4 on the same queue.
     builder.Services.AddScoped<DiagnoseProvisioner>();
+    builder.Services.AddSingleton<DiagnoseQueue>();
+    builder.Services.AddScoped<DiagnoseService>();
     // The "what is stuck" projection (CARD-0035). Read-only — every verb it names is an endpoint
     // that already exists, and it is scoped because it is one query burst per request.
     builder.Services.AddScoped<AttentionService>();
@@ -442,6 +445,7 @@ try
     builder.Services.AddScoped<SubscriptionUsageReader>();
     builder.Services.AddScoped<SubscriptionQuotaGate>();
     builder.Services.AddScoped<ModelAvailability>();
+    builder.Services.AddScoped<IModelAvailability>(sp => sp.GetRequiredService<ModelAvailability>());
     // CARD-0305: per-card/stage routing pins. Scoped like the availability reader it hands off to.
     builder.Services.AddScoped<RoutingPinService>();
     // CARD-0090: complexity chains. Scoped like the pin/availability readers the walker consumes.
@@ -564,6 +568,7 @@ try
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Orchestration.AgentTaskLandHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Orchestration.AgentTaskLandSweepHostedService>();
     builder.Services.AddHostedService<AgentTaskCheckHostedService>();
+    builder.Services.AddHostedService<DiagnoseHostedService>();
     builder.Services.AddHostedService<ScheduleSweepHostedService>();
     builder.Services.AddHostedService<ScheduleFireHostedService>();
     // One-shot: re-prices tasks costed before CARD-0023, so the per-root ceiling stops reading

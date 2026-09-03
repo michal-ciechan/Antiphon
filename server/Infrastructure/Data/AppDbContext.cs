@@ -68,6 +68,7 @@ public class AppDbContext : DbContext
     public DbSet<ComplexityChain> ComplexityChains => Set<ComplexityChain>();
     public DbSet<Schedule> Schedules => Set<Schedule>();
     public DbSet<ScheduleFire> ScheduleFires => Set<ScheduleFire>();
+    public DbSet<DiagnosisRecord> Diagnoses => Set<DiagnosisRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -1728,6 +1729,41 @@ public class AppDbContext : DbContext
                 .WithMany(s => s.Fires)
                 .HasForeignKey(f => f.ScheduleId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<DiagnosisRecord>(entity =>
+        {
+            entity.ToTable("Diagnoses");
+            entity.HasKey(d => d.Id);
+            entity.Property(d => d.Kind).IsRequired();
+            entity.Property(d => d.Outcome).IsRequired();
+            entity.Property(d => d.Answer).HasColumnType("text");
+            entity.Property(d => d.Applied).HasColumnType("text");
+            entity.Property(d => d.Reason).HasColumnType("text");
+            entity.Property(d => d.BundleStamp).HasMaxLength(80);
+            entity.Property(d => d.CostUsd).HasPrecision(18, 6);
+            entity.Property(d => d.WaitMs).IsRequired();
+            entity.Property(d => d.Forced).IsRequired();
+            entity.Property(d => d.CreatedAt).IsRequired();
+
+            entity.HasIndex(d => new { d.CardId, d.CreatedAt })
+                .IsDescending(false, true)
+                .HasDatabaseName("IX_Diagnoses_CardId_CreatedAt");
+            entity.HasIndex(d => d.TaskId).HasDatabaseName("IX_Diagnoses_TaskId");
+            entity.HasIndex(d => d.CreatedAt).HasDatabaseName("IX_Diagnoses_CreatedAt");
+
+            entity.HasOne<AgentTask>()
+                .WithMany()
+                .HasForeignKey(d => d.TaskId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<Card>()
+                .WithMany()
+                .HasForeignKey(d => d.CardId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<AgentTask>()
+                .WithMany()
+                .HasForeignKey(d => d.DiagnoseTaskId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
     }

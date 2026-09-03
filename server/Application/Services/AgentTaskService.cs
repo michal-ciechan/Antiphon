@@ -46,6 +46,9 @@ public sealed class AgentTaskService
     // CARD-0033. Optional so predating harnesses keep constructing this; absent, blocked
     // progress degrades to Unavailable rather than failing the drawer GET.
     private readonly DelegateCheckProbe? _checkProbe;
+    // CARD-0352 S3. Optional so predating harnesses keep constructing this; absent, create
+    // never queues a title diagnosis.
+    private readonly DiagnoseQueue? _diagnoseQueue;
 
     public AgentTaskService(
         AppDbContext db,
@@ -62,7 +65,8 @@ public sealed class AgentTaskService
         RoutingPinService? routingPins = null,
         ComplexityRoutingService? complexityRouting = null,
         IOptions<AgentRegistrySettings>? registrySettings = null,
-        DelegateCheckProbe? checkProbe = null)
+        DelegateCheckProbe? checkProbe = null,
+        DiagnoseQueue? diagnoseQueue = null)
     {
         _areas = areas;
         _db = db;
@@ -79,6 +83,7 @@ public sealed class AgentTaskService
         _complexityRouting = complexityRouting;
         _registrySettings = registrySettings?.Value;
         _checkProbe = checkProbe;
+        _diagnoseQueue = diagnoseQueue;
     }
 
     /// <summary>
@@ -756,6 +761,10 @@ public sealed class AgentTaskService
             DelegationReportFormatter.Short(id), task.Kind, task.Role, level, agentKind,
             task.WorkingDirectory, depth);
 
+        var titleDiagnosisQueued = false;
+        if (ShouldQueueTitleDiagnosis(request, title))
+            titleDiagnosisQueued = _diagnoseQueue!.TryEnqueue(DiagnoseRequest.ForTitle(id));
+
         // The raw token is returned ONCE, to be injected into the delegate's environment. It is
         // never persisted and never readable again.
         RawTokens[id] = token;
@@ -767,7 +776,8 @@ public sealed class AgentTaskService
             CardIdentifier: binding.Identifier,
             FollowUpMessage: followUpMessage,
             Complexity: request.Complexity,
-            Routing: routingWalk?.ToDto());
+            Routing: routingWalk?.ToDto(),
+            TitleDiagnosisQueued: titleDiagnosisQueued);
     }
 
     private async Task<string?> CompletionHeaderAsync(Guid taskId, CancellationToken ct) =>
@@ -1849,11 +1859,27 @@ public sealed class AgentTaskService
         if (!string.IsNullOrWhiteSpace(request.Title))
             return Clamp(request.Title.Trim(), 300);
 
-        // Fall back to the goal's first line — a board chip needs something readable.
-        var firstLine = request.Goal.ReplaceLineEndings("\n").Split('\n', StringSplitOptions.RemoveEmptyEntries)
+        return FallbackTitle(request.Goal);
+    }
+
+    /// <summary>
+    /// The Goal-first-line fallback stored when create is given no Title (CARD-0352 S3).
+    /// Diagnose compares the live title to this to know whether something else already renamed it.
+    /// </summary>
+    internal static string FallbackTitle(string goal)
+    {
+        var firstLine = goal.ReplaceLineEndings("\n").Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .FirstOrDefault()?.Trim() ?? "Delegated task";
         return Clamp(firstLine, 300);
     }
+
+    private bool ShouldQueueTitleDiagnosis(CreateAgentTaskRequest request, string storedTitle) =>
+        _diagnoseQueue is not null
+        && _settings.DiagnoseEnabled
+        && _settings.DiagnoseTitleEnabled
+        && string.IsNullOrWhiteSpace(request.Title)
+        && !AgentTaskRoles.IsSpecialist(request.Role)
+        && storedTitle.Length > _settings.DiagnoseTitleMinFallbackChars;
 
     private static string Clamp(string value, int max) =>
         value.Length <= max ? value : value[..(max - 1)] + "…";
