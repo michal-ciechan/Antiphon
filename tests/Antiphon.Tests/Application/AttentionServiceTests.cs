@@ -111,15 +111,17 @@ public class AttentionServiceTests
     }
 
     [Test]
-    public async Task a_check_role_blocked_task_is_not_a_blocked_question()
+    [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Diagnose)]
+    public async Task a_specialist_role_blocked_task_is_not_a_blocked_question(AgentTaskRole role)
     {
-        // CARD-0302 S3: even before remap, a Check-role Blocked row is not waiting on a human.
-        // Reply/Cancel would hit the standing interpreter session.
+        // CARD-0302 S3 / CARD-0352: even before remap, a specialist Blocked row is not waiting
+        // on a human. Reply/Cancel would hit the standing seat's session.
         await using var scenario = new Scenario();
         var session = await scenario.AddSessionAsync();
         var task = await scenario.AddTaskAsync(
             session, AgentTaskStatus.Blocked, dispatchedMinutesAgo: 20,
-            completedMinutesAgo: 5, role: AgentTaskRole.Check);
+            completedMinutesAgo: 5, role: role);
         await scenario.AddTaskEventAsync(task, AgentTaskEventType.Blocked,
             "LOOKS STUCK — session idle 28m.", minutesAgo: 5);
 

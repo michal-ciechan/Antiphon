@@ -1631,8 +1631,8 @@ public sealed class AgentTaskReplyService
                 .Where(t => t.Id != task.Id
                     && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
                     && t.Scope != null
-                    && t.Workspace != WorkspaceMode.ReadOnly
-                    && t.Role != AgentTaskRole.Check)
+                    && t.Workspace != WorkspaceMode.ReadOnly)
+                .Where(AgentTaskRoles.NotSpecialist)
                 .Select(t => new { t.Id, t.WorkingDirectory, t.RepoPath, t.Scope })
                 .ToListAsync(ct);
 
@@ -2251,6 +2251,8 @@ public sealed class AgentTaskReplyService
         // mark the interpreter's own row Blocked. Do not parse LOOKS STUCK as English.
         if (task.Role == AgentTaskRole.Check)
             return ClassifyCheckReport(body, verdict);
+        if (task.Role == AgentTaskRole.Diagnose)
+            return ClassifyDiagnoseReport(body, verdict);
 
         if (verdict == "done")
         {
@@ -2319,6 +2321,27 @@ public sealed class AgentTaskReplyService
     /// </summary>
     private static (AgentTaskStatus Status, AgentTaskReportEvidence Evidence, string Body, string? FailureReason)
         ClassifyCheckReport(string body, string verdict)
+    {
+        if (verdict == "failed")
+        {
+            var reason = FirstLine(body);
+            return (AgentTaskStatus.Failed, AgentTaskReportEvidence.Marked, body,
+                string.IsNullOrWhiteSpace(reason) ? "Delegate reported failed." : reason);
+        }
+
+        if (verdict == "done")
+            return (AgentTaskStatus.Succeeded, AgentTaskReportEvidence.Marked, body, null);
+
+        return (AgentTaskStatus.Succeeded, AgentTaskReportEvidence.Exempt, body, null);
+    }
+
+    /// <summary>
+    /// CARD-0352: Diagnose-role status is "did the seat finish an answer", never "what did it
+    /// think of the work." Mirrors <see cref="ClassifyCheckReport"/>: <c>done</c> Succeeded/Marked,
+    /// <c>failed</c> Failed, anything else Succeeded/Exempt. A trailing <c>?</c> never Blocks.
+    /// </summary>
+    private static (AgentTaskStatus Status, AgentTaskReportEvidence Evidence, string Body, string? FailureReason)
+        ClassifyDiagnoseReport(string body, string verdict)
     {
         if (verdict == "failed")
         {
@@ -2518,7 +2541,7 @@ public sealed class AgentTaskReplyService
             t => t.AgentSessionId == sessionId
                 && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working),
             ct);
-        if (task is null || task.Role == AgentTaskRole.Check)
+        if (task is null || AgentTaskRoles.IsSpecialist(task.Role))
             return;
         if (task.ReportNudgedAt is not DateTime nudgedAt)
             return;

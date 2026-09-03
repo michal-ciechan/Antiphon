@@ -469,7 +469,7 @@ public class DelegateLaunchArgvIntegrityTests
         Kind = kind,
         Role = role,
         AgentKind = agentKind,
-        ModelLevel = role == AgentTaskRole.Check ? AgentModelLevel.Low : AgentModelLevel.High,
+        ModelLevel = AgentTaskRoles.IsSpecialist(role) ? AgentModelLevel.Low : AgentModelLevel.High,
         Status = AgentTaskStatus.Queued,
         Goal = "prove the composed launch arguments survive both command-line composers",
         WorkingDirectory = Path.GetTempPath(),

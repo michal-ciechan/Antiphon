@@ -934,14 +934,16 @@ public class AgentTaskDeliveryWatchdogTests
     }
 
     [Test]
-    public async Task a_check_role_is_never_blocked_as_unmarked_waiting()
+    [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Diagnose)]
+    public async Task a_specialist_role_is_never_blocked_as_unmarked_waiting(AgentTaskRole role)
     {
         var (harness, _) = CreateHarness();
         var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 8);
         await using (var db = CreateContext())
         {
             var row = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
-            row.Role = AgentTaskRole.Check;
+            row.Role = role;
             await db.SaveChangesAsync();
         }
         var sessionId = task.AgentSessionId!.Value;

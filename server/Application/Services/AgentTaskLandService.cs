@@ -339,12 +339,12 @@ public sealed class AgentTaskLandService
     {
         var candidates = await _db.AgentTasks.AsNoTracking()
             .Where(t => t.Id != task.Id && t.Workspace == WorkspaceMode.Shared
-                && t.Role != AgentTaskRole.Check
                 && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working))
+            .Where(AgentTaskRoles.NotSpecialist)
             .ToListAsync(ct);
         return IsHeldBehindSharedWriter(task, candidates)
             ? candidates.First(t => t.Id != task.Id && t.Workspace == WorkspaceMode.Shared
-                && t.Role != AgentTaskRole.Check
+                && !AgentTaskRoles.IsSpecialist(t.Role)
                 && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
                 && ScopeResolver.KeyFor(t.RepoPath, t.WorkingDirectory)
                     == ScopeResolver.KeyFor(task.RepoPath, task.WorkingDirectory))
@@ -356,7 +356,7 @@ public sealed class AgentTaskLandService
     {
         var key = ScopeResolver.KeyFor(landing.RepoPath, landing.WorkingDirectory);
         return candidates.Any(t => t.Id != landing.Id && t.Workspace == WorkspaceMode.Shared
-            && t.Role != AgentTaskRole.Check
+            && !AgentTaskRoles.IsSpecialist(t.Role)
             && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
             && ScopeResolver.KeyFor(t.RepoPath, t.WorkingDirectory) == key);
     }

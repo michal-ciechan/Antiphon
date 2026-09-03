@@ -77,8 +77,8 @@ public sealed class RoutingPinService
     /// </summary>
     public async Task<RoutingPin?> FindActiveAsync(Guid? cardId, AgentTaskRole role, CancellationToken ct)
     {
-        // A Check row is about a task, never a card, so it has no stage and never carries a pin.
-        if (role == AgentTaskRole.Check)
+        // A specialist row is about a task, never a card, so it has no stage and never carries a pin.
+        if (AgentTaskRoles.IsSpecialist(role))
             return null;
 
         var query = _db.RoutingPins.Where(p => p.ClearedAt == null && p.Role == role);
@@ -519,12 +519,12 @@ public sealed class RoutingPinService
     {
         if (!Enum.IsDefined(role))
             throw new ValidationException(nameof(PutRoutingPinRequest.Role), $"'{role}' is not a task role.");
-        if (role == AgentTaskRole.Check)
+        if (AgentTaskRoles.IsSpecialist(role))
         {
             throw new ValidationException(
                 nameof(PutRoutingPinRequest.Role),
-                "Check rows interpret a check-in bundle and never bind a card, so there is no Check "
-                + "stage to pin. Pin the role whose work you mean (Plan, Code, Debug, ...).");
+                "Specialist rows (Check, Distill, Diagnose) are furniture, not a card stage, so there "
+                + "is no stage to pin. Pin the role whose work you mean (Plan, Code, Debug, ...).");
         }
 
         return role;

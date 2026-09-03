@@ -100,11 +100,11 @@ public static class SharedWriterLeaseProjection
     }
 
     /// <summary>
-    /// ReadOnly writes nothing and Check-role tasks spawn nothing, so neither participates in the
-    /// lease in either direction.
+    /// ReadOnly writes nothing and specialist-role tasks spawn nothing, so neither participates in
+    /// the lease in either direction.
     /// </summary>
     public static bool Participates(WorkspaceMode workspace, AgentTaskRole role) =>
-        ScopeResolver.ParticipatesInLease(workspace) && role != AgentTaskRole.Check;
+        ScopeResolver.ParticipatesInLease(workspace) && !AgentTaskRoles.IsSpecialist(role);
 
     /// <summary>
     /// First serialising overlap is the live hold; remaining Warn overlaps are worktree collisions

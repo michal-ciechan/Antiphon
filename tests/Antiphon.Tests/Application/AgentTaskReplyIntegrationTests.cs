@@ -331,11 +331,13 @@ public class AgentTaskReplyIntegrationTests
     }
 
     [Test]
-    public async Task a_check_role_task_is_never_nudged()
+    [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Diagnose)]
+    public async Task a_specialist_role_task_is_never_nudged(AgentTaskRole role)
     {
         using var workspace = new TempWorkspace();
         var (task, sessionId) = await SeedDispatchedTaskAsync(
-            workspace.Path, configure: t => t.Role = AgentTaskRole.Check);
+            workspace.Path, configure: t => t.Role = role);
 
         await SeedTurnAsync(
             sessionId, DelegationReportFormatter.TaskMarker(task.Id),
@@ -352,10 +354,12 @@ public class AgentTaskReplyIntegrationTests
     }
 
     [Test]
-    public async Task a_check_role_looks_stuck_blocked_token_settles_succeeded_exempt()
+    [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Diagnose)]
+    public async Task a_specialist_role_looks_stuck_blocked_token_settles_succeeded_exempt(AgentTaskRole role)
     {
-        // CARD-0302 S1: LOOKS STUCK is the reading; the generic `blocked` token must not Block
-        // the Check row. Role is the gate — this does not parse LOOKS STUCK as English.
+        // CARD-0302 S1 / CARD-0352: LOOKS STUCK is the reading; the generic `blocked` token must
+        // not Block the specialist row. Role is the gate — this does not parse LOOKS STUCK as English.
         using var workspace = new TempWorkspace();
         var agentId = await SeedAgentAsync(workspace.Path, $"check-s1-{Guid.NewGuid():N}"[..24],
             poolDelegate: false);
@@ -369,7 +373,7 @@ public class AgentTaskReplyIntegrationTests
 
         var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, configure: t =>
         {
-            t.Role = AgentTaskRole.Check;
+            t.Role = role;
             t.ReplyTo = AgentTaskReplyTo.None;
             t.AgentId = agentId;
         });
@@ -404,13 +408,15 @@ public class AgentTaskReplyIntegrationTests
     }
 
     [Test]
-    public async Task a_check_role_trailing_question_settles_succeeded_exempt()
+    [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Diagnose)]
+    public async Task a_specialist_role_trailing_question_settles_succeeded_exempt(AgentTaskRole role)
     {
         using var workspace = new TempWorkspace();
         var (task, sessionId) = await SeedDispatchedTaskAsync(
             workspace.Path, configure: t =>
             {
-                t.Role = AgentTaskRole.Check;
+                t.Role = role;
                 t.ReplyTo = AgentTaskReplyTo.None;
             });
 
@@ -427,11 +433,13 @@ public class AgentTaskReplyIntegrationTests
     }
 
     [Test]
-    public async Task a_check_role_failed_token_still_fails_the_task()
+    [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Diagnose)]
+    public async Task a_specialist_role_failed_token_still_fails_the_task(AgentTaskRole role)
     {
         using var workspace = new TempWorkspace();
         var (task, sessionId) = await SeedDispatchedTaskAsync(
-            workspace.Path, configure: t => t.Role = AgentTaskRole.Check);
+            workspace.Path, configure: t => t.Role = role);
         const string report = "Could not produce a reading: the digest was empty.";
 
         await SeedTurnAsync(

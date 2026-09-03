@@ -28,7 +28,8 @@ public sealed class BlockedTaskNotifier
         var channelIds = await _db.ChatChannels.AsNoTracking().Where(c => c.DigestEnabled).Select(c => c.Id).ToListAsync(ct);
         if (channelIds.Count == 0) return;
         var blocked = await _db.AgentTasks.AsNoTracking()
-            .Where(t => t.Status == AgentTaskStatus.Blocked && t.Role != AgentTaskRole.Check)
+            .Where(t => t.Status == AgentTaskStatus.Blocked)
+            .Where(AgentTaskRoles.NotSpecialist)
             .ToListAsync(ct);
         if (blocked.Count == 0) return;
         var taskIds = blocked.Select(t => t.Id).ToList();

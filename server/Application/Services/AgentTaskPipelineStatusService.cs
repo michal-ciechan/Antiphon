@@ -26,14 +26,14 @@ public sealed class AgentTaskPipelineStatusService
     internal const string QueueReasonRoutingPinNotBefore = "routingPinNotBefore";
     /// <summary>
     /// CARD-0031: the fleet is at <see cref="DelegationSettings.MaxConcurrentTasks"/>. Same
-    /// predicate as the dispatcher's active-task count (non-Check Dispatched/Working). Reported
+    /// predicate as the dispatcher's active-task count (non-specialist Dispatched/Working). Reported
     /// only after lease and pin, so a task behind a checkout still names the checkout.
     /// </summary>
     internal const string QueueReasonConcurrencyCap = "concurrencyCap";
     internal const string PlanDeliverablePrefix = "docs/superpowers/plans/";
 
     private static readonly AgentTaskRole[] VisibleRoles = Enum.GetValues<AgentTaskRole>()
-        .Where(role => role != AgentTaskRole.Check)
+        .Where(role => !AgentTaskRoles.IsSpecialist(role))
         .OrderBy(role => (int)role)
         .ToArray();
 
@@ -59,11 +59,11 @@ public sealed class AgentTaskPipelineStatusService
         var asOf = _time.GetUtcNow().UtcDateTime;
 
         var open = await _db.AgentTasks.AsNoTracking()
-            .Where(t => t.Role != AgentTaskRole.Check
-                && (t.Status == AgentTaskStatus.Queued
+            .Where(AgentTaskRoles.NotSpecialist)
+            .Where(t => t.Status == AgentTaskStatus.Queued
                     || t.Status == AgentTaskStatus.Dispatched
                     || t.Status == AgentTaskStatus.Working
-                    || t.Status == AgentTaskStatus.Blocked))
+                    || t.Status == AgentTaskStatus.Blocked)
             .Select(t => new TaskRow(
                 t.Id, t.Title, t.Role, t.Status, t.CardId, t.AgentName, t.AgentKind, t.ModelLevel,
                 t.CreatedAt, t.DispatchedAt, t.CompletedAt, t.AgentSessionId, t.WorkingDirectory,
@@ -271,7 +271,7 @@ public sealed class AgentTaskPipelineStatusService
         Dictionary<AgentTaskRole, RoutingPin> stagePins,
         Dictionary<(Guid CardId, AgentTaskRole Role), RoutingPin> cardPins)
     {
-        if (role == AgentTaskRole.Check)
+        if (AgentTaskRoles.IsSpecialist(role))
             return null;
         if (cardId is Guid id && cardPins.TryGetValue((id, role), out var cardPin))
             return cardPin;

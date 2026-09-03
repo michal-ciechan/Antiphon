@@ -196,8 +196,8 @@ public sealed class OrchestratorService
         var openTasks = await _db.AgentTasks
             .AsNoTracking()
             .Where(t => t.AgentSessionId != null
-                && t.Role != AgentTaskRole.Check
                 && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working))
+            .Where(AgentTaskRoles.NotSpecialist)
             .Select(t => new OpenRunningTask(
                 t.Id,
                 t.Title,

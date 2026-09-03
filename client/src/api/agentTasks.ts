@@ -30,6 +30,16 @@ export type AgentTaskRole =
    * role a human picks.
    */
   | 'Check'
+  /**
+   * Distill a settled report (CARD-0330). Reserved specialist role; hidden unless
+   * `includeChecks` is asked for. Absent from AGENT_TASK_ROLES.
+   */
+  | 'Distill'
+  /**
+   * Title an untitled task or label an unlabelled card (CARD-0352). Machinery, hidden unless
+   * `includeChecks` is asked for. Absent from AGENT_TASK_ROLES.
+   */
+  | 'Diagnose'
 
 export type AgentTaskStatus =
   | 'Queued'
@@ -82,6 +92,10 @@ export type AgentTaskEventType =
   | 'LandRefused'
   | 'Rerouted'
   | 'LandedWithResidue'
+  /** A settled report was distilled (CARD-0330). Reserved so CARD-0352 can land the substrate. */
+  | 'Distilled'
+  /** The diagnose seat applied a title or labels (CARD-0352). */
+  | 'Diagnosed'
 
 export interface AgentTaskSummaryDto {
   id: string
@@ -457,7 +471,7 @@ function queryForAgentTasks(includeChecks: boolean, options: AgentTaskListOption
 }
 
 /**
- * The delegations board. `includeChecks` surfaces the per-check interpretation tasks (CARD-0047),
+ * The delegations board. `includeChecks` surfaces specialist rows (Check, Distill, Diagnose),
  * which the server hides by default — one exists per interpreted check-in and none of them is
  * anybody's delegated work, so the board would otherwise drown in them on a busy fleet.
  */

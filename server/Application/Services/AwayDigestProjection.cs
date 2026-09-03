@@ -45,7 +45,8 @@ public sealed class AwayDigestProjection
             .OrderByDescending(i => i.IsNew).ThenBy(i => i.At).ToList();
 
         var roots = await _db.AgentTasks.AsNoTracking()
-            .Where(t => t.ParentTaskId == null && t.Role != AgentTaskRole.Check)
+            .Where(t => t.ParentTaskId == null)
+            .Where(AgentTaskRoles.NotSpecialist)
             .ToListAsync(ct);
         var rootIds = roots.Select(t => t.Id).ToList();
         var family = rootIds.Count == 0 ? [] : await _db.AgentTasks.AsNoTracking()

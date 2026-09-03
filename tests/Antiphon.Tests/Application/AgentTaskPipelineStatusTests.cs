@@ -42,6 +42,8 @@ public class AgentTaskPipelineStatusTests
             AgentTaskRole.Test, AgentTaskRole.Deploy, AgentTaskRole.Merge,
         ]);
         dto.Stages.ShouldNotContain(s => s.Role == AgentTaskRole.Check);
+        dto.Stages.ShouldNotContain(s => s.Role == AgentTaskRole.Distill);
+        dto.Stages.ShouldNotContain(s => s.Role == AgentTaskRole.Diagnose);
         foreach (var stage in dto.Stages)
         {
             stage.InFlight.ShouldBeEmpty();
@@ -232,13 +234,15 @@ public class AgentTaskPipelineStatusTests
     }
 
     [Test]
-    public async Task a_check_role_working_task_does_not_count_against_the_cap()
+    [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Diagnose)]
+    public async Task a_specialist_role_working_task_does_not_count_against_the_cap(AgentTaskRole role)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
         using var checkDir = new TempWorkspace();
         using var queuedDir = new TempWorkspace();
-        var check = await SeedTaskAsync(db, checkDir.Path, AgentTaskRole.Check, AgentTaskStatus.Working,
+        var check = await SeedTaskAsync(db, checkDir.Path, role, AgentTaskStatus.Working,
             dispatchedAt: DateTime.UtcNow.AddMinutes(-2), title: "own check",
             workspace: WorkspaceMode.Shared, repoPath: checkDir.Path);
         var waiting = await SeedTaskAsync(db, queuedDir.Path, AgentTaskRole.Docs, AgentTaskStatus.Queued,
@@ -774,6 +778,8 @@ public class AgentTaskPipelineEndpointTests
         dto.InFlightAgainstCap.ShouldBe(0);
         dto.Stages.Count.ShouldBe(11);
         dto.Stages.ShouldNotContain(s => s.Role == AgentTaskRole.Check);
+        dto.Stages.ShouldNotContain(s => s.Role == AgentTaskRole.Distill);
+        dto.Stages.ShouldNotContain(s => s.Role == AgentTaskRole.Diagnose);
         dto.Stages.ShouldContain(s => s.Role == AgentTaskRole.Plan && s.RecommendedInFlight == 1);
         foreach (var stage in dto.Stages)
         {

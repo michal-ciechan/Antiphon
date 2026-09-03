@@ -160,14 +160,16 @@ public class HomeTaskServiceIntegrationTests
     }
 
     [Test]
-    public async Task check_role_rows_are_never_an_item_and_never_a_worker()
+    [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Diagnose)]
+    public async Task specialist_role_rows_are_never_an_item_and_never_a_worker(AgentTaskRole role)
     {
         await using var world = await World.CreateAsync();
         var unboundCheck = await world.SeedTaskAsync(
-            cardId: null, AgentTaskStatus.Working, role: AgentTaskRole.Check);
+            cardId: null, AgentTaskStatus.Working, role: role);
         var card = await world.SeedCardAsync(CardStatus.Backlog);
         var boundCheck = await world.SeedTaskAsync(
-            card.Id, AgentTaskStatus.Working, role: AgentTaskRole.Check);
+            card.Id, AgentTaskStatus.Working, role: role);
 
         var dto = await world.GetAsync();
         dto.Items.Any(i => i.Id == unboundCheck.Id).ShouldBeFalse();

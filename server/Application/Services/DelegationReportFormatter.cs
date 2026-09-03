@@ -185,11 +185,14 @@ public static class DelegationReportFormatter
         var inlineMax = replyInlineMaxChars ?? settings.ReplyInlineMaxChars;
         if (!string.IsNullOrWhiteSpace(task.StandingAuthority))
             sb.AppendLine(BlockedNote.StandingAuthorityBlock(task.StandingAuthority.Trim())).AppendLine();
-        // CARD-0302: Check briefs must not offer `blocked` as this Check task's status. The
-        // generic done|blocked|failed paragraph is the wrong vocabulary for an interpretation.
-        sb.Append(task.Role == AgentTaskRole.Check
-            ? CheckReportingContract(task.Id, inlineMax)
-            : ReportingContract(task.Id, task.Kind, inlineMax));
+        // CARD-0302 / CARD-0352: specialist briefs must not offer `blocked` as this seat's
+        // status. The generic done|blocked|failed paragraph is the wrong vocabulary.
+        sb.Append(task.Role switch
+        {
+            AgentTaskRole.Check => CheckReportingContract(task.Id, inlineMax),
+            AgentTaskRole.Diagnose => DiagnoseReportingContract(task.Id, inlineMax),
+            _ => ReportingContract(task.Id, task.Kind, inlineMax),
+        });
         return sb.ToString();
     }
 
@@ -312,6 +315,33 @@ public static class DelegationReportFormatter
             could not produce a reading. Never emit a `blocked` report token. LOOKS STUCK / "needs
             a human" is the reading, filed on the checked task. This Check task does not ask the
             operator a question. Nothing after the closing line.
+
+            {TaskMarker(taskId)}
+            """;
+    }
+
+    /// <summary>
+    /// CARD-0352: a Diagnose-role closer. One physical line in the request's grammar; <c>done</c>
+    /// after that line; <c>failed</c> if no answer is possible; never <c>blocked</c>.
+    /// </summary>
+    public static string DiagnoseReportingContract(Guid taskId, int inlineMaxChars)
+    {
+        return $"""
+            --- how to report back ---
+            Your final message is the entire answer the caller receives. Nothing else from this
+            session is forwarded.
+
+            Answer with exactly one physical line in the request's grammar, then the closing line.
+            No preamble, no bullets, no explanation, no sign-off, no second option.
+
+            If your report would run past {inlineMaxChars:N0} characters, write the full detail to
+            .antiphon/task-{Short(taskId)}.md and make your final message a summary that points
+            at that path.
+
+            End your final message with one line, on its own: `{ReportToken(taskId, "done")}` when
+            you produced an answer. End with `{ReportToken(taskId, "failed")}` only if you could
+            not produce one. Never emit a `blocked` report token. This Diagnose task does not
+            ask the operator a question. Nothing after the closing line.
 
             {TaskMarker(taskId)}
             """;
@@ -550,7 +580,7 @@ public static class DelegationReportFormatter
         // failure it exists to prevent. The complete contract is in the spilled brief the delegate
         // is told to read first, so repeating it here buys nothing and risks the whole message.
         // The closing marker stays, because correlation must survive even if the head is lost.
-        // CARD-0302: Check still must not see a `blocked` token on the pointer path.
+        // CARD-0302 / CARD-0352: specialists still must not see a `blocked` token on the pointer path.
         if (task.Role == AgentTaskRole.Check)
         {
             sb.AppendLine($"""
@@ -559,6 +589,15 @@ public static class DelegationReportFormatter
                 Close with `{ReportToken(task.Id, "done")}` after a verdict word. That token
                 finishes this interpretation, not the checked task. Use `{ReportToken(task.Id, "failed")}`
                 only if there is no reading. Never emit a `blocked` report token.
+                """).AppendLine();
+        }
+        else if (task.Role == AgentTaskRole.Diagnose)
+        {
+            sb.AppendLine($"""
+                --- how to report back ---
+                The Diagnose reporting contract is in the brief above — read it there.
+                Close with `{ReportToken(task.Id, "done")}` after the one-line answer. Use
+                `{ReportToken(task.Id, "failed")}` only if there is no answer. Never emit a `blocked` report token.
                 """).AppendLine();
         }
         else

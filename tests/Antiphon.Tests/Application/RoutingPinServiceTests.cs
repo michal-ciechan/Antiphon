@@ -122,13 +122,15 @@ public class RoutingPinServiceTests
     }
 
     [Test]
-    public async Task The_Check_role_has_no_stage_to_pin()
+    [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Diagnose)]
+    public async Task A_specialist_role_has_no_stage_to_pin(AgentTaskRole role)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
 
         var failure = await Should.ThrowAsync<ValidationException>(() => Service(db).UpsertAsync(
-            StagePin(AgentTaskRole.Check), null, CancellationToken.None));
+            StagePin(role), null, CancellationToken.None));
 
         failure.StatusCode.ShouldBe(422);
         failure.Errors.ShouldContainKey("Role");

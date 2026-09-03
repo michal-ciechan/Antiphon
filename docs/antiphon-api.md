@@ -208,7 +208,8 @@ curl -s -X POST http://localhost:17202/api/agents/{id}/attach-herdr \
 ```
 POST   /api/agent-tasks                      create (CreateAgentTaskRequest)
 GET    /api/agent-tasks                      list. Query: rootId, status (comma list of
-                                             AgentTaskStatus), includeChecks (bool, default false),
+                                             AgentTaskStatus), includeChecks (bool, default false;
+                                             hides Check, Distill, and Diagnose specialist rows),
                                              since (ISO instant). `since` keeps every non-settled
                                              row regardless of age and trims only settled rows by
                                              CompletedAt. Omitting every filter returns the full

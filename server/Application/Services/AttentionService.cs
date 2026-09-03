@@ -159,7 +159,8 @@ public sealed class AttentionService
             .Where(t => t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
             .ToListAsync(ct);
         var blocked = await _db.AgentTasks.AsNoTracking()
-            .Where(t => t.Status == AgentTaskStatus.Blocked && t.Role != AgentTaskRole.Check)
+            .Where(t => t.Status == AgentTaskStatus.Blocked)
+            .Where(AgentTaskRoles.NotSpecialist)
             .ToListAsync(ct);
         // CARD-0231: an unacknowledged pre-dispatch failure is counted until the reminder
         // disarms, and is NOT subject to RecentFailure's 24h window or its cap of 20.
@@ -451,8 +452,7 @@ public sealed class AttentionService
                 && c.ArchivedAt == null
                 // The RunAttempt / card-spawn path owns this one; its own liveness rules apply.
                 && c.OwnerSessionId == null
-                && !_db.AgentTasks.Any(t => t.CardId == c.Id
-                    && t.Role != AgentTaskRole.Check
+                && !_db.AgentTasks.Where(AgentTaskRoles.NotSpecialist).Any(t => t.CardId == c.Id
                     && (t.Status == AgentTaskStatus.Dispatched
                         || t.Status == AgentTaskStatus.Working
                         || t.Status == AgentTaskStatus.Blocked))
@@ -481,7 +481,8 @@ public sealed class AttentionService
             .ToDictionary(g => g.Key, g => g.Max(r => r.CreatedAt));
 
         var lastTasks = (await _db.AgentTasks.AsNoTracking()
-                .Where(t => t.CardId != null && cardIds.Contains(t.CardId!.Value) && t.Role != AgentTaskRole.Check)
+                .Where(t => t.CardId != null && cardIds.Contains(t.CardId!.Value))
+                .Where(AgentTaskRoles.NotSpecialist)
                 .Select(t => new
                 {
                     t.Id,
