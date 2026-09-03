@@ -260,23 +260,44 @@ public sealed class AttentionService
         var events = await _db.AgentTaskEvents.AsNoTracking()
             .Where(e => ids.Contains(e.AgentTaskId)
                 && (e.Type == AgentTaskEventType.Blocked || e.Type == AgentTaskEventType.Conflicted))
-            .Select(e => new { e.AgentTaskId, e.At })
+            .Select(e => new { e.AgentTaskId, e.At, e.Type })
             .ToListAsync(ct);
         var blockedAt = events
             .GroupBy(e => e.AgentTaskId)
             .ToDictionary(g => g.Key, g => g.Max(e => e.At));
+        var latestType = events
+            .GroupBy(e => e.AgentTaskId)
+            .ToDictionary(g => g.Key, g => g.OrderBy(e => e.At).Last().Type);
+        var mergeChildren = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.ParentTaskId != null && ids.Contains(t.ParentTaskId.Value)
+                && t.Role == AgentTaskRole.Merge)
+            .Select(t => new { t.ParentTaskId, t.Id, t.CreatedAt })
+            .ToListAsync(ct);
+        var mergeByParent = mergeChildren
+            .GroupBy(t => t.ParentTaskId!.Value)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(t => t.CreatedAt).First().Id);
 
         foreach (var task in blocked)
         {
             var at = blockedAt.TryGetValue(task.Id, out var stamp) ? stamp : task.DispatchedAt;
+            var kind = ClassifyBlocked(task, latestType.GetValueOrDefault(task.Id));
 
             // FailureReason is what the dispatcher and the conflict path write; the question path
             // writes the delegate's own words to Result and leaves FailureReason null. Preferring
-            // the reason keeps a conflict readable, and falling through to Result is what puts the
-            // actual question on the row.
-            var primary = !string.IsNullOrWhiteSpace(task.FailureReason)
-                ? task.FailureReason!
-                : task.Result ?? "The delegate is blocked and gave no reason.";
+            // the reason keeps a conflict readable. For a question, extract the trailing question
+            // so a long report does not bury it past the 400-char evidence head (CARD-0033).
+            var primary = BlockedContextBuilder.AttentionPrimary(task);
+            var headline = kind switch
+            {
+                BlockedKind.MergeConflict when mergeByParent.TryGetValue(task.Id, out var mergeId) =>
+                    $"Blocked — merge conflict; task {DelegationReportFormatter.Short(mergeId)} is resolving it",
+                BlockedKind.MergeConflict => "Blocked — merge conflict.",
+                BlockedKind.CostCeiling => "Blocked — run cost ceiling reached.",
+                _ => "Blocked — waiting on a human answer.",
+            };
+            var actions = kind == BlockedKind.CostCeiling
+                ? new[] { AttentionAction.Cancel, AttentionAction.Escalate }
+                : new[] { AttentionAction.Reply, AttentionAction.Cancel, AttentionAction.Escalate };
 
             items.Add(new AttentionItemDto(
                 AttentionKind.BlockedQuestion,
@@ -286,14 +307,29 @@ public sealed class AttentionService
                 task.AgentId,
                 null,
                 task.Title,
-                "Blocked — waiting on a human answer.",
+                headline,
                 Evidence(primary, checkDigests.GetValueOrDefault(task.Id)),
                 at,
                 costs.GetValueOrDefault(task.Id),
-                [AttentionAction.Reply, AttentionAction.Cancel, AttentionAction.Escalate]));
+                actions));
         }
 
         return items;
+    }
+
+    private static BlockedKind ClassifyBlocked(AgentTask task, AgentTaskEventType latestBlockType)
+    {
+        if (latestBlockType == AgentTaskEventType.Conflicted)
+            return BlockedKind.MergeConflict;
+        if (task.FailureReason is { } reason)
+        {
+            if (reason.StartsWith(BlockedQuestion.CostCeilingPrefix, StringComparison.Ordinal))
+                return BlockedKind.CostCeiling;
+            if (reason.StartsWith(ComplexityRoutingService.RoutingExhaustedPrefix, StringComparison.Ordinal))
+                return BlockedKind.RoutingExhausted;
+        }
+
+        return BlockedKind.Question;
     }
 
     // ---- CARD-0090: a complexity chain has no available candidate --------------------------------

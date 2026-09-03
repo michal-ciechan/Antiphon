@@ -118,7 +118,12 @@ public static class AgentTaskEndpoints
             CancellationToken ct) =>
         {
             var taskId = await service.ResolveTaskIdAsync(id, ct);
-            return Results.Ok(await replies.AnswerAsync(taskId, request.Message, ct));
+            return Results.Ok(await replies.AnswerAsync(
+                taskId,
+                request.Message,
+                request.Origin ?? AnswerOrigin.Web,
+                request.Round,
+                ct));
         });
 
         // Steer a RUNNING delegate without cancelling it (CARD-0062). Same body shape as reply;

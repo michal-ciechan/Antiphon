@@ -147,6 +147,45 @@ public class AttentionServiceTests
         item.Evidence.ShouldContain("conflicted in 2 file(s)");
     }
 
+    [Test]
+    public async Task a_long_report_that_ends_in_a_question_puts_the_question_on_the_row()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var findings = new string('a', 500);
+        var question = "Should I accept negative inputs?";
+        var task = await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Blocked, dispatchedMinutesAgo: 20,
+            result: $"{findings}\n\n{question}");
+        await scenario.AddTaskEventAsync(task, AgentTaskEventType.Blocked, $"Delegate asked: {question}",
+            minutesAgo: 5);
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.TaskId == task);
+
+        item.Evidence.ShouldContain(question);
+        item.Evidence.ShouldNotContain(findings[..80]);
+        item.Headline.ShouldBe("Blocked — waiting on a human answer.");
+        item.Actions.ShouldContain(AttentionAction.Reply);
+    }
+
+    [Test]
+    public async Task a_cost_ceiling_block_does_not_offer_reply()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Blocked, dispatchedMinutesAgo: 20, neverDispatched: true,
+            failureReason: "Run cost ceiling reached ($5.00).");
+        await scenario.AddTaskEventAsync(task, AgentTaskEventType.Blocked, "Run cost ceiling reached ($5.00).",
+            minutesAgo: 1);
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.TaskId == task);
+
+        item.Actions.ShouldNotContain(AttentionAction.Reply);
+        item.Headline.ShouldBe("Blocked — run cost ceiling reached.");
+        item.Evidence.ShouldContain("Run cost ceiling reached");
+    }
+
     // ---- 2. ParkedMessage -----------------------------------------------------------------------
 
     [Test]
@@ -2337,6 +2376,7 @@ public class AttentionServiceTests
             DateTime? nextCheckAt = null,
             int? completedMinutesAgo = null,
             string? failureReason = null,
+            string? result = null,
             decimal costUsd = 0m,
             string? workingDirectory = null,
             bool neverDispatched = false,
@@ -2368,6 +2408,7 @@ public class AttentionServiceTests
                 CheckCount = checkCount,
                 NextCheckAt = nextCheckAt,
                 FailureReason = failureReason,
+                Result = result,
                 CostUsd = costUsd,
                 CreatedAt = dispatched,
                 DispatchedAt = neverDispatched ? null : dispatched,

@@ -33,6 +33,20 @@ public class AwayDigestFormatterTests
     }
 
     [Test]
+    public void the_ping_carries_the_question_not_the_report_head()
+    {
+        var id = Guid.Parse("1a2b3c4d-0000-0000-0000-000000000000");
+        var question = "Should I accept negative inputs?";
+        var ping = AwayDigestFormatter.FormatPing(new AttentionItemDto(
+            AttentionKind.BlockedQuestion, AlertSeverity.Critical,
+            id, null, null, null, "Fizz", "Blocked — waiting on a human answer.",
+            question, DateTime.UtcNow, 1.37m, [AttentionAction.Reply]));
+
+        ping.ShouldContain(question);
+        ping.ShouldNotContain(new string('a', 40));
+    }
+
+    [Test]
     public void Decision_ping_first_line_carries_the_card_identifier()
     {
         var ping = AwayDigestFormatter.FormatDecisionPing(new AttentionItemDto(AttentionKind.CardNeedsDecision,

@@ -61,5 +61,25 @@
       "detail": "Delegate asked a question.",
       "at": "2026-02-03T09:07:11Z"
     }
-  ]
+  ],
+  "blocked": {
+    "kind": "Question",
+    "round": 1,
+    "blockedAt": "2026-02-03T09:07:11Z",
+    "question": "One decision is yours: should the old cmd examples be deleted, or kept alongside?",
+    "context": "Rewrote \u0022## Windows install\u0022 in docs/setup.md \u2014 34 lines changed, every command now pwsh 7.",
+    "priorRounds": [],
+    "progress": {
+      "branch": null,
+      "commits": [],
+      "changedFiles": 0,
+      "untrackedFiles": 0,
+      "lastCheckDigest": null,
+      "lastCheckAt": null,
+      "unavailable": "shared checkout — commits and working-tree state are deliberately omitted because they cannot be attributed to this task."
+    },
+    "canAnswer": false,
+    "cannotAnswerReason": "The delegate's session is no longer available.",
+    "mergeTaskId": null
+  }
 }

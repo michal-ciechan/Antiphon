@@ -227,7 +227,60 @@ public sealed record AgentTaskDetailDto(
     /// Machine-readable class of <see cref="FailureReason"/> when one was assigned (CARD-0256).
     /// Null on legacy and otherwise-unclassified failures.
     /// </summary>
-    AgentTaskFailureCode? FailureCode = null);
+    AgentTaskFailureCode? FailureCode = null,
+    /// <summary>
+    /// CARD-0033. Non-null iff <see cref="AgentTaskSummaryDto.Status"/> is Blocked: the isolated
+    /// question, prior Q&amp;A rounds, and a bounded git progress snapshot. Null on every other
+    /// status so non-Blocked drawers are unchanged.
+    /// </summary>
+    BlockedContextDto? Blocked = null);
+
+/// <summary>Why a task is Blocked — CARD-0033. RoutingExhausted is CARD-0090, added after the original three.</summary>
+public enum BlockedKind
+{
+    Question = 0,
+    MergeConflict = 1,
+    CostCeiling = 2,
+    RoutingExhausted = 3,
+}
+
+/// <summary>Where an answer to a blocked delegate was typed (CARD-0033). Recorded on the Replied event.</summary>
+public enum AnswerOrigin
+{
+    Web = 0,
+    Cli = 1,
+    Channel = 2,
+}
+
+/// <summary>Projection of a Blocked task: the question, isolated from the report that preceded it.</summary>
+public sealed record BlockedContextDto(
+    BlockedKind Kind,
+    int Round,
+    DateTime BlockedAt,
+    string Question,
+    string? Context,
+    IReadOnlyList<BlockedRoundDto> PriorRounds,
+    BlockedProgressDto? Progress,
+    bool CanAnswer,
+    string? CannotAnswerReason,
+    Guid? MergeTaskId);
+
+public sealed record BlockedRoundDto(
+    int Round,
+    string Question,
+    DateTime AskedAt,
+    string? Answer,
+    DateTime? AnsweredAt,
+    AnswerOrigin? AnsweredVia);
+
+public sealed record BlockedProgressDto(
+    string? Branch,
+    IReadOnlyList<string> Commits,
+    int ChangedFiles,
+    int UntrackedFiles,
+    string? LastCheckDigest,
+    DateTime? LastCheckAt,
+    string? Unavailable);
 
 /// <summary>POST /api/agent-tasks/{id}/reroute (CARD-0090).</summary>
 public sealed record RerouteAgentTaskRequest(AgentKind AgentKind, AgentModelLevel ModelLevel);
@@ -293,7 +346,10 @@ public sealed record ScopeOverlapDto(
     string Policy,
     string? Areas);
 
-public sealed record ReplyToAgentTaskRequest(string Message);
+public sealed record ReplyToAgentTaskRequest(
+    string Message,
+    int? Round = null,
+    AnswerOrigin? Origin = null);
 
 /// <summary>Optional narrow test filter for an explicit <c>POST /land</c> verification.</summary>
 public sealed record LandAgentTaskRequest(string? Verify = null);

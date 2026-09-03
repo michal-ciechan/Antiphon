@@ -270,7 +270,11 @@ public sealed class AgentTaskReplyService
     /// marker (same turn as the brief), a persisted queue row so a 409 can late-confirm. Anything
     /// else is a 409 naming Refine vs Reply-on-Blocked vs Reply-on-open-question.
     /// </summary>
-    public async Task<AgentTaskSummaryDto> AnswerAsync(Guid taskId, string message, CancellationToken ct)
+    public Task<AgentTaskSummaryDto> AnswerAsync(Guid taskId, string message, CancellationToken ct) =>
+        AnswerAsync(taskId, message, AnswerOrigin.Web, round: null, ct);
+
+    public async Task<AgentTaskSummaryDto> AnswerAsync(
+        Guid taskId, string message, AnswerOrigin origin, int? round, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(message))
             throw new ValidationException(nameof(message), "A reply message is required.");
@@ -287,10 +291,26 @@ public sealed class AgentTaskReplyService
             if (task.AgentSessionId is not Guid blockedSessionId)
                 throw new ConflictException("The delegate's session is no longer available.");
 
+            var blockCount = await db.AgentTaskEvents.AsNoTracking()
+                .CountAsync(
+                    e => e.AgentTaskId == taskId
+                        && (e.Type == AgentTaskEventType.Blocked || e.Type == AgentTaskEventType.Conflicted),
+                    ct);
+            var currentRound = blockCount == 0 ? 1 : blockCount;
+            if (round is int requested && requested != currentRound)
+            {
+                throw new ConflictException(
+                    $"Task {DelegationReportFormatter.Short(taskId)} has moved on: it asked a new question (round {currentRound}) since the one you are answering (round {requested}).");
+            }
+
             var now = UtcNow();
             task.Status = AgentTaskStatus.Working;
             task.ConcurrencyToken = Guid.NewGuid();
-            db.AgentTaskEvents.Add(NewEvent(taskId, AgentTaskEventType.Replied, "Caller answered the delegate's question.", now));
+            db.AgentTaskEvents.Add(NewEvent(
+                taskId,
+                AgentTaskEventType.Replied,
+                BlockedQuestion.RepliedEventDetail(origin, currentRound, message.Trim()),
+                now));
             await db.SaveChangesAsync(ct);
 
             // The marker rides the answer so the delegate's NEXT turn correlates back to this task.
@@ -588,7 +608,7 @@ public sealed class AgentTaskReplyService
             && failureReason is not null
             ? failureReason
             : task.Status == AgentTaskStatus.Blocked && evidence == AgentTaskReportEvidence.QuestionHeuristic
-                ? "Delegate asked a question."
+                ? BlockedQuestion.BlockedEventDetail(settledBody)
                 : reported;
         db.AgentTaskEvents.Add(NewEvent(task.Id, eventType, eventDetail, now));
 
@@ -2581,18 +2601,8 @@ public sealed class AgentTaskReplyService
     /// conservative: only a question mark in the last couple of lines counts, so a report that
     /// merely mentions a question mid-text still reads as finished.
     /// </summary>
-    internal static bool LooksLikeAQuestion(string report)
-    {
-        var lines = report.ReplaceLineEndings("\n")
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Select(l => l.Trim())
-            .Where(l => l.Length > 0)
-            .ToList();
-        if (lines.Count == 0)
-            return false;
-
-        return lines.TakeLast(2).Any(l => l.EndsWith('?'));
-    }
+    internal static bool LooksLikeAQuestion(string report) =>
+        BlockedQuestion.TryExtract(report, out _, out _);
 
     private async Task PublishAsync(AgentTask task, CancellationToken ct) =>
         await _eventBus.PublishToAllAsync(

@@ -43,6 +43,9 @@ public sealed class AgentTaskService
     // CARD-0324. Optional so predating harnesses keep constructing this; absent, the
     // create-time Grok store probe uses the shipped default (enabled).
     private readonly AgentRegistrySettings? _registrySettings;
+    // CARD-0033. Optional so predating harnesses keep constructing this; absent, blocked
+    // progress degrades to Unavailable rather than failing the drawer GET.
+    private readonly DelegateCheckProbe? _checkProbe;
 
     public AgentTaskService(
         AppDbContext db,
@@ -58,7 +61,8 @@ public sealed class AgentTaskService
         ModelAvailability? modelAvailability = null,
         RoutingPinService? routingPins = null,
         ComplexityRoutingService? complexityRouting = null,
-        IOptions<AgentRegistrySettings>? registrySettings = null)
+        IOptions<AgentRegistrySettings>? registrySettings = null,
+        DelegateCheckProbe? checkProbe = null)
     {
         _areas = areas;
         _db = db;
@@ -74,6 +78,7 @@ public sealed class AgentTaskService
         _routingPins = routingPins;
         _complexityRouting = complexityRouting;
         _registrySettings = registrySettings?.Value;
+        _checkProbe = checkProbe;
     }
 
     /// <summary>
@@ -1127,10 +1132,12 @@ public sealed class AgentTaskService
             .Select(e => new AgentTaskEventDto(e.Type, e.ModelLevel, e.Detail, e.At))
             .ToListAsync(ct);
 
+        var blocked = await BlockedContextBuilder.BuildAsync(task, family, events, _checkProbe, ct);
+
         return new AgentTaskDetailDto(
             ToSummary(task, family, await LoadCardIdentifiersAsync([task], ct)), task.Goal, task.Result,
             task.ResultFilePath, task.DeliverablePath, task.DeliverableRef,
-            task.FailureReason, task.MergeTargetRef, events, task.FailureCode);
+            task.FailureReason, task.MergeTargetRef, events, task.FailureCode, blocked);
     }
 
     /// <summary>Record the first operator read; repeat opens deliberately preserve that timestamp.</summary>

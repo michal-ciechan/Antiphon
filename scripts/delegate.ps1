@@ -282,7 +282,10 @@ switch ($PSCmdlet.ParameterSetName) {
             Write-Error 'Pass the answer as the first argument: delegate.ps1 -Reply <taskId> "your answer"'
             exit 1
         }
-        Invoke-Antiphon -Method POST -Path "/api/agent-tasks/$Reply/reply" -Body @{ message = $Message } | Out-Null
+        Invoke-Antiphon -Method POST -Path "/api/agent-tasks/$Reply/reply" -Body @{
+            message = $Message
+            origin  = 'Cli'
+        } | Out-Null
         Write-Output "Answered task $Reply. It will resume and report back."
         return
     }

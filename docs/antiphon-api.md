@@ -213,11 +213,20 @@ GET    /api/agent-tasks                      list. Query: rootId, status (comma 
                                              row regardless of age and trims only settled rows by
                                              CompletedAt. Omitting every filter returns the full
                                              table — scripts and `delegate.ps1` depend on that.
-GET    /api/agent-tasks/{id}                 {id} accepts the 8-char short id
+GET    /api/agent-tasks/{id}                 {id} accepts the 8-char short id.
+                                             Blocked tasks include `blocked`
+                                             (`BlockedContextDto`): kind, round,
+                                             isolated question, prior rounds,
+                                             canAnswer.
 GET    /api/agent-tasks/summary              fleet-wide counters (active, blocked, runs,
                                              totalCostUsd, byStatus), independent of the list window
 POST   /api/agent-tasks/{id}/cancel  |  /retry  |  /escalate
-POST   /api/agent-tasks/{id}/reply           answer a Blocked delegate's question
+POST   /api/agent-tasks/{id}/reply           answer a Blocked delegate's question.
+                                             Body `ReplyToAgentTaskRequest`:
+                                             `message`, optional `round` (stale
+                                             guard, 409 if the question moved on),
+                                             optional `origin` (`Web` default;
+                                             `delegate.ps1` sends `Cli`).
 POST   /api/agent-tasks/{id}/refine          steer a running delegate without cancelling it
 POST   /api/agent-tasks/{id}/land            queue an explicit land of a Succeeded Worktree
                                              task (`{ verify?: string }`). 202; git runs in
