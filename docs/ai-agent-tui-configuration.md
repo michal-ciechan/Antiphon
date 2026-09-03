@@ -100,8 +100,11 @@ merged launch env carries `X_LLM_PROJECT` (or the profile passes a literal `--pr
 `GROK_BASE_URL`, and a dummy `XAI_API_KEY` (or `GROK_CODE_XAI_API_KEY`); `GROK_CLI_CHAT_PROXY_BASE_URL`
 should be there too or Grok's chat-proxy calls go to its default `cli-chat-proxy.grok.com`. Seed
 them on the project's `DefaultLaunchEnv` (every agent on that board inherits) or the agent's
-`launchEnv`. A `--project $env:X_LLM_PROJECT` argument is resolved to the env value before the
-herdr launch script single-quotes it, so the wrapper sees the project whichever pane it lands in.
+`launchEnv`. The **server** expands a whole-token `$env:NAME` / `${env:NAME}` in **profile** args
+against that merged env (CARD-0345) so PtyHost `CreateProcess` receives the value, not the token.
+ExtraArgs are not expanded. CARD-0341's herdr expansion remains a second pass on that lane, so a
+`--project $env:X_LLM_PROJECT` profile arg reaches the wrapper as the project name whichever pane
+it lands in.
 
 ## Key custody
 

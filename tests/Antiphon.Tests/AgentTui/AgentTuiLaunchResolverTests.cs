@@ -358,6 +358,36 @@ public sealed class AgentTuiLaunchResolverTests
         exception.Code.ShouldBe("profile_resolution_unavailable");
     }
 
+    [Test]
+    public async Task Resolve_expands_dollar_env_on_profile_args_and_leaves_extra_args_literal()
+    {
+        await using var isolatedSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildProvider(isolatedSchema.ConnectionString);
+        var (profile, _) = await SeedProfileAsync(
+            provider,
+            AgentKind.Grok,
+            modelArgumentName: null,
+            arguments: ["--project", "$env:X_LLM_PROJECT"]);
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "Gkp-Project",
+            TuiProfileId = profile.Id
+        };
+
+        var resolved = await ResolveAsync(
+            provider,
+            agent,
+            new AgentLaunchOptions(
+                Cols: 120,
+                Rows: 30,
+                AgentEnv: new Dictionary<string, string> { ["X_LLM_PROJECT"] = "PredictionMarkets" },
+                ExtraArgs: ["$env:X_LLM_PROJECT"]));
+
+        resolved.Spec.Args.ShouldBe(["--project", "PredictionMarkets", "$env:X_LLM_PROJECT"]);
+        resolved.Spec.Env["X_LLM_PROJECT"].ShouldBe("PredictionMarkets");
+    }
+
     private static async Task<ResolvedAgentTuiLaunch> ResolveAsync(
         ServiceProvider provider,
         Agent agent,
@@ -406,7 +436,8 @@ public sealed class AgentTuiLaunchResolverTests
         string[]? secretNames = null,
         string[]? models = null,
         string canary = "canary-secret",
-        string? modelArgumentName = "--model")
+        string? modelArgumentName = "--model",
+        string[]? arguments = null)
     {
         await using var scope = provider.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -433,7 +464,7 @@ public sealed class AgentTuiLaunchResolverTests
             ProfileId = profile.Id,
             RevisionNumber = 1,
             Executable = "pwsh.exe",
-            ArgumentsJson = JsonSerializer.Serialize(new[] { "--auto", "--mini" }),
+            ArgumentsJson = JsonSerializer.Serialize(arguments ?? ["--auto", "--mini"]),
             DiscoveryArgumentsJson = "[]",
             VersionArgumentsJson = "[]",
             WorkingDirectory = Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar),

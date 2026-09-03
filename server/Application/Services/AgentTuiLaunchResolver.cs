@@ -384,7 +384,13 @@ public sealed class AgentTuiLaunchResolver
                 environment[key] = value;
         }
 
-        var args = new List<string>(arguments);
+        // CARD-0345: expand whole-token $env:NAME / ${env:NAME} on PROFILE args only, against the
+        // merged env, before ExtraArgs and ApplyModelArgument. ExtraArgs stay literal — the caller
+        // already resolved those. Keep the matcher in lockstep with HerdrLaunchScript (CARD-0341);
+        // do not share a type.
+        var args = new List<string>(arguments.Length + (options.ExtraArgs?.Count ?? 0));
+        foreach (var argument in arguments)
+            args.Add(DollarEnvArg.Expand(argument, environment));
         if (options.ExtraArgs is not null)
             args.AddRange(options.ExtraArgs);
 
