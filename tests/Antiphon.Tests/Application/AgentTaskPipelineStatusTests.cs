@@ -122,16 +122,19 @@ public class AgentTaskPipelineStatusTests
         await SeedSessionAsync(db, sessionId, workspace.Path);
         var task = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Debug, AgentTaskStatus.Working,
             dispatchedAt: dispatchedAt, sessionId: sessionId, title: "debug");
+        // Npgsql timestamptz stores microseconds; DateTime has 100 ns ticks. Seed at the stored
+        // precision so LastActivityAt compares equal instead of 200 ns off (CARD-0336).
+        var tooEarly = Truncate(dispatchedAt.AddMinutes(-5))!.Value;
         db.TranscriptEntries.Add(new TranscriptEntry
         {
             Id = Guid.NewGuid(),
             AgentSessionId = sessionId,
             Sequence = 1,
             Kind = "assistant",
-            Timestamp = dispatchedAt.AddMinutes(-5),
-            CreatedAt = dispatchedAt.AddMinutes(-5),
+            Timestamp = tooEarly,
+            CreatedAt = tooEarly,
         });
-        var later = dispatchedAt.AddMinutes(12);
+        var later = Truncate(dispatchedAt.AddMinutes(12))!.Value;
         db.TranscriptEntries.Add(new TranscriptEntry
         {
             Id = Guid.NewGuid(),
@@ -139,7 +142,7 @@ public class AgentTaskPipelineStatusTests
             Sequence = 2,
             Kind = "assistant",
             Timestamp = later,
-            CreatedAt = later.AddSeconds(1),
+            CreatedAt = Truncate(later.AddSeconds(1))!.Value,
         });
         await db.SaveChangesAsync();
 
