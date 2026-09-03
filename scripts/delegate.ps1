@@ -18,6 +18,7 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [string]$Goal,
 
+    # 2-5 word label (max 80) for check headers and the board chip; not a second Goal.
     [Parameter(ParameterSetName = 'Create')]
     [string]$Title,
 
@@ -332,11 +333,38 @@ switch ($PSCmdlet.ParameterSetName) {
             Write-Error 'A -Goal is required. Write it as an outcome, not a procedure.'
             exit 1
         }
+
+        # Whitespace-only is omitted (do not send title). Measure length after Trim; refuse CR/LF
+        # and anything over 80 rather than clamping. The server's BuildTitle clamp stays 300.
+        $titleText = $null
+        if (-not [string]::IsNullOrWhiteSpace($Title)) {
+            $titleText = $Title.Trim()
+            if ($titleText -match '[\r\n]') {
+                Write-Error '-Title is a single line'
+                exit 1
+            }
+            if ($titleText.Length -gt 80) {
+                Write-Error (('Title is {0} characters; the limit is 80. -Title is a 2-5 word label for check ' `
+                    + 'headers and the board, not a second Goal. Trim it, or put the rest in -Goal.') -f $titleText.Length)
+                exit 1
+            }
+        }
+        else {
+            # Same first-line extraction as AgentTaskService.BuildTitle: CR -> LF, skip empty, trim.
+            $goalNormalized = $Goal.Replace("`r`n", "`n").Replace("`r", "`n")
+            $firstLine = $goalNormalized -split "`n" | Where-Object { $_ -ne '' } | Select-Object -First 1
+            if ($null -eq $firstLine) { $firstLine = '' } else { $firstLine = $firstLine.Trim() }
+            if ($firstLine.Length -gt 80) {
+                Write-Output (('WARNING: no -Title; the goal''s first line is {0} characters and will become the ' `
+                    + 'check-header/board title (server clamp 300). Pass -Title with 2-5 words (max 80).') -f $firstLine.Length)
+            }
+        }
+
         # -Pin writes a pin for THIS card+stage. With nothing that could bind a card - no -Card, no
         # CARD-nnnn in the title, and no task token whose own card could be inherited - it would
         # write a STAGE-WIDE pin that changes routing for every card. That is a deliberate act, so
         # it goes through routing-pin.ps1 rather than falling out of one dispatch.
-        if ($Pin -and -not $Card -and $Title -notmatch '(?i)\bCARD-[0-9]+\b' `
+        if ($Pin -and -not $Card -and $titleText -notmatch '(?i)\bCARD-[0-9]+\b' `
                 -and [string]::IsNullOrWhiteSpace($env:ANTIPHON_TASK_TOKEN)) {
             Write-Error ('-Pin without a card would write a stage-wide pin. Pass -Card CARD-nnnn ' `
                 + '(or lead -Title with it), or write the stage pin explicitly with routing-pin.ps1.')
@@ -368,7 +396,7 @@ switch ($PSCmdlet.ParameterSetName) {
         if ($AllowDirectEdits) { $body['denyDirectEdits'] = $false }
         if ($OnAgent) { $body['followUpOnTask'] = $OnAgent }
         if ($Agent) { $body['agent'] = $Agent }
-        if ($Title) { $body['title'] = $Title }
+        if ($titleText) { $body['title'] = $titleText }
         if ($Level) { $body['modelLevel'] = $Level }
         # Sent only when chosen - an omitted -Kind leaves the decision to the role policy, which
         # ships unset and therefore resolves to ClaudeCode.

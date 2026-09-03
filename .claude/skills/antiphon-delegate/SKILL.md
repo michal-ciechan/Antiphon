@@ -17,10 +17,10 @@ arguments before `-File` makes PowerShell take them as its own.
 
 ```powershell
 # a worker: one piece of work, reports back to you
-pwsh -NoProfile -File scripts/delegate.ps1 -Role Code -Goal "add Fizz(int) in Calc.cs, multiples of 3 -> 'Fizz'"
+pwsh -NoProfile -File scripts/delegate.ps1 -Role Code -Title "add Fizz" -Goal "add Fizz(int) in Calc.cs, multiples of 3 -> 'Fizz'"
 
 # a sub-orchestrator: owns a chunk, decomposes it, runs its own agents
-pwsh -NoProfile -File scripts/delegate.ps1 -Orchestrator -Goal "get the Postgres 18 upgrade shipped"
+pwsh -NoProfile -File scripts/delegate.ps1 -Orchestrator -Title "Postgres 18 upgrade" -Goal "get the Postgres 18 upgrade shipped"
 ```
 
 Quote every value that contains a space. If `pwsh` is not on PATH, use `powershell` — the script is
@@ -80,7 +80,7 @@ A sub-orchestrator defaults to `Plan` and never runs below opus.
 | `-ReadOnly` | shared directory, but the brief says don't write |
 | `-AllowDirectEdits` | don't arm the deny hook in a sub-orchestrator's worktree (it needs to write a plan file itself) |
 | `-Scope "<areas>"` | what this task owns: area names from `antiphon.areas.json` and/or path globs, comma-separated. Two **Shared** tasks whose scopes intersect are serialised — the waiting one gets a visible `Held` event; a worktree on either side runs anyway with a `Warning`. `-ListAreas` prints the names |
-| `-Title "<text>"` | a short label for the board; defaults to the goal's first line |
+| `-Title "<text>"` | a 2–5 word label (max 80) for check headers, completion notes, and the board. Omitted, the Goal's first line is stored (clamped 300). Always pass it when `-Goal` is more than one short sentence |
 | `-Card <id>` | which CARD this work is against — `CARD-0040`, `card-40`, `#40`, `40`, or the guid. Omitted, the server derives it: your own task's card, else the first `CARD-nnnn` in `-Title` |
 | `-ExpectAbout <minutes>` | how long the work should honestly take (1-1440) — schedules the first automatic check-in. Defaults to 10 when omitted |
 | `-NoInheritEnv` | do not forward this shell's `X_LLM_PROJECT` / `X_LLM_KEY`; server-side stored-env inheritance remains the fallback |
@@ -230,6 +230,7 @@ These are rules for YOU, the caller. The rules the *delegate* works under are de
 automatically — see "What the delegate is told" below; don't type them into `-Goal`.
 
 - **One task, one deliverable.** Don't delegate what you could finish in two tool calls.
+- **Always pass `-Title`.** It is a 2–5 word label (max 80) for check headers, completion notes, and the board — not a second Goal.
 - **Write `-Goal` as an outcome, not a procedure.** The delegate decides how.
 - **Put the state of today in `-Goal`, not the standing rules.** Known-red tests, what already
   landed, what is out of scope, which ports are taken — that is what only you know. The harness
