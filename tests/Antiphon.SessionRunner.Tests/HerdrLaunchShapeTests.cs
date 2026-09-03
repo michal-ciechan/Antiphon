@@ -56,6 +56,19 @@ public class HerdrLaunchShapeTests
     }
 
     [Test]
+    public void Fresh_root_script_prepends_quoted_set_location()
+    {
+        var content = HerdrLaunchScript.BuildContent(
+            @"C:\tools\claude.exe",
+            ["--session-id", "abc"],
+            @"D:\worktrees\it's\card");
+        content.ShouldBe(
+            "Set-Location -LiteralPath 'D:\\worktrees\\it''s\\card'\n& 'C:\\tools\\claude.exe' @('--session-id', 'abc')");
+        HerdrLaunchScript.BuildContent(@"C:\tools\claude.exe", ["--session-id", "abc"])
+            .ShouldBe("& 'C:\\tools\\claude.exe' @('--session-id', 'abc')");
+    }
+
+    [Test]
     public async Task Success_types_exactly_the_script_line_deletes_the_script_and_does_not_call_agent_start()
     {
         await using var fake = new FakeHerdrServer();
@@ -490,6 +503,217 @@ public class HerdrLaunchShapeTests
         DeleteLogRoot(settings.SessionLogPath);
     }
 
+    [Test]
+    public async Task Fresh_workspace_uses_the_created_root_pane()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        var sessionId = Guid.NewGuid();
+        const string paneTitle = "Agent-PM";
+
+        await using var runtime = BuildRuntime(settings, fake);
+        await StartAsync(runtime, sessionId, settings.SessionLogPath, paneTitle: paneTitle);
+
+        CountMethod(fake, "workspace.create").ShouldBe(1);
+        CountMethod(fake, "tab.create").ShouldBe(0);
+        CountMethod(fake, "tab.rename").ShouldBe(1);
+        var rename = fake.Requests.Single(r => r.GetProperty("method").GetString() == "tab.rename");
+        rename.GetProperty("params").GetProperty("label").GetString().ShouldBe(paneTitle);
+
+        fake.Workspaces.ShouldHaveSingleItem();
+        fake.Workspaces[0].Tabs.ShouldHaveSingleItem();
+        fake.Workspaces[0].Tabs[0].Panes.ShouldHaveSingleItem();
+        fake.Workspaces[0].Tabs[0].Label.ShouldBe(paneTitle);
+        fake.Workspaces[0].Tabs[0].Panes[0].Label.ShouldBe(paneTitle);
+
+        var sidecar = HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId));
+        sidecar.ShouldNotBeNull();
+        sidecar!.WorkspaceId.ShouldBe(fake.Workspaces[0].WorkspaceId);
+        sidecar.TabId.ShouldBe(fake.Workspaces[0].Tabs[0].TabId);
+        sidecar.PaneId.ShouldBe(fake.Workspaces[0].Tabs[0].Panes[0].PaneId);
+
+        await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
+    [Test]
+    public async Task Fresh_root_keeps_launch_cwd_and_environment()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        var sessionId = Guid.NewGuid();
+        var workspaceCwd = Path.Combine(settings.SessionLogPath, "project");
+        var requestCwd = Path.Combine(settings.SessionLogPath, "worktree");
+        Directory.CreateDirectory(workspaceCwd);
+        Directory.CreateDirectory(requestCwd);
+        var secret = $"env-secret-{Guid.NewGuid():N}";
+
+        await using var runtime = BuildRuntime(settings, fake);
+        await StartAsync(
+            runtime, sessionId, settings.SessionLogPath,
+            env: new Dictionary<string, string> { ["ANTIPHON_LAUNCH_SECRET"] = secret },
+            workspaceCwd: workspaceCwd,
+            requestCwd: requestCwd);
+
+        var create = fake.Requests.Single(r => r.GetProperty("method").GetString() == "workspace.create");
+        create.GetProperty("params").GetProperty("cwd").GetString().ShouldBe(workspaceCwd);
+        create.GetProperty("params").GetProperty("env").GetProperty("ANTIPHON_LAUNCH_SECRET")
+            .GetString().ShouldBe(secret);
+        fake.Workspaces[0].Tabs[0].Panes[0].Env!["ANTIPHON_LAUNCH_SECRET"].ShouldBe(secret);
+
+        fake.LastLaunchScriptContent.ShouldNotBeNull();
+        fake.LastLaunchScriptContent.ShouldContain($"Set-Location -LiteralPath {HerdrLaunchScript.Quote(requestCwd)}");
+        fake.LastLaunchScriptContent.ShouldNotContain(secret);
+        foreach (var text in fake.Requests
+                     .Where(r => r.GetProperty("method").GetString() == "pane.send_text")
+                     .Select(r => r.GetProperty("params").GetProperty("text").GetString() ?? ""))
+        {
+            text.Contains(secret, StringComparison.Ordinal).ShouldBeFalse();
+            text.Contains("Set-Location", StringComparison.Ordinal).ShouldBeFalse();
+        }
+
+        await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
+    [Test]
+    public async Task Unique_untagged_label_reuses_the_operator_workspace_without_stamping()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        var sessionId = Guid.NewGuid();
+        const string label = "PredictionMarkets";
+        fake.SeedWorkspace("wOp", label);
+
+        await using var runtime = BuildRuntime(settings, fake);
+        await StartAsync(
+            runtime, sessionId, settings.SessionLogPath,
+            workspaceKey: "project:pm",
+            workspaceLabel: label);
+
+        CountMethod(fake, "workspace.create").ShouldBe(0);
+        var tabCreate = fake.Requests
+            .Where(r => r.GetProperty("method").GetString() == "tab.create")
+            .ShouldHaveSingleItem();
+        tabCreate.GetProperty("params").GetProperty("workspace_id").GetString().ShouldBe("wOp");
+        fake.Requests.Any(r =>
+                r.GetProperty("method").GetString() == "workspace.report_metadata"
+                && r.GetProperty("params").GetProperty("workspace_id").GetString() == "wOp")
+            .ShouldBeFalse();
+        fake.Workspaces.Single(w => w.WorkspaceId == "wOp").Tokens.ContainsKey("antiphon-ws")
+            .ShouldBeFalse();
+        fake.LastLaunchScriptContent.ShouldNotBeNull();
+        fake.LastLaunchScriptContent.ShouldNotContain("Set-Location");
+
+        await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
+    [Test]
+    public async Task Ambiguous_or_foreign_label_match_creates_a_managed_workspace()
+    {
+        await using (var fake = new FakeHerdrServer())
+        {
+            fake.Start();
+            await fake.WaitUntilListeningAsync();
+            var settings = BuildSettings();
+            var sessionId = Guid.NewGuid();
+            const string label = "PredictionMarkets";
+            fake.SeedWorkspace("wA", label);
+            fake.SeedWorkspace("wB", label);
+
+            await using var runtime = BuildRuntime(settings, fake);
+            await StartAsync(
+                runtime, sessionId, settings.SessionLogPath,
+                workspaceKey: "project:pm",
+                workspaceLabel: label);
+
+            CountMethod(fake, "workspace.create").ShouldBe(1);
+            fake.Workspaces.Count.ShouldBe(3);
+            fake.Workspaces.Single(w => w.WorkspaceId == "wA").Tabs.Count.ShouldBe(1);
+            fake.Workspaces.Single(w => w.WorkspaceId == "wB").Tabs.Count.ShouldBe(1);
+            var created = fake.Workspaces.Single(w => w.WorkspaceId is not "wA" and not "wB");
+            created.Tokens["antiphon-ws"].ShouldBe("project:pm");
+            created.Tabs.ShouldHaveSingleItem();
+
+            await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+            DeleteLogRoot(settings.SessionLogPath);
+        }
+
+        await using (var fake = new FakeHerdrServer())
+        {
+            fake.Start();
+            await fake.WaitUntilListeningAsync();
+            var settings = BuildSettings();
+            var sessionId = Guid.NewGuid();
+            const string label = "PredictionMarkets";
+            fake.SeedWorkspace("wForeign", label, new Dictionary<string, string>
+            {
+                ["antiphon-ws"] = "project:other",
+            });
+
+            await using var runtime = BuildRuntime(settings, fake);
+            await StartAsync(
+                runtime, sessionId, settings.SessionLogPath,
+                workspaceKey: "project:pm",
+                workspaceLabel: label);
+
+            CountMethod(fake, "workspace.create").ShouldBe(1);
+            fake.Workspaces.Single(w => w.WorkspaceId == "wForeign").Tokens["antiphon-ws"]
+                .ShouldBe("project:other");
+            fake.Workspaces.Single(w => w.WorkspaceId == "wForeign").Tabs.Count.ShouldBe(1);
+            var created = fake.Workspaces.Single(w => w.WorkspaceId != "wForeign");
+            created.Tokens["antiphon-ws"].ShouldBe("project:pm");
+
+            await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+            DeleteLogRoot(settings.SessionLogPath);
+        }
+    }
+
+    [Test]
+    public async Task Own_antiphon_ws_token_wins_over_untagged_same_label()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        var sessionId = Guid.NewGuid();
+        const string label = "PredictionMarkets";
+        const string key = "project:pm";
+        fake.SeedWorkspace("wK", label, new Dictionary<string, string> { ["antiphon-ws"] = key });
+        fake.SeedWorkspace("w2", label);
+
+        await using var runtime = BuildRuntime(settings, fake);
+        await StartAsync(
+            runtime, sessionId, settings.SessionLogPath,
+            workspaceKey: key,
+            workspaceLabel: label);
+
+        CountMethod(fake, "workspace.create").ShouldBe(0);
+        var report = fake.Requests
+            .Where(r => r.GetProperty("method").GetString() == "workspace.report_metadata")
+            .ShouldHaveSingleItem();
+        report.GetProperty("params").GetProperty("workspace_id").GetString().ShouldBe("wK");
+        report.GetProperty("params").GetProperty("tokens").GetProperty("antiphon-ws").GetString()
+            .ShouldBe(key);
+        fake.Workspaces.Single(w => w.WorkspaceId == "wK").Tokens["antiphon-ws"].ShouldBe(key);
+        fake.Workspaces.Single(w => w.WorkspaceId == "w2").Tokens.ContainsKey("antiphon-ws")
+            .ShouldBeFalse();
+        var tabCreate = fake.Requests
+            .Where(r => r.GetProperty("method").GetString() == "tab.create")
+            .ShouldHaveSingleItem();
+        tabCreate.GetProperty("params").GetProperty("workspace_id").GetString().ShouldBe("wK");
+
+        await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
     private static Task<RunnerSessionDto> StartAsync(
         SessionRunnerRuntime runtime,
         Guid sessionId,
@@ -498,6 +722,10 @@ public class HerdrLaunchShapeTests
         string? agentKind = null,
         string? agentSlug = null,
         string? workspaceKey = null,
+        string? workspaceLabel = null,
+        string? workspaceCwd = null,
+        string? paneTitle = null,
+        string? requestCwd = null,
         Guid? reusePaneOfSessionId = null) =>
         runtime.StartAsync(
             new RunnerLaunchRequest(
@@ -505,19 +733,22 @@ public class HerdrLaunchShapeTests
                 @"C:\tools\claude.exe",
                 ["--dangerously-skip-permissions", "--append-system-prompt", "line one\nline two"],
                 env ?? new Dictionary<string, string>(),
-                cwd,
+                requestCwd ?? cwd,
                 Cols: 120,
                 Rows: 30,
                 Backend: SessionBackends.Herdr,
                 Herdr: new HerdrLaunchOptions(
                     WorkspaceKey: workspaceKey ?? $"test-{sessionId:N}"[..32],
-                    WorkspaceLabel: "card0187-launch",
-                    WorkspaceCwd: cwd,
-                    PaneTitle: "card0187-launch",
+                    WorkspaceLabel: workspaceLabel ?? "card0187-launch",
+                    WorkspaceCwd: workspaceCwd ?? cwd,
+                    PaneTitle: paneTitle ?? "card0187-launch",
                     AgentKind: agentKind,
                     AgentSlug: agentSlug,
                     ReusePaneOfSessionId: reusePaneOfSessionId)),
             CancellationToken.None);
+
+    private static int CountMethod(FakeHerdrServer fake, string method) =>
+        fake.Requests.Count(r => r.GetProperty("method").GetString() == method);
 
     private static void AssertTornDown(FakeHerdrServer fake, string scriptPath)
     {

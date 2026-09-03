@@ -55,6 +55,9 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
     /// </summary>
     public string? LaunchScriptAgentKind { get; set; } = HerdrAgentKinds.Claude;
 
+    /// <summary>CARD-0323: last typed launch-script file contents, captured at <c>pane.send_text</c>.</summary>
+    public string? LastLaunchScriptContent { get; private set; }
+
     /// <summary>CARD-0187: delay before the launch-script send_text is reflected in pane.agent.</summary>
     public int LaunchScriptDetectDelayMs { get; set; }
 
@@ -642,6 +645,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         var (_, _, pane) = RequirePane(paneId);
         if (IsLaunchScriptInvocation(text))
         {
+            LastLaunchScriptContent = TryReadTypedLaunchScript(text);
             pane.LaunchDetectKind = LaunchScriptAgentKind;
             pane.LaunchDetectAtUtc = DateTime.UtcNow.AddMilliseconds(Math.Max(0, LaunchScriptDetectDelayMs));
             ApplyLaunchDetection(pane);
@@ -658,6 +662,36 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
     }
 
     /// <summary>
+    /// CARD-0323: seed an operator (or owned) workspace with a root tab/pane without going through
+    /// <c>workspace.create</c>. Used to pin reuse matching independently of creation.
+    /// </summary>
+    public WorkspaceState SeedWorkspace(
+        string workspaceId,
+        string label,
+        IReadOnlyDictionary<string, string>? tokens = null)
+    {
+        if (Workspaces.Any(w => w.WorkspaceId == workspaceId))
+            throw new InvalidOperationException($"workspace '{workspaceId}' already exists");
+
+        var tabId = $"{workspaceId}:t{++_tabSeq}";
+        var paneId = $"{workspaceId}:p{++_paneSeq}";
+        var termId = $"term_{++_termSeq:x12}";
+        var pane = new PaneState(paneId, tabId, workspaceId, termId, cwd: null, null, null, null, null);
+        var tab = new TabState(tabId, workspaceId, "1", 1, [pane]);
+        var ws = new WorkspaceState(
+            workspaceId,
+            label,
+            ++_workspaceSeq,
+            tabId,
+            [tab],
+            tokens is null
+                ? new Dictionary<string, string>()
+                : new Dictionary<string, string>(tokens));
+        Workspaces.Add(ws);
+        return ws;
+    }
+
+    /// <summary>
     /// CARD-0187: detect the typed launch line without referencing internal
     /// <c>HerdrLaunchScript</c> (this file is also compiled into Antiphon.Tests).
     /// </summary>
@@ -670,6 +704,25 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
             return false;
         var inner = text[prefix.Length..^1].Replace("''", "'", StringComparison.Ordinal);
         return inner.EndsWith(".launch.ps1", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? TryReadTypedLaunchScript(string text)
+    {
+        const string prefix = "& '";
+        if (text.Length < prefix.Length + 1
+            || !text.StartsWith(prefix, StringComparison.Ordinal)
+            || text[^1] != '\'')
+            return null;
+
+        var path = text[prefix.Length..^1].Replace("''", "'", StringComparison.Ordinal);
+        try
+        {
+            return File.Exists(path) ? File.ReadAllText(path) : null;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
     }
 
     private static void ApplyLaunchDetection(PaneState pane)
