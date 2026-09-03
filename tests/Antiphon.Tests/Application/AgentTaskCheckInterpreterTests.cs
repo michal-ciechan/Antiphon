@@ -55,15 +55,25 @@ public class AgentTaskCheckInterpreterTests
 
         var run = Task.Run(() => h.Checks.RunCheckAsync(seed.Task.Id, CancellationToken.None));
         var interpretation = await h.WaitForInterpretationAsync(specialist.Id);
+        const string reading =
+            "On track — three commits in the last 6 minutes; tests ran green (no action needed).";
         await h.SettleInterpretationAsync(
             interpretation.Id,
-            result: "PRODUCED — three commits in the last 6 minutes and the test suite ran green.",
+            result: reading,
             costUsd: 0.0031m);
         await h.PumpClockAsync(run);
 
         (await run).ShouldBe(AgentTaskCheckService.CheckOutcome.Delivered);
         var note = (await h.NotesToCallerAsync(seed.CallerSessionId)).ShouldHaveSingleItem();
         note.ShouldStartWith("[check ", customMessage: "the envelope is untouched by the interpretation");
+        var header = note.Split('\n')[0];
+        header.ShouldContain(DelegationReportFormatter.Short(seed.Task.Id));
+        header.ShouldContain("#");
+        header.ShouldContain("elapsed (expected ");
+        header.ShouldContain("session Running");
+        header.ShouldContain("last activity");
+        header.ShouldContain(" ago");
+        note.Split('\n').Skip(1).First(l => l.Length > 0).ShouldBe(reading);
         note.ShouldNotContain(AgentTaskCheckService.InterpreterDownMarker);
         note.ShouldContain("three commits in the last 6 minutes");
         note.ShouldNotContain("unverified digest", customMessage: "this one WAS read");
@@ -80,6 +90,52 @@ public class AgentTaskCheckInterpreterTests
         check.Detail.ShouldContain($"interpreter: task {DelegationReportFormatter.Short(interpretation.Id)}");
         check.Detail.ShouldContain("$0.0031");
         check.Detail.ShouldContain("TASK ", customMessage: "and the digest itself, which is the evidence");
+    }
+
+    [Test]
+    public void a_live_session_with_no_entry_shows_last_activity_never()
+    {
+        using var h = new Harness();
+        var task = HeaderTask();
+        var facts = HeaderFacts(withSession: true, sinceLastEntry: null);
+        var note = h.Checks.BuildNote(task, facts, digest: "CAPTURED — digest body");
+
+        var header = note.Split('\n')[0];
+        header.ShouldContain("session Running");
+        header.ShouldContain("last activity never");
+        header.ShouldNotContain("last activity unknown");
+        System.Text.RegularExpressions.Regex.IsMatch(header, @"last activity \d")
+            .ShouldBeFalse("a missing entry must not fabricate an age");
+    }
+
+    [Test]
+    public void a_captured_entry_puts_last_activity_age_on_the_header()
+    {
+        using var h = new Harness();
+        var task = HeaderTask();
+        var facts = HeaderFacts(withSession: true, sinceLastEntry: TimeSpan.Zero);
+        var note = h.Checks.BuildNote(
+            task, facts, digest: "CAPTURED — digest body",
+            interpretation: "On track — fixed a stale test pin; now verifying larger channel suites (no action needed).");
+
+        var header = note.Split('\n')[0];
+        header.ShouldContain("last activity 0m ago");
+        header.ShouldContain("session Running · working");
+        note.Split('\n').Skip(1).First(l => l.Length > 0)
+            .ShouldBe("On track — fixed a stale test pin; now verifying larger channel suites (no action needed).");
+    }
+
+    [Test]
+    public void a_note_with_no_session_does_not_invent_last_activity()
+    {
+        using var h = new Harness();
+        var task = HeaderTask();
+        var facts = HeaderFacts(withSession: false, sinceLastEntry: null);
+        var note = h.Checks.BuildNote(task, facts, digest: "CAPTURED — digest body");
+
+        var header = note.Split('\n')[0];
+        header.ShouldContain("no session");
+        header.ShouldNotContain("last activity");
     }
 
     /// <summary>
@@ -546,6 +602,55 @@ public class AgentTaskCheckInterpreterTests
     // ---- helpers ---------------------------------------------------------------------------------
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
+
+    private static AgentTask HeaderTask() => new()
+    {
+        Id = Guid.Parse("639b197e-0000-0000-0000-000000000000"),
+        Title = "channel tests",
+        Goal = "g",
+        Kind = AgentTaskKind.Worker,
+        Role = AgentTaskRole.Code,
+        Workspace = WorkspaceMode.Shared,
+        WorkingDirectory = Path.GetTempPath(),
+        Status = AgentTaskStatus.Dispatched,
+        CreatedAt = DateTime.UtcNow,
+        ExpectedDurationMinutes = 10,
+        NextCheckAt = DateTime.UtcNow.AddMinutes(10),
+    };
+
+    private static DelegateCheckProbe.CheckFacts HeaderFacts(bool withSession, TimeSpan? sinceLastEntry)
+    {
+        var now = DateTime.UtcNow;
+        var task = new DelegateCheckProbe.CheckTaskFacts(
+            HeaderTask().Id,
+            DelegationReportFormatter.Short(HeaderTask().Id),
+            "channel tests",
+            AgentTaskKind.Worker,
+            AgentKind.ClaudeCode,
+            AgentTaskRole.Code,
+            AgentModelLevel.Frontier,
+            AgentTaskStatus.Dispatched,
+            Settled: false,
+            Attempt: 1,
+            MaxAttempts: 3,
+            DispatchedAt: now.AddMinutes(-11),
+            Age: TimeSpan.FromMinutes(11),
+            ExpectedDurationMinutes: 10,
+            CheckNumber: 3,
+            HasResult: false,
+            FailureReason: null);
+        DelegateCheckProbe.CheckSessionFacts? session = withSession
+            ? new(
+                Guid.NewGuid(),
+                SessionStatus.Running,
+                Working: true,
+                TranscriptEntries: sinceLastEntry is null ? 0 : 2,
+                LastEntryAt: sinceLastEntry is { } age ? now - age : null,
+                SinceLastEntry: sinceLastEntry)
+            : null;
+        return new DelegateCheckProbe.CheckFacts(
+            now, task, session, [], Git: null, [], []);
+    }
 
     private sealed record Seeded(AgentTask Task, Guid DelegateSessionId, Guid CallerSessionId);
 

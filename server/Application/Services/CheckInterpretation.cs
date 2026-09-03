@@ -25,12 +25,12 @@ public static class CheckInterpretation
     /// </summary>
     /// <remarks>
     /// It is now a legacy label beside the bundle's content hash (CARD-0058), which needs no bumping
-    /// at all. The number below and the literal <c>contract v3</c> in
+    /// at all. The number below and the literal <c>contract v4</c> in
     /// <c>server/Bundles/check-interpreter.md</c> are two copies of one fact, held together by
     /// <c>CheckInterpreterProvisionerTests</c>: bump this without editing the bundle and that test
     /// goes red.
     /// </remarks>
-    public const string ContractVersion = "3";
+    public const string ContractVersion = "4";
 
     /// <summary>
     /// The standing contract. Triage, not diagnosis: the specialist reads a bundle of facts about
@@ -50,9 +50,11 @@ public static class CheckInterpretation
 
     /// <summary>The one-line format reminder that rides every brief, so the shape survives compaction.</summary>
     public const string OutputFormatReminder =
-        "Answer in 3-5 lines: the verdict word (DOING / PRODUCED / LOOKS STUCK / SETTLED / "
-        + "AMBIGUOUS) and why, from these facts only. Never claim the checked task is complete. "
-        + "Close with the Check task's `done` token after the reading; never `blocked`.";
+        "Return exactly one physical line, at most 240 characters: start with On track, Needs "
+        + "attention, Unclear, or Settled at capture, then one evidence-backed clause and an "
+        + "optional short action cue. Do not repeat elapsed, expected, session status, working "
+        + "state, or last activity. Never claim the checked task is complete. Close with the "
+        + "Check task's `done` token after the reading; never `blocked`.";
 
     /// <summary>
     /// A deny-all <c>PreToolUse</c> hook — the hard half of "use no tools". Same mechanism as

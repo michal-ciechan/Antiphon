@@ -267,7 +267,7 @@ public sealed class AgentTaskCheckService
     /// What a <see cref="AgentTaskEventType.Check"/> event stores (CARD-0035 slice 5): the cost line,
     /// then the interpreter's reading, then the digest.
     ///
-    /// <para><b>Why the reading is stored at all.</b> The specialist's 3-5 lines were built for
+    /// <para><b>Why the reading is stored at all.</b> The specialist's one-line judgement was built for
     /// exactly the altitude a human reads a stuck task at, and until now the system threw the best
     /// explanation it produces away: the reading reached the caller's note (a message body nothing
     /// can query) and the interpretation task's own <c>Result</c> row (correlated to the checked task
@@ -814,9 +814,15 @@ public sealed class AgentTaskCheckService
             bits.Add(task.Title.Trim().ReplaceLineEndings(" "));
         bits.Add($"captured {DelegateCheckProbe.Stamp(facts.At)}");
         bits.Add($"{FormatAge(facts.Task.Age)} elapsed (expected {facts.Task.ExpectedDurationMinutes}m)");
-        bits.Add(facts.Session is { } session
-            ? $"session {session.Status} · {(session.Working ? "working" : "idle")}"
-            : "no session");
+        if (facts.Session is { } session)
+        {
+            bits.Add($"session {session.Status} · {(session.Working ? "working" : "idle")}");
+            bits.Add($"last activity {(session.SinceLastEntry is { } quiet ? $"{FormatAge(quiet)} ago" : "never")}");
+        }
+        else
+        {
+            bits.Add("no session");
+        }
         if (task.NextCheckAt is null)
             bits.Add($"final check — the {_settings.CheckMaxCount}-check budget is spent");
         header.Append(' ').Append(string.Join(" · ", bits));

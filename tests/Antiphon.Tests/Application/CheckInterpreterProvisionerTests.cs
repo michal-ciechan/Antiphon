@@ -139,7 +139,7 @@ public class CheckInterpreterProvisionerTests
         reconciled.SystemPromptAppend.ShouldBe(CheckInterpretation.Contract);
         reconciled.SystemPromptAppend!.ShouldContain("NEVER say the **checked** task is complete");
         reconciled.SystemPromptAppend!.ShouldContain($"contract v{CheckInterpretation.ContractVersion}");
-        reconciled.SystemPromptAppend!.ShouldContain("contract v3");
+        reconciled.SystemPromptAppend!.ShouldContain("contract v4");
         reconciled.SystemPromptAppend!.ShouldContain("task-owned");
         reconciled.SystemPromptAppend!.ShouldContain("shared-checkout disclaimer");
     }
@@ -181,15 +181,26 @@ public class CheckInterpreterProvisionerTests
         // CARD-0227: the interpreter must not read the Shared-checkout digest line as PRODUCED.
         // The digest itself is the safety boundary (DelegateCheckProbeTests); this pins that the
         // standing contract the specialist is reconciled onto agrees with that fact shape.
-        CheckInterpretation.ContractVersion.ShouldBe("3");
+        CheckInterpretation.ContractVersion.ShouldBe("4");
         CheckInterpretation.Contract.ShouldContain($"contract v{CheckInterpretation.ContractVersion}");
+        CheckInterpretation.Contract.ShouldContain("exactly one physical line, at most 240 characters");
+        CheckInterpretation.Contract.ShouldNotContain("3-5 lines");
         CheckInterpretation.Contract.ShouldContain("NEVER say the **checked** task is complete");
         CheckInterpretation.Contract.ShouldContain("Closing *this* Check task with `done`");
+        CheckInterpretation.Contract.ShouldContain("USE NO TOOLS");
         CheckInterpretation.Contract.ShouldContain("task-owned");
         CheckInterpretation.Contract.ShouldContain("shared-checkout disclaimer");
         CheckInterpretation.Contract.ShouldContain(
             "never infer authorship",
             customMessage: "a Shared disclaimer is not evidence the checked task wrote a commit or file");
+        CheckInterpretation.OutputFormatReminder.ShouldContain("exactly one physical line, at most 240 characters");
+        CheckInterpretation.OutputFormatReminder.ShouldNotContain("3-5 lines");
+        CheckInterpretation.OutputFormatReminder.ShouldContain("never `blocked`");
+        var reporting = DelegationReportFormatter.CheckReportingContract(Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"), 20_000);
+        reporting.ShouldContain("exactly one physical line, at most 240 characters");
+        reporting.ShouldNotContain("3-5 lines");
+        reporting.ShouldContain("Never emit a `blocked` report token");
+        reporting.ShouldContain(DelegationReportFormatter.ReportToken(Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"), "done"));
     }
 
     [Test]

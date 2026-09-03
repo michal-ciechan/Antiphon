@@ -225,6 +225,13 @@ public class InstructionBundleTests
             "[bundle:", customMessage: "the forward is the TEXT — a header on the reconciled agent row "
             + "would be a behaviour change, and CheckInterpreterProvisionerTests would say so");
         CheckInterpretation.Contract.ShouldContain($"contract v{CheckInterpretation.ContractVersion}");
+        CheckInterpretation.Contract.ShouldContain("exactly one physical line, at most 240 characters");
+        CheckInterpretation.Contract.ShouldNotContain("3-5 lines");
+        CheckInterpretation.OutputFormatReminder.ShouldContain("exactly one physical line, at most 240 characters");
+        CheckInterpretation.OutputFormatReminder.ShouldNotContain("3-5 lines");
+        var reporting = DelegationReportFormatter.CheckReportingContract(Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"), 20_000);
+        reporting.ShouldContain("exactly one physical line, at most 240 characters");
+        reporting.ShouldNotContain("3-5 lines");
     }
 
     [Test]
@@ -294,12 +301,15 @@ public class InstructionBundleTests
         // and 28% of the OS limit. Re-measured 2026-08-30 after CARD-0250's channel-bound paragraph
         // (orchestrator 2 441, telegram preset 2 189) plus catalog growth since: 15 307 composed,
         // 51% of the budget. Re-measured 2026-09-02 after CARD-0017's delegate-the-reading paragraph
-        // (orchestrator 5 143) plus catalog growth since: 18 426 composed, 61% of the budget. That
-        // is what makes 30 000 a runaway stop rather than a working constraint, and it is why the
-        // guard can afford to THROW instead of truncating. The assertion is a headroom bound rather
-        // than the exact number so ordinary prose edits do not fail it — an order-of-magnitude
-        // growth does. /2 (15 000) was crossed by that planned paragraph; 2/3 still sits far under
-        // the 30 000 throw and would still catch a doubling.
+        // (orchestrator 5 143) plus catalog growth since: 18 426 composed, 61% of the budget.
+        // Re-measured 2026-09-03 after CARD-0339's v4 one-line check-interpreter contract
+        // (check-interpreter 2 323) plus catalog growth since: 20 376 composed, 68% of the budget.
+        // That is what makes 30 000 a runaway stop rather than a working constraint, and it is why
+        // the guard can afford to THROW instead of truncating. The assertion is a headroom bound
+        // rather than the exact number so ordinary prose edits do not fail it — an order-of-magnitude
+        // growth does. /2 (15 000) was crossed by CARD-0017; 2/3 (20 000) was crossed by this
+        // planned v4 expansion; 3/4 still sits far under the 30 000 throw and would still catch a
+        // doubling.
         var budget = new DelegationSettings().CommandLineBudgetChars;
         var everything = InstructionBundles.All.Keys.Order().ToList();
 
@@ -309,7 +319,7 @@ public class InstructionBundleTests
         var detail = string.Join(", ", composed.Bundles.Select(b => $"{b.Stamp} {b.Text.Length}"))
             + $", telegram-preset {ChannelPreamble.TelegramPresetTemplate.Length}"
             + $" => composed {composed.Text.Length} chars against a budget of {budget}";
-        composed.Text.Length.ShouldBeLessThan(budget * 2 / 3, detail);
+        composed.Text.Length.ShouldBeLessThan(budget * 3 / 4, detail);
         // And it fits with every other launch argument beside it, which is what the guard measures.
         Should.NotThrow(() => InstructionBundleComposer.EnsureWithinCommandLineBudget(
             composed,

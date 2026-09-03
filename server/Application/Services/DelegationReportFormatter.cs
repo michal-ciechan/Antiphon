@@ -282,7 +282,8 @@ public static class DelegationReportFormatter
     }
 
     /// <summary>
-    /// CARD-0302 contract v3: a Check-role closer. <c>done</c> means this interpretation is
+    /// CARD-0339 contract v4: a Check-role closer. The reading is one physical line; the
+    /// report token is a separate protocol line. <c>done</c> means this interpretation is
     /// finished (including LOOKS STUCK); <c>failed</c> only if there is no reading. Never
     /// <c>blocked</c> — that token would settle the Check row itself as waiting on a human.
     /// </summary>
@@ -293,15 +294,18 @@ public static class DelegationReportFormatter
             Your final message is the entire reading the caller receives. Nothing else from this
             session is forwarded.
 
-            Lead with a verdict word (DOING / PRODUCED / LOOKS STUCK / SETTLED / AMBIGUOUS) and
-            why, from the bundle only. 3-5 lines. No preamble, no sign-off.
+            Return exactly one physical line, at most 240 characters: start with On track, Needs
+            attention, Unclear, or Settled at capture, then one evidence-backed clause and an
+            optional short action cue. No bullets, line breaks, evidence list, recap, or
+            explanation that an overrun is fine. Do not repeat elapsed, expected, session status,
+            working state, or last activity. No preamble, no sign-off.
 
             If your report would run past {inlineMaxChars:N0} characters, write the full detail to
             .antiphon/task-{Short(taskId)}.md and make your final message a summary that points
             at that path.
 
             End your final message with one line, on its own: `{ReportToken(taskId, "done")}` when
-            you produced a verdict word. That token means this interpretation is finished, not that
+            you produced a reading. That token means this interpretation is finished, not that
             the checked task is complete. End with `{ReportToken(taskId, "failed")}` only if you
             could not produce a reading. Never emit a `blocked` report token. LOOKS STUCK / "needs
             a human" is the reading, filed on the checked task. This Check task does not ask the

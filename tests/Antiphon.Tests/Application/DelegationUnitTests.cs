@@ -548,6 +548,8 @@ public class DelegationReportFormatterTests
         brief.ShouldNotContain(DelegationReportFormatter.ReportToken(task.Id, "blocked"));
         brief.ShouldNotContain("if you need a decision or an answer to continue");
         brief.ShouldContain("this interpretation is finished");
+        brief.ShouldContain("exactly one physical line, at most 240 characters");
+        brief.ShouldNotContain("3-5 lines");
     }
 
     [Test]
