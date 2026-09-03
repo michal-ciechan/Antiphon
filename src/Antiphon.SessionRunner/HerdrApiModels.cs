@@ -105,11 +105,12 @@ public sealed record HerdrTabCreateResult(
     public string TabId => Tab.TabId;
 }
 
-/// <summary><c>workspace.create</c> envelope (probe P1); callers usually take <see cref="Workspace"/>.</summary>
+/// <summary><c>workspace.create</c> result (probe P1). Tab and root pane are required; a missing
+/// field is a protocol-shape failure, not a reason to call <c>tab.create</c>.</summary>
 public sealed record HerdrWorkspaceCreateResult(
     [property: JsonPropertyName("workspace")] HerdrWorkspaceInfo Workspace,
-    [property: JsonPropertyName("tab")] HerdrTabInfo? Tab = null,
-    [property: JsonPropertyName("root_pane")] HerdrPaneInfo? RootPane = null)
+    [property: JsonPropertyName("tab")] HerdrTabInfo Tab,
+    [property: JsonPropertyName("root_pane")] HerdrPaneInfo RootPane)
 {
     [JsonIgnore]
     public string WorkspaceId => Workspace.WorkspaceId;
@@ -148,6 +149,10 @@ public sealed record HerdrPaneSplitParams(
 
 public sealed record HerdrPaneRenameParams(
     [property: JsonPropertyName("pane_id")] string PaneId,
+    [property: JsonPropertyName("label"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Label = null);
+
+public sealed record HerdrTabRenameParams(
+    [property: JsonPropertyName("tab_id")] string TabId,
     [property: JsonPropertyName("label"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Label = null);
 
 public sealed record HerdrPaneReportMetadataParams(

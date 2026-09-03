@@ -320,6 +320,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
                 "workspace.create" => WorkspaceCreateJson(parameters),
                 "workspace.report_metadata" => ReportWorkspaceMetadata(parameters),
                 "tab.create" => TabCreateJson(parameters),
+                "tab.rename" => TabRenameJson(parameters),
                 "tab.close" => TabCloseJson(parameters),
                 "pane.split" => PaneSplitJson(parameters),
                 "pane.rename" => PaneRenameJson(parameters),
@@ -361,7 +362,8 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         var termId = $"term_{++_termSeq:x12}";
         var label = OptString(parameters, "label") ?? id;
         var cwd = OptString(parameters, "cwd");
-        var pane = new PaneState(paneId, tabId, id, termId, cwd, null, null, null, null);
+        var env = ReadEnv(parameters);
+        var pane = new PaneState(paneId, tabId, id, termId, cwd, null, null, null, env);
         var tab = new TabState(tabId, id, "1", 1, [pane]);
         var ws = new WorkspaceState(id, label, _workspaceSeq, tabId, [tab], new Dictionary<string, string>());
         Workspaces.Add(ws);
@@ -396,6 +398,23 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         ws.Tabs.Add(tab);
         ws.ActiveTabId = tabId;
         return $"{{\"type\":\"tab_created\",\"tab\":{TabJson(tab)},\"root_pane\":{PaneJson(pane)}}}";
+    }
+
+    private string TabRenameJson(JsonElement parameters)
+    {
+        var tabId = parameters.GetProperty("tab_id").GetString()!;
+        var label = OptString(parameters, "label");
+        foreach (var ws in Workspaces)
+        {
+            var tab = ws.Tabs.FirstOrDefault(t => t.TabId == tabId);
+            if (tab is null)
+                continue;
+            if (label is not null)
+                tab.Label = label;
+            return OkJson();
+        }
+
+        throw new FakeHerdrApiException("not_found", $"tab '{tabId}' not found");
     }
 
     private string TabCloseJson(JsonElement parameters)
