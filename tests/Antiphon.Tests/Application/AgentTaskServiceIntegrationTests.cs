@@ -1173,6 +1173,9 @@ public class AgentTaskServiceIntegrationTests
         prior.RecoveredAt = DateTime.UtcNow;
         prior.RepliedAt = DateTime.UtcNow;
         prior.RepliedAtSequence = 3;
+        prior.ReportNudgedAt = DateTime.UtcNow;
+        prior.ReportNudgedSequence = 3;
+        prior.ReportNudgeMessageId = Guid.NewGuid();
         await db.SaveChangesAsync();
         var summary = await CreateService(db).RetryAsync(task.Id, CancellationToken.None);
 
@@ -1184,6 +1187,9 @@ public class AgentTaskServiceIntegrationTests
         var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
         stored.RepliedAt.ShouldBeNull();
         stored.RepliedAtSequence.ShouldBeNull();
+        stored.ReportNudgedAt.ShouldBeNull();
+        stored.ReportNudgedSequence.ShouldBeNull();
+        stored.ReportNudgeMessageId.ShouldBeNull();
     }
 
     [Test]

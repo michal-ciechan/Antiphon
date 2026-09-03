@@ -1435,6 +1435,12 @@ public sealed class AgentTaskService
         // old session would refuse the new session's first hundred rows.
         task.RepliedAt = null;
         task.RepliedAtSequence = null;
+        // CARD-0349: the closing-line nudge is likewise session-scoped. Its boundary sequence
+        // and queued-message delivery belong to the old session, so retaining any part of the
+        // tuple could skip the new attempt's nudge or settle/block it as though it had been asked.
+        task.ReportNudgedAt = null;
+        task.ReportNudgedSequence = null;
+        task.ReportNudgeMessageId = null;
         task.ConcurrencyToken = Guid.NewGuid();
         // A new attempt gets a new check schedule: the old NextCheckAt was measured from a dispatch
         // that no longer exists, and the previous attempt's checks are not this one's budget.
