@@ -15,9 +15,9 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-0022 reader + AutoDetected writer. Shared-Postgres: every row is seeded by id and deleted
-/// in finally. The CARD-0309 outrank contract is green here so a later Manual writer layers on
-/// the same table.
+/// CARD-0022 reader + AutoDetected writer. Isolated schema so ListAvailable / Require / IsHeld
+/// do not read other suites' ModelAvailabilityHolds (CARD-0336). The CARD-0309 outrank contract
+/// is green here so a later Manual writer layers on the same table.
 /// </summary>
 [Category("Integration")]
 [NotInParallel]
@@ -27,7 +27,8 @@ public class ModelAvailabilityTests
     public async Task IsHeld_is_true_only_for_the_paused_alias()
     {
         var id = Guid.NewGuid();
-        await using var db = CreateContext();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
         try
         {
             await ReplaceHoldAsync(db, Hold(id, "fable", until: DateTime.UtcNow.AddHours(1)));
@@ -47,7 +48,8 @@ public class ModelAvailabilityTests
     public async Task Kind_wide_star_holds_every_alias_of_that_kind()
     {
         var id = Guid.NewGuid();
-        await using var db = CreateContext();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
         try
         {
             await ReplaceHoldAsync(db, Hold(id, ModelAlias.KindWide, until: DateTime.UtcNow.AddHours(1)));
@@ -72,7 +74,8 @@ public class ModelAvailabilityTests
     public async Task Lazy_IsHeld_clears_an_expired_timed_hold()
     {
         var id = Guid.NewGuid();
-        await using var db = CreateContext();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
         try
         {
             await ReplaceHoldAsync(db, Hold(id, "fable", until: DateTime.UtcNow.AddSeconds(-1)));
@@ -80,7 +83,7 @@ public class ModelAvailabilityTests
             var availability = Service(db);
             (await availability.IsHeldAsync(AgentKind.ClaudeCode, "fable", CancellationToken.None)).ShouldBeFalse();
 
-            await using var verify = CreateContext();
+            await using var verify = CreateContext(schema);
             (await verify.ModelAvailabilityHolds.SingleAsync(h => h.Id == id)).ClearedAt.ShouldNotBeNull();
         }
         finally
@@ -95,7 +98,8 @@ public class ModelAvailabilityTests
         var id = Guid.NewGuid();
         var until = DateTime.UtcNow.AddHours(2);
         until = new DateTime(until.Year, until.Month, until.Day, until.Hour, until.Minute, 0, DateTimeKind.Utc);
-        await using var db = CreateContext();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
         try
         {
             await ReplaceHoldAsync(db, Hold(id, "fable", until));
@@ -125,7 +129,8 @@ public class ModelAvailabilityTests
     {
         var id = Guid.NewGuid();
         var thursday = new DateTime(2026, 9, 4, 0, 0, 0, DateTimeKind.Utc);
-        await using var db = CreateContext();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
         try
         {
             await ReplaceHoldAsync(db, new ModelAvailabilityHold
@@ -164,7 +169,8 @@ public class ModelAvailabilityTests
     public async Task Auto_detected_does_not_fill_an_open_ended_manual_DisabledUntil()
     {
         var id = Guid.NewGuid();
-        await using var db = CreateContext();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
         try
         {
             await ReplaceHoldAsync(db, new ModelAvailabilityHold
@@ -204,7 +210,8 @@ public class ModelAvailabilityTests
         var id = Guid.NewGuid();
         var until = DateTime.UtcNow.AddDays(3);
         var thursday = new DateTime(until.Year, until.Month, until.Day, 0, 0, 0, DateTimeKind.Utc);
-        await using var db = CreateContext();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
         try
         {
             await ReplaceHoldAsync(db, Hold(id, "fable", DateTime.UtcNow.AddMinutes(10)));
@@ -223,7 +230,7 @@ public class ModelAvailabilityTests
             dto.SourceSessionId.ShouldBeNull();
             dto.Reason.ShouldContain("weekly cap");
 
-            await using var verify = CreateContext();
+            await using var verify = CreateContext(schema);
             var row = await verify.ModelAvailabilityHolds.SingleAsync(h => h.Id == id);
             row.Source.ShouldBe(ModelAvailabilitySource.Manual);
             row.DisabledUntil.ShouldBe(thursday);
@@ -239,7 +246,8 @@ public class ModelAvailabilityTests
     public async Task ListAvailable_omits_held_aliases_and_keeps_the_rest()
     {
         var id = Guid.NewGuid();
-        await using var db = CreateContext();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
         try
         {
             await ReplaceHoldAsync(db, Hold(id, "fable", until: null));
@@ -264,7 +272,8 @@ public class ModelAvailabilityTests
         var id = Guid.NewGuid();
         var now = new DateTimeOffset(2026, 9, 3, 12, 0, 0, TimeSpan.Zero);
         var time = new FakeTimeProvider(now);
-        await using var db = CreateContext();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
         try
         {
             await db.ModelAvailabilityHolds
@@ -289,7 +298,7 @@ public class ModelAvailabilityTests
             (await availability.IsHeldAsync(AgentKind.ClaudeCode, "fable", CancellationToken.None))
                 .ShouldBeFalse();
 
-            await using var verify = CreateContext();
+            await using var verify = CreateContext(schema);
             (await verify.ModelAvailabilityHolds.SingleAsync(h => h.Id == id)).ClearedAt.ShouldNotBeNull();
         }
         finally
@@ -309,7 +318,8 @@ public class ModelAvailabilityTests
         {
             ApiErrorRecovery = new ApiErrorRecoverySettings { ModelCapFallbackHoldHours = 4 },
         });
-        await using var db = CreateContext();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
         try
         {
             await ReplaceHoldAsync(db, new ModelAvailabilityHold
@@ -327,7 +337,7 @@ public class ModelAvailabilityTests
             (await availability.IsHeldAsync(AgentKind.ClaudeCode, "fable", CancellationToken.None))
                 .ShouldBeFalse();
 
-            await using var verify = CreateContext();
+            await using var verify = CreateContext(schema);
             var row = await verify.ModelAvailabilityHolds.SingleAsync(h => h.Id == id);
             row.DisabledUntil.ShouldBe(hitAt.AddHours(4));
             row.ClearedAt.ShouldNotBeNull();
@@ -345,7 +355,8 @@ public class ModelAvailabilityTests
         var now = new DateTimeOffset(2026, 9, 3, 12, 0, 0, TimeSpan.Zero);
         var hitAt = now.UtcDateTime;
         var time = new FakeTimeProvider(now);
-        await using var db = CreateContext();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
         try
         {
             await ReplaceHoldAsync(db, new ModelAvailabilityHold
@@ -364,7 +375,7 @@ public class ModelAvailabilityTests
             (await availability.IsHeldAsync(AgentKind.ClaudeCode, "fable", CancellationToken.None))
                 .ShouldBeTrue();
 
-            await using var verify = CreateContext();
+            await using var verify = CreateContext(schema);
             var row = await verify.ModelAvailabilityHolds.SingleAsync(h => h.Id == id);
             row.DisabledUntil.ShouldBe(hitAt.AddHours(6));
             row.ClearedAt.ShouldBeNull();
@@ -381,7 +392,8 @@ public class ModelAvailabilityTests
         var id = Guid.NewGuid();
         var now = new DateTimeOffset(2026, 9, 3, 18, 0, 0, TimeSpan.Zero);
         var time = new FakeTimeProvider(now);
-        await using var db = CreateContext();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
         try
         {
             await ReplaceHoldAsync(db, new ModelAvailabilityHold
@@ -400,7 +412,7 @@ public class ModelAvailabilityTests
                 .ShouldBeTrue();
             (await availability.SweepExpiredAsync(CancellationToken.None)).ShouldBe(0);
 
-            await using var verify = CreateContext();
+            await using var verify = CreateContext(schema);
             var row = await verify.ModelAvailabilityHolds.SingleAsync(h => h.Id == id);
             row.DisabledUntil.ShouldBeNull();
             row.ClearedAt.ShouldBeNull();
@@ -436,5 +448,6 @@ public class ModelAvailabilityTests
         Reason = until is null ? "Fable 5 per-model cap (no reset stated)" : "session-limit resets 18:10 Europe/London",
     };
 
-    private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
+    private static AppDbContext CreateContext(IsolatedTestSchema schema) =>
+        new(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
 }

@@ -15,7 +15,8 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>
 /// CARD-0022 S3: queued work whose model is held stays Queued; other models on the same tick
-/// still dispatch. Shared-Postgres: assertions are scoped to rows this class created.
+/// still dispatch. Isolated schema so TickAsync / ListAvailable do not see other suites'
+/// holds or Queued rows (CARD-0336).
 /// </summary>
 [Category("Integration")]
 [NotInParallel]
@@ -24,101 +25,83 @@ public class ModelAvailabilityDispatcherTests
     [Test]
     public async Task A_fable_hold_skips_fable_and_dispatches_sonnet_on_the_same_tick()
     {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         using var workspace = new TempWorkspace();
         var holdId = Guid.NewGuid();
-        var dispatcher = CreateDispatcher();
-        var (fableAgent, _) = await SeedWarmAgentAsync(workspace.Path);
-        var (sonnetAgent, _) = await SeedWarmAgentAsync(workspace.Path);
+        var dispatcher = CreateDispatcher(schema.ConnectionString);
+        var (fableAgent, _) = await SeedWarmAgentAsync(schema.ConnectionString, workspace.Path);
+        var (sonnetAgent, _) = await SeedWarmAgentAsync(schema.ConnectionString, workspace.Path);
         var fable = await SeedQueuedTaskAsync(
-            workspace.Path, pinnedAgentId: fableAgent, level: AgentModelLevel.Frontier, title: "fable plan");
+            schema.ConnectionString, workspace.Path, pinnedAgentId: fableAgent, level: AgentModelLevel.Frontier, title: "fable plan");
         var sonnet = await SeedQueuedTaskAsync(
-            workspace.Path, pinnedAgentId: sonnetAgent, level: AgentModelLevel.Medium, title: "sonnet docs");
-        await SeedHoldAsync(holdId, "fable", until: DateTime.UtcNow.AddHours(1), manual: false);
+            schema.ConnectionString, workspace.Path, pinnedAgentId: sonnetAgent, level: AgentModelLevel.Medium, title: "sonnet docs");
+        await SeedHoldAsync(schema.ConnectionString, holdId, "fable", until: DateTime.UtcNow.AddHours(1), manual: false);
 
-        try
-        {
-            var result = await dispatcher.TickAsync(CancellationToken.None);
+        var result = await dispatcher.TickAsync(CancellationToken.None);
 
-            result.SkippedModelAvailability.ShouldBeGreaterThanOrEqualTo(1);
-            await using var verify = CreateContext();
-            (await verify.AgentTasks.SingleAsync(t => t.Id == fable.Id)).Status
-                .ShouldBe(AgentTaskStatus.Queued);
-            (await verify.AgentTasks.SingleAsync(t => t.Id == sonnet.Id)).Status
-                .ShouldBe(AgentTaskStatus.Dispatched);
-            var held = await verify.AgentTaskEvents
-                .Where(e => e.AgentTaskId == fable.Id && e.Type == AgentTaskEventType.Held)
-                .ToListAsync();
-            held.ShouldContain(e => e.Detail.Contains("fable"));
-        }
-        finally
-        {
-            await CleanupAsync(holdId, fable.Id, sonnet.Id, fableAgent, sonnetAgent);
-        }
+        result.SkippedModelAvailability.ShouldBeGreaterThanOrEqualTo(1);
+        await using var verify = CreateContext(schema.ConnectionString);
+        (await verify.AgentTasks.SingleAsync(t => t.Id == fable.Id)).Status
+            .ShouldBe(AgentTaskStatus.Queued);
+        (await verify.AgentTasks.SingleAsync(t => t.Id == sonnet.Id)).Status
+            .ShouldBe(AgentTaskStatus.Dispatched);
+        var held = await verify.AgentTaskEvents
+            .Where(e => e.AgentTaskId == fable.Id && e.Type == AgentTaskEventType.Held)
+            .ToListAsync();
+        held.ShouldContain(e => e.Detail.Contains("fable"));
     }
 
     [Test]
     public async Task A_manual_fable_hold_skips_queued_fable_and_dispatches_sonnet()
     {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         using var workspace = new TempWorkspace();
         var holdId = Guid.NewGuid();
-        var dispatcher = CreateDispatcher();
-        var (fableAgent, _) = await SeedWarmAgentAsync(workspace.Path);
-        var (sonnetAgent, _) = await SeedWarmAgentAsync(workspace.Path);
+        var dispatcher = CreateDispatcher(schema.ConnectionString);
+        var (fableAgent, _) = await SeedWarmAgentAsync(schema.ConnectionString, workspace.Path);
+        var (sonnetAgent, _) = await SeedWarmAgentAsync(schema.ConnectionString, workspace.Path);
         var fable = await SeedQueuedTaskAsync(
-            workspace.Path, pinnedAgentId: fableAgent, level: AgentModelLevel.Frontier, title: "manual fable");
+            schema.ConnectionString, workspace.Path, pinnedAgentId: fableAgent, level: AgentModelLevel.Frontier, title: "manual fable");
         var sonnet = await SeedQueuedTaskAsync(
-            workspace.Path, pinnedAgentId: sonnetAgent, level: AgentModelLevel.Medium, title: "manual sonnet");
-        await SeedHoldAsync(holdId, "fable", until: DateTime.UtcNow.AddHours(1), manual: true);
+            schema.ConnectionString, workspace.Path, pinnedAgentId: sonnetAgent, level: AgentModelLevel.Medium, title: "manual sonnet");
+        await SeedHoldAsync(schema.ConnectionString, holdId, "fable", until: DateTime.UtcNow.AddHours(1), manual: true);
 
-        try
-        {
-            var result = await dispatcher.TickAsync(CancellationToken.None);
+        var result = await dispatcher.TickAsync(CancellationToken.None);
 
-            result.SkippedModelAvailability.ShouldBeGreaterThanOrEqualTo(1);
-            await using var verify = CreateContext();
-            (await verify.AgentTasks.SingleAsync(t => t.Id == fable.Id)).Status
-                .ShouldBe(AgentTaskStatus.Queued);
-            (await verify.AgentTasks.SingleAsync(t => t.Id == sonnet.Id)).Status
-                .ShouldBe(AgentTaskStatus.Dispatched);
-        }
-        finally
-        {
-            await CleanupAsync(holdId, fable.Id, sonnet.Id, fableAgent, sonnetAgent);
-        }
+        result.SkippedModelAvailability.ShouldBeGreaterThanOrEqualTo(1);
+        await using var verify = CreateContext(schema.ConnectionString);
+        (await verify.AgentTasks.SingleAsync(t => t.Id == fable.Id)).Status
+            .ShouldBe(AgentTaskStatus.Queued);
+        (await verify.AgentTasks.SingleAsync(t => t.Id == sonnet.Id)).Status
+            .ShouldBe(AgentTaskStatus.Dispatched);
     }
 
     [Test]
     public async Task An_expired_hold_clears_and_then_dispatches()
     {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         using var workspace = new TempWorkspace();
         var holdId = Guid.NewGuid();
-        var dispatcher = CreateDispatcher();
-        var (agentId, _) = await SeedWarmAgentAsync(workspace.Path);
+        var dispatcher = CreateDispatcher(schema.ConnectionString);
+        var (agentId, _) = await SeedWarmAgentAsync(schema.ConnectionString, workspace.Path);
         var task = await SeedQueuedTaskAsync(
-            workspace.Path, pinnedAgentId: agentId, level: AgentModelLevel.Frontier, title: "expired hold");
-        await SeedHoldAsync(holdId, "fable", until: DateTime.UtcNow.AddSeconds(-2));
+            schema.ConnectionString, workspace.Path, pinnedAgentId: agentId, level: AgentModelLevel.Frontier, title: "expired hold");
+        await SeedHoldAsync(schema.ConnectionString, holdId, "fable", until: DateTime.UtcNow.AddSeconds(-2));
 
-        try
-        {
-            await dispatcher.TickAsync(CancellationToken.None);
+        await dispatcher.TickAsync(CancellationToken.None);
 
-            await using var verify = CreateContext();
-            (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status
-                .ShouldBe(AgentTaskStatus.Dispatched);
-            (await verify.ModelAvailabilityHolds.SingleAsync(h => h.Id == holdId)).ClearedAt
-                .ShouldNotBeNull();
-        }
-        finally
-        {
-            await CleanupAsync(holdId, task.Id, agentId);
-        }
+        await using var verify = CreateContext(schema.ConnectionString);
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status
+            .ShouldBe(AgentTaskStatus.Dispatched);
+        (await verify.ModelAvailabilityHolds.SingleAsync(h => h.Id == holdId)).ClearedAt
+            .ShouldNotBeNull();
     }
 
-    private static AgentTaskDispatcher CreateDispatcher()
+    private static AgentTaskDispatcher CreateDispatcher(string connectionString)
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
+        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString));
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton(Options.Create(new SupervisionSettings()));
@@ -153,9 +136,10 @@ public class ModelAvailabilityDispatcherTests
         return provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
     }
 
-    private static async Task SeedHoldAsync(Guid id, string alias, DateTime? until, bool manual = false)
+    private static async Task SeedHoldAsync(
+        string connectionString, Guid id, string alias, DateTime? until, bool manual = false)
     {
-        await using var db = CreateContext();
+        await using var db = CreateContext(connectionString);
         await db.ModelAvailabilityHolds
             .Where(h => h.Kind == AgentKind.ClaudeCode && h.ModelAlias == alias && h.ClearedAt == null)
             .ExecuteDeleteAsync();
@@ -175,7 +159,7 @@ public class ModelAvailabilityDispatcherTests
     }
 
     private static async Task<AgentTask> SeedQueuedTaskAsync(
-        string directory, Guid pinnedAgentId, AgentModelLevel level, string title)
+        string connectionString, string directory, Guid pinnedAgentId, AgentModelLevel level, string title)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -194,18 +178,19 @@ public class ModelAvailabilityDispatcherTests
             Ephemeral = false,
             CreatedAt = DateTime.UtcNow,
         };
-        await using var db = CreateContext();
+        await using var db = CreateContext(connectionString);
         db.AgentTasks.Add(task);
         await db.SaveChangesAsync();
         return task;
     }
 
-    private static async Task<(Guid AgentId, Guid SessionId)> SeedWarmAgentAsync(string directory)
+    private static async Task<(Guid AgentId, Guid SessionId)> SeedWarmAgentAsync(
+        string connectionString, string directory)
     {
         var sessionId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
         var now = DateTime.UtcNow;
-        await using var db = CreateContext();
+        await using var db = CreateContext(connectionString);
         db.AgentSessions.Add(new AgentSession
         {
             Id = sessionId,
@@ -239,25 +224,8 @@ public class ModelAvailabilityDispatcherTests
         return (agentId, sessionId);
     }
 
-    private static async Task CleanupAsync(Guid holdId, params Guid[] ids)
-    {
-        await using var db = CreateContext();
-        await db.ModelAvailabilityHolds.Where(h => h.Id == holdId).ExecuteDeleteAsync();
-        await db.AgentTaskEvents.Where(e => ids.Contains(e.AgentTaskId)).ExecuteDeleteAsync();
-        await db.AgentTasks.Where(t => ids.Contains(t.Id)).ExecuteDeleteAsync();
-        var sessionIds = await db.Agents
-            .Where(a => ids.Contains(a.Id) && a.PersistentSessionId != null)
-            .Select(a => a.PersistentSessionId!)
-            .ToListAsync();
-        foreach (var text in sessionIds)
-        {
-            if (Guid.TryParse(text, out var sid))
-                await db.AgentSessions.Where(s => s.Id == sid).ExecuteDeleteAsync();
-        }
-        await db.Agents.Where(a => ids.Contains(a.Id)).ExecuteDeleteAsync();
-    }
-
-    private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
+    private static AppDbContext CreateContext(string connectionString) =>
+        new(TestDbFixture.CreateDbContextOptions(connectionString));
 
     private sealed class TempWorkspace : IDisposable
     {
