@@ -140,7 +140,14 @@ public sealed record CreateAgentTaskRequest(
     /// <see cref="Authority"/>. The fire-once auto-continue is a follow-on; a 422
     /// <c>auto_continue_needs_authority</c> refuses the flag without authority.
     /// </summary>
-    bool AutoContinue = false);
+    bool AutoContinue = false,
+    /// <summary>
+    /// Bypass the CARD-0147 create-time 409 <c>concurrency_limit</c>. Default false: a new
+    /// non-specialist task that would push the fleet or this role past the cap is refused.
+    /// True queues anyway and records a Warning naming the counts; it does not raise
+    /// <see cref="Settings.DelegationSettings.MaxConcurrentTasks"/>.
+    /// </summary>
+    bool IgnoreConcurrencyLimit = false);
 
 public sealed record AgentTaskSummaryDto(
     Guid Id,

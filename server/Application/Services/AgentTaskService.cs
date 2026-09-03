@@ -9,6 +9,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
@@ -49,6 +50,9 @@ public sealed class AgentTaskService
     // CARD-0352 S3. Optional so predating harnesses keep constructing this; absent, create
     // never queues a title diagnosis.
     private readonly DiagnoseQueue? _diagnoseQueue;
+    // CARD-0147. Optional so every harness that predates this card keeps constructing this;
+    // absent, create does not consult the fleet/role cap.
+    private readonly DelegationOpenGate? _openGate;
 
     public AgentTaskService(
         AppDbContext db,
@@ -66,7 +70,8 @@ public sealed class AgentTaskService
         ComplexityRoutingService? complexityRouting = null,
         IOptions<AgentRegistrySettings>? registrySettings = null,
         DelegateCheckProbe? checkProbe = null,
-        DiagnoseQueue? diagnoseQueue = null)
+        DiagnoseQueue? diagnoseQueue = null,
+        DelegationOpenGate? openGate = null)
     {
         _areas = areas;
         _db = db;
@@ -84,6 +89,7 @@ public sealed class AgentTaskService
         _registrySettings = registrySettings?.Value;
         _checkProbe = checkProbe;
         _diagnoseQueue = diagnoseQueue;
+        _openGate = openGate;
     }
 
     /// <summary>
@@ -716,6 +722,27 @@ public sealed class AgentTaskService
             task.AgentSessionId = null;
         }
 
+        // CARD-0147: refuse at create, not at the dispatcher tick. Specialists and live
+        // follow-ups are sequential continuation / no new process — they skip the gate.
+        // The lock is held only across count+insert, not the HTTP-ish work above.
+        var gateCreate = _openGate is not null
+            && !AgentTaskRoles.IsSpecialist(request.Role)
+            && !liveFollowUp;
+        IDbContextTransaction? gateTx = null;
+        DelegationOpenGate.Snapshot? openSnapshot = null;
+        if (gateCreate)
+        {
+            gateTx = _db.Database.CurrentTransaction is null
+                ? await _db.Database.BeginTransactionAsync(ct)
+                : null;
+        }
+
+        try
+        {
+            if (gateCreate)
+                openSnapshot = await _openGate!.EnsureCanCreateAsync(
+                    request.Role, request.IgnoreConcurrencyLimit, ct);
+
         _db.AgentTasks.Add(task);
         _db.AgentTaskEvents.Add(new AgentTaskEvent
         {
@@ -753,7 +780,36 @@ public sealed class AgentTaskService
         // is strictly better than the string-prefix comparison it replaces.
         if (UnknownAreaWarning(task) is { } areaWarning)
             AddEvent(id, AgentTaskEventType.Warning, null, areaWarning, now);
+        if (request.IgnoreConcurrencyLimit && openSnapshot is { WouldRefuse: true })
+        {
+            AddEvent(
+                id,
+                AgentTaskEventType.Warning,
+                null,
+                ConcurrencyLimitException.FormatOverrideWarning(
+                    openSnapshot.AbsoluteCount,
+                    openSnapshot.AbsoluteLimit,
+                    openSnapshot.Role,
+                    openSnapshot.RoleCount,
+                    openSnapshot.RoleLimit),
+                now);
+        }
+
         await _db.SaveChangesAsync(ct);
+        if (gateTx is not null)
+            await gateTx.CommitAsync(ct);
+        }
+        catch
+        {
+            if (gateTx is not null)
+                await gateTx.RollbackAsync(ct);
+            throw;
+        }
+        finally
+        {
+            if (gateTx is not null)
+                await gateTx.DisposeAsync();
+        }
 
         await _eventBus.PublishToAllAsync("AgentTaskChanged", new { taskId = id, rootId = task.RootTaskId }, ct);
         _logger.LogInformation(
