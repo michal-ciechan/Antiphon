@@ -1764,6 +1764,28 @@ public class SessionMessageQueueDeliveryVerificationTests
     }
 
     [Test]
+    public async Task Claude_remote_control_skips_confirm_and_does_not_kill()
+    {
+        // CARD-0354: health-watch queues /remote-control. Claude writes a local_command wrapper,
+        // never a UserPrompt. Without the catalog declaration, CARD-0055 times out, raises
+        // DeliveryVerificationFailed, and kills the always-on agent — the restart loop.
+        await using var h = await ObservableHarnessAsync();
+        h.Adapter.OnSubmitted = null;
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "/remote-control", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        h.Adapter.Inputs.Count(i => i == "\r").ShouldBe(1, "one Enter; a re-press is the CARD-0141 picker hazard");
+        h.Adapter.Inputs.ShouldContain("/remote-control");
+        h.Adapter.Killed.ShouldBeFalse();
+
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Sent);
+        (await IncidentsOfAsync(db, h.AgentId)).ShouldBeEmpty();
+    }
+
+    [Test]
     public async Task A_WritesUserPrompt_true_command_keeps_the_confirm_loop_and_represses_Enter()
     {
         await using var h = await ObservableHarnessAsync();

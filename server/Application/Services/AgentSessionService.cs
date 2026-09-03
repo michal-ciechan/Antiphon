@@ -1767,6 +1767,19 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, rcCt);
 
             _logger.LogInformation("Remote-control setup completed for session {SessionId}", sessionId);
+
+            // CARD-0354: a health-watch leftover /remote-control on this persistent session must
+            // not be flushed after we just armed (or found the bridge already live). Delivering it
+            // again opens the management menu and used to CARD-0055-kill the always-on agent.
+            try
+            {
+                await _messageQueue.CancelPendingRemoteControlAsync(sessionId, ct);
+            }
+            catch (Exception cancelEx) when (cancelEx is not OperationCanceledException)
+            {
+                _logger.LogDebug(cancelEx,
+                    "Canceling leftover queued /remote-control for session {SessionId} failed", sessionId);
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

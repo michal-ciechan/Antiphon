@@ -77,13 +77,17 @@ public static class ProviderContractCatalog
             DetectFragments: []),
         LocalCommands: new LocalCommandContract(
             AgentTuiCapabilityState.Supported,
-            "Declared commands are those measured to write (or not write) a UserPrompt row. /compact writes one (CARD-0041); absence of a declaration is not a claim of absence.",
+            "Declared commands are those measured to write (or not write) a UserPrompt row. /compact writes one (CARD-0041); /remote-control writes a local_command wrapper and no UserPrompt (CARD-0354). Absence of a declaration is not a claim of absence.",
             Commands: new Dictionary<string, LocalCommandFact>(StringComparer.OrdinalIgnoreCase)
             {
                 ["/compact"] = new LocalCommandFact(
                     OpensOverlay: false,
                     WritesUserPrompt: true,
                     Evidence: "CARD-0041: Claude writes the raw typed /compact text as a plain UserPrompt record in addition to the <command-name> wrapper; CARD-0082 auto-compact depends on that row."),
+                ["/remote-control"] = new LocalCommandFact(
+                    OpensOverlay: true,
+                    WritesUserPrompt: false,
+                    Evidence: "CARD-0354 / CARD-0292: a first send writes <command-name>/remote-control</command-name> as system/local_command (no UserPrompt). A second send on an already-armed bridge opens the management menu. CARD-0055 confirm looking for a UserPrompt kills always-on agents in a restart loop."),
             },
             Forbidden: EmptyForbidden),
         RefocusCompact: new RefocusCompactContract(

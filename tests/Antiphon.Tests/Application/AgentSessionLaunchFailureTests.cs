@@ -482,6 +482,27 @@ public class AgentSessionLaunchFailureTests
     // ---- CARD-0292 S1/S2: skip /remote-control on a live bridge; Esc a standing menu ----------
 
     [Test]
+    public async Task Boot_arm_cancels_a_leftover_queued_remote_control()
+    {
+        // CARD-0354: health-watch leftover on the persistent session must not be flushed after
+        // boot just armed. Delivering it again opens the management menu and used to kill.
+        var adapter = new FakeAgentProtocolAdapter { PromptOutput = "remote-control is active" };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        var queue = fixture.Services.GetRequiredService<SessionMessageQueueService>();
+        await queue.EnqueueAsync(
+            fixture.SessionId, "/remote-control", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        await fixture.LaunchInteractiveAsync(remoteControlName: "Antiphon-Orchestrator");
+
+        adapter.Prompts.ShouldBe(["/remote-control", "/rename Antiphon-Orchestrator"]);
+        await using var db = LaunchFixture.CreateContext();
+        var leftover = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == fixture.SessionId);
+        leftover.Status.ShouldBe(QueuedMessageStatus.Canceled);
+        leftover.Body.ShouldBe("/remote-control");
+        leftover.CanceledAt.ShouldNotBeNull();
+    }
+
+    [Test]
     public async Task Resume_with_an_already_armed_bridge_skips_remote_control_and_still_renames()
     {
         var adapter = new FakeAgentProtocolAdapter { PromptOutput = "remote-control is active" };

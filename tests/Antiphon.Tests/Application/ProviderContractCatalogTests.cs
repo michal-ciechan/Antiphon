@@ -164,6 +164,16 @@ public sealed class ProviderContractCatalogTests
     }
 
     [Test]
+    public void Claude_remote_control_is_declared_WritesUserPrompt_false()
+    {
+        var commands = ProviderContractCatalog.For(AgentKind.ClaudeCode).LocalCommands.Commands;
+        commands.ContainsKey("/remote-control").ShouldBeTrue();
+        commands["/remote-control"].WritesUserPrompt.ShouldBeFalse();
+        commands["/remote-control"].OpensOverlay.ShouldBeTrue();
+        commands["/remote-control"].Evidence.ShouldContain("CARD-0354");
+    }
+
+    [Test]
     public void Grok_usage_is_declared_overlay_opening_and_not_forbidden()
     {
         var grok = ProviderContractCatalog.For(AgentKind.Grok);

@@ -619,6 +619,58 @@ public sealed class SessionMessageQueueService
             m => m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts == 0, ct) == true;
 
     /// <summary>
+    /// CARD-0354: after boot successfully arms remote-control (or finds the bridge already live),
+    /// drop leftover queued <c>/remote-control</c> rows. Health-watch enqueues that body WhenIdle
+    /// as Ui origin; a kill/restart leaves the row on the persistent session, and delivering it
+    /// again after the preamble already armed opens the CARD-0292 management menu. The body also
+    /// writes no UserPrompt, so CARD-0055 used to <c>NoTranscriptRecord</c>-kill the always-on
+    /// agent — the ClaudeBot-Antiphon restart loop.
+    /// </summary>
+    public async Task<int> CancelPendingRemoteControlAsync(Guid sessionId, CancellationToken ct)
+    {
+        var sem = GetLock(sessionId);
+        await sem.WaitAsync(ct);
+        var canceled = 0;
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var pending = await db.SessionQueuedMessages
+                .Where(m => m.AgentSessionId == sessionId && m.Status == QueuedMessageStatus.Pending)
+                .ToListAsync(ct);
+            if (pending.Count == 0)
+                return 0;
+
+            var now = UtcNow();
+            foreach (var message in pending)
+            {
+                if (!string.Equals(FirstCommandToken(message.Body), "/remote-control", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                message.Status = QueuedMessageStatus.Canceled;
+                message.CanceledAt = now;
+                canceled++;
+            }
+
+            if (canceled > 0)
+                await db.SaveChangesAsync(ct);
+        }
+        finally
+        {
+            sem.Release();
+        }
+
+        if (canceled > 0)
+        {
+            _logger.LogInformation(
+                "Canceled {Count} leftover queued /remote-control on session {SessionId} (CARD-0354)",
+                canceled, sessionId);
+            await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
+        }
+
+        return canceled;
+    }
+
+    /// <summary>
     /// Cancel still-Pending copies of a schedule (CARD-0057 D3). One outstanding copy per
     /// recurring schedule: a daily prompt that missed three days delivers once on boot.
     /// </summary>
