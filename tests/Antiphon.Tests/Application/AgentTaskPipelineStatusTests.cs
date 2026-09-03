@@ -442,6 +442,41 @@ public class AgentTaskPipelineStatusTests
     }
 
     [Test]
+    public async Task rows_carry_agent_kind_model_level_and_workspace()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var flying = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Code, AgentTaskStatus.Working,
+            title: "grok execute", dispatchedAt: DateTime.UtcNow.AddMinutes(-4),
+            agentKind: AgentKind.Grok, modelLevel: AgentModelLevel.Frontier,
+            workspace: WorkspaceMode.Worktree);
+        var waiting = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Docs, AgentTaskStatus.Queued,
+            title: "codex docs", agentKind: AgentKind.Codex, modelLevel: AgentModelLevel.High,
+            workspace: WorkspaceMode.Shared, repoPath: workspace.Path);
+        var blocked = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Deploy, AgentTaskStatus.Blocked,
+            title: "claude deploy", agentKind: AgentKind.ClaudeCode, modelLevel: AgentModelLevel.Medium);
+
+        var dto = await CreateService(db).GetAsync(CancellationToken.None);
+        var inFlight = dto.Stages.Single(s => s.Role == AgentTaskRole.Code).InFlight
+            .Single(t => t.TaskId == flying.Id);
+        inFlight.AgentKind.ShouldBe(AgentKind.Grok);
+        inFlight.ModelLevel.ShouldBe(AgentModelLevel.Frontier);
+        inFlight.Workspace.ShouldBe(WorkspaceMode.Worktree);
+
+        var queued = dto.Stages.Single(s => s.Role == AgentTaskRole.Docs).Queued
+            .Single(t => t.TaskId == waiting.Id);
+        queued.AgentKind.ShouldBe(AgentKind.Codex);
+        queued.ModelLevel.ShouldBe(AgentModelLevel.High);
+        queued.Workspace.ShouldBe(WorkspaceMode.Shared);
+
+        var blockedRow = dto.Stages.Single(s => s.Role == AgentTaskRole.Deploy).Blocked
+            .Single(t => t.TaskId == blocked.Id);
+        blockedRow.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+        blockedRow.ModelLevel.ShouldBe(AgentModelLevel.Medium);
+    }
+
+    [Test]
     public void verified_plan_deliverable_accepts_only_the_plans_folder()
     {
         AgentTaskPipelineStatusService.IsVerifiedPlanDeliverable(
@@ -488,7 +523,11 @@ public class AgentTaskPipelineStatusTests
         WorkspaceMode workspace = WorkspaceMode.Shared,
         string? repoPath = null,
         string? deliverablePath = null,
-        string? scope = null)
+        string? scope = null,
+        AgentKind agentKind = AgentKind.ClaudeCode,
+        AgentModelLevel modelLevel = AgentModelLevel.High,
+        string? worktreeBranch = null,
+        DateTime? landRequestedAt = null)
     {
         var id = Guid.NewGuid();
         var now = DateTime.UtcNow;
@@ -506,6 +545,10 @@ public class AgentTaskPipelineStatusTests
             Scope = scope,
             CardId = cardId,
             AgentSessionId = sessionId,
+            AgentKind = agentKind,
+            ModelLevel = modelLevel,
+            WorktreeBranch = worktreeBranch,
+            LandRequestedAt = Truncate(landRequestedAt),
             AgentName = status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working ? "delegate" : null,
             DispatchedAt = Truncate(dispatchedAt),
             CompletedAt = Truncate(completedAt),
@@ -653,6 +696,38 @@ public class AgentTaskPipelineEndpointTests
             stage.Blocked.ShouldBeEmpty();
             stage.Ready.ShouldBeEmpty();
         }
+    }
+
+    [Test]
+    public async Task pipeline_json_includes_agent_kind_on_a_row()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var id = Guid.NewGuid();
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = id,
+            RootTaskId = id,
+            Title = "kind row",
+            Goal = "kind row",
+            Role = AgentTaskRole.Docs,
+            Status = AgentTaskStatus.Working,
+            AgentKind = AgentKind.Grok,
+            ModelLevel = AgentModelLevel.Frontier,
+            Workspace = WorkspaceMode.Worktree,
+            WorkingDirectory = @"C:\tmp\pipe-kind",
+            AgentName = "kind-row",
+            DispatchedAt = DateTime.UtcNow.AddMinutes(-1),
+            CreatedAt = DateTime.UtcNow.AddMinutes(-2),
+        });
+        await db.SaveChangesAsync();
+
+        using var client = _factory.CreateClient();
+        var json = await client.GetStringAsync("/api/agent-tasks/pipeline");
+        json.ShouldContain("\"agentKind\"");
+        json.ShouldContain("\"Grok\"");
+        json.ShouldContain("\"modelLevel\"");
+        json.ShouldContain("\"workspace\"");
     }
 
     [Test]

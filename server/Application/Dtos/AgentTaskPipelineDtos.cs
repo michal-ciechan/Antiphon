@@ -43,7 +43,10 @@ public sealed record AgentTaskPipelineInFlightDto(
     AgentTaskPipelineCardRefDto? Card,
     string? AgentName,
     DateTime? DispatchedAt,
-    DateTime LastActivityAt);
+    DateTime LastActivityAt,
+    AgentKind AgentKind,
+    AgentModelLevel ModelLevel,
+    WorkspaceMode Workspace);
 
 public sealed record AgentTaskPipelineQueuedDto(
     Guid TaskId,
@@ -52,7 +55,10 @@ public sealed record AgentTaskPipelineQueuedDto(
     AgentTaskPipelineCardRefDto? Card,
     DateTime CreatedAt,
     string QueueReason,
-    IReadOnlyList<AgentTaskPipelineHolderDto> HeldBy);
+    IReadOnlyList<AgentTaskPipelineHolderDto> HeldBy,
+    AgentKind AgentKind,
+    AgentModelLevel ModelLevel,
+    WorkspaceMode Workspace);
 
 public sealed record AgentTaskPipelineHolderDto(Guid TaskId, string ShortId, string Title);
 
@@ -62,6 +68,8 @@ public sealed record AgentTaskPipelineBlockedDto(
     string Title,
     AgentTaskPipelineCardRefDto? Card,
     DateTime CreatedAt,
+    AgentKind AgentKind,
+    AgentModelLevel ModelLevel,
     /// <summary>CARD-0090: this Blocked row is routing-exhausted, not a question.</summary>
     bool RoutingExhausted = false);
 
