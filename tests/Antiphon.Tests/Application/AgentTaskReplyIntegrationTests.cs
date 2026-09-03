@@ -1224,6 +1224,43 @@ public class AgentTaskReplyIntegrationTests
     }
 
     [Test]
+    public async Task a_custom_role_worktree_task_that_names_four_docs_writes_a_source_bundle()
+    {
+        using var workspace = new TempWorkspace();
+        var feature = Path.Combine(workspace.Path, "docs", "features", "001-kalshi-ref-data-downloader");
+        Directory.CreateDirectory(feature);
+        foreach (var name in new[] { "01-requirements.md", "02-design.md", "03-api.md", "04-test.md" })
+            await File.WriteAllTextAsync(Path.Combine(feature, name), $"# {name}\n");
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, configure: t =>
+        {
+            t.Role = AgentTaskRole.Custom;
+            t.Workspace = WorkspaceMode.Worktree;
+            t.WorktreePath = workspace.Path;
+            t.RepoPath = workspace.Path;
+        });
+
+        await SeedTurnAsync(
+            sessionId,
+            DelegationReportFormatter.TaskMarker(task.Id),
+            "Wrote `docs/features/001-kalshi-ref-data-downloader/01-requirements.md`, "
+            + "`docs/features/001-kalshi-ref-data-downloader/02-design.md`, "
+            + "`docs/features/001-kalshi-ref-data-downloader/03-api.md`, "
+            + "`docs/features/001-kalshi-ref-data-downloader/04-test.md`.");
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.DeliverableBundleDir.ShouldBe(
+            Path.Combine(workspace.Path, ".antiphon", "deliverables", DelegationReportFormatter.Short(task.Id)));
+        settled.DeliverableFileCount.ShouldBe(4);
+        Directory.GetFiles(settled.DeliverableBundleDir!, "*.md").Length.ShouldBe(4);
+        settled.DeliverablePdfPath.ShouldBeNull("TestScopeFactory points BrowserPath at a missing exe");
+        settled.DeliverableRenderError.ShouldNotBeNull();
+        File.Exists(Path.Combine(settled.DeliverableBundleDir!, "render.log")).ShouldBeTrue();
+    }
+
+    [Test]
     public async Task a_report_with_no_resolving_markdown_path_leaves_no_deliverable_pointer()
     {
         using var workspace = new TempWorkspace();
@@ -3548,6 +3585,12 @@ public class AgentTaskReplyIntegrationTests
                 WorktreeStaleAfterDays = 7,
                 WorktreeJanitorIntervalHours = 24,
             });
+            services.AddSingleton(Options.Create(new DeliverablesSettings
+            {
+                BrowserPath = Path.Combine(Path.GetTempPath(), "antiphon-missing-browser", "msedge.exe"),
+            }));
+            services.AddSingleton<MarkdownPdfRenderer>();
+            services.AddSingleton<DeliverableBundleService>();
             _provider = services.BuildServiceProvider();
         }
 

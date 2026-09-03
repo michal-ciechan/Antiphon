@@ -591,6 +591,8 @@ public sealed class AgentTaskReplyService
         // ignored the instruction, write the file ourselves so the excerpt has somewhere to point.
         task.ResultFilePath = await ResolveSpillFileAsync(task, settledBody, ct);
         (task.DeliverablePath, task.DeliverableRef) = await ResolveDeliverableAsync(services, task, settledBody, ct);
+        if (task.Status == AgentTaskStatus.Succeeded)
+            await TryBuildDeliverableBundleAsync(services, db, task, settledBody, ct);
 
         // What the report was built from, on the record. The report is the turn-ending response's
         // own text, so a delegate that front-loaded findings mid-turn left some behind — name how
@@ -2050,6 +2052,28 @@ public sealed class AgentTaskReplyService
                 ex, "Could not resolve a deliverable pointer for task {ShortId}.",
                 DelegationReportFormatter.Short(task.Id));
             return (null, null);
+        }
+    }
+
+    /// <summary>
+    /// CARD-0337: enrichment, same never-abort contract as <see cref="ResolveDeliverableAsync"/>.
+    /// A missing <see cref="DeliverableBundleService"/> (test harness) is a no-op.
+    /// </summary>
+    private async Task TryBuildDeliverableBundleAsync(
+        IServiceProvider services, AppDbContext db, AgentTask task, string report, CancellationToken ct)
+    {
+        try
+        {
+            var bundles = services.GetService<DeliverableBundleService>();
+            if (bundles is null)
+                return;
+            await bundles.TryBuildAsync(task, report, db, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex, "Could not build a deliverable bundle for task {ShortId}.",
+                DelegationReportFormatter.Short(task.Id));
         }
     }
 

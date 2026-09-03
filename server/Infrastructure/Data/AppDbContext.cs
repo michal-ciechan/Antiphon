@@ -1456,6 +1456,12 @@ public class AppDbContext : DbContext
             entity.Property(t => t.ResultFilePath).HasMaxLength(1000);
             entity.Property(t => t.DeliverablePath).HasMaxLength(1000);
             entity.Property(t => t.DeliverableRef).HasMaxLength(300);
+            // CARD-0337. Pre-existing rows have no bundle; FileCount 0 is "not produced".
+            entity.Property(t => t.DeliverableBundleDir).HasMaxLength(1000);
+            entity.Property(t => t.DeliverablePdfPath).HasMaxLength(1000);
+            entity.Property(t => t.DeliverableFileCount).IsRequired().HasDefaultValue(0);
+            entity.Property(t => t.DeliverableRenderError).HasMaxLength(300);
+            entity.Property(t => t.DeliverableDeliveredAt).IsRequired(false);
             entity.Property(t => t.TokenHash).HasMaxLength(128);
             entity.Property(t => t.CacheReadTokens).IsRequired();
             entity.Property(t => t.CacheCreationTokens).IsRequired();

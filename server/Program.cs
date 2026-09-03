@@ -121,6 +121,8 @@ try
     builder.Services.Configure<GithubSettings>(builder.Configuration.GetSection("GitHub"));
     builder.Services.Configure<SessionRunnerSettings>(builder.Configuration.GetSection("SessionRunner"));
     builder.Services.Configure<DiagnosticsSettings>(builder.Configuration.GetSection("Diagnostics"));
+    builder.Services.Configure<DeliverablesSettings>(
+        builder.Configuration.GetSection(DeliverablesSettings.SectionName));
     builder.Services.AddSingleton<IValidateOptions<AgentSessionSettings>, AgentSessionSettingsValidator>();
     builder.Services.AddOptions<AgentSessionSettings>()
         .Bind(builder.Configuration.GetSection("AgentSessions"))
@@ -469,6 +471,8 @@ try
     builder.Services.AddSingleton<GitProcessGate>(sp =>
         new GitProcessGate(Math.Max(1, sp.GetRequiredService<IOptions<GitSettings>>().Value.MaxConcurrentProcesses)));
     builder.Services.AddSingleton<GitWorkspaceService>();
+    builder.Services.AddSingleton<MarkdownPdfRenderer>();
+    builder.Services.AddSingleton<DeliverableBundleService>();
     builder.Services.AddMemoryCache();
     builder.Services.AddSingleton<ProjectReadinessCache>();
     builder.Services.AddSingleton<IResettableCache>(sp => sp.GetRequiredService<ProjectReadinessCache>());

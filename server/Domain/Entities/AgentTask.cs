@@ -193,6 +193,24 @@ public class AgentTask
     /// <summary>The branch holding <see cref="DeliverablePath"/> when it was not on disk at settlement.</summary>
     public string? DeliverableRef { get; set; }
 
+    /// <summary>
+    /// CARD-0337: directory of the settlement document bundle (PDF + sources) under
+    /// <c>.antiphon/deliverables/</c>. Null when the task produced no documents.
+    /// </summary>
+    public string? DeliverableBundleDir { get; set; }
+
+    /// <summary>Absolute path of the rendered PDF inside <see cref="DeliverableBundleDir"/>, if render succeeded.</summary>
+    public string? DeliverablePdfPath { get; set; }
+
+    /// <summary>How many source documents the bundle holds.</summary>
+    public int DeliverableFileCount { get; set; }
+
+    /// <summary>Why the PDF is missing, capped at 300 characters. Sources may still be present.</summary>
+    public string? DeliverableRenderError { get; set; }
+
+    /// <summary>When S3 attached at least one bundle file to a channel turn. Null until then.</summary>
+    public DateTime? DeliverableDeliveredAt { get; set; }
+
     /// <summary>When an operator first opened this task's deliverable or report.</summary>
     public DateTime? ReadAt { get; set; }
 

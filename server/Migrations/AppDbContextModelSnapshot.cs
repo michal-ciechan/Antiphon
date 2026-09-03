@@ -439,11 +439,31 @@ namespace Antiphon.Server.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("DeliverableBundleDir")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTime?>("DeliverableDeliveredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("DeliverableFileCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
                     b.Property<string>("DeliverablePath")
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
 
+                    b.Property<string>("DeliverablePdfPath")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
                     b.Property<string>("DeliverableRef")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<string>("DeliverableRenderError")
                         .HasMaxLength(300)
                         .HasColumnType("character varying(300)");
 
