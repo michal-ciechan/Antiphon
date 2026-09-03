@@ -477,6 +477,89 @@ public class AgentTaskPipelineStatusTests
     }
 
     [Test]
+    public async Task a_sibling_land_in_flight_is_the_queued_reason_after_the_lease()
+    {
+        // CARD-0331: the dispatcher holds on AgentTasks.LandRequestedAt, not the latest
+        // LandRequested / Landed / LandRefused event. The projection matches that column.
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var card = await SeedCardAsync(db, CardStatus.InProgress, "CARD-0301");
+        var sibling = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Plan, AgentTaskStatus.Succeeded,
+            title: "plan sibling landing", cardId: card.Id, workspace: WorkspaceMode.Worktree,
+            repoPath: workspace.Path, worktreeBranch: "card-0301-plan",
+            landRequestedAt: DateTime.UtcNow.AddMinutes(-2), completedAt: DateTime.UtcNow.AddMinutes(-5));
+        var waiting = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Code, AgentTaskStatus.Queued,
+            title: "execute behind land", cardId: card.Id, workspace: WorkspaceMode.Worktree,
+            repoPath: workspace.Path);
+        db.RoutingPins.Add(new RoutingPin
+        {
+            Id = Guid.NewGuid(),
+            CardId = card.Id,
+            Role = AgentTaskRole.Code,
+            Provenance = RoutingPinProvenance.Human,
+            Strength = RoutingPinStrength.Required,
+            AgentKind = AgentKind.Grok,
+            NotBefore = DateTime.UtcNow.AddHours(6),
+            Reason = "dated pin must lose to sibling land",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+
+        var code = (await CreateService(db).GetAsync(CancellationToken.None))
+            .Stages.Single(s => s.Role == AgentTaskRole.Code);
+        var row = code.Queued.Single(t => t.TaskId == waiting.Id);
+        row.QueueReason.ShouldBe(AgentTaskPipelineStatusService.QueueReasonSiblingLandInFlight);
+        row.HeldBy.Select(h => h.TaskId).ShouldBe([sibling.Id]);
+        row.HeldBy.Single().Title.ShouldBe("plan sibling landing");
+
+        sibling.LandRequestedAt = null;
+        await db.SaveChangesAsync();
+
+        var afterLand = (await CreateService(db).GetAsync(CancellationToken.None))
+            .Stages.Single(s => s.Role == AgentTaskRole.Code).Queued.Single(t => t.TaskId == waiting.Id);
+        afterLand.QueueReason.ShouldBe(AgentTaskPipelineStatusService.QueueReasonRoutingPinNotBefore);
+        afterLand.HeldBy.ShouldBeEmpty();
+
+        using var heldDir = new TempWorkspace();
+        var holder = await SeedTaskAsync(db, heldDir.Path, AgentTaskRole.Docs, AgentTaskStatus.Working,
+            dispatchedAt: DateTime.UtcNow.AddMinutes(-2), title: "shared holder",
+            workspace: WorkspaceMode.Shared, repoPath: heldDir.Path);
+        var sharedWaiting = await SeedTaskAsync(db, heldDir.Path, AgentTaskRole.Docs, AgentTaskStatus.Queued,
+            title: "shared waiting on lease", cardId: card.Id, workspace: WorkspaceMode.Shared,
+            repoPath: heldDir.Path);
+        sibling.LandRequestedAt = DateTime.UtcNow.AddMinutes(-1);
+        await db.SaveChangesAsync();
+
+        var leaseRow = (await CreateService(db).GetAsync(CancellationToken.None))
+            .Stages.Single(s => s.Role == AgentTaskRole.Docs).Queued.Single(t => t.TaskId == sharedWaiting.Id);
+        leaseRow.QueueReason.ShouldBe(AgentTaskPipelineStatusService.QueueReasonSharedCheckoutLease);
+        leaseRow.HeldBy.Select(h => h.TaskId).ShouldBe([holder.Id]);
+    }
+
+    [Test]
+    public async Task a_shared_task_never_reports_a_sibling_land()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var card = await SeedCardAsync(db, CardStatus.InProgress, "CARD-0215");
+        await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Plan, AgentTaskStatus.Succeeded,
+            title: "landing sibling", cardId: card.Id, workspace: WorkspaceMode.Worktree,
+            repoPath: workspace.Path, worktreeBranch: "card-0215-plan",
+            landRequestedAt: DateTime.UtcNow.AddMinutes(-2), completedAt: DateTime.UtcNow.AddMinutes(-5));
+        var shared = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Code, AgentTaskStatus.Queued,
+            title: "shared execute", cardId: card.Id, workspace: WorkspaceMode.Shared,
+            repoPath: workspace.Path);
+
+        var row = (await CreateService(db).GetAsync(CancellationToken.None))
+            .Stages.Single(s => s.Role == AgentTaskRole.Code).Queued.Single(t => t.TaskId == shared.Id);
+        row.QueueReason.ShouldBe(AgentTaskPipelineStatusService.QueueReasonAwaitingDispatch);
+        row.HeldBy.ShouldBeEmpty();
+    }
+
+    [Test]
     public void verified_plan_deliverable_accepts_only_the_plans_folder()
     {
         AgentTaskPipelineStatusService.IsVerifiedPlanDeliverable(
