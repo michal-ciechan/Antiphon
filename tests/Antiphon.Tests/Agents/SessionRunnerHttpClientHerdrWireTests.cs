@@ -157,6 +157,51 @@ public class SessionRunnerHttpClientHerdrWireTests
     }
 
     [Test]
+    public async Task Launch_409_problem_maps_to_conflict_carrying_the_runner_detail()
+    {
+        // CARD-0341: the gkp gate's refusal (and CARD-0224's pane_occupied) must reach
+        // FailureReason as the runner's own words, not "status code does not indicate success".
+        const string detail = "refusing to type a gkp Grok launch: the launch env carries no GROK_BASE_URL";
+        var handler = new CapturingHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/capabilities")
+            {
+                return Task.FromResult(Json(new RunnerCapabilitiesDto(
+                    "InboxConhost",
+                    "inbox",
+                    "test",
+                    false,
+                    TranscriptFormats: [TranscriptFormats.Claude, TranscriptFormats.Grok, TranscriptFormats.Codex],
+                    SessionBackends: [SessionBackends.PtyHost, SessionBackends.Herdr])));
+            }
+
+            return Task.FromResult(Problem(409, HerdrProblemTypes.GkpEnvMissing, detail));
+        });
+        var client = new SessionRunnerHttpClient(
+            new HttpClient(handler) { BaseAddress = new Uri("http://runner.test/") },
+            new StubFactory(),
+            Options.Create(new SessionRunnerSettings { BaseUrl = "http://runner.test" }));
+
+        var ex = await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ConflictException>(() =>
+            client.StartAsync(
+                Guid.NewGuid(),
+                new AgentLaunchSpec(
+                    "grok-gkp-project",
+                    AgentKind.Grok,
+                    "pwsh.exe",
+                    ["-File", @"C:\x\gkp.ps1"],
+                    new Dictionary<string, string>(),
+                    Path.GetTempPath(),
+                    120,
+                    30,
+                    Backend: SessionBackend.Herdr,
+                    Herdr: new HerdrLaunchOptions("none", "Antiphon", null, "g", AgentKind: HerdrAgentKinds.Grok)),
+                CancellationToken.None));
+        ex.Code.ShouldBe(HerdrProblemTypes.GkpEnvMissing);
+        ex.Message.ShouldBe(detail);
+    }
+
+    [Test]
     public async Task Problem_details_404_maps_to_runner_problem()
     {
         var handler = new CapturingHandler(_ => Task.FromResult(Problem(

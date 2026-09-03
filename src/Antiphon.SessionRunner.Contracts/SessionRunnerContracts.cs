@@ -694,6 +694,13 @@ public static class HerdrProblemTypes
 
     /// <summary>409 on POST /sessions: last-pane is occupied by a foreign process (CARD-0224).</summary>
     public const string PaneOccupied = "pane_occupied";
+
+    /// <summary>
+    /// 409 on POST /sessions: a gkp (local llm-key-proxy) Grok launch whose env carries no
+    /// resolvable project, no <c>GROK_BASE_URL</c>, or no dummy key — refused before anything is
+    /// typed rather than falling through to grok.com (CARD-0341).
+    /// </summary>
+    public const string GkpEnvMissing = "herdr_gkp_env_missing";
 }
 
 /// <summary>

@@ -39,6 +39,7 @@ internal static class HerdrProblemMapper
         HerdrProblemTypes.TranscriptNotFound => "Herdr transcript not found",
         HerdrProblemTypes.PaneChanged => "Herdr pane changed",
         HerdrProblemTypes.PaneOccupied => "Herdr pane occupied",
+        HerdrProblemTypes.GkpEnvMissing => "Herdr gkp launch cannot route",
         "pane_shell" => "Herdr pane shell",
         _ => "Herdr launch refused",
     };

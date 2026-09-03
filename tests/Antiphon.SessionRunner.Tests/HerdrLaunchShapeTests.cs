@@ -315,6 +315,84 @@ public class HerdrLaunchShapeTests
     }
 
     [Test]
+    public async Task Gkp_launch_without_routing_env_is_refused_before_contacting_herdr()
+    {
+        // CARD-0341 ask 4: never let a gkp Grok launch fall through to grok.com. Nothing is
+        // allocated, renamed, typed, or even written when the env cannot route it.
+        await using var fake = new FakeHerdrServer();
+        fake.LaunchScriptAgentKind = HerdrAgentKinds.Grok;
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        var sessionId = Guid.NewGuid();
+        var scriptPath = HerdrLaunchScript.PathFor(settings.SessionLogPath, sessionId);
+        await using var runtime = BuildRuntime(settings, fake);
+
+        var ex = await Should.ThrowAsync<HerdrLaunchException>(() =>
+            runtime.StartAsync(GkpRequest(sessionId, settings.SessionLogPath, new Dictionary<string, string>
+            {
+                ["X_LLM_PROJECT"] = "PredictionMarkets",
+                // no GROK_BASE_URL, no dummy key
+            }), CancellationToken.None));
+        ex.Code.ShouldBe(HerdrProblemTypes.GkpEnvMissing);
+        ex.Message.ShouldContain("GROK_BASE_URL");
+        ex.Message.ShouldContain("XAI_API_KEY");
+        fake.Requests.ShouldBeEmpty("a refused gkp launch never contacts herdr");
+        File.Exists(scriptPath).ShouldBeFalse("nothing is written for a refused launch");
+        File.Exists(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId)).ShouldBeFalse();
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
+    [Test]
+    public async Task Gkp_launch_with_routing_env_types_a_script_carrying_the_resolved_project()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.LaunchScriptAgentKind = HerdrAgentKinds.Grok;
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        var sessionId = Guid.NewGuid();
+        await using var runtime = BuildRuntime(settings, fake);
+
+        var dto = await runtime.StartAsync(GkpRequest(sessionId, settings.SessionLogPath, new Dictionary<string, string>
+        {
+            ["X_LLM_PROJECT"] = "PredictionMarkets",
+            ["GROK_BASE_URL"] = "http://localhost:10746/v1",
+            ["GROK_CLI_CHAT_PROXY_BASE_URL"] = "http://localhost:10746/v1",
+            ["XAI_API_KEY"] = "llm-key-proxy",
+        }), CancellationToken.None);
+        dto.Status.ShouldBe("Running");
+
+        var script = fake.LastLaunchScriptContent.ShouldNotBeNull();
+        script.ShouldContain("Set-Item -LiteralPath 'Env:GROK_BASE_URL' -Value 'http://localhost:10746/v1'");
+        script.ShouldContain("Set-Item -LiteralPath 'Env:XAI_API_KEY' -Value 'llm-key-proxy'");
+        script.ShouldContain("Set-Item -LiteralPath 'Env:X_LLM_PROJECT' -Value 'PredictionMarkets'");
+        // Ask 3: the single-quoted --project value is the project, not the literal token.
+        script.ShouldContain("'--project', 'PredictionMarkets'");
+        script.ShouldNotContain("$env:X_LLM_PROJECT");
+
+        await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
+    private static RunnerLaunchRequest GkpRequest(Guid sessionId, string cwd, IReadOnlyDictionary<string, string> env) =>
+        new(
+            sessionId,
+            @"C:\Program Files\PowerShell\7\pwsh.exe",
+            ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", @"C:\Users\x\.local\bin\gkp.ps1", "--project", "$env:X_LLM_PROJECT"],
+            env,
+            cwd,
+            Cols: 120,
+            Rows: 30,
+            Backend: SessionBackends.Herdr,
+            Herdr: new HerdrLaunchOptions(
+                WorkspaceKey: $"gkp-{sessionId:N}"[..32],
+                WorkspaceLabel: "card0341-gkp",
+                WorkspaceCwd: cwd,
+                PaneTitle: "PM-MavRef-DL-Grok",
+                AgentKind: HerdrAgentKinds.Grok));
+
+    [Test]
     public void Null_AgentKind_is_supported_as_claude()
     {
         HerdrAgentKinds.IsSupported(null).ShouldBeTrue();

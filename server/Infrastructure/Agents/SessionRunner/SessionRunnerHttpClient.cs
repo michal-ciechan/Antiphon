@@ -79,6 +79,10 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             Backend: backendWire,
             Herdr: spec.Herdr);
         var response = await _httpClient.PostAsJsonAsync("sessions", request, JsonOptions, ct);
+        // CARD-0341: a runner refusal (herdr_gkp_env_missing, pane_occupied, …) carries its reason
+        // in problem-details; surface that as the typed exception so the launch path stores the
+        // runner's detail in FailureReason rather than "status code does not indicate success".
+        await ThrowForRunnerProblemAsync(response, ct);
         response.EnsureSuccessStatusCode();
         return Map(await response.Content.ReadFromJsonAsync<RunnerSessionDto>(JsonOptions, ct)
             ?? throw new InvalidOperationException("Session runner returned an empty start response."));

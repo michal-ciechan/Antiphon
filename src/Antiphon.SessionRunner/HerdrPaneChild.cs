@@ -273,6 +273,10 @@ internal sealed class HerdrPaneChild : ISessionChild
                 "Herdr lane ignores Cols/Rows/MemoryLimitMb (herdr owns layout; Job-object cap is pty-host machinery).");
         }
 
+        // CARD-0341: a gkp Grok launch that cannot route is refused here, before herdr is
+        // contacted, so nothing is allocated, renamed, or typed for it.
+        HerdrGkpLaunchGuard.Require(request.SessionId, request.Args, request.Env, _logger);
+
         await _client.ConnectAndValidateAsync(ct);
 
         var ensured = await EnsureWorkspaceAsync(opts, request.Env, ct);
