@@ -61,11 +61,83 @@ public class HerdrLaunchShapeTests
         var content = HerdrLaunchScript.BuildContent(
             @"C:\tools\claude.exe",
             ["--session-id", "abc"],
-            @"D:\worktrees\it's\card");
+            workingDirectory: @"D:\worktrees\it's\card");
         content.ShouldBe(
             "Set-Location -LiteralPath 'D:\\worktrees\\it''s\\card'\n& 'C:\\tools\\claude.exe' @('--session-id', 'abc')");
         HerdrLaunchScript.BuildContent(@"C:\tools\claude.exe", ["--session-id", "abc"])
             .ShouldBe("& 'C:\\tools\\claude.exe' @('--session-id', 'abc')");
+    }
+
+    [Test]
+    public void Script_applies_env_clears_stale_names_and_resolves_env_tokens_before_quoting()
+    {
+        // CARD-0341: env lines precede the command (ordinal name order), stale names from the
+        // previous launch are removed first, and a whole-argument $env:NAME token is resolved
+        // from the env — PowerShell never expands it inside a single-quoted argument.
+        var env = new Dictionary<string, string>
+        {
+            ["X_LLM_PROJECT"] = "PredictionMarkets",
+            ["GROK_BASE_URL"] = "http://localhost:10746/v1",
+            ["XAI_API_KEY"] = "llm-key-proxy",
+            ["ODD"] = "it's\nmulti $line `tick` \"dq\"",
+        };
+        var content = HerdrLaunchScript.BuildContent(
+            @"C:\Program Files\PowerShell\7\pwsh.exe",
+            ["-NoProfile", "-File", @"C:\Users\x\.local\bin\gkp.ps1", "--project", "$env:X_LLM_PROJECT", "${env:xai_api_key}", "$env:MISSING", "$env:X_LLM_PROJECT/sub"],
+            env,
+            workingDirectory: @"D:\worktrees\card",
+            clearNames: ["STALE_B", "STALE_A"]);
+
+        content.ShouldBe(string.Join("\n",
+            "Remove-Item -LiteralPath 'Env:STALE_A' -ErrorAction SilentlyContinue",
+            "Remove-Item -LiteralPath 'Env:STALE_B' -ErrorAction SilentlyContinue",
+            "Set-Item -LiteralPath 'Env:GROK_BASE_URL' -Value 'http://localhost:10746/v1'",
+            "Set-Item -LiteralPath 'Env:ODD' -Value 'it''s\nmulti $line `tick` \"dq\"'",
+            "Set-Item -LiteralPath 'Env:XAI_API_KEY' -Value 'llm-key-proxy'",
+            "Set-Item -LiteralPath 'Env:X_LLM_PROJECT' -Value 'PredictionMarkets'",
+            "Set-Location -LiteralPath 'D:\\worktrees\\card'",
+            "& 'C:\\Program Files\\PowerShell\\7\\pwsh.exe' @('-NoProfile', '-File', 'C:\\Users\\x\\.local\\bin\\gkp.ps1', '--project', 'PredictionMarkets', 'llm-key-proxy', '$env:MISSING', '$env:X_LLM_PROJECT/sub')"));
+
+        HerdrLaunchScript.TryReadEnvTokenName("$env:X_LLM_PROJECT", out var name).ShouldBeTrue();
+        name.ShouldBe("X_LLM_PROJECT");
+        HerdrLaunchScript.TryReadEnvTokenName("${ENV:My-Name}", out name).ShouldBeTrue();
+        name.ShouldBe("My-Name");
+        HerdrLaunchScript.TryReadEnvTokenName("--project=$env:X", out _).ShouldBeFalse();
+        HerdrLaunchScript.TryReadEnvTokenName("$env:", out _).ShouldBeFalse();
+        HerdrLaunchScript.TryReadEnvTokenName("literal", out _).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Redacted_script_hides_every_env_value_and_leaves_tokens_unresolved()
+    {
+        var env = new Dictionary<string, string>
+        {
+            ["XAI_API_KEY"] = "super-secret",
+            ["X_LLM_PROJECT"] = "PredictionMarkets",
+        };
+        var content = HerdrLaunchScript.BuildContent(
+            "pwsh.exe",
+            ["--project", "$env:X_LLM_PROJECT"],
+            env,
+            clearNames: ["OLD"],
+            redactEnv: true);
+
+        content.ShouldBe(string.Join("\n",
+            "Remove-Item -LiteralPath 'Env:OLD' -ErrorAction SilentlyContinue",
+            $"Set-Item -LiteralPath 'Env:XAI_API_KEY' -Value '{HerdrLaunchScript.RedactedValue}'",
+            $"Set-Item -LiteralPath 'Env:X_LLM_PROJECT' -Value '{HerdrLaunchScript.RedactedValue}'",
+            "& 'pwsh.exe' @('--project', '$env:X_LLM_PROJECT')"));
+        content.ShouldNotContain("super-secret");
+        content.ShouldNotContain("PredictionMarkets");
+    }
+
+    [Test]
+    public void StaleEnvNames_is_previous_minus_current_case_insensitive()
+    {
+        HerdrPaneChild.StaleEnvNames(null, new Dictionary<string, string>()).ShouldBeEmpty();
+        HerdrPaneChild.StaleEnvNames(["A", "b", "C", "c"], new Dictionary<string, string> { ["B"] = "1" })
+            .ShouldBe(["A", "C"]);
+        HerdrPaneChild.StaleEnvNames(["A"], null).ShouldBe(["A"]);
     }
 
     [Test]
@@ -92,6 +164,13 @@ public class HerdrLaunchShapeTests
         sendText.ShouldContain(HerdrLaunchScript.TypedCommand(scriptPath));
         foreach (var t in sendText)
             (t ?? "").Contains(secret, StringComparison.Ordinal).ShouldBeFalse();
+
+        // CARD-0341: the env reaches the child through the script, never through the typed line.
+        fake.LastLaunchScriptContent.ShouldNotBeNull();
+        fake.LastLaunchScriptContent.ShouldContain(
+            $"Set-Item -LiteralPath 'Env:ANTIPHON_LAUNCH_SECRET' -Value '{secret}'");
+        fake.LastLaunchScriptContent.IndexOf("Set-Item", StringComparison.Ordinal)
+            .ShouldBeLessThan(fake.LastLaunchScriptContent.IndexOf("& '", StringComparison.Ordinal));
 
         fake.Requests.Any(r => r.GetProperty("method").GetString() == "agent.start")
             .ShouldBeFalse("CARD-0187: production launch never calls agent.start");
@@ -137,12 +216,20 @@ public class HerdrLaunchShapeTests
         var sessionId = Guid.NewGuid();
         var scriptPath = HerdrLaunchScript.PathFor(settings.SessionLogPath, sessionId);
 
+        var secret = $"env-secret-{Guid.NewGuid():N}";
+
         await using var runtime = BuildRuntime(settings, fake);
         var ex = await Should.ThrowAsync<HerdrLaunchException>(() =>
-            StartAsync(runtime, sessionId, settings.SessionLogPath, agentKind: HerdrAgentKinds.Claude));
+            StartAsync(
+                runtime, sessionId, settings.SessionLogPath, agentKind: HerdrAgentKinds.Claude,
+                env: new Dictionary<string, string> { ["ANTIPHON_LAUNCH_SECRET"] = secret }));
         ex.Message.ShouldContain("grok");
         ex.Message.ShouldContain("claude");
         File.Exists(scriptPath).ShouldBeTrue("script is kept on failure");
+        // CARD-0341: kept for diagnosis, but never with the env values in it.
+        var kept = File.ReadAllText(scriptPath);
+        kept.ShouldContain($"Set-Item -LiteralPath 'Env:ANTIPHON_LAUNCH_SECRET' -Value '{HerdrLaunchScript.RedactedValue}'");
+        kept.ShouldNotContain(secret);
         AssertTornDown(fake, scriptPath);
         DeleteLogRoot(settings.SessionLogPath);
     }
@@ -504,6 +591,53 @@ public class HerdrLaunchShapeTests
     }
 
     [Test]
+    public async Task Relaunch_in_place_reapplies_env_and_clears_the_names_it_no_longer_carries()
+    {
+        // CARD-0341: a reused pane (CARD-0224) gets no tab.create env; the script must carry it.
+        await using var fake = new FakeHerdrServer();
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        var sessionId = Guid.NewGuid();
+
+        await using var runtime = BuildRuntime(settings, fake);
+        await StartAsync(runtime, sessionId, settings.SessionLogPath, env: new Dictionary<string, string>
+        {
+            ["X_LLM_PROJECT"] = "Old",
+            ["STALE_ONLY_FIRST"] = "1",
+        });
+        var paneId = fake.RequireAgentPaneId();
+        HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId))!
+            .LaunchEnvNames.ShouldBe(["STALE_ONLY_FIRST", "X_LLM_PROJECT"]);
+
+        runtime.SweepVanishedSessions(new DeadProcessProbe());
+        HerdrLastPane.TryLoad(settings.SessionLogPath, sessionId)!
+            .LaunchEnvNames.ShouldBe(["STALE_ONLY_FIRST", "X_LLM_PROJECT"]);
+        fake.ClearDetectedAgent(paneId);
+        fake.SetPaneProcessInfo(paneId, shellPid: 1);
+        var afterFirst = fake.Requests.Count;
+
+        var dto = await StartAsync(runtime, sessionId, settings.SessionLogPath, env: new Dictionary<string, string>
+        {
+            ["X_LLM_PROJECT"] = "New",
+        });
+        dto.Status.ShouldBe("Running");
+        fake.Requests.Skip(afterFirst).Any(r => r.GetProperty("method").GetString() is "tab.create" or "pane.split")
+            .ShouldBeFalse();
+
+        var script = fake.LastLaunchScriptContent.ShouldNotBeNull();
+        script.ShouldContain("Remove-Item -LiteralPath 'Env:STALE_ONLY_FIRST' -ErrorAction SilentlyContinue");
+        script.ShouldContain("Set-Item -LiteralPath 'Env:X_LLM_PROJECT' -Value 'New'");
+        script.ShouldNotContain("'Old'");
+        script.ShouldNotContain("Set-Item -LiteralPath 'Env:STALE_ONLY_FIRST'");
+        HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId))!
+            .LaunchEnvNames.ShouldBe(["X_LLM_PROJECT"]);
+
+        await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
+    [Test]
     public async Task Fresh_workspace_uses_the_created_root_pane()
     {
         await using var fake = new FakeHerdrServer();
@@ -567,7 +701,8 @@ public class HerdrLaunchShapeTests
 
         fake.LastLaunchScriptContent.ShouldNotBeNull();
         fake.LastLaunchScriptContent.ShouldContain($"Set-Location -LiteralPath {HerdrLaunchScript.Quote(requestCwd)}");
-        fake.LastLaunchScriptContent.ShouldNotContain(secret);
+        fake.LastLaunchScriptContent.ShouldContain(
+            $"Set-Item -LiteralPath 'Env:ANTIPHON_LAUNCH_SECRET' -Value '{secret}'");
         foreach (var text in fake.Requests
                      .Where(r => r.GetProperty("method").GetString() == "pane.send_text")
                      .Select(r => r.GetProperty("params").GetProperty("text").GetString() ?? ""))

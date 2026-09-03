@@ -286,11 +286,13 @@ internal sealed class HerdrPaneChild : ISessionChild
         string sidecarWorkspaceId;
         string? createdRootTabId = null;
         var useRootWorkingDirectory = false;
+        IReadOnlyList<string>? previousEnvNames = null;
         if (target.Kind == TargetPaneKind.Relaunch)
         {
             tabId = target.TabId;
             paneId = target.PaneId;
             sidecarWorkspaceId = target.WorkspaceId;
+            previousEnvNames = target.PreviousEnvNames;
         }
         else if (ensured.CreatedRootTab is not null && ensured.CreatedRootPane is not null)
         {
@@ -308,7 +310,7 @@ internal sealed class HerdrPaneChild : ISessionChild
 
         return await CompleteTypedLaunchAsync(
             request, opts, expectedKind, sidecarWorkspaceId, tabId, paneId, ct,
-            createdRootTabId, useRootWorkingDirectory);
+            createdRootTabId, useRootWorkingDirectory, previousEnvNames);
     }
 
     private enum TargetPaneKind { Allocate, Relaunch, Adopt }
@@ -320,7 +322,9 @@ internal sealed class HerdrPaneChild : ISessionChild
         string PaneId,
         Guid? LastPaneSessionId = null,
         HerdrPaneProcess? Occupant = null,
-        int? ShellPid = null);
+        int? ShellPid = null,
+        // CARD-0341: env names the previous launch script set on this pane's shell (relaunch arm).
+        IReadOnlyList<string>? PreviousEnvNames = null);
 
     /// <summary>
     /// CARD-0224: decide whether this launch reuses a standing last-pane, adopts a live occupant,
@@ -385,7 +389,8 @@ internal sealed class HerdrPaneChild : ISessionChild
                 candidate.TabId,
                 candidate.PaneId,
                 candidate.SessionId,
-                ShellPid: proc.ShellPid);
+                ShellPid: proc.ShellPid,
+                PreviousEnvNames: candidate.LaunchEnvNames);
         }
 
         if (string.Equals(pane.Agent, expectedKind, StringComparison.Ordinal)
@@ -542,7 +547,8 @@ internal sealed class HerdrPaneChild : ISessionChild
         string paneId,
         CancellationToken ct,
         string? createdRootTabId = null,
-        bool useRootWorkingDirectory = false)
+        bool useRootWorkingDirectory = false,
+        IReadOnlyList<string>? previousEnvNames = null)
     {
         _paneId = paneId;
 
@@ -558,18 +564,39 @@ internal sealed class HerdrPaneChild : ISessionChild
 
         var shellPid = await RequirePowerShellShellAsync(paneId, ct);
 
+        // CARD-0341: the script is the only carrier of env into a reused pane, so it applies
+        // request.Env itself and removes what the previous launch set but this one does not carry.
         var scriptPath = HerdrLaunchScript.PathFor(_settings.SessionLogPath, request.SessionId);
+        var workingDirectory = useRootWorkingDirectory ? request.Cwd : null;
+        var clearNames = StaleEnvNames(previousEnvNames, request.Env);
         HerdrLaunchScript.Write(
             scriptPath,
             request.Exe,
             request.Args,
-            useRootWorkingDirectory ? request.Cwd : null);
+            request.Env,
+            workingDirectory,
+            clearNames);
+        if (clearNames.Count > 0)
+        {
+            _logger.LogInformation(
+                "Relaunch into pane {PaneId} for session {SessionId} clears {Count} env name(s) the previous launch set: {Names}",
+                paneId, request.SessionId, clearNames.Count, string.Join(", ", clearNames));
+        }
 
-        var typed = HerdrLaunchScript.TypedCommand(scriptPath);
-        await _client.PaneSendTextAsync(paneId, typed, ct);
-        await _client.PaneSendKeysAsync(paneId, ["enter"], ct);
+        try
+        {
+            var typed = HerdrLaunchScript.TypedCommand(scriptPath);
+            await _client.PaneSendTextAsync(paneId, typed, ct);
+            await _client.PaneSendKeysAsync(paneId, ["enter"], ct);
 
-        await WaitForExpectedAgentAsync(paneId, expectedKind, ct);
+            await WaitForExpectedAgentAsync(paneId, expectedKind, ct);
+        }
+        catch
+        {
+            // The script is kept for diagnosis (CARD-0187), but never with the env values in it.
+            TryRedactLaunchScript(scriptPath, request, workingDirectory, clearNames);
+            throw;
+        }
 
         await TryApplyAgentNameAsync(paneId, opts.AgentSlug, ct);
 
@@ -662,8 +689,54 @@ internal sealed class HerdrPaneChild : ISessionChild
             AgentKind = expectedKind,
             Origin = origin,
             UpdatedAtUtc = launchedAt,
+            LaunchEnvNames = request.Env is { Count: > 0 }
+                ? request.Env.Keys.Order(StringComparer.Ordinal).ToList()
+                : null,
         };
         _sidecar.SaveAtomic(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, request.SessionId));
+    }
+
+    /// <summary>
+    /// CARD-0341: names the previous launch script set on this pane's shell that the current
+    /// request does not carry (Windows env names compare case-insensitively).
+    /// </summary>
+    internal static IReadOnlyList<string> StaleEnvNames(
+        IReadOnlyList<string>? previousEnvNames,
+        IReadOnlyDictionary<string, string>? currentEnv)
+    {
+        if (previousEnvNames is null || previousEnvNames.Count == 0)
+            return Array.Empty<string>();
+
+        var current = new HashSet<string>(currentEnv?.Keys ?? [], StringComparer.OrdinalIgnoreCase);
+        return previousEnvNames
+            .Where(n => !string.IsNullOrEmpty(n) && !current.Contains(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private void TryRedactLaunchScript(
+        string scriptPath,
+        RunnerLaunchRequest request,
+        string? workingDirectory,
+        IReadOnlyCollection<string> clearNames)
+    {
+        try
+        {
+            HerdrLaunchScript.Write(
+                scriptPath,
+                request.Exe,
+                request.Args,
+                request.Env,
+                workingDirectory,
+                clearNames,
+                redactEnv: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(ex, "Could not redact herdr launch script {Path}; deleting it instead", scriptPath);
+            TryDeleteLaunchScript(scriptPath);
+        }
     }
 
     /// <summary>

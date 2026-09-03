@@ -36,6 +36,11 @@ public sealed record HerdrPaneSidecar
     /// </summary>
     public string? Origin { get; init; }
     public DateTime UpdatedAtUtc { get; init; }
+    /// <summary>
+    /// CARD-0341: the NAMES (never values) the launch script set on the pane shell, so a later
+    /// relaunch into the same pane can remove the ones it no longer carries. Null on pre-field files.
+    /// </summary>
+    public IReadOnlyList<string>? LaunchEnvNames { get; init; }
 
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
     {

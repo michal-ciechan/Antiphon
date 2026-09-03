@@ -26,6 +26,8 @@ public sealed record HerdrLastPane
     public required string Origin { get; init; }
     public required string ExitReason { get; init; }
     public required DateTime ExitedAtUtc { get; init; }
+    /// <summary>CARD-0341: env NAMES the last launch script set on this pane's shell (see <see cref="HerdrPaneSidecar.LaunchEnvNames"/>).</summary>
+    public IReadOnlyList<string>? LaunchEnvNames { get; init; }
 
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
     {
@@ -53,6 +55,7 @@ public sealed record HerdrLastPane
             : sidecar.Origin,
         ExitReason = exitReason,
         ExitedAtUtc = DateTime.UtcNow,
+        LaunchEnvNames = sidecar.LaunchEnvNames,
     };
 
     /// <summary>Temp + rename, so a concurrent restore never observes a torn file.</summary>
