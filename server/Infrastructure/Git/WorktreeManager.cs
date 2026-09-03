@@ -146,6 +146,125 @@ public sealed class WorktreeManager : IWorktreeManager
         return worktrees;
     }
 
+    public async Task<IReadOnlyList<DelegateWorktreeScanEntry>> ScanDelegateWorktreesAsync(
+        string repoPath, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(repoPath) || !Directory.Exists(repoPath))
+            return [];
+
+        var repoFullPath = Path.GetFullPath(repoPath);
+        var list = await RunGitAsync(repoFullPath, ["worktree", "list", "--porcelain"], ct, throwOnError: false);
+        if (list.ExitCode != 0)
+        {
+            _logger.LogWarning(
+                "Worktree health scan skipped {RepoPath}: git worktree list failed ({ExitCode}): {StdErr}",
+                repoFullPath,
+                list.ExitCode,
+                list.Stderr.Trim());
+            return [];
+        }
+
+        var result = new List<DelegateWorktreeScanEntry>();
+        var registeredBranches = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var entry in ParseWorktreeList(list.Stdout))
+        {
+            var branch = NormalizeBranchName(entry.Branch);
+            if (!TryParseDelegateTaskBranch(branch, out var shortId))
+                continue;
+
+            registeredBranches.Add(branch);
+            var path = Path.GetFullPath(entry.Path);
+            var directoryExists = Directory.Exists(path);
+            var gitMarker = Path.Combine(path, ".git");
+            result.Add(new DelegateWorktreeScanEntry(
+                repoFullPath,
+                path,
+                branch,
+                shortId,
+                Registered: true,
+                Locked: entry.Locked,
+                LockReason: entry.LockReason,
+                DirectoryExists: directoryExists,
+                GitFileExists: File.Exists(gitMarker) || Directory.Exists(gitMarker)));
+        }
+
+        var branches = await RunGitAsync(
+            repoFullPath, ["branch", "--list", "feat/card-task-*"], ct, throwOnError: false);
+        if (branches.ExitCode == 0)
+        {
+            foreach (var raw in branches.Stdout.Replace("\r\n", "\n", StringComparison.Ordinal)
+                         .Replace('\r', '\n')
+                         .Split('\n'))
+            {
+                var name = raw.Trim().TrimStart('*').Trim();
+                if (!TryParseDelegateTaskBranch(name, out var shortId))
+                    continue;
+                if (registeredBranches.Contains(name))
+                    continue;
+
+                result.Add(new DelegateWorktreeScanEntry(
+                    repoFullPath,
+                    Path: string.Empty,
+                    Branch: name,
+                    ShortId: shortId,
+                    Registered: false,
+                    Locked: false,
+                    LockReason: null,
+                    DirectoryExists: false,
+                    GitFileExists: false));
+            }
+        }
+
+        return result;
+    }
+
+    public async Task<IReadOnlyList<string>> ListKnownDelegateRepoPathsAsync(CancellationToken ct)
+    {
+        var worktreeRoot = ResolveWorktreeRoot(create: false);
+        if (!Directory.Exists(worktreeRoot))
+            return [];
+
+        var comparer = OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+        var repos = new HashSet<string>(comparer);
+        foreach (var record in await LoadMetadataRecordsAsync(worktreeRoot, ct))
+        {
+            if (!string.IsNullOrWhiteSpace(record.Metadata.RepoPath)
+                && Directory.Exists(record.Metadata.RepoPath))
+            {
+                repos.Add(Path.GetFullPath(record.Metadata.RepoPath));
+            }
+        }
+
+        return repos.ToList();
+    }
+
+    internal static bool TryParseDelegateTaskBranch(string? branch, out string shortId)
+    {
+        shortId = string.Empty;
+        if (string.IsNullOrWhiteSpace(branch))
+            return false;
+
+        const string prefix = "feat/card-task-";
+        var name = NormalizeBranchName(branch);
+        if (!name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var rest = name[prefix.Length..];
+        if (rest.Length != 8)
+            return false;
+        foreach (var c in rest)
+        {
+            if (!char.IsAsciiHexDigit(c))
+                return false;
+        }
+
+        shortId = rest.ToLowerInvariant();
+        return true;
+    }
+
     public async Task RemoveAsync(string repoPath, string worktreePath, CancellationToken ct)
     {
         var result = await TryRemoveAsync(repoPath, worktreePath, mergedInto: null, ct);

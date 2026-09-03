@@ -48,6 +48,21 @@ public class WorktreeManagerTests
     }
 
     [Test]
+    public void TryParseDelegateTaskBranch_accepts_feat_card_task_short_ids_only()
+    {
+        WorktreeManager.TryParseDelegateTaskBranch("feat/card-task-aabbccdd", out var shortId)
+            .ShouldBeTrue();
+        shortId.ShouldBe("aabbccdd");
+        WorktreeManager.TryParseDelegateTaskBranch("refs/heads/feat/card-task-AABBCCDD", out shortId)
+            .ShouldBeTrue();
+        shortId.ShouldBe("aabbccdd");
+        WorktreeManager.TryParseDelegateTaskBranch("feat/card-E03-003", out _).ShouldBeFalse();
+        WorktreeManager.TryParseDelegateTaskBranch("feat/card-task-nothexxx", out _).ShouldBeFalse();
+        WorktreeManager.TryParseDelegateTaskBranch("feat/card-task-short", out _).ShouldBeFalse();
+        WorktreeManager.TryParseDelegateTaskBranch(null, out _).ShouldBeFalse();
+    }
+
+    [Test]
     public void ParseWorktreeList_captures_a_bare_locked_line()
     {
         const string porcelain = """
@@ -236,6 +251,64 @@ public class WorktreeManagerGitIntegrationTests
                 .ShouldBe(string.Empty);
             var metadataDir = Path.Combine(env.WorktreeRoot, ".antiphon", "worktrees");
             Directory.EnumerateFiles(metadataDir, "*.json").ShouldBeEmpty();
+        }
+        finally
+        {
+            env.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task ScanDelegateWorktrees_names_a_locked_registration_whose_directory_is_gone()
+    {
+        await GitTestEnvironment.SkipIfGitUnavailableAsync();
+        var env = await GitTestEnvironment.CreateAsync();
+
+        try
+        {
+            var manager = BuildManager(env.WorktreeRoot);
+            var worktree = await manager.CreateAsync(env.RepoPath, "task-aabbccdd", "HEAD", CancellationToken.None);
+            await GitTestEnvironment.RunGitAsync(env.RepoPath, "worktree", "lock", "--reason", "initializing", worktree.Path);
+            Directory.Delete(worktree.Path, recursive: true);
+
+            var scan = await manager.ScanDelegateWorktreesAsync(env.RepoPath, CancellationToken.None);
+            var entry = scan.ShouldHaveSingleItem();
+            entry.Branch.ShouldBe("feat/card-task-aabbccdd");
+            entry.ShortId.ShouldBe("aabbccdd");
+            entry.Registered.ShouldBeTrue();
+            entry.Locked.ShouldBeTrue();
+            entry.LockReason.ShouldBe("initializing");
+            entry.DirectoryExists.ShouldBeFalse();
+            entry.GitFileExists.ShouldBeFalse();
+
+            Directory.Exists(worktree.Path).ShouldBeFalse();
+            (await GitTestEnvironment.RunGitAsync(env.RepoPath, "worktree", "list", "--porcelain"))
+                .ShouldContain("feat/card-task-aabbccdd");
+        }
+        finally
+        {
+            env.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task ScanDelegateWorktrees_names_a_dangling_task_branch_and_ignores_card_spawn()
+    {
+        await GitTestEnvironment.SkipIfGitUnavailableAsync();
+        var env = await GitTestEnvironment.CreateAsync();
+
+        try
+        {
+            var manager = BuildManager(env.WorktreeRoot);
+            await manager.CreateAsync(env.RepoPath, "E03-scan", "HEAD", CancellationToken.None);
+            await GitTestEnvironment.RunGitAsync(env.RepoPath, "branch", "feat/card-task-cafebabe");
+
+            var scan = await manager.ScanDelegateWorktreesAsync(env.RepoPath, CancellationToken.None);
+            var entry = scan.ShouldHaveSingleItem();
+            entry.Branch.ShouldBe("feat/card-task-cafebabe");
+            entry.Registered.ShouldBeFalse();
+            entry.DirectoryExists.ShouldBeFalse();
+            scan.ShouldNotContain(e => e.Branch.Contains("E03-scan", StringComparison.Ordinal));
         }
         finally
         {

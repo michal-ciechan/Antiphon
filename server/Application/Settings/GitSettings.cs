@@ -26,4 +26,10 @@ public class GitSettings
     /// 30 s left the registration in place and the land was reported as refused.
     /// </summary>
     public int WorktreeRemoveTimeoutSeconds { get; set; } = 300;
+
+    /// <summary>
+    /// CARD-0147 S3: how often the detection-only worktree health sweep runs. Must be positive.
+    /// The sweep never prunes, removes, or fails a task.
+    /// </summary>
+    public int WorktreeHealthIntervalSeconds { get; set; } = 60;
 }

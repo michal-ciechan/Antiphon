@@ -69,6 +69,7 @@ public class AppDbContext : DbContext
     public DbSet<Schedule> Schedules => Set<Schedule>();
     public DbSet<ScheduleFire> ScheduleFires => Set<ScheduleFire>();
     public DbSet<DiagnosisRecord> Diagnoses => Set<DiagnosisRecord>();
+    public DbSet<WorktreeHealthFinding> WorktreeHealthFindings => Set<WorktreeHealthFinding>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -1775,6 +1776,31 @@ public class AppDbContext : DbContext
             entity.HasOne<AgentTask>()
                 .WithMany()
                 .HasForeignKey(d => d.DiagnoseTaskId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<WorktreeHealthFinding>(entity =>
+        {
+            entity.ToTable("WorktreeHealthFindings");
+            entity.HasKey(f => f.Id);
+            entity.Property(f => f.RepoPath).IsRequired().HasMaxLength(WorktreeHealthFinding.RepoPathMaxLength);
+            entity.Property(f => f.Branch).IsRequired().HasMaxLength(WorktreeHealthFinding.BranchMaxLength);
+            entity.Property(f => f.Path).IsRequired().HasMaxLength(WorktreeHealthFinding.PathMaxLength);
+            entity.Property(f => f.Shape).IsRequired();
+            entity.Property(f => f.Detail).IsRequired().HasMaxLength(WorktreeHealthFinding.DetailMaxLength);
+            entity.Property(f => f.FirstSeenAt).IsRequired();
+            entity.Property(f => f.LastSeenAt).IsRequired();
+
+            entity.HasIndex(f => new { f.RepoPath, f.Branch, f.Shape })
+                .IsUnique()
+                .HasFilter("\"ClearedAt\" IS NULL")
+                .HasDatabaseName("IX_WorktreeHealthFindings_RepoPath_Branch_Shape_Uncleared");
+            entity.HasIndex(f => f.TaskId).HasDatabaseName("IX_WorktreeHealthFindings_TaskId");
+
+            entity.HasOne<AgentTask>()
+                .WithMany()
+                .HasForeignKey(f => f.TaskId)
+                .IsRequired(false)
                 .OnDelete(DeleteBehavior.SetNull);
         });
 

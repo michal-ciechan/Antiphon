@@ -25,4 +25,19 @@ public interface IWorktreeManager
     Task TouchAsync(string worktreePath, CancellationToken ct);
 
     Task<int> PruneStaleAsync(CancellationToken ct);
+
+    /// <summary>
+    /// CARD-0147 S3: porcelain plus <c>git branch --list feat/card-task-*</c> for one repo.
+    /// Default empty so existing test fakes compile unchanged. Detection only — never prune.
+    /// </summary>
+    Task<IReadOnlyList<DelegateWorktreeScanEntry>> ScanDelegateWorktreesAsync(
+        string repoPath, CancellationToken ct)
+        => Task.FromResult<IReadOnlyList<DelegateWorktreeScanEntry>>([]);
+
+    /// <summary>
+    /// Repo paths recorded in <c>.antiphon/worktrees/*.json</c> under the worktree base.
+    /// Default empty so existing test fakes compile unchanged.
+    /// </summary>
+    Task<IReadOnlyList<string>> ListKnownDelegateRepoPathsAsync(CancellationToken ct)
+        => Task.FromResult<IReadOnlyList<string>>([]);
 }

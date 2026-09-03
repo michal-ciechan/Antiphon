@@ -297,6 +297,7 @@ try
     builder.Services.AddSingleton<AreaMapLoader>();
     builder.Services.AddScoped<DelegationWorktreeService>();
     builder.Services.AddScoped<DelegationOpenGate>();
+    builder.Services.AddScoped<WorktreeHealthService>();
     builder.Services.AddScoped<AgentTaskService>();
     builder.Services.AddScoped<AgentTaskPipelineStatusService>();
     builder.Services.AddSingleton<AgentTaskLandQueue>();
@@ -552,6 +553,7 @@ try
     builder.Services.AddHostedService<GitHubMonitorService>();
     builder.Services.AddHostedService<ChangeDetectionService>();
     builder.Services.AddHostedService<WorktreeJanitorHostedService>();
+    builder.Services.AddHostedService<WorktreeHealthHostedService>();
     builder.Services.AddHostedService<RunAttemptStallHostedService>();
     builder.Services.AddHostedService<WatchdogHostedService>();
     builder.Services.AddHostedService<SessionReconciliationHostedService>();

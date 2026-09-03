@@ -127,15 +127,46 @@ public sealed class DelegationOpenGate
     }
 
     /// <summary>
-    /// CARD-0147 S3 fills this from uncleared <c>WorktreeHealthFinding</c> rows.
-    /// Create must not talk to git; until that table exists, stuck labels are empty.
+    /// CARD-0147 S3: uncleared <c>WorktreeHealthFinding</c> rows for the occupants.
+    /// Create must not talk to git — the sweep (or <c>delegate.ps1 -WorktreeHealth</c>) writes
+    /// the rows; this only reads them.
     /// </summary>
-    private static Task<IReadOnlyDictionary<Guid, string>> LoadStuckLabelsAsync(
+    private async Task<IReadOnlyDictionary<Guid, string>> LoadStuckLabelsAsync(
         IReadOnlyList<Guid> taskIds,
         CancellationToken ct)
     {
-        _ = taskIds;
-        _ = ct;
-        return Task.FromResult<IReadOnlyDictionary<Guid, string>>(new Dictionary<Guid, string>());
+        if (taskIds.Count == 0)
+            return new Dictionary<Guid, string>();
+
+        var rows = await _db.WorktreeHealthFindings
+            .AsNoTracking()
+            .Where(f => f.ClearedAt == null && f.TaskId != null && taskIds.Contains(f.TaskId.Value))
+            .Select(f => new { TaskId = f.TaskId!.Value, f.Detail, f.Shape })
+            .ToListAsync(ct);
+
+        return rows
+            .GroupBy(r => r.TaskId)
+            .ToDictionary(
+                g => g.Key,
+                g => string.Join("; ", g
+                    .OrderBy(x => x.Shape)
+                    .Select(x => CompactStuck(x.Detail))
+                    .Distinct(StringComparer.Ordinal)));
+    }
+
+    internal static string CompactStuck(string detail)
+    {
+        // Occupant labels are the parenthetical after "stuck:". Keep them short: drop the
+        // branch prefix when the 409 already names the short id.
+        const string prefix = "feat/card-task-";
+        var text = detail.Trim();
+        if (text.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            var space = text.IndexOf(' ');
+            if (space > 0 && space + 1 < text.Length)
+                text = text[(space + 1)..];
+        }
+
+        return text.Trim().TrimStart(';').Trim();
     }
 }

@@ -65,6 +65,12 @@ public static class AgentTaskEndpoints
             return Results.Ok(await service.ListAreasAsync(directory, caller, ct));
         });
 
+        // CARD-0147 S3. Declared BEFORE /{id} so "worktree-health" is never read as a task id.
+        // Detection only: upserts WorktreeHealthFinding rows and returns them. Never prune.
+        tasks.MapPost("/worktree-health", async (
+            WorktreeHealthService health,
+            CancellationToken ct) => Results.Ok(await health.SweepAsync(ct)));
+
         // {id} is a string, not :guid — a delegate only ever SEES 8-char short ids (the completion
         // note, the board chip), so -Status and -Reply must accept them or they are unusable.
         tasks.MapGet("/{id}", async (

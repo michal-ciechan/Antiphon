@@ -356,6 +356,54 @@ public class AgentTaskConcurrencyLimitTests
     }
 
     [Test]
+    public async Task a_stuck_finding_is_named_on_the_occupant()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var open = await SeedOpenAsync(db, workspace.Path,
+            (AgentTaskRole.Plan, AgentTaskStatus.Working),
+            (AgentTaskRole.Code, AgentTaskStatus.Queued),
+            (AgentTaskRole.Debug, AgentTaskStatus.Dispatched));
+        var stuckTask = open[0];
+        db.WorktreeHealthFindings.Add(new WorktreeHealthFinding
+        {
+            Id = Guid.NewGuid(),
+            RepoPath = workspace.Path,
+            Branch = $"feat/card-task-{DelegationReportFormatter.Short(stuckTask.Id)}",
+            Path = Path.Combine(workspace.Path, "gone"),
+            TaskId = stuckTask.Id,
+            Shape = WorktreeHealthShape.LockedMissing,
+            Detail = $"feat/card-task-{DelegationReportFormatter.Short(stuckTask.Id)} locked initializing; directory gone",
+            FirstSeenAt = DateTime.UtcNow,
+            LastSeenAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+        var goal = Unique("stuck-fourth");
+
+        var ex = await Should.ThrowAsync<ConcurrencyLimitException>(
+            () => CreateService(db).CreateAsync(
+                Request(goal, AgentTaskRole.Test),
+                ManualCaller(workspace.Path),
+                CancellationToken.None));
+
+        var occupant = ex.Concurrency.Open.Single(o => o.TaskId == stuckTask.Id);
+        occupant.Stuck.ShouldNotBeNull();
+        occupant.Stuck.ShouldContain("locked initializing");
+        occupant.Stuck.ShouldContain("directory gone");
+        ex.Message.ShouldContain("stuck:");
+        ex.Concurrency.Open.Where(o => o.TaskId != stuckTask.Id).ShouldAllBe(o => o.Stuck == null);
+    }
+
+    [Test]
+    public void compact_stuck_drops_the_branch_prefix()
+    {
+        DelegationOpenGate.CompactStuck(
+                "feat/card-task-aabbccdd locked initializing; directory C:\\trees\\x is gone")
+            .ShouldBe("locked initializing; directory C:\\trees\\x is gone");
+    }
+
+    [Test]
     public async Task a_plan_and_a_code_together_are_under_the_absolute_cap()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
