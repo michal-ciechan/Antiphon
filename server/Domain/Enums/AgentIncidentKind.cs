@@ -458,4 +458,12 @@ public enum AgentIncidentKind
     /// the store and the <c>grok login</c> remedy.
     /// </summary>
     ProviderSignInRequired = 45,
+
+    /// <summary>
+    /// CARD-0340: a <c>Starting</c> row the runner still served after this process died, so the
+    /// launch was resumed on the existing pty-host (Warning) or failed loudly because its extras
+    /// were not durable (Error). The always-on supervisor's existing restart ladder relaunches
+    /// the Error arm with full notes.
+    /// </summary>
+    LaunchInterruptedByRestart = 46,
 }

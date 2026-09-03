@@ -8,7 +8,7 @@ using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
-public sealed class RunnerCodexAdapter : IAgentProtocolAdapter
+public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProtocolAdapter
 {
     // How long after a screen-level done signal to keep polling for the trailing TurnEnd row, so a
     // verdict the transcript could have made is not made from the screen instead. Codex flushes
@@ -56,6 +56,14 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter
             throw new InvalidOperationException("RunnerCodexAdapter already started.");
         _started = true;
         await _terminal.StartAsync(spec, ct);
+    }
+
+    public async Task AttachAsync(Guid sessionId, CancellationToken ct)
+    {
+        if (_started)
+            throw new InvalidOperationException("RunnerCodexAdapter already started.");
+        _started = true;
+        await _terminal.AttachAsync(sessionId, ct);
     }
 
     public async Task<bool> KillAsync(TimeSpan timeout, CancellationToken ct) =>

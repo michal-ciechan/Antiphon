@@ -152,6 +152,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         services.AddScoped<OrchestratorService>();
         services.AddSingleton<OrchestratorControlState>();
         services.AddSingleton<AgentSessionLaunchQueue>();
+        services.AddSingleton<ILaunchOwnership>(sp => sp.GetRequiredService<AgentSessionLaunchQueue>());
         services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(
             new OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
             {

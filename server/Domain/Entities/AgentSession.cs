@@ -51,6 +51,14 @@ public class AgentSession
     public SessionLaunchBlock? LaunchBlock { get; set; }
 
     /// <summary>
+    /// When this process last resumed an interrupted launch on this row (CARD-0340). Null on
+    /// every pre-existing row and on every launch that became ready without a restart. The
+    /// delivery watchdog measures its window from <c>max(DispatchedAt, LaunchResumedAt)</c>
+    /// so a resume does not hide the surviving brief by restamping <c>DispatchedAt</c>.
+    /// </summary>
+    public DateTime? LaunchResumedAt { get; set; }
+
+    /// <summary>
     /// Highest transcript sequence for which compaction recovery has already run. The durable
     /// dedupe anchor: TranscriptTailer restarts at offset 0 on every runner restart/adoption and
     /// republishes ALL historical events — an incident-row check would be defeated by incident

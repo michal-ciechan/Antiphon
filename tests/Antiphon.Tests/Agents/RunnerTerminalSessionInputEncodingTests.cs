@@ -34,6 +34,54 @@ public class RunnerTerminalSessionInputEncodingTests
     }
 
     [Test]
+    public async Task AttachAsync_copies_StartedAt_and_Pid_and_polls_Exited()
+    {
+        var startedAt = DateTime.UtcNow.AddMinutes(-3);
+        var client = new RecordingRunnerClient
+        {
+            GetStatus = "Running",
+            GetPid = 4242,
+            GetStartedAt = startedAt,
+        };
+        var sessionId = Guid.NewGuid();
+        var session = new RunnerTerminalSession(client);
+
+        await session.AttachAsync(sessionId, CancellationToken.None);
+
+        session.SessionId.ShouldBe(sessionId);
+        session.Pid.ShouldBe(4242);
+        session.StartedAt.ShouldBe(startedAt);
+        session.Exited.IsCompleted.ShouldBeFalse();
+
+        client.GetStatus = "Exited";
+        client.GetExitCode = 0;
+        var exit = await session.Exited.WaitAsync(TimeSpan.FromSeconds(2));
+        exit.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task AttachAsync_throws_when_the_runner_session_is_not_Running()
+    {
+        var client = new RecordingRunnerClient { GetStatus = "Exited" };
+        var session = new RunnerTerminalSession(client);
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(
+            () => session.AttachAsync(Guid.NewGuid(), CancellationToken.None));
+        ex.Message.ShouldContain("Exited");
+    }
+
+    [Test]
+    public async Task AttachAsync_throws_when_the_session_is_unknown()
+    {
+        var client = new RecordingRunnerClient { GetThrows = new KeyNotFoundException("missing") };
+        var session = new RunnerTerminalSession(client);
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(
+            () => session.AttachAsync(Guid.NewGuid(), CancellationToken.None));
+        ex.Message.ShouldContain("does not know");
+    }
+
+    [Test]
     public async Task SendLineAsync_leaves_single_line_prompts_unwrapped()
     {
         var client = new RecordingRunnerClient();
@@ -59,6 +107,11 @@ public class RunnerTerminalSessionInputEncodingTests
     private sealed class RecordingRunnerClient : ISessionRunnerClient
     {
         public List<string> Inputs { get; } = [];
+        public string GetStatus { get; set; } = "Running";
+        public int? GetPid { get; set; } = 1234;
+        public DateTime GetStartedAt { get; set; } = DateTime.UtcNow;
+        public int? GetExitCode { get; set; }
+        public Exception? GetThrows { get; set; }
 
         public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct) =>
             Task.FromResult(new SessionRunnerSessionDto(
@@ -68,8 +121,10 @@ public class RunnerTerminalSessionInputEncodingTests
             Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
 
         public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
-            Task.FromResult(new SessionRunnerSessionDto(
-                sessionId, 1234, DateTime.UtcNow, "Running", null, AgentExitReason.Unknown, 0));
+            GetThrows is not null
+                ? Task.FromException<SessionRunnerSessionDto>(GetThrows)
+                : Task.FromResult(new SessionRunnerSessionDto(
+                    sessionId, GetPid, GetStartedAt, GetStatus, GetExitCode, AgentExitReason.Unknown, 0));
 
         public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct) =>
             Task.FromResult(new SessionRunnerBufferDto(sessionId, "", 0));

@@ -74,6 +74,11 @@ public sealed class AgentTaskDispatcher
     private readonly RoutingPinService? _routingPins;
     // CARD-0090. Optional: absent, chain tasks take today's Held skip and are never re-walked.
     private readonly ComplexityRoutingService? _complexityRouting;
+    // CARD-0340 S2: the watchdog clock is max(DispatchedAt, LaunchResumedAt), and a Starting
+    // session the runner still serves is deferred while launch resume is on. Optional so
+    // predating harnesses keep today's fail; a null runner also disables the deferral.
+    private readonly bool _reconciliationEnabled;
+    private readonly bool _launchResumeEnabled;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -121,7 +126,8 @@ public sealed class AgentTaskDispatcher
         ModelAvailability? modelAvailability = null,
         BootWedgeRelaunchState? bootWedgePending = null,
         RoutingPinService? routingPins = null,
-        ComplexityRoutingService? complexityRouting = null)
+        ComplexityRoutingService? complexityRouting = null,
+        IOptions<SessionReconciliationSettings>? reconciliation = null)
     {
         _complexityRouting = complexityRouting;
         _routingPins = routingPins;
@@ -153,6 +159,8 @@ public sealed class AgentTaskDispatcher
         _timeProvider = timeProvider;
         _logger = logger;
         _quotaGate = quotaGate;
+        _reconciliationEnabled = reconciliation?.Value.Enabled ?? true;
+        _launchResumeEnabled = reconciliation?.Value.LaunchResumeEnabled ?? true;
     }
 
     /// <summary>
@@ -884,10 +892,64 @@ public sealed class AgentTaskDispatcher
             .ToListAsync(ct);
 
         var failed = 0;
+        var sessionIds = suspects.Select(t => t.AgentSessionId!.Value).Distinct().ToList();
+        var sessionById = (await _db.AgentSessions.AsNoTracking()
+                .Where(s => sessionIds.Contains(s.Id))
+                .Select(s => new { s.Id, s.Status, s.LaunchResumedAt })
+                .ToListAsync(ct))
+            .ToDictionary(s => s.Id);
+
+        IReadOnlyList<SessionRunnerSessionDto>? runnerList = null;
+        var runnerListFetched = false;
+
         foreach (var task in suspects)
         {
             ct.ThrowIfCancellationRequested();
             var sessionId = task.AgentSessionId!.Value;
+            sessionById.TryGetValue(sessionId, out var sessionSnap);
+
+            // CARD-0340 S2: a resumed launch's watchdog clock is the resume, not dispatch.
+            // Do not restamp DispatchedAt — FailNeverStarted finds the brief with
+            // m.CreatedAt >= task.DispatchedAt.
+            var clock = task.DispatchedAt!.Value;
+            if (sessionSnap?.LaunchResumedAt is DateTime resumed && resumed > clock)
+                clock = resumed;
+            if (clock >= cutoff)
+                continue;
+
+            // Defer a Starting session the runner still serves: the reconciler's pass 1c will
+            // resume it. Without this, a restart longer than ten minutes loses the race to
+            // the dispatcher's first tick.
+            if (sessionSnap?.Status == SessionStatus.Starting
+                && _reconciliationEnabled
+                && _launchResumeEnabled
+                && _runnerClient is not null)
+            {
+                if (!runnerListFetched)
+                {
+                    runnerListFetched = true;
+                    try
+                    {
+                        runnerList = await _runnerClient.ListAsync(ct);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _logger.LogDebug(ex,
+                            "Delivery watchdog could not list runner sessions while considering a Starting deferral");
+                    }
+                }
+
+                var runnerSession = runnerList?.FirstOrDefault(s => s.SessionId == sessionId);
+                if (runnerSession is not null
+                    && string.Equals(runnerSession.Status, "Running", StringComparison.OrdinalIgnoreCase)
+                    && string.IsNullOrEmpty(runnerSession.Pending))
+                {
+                    _logger.LogInformation(
+                        "delivery watchdog deferring: session {SessionId} is an interrupted launch the reconciler will resume",
+                        sessionId);
+                    continue;
+                }
+            }
 
             // PULL BEFORE YOU JUDGE (CARD-0055, plan section 6.1). Everything below decides on "the
             // transcript does not contain X" and then FAILS the task and KILLS the session — the
@@ -1031,6 +1093,12 @@ public sealed class AgentTaskDispatcher
                         ex, "Could not stop never-started session {SessionId} for task {ShortId}",
                         sessionId, DelegationReportFormatter.Short(task.Id));
                 }
+
+                // KillOnAsync writes FailureReason=null on a clean kill. The row is the only
+                // evidence left once RemoveEphemeralAgentAsync deletes the agent (CARD-0340).
+                var killedSession = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct);
+                if (killedSession is not null)
+                    killedSession.FailureReason = "Killed by the delivery watchdog: " + reason;
             }
 
             await _tasks.RemoveEphemeralAgentAsync(task, task.AgentId, ct);

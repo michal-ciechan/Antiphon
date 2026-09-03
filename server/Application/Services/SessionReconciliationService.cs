@@ -48,6 +48,7 @@ public sealed class SessionReconciliationService
     private readonly SessionReconciliationSettings _settings;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<SessionReconciliationService> _logger;
+    private readonly ILaunchOwnership? _ownership;
 
     public SessionReconciliationService(
         AppDbContext db,
@@ -61,7 +62,8 @@ public sealed class SessionReconciliationService
         PtyHostCensusAlertState censusAlerts,
         IOptions<SessionReconciliationSettings> settings,
         TimeProvider timeProvider,
-        ILogger<SessionReconciliationService> logger)
+        ILogger<SessionReconciliationService> logger,
+        ILaunchOwnership? ownership = null)
     {
         _db = db;
         _runnerClient = runnerClient;
@@ -75,6 +77,7 @@ public sealed class SessionReconciliationService
         _settings = settings.Value;
         _timeProvider = timeProvider;
         _logger = logger;
+        _ownership = ownership;
     }
 
     /// <summary>Runs one reconciliation sweep. Returns the number of rows it had to correct.</summary>
@@ -93,6 +96,7 @@ public sealed class SessionReconciliationService
         if (runnerSessions is not null)
         {
             corrections += await ReconcileSessionsAsync(runnerSessions, now, ct);
+            await ResumeInterruptedLaunchesAsync(runnerSessions, now, ct);
             await RaiseHerdrPendingIncidentsAsync(runnerSessions, now, ct);
             corrections += await ReconcileRunnerAliveSessionsAsync(runnerSessions, now, ct);
             // Pass 4 (CARD-0102): report what the three views of "what is running" add up to.
@@ -168,7 +172,7 @@ public sealed class SessionReconciliationService
             {
                 session.Status = SessionStatus.Failed;
                 session.FailureReason =
-                    "Session runner does not know this session (launch failed or the runner restarted).";
+                    "Session runner does not know this session (the launch failed, the runner restarted, or the server restarted before the launch reached the runner).";
                 session.EndedAt ??= now;
                 session.LastSeenAt = now;
                 SessionTermination.Record(session, SessionTerminationSource.SystemRequest);
@@ -222,6 +226,46 @@ public sealed class SessionReconciliationService
         }
 
         return closedSessionIds.Count;
+    }
+
+    /// <summary>
+    /// Pass 1c (CARD-0340): a DB <c>Starting</c> row the runner still serves that no launch in
+    /// this process owns is an interrupted launch. Detection only — the resume method owns every
+    /// write. No timeout: the liveness argument is exact.
+    /// </summary>
+    private async Task ResumeInterruptedLaunchesAsync(
+        IReadOnlyList<SessionRunnerSessionDto> runnerSessions, DateTime now, CancellationToken ct)
+    {
+        if (!_settings.LaunchResumeEnabled || _ownership is null)
+            return;
+
+        var starting = await _db.AgentSessions
+            .Where(s => s.Status == SessionStatus.Starting)
+            .ToListAsync(ct);
+        if (starting.Count == 0)
+            return;
+
+        var runnerById = runnerSessions.ToDictionary(s => s.SessionId);
+        foreach (var session in starting)
+        {
+            if (!runnerById.TryGetValue(session.Id, out var runnerSession))
+                continue;
+            if (!string.Equals(runnerSession.Status, "Running", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!string.IsNullOrEmpty(runnerSession.Pending))
+                continue;
+            if (_ownership.Owns(session.Id))
+                continue;
+
+            var startingSeconds = Math.Max(0, (int)(now - session.StartedAt).TotalSeconds);
+            _logger.LogInformation(
+                "Interrupted launch: session {SessionId} has been Starting for {StartingSeconds}s; "
+                + "the runner still serves it and this process does not own the launch",
+                session.Id, startingSeconds);
+
+            var agent = await FindOwningAgentAsync(session.Id, ct);
+            _ownership.ResumeInterrupted(session.Id, agent?.Id ?? Guid.Empty);
+        }
     }
 
     /// <summary>

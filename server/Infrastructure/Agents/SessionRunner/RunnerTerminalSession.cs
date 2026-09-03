@@ -38,6 +38,50 @@ internal sealed class RunnerTerminalSession
         _started = true;
     }
 
+    /// <summary>
+    /// Adopt a runner session this process did not start (CARD-0340). Requires the runner to
+    /// report Running with no Pending herdr wait. <see cref="StartedAt"/> is copied from the
+    /// runner so Claude/Grok <c>MinTotalWait</c> floors are already satisfied on a minutes-old
+    /// process.
+    /// </summary>
+    public async Task AttachAsync(Guid sessionId, CancellationToken ct)
+    {
+        if (_started)
+            throw new InvalidOperationException("Runner terminal session already started.");
+        if (sessionId == Guid.Empty)
+            throw new InvalidOperationException("sessionId is required to attach a runner session.");
+
+        SessionRunnerSessionDto session;
+        try
+        {
+            session = await _client.GetAsync(sessionId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw new InvalidOperationException(
+                $"Cannot attach: session runner does not know session {sessionId}.", ex);
+        }
+
+        if (!string.Equals(session.Status, "Running", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Cannot attach: runner session {sessionId} is {session.Status}.");
+        }
+
+        if (!string.IsNullOrEmpty(session.Pending))
+        {
+            throw new InvalidOperationException(
+                $"Cannot attach: runner session {sessionId} is pending ({session.Pending}).");
+        }
+
+        _sessionId = sessionId;
+        StartedAt = session.StartedAt;
+        Pid = session.Pid;
+        ExitReason = session.ExitReason;
+        Exited = WaitForExitAsync(sessionId, CancellationToken.None);
+        _started = true;
+    }
+
     public async Task WriteAsync(string input, CancellationToken ct)
     {
         EnsureStarted();

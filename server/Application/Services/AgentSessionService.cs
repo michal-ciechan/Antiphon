@@ -45,6 +45,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     // CARD-0292 S1: optional the way _ptyProfile is — production DI supplies the singleton probe;
     // a hand-built harness without one simply never skips the /remote-control send.
     private readonly IRcBridgeProbe? _rcProbe;
+    private readonly ILaunchOwnership? _launchOwnership;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AgentSessionService> _logger;
 
@@ -63,7 +64,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         ILogger<AgentSessionService> logger,
         IOptions<DelegationSettings>? delegationSettings = null,
         PtyDeliveryProfile? ptyProfile = null,
-        IRcBridgeProbe? rcProbe = null)
+        IRcBridgeProbe? rcProbe = null,
+        ILaunchOwnership? launchOwnership = null)
     {
         _db = db;
         _worktreeManager = worktreeManager;
@@ -80,6 +82,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         _delegationSettings = delegationSettings?.Value ?? new DelegationSettings();
         _ptyProfile = ptyProfile;
         _rcProbe = rcProbe;
+        _launchOwnership = launchOwnership;
     }
 
     /// <summary>
@@ -144,6 +147,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
         AgentSession? session = null;
         IAgentProtocolAdapter? adapter = null;
+        var claimedLaunch = false;
 
         try
         {
@@ -175,6 +179,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             adapter = _adapterFactory.Create(request.AgentKind);
             var spec = await BuildRuntimeLaunchSpecAsync(launchSpec, session, worktree.Path, resumeMode: null, ct);
             EnsureHerdrLaunchAllowed(session, spec);
+            claimedLaunch = _launchOwnership?.TryRegister(session.Id) ?? false;
             await adapter.StartAsync(spec, ct);
 
             RunAttemptStateMachine.Transition(attempt, RunPhase.InitializingSession, UtcNow());
@@ -296,6 +301,11 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             await _db.SaveChangesAsync(CancellationToken.None);
 
             throw;
+        }
+        finally
+        {
+            if (claimedLaunch && session is not null)
+                _launchOwnership?.Unregister(session.Id);
         }
     }
 
@@ -503,6 +513,206 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         }
 
         await adapter.DisposeAsync();
+    }
+
+    /// <summary>
+    /// CARD-0340: re-run the tail of <see cref="LaunchInteractiveProcessAsync"/> on a runner
+    /// session this process did not start. Attach, wait for the kind's own ready verdict, flip
+    /// Running, then flush. Nothing types before ready. Delegate sessions (a Dispatched task,
+    /// attachable adapter, not herdr) resume in place; everything else is failed loudly and
+    /// killed so the supervisor can relaunch with durable notes.
+    /// </summary>
+    public async Task ResumeInterruptedLaunchAsync(Guid sessionId, Guid agentId, CancellationToken ct)
+    {
+        var session = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct)
+            ?? throw new NotFoundException(nameof(AgentSession), sessionId);
+
+        if (session.Status != SessionStatus.Starting)
+            return;
+
+        var now = UtcNow();
+        var startingSeconds = Math.Max(0, (int)(now - session.StartedAt).TotalSeconds);
+        session.LaunchResumedAt = now;
+        await _db.SaveChangesAsync(ct);
+
+        IAgentProtocolAdapter? adapter = null;
+        var attached = false;
+        try
+        {
+            adapter = _adapterFactory.Create(session.AgentKind);
+            var hasDispatchedTask = await _db.AgentTasks.AnyAsync(
+                t => t.AgentSessionId == session.Id && t.Status == AgentTaskStatus.Dispatched, ct);
+            var resumable = hasDispatchedTask
+                && adapter is IAttachableProtocolAdapter
+                && session.SessionBackend != SessionBackend.Herdr;
+
+            if (!resumable)
+            {
+                await KillRunnerSessionAsync(session.Id);
+                await adapter.DisposeAsync();
+                adapter = null;
+                await FailInterruptedLaunchAsync(
+                    session,
+                    agentId,
+                    "Launch was interrupted by a server restart before the session became ready. "
+                    + "Its launch notes, remote-control name and initial prompt are not durable, "
+                    + "so the process was stopped for a clean relaunch.",
+                    startingSeconds,
+                    blocked: null,
+                    ct);
+                return;
+            }
+
+            await ((IAttachableProtocolAdapter)adapter).AttachAsync(session.Id, ct);
+            attached = true;
+            await WaitForReadyOrThrowAsync(adapter, ct);
+
+            session.Status = SessionStatus.Running;
+            session.LastSeenAt = UtcNow();
+            await _db.SaveChangesAsync(ct);
+
+            await WriteRestartBoundaryIfInterruptedAsync(session.Id, ct);
+            await _eventBus.PublishToGroupAsync(
+                AgentSessionGroups.Session(session.Id),
+                "SessionStarted",
+                new { sessionId = session.Id, cardId = (Guid?)null },
+                ct);
+            await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), ct);
+
+            await _messageQueue.FlushSessionAsync(session.Id, ct);
+
+            var task = await _db.AgentTasks
+                .Where(t => t.AgentSessionId == session.Id && t.Status == AgentTaskStatus.Dispatched)
+                .OrderByDescending(t => t.DispatchedAt)
+                .FirstOrDefaultAsync(ct);
+            if (task is not null)
+            {
+                _db.AgentTaskEvents.Add(new AgentTaskEvent
+                {
+                    Id = Guid.NewGuid(),
+                    AgentTaskId = task.Id,
+                    Type = AgentTaskEventType.Warning,
+                    Detail =
+                        $"launch resumed after a server restart: the session sat Starting for {startingSeconds} s; ready re-verified",
+                    At = UtcNow(),
+                });
+                await _db.SaveChangesAsync(ct);
+            }
+
+            await RecordLaunchInterruptedByRestartAsync(
+                agentId,
+                session.Id,
+                AlertSeverity.Warning,
+                $"Launch resumed after a server restart: the session sat Starting for {startingSeconds}s; ready re-verified.",
+                ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Resumed launch after a server restart failed for session {SessionId}", sessionId);
+            if (attached && adapter is not null)
+                await KillAndDisposeAsync(adapter);
+            else
+            {
+                await KillRunnerSessionAsync(session.Id);
+                if (adapter is not null)
+                    await adapter.DisposeAsync();
+            }
+
+            await FailInterruptedLaunchAsync(
+                session,
+                agentId,
+                "Resumed launch after a server restart failed: " + ex.Message,
+                startingSeconds,
+                ex as AgentLaunchBlockedException,
+                CancellationToken.None);
+            throw;
+        }
+    }
+
+    private async Task FailInterruptedLaunchAsync(
+        AgentSession session,
+        Guid agentId,
+        string reason,
+        int startingSeconds,
+        AgentLaunchBlockedException? blocked,
+        CancellationToken ct)
+    {
+        session.Status = SessionStatus.Failed;
+        session.FailureReason = reason;
+        session.EndedAt = UtcNow();
+        session.LastSeenAt = session.EndedAt.Value;
+        SessionTermination.Record(session, SessionTerminationSource.SystemRequest);
+        if (blocked is not null)
+        {
+            session.LaunchBlock = GrokSignInIncident.ToSessionBlock(blocked.Block.Kind);
+            if (blocked.Block.Kind == AgentLaunchBlockKind.ProviderSignInRequired)
+                await RecordProviderSignInRequiredAsync(session.Id, blocked, ct, agentId);
+        }
+
+        var agent = await _db.Agents.FirstOrDefaultAsync(a => a.Id == agentId, ct);
+        if (agent is not null
+            && agent.Status == AgentStatus.Running
+            && string.Equals(agent.PersistentSessionId, session.Id.ToString("D"), StringComparison.OrdinalIgnoreCase))
+        {
+            agent.Status = AgentStatus.Failed;
+            agent.UpdatedAt = UtcNow();
+        }
+
+        await _db.SaveChangesAsync(ct);
+        await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), ct);
+        await RecordLaunchInterruptedByRestartAsync(
+            agentId,
+            session.Id,
+            AlertSeverity.Error,
+            $"Launch was interrupted by a server restart after {startingSeconds}s Starting: {reason}",
+            ct);
+    }
+
+    private async Task KillRunnerSessionAsync(Guid sessionId)
+    {
+        try
+        {
+            await _runtime.KillAsync(
+                sessionId,
+                TimeSpan.FromMilliseconds(Math.Max(100, _settings.KillGraceMs)),
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Killing interrupted-launch runner session {SessionId} threw", sessionId);
+        }
+    }
+
+    private async Task RecordLaunchInterruptedByRestartAsync(
+        Guid agentId,
+        Guid sessionId,
+        AlertSeverity severity,
+        string message,
+        CancellationToken ct)
+    {
+        if (agentId == Guid.Empty)
+            return;
+
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
+            await supervisor.RecordIncidentAsync(
+                agentId,
+                sessionId,
+                AgentIncidentKind.LaunchInterruptedByRestart,
+                severity,
+                message,
+                failureReason: message,
+                ct: ct);
+            await db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex,
+                "Could not record LaunchInterruptedByRestart for session {SessionId}", sessionId);
+        }
     }
 
     /// <summary>

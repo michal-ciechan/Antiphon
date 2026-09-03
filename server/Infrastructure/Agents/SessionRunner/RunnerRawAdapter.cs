@@ -5,7 +5,7 @@ using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
-public sealed class RunnerRawAdapter : IAgentProtocolAdapter
+public sealed class RunnerRawAdapter : IAgentProtocolAdapter, IAttachableProtocolAdapter
 {
     private static readonly TimeSpan ReadyGrace = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan TurnQuietPeriod = TimeSpan.FromSeconds(2);
@@ -36,6 +36,14 @@ public sealed class RunnerRawAdapter : IAgentProtocolAdapter
             throw new InvalidOperationException("RunnerRawAdapter already started.");
         _started = true;
         await _terminal.StartAsync(spec, ct);
+    }
+
+    public async Task AttachAsync(Guid sessionId, CancellationToken ct)
+    {
+        if (_started)
+            throw new InvalidOperationException("RunnerRawAdapter already started.");
+        _started = true;
+        await _terminal.AttachAsync(sessionId, ct);
     }
 
     public async Task<bool> KillAsync(TimeSpan timeout, CancellationToken ct) =>

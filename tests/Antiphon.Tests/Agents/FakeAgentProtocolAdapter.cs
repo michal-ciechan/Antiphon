@@ -6,7 +6,7 @@ using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.Tests.Agents;
 
-internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
+internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttachableProtocolAdapter
 {
     // When set, StartAsync registers this adapter in the runtime under spec.SessionId — launch-path
     // tests need the adapter reachable (queue delivery, snapshots) BEFORE the launch code delivers
@@ -99,6 +99,13 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     private bool _staleSubmitUsed;
     public int PromptOutputDelayMs { get; set; } = 10;
     public bool ReadyResult { get; set; } = true;
+    /// <summary>
+    /// When set, <see cref="WaitForReadyAsync"/> waits on this instead of returning
+    /// <see cref="ReadyResult"/> immediately. Used to pin launch ownership across the in-flight window.
+    /// </summary>
+    public TaskCompletionSource<bool>? ReadyHold { get; set; }
+    public bool Attached { get; private set; }
+    public bool AttachResult { get; set; } = true;
     public AgentLaunchBlock? LaunchBlock { get; set; }
     public bool TurnCompleted { get; set; } = true;
     public bool ThrowOnRenderedSnapshot { get; set; }
@@ -168,6 +175,20 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
         Rows = spec.Rows;
         MemoryLimitMb = spec.MemoryLimitMb;
         if (RegisterOnStart is not null && spec.SessionId is Guid sessionId)
+            RegisterOnStart.Register(sessionId, this);
+        Emit(StartupOutput);
+        return Task.CompletedTask;
+    }
+
+    public Task AttachAsync(Guid sessionId, CancellationToken ct)
+    {
+        if (!AttachResult)
+            throw new InvalidOperationException("Attach failed.");
+
+        Attached = true;
+        Started = true;
+        StartedSessionId = sessionId;
+        if (RegisterOnStart is not null)
             RegisterOnStart.Register(sessionId, this);
         Emit(StartupOutput);
         return Task.CompletedTask;
@@ -332,7 +353,8 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
         return Task.CompletedTask;
     }
 
-    public Task<bool> WaitForReadyAsync(CancellationToken ct) => Task.FromResult(ReadyResult);
+    public Task<bool> WaitForReadyAsync(CancellationToken ct) =>
+        ReadyHold is not null ? ReadyHold.Task.WaitAsync(ct) : Task.FromResult(ReadyResult);
 
     public Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct)
     {

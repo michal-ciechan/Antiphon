@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
-public sealed class RunnerClaudeAdapter : IAgentProtocolAdapter
+public sealed class RunnerClaudeAdapter : IAgentProtocolAdapter, IAttachableProtocolAdapter
 {
     private static readonly Regex DonePattern = new(@" for \d+s", RegexOptions.Compiled);
     private const string IdleTitleSignal = "\x1b]0;✳";
@@ -49,6 +49,14 @@ public sealed class RunnerClaudeAdapter : IAgentProtocolAdapter
             throw new InvalidOperationException("RunnerClaudeAdapter already started.");
         _started = true;
         await _terminal.StartAsync(spec, ct);
+    }
+
+    public async Task AttachAsync(Guid sessionId, CancellationToken ct)
+    {
+        if (_started)
+            throw new InvalidOperationException("RunnerClaudeAdapter already started.");
+        _started = true;
+        await _terminal.AttachAsync(sessionId, ct);
     }
 
     public async Task<bool> KillAsync(TimeSpan timeout, CancellationToken ct) =>

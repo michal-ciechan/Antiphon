@@ -6,7 +6,7 @@ using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
-public sealed class RunnerOpenCodeAdapter : IAgentProtocolAdapter
+public sealed class RunnerOpenCodeAdapter : IAgentProtocolAdapter, IAttachableProtocolAdapter
 {
     private readonly RunnerTerminalSession _terminal;
     private readonly AgentRegistrySettings _settings;
@@ -36,6 +36,14 @@ public sealed class RunnerOpenCodeAdapter : IAgentProtocolAdapter
             throw new InvalidOperationException("RunnerOpenCodeAdapter already started.");
         _started = true;
         await _terminal.StartAsync(spec, ct);
+    }
+
+    public async Task AttachAsync(Guid sessionId, CancellationToken ct)
+    {
+        if (_started)
+            throw new InvalidOperationException("RunnerOpenCodeAdapter already started.");
+        _started = true;
+        await _terminal.AttachAsync(sessionId, ct);
     }
 
     public async Task<bool> KillAsync(TimeSpan timeout, CancellationToken ct) =>

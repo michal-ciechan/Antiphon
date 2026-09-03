@@ -9,6 +9,14 @@ public sealed class SessionReconciliationSettings
 {
     public bool Enabled { get; set; } = true;
 
+    /// <summary>
+    /// CARD-0340: whether pass 1c may hand an unowned <c>Starting</c> row the runner still
+    /// serves to <c>ILaunchOwnership.ResumeInterrupted</c>. Off leaves the row Starting and
+    /// the delivery watchdog's deferral is also off, which is today's behaviour (the
+    /// 10-minute never-started fail).
+    /// </summary>
+    public bool LaunchResumeEnabled { get; set; } = true;
+
     /// <summary>How often the sweep runs.</summary>
     public int IntervalMs { get; set; } = 15_000;
 

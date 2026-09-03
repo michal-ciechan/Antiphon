@@ -220,6 +220,7 @@ export type AgentIncidentKind =
   | 'DeliveryVerificationFailed'
   | 'ContextCompacted'
   | 'DeliveryUnverified'
+  | 'LaunchInterruptedByRestart'
 
 export type AlertSeverity = 'Info' | 'Warning' | 'Error' | 'Critical'
 

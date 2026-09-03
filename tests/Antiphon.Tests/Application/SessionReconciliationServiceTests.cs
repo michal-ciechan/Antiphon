@@ -212,6 +212,114 @@ public class SessionReconciliationServiceTests
     }
 
     [Test]
+    public async Task Starting_runner_Running_unowned_resumes_the_launch()
+    {
+        var marker = NewMarker();
+        var ownership = new RecordingLaunchOwnership();
+        try
+        {
+            var (agentId, sessionId) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Starting, staleAgent: false);
+
+            await using var db = CreateContext();
+            var service = BuildService(db, RunnerRunning(sessionId), new MockEventBus(), ownership: ownership);
+
+            await service.ScanAsync(CancellationToken.None);
+
+            ownership.Resumes.ShouldBe([(sessionId, agentId)]);
+            await using var verify = CreateContext();
+            (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId))
+                .Status.ShouldBe(SessionStatus.Starting, "pass 1c changes no row itself");
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    public async Task Starting_runner_Running_owned_is_not_resumed()
+    {
+        var marker = NewMarker();
+        var ownership = new RecordingLaunchOwnership();
+        try
+        {
+            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Starting, staleAgent: false);
+            ownership.Owned.Add(sessionId);
+
+            await using var db = CreateContext();
+            var service = BuildService(db, RunnerRunning(sessionId), new MockEventBus(), ownership: ownership);
+
+            await service.ScanAsync(CancellationToken.None);
+
+            ownership.Resumes.ShouldBeEmpty();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    public async Task Starting_runner_Pending_is_not_resumed()
+    {
+        var marker = NewMarker();
+        var ownership = new RecordingLaunchOwnership();
+        try
+        {
+            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Starting, staleAgent: false);
+
+            await using var db = CreateContext();
+            var runner = new FakeRunnerClient
+            {
+                Sessions =
+                [
+                    new SessionRunnerSessionDto(
+                        sessionId, Pid: 4242, StartedAt: DateTime.UtcNow.AddMinutes(-2),
+                        Status: "Running", ExitCode: null, ExitReason: AgentExitReason.Unknown,
+                        LastSequence: 10, Pending: HerdrPendingReasons.Unreachable)
+                ]
+            };
+            var service = BuildService(db, runner, new MockEventBus(), ownership: ownership);
+
+            await service.ScanAsync(CancellationToken.None);
+
+            ownership.Resumes.ShouldBeEmpty();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    public async Task LaunchResumeEnabled_false_does_not_resume()
+    {
+        var marker = NewMarker();
+        var ownership = new RecordingLaunchOwnership();
+        try
+        {
+            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Starting, staleAgent: false);
+
+            await using var db = CreateContext();
+            var service = BuildService(
+                db, RunnerRunning(sessionId), new MockEventBus(),
+                ownership: ownership, launchResumeEnabled: false);
+
+            await service.ScanAsync(CancellationToken.None);
+
+            ownership.Resumes.ShouldBeEmpty();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
     public async Task Starting_session_within_grace_is_left_alone()
     {
         var marker = NewMarker();
@@ -898,7 +1006,9 @@ public class SessionReconciliationServiceTests
         bool censusAlertEnabled = true,
         HerdrPendingAlertState? pendingAlerts = null,
         TimeProvider? time = null,
-        int herdrPendingAlertMinutes = 5) =>
+        int herdrPendingAlertMinutes = 5,
+        ILaunchOwnership? ownership = null,
+        bool launchResumeEnabled = true) =>
         new(
             db,
             runnerClient,
@@ -920,9 +1030,11 @@ public class SessionReconciliationServiceTests
                 ReAdoptEnabled = reAdoptEnabled,
                 CensusAlertEnabled = censusAlertEnabled && census is not null,
                 HerdrPendingAlertMinutes = herdrPendingAlertMinutes,
+                LaunchResumeEnabled = launchResumeEnabled,
             }),
             time ?? TimeProvider.System,
-            NullLogger<SessionReconciliationService>.Instance);
+            NullLogger<SessionReconciliationService>.Instance,
+            ownership);
 
     /// <summary>A runner that reports one session Running, with a real process behind it.</summary>
     private static FakeRunnerClient RunnerRunning(
@@ -1090,6 +1202,21 @@ public class SessionReconciliationServiceTests
             .ExecuteDeleteAsync();
         await db.Agents.Where(a => a.Name == marker).ExecuteDeleteAsync();
         await db.AgentSessions.Where(s => s.Cwd.EndsWith(marker)).ExecuteDeleteAsync();
+    }
+
+    private sealed class RecordingLaunchOwnership : ILaunchOwnership
+    {
+        public HashSet<Guid> Owned { get; } = [];
+        public List<(Guid SessionId, Guid AgentId)> Resumes { get; } = [];
+
+        public bool Owns(Guid sessionId) => Owned.Contains(sessionId);
+
+        public void ResumeInterrupted(Guid sessionId, Guid agentId) =>
+            Resumes.Add((sessionId, agentId));
+
+        public bool TryRegister(Guid sessionId) => Owned.Add(sessionId);
+
+        public void Unregister(Guid sessionId) => Owned.Remove(sessionId);
     }
 
     private sealed class FakeRunnerClient : ISessionRunnerClient

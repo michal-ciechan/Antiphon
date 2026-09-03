@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
-public sealed class RunnerGrokAdapter : IAgentProtocolAdapter
+public sealed class RunnerGrokAdapter : IAgentProtocolAdapter, IAttachableProtocolAdapter
 {
     // The measured turn-end lines (grok 1.0.5, CARD-0080 S1): "Worked for 1.7s" — DECIMAL seconds,
     // which the old " for \d+s" integer regex never matched — and, for an Esc mid-turn,
@@ -76,6 +76,16 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter
         _started = true;
         _launchEnv = spec.Env;
         await _terminal.StartAsync(spec, ct);
+    }
+
+    public async Task AttachAsync(Guid sessionId, CancellationToken ct)
+    {
+        if (_started)
+            throw new InvalidOperationException("RunnerGrokAdapter already started.");
+        _started = true;
+        // No launch env survives a server death; GROK_HOME comes from the process environment.
+        _launchEnv = null;
+        await _terminal.AttachAsync(sessionId, ct);
     }
 
     public async Task<bool> KillAsync(TimeSpan timeout, CancellationToken ct) =>
@@ -169,7 +179,9 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter
             _launchBlock = new AgentLaunchBlock(
                 AgentLaunchBlockKind.ProviderSignInRequired, reason, grokHome);
             _logger?.LogError(
-                "Session {SessionId} opened on Grok's sign-in screen (GROK_HOME={GrokHome}). Nothing was typed. Screen:\n{Screen}",
+                _launchEnv is null
+                    ? "Session {SessionId} opened on Grok's sign-in screen (GROK_HOME={GrokHome}, resolved from the process environment because no launch env is attached). Nothing was typed. Screen:\n{Screen}"
+                    : "Session {SessionId} opened on Grok's sign-in screen (GROK_HOME={GrokHome}). Nothing was typed. Screen:\n{Screen}",
                 _terminal.SessionId, grokHome, screen);
             return false;
         }

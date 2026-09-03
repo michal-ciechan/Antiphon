@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -10,10 +11,11 @@ using Microsoft.Extensions.Logging;
 
 namespace Antiphon.Server.Application.Services;
 
-public sealed class AgentSessionLaunchQueue
+public sealed class AgentSessionLaunchQueue : ILaunchOwnership
 {
     private readonly object _gate = new();
     private readonly HashSet<Task> _launches = [];
+    private readonly ConcurrentDictionary<Guid, byte> _owned = new();
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<AgentSessionLaunchQueue> _logger;
 
@@ -44,8 +46,29 @@ public sealed class AgentSessionLaunchQueue
         Guid sessionId, Guid agentId, AgentLaunchSpec spec, string? remoteControlName,
         bool resume = false, LaunchNotes? notes = null, string? initialPrompt = null)
     {
+        _owned.TryAdd(sessionId, 0);
         var launch = Task.Run(() => LaunchInteractiveSessionAsync(
             sessionId, agentId, spec, remoteControlName, resume, notes, initialPrompt));
+        TrackLaunch(launch, sessionId, agentId, interactive: true);
+    }
+
+    public bool Owns(Guid sessionId) => _owned.ContainsKey(sessionId);
+
+    public bool TryRegister(Guid sessionId) => _owned.TryAdd(sessionId, 0);
+
+    public void Unregister(Guid sessionId) => _owned.TryRemove(sessionId, out _);
+
+    public void ResumeInterrupted(Guid sessionId, Guid agentId)
+    {
+        if (!_owned.TryAdd(sessionId, 0))
+            return;
+
+        var launch = Task.Run(() => ResumeInterruptedLaunchAsync(sessionId, agentId));
+        TrackLaunch(launch, sessionId, agentId, interactive: false);
+    }
+
+    private void TrackLaunch(Task launch, Guid sessionId, Guid agentId, bool interactive)
+    {
         lock (_gate)
             _launches.Add(launch);
 
@@ -54,21 +77,42 @@ public sealed class AgentSessionLaunchQueue
             {
                 lock (_gate)
                     _launches.Remove(task);
+                _owned.TryRemove(sessionId, out _);
 
                 if (task.Exception is not null)
                 {
-                    _logger.LogWarning(task.Exception, "Queued interactive session launch failed for session {SessionId}", sessionId);
-                    _ = RaiseLaunchAlertAsync(
-                        $"Interactive launch failed for agent session {sessionId}",
-                        task.Exception.GetBaseException().Message,
-                        $"launch:interactive:{agentId}",
-                        agentId,
-                        sessionId);
+                    if (interactive)
+                    {
+                        _logger.LogWarning(task.Exception, "Queued interactive session launch failed for session {SessionId}", sessionId);
+                        _ = RaiseLaunchAlertAsync(
+                            $"Interactive launch failed for agent session {sessionId}",
+                            task.Exception.GetBaseException().Message,
+                            $"launch:interactive:{agentId}",
+                            agentId,
+                            sessionId);
+                    }
+                    else
+                    {
+                        _logger.LogWarning(task.Exception, "Resumed launch after a server restart failed for session {SessionId}", sessionId);
+                        _ = RaiseLaunchAlertAsync(
+                            $"Resumed launch failed for agent session {sessionId}",
+                            task.Exception.GetBaseException().Message,
+                            $"launch:resume:{sessionId}",
+                            agentId,
+                            sessionId);
+                    }
                 }
             },
             CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
+    }
+
+    private async Task ResumeInterruptedLaunchAsync(Guid sessionId, Guid agentId)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<AgentSessionService>();
+        await service.ResumeInterruptedLaunchAsync(sessionId, agentId, CancellationToken.None);
     }
 
     // Fire-and-forget by design: alerting must never affect the launch pipeline.

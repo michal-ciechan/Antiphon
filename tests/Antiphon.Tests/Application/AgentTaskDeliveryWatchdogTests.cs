@@ -1743,6 +1743,122 @@ public class AgentTaskDeliveryWatchdogTests
         await EscalateClockHistoricalFixture.RetireAsync(task.Id);
     }
 
+    [Test]
+    public async Task Starting_session_the_runner_still_serves_is_deferred_as_an_interrupted_launch()
+    {
+        var logs = new List<string>();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11, sessionStatus: SessionStatus.Starting);
+        try
+        {
+            await SeedBriefAsync(task.AgentSessionId!.Value, task.Id, QueuedMessageStatus.Pending);
+            var runner = new ListRunnerClient(task.AgentSessionId.Value);
+            var (harness, stopper) = CreateHarness(runnerClient: runner, logs: logs);
+
+            await harness.FailNeverStartedAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+                .Status.ShouldBe(AgentTaskStatus.Dispatched);
+            stopper.Killed.ShouldBeEmpty();
+            logs.ShouldContain(l => l.Contains("interrupted launch the reconciler will resume", StringComparison.Ordinal));
+        }
+        finally
+        {
+            await RetireSeededTaskAsync(task);
+        }
+    }
+
+    [Test]
+    public async Task LaunchResumedAt_two_minutes_ago_is_inside_the_watchdog_window()
+    {
+        var task = await SeedDispatchedTaskAsync(
+            dispatchedMinutesAgo: 20,
+            launchResumedAt: DateTime.UtcNow.AddMinutes(-2));
+        try
+        {
+            var (harness, stopper) = CreateHarness();
+
+            await harness.FailNeverStartedAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+                .Status.ShouldBe(AgentTaskStatus.Dispatched);
+            stopper.Killed.ShouldBeEmpty();
+        }
+        finally
+        {
+            await RetireSeededTaskAsync(task);
+        }
+    }
+
+    [Test]
+    public async Task LaunchResumedAt_twelve_minutes_ago_fails_as_today()
+    {
+        var task = await SeedDispatchedTaskAsync(
+            dispatchedMinutesAgo: 20,
+            launchResumedAt: DateTime.UtcNow.AddMinutes(-12));
+        try
+        {
+            var (harness, stopper) = CreateHarness();
+
+            await harness.FailNeverStartedAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+                .Status.ShouldBe(AgentTaskStatus.Failed);
+            stopper.Killed.ShouldContain(task.AgentSessionId!.Value);
+        }
+        finally
+        {
+            await RetireSeededTaskAsync(task);
+        }
+    }
+
+    [Test]
+    public async Task Watchdog_kill_stamps_FailureReason_on_the_session()
+    {
+        var (harness, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+        try
+        {
+            await harness.FailNeverStartedAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            var session = await verify.AgentSessions.SingleAsync(s => s.Id == task.AgentSessionId);
+            session.FailureReason.ShouldNotBeNull();
+            session.FailureReason.ShouldStartWith("Killed by the delivery watchdog:");
+        }
+        finally
+        {
+            await RetireSeededTaskAsync(task);
+        }
+    }
+
+    [Test]
+    public async Task Reconciliation_disabled_does_not_defer_a_Starting_runner_served_session()
+    {
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11, sessionStatus: SessionStatus.Starting);
+        try
+        {
+            await SeedBriefAsync(task.AgentSessionId!.Value, task.Id, QueuedMessageStatus.Pending);
+            var runner = new ListRunnerClient(task.AgentSessionId.Value);
+            var (harness, stopper) = CreateHarness(
+                runnerClient: runner,
+                reconciliation: new SessionReconciliationSettings { Enabled = false, LaunchResumeEnabled = true });
+
+            await harness.FailNeverStartedAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+                .Status.ShouldBe(AgentTaskStatus.Failed);
+            stopper.Killed.ShouldContain(task.AgentSessionId.Value);
+        }
+        finally
+        {
+            await RetireSeededTaskAsync(task);
+        }
+    }
+
     // ---- helpers ---------------------------------------------------------------------------
 
     /// <summary>
@@ -1851,7 +1967,8 @@ public class AgentTaskDeliveryWatchdogTests
         DelegateBindRefusalRecoverySettings? recoverySettings = null,
         ISessionRunnerClient? runnerClient = null,
         List<string>? logs = null,
-        DelegationSettings? settings = null)
+        DelegationSettings? settings = null,
+        SessionReconciliationSettings? reconciliation = null)
     {
         var stopper = new RecordingSessionStopper();
         var services = new ServiceCollection();
@@ -1877,6 +1994,8 @@ public class AgentTaskDeliveryWatchdogTests
         services.AddSingleton<IDelegateSessionStopper>(stopper);
         if (runnerClient is not null)
             services.AddSingleton<ISessionRunnerClient>(runnerClient);
+        if (reconciliation is not null)
+            services.AddSingleton(Options.Create(reconciliation));
         services.AddSingleton<DelegationWorkspaceResolver>();
         services.AddDelegationWorktreeGraph(new GitSettings
         {
@@ -1932,7 +2051,11 @@ public class AgentTaskDeliveryWatchdogTests
         public void Dispose() { }
     }
 
-    private static async Task<AgentTask> SeedDispatchedTaskAsync(int dispatchedMinutesAgo, AgentKind kind = AgentKind.ClaudeCode)
+    private static async Task<AgentTask> SeedDispatchedTaskAsync(
+        int dispatchedMinutesAgo,
+        AgentKind kind = AgentKind.ClaudeCode,
+        SessionStatus sessionStatus = SessionStatus.Running,
+        DateTime? launchResumedAt = null)
     {
         var sessionId = Guid.NewGuid();
         var id = Guid.NewGuid();
@@ -1943,13 +2066,14 @@ public class AgentTaskDeliveryWatchdogTests
             Id = sessionId,
             DefinitionName = "fake",
             AgentKind = kind,
-            Status = SessionStatus.Running,
+            Status = sessionStatus,
             Cwd = Path.GetTempPath(),
             Cols = 120,
             Rows = 30,
             CreatedAt = dispatched,
             StartedAt = dispatched,
             LastSeenAt = dispatched,
+            LaunchResumedAt = launchResumedAt,
         });
         var task = new AgentTask
         {
@@ -1970,6 +2094,17 @@ public class AgentTaskDeliveryWatchdogTests
         db.AgentTasks.Add(task);
         await db.SaveChangesAsync();
         return task;
+    }
+
+    private static async Task RetireSeededTaskAsync(AgentTask task)
+    {
+        await using var db = CreateContext();
+        await db.SessionQueuedMessages.Where(m => m.AgentSessionId == task.AgentSessionId).ExecuteDeleteAsync();
+        await db.TranscriptEntries.Where(t => t.AgentSessionId == task.AgentSessionId).ExecuteDeleteAsync();
+        await db.AgentTaskEvents.Where(e => e.AgentTaskId == task.Id).ExecuteDeleteAsync();
+        await db.AgentTasks.Where(t => t.Id == task.Id).ExecuteDeleteAsync();
+        if (task.AgentSessionId is Guid sessionId)
+            await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
     }
 
     private static async Task SeedBriefAsync(
@@ -2666,6 +2801,40 @@ public class AgentTaskDeliveryWatchdogTests
         {
             lock (sink)
                 sink.Add($"{formatter(state, exception)}");
+        }
+    }
+
+    private sealed class ListRunnerClient(Guid sessionId) : ISessionRunnerClient
+    {
+        public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([
+                new SessionRunnerSessionDto(
+                    sessionId, Pid: 4242, StartedAt: DateTime.UtcNow.AddMinutes(-11),
+                    Status: "Running", ExitCode: null, ExitReason: AgentExitReason.Unknown, LastSequence: 1)
+            ]);
+
+        public Task<SessionRunnerSessionDto> StartAsync(Guid id, AgentLaunchSpec spec, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task<SessionRunnerSessionDto> GetAsync(Guid id, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task<SessionRunnerBufferDto> GetBufferAsync(Guid id, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid id, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid id, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task SendInputAsync(Guid id, string input, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task ClearLiveBufferAsync(Guid id, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task ResizeAsync(Guid id, int cols, int rows, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task<SessionRunnerSessionDto> KillAsync(Guid id, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+        {
+            yield break;
         }
     }
 
