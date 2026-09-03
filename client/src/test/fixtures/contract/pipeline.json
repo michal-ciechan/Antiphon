@@ -98,7 +98,10 @@
           "card": null,
           "agentName": "pipe-holder",
           "dispatchedAt": "2026-02-03T08:40:00Z",
-          "lastActivityAt": "2026-02-03T08:40:00Z"
+          "lastActivityAt": "2026-02-03T08:40:00Z",
+          "agentKind": "ClaudeCode",
+          "modelLevel": "Medium",
+          "workspace": "Shared"
         }
       ],
       "queued": [
@@ -115,7 +118,10 @@
               "shortId": "dddddddd",
               "title": "in-flight docs pass"
             }
-          ]
+          ],
+          "agentKind": "ClaudeCode",
+          "modelLevel": "Medium",
+          "workspace": "Shared"
         }
       ],
       "blocked": [],
@@ -151,7 +157,18 @@
       "atOrAboveRecommendation": false,
       "inFlight": [],
       "queued": [],
-      "blocked": [],
+      "blocked": [
+        {
+          "taskId": "dddddddd-0000-0000-0000-000000000004",
+          "shortId": "dddddddd",
+          "title": "blocked deploy",
+          "card": null,
+          "createdAt": "2026-02-03T08:55:00Z",
+          "agentKind": "ClaudeCode",
+          "modelLevel": "Medium",
+          "routingExhausted": false
+        }
+      ],
       "ready": [],
       "routingPin": null
     },

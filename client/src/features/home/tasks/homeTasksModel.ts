@@ -234,6 +234,7 @@ export function pipelineRowFor(
 
 export const QUEUE_REASON_LABEL: Record<AgentTaskPipelineQueueReason, string> = {
   sharedCheckoutLease: 'waiting: shared checkout held by',
+  siblingLandInFlight: 'waiting: a sibling is landing',
   concurrencyCap: 'waiting: task slots in use',
   routingPinNotBefore: 'waiting: not before',
   awaitingDispatch: 'queued — next dispatch tick',
@@ -279,6 +280,11 @@ function queueReasonLine(
       const who = first ? `task-${first.shortId} — ${first.title}` : 'another task'
       const extra = queued.heldBy.length > 1 ? ` +${queued.heldBy.length - 1}` : ''
       return `waiting: shared checkout held by ${who}${extra}`
+    }
+    case 'siblingLandInFlight': {
+      const first = queued.heldBy[0]
+      const who = first ? `task-${first.shortId} — ${first.title}` : 'another task'
+      return `waiting: a sibling is landing (${who})`
     }
     case 'concurrencyCap':
       return `waiting: ${pipeline.inFlightAgainstCap} of ${pipeline.maxConcurrentTasks} task slots in use`

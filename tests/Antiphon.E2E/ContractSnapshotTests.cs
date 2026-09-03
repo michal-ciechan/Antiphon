@@ -460,7 +460,7 @@ public class ContractSnapshotTests
 
         await SnapshotPipelineAsync(
             app,
-            new HashSet<Guid> { PipelineHolderTaskId, PipelineQueuedTaskId, PipelinePlanTaskId },
+            new HashSet<Guid> { PipelineHolderTaskId, PipelineQueuedTaskId, PipelinePlanTaskId, PipelineBlockedTaskId },
             new HashSet<Guid> { PipelineReadyCardId });
     }
 
@@ -476,6 +476,7 @@ public class ContractSnapshotTests
     private static readonly Guid PipelineHolderTaskId = Guid.Parse("dddddddd-0000-0000-0000-000000000001");
     private static readonly Guid PipelineQueuedTaskId = Guid.Parse("dddddddd-0000-0000-0000-000000000002");
     private static readonly Guid PipelinePlanTaskId = Guid.Parse("dddddddd-0000-0000-0000-000000000003");
+    private static readonly Guid PipelineBlockedTaskId = Guid.Parse("dddddddd-0000-0000-0000-000000000004");
     private static readonly Guid PipelineHolderAgentId = Guid.Parse("dddddddd-0000-0000-0000-000000000011");
     private static readonly Guid PipelineQueuedAgentId = Guid.Parse("dddddddd-0000-0000-0000-000000000012");
     private static readonly Guid PipelineProjectId = Guid.Parse("dddddddd-0000-0000-0000-000000000021");
@@ -580,11 +581,13 @@ public class ContractSnapshotTests
         db.AgentTaskEvents.RemoveRange(db.AgentTaskEvents.Where(e =>
             e.AgentTaskId == PipelineHolderTaskId
             || e.AgentTaskId == PipelineQueuedTaskId
-            || e.AgentTaskId == PipelinePlanTaskId));
+            || e.AgentTaskId == PipelinePlanTaskId
+            || e.AgentTaskId == PipelineBlockedTaskId));
         db.AgentTasks.RemoveRange(db.AgentTasks.Where(t =>
             t.Id == PipelineHolderTaskId
             || t.Id == PipelineQueuedTaskId
-            || t.Id == PipelinePlanTaskId));
+            || t.Id == PipelinePlanTaskId
+            || t.Id == PipelineBlockedTaskId));
         db.Cards.RemoveRange(db.Cards.Where(c => c.Id == PipelineReadyCardId));
         await db.SaveChangesAsync();
 
@@ -683,6 +686,16 @@ public class ContractSnapshotTests
                     t.DispatchedAt = t0.AddDays(-3);
                     t.CompletedAt = t0.AddDays(-3).AddHours(2);
                     t.DeliverablePath = "docs/superpowers/plans/2026-09-02-card-0031-project-status-view-plan.md";
+                    t.CostPricingVersion = Server.Application.Services.DelegationCost.PricingVersion;
+                }),
+            Task(PipelineBlockedTaskId, PipelineBlockedTaskId, null, 0,
+                "blocked deploy", cwd, t0.AddMinutes(-5),
+                PipelineQueuedAgentId, "pipe-queued", t =>
+                {
+                    t.Role = Server.Domain.Enums.AgentTaskRole.Deploy;
+                    t.ModelLevel = Server.Domain.Enums.AgentModelLevel.Medium;
+                    t.Status = Server.Domain.Enums.AgentTaskStatus.Blocked;
+                    t.Workspace = Server.Domain.Enums.WorkspaceMode.Shared;
                     t.CostPricingVersion = Server.Application.Services.DelegationCost.PricingVersion;
                 }));
         await db.SaveChangesAsync();

@@ -106,6 +106,13 @@ describe('the tier alias', () => {
     expect(tierAlias('Low', 'Grok')).toBe('grok-4.5')
   })
 
+  it('names a Codex task the model it actually runs, not a Claude one', () => {
+    expect(tierAlias('Frontier', 'Codex')).toBe('gpt-5.6-sol')
+    expect(tierAlias('High', 'Codex')).toBe('gpt-5.6-terra')
+    expect(tierAlias('Medium', 'Codex')).toBe('gpt-5.6-luna')
+    expect(tierAlias('Low', 'Codex')).toBe('gpt-5.6-luna')
+  })
+
   it('lets Grok collapse two rungs to one name without collapsing the rungs', () => {
     // xAI ships two models, so the ladder is shorter than the tier axis — but Frontier and High are
     // still different rungs (different price, different escalation), which is why only the NAME
@@ -119,6 +126,8 @@ describe('the tier alias', () => {
     expect(tierTooltip('High')).toBe('High tier — Claude opus')
     // "Grok grok-4.6" would be a stutter — the alias already names the family.
     expect(tierTooltip('High', 'Grok')).toBe('High tier — grok-4.6')
+    expect(tierTooltip('Frontier', 'Codex')).toBe('Frontier tier — Codex gpt-5.6-sol')
+    expect(tierTooltip('High', 'Codex')).toBe('High tier — Codex gpt-5.6-terra')
   })
 })
 
