@@ -232,6 +232,7 @@ public sealed partial class WorkflowDefinitionLoader
             ["card.effective_urgency"] = effective.ToString(),
             ["card.quadrant"] = CardRanking.Quadrant(card.Importance, effective).ToString(),
             ["card.due_at"] = card.DueAt?.ToString("o", System.Globalization.CultureInfo.InvariantCulture),
+            ["card.position"] = card.Position?.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["board.id"] = card.BoardId.ToString(),
             ["workspace.path"] = worktree?.Path,
             ["workspace.branch"] = worktree?.Branch,

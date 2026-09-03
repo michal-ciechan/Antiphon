@@ -4,9 +4,10 @@ using Antiphon.Server.Domain.Enums;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// Single owner of effective urgency, quadrant and rank. Every sort site calls
-/// <see cref="Rank(CardImportance, CardUrgency, DateTime?, DateTime, int)"/>; there is no persisted
-/// Rank column because it would go stale with the clock.
+/// Single owner of effective urgency, quadrant, rank and the in-cell order key. Every sort site
+/// calls <see cref="OrderKey(CardImportance, CardUrgency, DateTime?, int?, DateTime, DateTime)"/>;
+/// there is no persisted Rank column because it would go stale with the clock. Position is a
+/// separate stored ordinal that only breaks ties inside a rank cell at read time (CARD-0098).
 /// </summary>
 /// <remarks>
 /// <para><c>rank = 13 − (3·importance + 2·effectiveUrgency)</c>, lower sorts first. The weights
@@ -66,6 +67,26 @@ public static class CardRanking
 
     public static int Rank(Card card, DateTime now, int blockedDependants = 0) =>
         Rank(card.Importance, card.Urgency, card.DueAt, now, blockedDependants);
+
+    /// <summary>
+    /// The one comparable sort key. Lower sorts first. Unplaced cards
+    /// (<paramref name="position"/> null) sort after every placed card in the same rank cell.
+    /// </summary>
+    public static (int Rank, int Position, DateTime Due, DateTime Created) OrderKey(
+        CardImportance importance,
+        CardUrgency urgency,
+        DateTime? dueAt,
+        int? position,
+        DateTime createdAt,
+        DateTime now) =>
+        (
+            Rank(importance, urgency, dueAt, now),
+            position ?? int.MaxValue,
+            DueAtSortKey(dueAt),
+            createdAt);
+
+    public static (int Rank, int Position, DateTime Due, DateTime Created) OrderKey(Card card, DateTime now) =>
+        OrderKey(card.Importance, card.Urgency, card.DueAt, card.Position, card.CreatedAt, now);
 
     /// <summary>
     /// Maps the 0–5 tracker adapter scale onto <see cref="CardImportance"/>:

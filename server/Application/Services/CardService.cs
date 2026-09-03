@@ -465,6 +465,9 @@ public sealed class CardService : IScheduledCardActions
         // Snapshot BEFORE the overwrite — the revision holds what is being superseded.
         CardRevisionLog.AppendContentEdit(card, request.Reason, request.EditedBy, now);
 
+        var cellChanged = (request.Importance is { } nextImportance && nextImportance != card.Importance)
+            || (request.Urgency is { } nextUrgency && nextUrgency != card.Urgency);
+
         if (request.Title is not null)
             card.Title = request.Title.Trim();
         if (request.Description is not null)
@@ -484,6 +487,8 @@ public sealed class CardService : IScheduledCardActions
                 card.UrgentSince = null;
             card.Urgency = urgency;
         }
+        if (cellChanged)
+            card.Position = null;
         if (request.ClearDueAt)
             card.DueAt = null;
         else if (request.DueAt is { } dueAt)
@@ -1096,6 +1101,7 @@ public sealed class CardService : IScheduledCardActions
         card.BoardColumnId = targetColumn.Id;
         card.BoardColumn = targetColumn;
         card.Status = targetColumn.CardStatus;
+        card.Position = null;
         card.UpdatedAt = now;
         card.ConcurrencyToken = Guid.NewGuid();
 

@@ -175,9 +175,7 @@ internal static class CardTaskFileRenderer
         {
             var group = cards
                 .Where(match)
-                .OrderBy(c => CardRanking.Rank(c, now))
-                .ThenBy(c => CardRanking.DueAtSortKey(c.DueAt))
-                .ThenBy(c => c.CreatedAt)
+                .OrderBy(c => CardRanking.OrderKey(c, now))
                 .ThenBy(c => c.Identifier, StringComparer.Ordinal)
                 .ToList();
             if (group.Count == 0)

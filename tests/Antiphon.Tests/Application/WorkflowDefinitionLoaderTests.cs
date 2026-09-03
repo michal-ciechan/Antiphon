@@ -112,6 +112,15 @@ public class WorkflowDefinitionLoaderTests
         vars["card.quadrant"].ShouldBe("Schedule");
         vars["card.priority"].ShouldBe("7");
         vars["issue.priority"].ShouldBe("7");
+        vars["card.position"].ShouldBeNull();
+
+        card.Position = 3;
+        var placed = WorkflowDefinitionLoader.BuildPromptVariables(card, worktree: null);
+        placed["card.position"].ShouldBe("3");
+        WorkflowDefinitionLoader.RenderPrompt("you are card {{ card.position }} of 44", placed)
+            .ShouldBe("you are card 3 of 44");
+        WorkflowDefinitionLoader.RenderPrompt("you are card {{ card.position }} of 44", vars)
+            .ShouldBe("you are card  of 44");
     }
 
     [Test]

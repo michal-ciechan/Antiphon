@@ -679,6 +679,109 @@ public class CardCorrectionIntegrationTests
     }
 
     [Test]
+    public async Task An_importance_edit_clears_position_and_snapshots_it()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            Guid cardId;
+            await using (var seed = BuildHarness(tempRoot))
+            {
+                var board = await seed.BoardService.CreateAsync(
+                    new CreateBoardRequest(project.Id, "Position clear board"), CancellationToken.None);
+                var card = await seed.CardService.CreateAsync(
+                    board.Id, new CreateCardRequest(null, "Placed"), CancellationToken.None);
+                cardId = card.Id;
+            }
+
+            await using (var mutate = CreateContext())
+            {
+                var row = await mutate.Cards.SingleAsync(c => c.Id == cardId);
+                row.Position = 3;
+                await mutate.SaveChangesAsync();
+            }
+
+            await using var harness = BuildHarness(tempRoot);
+            var before = await harness.CardService.GetByIdAsync(cardId, CancellationToken.None);
+            before.Position.ShouldBe(3);
+
+            var titled = await harness.CardService.UpdateContentAsync(
+                before.Id,
+                new UpdateCardContentRequest(before.ConcurrencyToken, "Title only.", Title: "Still placed"),
+                CancellationToken.None);
+            titled.Position.ShouldBe(3);
+
+            var rated = await harness.CardService.UpdateContentAsync(
+                titled.Id,
+                new UpdateCardContentRequest(titled.ConcurrencyToken, "Promote.", Importance: CardImportance.High),
+                CancellationToken.None);
+            rated.Position.ShouldBeNull();
+            rated.Importance.ShouldBe(CardImportance.High);
+
+            await using var verify = CreateContext();
+            var revision = await verify.CardRevisions
+                .Where(r => r.CardId == cardId && r.Kind == CardRevisionKind.ContentEdit)
+                .OrderByDescending(r => r.RevisionNumber)
+                .FirstAsync();
+            revision.Position.ShouldBe(3);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task A_move_clears_position()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            Guid cardId;
+            Guid inProgressId;
+            Guid concurrencyToken;
+            await using (var seed = BuildHarness(tempRoot))
+            {
+                var board = await seed.BoardService.CreateAsync(
+                    new CreateBoardRequest(project.Id, "Position move board"), CancellationToken.None);
+                var card = await seed.CardService.CreateAsync(
+                    board.Id, new CreateCardRequest(null, "Placed then moved"), CancellationToken.None);
+                cardId = card.Id;
+                inProgressId = board.Columns.Single(c => c.StateKey == "in-progress").Id;
+                concurrencyToken = card.ConcurrencyToken;
+            }
+
+            await using (var mutate = CreateContext())
+            {
+                var row = await mutate.Cards.SingleAsync(c => c.Id == cardId);
+                row.Position = 2;
+                await mutate.SaveChangesAsync();
+            }
+
+            await using var harness = BuildHarness(tempRoot);
+            var moved = await harness.CardService.MoveAsync(
+                cardId,
+                new MoveCardRequest(inProgressId, concurrencyToken, "Start it."),
+                CancellationToken.None);
+            moved.Card.Position.ShouldBeNull();
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task ImportanceProvenance_Auto_hands_the_field_back_to_the_automatic_writer()
     {
         await using var db = CreateContext();

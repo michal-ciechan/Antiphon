@@ -893,6 +893,8 @@ public class AppDbContext : DbContext
             entity.Property(c => c.Urgency).IsRequired().HasDefaultValue(CardUrgency.Normal);
             entity.Property(c => c.DueAt);
             entity.Property(c => c.UrgentSince);
+            // Nullable, no index: every sort is in memory per column (CARD-0098).
+            entity.Property(c => c.Position);
             entity.Property(c => c.LabelsJson).IsRequired().HasColumnType("jsonb");
             entity.Property(c => c.Status).IsRequired();
             entity.Property(c => c.ConcurrencyToken).IsConcurrencyToken();
@@ -963,6 +965,7 @@ public class AppDbContext : DbContext
             entity.Property(r => r.Importance);
             entity.Property(r => r.Urgency);
             entity.Property(r => r.DueAt);
+            entity.Property(r => r.Position);
             entity.Property(r => r.Title).HasMaxLength(300);
             // text + application ceiling, matching Cards.Description — a revision holds a copy of
             // exactly that value, so a tighter column here would 500 on the very edit it records.

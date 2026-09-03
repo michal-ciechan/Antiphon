@@ -252,9 +252,7 @@ public sealed class BoardService
             .Where(c => includeArchived || c.ArchivedAt == null)
             .GroupBy(c => c.BoardColumnId)
             .ToDictionary(g => g.Key, g => g
-                .OrderBy(c => CardRanking.Rank(c, now))
-                .ThenBy(c => CardRanking.DueAtSortKey(c.DueAt))
-                .ThenBy(c => c.CreatedAt)
+                .OrderBy(c => CardRanking.OrderKey(c, now))
                 .ToList());
 
         var columns = board.Columns
@@ -332,6 +330,7 @@ public sealed class BoardService
             effective,
             CardRanking.Quadrant(card.Importance, effective),
             CardRanking.Rank(card, utc),
+            card.Position,
             ParseLabels(card.LabelsJson),
             card.Status,
             card.ConcurrencyToken,
@@ -449,6 +448,7 @@ public sealed class BoardService
             revision.Importance,
             revision.Urgency,
             revision.DueAt,
+            revision.Position,
             revision.LabelsJson is null ? null : ParseLabels(revision.LabelsJson),
             revision.FromColumnId,
             revision.ToColumnId,

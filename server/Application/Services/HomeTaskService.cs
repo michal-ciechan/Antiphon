@@ -72,6 +72,7 @@ public sealed class HomeTaskService
                 c.Urgency,
                 c.DueAt,
                 c.UrgentSince,
+                c.Position,
                 c.BoardId,
                 c.OwnerSessionId,
                 c.ActiveWorkflowRun != null ? c.ActiveWorkflowRun.Status : (CardWorkflowRunStatus?)null,
@@ -204,7 +205,7 @@ public sealed class HomeTaskService
             ?? workerRow?.WorkingDirectory;
 
         var effective = CardRanking.EffectiveUrgency(card.Urgency, card.DueAt, now);
-        var rank = CardRanking.Rank(card.Importance, card.Urgency, card.DueAt, now);
+        var order = CardRanking.OrderKey(card.Importance, card.Urgency, card.DueAt, card.Position, card.CreatedAt, now);
         var item = new HomeTaskItemDto(
             Key: $"card:{card.Id:N}",
             Source: HomeTaskSource.Card,
@@ -220,7 +221,7 @@ public sealed class HomeTaskService
             Importance: card.Importance,
             EffectiveUrgency: effective,
             Quadrant: CardRanking.Quadrant(card.Importance, effective),
-            Rank: rank,
+            Rank: order.Rank,
             UrgentSince: card.UrgentSince,
             BoardId: card.BoardId,
             Worker: worker,
@@ -255,7 +256,9 @@ public sealed class HomeTaskService
             waitingSince,
             runningAt,
             NextSourceRank: 0,
-            rank,
+            order.Rank,
+            order.Position,
+            order.Due,
             card.CreatedAt,
             card.UpdatedAt,
             card.CompletedAt ?? DateTime.MinValue);
@@ -313,6 +316,8 @@ public sealed class HomeTaskService
             runningAt,
             NextSourceRank: 1,
             Rank: 10,
+            Position: int.MaxValue,
+            Due: DateTime.MaxValue,
             task.CreatedAt,
             item.UpdatedAt,
             task.CompletedAt ?? DateTime.MinValue);
@@ -424,6 +429,10 @@ public sealed class HomeTaskService
                 if (source != 0) return source;
                 var rank = a.Rank.CompareTo(b.Rank);
                 if (rank != 0) return rank;
+                var position = a.Position.CompareTo(b.Position);
+                if (position != 0) return position;
+                var due = a.Due.CompareTo(b.Due);
+                if (due != 0) return due;
                 var created = a.CreatedAt.CompareTo(b.CreatedAt);
                 if (created != 0) return created;
                 break;
@@ -467,6 +476,7 @@ public sealed class HomeTaskService
         CardUrgency Urgency,
         DateTime? DueAt,
         DateTime? UrgentSince,
+        int? Position,
         Guid BoardId,
         Guid? OwnerSessionId,
         CardWorkflowRunStatus? WorkflowRunStatus,
@@ -525,6 +535,8 @@ public sealed class HomeTaskService
         DateTime RunningAt,
         int NextSourceRank,
         int Rank,
+        int Position,
+        DateTime Due,
         DateTime CreatedAt,
         DateTime UpdatedAt,
         DateTime CompletedAt);

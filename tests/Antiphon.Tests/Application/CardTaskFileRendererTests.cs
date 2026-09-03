@@ -177,6 +177,26 @@ public class CardTaskFileRendererTests
     }
 
     [Test]
+    public void Index_orders_a_later_placed_card_ahead_of_an_older_same_rank_card()
+    {
+        var earlier = new DateTime(2026, 8, 9, 10, 0, 0, DateTimeKind.Utc);
+        var later = earlier.AddHours(2);
+        var older = MakeCard(Guid.NewGuid(), "CARD-0001", "older unplaced", "", CardStatus.Backlog, CardImportance.Normal, created: earlier);
+        var placed = MakeCard(Guid.NewGuid(), "CARD-0002", "later placed", "", CardStatus.Backlog, CardImportance.Normal, created: later);
+        placed.Position = 1;
+
+        var names = new Dictionary<Guid, string>
+        {
+            [older.Id] = "CARD-0001-older.md",
+            [placed.Id] = "CARD-0002-later.md"
+        };
+        var index = CardTaskFileRenderer.RenderIndex("Antiphon", [older, placed], names);
+        var placedAt = index.IndexOf("CARD-0002", StringComparison.Ordinal);
+        var olderAt = index.IndexOf("CARD-0001", StringComparison.Ordinal);
+        placedAt.ShouldBeLessThan(olderAt);
+    }
+
+    [Test]
     public void Slug_rules_cap_at_60_and_collapse_non_alphanumerics()
     {
         CardTaskFileRenderer.BoardSlug("Gym Stat").ShouldBe("gym-stat");

@@ -121,6 +121,23 @@ public class HomeTaskServiceIntegrationTests
     }
 
     [Test]
+    public async Task next_honours_position_ahead_of_an_older_same_rank_card()
+    {
+        await using var world = await World.CreateAsync();
+        var older = await world.SeedCardAsync(
+            CardStatus.Backlog, CardImportance.Normal, createdAt: world.Now.AddMinutes(-10));
+        var placed = await world.SeedCardAsync(
+            CardStatus.Backlog, CardImportance.Normal, createdAt: world.Now, position: 1);
+
+        var items = (await world.GetAsync()).Items.ToList();
+        var first = items.Single(i => i.Id == placed.Id);
+        var second = items.Single(i => i.Id == older.Id);
+        first.Group.ShouldBe(HomeTaskGroup.Next);
+        second.Group.ShouldBe(HomeTaskGroup.Next);
+        items.IndexOf(first).ShouldBeLessThan(items.IndexOf(second));
+    }
+
+    [Test]
     public async Task unbound_tasks_group_by_status_and_a_bound_task_is_only_a_worker()
     {
         await using var world = await World.CreateAsync();
@@ -468,7 +485,8 @@ public class HomeTaskServiceIntegrationTests
             DateTime? completedAt = null,
             Guid? boardId = null,
             Guid? assignedAgentId = null,
-            string? terminalReason = null)
+            string? terminalReason = null,
+            int? position = null)
         {
             await using var scope = _provider.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -484,6 +502,7 @@ public class HomeTaskServiceIntegrationTests
                 Title = $"Home card {status}",
                 Status = status,
                 Importance = importance,
+                Position = position,
                 AssignedAgentId = assignedAgentId,
                 CreatedAt = at,
                 UpdatedAt = updatedAt ?? at,
