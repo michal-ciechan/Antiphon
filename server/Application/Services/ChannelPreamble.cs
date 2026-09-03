@@ -81,12 +81,18 @@ public static class ChannelPreamble
             .ToString();
     }
 
-    /// <summary>Queued once on a genuinely fresh (or effectively fresh fallback) session start.</summary>
+    /// <summary>
+    /// Ritual queued once on a genuinely fresh (or effectively fresh fallback) session start.
+    /// Delivered as <see cref="WithSessionTag"/>; this constant is the ritual, not the queued bytes.
+    /// </summary>
     public static string BootstrapBody { get; } =
         "New session started. Follow your CLAUDE.md session-start ritual now (read SOUL.md, USER.md, "
         + "MEMORY.md and today's memory log; if BOOTSTRAP.md exists, complete it and delete it), then reply READY.";
 
-    /// <summary>Queued after a successful resume of a previous conversation (e.g. post-restart).</summary>
+    /// <summary>
+    /// Ritual queued after a successful resume of a previous conversation (e.g. post-restart).
+    /// Delivered as <see cref="WithSessionTag"/>; this constant is the ritual, not the queued bytes.
+    /// </summary>
     public static string RestartResumeBody { get; } =
         "[System note from Antiphon: your session was resumed after a restart. Skim today's memory log "
         + "before acting; do not re-execute work that already completed. Reply "
@@ -98,4 +104,18 @@ public static class ChannelPreamble
         + "MEMORY.md and today's memory log before acting on anything below. Do not re-execute "
         + "completed work. Reply " + ChannelContracts.NoReplyToken
         + " unless you have something for the user.]";
+
+    /// <summary>Eight hex chars, same short-id as <c>[task …]</c> / <c>[check …]</c>.</summary>
+    public static string SessionShortId(Guid sessionId) => sessionId.ToString("N")[..8];
+
+    public static string SessionTag(Guid sessionId) => $"[session {SessionShortId(sessionId)}]";
+
+    /// <summary>
+    /// Prefixes <paramref name="body"/> with <see cref="SessionTag"/> so C4's 200-char head window
+    /// can tell two always-on incarnations' launch notes apart. Must be a prefix: a suffix on
+    /// <see cref="BootstrapBody"/> (195 chars) or <see cref="RestartResumeBody"/> (211 chars) does
+    /// not reach that window. Applied at delivery, not baked into the frozen bodies.
+    /// </summary>
+    public static string WithSessionTag(string body, Guid sessionId) =>
+        $"{SessionTag(sessionId)} {body}";
 }

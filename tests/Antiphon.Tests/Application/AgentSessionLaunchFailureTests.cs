@@ -343,7 +343,8 @@ public class AgentSessionLaunchFailureTests
         alert.Severity.ShouldBe(AlertSeverity.Warning);
 
         // The launch ran to completion: the note went out and the boot's flush released the queue.
-        adapter.SubmittedBodies.ShouldContain("launch note body");
+        adapter.SubmittedBodies.ShouldContain(
+            ChannelPreamble.WithSessionTag("launch note body", fixture.SessionId));
         var released = await db.SessionQueuedMessages.SingleAsync(m => m.Id == queued);
         released.Status.ShouldBe(QueuedMessageStatus.Sent);
     }

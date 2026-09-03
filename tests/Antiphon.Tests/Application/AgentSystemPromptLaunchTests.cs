@@ -50,9 +50,10 @@ public class AgentSystemPromptLaunchTests
         args.ShouldContain("--settings");
 
         // The bootstrap is delivered exactly once, verified, and leaves no pending rows.
-        adapter.SubmittedBodies.ShouldBe([ChannelPreamble.BootstrapBody]);
-        await using var db = CreateContext();
         var newSessionId = Guid.Parse(started.PersistentSessionId!);
+        adapter.SubmittedBodies.ShouldBe(
+            [ChannelPreamble.WithSessionTag(ChannelPreamble.BootstrapBody, newSessionId)]);
+        await using var db = CreateContext();
         (await db.SessionQueuedMessages.Where(m => m.AgentSessionId == newSessionId).ToListAsync())
             .ShouldAllBe(m => m.Status == QueuedMessageStatus.Sent);
         (await db.AgentIncidents.AnyAsync(i => i.AgentId == h.AgentId)).ShouldBeFalse();
@@ -65,13 +66,15 @@ public class AgentSystemPromptLaunchTests
         await SetPreambleAsync(h, Template);
         await EndSessionAsync(h, SessionStatus.Failed);
 
-        await StartAsync(h, fresh: true);
+        var started = await StartAsync(h, fresh: true);
         Factory(h).Created.Count.ShouldBe(1);
 
         await StartAsync(h, fresh: true); // live session — idempotent no-op
 
         Factory(h).Created.Count.ShouldBe(1, "no second process, no second bootstrap");
-        Factory(h).Created[0].SubmittedBodies.ShouldBe([ChannelPreamble.BootstrapBody]);
+        Factory(h).Created[0].SubmittedBodies.ShouldBe(
+            [ChannelPreamble.WithSessionTag(
+                ChannelPreamble.BootstrapBody, Guid.Parse(started.PersistentSessionId!))]);
     }
 
     [Test]
@@ -91,7 +94,8 @@ public class AgentSystemPromptLaunchTests
         adapter.StartedArgs.ShouldContain("--resume");
         adapter.StartedArgs.ShouldContain("--append-system-prompt");
         adapter.StartedArgs.ShouldContain("--settings");
-        adapter.SubmittedBodies.ShouldBe([ChannelPreamble.RestartResumeBody],
+        adapter.SubmittedBodies.ShouldBe(
+            [ChannelPreamble.WithSessionTag(ChannelPreamble.RestartResumeBody, h.SessionId)],
             "a successful resume gets the restart note, NOT the bootstrap");
     }
 
@@ -244,7 +248,8 @@ public class AgentSystemPromptLaunchTests
         factory.Created.Count.ShouldBe(2, "resume attempt + fresh fallback");
         factory.Created[1].StartedArgs.ShouldContain("--session-id");
         factory.Created[1].StartedArgs.ShouldNotContain("--resume");
-        factory.Created[1].SubmittedBodies.ShouldBe([ChannelPreamble.BootstrapBody]);
+        factory.Created[1].SubmittedBodies.ShouldBe(
+            [ChannelPreamble.WithSessionTag(ChannelPreamble.BootstrapBody, h.SessionId)]);
     }
 
     [Test]
@@ -263,7 +268,8 @@ public class AgentSystemPromptLaunchTests
 
         await StartAsync(h, fresh: false);
 
-        Factory(h).Created[1].SubmittedBodies.ShouldBe([ChannelPreamble.BootstrapBody]);
+        Factory(h).Created[1].SubmittedBodies.ShouldBe(
+            [ChannelPreamble.WithSessionTag(ChannelPreamble.BootstrapBody, h.SessionId)]);
     }
 
     // CARD-0233 S4: a Mode.Now launch note typed into a composer that was already answering a
@@ -316,14 +322,16 @@ public class AgentSystemPromptLaunchTests
         {
             var note = await db.SessionQueuedMessages.SingleAsync(m =>
                 m.AgentSessionId == h.SessionId && m.Origin == QueuedMessageOrigin.System);
-            note.Body.ShouldBe(ChannelPreamble.RestartResumeBody);
+            note.Body.ShouldBe(
+                ChannelPreamble.WithSessionTag(ChannelPreamble.RestartResumeBody, h.SessionId));
             note.Status.ShouldBe(QueuedMessageStatus.Pending);
         }
 
         await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
         await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
 
-        adapter.SubmittedBodies.ShouldBe([channelBody, ChannelPreamble.RestartResumeBody]);
+        adapter.SubmittedBodies.ShouldBe(
+            [channelBody, ChannelPreamble.WithSessionTag(ChannelPreamble.RestartResumeBody, h.SessionId)]);
         await using (var db = CreateContext())
         {
             var note = await db.SessionQueuedMessages.SingleAsync(m =>
@@ -348,7 +356,8 @@ public class AgentSystemPromptLaunchTests
         (await db.AgentSessions.SingleAsync(s => s.Id == newSessionId)).Status
             .ShouldBe(SessionStatus.Running, "a note-delivery failure must never fail the launch");
         var note = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == newSessionId);
-        note.Body.ShouldBe(ChannelPreamble.BootstrapBody);
+        note.Body.ShouldBe(
+            ChannelPreamble.WithSessionTag(ChannelPreamble.BootstrapBody, newSessionId));
         note.Status.ShouldBe(QueuedMessageStatus.Pending, "failed Now delivery falls back to a queued note");
     }
 

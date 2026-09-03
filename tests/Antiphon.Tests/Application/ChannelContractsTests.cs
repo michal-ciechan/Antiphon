@@ -163,6 +163,38 @@ public class ChannelContractsTests
     }
 
     [Test]
+    public void WithSessionTag_prefixes_the_short_id_and_leaves_the_body_intact()
+    {
+        var sessionId = Guid.Parse("abcdef12-3456-7890-abcd-ef1234567890");
+        var tagged = ChannelPreamble.WithSessionTag(ChannelPreamble.BootstrapBody, sessionId);
+
+        tagged.ShouldStartWith("[session abcdef12] ");
+        tagged.ShouldEndWith(ChannelPreamble.BootstrapBody);
+        tagged.ShouldBe($"[session abcdef12] {ChannelPreamble.BootstrapBody}");
+        ChannelPreamble.BootstrapBody.ShouldNotContain("[session ");
+        ChannelPreamble.RestartResumeBody.ShouldNotContain("[session ");
+        // Lengths today: BootstrapBody 195, RestartResumeBody 211. A suffix would miss
+        // PromptSubmissionMatch.MatchWindowChars (200) on both; the helper must stay a prefix.
+        ChannelPreamble.WithSessionTag(ChannelPreamble.BootstrapBody, sessionId)
+            .ShouldStartWith(ChannelPreamble.SessionTag(sessionId) + " ");
+    }
+
+    [Test]
+    public void WithSessionTag_differs_across_session_ids()
+    {
+        var a = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        var b = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        var taggedA = ChannelPreamble.WithSessionTag(ChannelPreamble.BootstrapBody, a);
+        var taggedB = ChannelPreamble.WithSessionTag(ChannelPreamble.BootstrapBody, b);
+
+        taggedA.ShouldNotBe(taggedB);
+        taggedA.ShouldContain(ChannelPreamble.SessionTag(a));
+        taggedB.ShouldContain(ChannelPreamble.SessionTag(b));
+        taggedA.ShouldNotContain(ChannelPreamble.SessionTag(b));
+        taggedB.ShouldNotContain(ChannelPreamble.SessionTag(a));
+    }
+
+    [Test]
     public void IsNoReply_matches_whole_turn_only()
     {
         ChannelContracts.IsNoReply("NO_REPLY").ShouldBeTrue();

@@ -268,6 +268,76 @@ public class TranscriptAdoptionSafetyTests
     }
 
     /// <summary>
+    /// CARD-0189 residual: two same-named always-on incarnations, Claude-chosen (non-namesake)
+    /// forks, identical 195-char bootstrap ritual, differing only by a session tag. C0 is a no-op
+    /// (new GUID basename, no sidecar). C4 must bind each file to its own session — swapping
+    /// would be newest-mtime plus a shared ritual.
+    /// </summary>
+    [Test]
+    public async Task Two_same_named_incarnations_with_tagged_launch_notes_bind_only_their_own_fork()
+    {
+        // Copied literally from ChannelPreamble.BootstrapBody — the runner project does not
+        // reference the server.
+        const string bootstrap =
+            "New session started. Follow your CLAUDE.md session-start ritual now (read SOUL.md, USER.md, "
+            + "MEMORY.md and today's memory log; if BOOTSTRAP.md exists, complete it and delete it), then reply READY.";
+
+        using var tree = new TranscriptTree("0189-tagged-note");
+        var claims = new TranscriptClaimRegistry();
+        var sessionA = Guid.NewGuid();
+        var sessionB = Guid.NewGuid();
+        var taggedA = "[session " + sessionA.ToString("N")[..8] + "] " + bootstrap;
+        var taggedB = "[session " + sessionB.ToString("N")[..8] + "] " + bootstrap;
+
+        var inputA = new SessionInputLog();
+        inputA.Append(taggedA);
+        var inputB = new SessionInputLog();
+        inputB.Append(taggedB);
+
+        const string agentName = "PredictionMarkets-Orchestrator";
+        await using var hub = new HubEvents();
+        var tailerA = NewTailer(
+            hub, tree, inputA,
+            childStartUtc: DateTime.UtcNow.AddSeconds(-5),
+            claims: claims,
+            agentName: agentName,
+            sessionId: sessionA);
+        var tailerB = NewTailer(
+            hub, tree, inputB,
+            childStartUtc: DateTime.UtcNow.AddSeconds(-5),
+            claims: claims,
+            agentName: agentName,
+            sessionId: sessionB);
+        tailerA.Start();
+        tailerB.Start();
+        try
+        {
+            await Task.Delay(400);
+            var fileA = tree.NewTranscript();
+            await tree.AppendAsync(fileA, AgentNameLine(agentName));
+            await tree.AppendAsync(fileA, UserLine("a1", tree.Cwd, taggedA, DateTime.UtcNow));
+            await Task.Delay(150);
+            // B's fork is written LAST, so "newest wins" plus a shared ritual would hand it to A.
+            var fileB = tree.NewTranscript();
+            await tree.AppendAsync(fileB, AgentNameLine(agentName));
+            await tree.AppendAsync(fileB, UserLine("b1", tree.Cwd, taggedB, DateTime.UtcNow));
+
+            (await PollForEntriesAsync(tailerA, want: 1, TimeSpan.FromSeconds(10)))
+                .ShouldHaveSingleItem().Text.ShouldBe(taggedA);
+            (await PollForEntriesAsync(tailerB, want: 1, TimeSpan.FromSeconds(10)))
+                .ShouldHaveSingleItem().Text.ShouldBe(taggedB);
+
+            tailerA.BoundTranscriptPath.ShouldBe(fileA);
+            tailerB.BoundTranscriptPath.ShouldBe(fileB);
+        }
+        finally
+        {
+            await tailerA.DisposeAsync();
+            await tailerB.DisposeAsync();
+        }
+    }
+
+    /// <summary>
     /// C1 on its own: even a candidate that satisfies every other rule (identical delivered text is
     /// entirely possible — two agents get the same launch note) is refused while another live
     /// session holds it.
