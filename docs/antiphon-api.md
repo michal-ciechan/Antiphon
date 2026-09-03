@@ -236,7 +236,7 @@ POST   /api/agent-tasks/{id}/land            queue an explicit land of a Succeed
                                              cleanup), `LandRefused` (target did not
                                              advance). 409 if a land is already queued.
 GET    /api/agent-tasks/areas?directory=     the repo's named areas (antiphon.areas.json)
-GET    /api/agent-tasks/pipeline             fleet-wide advisory in-flight / queued / blocked / ready snapshot. Queued queueReason is one of sharedCheckoutLease, concurrencyCap, routingPinNotBefore, awaitingDispatch. In-flight, queued and blocked rows carry agentKind / modelLevel; in-flight and queued also carry workspace.
+GET    /api/agent-tasks/pipeline             fleet-wide advisory in-flight / queued / blocked / ready snapshot. Queued queueReason is one of sharedCheckoutLease, siblingLandInFlight, concurrencyCap, routingPinNotBefore, awaitingDispatch. In-flight, queued and blocked rows carry agentKind / modelLevel; in-flight and queued also carry workspace.
 ```
 
 `CreateAgentTaskRequest` (`server/Application/Dtos/AgentTaskDtos.cs`) is the biggest body in the

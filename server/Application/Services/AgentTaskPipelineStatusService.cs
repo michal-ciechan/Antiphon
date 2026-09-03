@@ -15,6 +15,12 @@ namespace Antiphon.Server.Application.Services;
 public sealed class AgentTaskPipelineStatusService
 {
     internal const string QueueReasonSharedCheckoutLease = "sharedCheckoutLease";
+    /// <summary>
+    /// CARD-0301 / CARD-0215: a same-card Worktree sibling has a pending land
+    /// (<c>AgentTasks.LandRequestedAt</c>). Matches the dispatcher's hold without the Git
+    /// probes. CARD-0331 moved this off LandRequested/Landed/LandRefused event rows onto the column.
+    /// </summary>
+    internal const string QueueReasonSiblingLandInFlight = "siblingLandInFlight";
     internal const string QueueReasonAwaitingDispatch = "awaitingDispatch";
     /// <summary>CARD-0305: waiting on its routing pin's <c>NotBefore</c>, not on a checkout.</summary>
     internal const string QueueReasonRoutingPinNotBefore = "routingPinNotBefore";
@@ -144,6 +150,7 @@ public sealed class AgentTaskPipelineStatusService
 
         var queued = open.Where(t => t.Status == AgentTaskStatus.Queued).ToList();
         var blocked = open.Where(t => t.Status == AgentTaskStatus.Blocked).ToList();
+        var siblingLands = await LoadSiblingLandHoldersAsync(queued, ct);
 
         var stages = new List<AgentTaskPipelineStageDto>(VisibleRoles.Length);
         foreach (var role in VisibleRoles)
@@ -157,7 +164,7 @@ public sealed class AgentTaskPipelineStatusService
             var roleQueued = queued
                 .Where(t => t.Role == role)
                 .OrderBy(t => t.CreatedAt).ThenBy(t => t.Id)
-                .Select(t => ToQueued(t, cards, holders, stagePins, cardPins, asOf, inFlightRows.Count))
+                .Select(t => ToQueued(t, cards, holders, stagePins, cardPins, asOf, inFlightRows.Count, siblingLands))
                 .ToList();
             var roleBlocked = blocked
                 .Where(t => t.Role == role)
@@ -278,7 +285,8 @@ public sealed class AgentTaskPipelineStatusService
         Dictionary<AgentTaskRole, RoutingPin> stagePins,
         Dictionary<(Guid CardId, AgentTaskRole Role), RoutingPin> cardPins,
         DateTime asOf,
-        int inFlightAgainstCap)
+        int inFlightAgainstCap,
+        Dictionary<Guid, SiblingLandRow> siblingLands)
     {
         IReadOnlyList<AgentTaskPipelineHolderDto> heldBy = [];
         var queueReason = QueueReasonAwaitingDispatch;
@@ -302,6 +310,22 @@ public sealed class AgentTaskPipelineStatusService
             }
         }
 
+        // CARD-0301: lease → sibling land → pin → cap. The dispatcher holds a card-bound Worktree
+        // task while a same-card sibling's LandRequestedAt is set (CARD-0331); name that hold here
+        // without the Git probes the dispatcher adds.
+        if (queueReason == QueueReasonAwaitingDispatch
+            && task.CardId is Guid cardId
+            && task.Workspace == WorkspaceMode.Worktree
+            && siblingLands.TryGetValue(cardId, out var sibling)
+            && sibling.Id != task.Id)
+        {
+            queueReason = QueueReasonSiblingLandInFlight;
+            heldBy = [new AgentTaskPipelineHolderDto(
+                sibling.Id,
+                DelegationReportFormatter.Short(sibling.Id),
+                sibling.Title)];
+        }
+
         // CARD-0305: the same precedence the dispatcher applies — the lease is checked first, so a
         // task waiting on BOTH reports the checkout it is behind, not the date it is before.
         if (queueReason == QueueReasonAwaitingDispatch
@@ -311,8 +335,9 @@ public sealed class AgentTaskPipelineStatusService
             queueReason = QueueReasonRoutingPinNotBefore;
         }
 
-        // Lease → pin → cap, the reasons the rail can name. The dispatcher itself checks the cap
-        // first and continues, but a task that is also behind a checkout still reports the checkout.
+        // Lease → sibling land → pin → cap, the reasons the rail can name. The dispatcher itself
+        // checks the cap first and continues, but a task that is also behind a checkout still
+        // reports the checkout.
         if (queueReason == QueueReasonAwaitingDispatch
             && inFlightAgainstCap >= _settings.MaxConcurrentTasks)
         {
@@ -381,6 +406,39 @@ public sealed class AgentTaskPipelineStatusService
             ? new AgentTaskPipelineCardRefDto(card.Id, card.Identifier, card.Title)
             : null;
 
+    /// <summary>
+    /// CARD-0331: pending lands are <c>LandRequestedAt != null</c> on Succeeded/Blocked Worktree
+    /// siblings — the same column the dispatcher reads. One query keyed by the queued rows' card
+    /// ids; never contacts Git.
+    /// </summary>
+    private async Task<Dictionary<Guid, SiblingLandRow>> LoadSiblingLandHoldersAsync(
+        List<TaskRow> queued, CancellationToken ct)
+    {
+        var cardIds = queued
+            .Where(t => t.CardId is not null && t.Workspace == WorkspaceMode.Worktree)
+            .Select(t => t.CardId!.Value)
+            .Distinct()
+            .ToList();
+        if (cardIds.Count == 0)
+            return [];
+
+        var rows = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.CardId != null
+                && cardIds.Contains(t.CardId.Value)
+                && t.Workspace == WorkspaceMode.Worktree
+                && t.WorktreeBranch != null
+                && t.LandRequestedAt != null
+                && (t.Status == AgentTaskStatus.Succeeded || t.Status == AgentTaskStatus.Blocked))
+            .Select(t => new SiblingLandRow(t.Id, t.Title, t.CardId!.Value, t.LandRequestedAt!.Value))
+            .ToListAsync(ct);
+
+        return rows
+            .GroupBy(r => r.CardId)
+            .ToDictionary(
+                g => g.Key,
+                g => g.OrderBy(r => r.LandRequestedAt).ThenBy(r => r.Id).First());
+    }
+
     private async Task<Dictionary<Guid, DateTime>> LoadLastActivityAsync(
         List<TaskRow> inFlight, CancellationToken ct)
     {
@@ -440,6 +498,8 @@ public sealed class AgentTaskPipelineStatusService
         string? DeliverableRef,
         TaskComplexity? Complexity = null,
         string? FailureReason = null);
+
+    private sealed record SiblingLandRow(Guid Id, string Title, Guid CardId, DateTime LandRequestedAt);
 
     private sealed record CardRow(
         Guid Id, string Identifier, string Title, CardStatus Status, DateTime? ArchivedAt);
