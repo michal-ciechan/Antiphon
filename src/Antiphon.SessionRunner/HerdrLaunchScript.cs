@@ -23,23 +23,26 @@ internal static class HerdrLaunchScript
         return "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
     }
 
-    public static string BuildContent(string exe, IReadOnlyList<string> args)
+    public static string BuildContent(string exe, IReadOnlyList<string> args, string? workingDirectory = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(exe);
         args ??= Array.Empty<string>();
         var quoted = new string[args.Count];
         for (var i = 0; i < args.Count; i++)
             quoted[i] = Quote(args[i] ?? "");
-        return $"& {Quote(exe)} @({string.Join(", ", quoted)})";
+        var command = $"& {Quote(exe)} @({string.Join(", ", quoted)})";
+        if (string.IsNullOrEmpty(workingDirectory))
+            return command;
+        return $"Set-Location -LiteralPath {Quote(workingDirectory)}\n{command}";
     }
 
     /// <summary>The constant-length line typed into the pane: <c>&amp; '&lt;path&gt;'</c>.</summary>
     public static string TypedCommand(string scriptPath) => $"& {Quote(scriptPath)}";
 
-    public static void Write(string path, string exe, IReadOnlyList<string> args)
+    public static void Write(string path, string exe, IReadOnlyList<string> args, string? workingDirectory = null)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, BuildContent(exe, args), Utf8Bom);
+        File.WriteAllText(path, BuildContent(exe, args, workingDirectory), Utf8Bom);
     }
 
     public static bool IsTypedCommand(string text)
