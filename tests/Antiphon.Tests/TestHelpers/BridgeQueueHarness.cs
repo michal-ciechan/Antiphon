@@ -9,6 +9,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
+using Antiphon.Tests.ApiKeys;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -141,6 +142,10 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         services.AddScoped<AgentSessionService>();
         services.AddScoped<RetryScheduler>();
         services.AddScoped<ExternalTrackerSyncService>();
+        services.AddSingleton<IApiKeyProtector, ApiKeyStoreTests.FakeApiKeyProtector>();
+        services.AddScoped<TrackerTokenResolver>();
+        services.AddSingleton(Options.Create(new TrackerSettings()));
+        services.AddScoped<TrackerCardStatePushService>();
         services.AddScoped<CardWorkflowRunFactory>();
         services.AddScoped<BoardService>();
         // CardService now depends on AgentReviewCheckpointService (files-review checkpoints);

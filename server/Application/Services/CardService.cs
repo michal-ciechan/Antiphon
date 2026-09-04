@@ -83,6 +83,9 @@ public sealed class CardService : IScheduledCardActions
     private readonly ApiKeyEnvResolver? _apiKeyEnvResolver;
     private readonly DelegationSettings _delegationSettings;
     private readonly CardsSettings _cards;
+    // CARD-0347: optional like the launch resolver. Production always registers it; a fixture
+    // that omits it gets no GitHub push on close/reopen.
+    private readonly TrackerCardStatePushService? _trackerStatePush;
 
     public CardService(
         AppDbContext db,
@@ -98,7 +101,8 @@ public sealed class CardService : IScheduledCardActions
         ApiKeyEnvResolver? apiKeyEnvResolver = null,
         IOptions<DelegationSettings>? delegationSettings = null,
         AgentSessionLaunchComposer? launchComposer = null,
-        IOptions<CardsSettings>? cards = null)
+        IOptions<CardsSettings>? cards = null,
+        TrackerCardStatePushService? trackerStatePush = null)
     {
         _db = db;
         _agentRegistry = agentRegistry;
@@ -114,6 +118,7 @@ public sealed class CardService : IScheduledCardActions
         _apiKeyEnvResolver = apiKeyEnvResolver;
         _delegationSettings = delegationSettings?.Value ?? new DelegationSettings();
         _cards = cards?.Value ?? new CardsSettings();
+        _trackerStatePush = trackerStatePush;
     }
 
     public async Task<CardDto> CreateAsync(Guid boardId, CreateCardRequest request, CancellationToken ct)
@@ -428,6 +433,10 @@ public sealed class CardService : IScheduledCardActions
         if (targetColumn.IsTerminal && !wasTerminal && assignedAgentId is { } checkpointAgentId)
             await _reviewCheckpoints.CaptureAsync(checkpointAgentId, $"Card {card.Identifier} completed", ct);
 
+        TrackerCardStatePushResult? push = null;
+        if (targetColumn.IsTerminal && !wasTerminal && card.ExternalIssueRef is not null && _trackerStatePush is not null)
+            push = await _trackerStatePush.PushForCardAsync(card.Id, ct);
+
         Guid? spawnedSessionId = null;
         var spawnSuppressed = false;
         if (targetColumn.IsActive && card.OwnerSessionId is null)
@@ -441,7 +450,7 @@ public sealed class CardService : IScheduledCardActions
         if (queueRemoval is not null)
             await CardLifecycleTransitions.PublishQueueRemovalAsync(_eventBus, queueRemoval, ct);
         await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
-        return new MoveCardResult(await GetByIdAsync(card.Id, ct), spawnedSessionId, spawnSuppressed);
+        return new MoveCardResult(await GetByIdAsync(card.Id, ct), spawnedSessionId, spawnSuppressed, push);
     }
 
     /// <summary>
@@ -588,7 +597,7 @@ public sealed class CardService : IScheduledCardActions
     /// so a reopen is structurally incapable of spawning (CARD-0051's opt-in lives only in
     /// <see cref="MoveAsync"/>).
     /// </summary>
-    public async Task<CardDto> ReopenAsync(Guid id, ReopenCardRequest request, CancellationToken ct)
+    public async Task<ReopenCardResult> ReopenAsync(Guid id, ReopenCardRequest request, CancellationToken ct)
     {
         ValidateArchiveRequest(
             request.Reason, nameof(request.Reason), request.ReopenedBy, nameof(request.ReopenedBy));
@@ -623,8 +632,13 @@ public sealed class CardService : IScheduledCardActions
             card.AutoDispatchHeldAt = UtcNow();
 
         await SaveCardWriteAsync(card, ct);
+
+        TrackerCardStatePushResult? push = null;
+        if (card.ExternalIssueRef is not null && _trackerStatePush is not null)
+            push = await _trackerStatePush.PushForCardAsync(card.Id, ct);
+
         await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
-        return await GetByIdAsync(card.Id, ct);
+        return new ReopenCardResult(await GetByIdAsync(card.Id, ct), push);
     }
 
     /// <summary>

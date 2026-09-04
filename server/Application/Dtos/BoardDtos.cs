@@ -192,7 +192,21 @@ public sealed record MoveCardRequest(
 /// is a caller discovering a card sitting in In Progress with nobody on it, days later.
 /// </param>
 public sealed record MoveCardResult(
-    CardDto Card, Guid? SpawnedSessionId, bool SpawnSuppressed);
+    CardDto Card,
+    Guid? SpawnedSessionId,
+    bool SpawnSuppressed,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    TrackerCardStatePushResult? TrackerPush = null);
+
+/// <summary>
+/// CARD-0347: what a reopen DID, including the optional tracker push on a linked card.
+/// <see cref="TrackerPush"/> is omitted when the card has no external issue, so an unlinked
+/// reopen's JSON is the card nested under <c>card</c> with no extra property.
+/// </summary>
+public sealed record ReopenCardResult(
+    CardDto Card,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    TrackerCardStatePushResult? TrackerPush = null);
 
 /// <summary>
 /// A correction to a card's text. Deliberately not an overload of <c>PATCH /cards/{id}</c>, which

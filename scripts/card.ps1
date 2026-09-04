@@ -297,6 +297,21 @@ function Write-CardLine {
             $TheCard.identifier, $TheCard.status, $TheCard.importance, $TheCard.urgency, $TheCard.rank, $prov, $TheCard.title, $labels)
 }
 
+function Write-TrackerPushLine {
+    param($Push)
+    if ($null -eq $Push) { return }
+    $name = if ($Push.trackerKind -eq 'GitHubIssues') { 'GitHub' } else { [string]$Push.trackerKind }
+    $outcome = [string]$Push.outcome
+    switch ($outcome) {
+        'Closed'   { Write-Output ("{0,-11} closed {1} ({2})" -f $name, $Push.externalKey, $Push.url) }
+        'Reopened' { Write-Output ("{0,-11} reopened {1} ({2})" -f $name, $Push.externalKey, $Push.url) }
+        'InSync'   { Write-Output ("{0,-11} already in sync ({1})" -f $name, $Push.externalKey) }
+        'Skipped'  { Write-Output ("{0,-11} skipped: {1}" -f $name, $Push.reason) }
+        'Failed'   { Write-Output ("{0,-11} push FAILED: {1} - the next scheduled sync will retry" -f $name, $Push.reason) }
+        default    { Write-Output ("{0,-11} {1} ({2})" -f $name, $outcome, $Push.externalKey) }
+    }
+}
+
 function Get-BoardColumns {
     param([string]$BoardId)
     return Invoke-Antiphon -Method GET -Path "/api/boards/$BoardId/columns"
@@ -483,6 +498,7 @@ switch ($Verb) {
         $result = Invoke-Antiphon -Method PATCH -Path ("/api/cards/{0}" -f $theCard.id) -Body $body
         Write-CardLine $result.card
         Write-Output ("moved to    {0}" -f $target.name)
+        Write-TrackerPushLine $result.trackerPush
         if ($result.spawnedSessionId) {
             Write-Output ("started     session {0}" -f $result.spawnedSessionId)
         }
@@ -521,12 +537,13 @@ switch ($Verb) {
         if (-not [string]::IsNullOrWhiteSpace($By)) { $body['reopenedBy'] = $By }
 
         $updated = Invoke-Antiphon -Method POST -Path ("/api/cards/{0}/reopen" -f $theCard.id) -Body $body
-        Write-CardLine $updated
+        Write-CardLine $updated.card
+        Write-TrackerPushLine $updated.trackerPush
         if ($null -ne $target) {
             Write-Output ("reopened to {0}" -f $target.name)
         }
         else {
-            Write-Output ("reopened to {0}" -f $updated.status)
+            Write-Output ("reopened to {0}" -f $updated.card.status)
         }
         return
     }

@@ -231,11 +231,12 @@ public class CardCorrectionApiTests
             $"/api/cards/{card.Id}/reopen",
             new ReopenCardRequest(closedCard.ConcurrencyToken, "Still open.", ReopenedBy: "operator"));
         reopen.StatusCode.ShouldBe(HttpStatusCode.OK);
-        var live = (await reopen.Content.ReadFromJsonAsync<CardDto>(Json))!;
-        live.Status.ShouldBe(CardStatus.Backlog);
-        live.BoardColumnId.ShouldBe(backlogColumn.Id);
-        live.CompletedAt.ShouldBeNull();
-        live.TerminalReason.ShouldBeNull();
+        var live = (await reopen.Content.ReadFromJsonAsync<ReopenCardResult>(Json))!;
+        live.Card.Status.ShouldBe(CardStatus.Backlog);
+        live.Card.BoardColumnId.ShouldBe(backlogColumn.Id);
+        live.Card.CompletedAt.ShouldBeNull();
+        live.Card.TerminalReason.ShouldBeNull();
+        live.TrackerPush.ShouldBeNull();
 
         var history = await client.GetFromJsonAsync<List<CardRevisionDto>>(
             $"/api/cards/{card.Id}/revisions", Json);

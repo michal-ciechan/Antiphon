@@ -1461,12 +1461,12 @@ public class CardCorrectionIntegrationTests
                 new ReopenCardRequest(closed.Card.ConcurrencyToken, "The close was wrong.", ReopenedBy: "operator"),
                 CancellationToken.None);
 
-            reopened.Status.ShouldBe(CardStatus.Backlog);
-            reopened.BoardColumnId.ShouldBe(backlogColumn.Id);
-            reopened.CompletedAt.ShouldBeNull();
-            reopened.TerminalReason.ShouldBeNull();
-            reopened.ConcurrencyToken.ShouldNotBe(closed.Card.ConcurrencyToken);
-            reopened.RevisionCount.ShouldBe(2);
+            reopened.Card.Status.ShouldBe(CardStatus.Backlog);
+            reopened.Card.BoardColumnId.ShouldBe(backlogColumn.Id);
+            reopened.Card.CompletedAt.ShouldBeNull();
+            reopened.Card.TerminalReason.ShouldBeNull();
+            reopened.Card.ConcurrencyToken.ShouldNotBe(closed.Card.ConcurrencyToken);
+            reopened.Card.RevisionCount.ShouldBe(2);
 
             await using var verify = CreateContext();
             var revisions = await verify.CardRevisions
@@ -1521,12 +1521,12 @@ public class CardCorrectionIntegrationTests
                 card.Id,
                 new ReopenCardRequest(closed.Card.ConcurrencyToken, "Back to the pile."),
                 CancellationToken.None);
-            defaulted.BoardColumnId.ShouldBe(backlogColumn.Id);
-            defaulted.OwnerSessionId.ShouldBeNull();
+            defaulted.Card.BoardColumnId.ShouldBe(backlogColumn.Id);
+            defaulted.Card.OwnerSessionId.ShouldBeNull();
 
             var closedAgain = await harness.CardService.MoveAsync(
                 card.Id,
-                new MoveCardRequest(doneColumn.Id, defaulted.ConcurrencyToken, "Parked again."),
+                new MoveCardRequest(doneColumn.Id, defaulted.Card.ConcurrencyToken, "Parked again."),
                 CancellationToken.None);
             var intoActive = await harness.CardService.ReopenAsync(
                 card.Id,
@@ -1536,11 +1536,11 @@ public class CardCorrectionIntegrationTests
                     BoardColumnId: activeColumn.Id),
                 CancellationToken.None);
 
-            intoActive.Status.ShouldBe(CardStatus.InProgress);
-            intoActive.BoardColumnId.ShouldBe(activeColumn.Id);
-            intoActive.OwnerSessionId.ShouldBeNull();
-            intoActive.AutoDispatchHeldAt.ShouldNotBeNull();
-            defaulted.AutoDispatchHeldAt.ShouldBeNull();
+            intoActive.Card.Status.ShouldBe(CardStatus.InProgress);
+            intoActive.Card.BoardColumnId.ShouldBe(activeColumn.Id);
+            intoActive.Card.OwnerSessionId.ShouldBeNull();
+            intoActive.Card.AutoDispatchHeldAt.ShouldNotBeNull();
+            defaulted.Card.AutoDispatchHeldAt.ShouldBeNull();
             await using var verify = CreateContext();
             (await verify.AgentSessions.CountAsync(s => s.CardId == card.Id)).ShouldBe(0);
             var stored = await verify.Cards.SingleAsync(c => c.Id == card.Id);
@@ -1592,10 +1592,10 @@ public class CardCorrectionIntegrationTests
                 new ReopenCardRequest(token, "The record still has to keep those facts."),
                 CancellationToken.None);
 
-            reopened.Status.ShouldBe(CardStatus.Backlog);
-            reopened.CompletedAt.ShouldBeNull();
-            reopened.TerminalReason.ShouldBeNull();
-            reopened.RevisionCount.ShouldBe(1);
+            reopened.Card.Status.ShouldBe(CardStatus.Backlog);
+            reopened.Card.CompletedAt.ShouldBeNull();
+            reopened.Card.TerminalReason.ShouldBeNull();
+            reopened.Card.RevisionCount.ShouldBe(1);
 
             await using var verify = CreateContext();
             var revision = await verify.CardRevisions.SingleAsync(r => r.CardId == created.Id);
@@ -1645,7 +1645,7 @@ public class CardCorrectionIntegrationTests
             await Task.Delay(20);
             var secondClose = await harness.CardService.MoveAsync(
                 card.Id,
-                new MoveCardRequest(doneColumn.Id, reopened.ConcurrencyToken, "Second verdict."),
+                new MoveCardRequest(doneColumn.Id, reopened.Card.ConcurrencyToken, "Second verdict."),
                 CancellationToken.None);
 
             secondClose.Card.TerminalReason.ShouldBe("Second verdict.");
@@ -1807,8 +1807,8 @@ public class CardCorrectionIntegrationTests
                 card.Id,
                 new ReopenCardRequest(restored.ConcurrencyToken, "And back to live."),
                 CancellationToken.None);
-            reopened.Status.ShouldBe(CardStatus.Backlog);
-            reopened.ArchivedAt.ShouldBeNull();
+            reopened.Card.Status.ShouldBe(CardStatus.Backlog);
+            reopened.Card.ArchivedAt.ShouldBeNull();
         }
         finally
         {
@@ -1872,7 +1872,7 @@ public class CardCorrectionIntegrationTests
                 card.Id,
                 new ReopenCardRequest(closed.Card.ConcurrencyToken, "Need another pass."),
                 CancellationToken.None);
-            reopened.Status.ShouldBe(CardStatus.Backlog);
+            reopened.Card.Status.ShouldBe(CardStatus.Backlog);
 
             await using var verify = CreateContext();
             (await verify.AgentReviewCheckpoints.AnyAsync(c => c.Id == checkpoint.Id)).ShouldBeTrue();

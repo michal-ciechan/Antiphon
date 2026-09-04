@@ -263,10 +263,21 @@ export interface MoveCardRequest {
  * away); `spawnSuppressed` is true when the target column was active and unowned and `spawn` was
  * not set — the card moved into a column where work happens and no work started.
  */
+export type TrackerCardStatePushOutcome = 'Closed' | 'Reopened' | 'InSync' | 'Skipped' | 'Failed'
+
+export interface TrackerCardStatePush {
+  outcome: TrackerCardStatePushOutcome
+  trackerKind: TrackerKind
+  externalKey: string
+  url: string
+  reason?: string | null
+}
+
 export interface MoveCardResult {
   card: CardDto
   spawnedSessionId: string | null
   spawnSuppressed: boolean
+  trackerPush?: TrackerCardStatePush | null
 }
 
 /**
@@ -314,8 +325,13 @@ export interface ReopenCardRequest {
   reopenedBy?: string | null
 }
 
+export interface ReopenCardResult {
+  card: CardDto
+  trackerPush?: TrackerCardStatePush | null
+}
+
 export function reopenCard(cardId: string, body: ReopenCardRequest) {
-  return apiPost<CardDto>(`/cards/${cardId}/reopen`, body)
+  return apiPost<ReopenCardResult>(`/cards/${cardId}/reopen`, body)
 }
 
 export interface SpawnCardRequest {

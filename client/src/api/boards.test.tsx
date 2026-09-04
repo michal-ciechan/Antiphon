@@ -157,16 +157,18 @@ describe('reopenCard', () => {
     server.use(
       http.post('/api/cards/card-1/reopen', async ({ request }) => {
         reopenSpy(await request.json())
-        return HttpResponse.json({ ...cardStub, status: 'Backlog' })
+        return HttpResponse.json({ card: { ...cardStub, status: 'Backlog' } })
       }),
     )
 
-    await reopenCard('card-1', {
+    const updated = await reopenCard('card-1', {
       concurrencyToken: 'token-1',
       reason: 'The close was wrong.',
       reopenedBy: 'operator',
     })
 
+    expect(updated.card.status).toBe('Backlog')
+    expect(updated.trackerPush).toBeUndefined()
     expect(reopenSpy).toHaveBeenCalledWith({
       concurrencyToken: 'token-1',
       reason: 'The close was wrong.',
@@ -179,7 +181,7 @@ describe('reopenCard', () => {
     server.use(
       http.post('/api/cards/card-1/reopen', async ({ request }) => {
         reopenSpy(await request.json())
-        return HttpResponse.json({ ...cardStub, status: 'InProgress' })
+        return HttpResponse.json({ card: { ...cardStub, status: 'InProgress' } })
       }),
     )
 
@@ -199,7 +201,7 @@ describe('reopenCard', () => {
   it('invalidates the board and that card\'s revisions through the hook', async () => {
     server.use(
       http.post('/api/cards/card-1/reopen', () =>
-        HttpResponse.json({ ...cardStub, status: 'Backlog' })),
+        HttpResponse.json({ card: { ...cardStub, status: 'Backlog' } })),
     )
 
     const { result, queryClient } = renderHookWithProviders(() => useReopenCard('board-1'))
