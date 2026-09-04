@@ -401,7 +401,14 @@ public sealed record StartAgentRequest(
     /// Ignored when Start is a no-op because a live session already exists; send a session
     /// message instead. Running does not mean a prompt was delivered.
     /// </summary>
-    string? Prompt = null);
+    string? Prompt = null,
+    /// <summary>
+    /// CARD-0334 S2. When set, this start is a policy-refresh resume: the launch note's
+    /// resume body is <c>ChannelPreamble.PolicyRefreshResumeBody</c> of this delta, even if
+    /// the agent has no channel preamble. Stamps and file names only — never bundle text.
+    /// The sweep is the writer; a client that copies it onto a manual start just gets the note.
+    /// </summary>
+    string? PolicyRefreshDelta = null);
 
 /// <summary>CARD-0213: bind a standing Herdr agent to an existing operator pane.</summary>
 public sealed record AttachHerdrPaneRequest(string PaneId);

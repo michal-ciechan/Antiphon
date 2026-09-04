@@ -35,6 +35,8 @@ public sealed class AgentSessionRuntime
     private readonly ConcurrentDictionary<Guid, string?> _testAgentStatuses = new();
     // CARD-0186 S3 test seam: runner Pending on in-process adapters.
     private readonly ConcurrentDictionary<Guid, string?> _testPending = new();
+    // CARD-0334 S2 test seam: transcript bind flag on in-process adapters (production reads it from the runner).
+    private readonly ConcurrentDictionary<Guid, bool?> _testTranscriptBound = new();
     private readonly ConcurrentDictionary<Guid, StringBuilder> _testBuffers = new();
     private readonly ISessionRunnerClient _runnerClient;
     private readonly IEventBus _eventBus;
@@ -893,8 +895,10 @@ public sealed class AgentSessionRuntime
         {
             _testAgentStatuses.TryGetValue(sessionId, out var status);
             _testPending.TryGetValue(sessionId, out var pending);
+            _testTranscriptBound.TryGetValue(sessionId, out var bound);
             metadata = new AgentSessionLiveMetadata(
-                sessionId, GetDeltaSequenceOrDefault(sessionId), status, Pending: pending);
+                sessionId, GetDeltaSequenceOrDefault(sessionId), status,
+                TranscriptBound: bound, Pending: pending);
             return true;
         }
 
@@ -991,6 +995,14 @@ public sealed class AgentSessionRuntime
     public void SetTestPending(Guid sessionId, string? pending) =>
         _testPending[sessionId] = pending;
 
+    /// <summary>
+    /// CARD-0334 S2 test seam: set <see cref="AgentSessionLiveMetadata.TranscriptBound"/> for an
+    /// in-process test adapter. Production reads this from the runner; a resume that is not
+    /// bound would fall back to fresh and lose the conversation.
+    /// </summary>
+    public void SetTestTranscriptBound(Guid sessionId, bool? bound) =>
+        _testTranscriptBound[sessionId] = bound;
+
     public bool TryRemove(Guid sessionId, out IAgentProtocolAdapter? adapter)
     {
         _pendingInputs.TryRemove(sessionId, out _);
@@ -1000,6 +1012,7 @@ public sealed class AgentSessionRuntime
         _testBuffers.TryRemove(sessionId, out _);
         _testAgentStatuses.TryRemove(sessionId, out _);
         _testPending.TryRemove(sessionId, out _);
+        _testTranscriptBound.TryRemove(sessionId, out _);
         return _testAdapters.TryRemove(sessionId, out adapter);
     }
 

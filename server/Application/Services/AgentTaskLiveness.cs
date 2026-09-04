@@ -133,7 +133,8 @@ public static class AgentTaskLiveness
             : "no failure reason recorded";
         if (session is { Status: SessionStatus.Stopped } settled
             && settled.TerminationSource is SessionTerminationSource.SystemRequest
-                or SessionTerminationSource.ProcessExit)
+                or SessionTerminationSource.ProcessExit
+                or SessionTerminationSource.PolicyRefresh)
         {
             evidence += DescribeStop(settled.TerminationSource, settled.ExitCode);
         }
@@ -152,6 +153,8 @@ public static class AgentTaskLiveness
         SessionTerminationSource.SystemRequest => "; Antiphon itself ended it (SystemRequest)",
         SessionTerminationSource.ProcessExit =>
             $"; the agent process exited on its own (ProcessExit, exit code {exitCode?.ToString() ?? "unknown"})",
+        SessionTerminationSource.PolicyRefresh =>
+            "; Antiphon relaunched it to pick up standing instructions (PolicyRefresh)",
         _ => ", and the stop origin was not recorded",
     };
 

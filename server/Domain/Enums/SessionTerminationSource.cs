@@ -22,4 +22,13 @@ public enum SessionTerminationSource
     /// had been persisted.
     /// </summary>
     ProcessExit = 3,
+
+    /// <summary>
+    /// CARD-0334: the policy-refresh sweep killed this session at an idle boundary so the
+    /// next start can resume the same conversation with rebuilt standing instructions.
+    /// Distinct from <see cref="SystemRequest"/> so an operator stop and a policy relaunch
+    /// stay distinguishable, and from <see cref="OperatorRequest"/> so supervision is not
+    /// treated as a human stop.
+    /// </summary>
+    PolicyRefresh = 4,
 }

@@ -9,7 +9,9 @@ namespace Antiphon.Server.Infrastructure.Supervision;
 /// and orchestrator hosted services), plus a slow incident-retention pass every 6 hours, the
 /// channel-reply correlation sweep every minute, the idle auto-compact sweep every minute,
 /// the API-error recovery sweep every minute, the orchestrator-investigation detection
-/// sweep every minute (CARD-0247), and the swallowed-input watchdog every minute (CARD-0292).
+/// sweep every minute (CARD-0247), the swallowed-input watchdog every minute (CARD-0292),
+/// and the policy-refresh relaunch sweep every minute (CARD-0334) — which runs BEFORE
+/// <see cref="AgentSupervisorService.TickAsync"/> so a kill→start completes in one pass.
 /// </summary>
 public sealed class AgentSupervisorHostedService : BackgroundService
 {
@@ -36,9 +38,17 @@ public sealed class AgentSupervisorHostedService : BackgroundService
     /// </summary>
     private static readonly TimeSpan QueuedInputSweepPeriod = TimeSpan.FromMinutes(1);
 
+    /// <summary>
+    /// CARD-0334: how often the idle policy-refresh sweep runs. Same 1-minute clock as compact
+    /// and channel-reply; the action itself is kill→resume, so it sits in front of the
+    /// supervisor tick that would otherwise see the gap and grow the backoff ladder.
+    /// </summary>
+    private static readonly TimeSpan PolicyRefreshSweepPeriod = TimeSpan.FromMinutes(1);
+
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ChannelReplyDispatcher _channelReplies;
     private readonly ContextCompactionService _compaction;
+    private readonly PolicyRefreshService _policyRefresh;
     private readonly ApiErrorRecoveryService _apiErrorRecovery;
     private readonly HerdrStatusCorroborationService _herdrCorroboration;
     private readonly OrchestratorInvestigationSweepService _investigation;
@@ -54,11 +64,13 @@ public sealed class AgentSupervisorHostedService : BackgroundService
     private DateTime _lastInvestigationSweepUtc = DateTime.MinValue;
     private DateTime _lastQueuedInputSweepUtc = DateTime.MinValue;
     private DateTime _lastModelAvailabilitySweepUtc = DateTime.MinValue;
+    private DateTime _lastPolicyRefreshSweepUtc = DateTime.MinValue;
 
     public AgentSupervisorHostedService(
         IServiceScopeFactory scopeFactory,
         ChannelReplyDispatcher channelReplies,
         ContextCompactionService compaction,
+        PolicyRefreshService policyRefresh,
         ApiErrorRecoveryService apiErrorRecovery,
         HerdrStatusCorroborationService herdrCorroboration,
         OrchestratorInvestigationSweepService investigation,
@@ -70,6 +82,7 @@ public sealed class AgentSupervisorHostedService : BackgroundService
         _scopeFactory = scopeFactory;
         _channelReplies = channelReplies;
         _compaction = compaction;
+        _policyRefresh = policyRefresh;
         _apiErrorRecovery = apiErrorRecovery;
         _herdrCorroboration = herdrCorroboration;
         _investigation = investigation;
@@ -96,6 +109,21 @@ public sealed class AgentSupervisorHostedService : BackgroundService
                 {
                     await using var scope = _scopeFactory.CreateAsyncScope();
                     var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
+
+                    // CARD-0334 D6: kill→start must finish before the supervisor tick, or the
+                    // tick sees a Stopped AlwaysOn agent and grows the backoff ladder.
+                    if (_settings.PolicyRefresh.Enabled
+                        && DateTime.UtcNow - _lastPolicyRefreshSweepUtc >= PolicyRefreshSweepPeriod)
+                    {
+                        _lastPolicyRefreshSweepUtc = DateTime.UtcNow;
+                        var refreshed = await _policyRefresh.SweepAsync(stoppingToken);
+                        if (refreshed > 0)
+                        {
+                            _logger.LogInformation(
+                                "Policy-refresh relaunched {Count} standing agent(s)", refreshed);
+                        }
+                    }
+
                     await supervisor.TickAsync(stoppingToken);
 
                     if (DateTime.UtcNow - _lastPruneUtc >= PrunePeriod)

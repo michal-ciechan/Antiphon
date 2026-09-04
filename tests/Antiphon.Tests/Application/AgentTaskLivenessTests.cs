@@ -43,6 +43,7 @@ public class AgentTaskLivenessTests
                      SessionTerminationSource.ProcessExit,
                      SessionTerminationSource.Unknown,
                      SessionTerminationSource.SystemRequest,
+                     SessionTerminationSource.PolicyRefresh,
                  })
         {
             var result = AgentTaskLiveness.ClassifyFailure(

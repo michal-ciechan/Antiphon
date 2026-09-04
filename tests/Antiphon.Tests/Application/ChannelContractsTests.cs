@@ -160,6 +160,16 @@ public class ChannelContractsTests
         ChannelPreamble.RecoveryNoteBody.ShouldContain("compacted");
         ChannelPreamble.RecoveryNoteBody.ShouldContain("MEMORY.md");
         ChannelPreamble.RecoveryNoteBody.ShouldContain(ChannelContracts.NoReplyToken);
+
+        var delta = "orchestrator v26dea68f → v3c1f0a9e; AGENTS.md changed";
+        var policy = ChannelPreamble.PolicyRefreshResumeBody(delta);
+        policy.ShouldContain(delta);
+        policy.ShouldContain("relaunch");
+        policy.ShouldContain("AGENTS.md");
+        policy.ShouldContain("-Refine");
+        policy.ShouldContain(ChannelContracts.NoReplyToken);
+        foreach (var bundle in InstructionBundles.All.Values)
+            policy.ShouldNotContain(bundle.Text);
     }
 
     [Test]

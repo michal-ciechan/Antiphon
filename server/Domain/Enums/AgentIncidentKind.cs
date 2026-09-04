@@ -486,4 +486,20 @@ public enum AgentIncidentKind
     /// first (a retry follows), Error on the repeat that also holds the model alias.
     /// </summary>
     ProviderUnresponsive = 48,
+
+    /// <summary>
+    /// CARD-0334 S2. The policy-refresh sweep killed and resumed this standing agent at an idle
+    /// boundary so rebuilt bundles / instruction files took effect. Info; timeline only (no
+    /// alert). Message carries the stamp delta. The durable cooldown across a server restart.
+    /// </summary>
+    PolicyRefreshed = 49,
+
+    /// <summary>
+    /// CARD-0334 S2. The policy-refresh sweep killed the idle session but
+    /// <c>AgentControlService.StartAsync</c> threw, or the row never reached Stopped inside the
+    /// kill-confirm window. Warning. Supervision state is left untouched — the agent is Stopped
+    /// and the supervisor's next tick schedules its normal ladder restart, which also carries
+    /// the new bundles.
+    /// </summary>
+    PolicyRefreshFailed = 50,
 }

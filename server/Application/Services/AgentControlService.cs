@@ -192,7 +192,8 @@ public sealed class AgentControlService
         else
         {
             sessionId = await StartInteractiveSessionAsync(
-                agent, remoteControlName, request.Fresh, launchEnvOverride, initialPrompt, ct);
+                agent, remoteControlName, request.Fresh, launchEnvOverride, initialPrompt,
+                request.PolicyRefreshDelta, ct);
             agent.CurrentCardId = null;
         }
 
@@ -215,6 +216,7 @@ public sealed class AgentControlService
         bool fresh,
         IReadOnlyDictionary<string, string>? launchEnvOverride,
         string? initialPrompt,
+        string? policyRefreshDelta,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(agent.WorkingDirectory))
@@ -269,6 +271,16 @@ public sealed class AgentControlService
                 && !string.IsNullOrWhiteSpace(agent.SystemPromptAppend)
             ? new LaunchNotes(ChannelPreamble.BootstrapBody, ChannelPreamble.RestartResumeBody)
             : null;
+        if (!string.IsNullOrWhiteSpace(policyRefreshDelta))
+        {
+            // CARD-0334: an orchestrator seat without a channel preamble must still be told
+            // why it was relaunched. Resume body is the policy note regardless of preamble;
+            // a resume→fresh fallback keeps BootstrapBody when one was already composed.
+            var policyBody = ChannelPreamble.PolicyRefreshResumeBody(policyRefreshDelta);
+            notes = new LaunchNotes(
+                FreshBody: notes?.FreshBody ?? ChannelPreamble.BootstrapBody,
+                ResumeBody: policyBody);
+        }
 
         AgentExecutableResolver.Default.EnsureSpawnable(spec.Exe);
 
@@ -285,6 +297,10 @@ public sealed class AgentControlService
                 previous.EndedAt = null;
                 previous.ExitCode = null;
                 previous.FailureReason = null;
+                // A resume is a new life of this row. Leaving the kill's PolicyRefresh (or a
+                // crash's ProcessExit) stamped would make SessionTermination.Record a no-op on
+                // the next close — first-writer-wins would never record the real closer.
+                previous.TerminationSource = SessionTerminationSource.Unknown;
                 previous.DelegationTokenHash = composition.DelegationTokenHash;
                 previous.TuiProfileRevisionId = resolved.ProfileRevisionId;
                 previous.EffectiveModelId = resolved.EffectiveModelId;

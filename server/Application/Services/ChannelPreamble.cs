@@ -105,6 +105,21 @@ public static class ChannelPreamble
         + "completed work. Reply " + ChannelContracts.NoReplyToken
         + " unless you have something for the user.]";
 
+    /// <summary>
+    /// CARD-0334 S2. Queued after a policy-refresh resume, including on orchestrator seats that
+    /// have no channel preamble — those seats must still be told why they were relaunched.
+    /// <paramref name="delta"/> is stamps and file names only (never bundle text).
+    /// </summary>
+    public static string PolicyRefreshResumeBody(string delta) =>
+        "[System note from Antiphon: your session was relaunched to pick up updated standing instructions — "
+        + delta
+        + ". Your conversation is intact and the new instructions are in your system prompt now; "
+        + "where they differ from what you told a delegate before this note, the new instructions win — "
+        + "steer that delegate with -Refine rather than assuming it knows. Re-read AGENTS.md before "
+        + "your next dispatch. Do not re-execute completed work. Reply "
+        + ChannelContracts.NoReplyToken
+        + " unless you have something for the user.]";
+
     /// <summary>Eight hex chars, same short-id as <c>[task …]</c> / <c>[check …]</c>.</summary>
     public static string SessionShortId(Guid sessionId) => sessionId.ToString("N")[..8];
 

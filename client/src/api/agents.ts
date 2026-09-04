@@ -236,6 +236,8 @@ export type AgentIncidentKind =
   | 'ContextCompacted'
   | 'DeliveryUnverified'
   | 'LaunchInterruptedByRestart'
+  | 'PolicyRefreshed'
+  | 'PolicyRefreshFailed'
 
 export type AlertSeverity = 'Info' | 'Warning' | 'Error' | 'Critical'
 
