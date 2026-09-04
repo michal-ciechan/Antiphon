@@ -300,6 +300,258 @@ public class GrokDelegateEndToEndTests
         }
     }
 
+    // ---- CARD-0353 S4 / CARD-0312 P1: the boot turn the provider never answers -------------------
+
+    /// <summary>
+    /// The measured 2026-09-03 incident, end to end on a real pty: an xAI capacity window left
+    /// three Grok requests accepted and never answered — no first token, no retry, no error,
+    /// because Grok Build 1.0.13 has no first-token timeout. The transcript ends at the delegate's
+    /// own pointer prompt and the screen sits on "Waiting for response…".
+    ///
+    /// <para>Everything the harness above makes real is real here too: the script, the dispatch,
+    /// the launch onto a ConPTY, the delivery path, the runner's own tailer. The one thing that is
+    /// arranged is WHICH turn hangs — <c>ANTIPHON_FAKE_NO_REPLY</c> on the task's launch-env
+    /// override, cleared before the retry so the second attempt finishes the work, which is what
+    /// every stalled task on the night actually did once the provider came back.</para>
+    ///
+    /// <para>The double-jeopardy control matters as much as the positive one: the delivery watchdog
+    /// fires on <c>started == false</c> and the boot arm on <c>started == true</c>, so they are
+    /// mutually exclusive by construction — and this asserts it against the same task rather than
+    /// by reading the two predicates.</para>
+    /// </summary>
+    [Test]
+    public async Task a_provider_that_never_answers_the_boot_prompt_is_failed_killed_and_retried_once()
+    {
+        if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
+        if (!File.Exists(FakeGrokExe))
+            throw new SkipTestException($"fakegrok.exe not staged at {FakeGrokExe} — build the solution first");
+
+        using var workspace = new TempWorkspace();
+        var grokHome = Path.Combine(Path.GetTempPath(), $"antiphon-e2e-stall-home-{Guid.NewGuid():N}");
+        await using var harness = BuildHarness(workspace.Path, grokHome, grokExe: FakeGrokExe, configure: d =>
+        {
+            d.FinalMessageGraceSeconds = 0;
+            // Armed at the shipped default; the elapsed time is arranged by back-dating the rows
+            // below rather than by loosening the deadline, so this test cannot pass because the
+            // number was made generous.
+            d.BootModelWaitDeadlineMinutes = 8;
+            // The repeat hold is a different slice's assertion and would otherwise put grok-4.6 on
+            // an AutoDetected hold that the RETRY below would then refuse to dispatch.
+            d.BootStallRepeatHoldMinutes = 0;
+        });
+
+        Guid sessionId = Guid.Empty;
+        Guid retrySessionId = Guid.Empty;
+        try
+        {
+            using var relay = new DelegateTaskApiRelay(workspace.Path, harness.Delegation);
+            var run = await DelegateScriptRunner.RunAsync(
+                relay.BaseUrl,
+                "-Role", "Code", "-Kind", "Grok", "-Title", "CARD-0353 boot stall", "-Goal", MultilineGoal);
+            run.ExitCode.ShouldBe(0, $"{run.Output}\n{relay.LastFailure}");
+
+            Guid taskId;
+            await using (var created = CreateContext())
+            {
+                var queued = await created.AgentTasks
+                    .SingleAsync(t => t.Title == "CARD-0353 boot stall" && t.WorkingDirectory == workspace.Path);
+                taskId = queued.Id;
+                // The provider incident, armed on THIS attempt only.
+                queued.LaunchEnvOverrideJson = "{\"ANTIPHON_FAKE_NO_REPLY\":\"1\"}";
+                await created.SaveChangesAsync();
+            }
+
+            using (var scope = harness.Provider.CreateScope())
+                await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
+
+            await using (var afterTick = CreateContext())
+            {
+                var dispatched = await afterTick.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+                dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched, dispatched.FailureReason ?? "no failure reason");
+                sessionId = dispatched.AgentSessionId.ShouldNotBeNull();
+            }
+
+            using var pump = new CancellationTokenSource();
+            var pumping = PumpTranscriptAsync(harness.Provider, sessionId, pump.Token);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromMinutes(2), CancellationToken.None);
+
+            // ---- the delivery SUCCEEDED; only the answer is missing --------------------------
+            await WaitUntilAsync(
+                async () =>
+                {
+                    await using var db = CreateContext();
+                    return await db.TranscriptEntries.CountAsync(t =>
+                        t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt) > 0;
+                },
+                TimeSpan.FromSeconds(60),
+                async () => $"the pointer prompt never reached the transcript. Screen:\n{await ScreenAsync(harness, sessionId)}");
+
+            var spill = Path.Combine(
+                workspace.Path, ".antiphon", $"task-{DelegationReportFormatter.Short(taskId)}-brief.md");
+            File.Exists(spill).ShouldBeTrue("the brief spilled, as every non-Claude brief does");
+
+            await using (var db = CreateContext())
+            {
+                var prompt = await db.TranscriptEntries.AsNoTracking()
+                    .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt)
+                    .OrderBy(t => t.Sequence)
+                    .FirstAsync();
+                (prompt.Text ?? "").ShouldContain(
+                    $"task-{DelegationReportFormatter.Short(taskId)}-brief.md",
+                    customMessage: "delivery is NOT the problem — the pointer is in the transcript");
+
+                (await db.TranscriptEntries.AnyAsync(t =>
+                    t.AgentSessionId == sessionId
+                    && (t.Kind == TranscriptKinds.AssistantText
+                        || t.Kind == TranscriptKinds.Thinking
+                        || t.Kind == TranscriptKinds.ToolCall
+                        || t.Kind == TranscriptKinds.TurnEnd)))
+                    .ShouldBeFalse("the model produced nothing at all — this is the stall");
+
+                (await db.SessionQueuedMessages.AsNoTracking()
+                    .SingleAsync(m => m.AgentSessionId == sessionId))
+                    .Status.ShouldBe(QueuedMessageStatus.Sent);
+            }
+
+            pump.Cancel();
+            await pumping;
+
+            // ---- the clock, arranged by back-dating the rows the policy reads ----------------
+            await BackdateAsync(sessionId, taskId, minutes: 30);
+
+            // ---- what a check-in would have SAID about it ------------------------------------
+            using (var scope = harness.Provider.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var probe = new DelegateCheckProbe(
+                    db,
+                    scope.ServiceProvider.GetRequiredService<GitWorkspaceService>(),
+                    TimeProvider.System,
+                    Options.Create(new SupervisionSettings()),
+                    Options.Create(harness.Delegation));
+                var facts = await probe.GatherAsync(
+                    await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId),
+                    CancellationToken.None);
+                var digest = DelegateCheckProbe.RenderDigest(facts);
+                digest.ShouldContain("BOOT TURN", customMessage:
+                    "the fact the interpreter lacked on 2026-09-03, when it read this exact shape "
+                    + "as 'brief delivery failed' twice");
+                digest.ShouldContain("DEADLINE: PAST BootModelWait");
+            }
+
+            // ---- the double-jeopardy control -------------------------------------------------
+            using (var scope = harness.Provider.CreateScope())
+            {
+                var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+                (await dispatcher.FailNeverStartedAsync(CancellationToken.None)).ShouldBe(0, customMessage:
+                    "the delivery watchdog fires on started == false; this task's prompt landed");
+                (await CreateContext().AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId))
+                    .Status.ShouldBe(AgentTaskStatus.Dispatched);
+            }
+
+            // ---- the boot arm ----------------------------------------------------------------
+            using (var scope = harness.Provider.CreateScope())
+            {
+                var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+                await dispatcher.FailOverdueTasksAsync(CancellationToken.None);
+            }
+
+            await using (var afterSweep = CreateContext())
+            {
+                var retried = await afterSweep.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+                retried.FailureCode.ShouldBe(AgentTaskFailureCode.ProviderUnresponsive);
+                retried.FailureReason.ShouldNotBeNull();
+                retried.FailureReason.ShouldContain("Provider never answered the boot prompt");
+                retried.Status.ShouldBe(AgentTaskStatus.Queued);
+                retried.Attempt.ShouldBe(2);
+                (await afterSweep.AgentIncidents.AnyAsync(
+                    i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.ProviderUnresponsive))
+                    .ShouldBeTrue();
+            }
+
+            harness.Provider.GetRequiredService<IDelegateSessionStopper>()
+                .ShouldBeOfType<RecordingSessionStopper>()
+                .Killed.ShouldContain(sessionId, customMessage:
+                    "a hung process costs a pool slot and re-adopts nothing");
+
+            // ---- the retry, on a provider that has come back ---------------------------------
+            await using (var clearing = CreateContext())
+            {
+                var task = await clearing.AgentTasks.SingleAsync(t => t.Id == taskId);
+                task.LaunchEnvOverrideJson = "{}";
+                await clearing.SaveChangesAsync();
+            }
+
+            using (var scope = harness.Provider.CreateScope())
+                await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
+
+            await using (var afterRetry = CreateContext())
+            {
+                var dispatched = await afterRetry.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+                dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched, dispatched.FailureReason ?? "no failure reason");
+                retrySessionId = dispatched.AgentSessionId.ShouldNotBeNull();
+                retrySessionId.ShouldNotBe(sessionId, "a fresh session, not the hung one");
+            }
+
+            using var retryPump = new CancellationTokenSource();
+            var retryPumping = PumpTranscriptAsync(harness.Provider, retrySessionId, retryPump.Token);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromMinutes(2), CancellationToken.None);
+
+            await WaitUntilAsync(
+                async () =>
+                {
+                    await using var db = CreateContext();
+                    return await db.AgentTasks.AsNoTracking()
+                        .AnyAsync(t => t.Id == taskId && t.Status != AgentTaskStatus.Dispatched);
+                },
+                TimeSpan.FromSeconds(60),
+                async () => $"the retry never settled. Screen:\n{await ScreenAsync(harness, retrySessionId)}");
+
+            retryPump.Cancel();
+            await retryPumping;
+
+            await using (var settledDb = CreateContext())
+            {
+                var settled = await settledDb.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+                settled.Status.ShouldBe(AgentTaskStatus.Succeeded, customMessage:
+                    "a bare retry is the measured cure — every stalled task on 2026-09-03 recovered "
+                    + "on one once the provider did");
+                settled.Attempt.ShouldBe(2);
+            }
+        }
+        finally
+        {
+            await CleanupAsync(harness, sessionId, workspace.Path, grokHome);
+            if (retrySessionId != Guid.Empty)
+                await CleanupAsync(harness, retrySessionId, workspace.Path, grokHome);
+        }
+    }
+
+    /// <summary>
+    /// Move this session's transcript rows and its task's dispatch back in time, so the deadline
+    /// policy reads the elapsed time a real stall would have accumulated. The rows themselves are
+    /// what the policy reads; nothing about the mechanism is stubbed.
+    /// </summary>
+    private static async Task BackdateAsync(Guid sessionId, Guid taskId, int minutes)
+    {
+        var shift = TimeSpan.FromMinutes(minutes);
+        await using var db = CreateContext();
+        foreach (var row in await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).ToListAsync())
+        {
+            row.Timestamp = (row.Timestamp ?? row.CreatedAt) - shift;
+            row.CreatedAt -= shift;
+        }
+
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
+        session.StartedAt -= shift;
+        session.CreatedAt -= shift;
+
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+        task.DispatchedAt = (task.DispatchedAt ?? DateTime.UtcNow) - shift;
+        task.CreatedAt -= shift;
+        await db.SaveChangesAsync();
+    }
+
     // ---- the Claude control --------------------------------------------------------------------
 
     /// <summary>
