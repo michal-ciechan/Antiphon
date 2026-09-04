@@ -289,6 +289,30 @@ public class AgentSessionLaunchFailureTests
         session.FailureReason.ShouldBe("Agent process did not become ready.");
     }
 
+    /// <summary>
+    /// CARD-0312 S3 / CARD-0311 item 1. "Agent process did not become ready." was true and useless
+    /// on the Antiphon-Orchestrator resume: the first /start failed the 60-second readiness budget,
+    /// the second succeeded, and the 168% context that explained both was nowhere in the sentence a
+    /// human read. Rung 1 measures a process painting a screen, so when the session's fullness is
+    /// known the message names it.
+    /// </summary>
+    [Test]
+    public async Task A_ready_failure_names_the_context_fullness_that_explains_it()
+    {
+        var adapter = new FakeAgentProtocolAdapter { ReadyResult = false };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        await fixture.SeedContextUsageAsync(inputTokens: 336_000);
+
+        await Should.ThrowAsync<InvalidOperationException>(fixture.LaunchInteractiveAsync());
+
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        session.FailureReason.ShouldNotBeNull();
+        session.FailureReason.ShouldStartWith("Agent process did not become ready (resuming a session at ");
+        session.FailureReason.ShouldContain("168", customMessage:
+            "336 000 tokens against the 200 000 default ceiling is 168% — the whole explanation");
+    }
+
     // ---- Slice 2: /remote-control is best-effort ------------------------------------------------
 
     /// <summary>
@@ -1104,6 +1128,30 @@ public class AgentSessionLaunchFailureTests
         }
 
         public static AppDbContext CreateContext() => BridgeQueueHarness.CreateContext();
+
+        /// <summary>
+        /// One usage-bearing transcript row, which is all <c>SessionContextUsage</c> needs to
+        /// compute a fullness for this session.
+        /// </summary>
+        public async Task SeedContextUsageAsync(int inputTokens)
+        {
+            await using var db = CreateContext();
+            var at = DateTime.UtcNow.AddMinutes(-1);
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = SessionId,
+                Sequence = 1,
+                Kind = TranscriptKinds.AssistantText,
+                Uuid = $"fullness-{Guid.NewGuid():N}",
+                Role = "assistant",
+                Text = "a turn from before the restart",
+                InputTokens = inputTokens,
+                Timestamp = at,
+                CreatedAt = at,
+            });
+            await db.SaveChangesAsync();
+        }
 
         public Task LaunchInteractiveAsync(
             string? remoteControlName = null,

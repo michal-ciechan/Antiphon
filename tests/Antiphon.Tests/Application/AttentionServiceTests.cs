@@ -1193,6 +1193,65 @@ public class AttentionServiceTests
         item.Headline.ShouldContain("1 refinement waiting");
     }
 
+    // ---- CARD-0312: LivenessProbeFailed ----------------------------------------------------------
+
+    [Test]
+    public async Task An_open_boot_reply_incident_on_a_live_session_is_liveness_probe_failed()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var agent = await scenario.AddAgentAsync(persistentSession: session);
+        await scenario.AddTranscriptAsync(session, (TranscriptKinds.UserPrompt, "the brief", null));
+        await scenario.AddIncidentAsync(
+            agent, session, AgentIncidentKind.LivenessProbeFailed, AlertSeverity.Warning,
+            "Boot prompt confirmed at sequence 1; no assistant, thinking, tool or turn-end row in 8m00s.",
+            minutesAgo: 5, failureReason: BootReplyWatchdogService.EpisodeKey(1));
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.SessionId == session
+            && i.Kind == AttentionKind.LivenessProbeFailed);
+
+        item.Severity.ShouldBe(AlertSeverity.Warning);
+        item.AgentId.ShouldBe(agent);
+        item.Actions.ShouldBe([AttentionAction.OpenAgent, AttentionAction.OpenDrawer]);
+        item.Evidence.ShouldContain("delivery is not the problem", customMessage:
+            "the row exists to stop the reading that cost CARD-0353 a plan pass");
+    }
+
+    [Test]
+    public async Task A_boot_prompt_that_was_answered_after_the_incident_is_no_longer_listed()
+    {
+        // Read-time re-verification: the row exists because the condition holds NOW. Whoever
+        // produced the answer — the retry, a late first token, or a human — closes it.
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var agent = await scenario.AddAgentAsync(persistentSession: session);
+        await scenario.AddTranscriptAsync(
+            session,
+            (TranscriptKinds.UserPrompt, "the brief", null),
+            (TranscriptKinds.AssistantText, "here at last", null));
+        await scenario.AddIncidentAsync(
+            agent, session, AgentIncidentKind.LivenessProbeFailed, AlertSeverity.Warning,
+            "stale", minutesAgo: 5, failureReason: BootReplyWatchdogService.EpisodeKey(1));
+
+        (await ItemsForAsync(scenario))
+            .ShouldNotContain(i => i.SessionId == session && i.Kind == AttentionKind.LivenessProbeFailed);
+    }
+
+    [Test]
+    public async Task A_boot_reply_incident_on_a_dead_session_is_not_listed()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync(SessionStatus.Failed, endedMinutesAgo: 10);
+        var agent = await scenario.AddAgentAsync(persistentSession: session);
+        await scenario.AddTranscriptAsync(session, (TranscriptKinds.UserPrompt, "the brief", null));
+        await scenario.AddIncidentAsync(
+            agent, session, AgentIncidentKind.LivenessProbeFailed, AlertSeverity.Warning,
+            "stale", minutesAgo: 5, failureReason: BootReplyWatchdogService.EpisodeKey(1));
+
+        (await ItemsForAsync(scenario))
+            .ShouldNotContain(i => i.SessionId == session && i.Kind == AttentionKind.LivenessProbeFailed);
+    }
+
     // ---- CARD-0292: QueuedInputStuck ------------------------------------------------------------
 
     [Test]

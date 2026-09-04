@@ -17,9 +17,14 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-0299 S2: NoSubmitOutput on a cold Codex first delivery (null baseline, origin
-/// Delegation, attempts 1, Dispatched task) is BootWedged + kill + one relaunch, not a
-/// 10-minute watchdog.
+/// CARD-0299 S2: NoSubmitOutput on a cold first delivery (null baseline, origin Delegation,
+/// attempts 1, Dispatched task) is BootWedged + kill + one relaunch, not a 10-minute watchdog.
+///
+/// <para>CARD-0312 S4 generalised the KIND and nothing else. "The composer holds the brief and
+/// Enter produced no output" was measured on Codex (3 of 55 sessions, 5.5%) but it is a fact
+/// about a TUI, not about Codex, so the gate is now "this kind's delivery is transcript-verified".
+/// The Codex tests below are the regression guard on that: same incident, same text, same kill,
+/// same relaunch count.</para>
 /// </summary>
 [Category("Integration")]
 [NotInParallel("MessageQueue")]
@@ -47,6 +52,9 @@ public class SessionMessageQueueBootWedgeTests
         incident.ShouldNotBeNull();
         incident.Severity.ShouldBe(AlertSeverity.Warning);
         incident.Message.ShouldContain("brief still in composer");
+        // CARD-0312 P3: the generalisation must leave Codex byte-identical. The MCP-boot clause is
+        // a Codex SCREEN fact and stays Codex-only, so the message shape is exactly what it was.
+        incident.Message.ShouldBe("TUI stopped painting; brief still in composer.");
 
         var oldRow = await db.SessionQueuedMessages.SingleAsync(
             m => m.AgentSessionId == h.SessionId);
@@ -64,6 +72,57 @@ public class SessionMessageQueueBootWedgeTests
         var newRow = await db.SessionQueuedMessages.SingleOrDefaultAsync(
             m => m.AgentSessionId == task.AgentSessionId && m.Origin == QueuedMessageOrigin.Delegation);
         newRow.ShouldNotBeNull("relaunch re-enqueues the brief onto the new session");
+    }
+
+    [Test]
+    public async Task a_non_codex_delivery_verified_kind_takes_the_same_recovery()
+    {
+        // CARD-0312 P2. Before the generalisation this session sat wedged until the 10-minute
+        // delivery watchdog; now it is killed and relaunched once, ~40s after dispatch.
+        await using var h = await CreateBootWedgeHarnessAsync();
+        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        var taskId = await SeedDispatchedTaskAsync(h, kind: AgentKind.Grok);
+        h.Adapter.SwallowSubmits = 99;
+        h.Adapter.SubmitAck = "";
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "grok brief that never submits", MessageSendMode.WhenIdle,
+            CancellationToken.None, origin: QueuedMessageOrigin.Delegation);
+
+        await using var db = CreateContext();
+        var incident = await db.AgentIncidents.SingleOrDefaultAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.BootWedged);
+        incident.ShouldNotBeNull("the wedge shape is a TUI fact, not a Codex fact");
+        incident.Message.ShouldNotContain("MCP boot line", customMessage:
+            "the MCP clause is a Codex screen fact and must not follow the generalisation");
+        h.Adapter.Killed.ShouldBeTrue();
+
+        var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        task.Status.ShouldBe(AgentTaskStatus.Dispatched, "one relaunch, not a failure");
+        task.BootWedgeRelaunchCount.ShouldBe(1);
+        task.AgentSessionId.ShouldNotBe(h.SessionId);
+    }
+
+    [Test]
+    public async Task a_kind_with_no_transcript_ground_truth_still_does_not_boot_wedge()
+    {
+        // The generalisation stops exactly where the evidence does: an OpenCode/Raw session
+        // delivers blind, so NoSubmitOutput there is not the measured wedge shape and killing on
+        // it would be a screen-only verdict (CARD-0055/CARD-0264).
+        await using var h = await CreateBootWedgeHarnessAsync();
+        await SetKindAsync(h.SessionId, AgentKind.OpenCode);
+        var taskId = await SeedDispatchedTaskAsync(h, kind: AgentKind.OpenCode);
+        h.Adapter.SwallowSubmits = 99;
+        h.Adapter.SubmitAck = "";
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "opencode brief", MessageSendMode.WhenIdle,
+            CancellationToken.None, origin: QueuedMessageOrigin.Delegation);
+
+        await using var db = CreateContext();
+        (await db.AgentIncidents.AnyAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.BootWedged)).ShouldBeFalse();
+        (await ReadTaskAsync(taskId)).BootWedgeRelaunchCount.ShouldBe(0);
     }
 
     [Test]
@@ -149,8 +208,17 @@ public class SessionMessageQueueBootWedgeTests
         (await ReadTaskAsync(taskId)).Status.ShouldBe(AgentTaskStatus.Dispatched);
     }
 
+    /// <summary>
+    /// CARD-0312 S4 turned this pin around, deliberately. It used to assert that only Codex could
+    /// boot-wedge, because that is where the shape was MEASURED — but "the composer holds the
+    /// brief and Enter produced no output" is a fact about a TUI, and it is the same shape
+    /// CARD-0055 measured on Claude, where a delivery marked Sent on a redraw sat unsubmitted for
+    /// 104 minutes. The conjunction stays as narrow as it ever was (cold first delivery, origin
+    /// Delegation, attempts 1, null baseline, a Dispatched task), so what changed is which kinds
+    /// may reach a recovery that was already correct, not when it fires.
+    /// </summary>
     [Test]
-    public async Task claude_kind_does_not_boot_wedge()
+    public async Task claude_kind_now_takes_the_same_recovery()
     {
         await using var h = await CreateBootWedgeHarnessAsync();
         var taskId = await SeedDispatchedTaskAsync(h, kind: AgentKind.ClaudeCode);
@@ -164,9 +232,11 @@ public class SessionMessageQueueBootWedgeTests
         await using var db = CreateContext();
         (await db.AgentIncidents.AnyAsync(
             i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.BootWedged))
-            .ShouldBeFalse();
-        h.Adapter.Killed.ShouldBeFalse();
-        (await ReadTaskAsync(taskId)).Status.ShouldBe(AgentTaskStatus.Dispatched);
+            .ShouldBeTrue();
+        h.Adapter.Killed.ShouldBeTrue();
+        var task = await ReadTaskAsync(taskId);
+        task.Status.ShouldBe(AgentTaskStatus.Dispatched, "one relaunch, not a failure");
+        task.BootWedgeRelaunchCount.ShouldBe(1);
     }
 
     [Test]
