@@ -1,0 +1,11 @@
+ FAIL  src/features/board/BoardPage.test.tsx > BoardPage > renders the board
+AssertionError: expected true to be false
+ ❯ src/features/board/BoardPage.test.tsx:120:18
+
+ × src/features/board/BoardPage.test.tsx > BoardPage > renders the board 4ms
+   → expected true to be false
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 10 passed (11)
+   Start at  00:31:02
+   Duration  5.50s

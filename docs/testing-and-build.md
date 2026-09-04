@@ -66,3 +66,35 @@
 
 - **A test harness that builds its own `ServiceCollection` and resolves `AgentTaskDispatcher`, `DelegationWorktreeService`, `AgentTaskReplyService`, `DelegateBindRefusalRecovery` or `AgentReviewCheckpointService` registers the git graph through `DelegationTestServices` (`tests/Antiphon.Tests/TestHelpers/DelegationTestServices.cs`), never by hand** (CARD-0297). `services.AddDelegationWorktreeGraph(new GitSettings { WorktreeBasePath = … })` is the one registration for `IOptions<GitSettings>`, the real `WorktreeManager` and `GitService`, `GitWorkspaceService` and the scoped `DelegationWorktreeService`; `services.AddGitWorkspaceService()` is the reply-only / card-service form. Both are `TryAdd`, so a harness that already holds a fake `IWorktreeManager` (as `BridgeQueueHarness` does) keeps it, and calling the helper twice is a no-op. Do not add `AddSingleton<GitWorkspaceService>()` next to a local `CreateDispatchHarness`, and do not register `GitSettings` separately when the helper is called — pass it in. The helper assumes `AddLogging()` and a `TimeProvider` are already registered, which every dispatcher harness has. Evidence: when `DelegationWorktreeService` gained a `GitWorkspaceService` constructor dependency (c4d7e0d, 2026-08-26), eight copied harnesses went red at `GetRequiredService<AgentTaskDispatcher>()` with `No service for type 'GitWorkspaceService' has been registered` — `PinnedAgentKindTests.T3` was the one that got noticed — and seventeen more each grew their own one-liner with a CARD-0230 comment. `DelegationTestServicesTests` pins the contract: logging + a clock + the helper resolve the whole graph, and a prior one-liner or fake is not duplicated.
 - Seeded settlement turns must end with `DelegationReportFormatter.ReportToken(id, "done")` unless the test is about the nudge.
+
+## Nightly
+
+The overnight job is `scripts/nightly-run.ps1`, invoked by Windmill
+(`u/lndcobra/antiphon_nightly_tests`, 00:30 Europe/London). Do not add a local
+Windows Scheduled Task.
+
+It syncs an **isolated** clone at `C:\Antiphon\nightly\checkout` to
+`origin/master` (never `C:\src\Antiphon`, never a worktree), builds (`npm ci`,
+`npm run build`, `dotnet build Antiphon.sln`), then runs `Antiphon.Tests`,
+`Antiphon.Agents.Pty.Tests` and the client vitest suite sequentially. Logs live
+at `C:\Antiphon\nightly\logs\<yyyy-MM-dd-HHmm>\` (`summary.json`, per-suite
+logs, `build.log`). `C:\Antiphon\nightly\last-run.json` is written every run.
+
+On red it files or updates **one** Antiphon-board card labelled `nightly`
+(plus `build` or `tests`). A second red night patches that card; it does not
+open another. Green auto-closes the card only when it is still in Backlog and
+unassigned; otherwise it posts a discussion line and leaves the card where a
+human or agent put it. A missing morning card is **not** evidence of green —
+check `last-run.json` and the Windmill run list (the job can die before it
+files).
+
+Re-run one failing test from the card's "Re-run one:" line, typically:
+
+```
+tests/Antiphon.Tests/bin/Debug/net9.0/Antiphon.Tests.exe --treenode-filter "/*/*/ClassName/method_name"
+pwsh -File scripts/test-client.ps1 BoardPage.test
+```
+
+The clone is already at the sha the card names; or pass that filter against any
+checkout of the same commit. Headed tests and `Antiphon.E2E` stay off the
+schedule (`-Suites e2e` is a manual opt-in).

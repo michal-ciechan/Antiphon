@@ -32,7 +32,10 @@ Pick one before touching the machine.
 that repo into `~/.claude`, run the `sync` skill, then the machine steps
 below. Recurring build-junk cleanup is Windmill on server2
 (`u/lndcobra/antiphon_build_junk_cleanup`, Mon 09:00 Europe/London), not a
-Windows Scheduled Task — do not re-add a local task.
+Windows Scheduled Task — do not re-add a local task. The overnight
+build+test job is the same shape (`u/lndcobra/antiphon_nightly_tests`,
+00:30 Europe/London, `scripts/nightly-run.ps1`); do not add a local
+Scheduled Task for that either.
 
 ### (b) New operator
 

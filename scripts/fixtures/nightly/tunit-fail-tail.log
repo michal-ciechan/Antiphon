@@ -1,0 +1,14 @@
+failed Windows_secret_replacement_canonicalizes_case_only_declaration_renames (0ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] TestExecutionException: Test failed: BeforeTest hook failed: 53300: sorry, too many clients already | After(Test) hook failed: Object reference not set to an instance of an object.
+    at TUnit.Engine.TestExecutor.ExecuteAsync(AbstractExecutableTest executableTest, TestInitializer testInitializer, CancellationToken cancellationToken, Nullable`1 testTimeout)
+    at TUnit.Engine.Services.TestExecution.TestCoordinator.ExecuteTestAsync(AbstractExecutableTest test, CancellationToken cancellationToken)
+  --->  One or more errors occurred. (BeforeTest hook failed: 53300: sorry, too many clients already) (After(Test) hook failed: Object reference not set to an instance of an object.)
+  --->  TUnit.Core.Exceptions.BeforeTestException: BeforeTest hook failed: 53300: sorry, too many clients already
+    at TUnit.Engine.Services.HookExecutor.ExecuteBeforeTestHooksCoreAsync(AbstractExecutableTest test, Type testClassType, IReadOnlyList`1 beforeEveryTestHooks, IReadOnlyList`1 cachedBeforeTestHooks, CancellationToken cancellationToken)
+  --->  Npgsql.PostgresException: 53300: sorry, too many clients already
+    at Npgsql.Internal.NpgsqlConnector.ReadMessageLong(Boolean async, DataRowLoadingMode dataRowLoadingMode, Boolean readingNotifications, Boolean isReadingPrependedMessage)
+
+failed Profile_mutations_preserve_exactly_one_installation_default (0ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] TestExecutionException: Test failed: BeforeTest hook failed: 53300: sorry, too many clients already | After(Test) hook failed: Object reference not set to an instance of an object.
+
+Test run summary: total: 100; failed: 2; succeeded: 98; skipped: 0
