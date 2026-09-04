@@ -1404,6 +1404,7 @@ public sealed class SessionMessageQueueService
         if (outcome.Verdict == DeliveryVerdict.Delivered)
         {
             StampAttemptVerdict(run, DeliveryVerdict.Delivered, UtcNow());
+            await ArmBootReplyWatchAsync(db, sessionId, ct);
             await db.SaveChangesAsync(ct);
             return FlushResult.Delivered;
         }
@@ -1712,6 +1713,7 @@ public sealed class SessionMessageQueueService
                 message.DeliveryVerdictAt = now;
             }
 
+            await ArmBootReplyWatchAsync(db, sessionId, ct);
             await db.SaveChangesAsync(ct);
             return FlushResult.Delivered;
         }
@@ -2737,6 +2739,35 @@ public sealed class SessionMessageQueueService
         }
     }
 
+    /// <summary>
+    /// CARD-0312 S1: arm the boot-reply watch off a delivery that reached the transcript. This is
+    /// rung 5 being stamped by rung 4 — the first point at which "our bytes became a prompt" is
+    /// ground truth, so it is the only honest place to start waiting for an answer.
+    ///
+    /// <para>Gated on <see cref="IsVerifiedDeliverySessionAsync"/>: a kind whose delivery is not
+    /// transcript-verified (OpenCode/Raw) has no ground truth to judge silence against, and a
+    /// screen-only verdict one rung up is exactly what CARD-0055/CARD-0264 forbid. Better a
+    /// session with no watch than a watch that kills healthy sessions on a redraw.</para>
+    ///
+    /// <para>Never fatal: the arm is a convenience over the sweep, which re-derives an unarmed
+    /// watch from the same predicate on its next tick.</para>
+    /// </summary>
+    private async Task ArmBootReplyWatchAsync(AppDbContext db, Guid sessionId, CancellationToken ct)
+    {
+        try
+        {
+            if (!await IsVerifiedDeliverySessionAsync(sessionId, ct))
+                return;
+            await BootReplyWatch.TryArmAsync(
+                db, sessionId, _delegationSettings.BootModelWaitDeadlineMinutes, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(
+                ex, "Could not arm the boot-reply watch on session {SessionId}", sessionId);
+        }
+    }
+
     private async Task<bool> IsVerifiedDeliverySessionAsync(Guid sessionId, CancellationToken ct)
     {
         // Claude, Grok and Codex all echo the composer's content on the rendered screen (Grok
@@ -3035,7 +3066,7 @@ public sealed class SessionMessageQueueService
                     .ToList();
 
                 if (verdict == DeliveryVerdict.NoSubmitOutput
-                    && await TryHandleCodexBootWedgeAsync(sessionId, messages, agent, db, scope, ct))
+                    && await TryHandleBootWedgeAsync(sessionId, messages, agent, db, scope, ct))
                 {
                     await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
                     return;
@@ -3235,12 +3266,27 @@ public sealed class SessionMessageQueueService
     }
 
     /// <summary>
-    /// CARD-0299 S2: a cold Codex delegate's first delivery returned NoSubmitOutput. Cancel the
+    /// CARD-0299 S2: a cold delegate's first delivery returned NoSubmitOutput. Cancel the
     /// queue row (CARD-0117: Pending on a dead session is a stranded retry), kill, and relaunch
     /// once. Returns true when the conjunction matched and this method owned the failure.
     /// Mode:Now has no row and never reaches here.
+    ///
+    /// <para><b>CARD-0312 S4 generalised the KIND, and nothing else.</b> The trigger was
+    /// <c>AgentKind.Codex</c> because that is where the shape was measured (3 of 55 sessions,
+    /// 5.5%), but "the composer holds the brief and Enter produced no output" is not a Codex fact
+    /// — it is a fact about a TUI, and Grok's swallowed Enter produces the identical row. The gate
+    /// is now "the kind's delivery is transcript-verified", i.e. exactly the kinds whose
+    /// <c>NoSubmitOutput</c> verdict means anything. Everything downstream — the cancel, the
+    /// incident, the kill, <c>RelaunchWedgedAsync</c>, <c>FailWedgedAtLimitAsync</c>, the limit and
+    /// the durable counter — is untouched, and Codex's outcome is byte-identical (the MCP-boot
+    /// clause stays Codex-only because <c>CodexMcpBoot</c> is a Codex screen fact).</para>
+    ///
+    /// <para><b>This is not the boot-REPLY watch.</b> That one (CARD-0312/CARD-0353) fires when
+    /// the brief DID become a prompt and the model never answered; this one fires when the brief
+    /// never became a prompt at all. Mutually exclusive by construction, and deliberately so —
+    /// the third overlapping mechanism is what CARD-0312's plan forbids.</para>
     /// </summary>
-    private async Task<bool> TryHandleCodexBootWedgeAsync(
+    private async Task<bool> TryHandleBootWedgeAsync(
         Guid sessionId,
         List<SessionQueuedMessage> messages,
         Agent? agent,
@@ -3255,8 +3301,13 @@ public sealed class SessionMessageQueueService
             return false;
 
         var session = await db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct);
-        if (session is not { AgentKind: AgentKind.Codex, Status: SessionStatus.Running })
+        if (session is not { Status: SessionStatus.Running })
             return false;
+        if (ProviderContractCatalog.For(session.AgentKind).DeliveryVerification.State
+            != AgentTuiCapabilityState.Supported)
+        {
+            return false;
+        }
 
         var task = await db.AgentTasks
             .Where(t => t.AgentSessionId == sessionId && t.Status == AgentTaskStatus.Dispatched)
@@ -3280,7 +3331,7 @@ public sealed class SessionMessageQueueService
         }
 
         var screen = _runtime.TryGetLiveSnapshot(sessionId, out var snap) ? snap.RenderedScreen : "";
-        var mcpVisible = CodexMcpBoot.IsVisible(screen);
+        var mcpVisible = session.AgentKind == AgentKind.Codex && CodexMcpBoot.IsVisible(screen);
         var already = await db.AgentIncidents.AnyAsync(
             i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.BootWedged, ct);
         if (agent is not null && !already)

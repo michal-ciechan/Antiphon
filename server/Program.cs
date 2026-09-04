@@ -465,6 +465,9 @@ try
     builder.Services.AddSingleton<OrchestratorInvestigationSweepService>();
     // CARD-0292 S4: swallowed-input watchdog (detection only; never kills/types/Escs).
     builder.Services.AddSingleton<QueuedInputWatchdogService>();
+    // CARD-0312 S3: the boot-reply watch's sweep (rung 5 of the delivery evidence ladder). Sends
+    // nothing — it resolves a watch a launch already armed. Never a periodic probe.
+    builder.Services.AddSingleton<BootReplyWatchdogService>();
     // Compaction recovery (incident + workspace re-read note); dispatched lazily from the runtime
     // on CompactBoundary transcript entries.
     builder.Services.AddSingleton<CompactionRecoveryService>();

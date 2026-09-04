@@ -75,13 +75,15 @@ public class TaskDeadlinePolicyTests
             DefaultTimeoutMinutes = 0,
             ModelWaitDeadlineMinutes = 0,
             LocalExecutionDeadlineMinutes = 0,
+            // CARD-0353 S1 added a fourth limit, so "all off" now needs four zeros.
+            BootModelWaitDeadlineMinutes = 0,
             RolePolicy = new(StringComparer.OrdinalIgnoreCase)
             {
                 ["Code"] = new DelegationSettings.RolePolicyEntry { TimeoutMinutes = 0 },
             },
         });
 
-        verdict.ShouldBeNull("0 is the documented off switch on every one of the three limits");
+        verdict.ShouldBeNull("0 is the documented off switch on every one of the four limits");
     }
 
     [Test]
@@ -112,9 +114,16 @@ public class TaskDeadlinePolicyTests
     {
         // One phase, four kinds: after a prompt or a tool result it is the first token that is late,
         // and mid-stream it is the next chunk. Measured maxima 217s / 1478s / 33s / 146s.
+        //
+        // CARD-0353 S1 note: the session must have PRODUCED something for this to be the general
+        // arm at all — a lone prompt with nothing after it is a BOOT turn and takes the tighter
+        // clock (the test below). The earlier assistant row here is what makes this a mid-TASK
+        // model wait rather than a first token that never came.
         await using var scenario = new Scenario();
         var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 60);
-        await scenario.SeedEntriesAsync((kind, "mid-turn", 30));
+        await scenario.SeedEntriesAsync(
+            (TranscriptKinds.AssistantText, "work already done", 40),
+            (kind, "mid-turn", 30));
 
         var verdict = await scenario.EvaluateAsync(task);
 
@@ -123,6 +132,107 @@ public class TaskDeadlinePolicyTests
         verdict.Limit.ShouldBe(TimeSpan.FromMinutes(20));
         verdict.Breached.ShouldBeTrue("30 minutes waiting on the model is past the 20-minute deadline");
         verdict.Summary.ShouldContain("waiting on the model", customMessage: "the phase must be named");
+    }
+
+    // ---- the boot arm (CARD-0353 S1) --------------------------------------------------------------
+
+    [Test]
+    public async Task a_prompt_with_nothing_after_it_takes_the_tighter_boot_deadline()
+    {
+        // The whole point: the general 20-minute arm is conservative because a mid-task session
+        // may hold real work (CARD-0056), and it fails without killing. A boot turn has produced
+        // nothing, so there is nothing to protect and no reason to wait 20 minutes.
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 60);
+        await scenario.SeedEntriesAsync((TranscriptKinds.UserPrompt, "the brief", 30));
+
+        var verdict = await scenario.EvaluateAsync(task);
+
+        verdict.ShouldNotBeNull();
+        verdict.Kind.ShouldBe(TaskDeadlinePolicy.DeadlineKind.BootModelWait);
+        verdict.Limit.ShouldBe(TimeSpan.FromMinutes(8));
+        verdict.Breached.ShouldBeTrue();
+        verdict.Summary.ShouldContain("FIRST token", customMessage:
+            "the reason must say which token is late");
+        verdict.Summary.ShouldContain("boot turn", customMessage:
+            "and that nothing it did would be lost — that is what licenses the kill");
+    }
+
+    [Test]
+    [Arguments(TranscriptKinds.Thinking)]
+    [Arguments(TranscriptKinds.AssistantText)]
+    [Arguments(TranscriptKinds.ToolCall)]
+    [Arguments(TranscriptKinds.TurnEnd)]
+    public async Task one_model_row_after_the_prompt_drops_back_to_the_general_arm(string produced)
+    {
+        // The boot arm can only ever TIGHTEN, so any evidence the model spoke ends it. TurnEnd is
+        // in this list deliberately: measured 2026-09-04, two Codex sessions answered their boot
+        // prompt with an API-error TurnEnd in ~1s and then sat in CARD-0072's retry ladder for 43
+        // minutes; treating that as silence would have killed sessions the ladder was reviving.
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 60);
+        await scenario.SeedEntriesAsync(
+            (produced, "something", 40),
+            (TranscriptKinds.UserPrompt, "and now this", 30));
+
+        var verdict = await scenario.EvaluateAsync(task);
+
+        verdict.ShouldNotBeNull();
+        verdict.Kind.ShouldBe(TaskDeadlinePolicy.DeadlineKind.ModelWait);
+        verdict.Limit.ShouldBe(TimeSpan.FromMinutes(20));
+    }
+
+    [Test]
+    public async Task inherited_rows_before_the_launch_resume_do_not_end_the_boot_turn()
+    {
+        // CARD-0340 S2: a resumed launch's boot turn starts at the resume, so the rows the session
+        // wrote before it belong to the launch that was interrupted.
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 120);
+        await scenario.SeedEntriesAsync(
+            (TranscriptKinds.UserPrompt, "the first attempt", 110),
+            (TranscriptKinds.AssistantText, "the first attempt's answer", 100),
+            (TranscriptKinds.UserPrompt, "the brief, retyped after the resume", 30));
+        await scenario.SetLaunchResumedAsync(minutesAgo: 40);
+
+        var verdict = await scenario.EvaluateAsync(task);
+
+        verdict.ShouldNotBeNull();
+        verdict.Kind.ShouldBe(TaskDeadlinePolicy.DeadlineKind.BootModelWait);
+    }
+
+    [Test]
+    public async Task a_disarmed_boot_deadline_falls_back_to_the_general_model_wait()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 60);
+        await scenario.SeedEntriesAsync((TranscriptKinds.UserPrompt, "the brief", 30));
+
+        var verdict = await scenario.EvaluateAsync(
+            task, new DelegationSettings { BootModelWaitDeadlineMinutes = 0 });
+
+        verdict.ShouldNotBeNull();
+        verdict.Kind.ShouldBe(TaskDeadlinePolicy.DeadlineKind.ModelWait, customMessage:
+            "<= 0 disables the boot arm and leaves the general one exactly as it was");
+        verdict.Limit.ShouldBe(TimeSpan.FromMinutes(20));
+    }
+
+    [Test]
+    public async Task a_compaction_record_after_the_prompt_is_still_a_boot_turn()
+    {
+        // A housekeeping prompt is neither evidence nor a disqualifier — CARD-0041's rule, shared
+        // with TranscriptPromptSpan so the two cannot disagree.
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 60);
+        await scenario.SeedEntriesAsync(
+            (TranscriptKinds.UserPrompt, "the brief", 30),
+            (TranscriptKinds.UserPrompt,
+                $"{TranscriptKinds.TaskNotificationPrefix}a background agent came back", 29));
+
+        var verdict = await scenario.EvaluateAsync(task);
+
+        verdict.ShouldNotBeNull();
+        verdict.Kind.ShouldBe(TaskDeadlinePolicy.DeadlineKind.BootModelWait);
     }
 
     [Test]
@@ -411,6 +521,14 @@ public class TaskDeadlinePolicyTests
                 });
             }
 
+            await db.SaveChangesAsync();
+        }
+
+        public async Task SetLaunchResumedAsync(int minutesAgo)
+        {
+            await using var db = CreateContext();
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == _sessionId);
+            session.LaunchResumedAt = DateTime.UtcNow.AddMinutes(-minutesAgo);
             await db.SaveChangesAsync();
         }
 

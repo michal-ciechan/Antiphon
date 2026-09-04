@@ -211,6 +211,19 @@ internal static class Program
         int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_FAKE_API_ERROR_AFTER_TURNS"), out var n) && n > 0 ? n : 1;
     private static int _apiTurnCount;
 
+    // OPT-IN hung-turn stub (CARD-0353 S4 / CARD-0312 S5). Presence arms it; a value picks WHICH
+    // turn hangs (default the first). The Nth turn writes its user_message_chunk and then nothing:
+    // no agent_message_chunk, no turn_completed, no done line, no idle title — the measured state
+    // of session f08c827e, whose screen timer reached 15m10s on "Waiting for response…" while its
+    // events.jsonl ended at phase_changed: waiting_for_model with no first_token.
+    private static readonly bool NoReplyEnabled =
+        Environment.GetEnvironmentVariable("ANTIPHON_FAKE_NO_REPLY") is { Length: > 0 };
+    private static readonly int NoReplyOnTurn =
+        int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_FAKE_NO_REPLY"), out var noReplyTurn)
+            && noReplyTurn > 0
+            ? noReplyTurn
+            : 1;
+
     private static int Main(string[] args)
     {
         if (IsHelp(args))
@@ -539,6 +552,16 @@ internal static class Program
             return;
         }
 
+        if (NoReplyEnabled && _apiTurnCount == NoReplyOnTurn)
+        {
+            // Real grok paints a spinner and an elapsed timer against a working OSC title while it
+            // waits, and keeps doing so for as long as the request is outstanding.
+            write("\x1b]0;⠹ - Waiting for response… - grok\x07");
+            write("- Waiting for response… 0.0s\r\n");
+            AppendUserChunkOnly(sessionDir, sessionId, text);
+            return;
+        }
+
         var echo = escaped.Length > 60 ? escaped[..60] : escaped;
         write($"FAKE response to: {echo}\r\n");
 
@@ -671,6 +694,44 @@ internal static class Program
                 JsonSerializer.Serialize(new { role = "user", content = user }) + "\n");
             File.AppendAllText(history,
                 JsonSerializer.Serialize(new { role = "assistant", content = assistant }) + "\n");
+        }
+        catch
+        {
+            // Session files are test plumbing; a write failure must not kill the TUI contract.
+        }
+    }
+
+    /// <summary>
+    /// The user chunk alone — no agent chunk and no <c>turn_completed</c>. The hung-first-call
+    /// shape (CARD-0353): the request was accepted and never answered, so Grok's own files show
+    /// the prompt and then stop.
+    /// </summary>
+    private static void AppendUserChunkOnly(string sessionDir, string sessionId, string user)
+    {
+        try
+        {
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var promptIndex = _promptCounter++;
+            var updates = Path.Combine(sessionDir, "updates.jsonl");
+            AppendShared(updates, JsonSerializer.Serialize(new
+            {
+                timestamp = now,
+                method = "session/update",
+                @params = new
+                {
+                    sessionId,
+                    update = new
+                    {
+                        sessionUpdate = "user_message_chunk",
+                        content = new { type = "text", text = user },
+                        _meta = new { modelId = "grok-4.6", promptIndex }
+                    },
+                    _meta = new { eventId = $"{sessionId}-{++_eventCounter}", agentTimestampMs = nowMs }
+                }
+            }));
+            File.AppendAllText(Path.Combine(sessionDir, "chat_history.jsonl"),
+                JsonSerializer.Serialize(new { role = "user", content = user }) + "\n");
         }
         catch
         {

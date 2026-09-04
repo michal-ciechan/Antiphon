@@ -86,6 +86,14 @@ namespace Antiphon.FakeClaude;
 ///    composer. Default OFF. Deaf-start <em>buffers</em> input and processes it late; an overlay
 ///    <em>consumes and discards</em> it (CARD-0137). The panel chrome includes the measured Grok
 ///    fragment <c>c copy session ID</c> so S6's detector can match.
+///  * <b>No reply</b> (OPT-IN, <c>ANTIPHON_FAKE_NO_REPLY[=N]</c>) — the Nth submitted turn
+///    (default 1) records its prompt and clears the composer exactly as a healthy turn does, then
+///    emits NOTHING: no assistant record, no thinking record, no turn-end, no done token and no
+///    idle title. The screen keeps a working indicator forever. This is the measured shape of a
+///    hung first model call — on 2026-09-03 an xAI capacity incident left three Grok requests
+///    accepted and never answered, with no retry and no error, because Grok Build 1.0.13 has no
+///    first-token timeout (CARD-0353; the same mode CARD-0312 P1 drives). Later turns respond
+///    normally, so a fresh retry that clears the variable finishes the work. Default OFF.
 ///  * <b>Split final response</b> (OPT-IN, <c>ANTIPHON_FAKE_SPLIT_FINAL</c>) — real Claude writes one
 ///    API response as SEVERAL records: a signature-only <c>thinking</c> record, then the <c>text</c>
 ///    record, both stamped with the response's <c>stop_reason</c> and sharing one <c>message.id</c>.
@@ -605,6 +613,16 @@ internal static class Program
         int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_FAKE_API_ERROR_AFTER_TURNS"), out var n) && n > 0 ? n : 1;
     private static int _apiTurnCount;
 
+    // OPT-IN hung-turn stub (CARD-0353 S4 / CARD-0312 S5). Read once, same as the API-error pair.
+    // Presence alone arms it; a value picks WHICH turn hangs (default the first).
+    private static readonly bool NoReplyEnabled =
+        Environment.GetEnvironmentVariable("ANTIPHON_FAKE_NO_REPLY") is { Length: > 0 };
+    private static readonly int NoReplyOnTurn =
+        int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_FAKE_NO_REPLY"), out var noReplyTurn)
+            && noReplyTurn > 0
+            ? noReplyTurn
+            : 1;
+
     private static void SubmitTurn(
         Action<string> write, string text, string? transcriptPath, bool splitFinal = false)
     {
@@ -651,6 +669,17 @@ internal static class Program
             write(IdleTitle);
             if (transcriptPath is not null)
                 AppendTranscript(transcriptPath, JsonApiErrorStubLine(errorClass, status, errorText));
+            return;
+        }
+
+        // The armed turn HANGS instead of answering (CARD-0353 S4): the prompt was recorded above
+        // (the request was accepted), and then nothing at all — no assistant record, no turn-end,
+        // no done token, no idle title. The screen keeps painting a working indicator, which is
+        // exactly what makes this indistinguishable from healthy work on the screen alone and is
+        // why the transcript has to be the verdict.
+        if (NoReplyEnabled && _apiTurnCount == NoReplyOnTurn)
+        {
+            write("* Waiting for response… (esc to interrupt)\r\n");
             return;
         }
 

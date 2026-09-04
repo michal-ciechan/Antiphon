@@ -59,6 +59,26 @@ public class AgentSession
     public DateTime? LaunchResumedAt { get; set; }
 
     /// <summary>
+    /// CARD-0312 S1. The transcript sequence of the boot prompt this launch is waiting on an
+    /// answer to, paired with <see cref="BootReplyDueAt"/>. Both null means no watch is armed,
+    /// which is every session that exists today — the change is inert on legacy rows.
+    ///
+    /// <para>The bound is a SEQUENCE, not a timestamp: a reused warm session inherits the previous
+    /// task's rows and a backfill rebases what it missed, so only rows strictly past this may
+    /// answer the watch (the CARD-0077 trap).</para>
+    /// </summary>
+    public long? BootPromptSequence { get; set; }
+
+    /// <summary>
+    /// CARD-0312 S1. When the boot prompt's answer is overdue —
+    /// <c>armed-at + DelegationSettings.BootModelWaitDeadlineMinutes</c>. Stamped on the ROW, not
+    /// held in memory, so the watch survives a server restart and is re-derived by
+    /// <c>ResumeInterruptedLaunchAsync</c> rather than lost (the CARD-0331 mistake). Cleared on
+    /// the first qualifying model row, on any human input, and on session termination.
+    /// </summary>
+    public DateTime? BootReplyDueAt { get; set; }
+
+    /// <summary>
     /// Highest transcript sequence for which compaction recovery has already run. The durable
     /// dedupe anchor: TranscriptTailer restarts at offset 0 on every runner restart/adoption and
     /// republishes ALL historical events — an incident-row check would be defeated by incident

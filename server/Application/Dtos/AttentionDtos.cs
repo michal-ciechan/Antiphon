@@ -216,6 +216,16 @@ public enum AttentionKind
     /// row, not this. Appended after shipped 25; do not renumber.
     /// </summary>
     ScheduleMisfired = 26,
+
+    /// <summary>
+    /// CARD-0312 S3: a launch's boot prompt was delivered and transcript-confirmed and the model
+    /// never answered it — rung 5 of the delivery evidence ladder. Projected from open
+    /// <c>AgentIncidentKind.LivenessProbeFailed</c> incidents (kind 10, reused rather than minting
+    /// a 48th), re-verified at read time against a live session and a still-unanswered boot
+    /// prompt. Warning; Error on the latching third, where the mechanism has stopped restarting.
+    /// Appended after shipped 26; do not renumber.
+    /// </summary>
+    LivenessProbeFailed = 27,
 }
 
 /// <summary>

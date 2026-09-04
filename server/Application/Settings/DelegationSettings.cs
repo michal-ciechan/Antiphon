@@ -380,6 +380,53 @@ public sealed class DelegationSettings
     public int ModelWaitDeadlineMinutes { get; set; } = 20;
 
     /// <summary>
+    /// The BOOT-TURN model-wait deadline (minutes): how long a session that has produced
+    /// <b>nothing at all</b> since its own first prompt may sit before the harness acts
+    /// (CARD-0353 S1, CARD-0312 S1). One setting, one clock, two consumers — the task-scoped
+    /// arm in <c>TaskDeadlinePolicy</c>/<c>AgentTaskDispatcher</c> and the session-scoped
+    /// <c>BootReplyWatch</c>. CARD-0312's plan forbids a second overlapping number, so
+    /// <c>BootReplyDeadlineMinutes</c> deliberately does not exist.
+    ///
+    /// <para><b>Why tighter than <see cref="ModelWaitDeadlineMinutes"/>.</b> The general
+    /// 20-minute arm is conservative because a mid-task session may hold real work
+    /// (CARD-0056) — it fails without killing. A boot turn has produced no assistant row, no
+    /// tool call and no file, so there is nothing to protect and no reason to wait.</para>
+    ///
+    /// <para><b>8 minutes is measured, not chosen.</b> Queried 2026-09-04 over
+    /// <c>TranscriptEntries</c> joined to <c>AgentSessions</c> since 2026-08-20: the gap from
+    /// each session's first non-housekeeping prompt at/after <c>StartedAt</c> to the first
+    /// <c>Thinking</c>/<c>AssistantText</c>/<c>ToolCall</c>/<c>TurnEnd</c> row past it, n = 660
+    /// sessions — p50 4.7 s, p90 9.7 s, p99 30.4 s. By kind: ClaudeCode n = 236 (p50 5.8 s,
+    /// p99 27.5 s, max 170.4 s); Codex n = 134 (p50 3.2 s, p99 8.8 s, max 13.1 s); Grok
+    /// n = 290 (p50 4.7 s, p99 54.3 s, max 3 379.8 s). Four sessions exceeded 60 s and one
+    /// exceeded 180 s — that one is Grok session 89254e96 at 2026-09-03 14:18Z, inside the
+    /// documented xAI capacity incident, i.e. the pathology this deadline exists to catch
+    /// rather than a healthy slow boot. Excluding it the measured maximum is 170.4 s, and
+    /// 8 minutes is ~2.8x that and ~16x p99. It also stays under
+    /// <see cref="DeliveryFailTimeoutMinutes"/> (10) and <see cref="ModelWaitDeadlineMinutes"/>
+    /// (20), the ordering both plans require and <c>BootDeadlineOrderingTests</c> pins.</para>
+    ///
+    /// <para><b>TurnEnd counts as an answer.</b> The same query showed two Codex sessions whose
+    /// boot prompt drew an immediate API-error <c>TurnEnd</c> (~1 s) and then sat in CARD-0072's
+    /// retry ladder for 43 minutes. Treating <c>TurnEnd</c> as silence would have had this
+    /// deadline kill sessions the API-error recovery was already correctly retrying.</para>
+    ///
+    /// <para><c>&lt;= 0</c> disables the boot arm entirely: the task-scoped classification falls
+    /// back to <see cref="ModelWaitDeadlineMinutes"/> and no session-scoped watch is armed.</para>
+    /// </summary>
+    public int BootModelWaitDeadlineMinutes { get; set; } = 8;
+
+    /// <summary>
+    /// CARD-0353 S2 step 5. When two boot-turn stalls fire for the same
+    /// <c>(AgentKind, model alias)</c> within this many minutes — across tasks, read from
+    /// <c>AgentTasks.FailureCode == ProviderUnresponsive</c> — the alias is put on a
+    /// <c>ModelAvailability</c> AutoDetected hold of the same length. Never on the FIRST stall:
+    /// one hung request is not evidence about a provider, and on 2026-09-03 a dispatch during
+    /// the same incident succeeded 38 minutes after the first stall. <c>0</c> disables the hold.
+    /// </summary>
+    public int BootStallRepeatHoldMinutes { get; set; } = 30;
+
+    /// <summary>
     /// The same clock for a WORKING session whose last entry is a <c>ToolCall</c> — the model has
     /// answered and a LOCAL tool (a build, a test suite, a long grep) is running (CARD-0020 S3).
     ///

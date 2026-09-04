@@ -200,6 +200,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     icon: TbCalendarOff,
     hint: 'A clock-driven schedule skipped, refused, failed, or is stuck at Claimed. Open the agent or card; the next good fire clears this.',
   },
+  LivenessProbeFailed: {
+    label: 'No reply to boot prompt',
+    color: 'warning',
+    icon: TbAlertTriangle,
+    hint: 'The prompt reached the transcript, so delivery is not the problem — the model produced nothing within the boot-turn deadline. A delegate task is retried once; a standing agent goes through the restart ladder and then latches off.',
+  },
 }
 
 export type AttentionGroupKey = 'now' | 'broken' | 'suspect' | 'failures'

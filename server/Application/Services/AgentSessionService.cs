@@ -41,6 +41,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     // late-confirm reuses the queue's matcher outright.
     private readonly DeliveryVerificationSettings _verification;
     private readonly DelegationSettings _delegationSettings;
+    private readonly ContextWindowSettings _contextWindow;
     private readonly PtyDeliveryProfile? _ptyProfile;
     // CARD-0292 S1: optional the way _ptyProfile is — production DI supplies the singleton probe;
     // a hand-built harness without one simply never skips the /remote-control send.
@@ -65,7 +66,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         IOptions<DelegationSettings>? delegationSettings = null,
         PtyDeliveryProfile? ptyProfile = null,
         IRcBridgeProbe? rcProbe = null,
-        ILaunchOwnership? launchOwnership = null)
+        ILaunchOwnership? launchOwnership = null,
+        // CARD-0312 S3: configuration only, so a ready-failure message can name the context
+        // fullness that explains it. Optional; absent, the message is exactly today's.
+        IOptions<ContextWindowSettings>? contextWindow = null)
     {
         _db = db;
         _worktreeManager = worktreeManager;
@@ -83,6 +87,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         _ptyProfile = ptyProfile;
         _rcProbe = rcProbe;
         _launchOwnership = launchOwnership;
+        _contextWindow = contextWindow?.Value ?? new ContextWindowSettings();
     }
 
     /// <summary>
@@ -185,7 +190,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             RunAttemptStateMachine.Transition(attempt, RunPhase.InitializingSession, UtcNow());
             await _db.SaveChangesAsync(ct);
 
-            await WaitForReadyOrThrowAsync(adapter, ct);
+            await WaitForReadyOrThrowAsync(adapter, session.Id, ct);
             session.Status = SessionStatus.Running;
             session.LastSeenAt = UtcNow();
             await _db.SaveChangesAsync(ct);
@@ -407,7 +412,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             EnsureHerdrLaunchAllowed(session, spec);
             await adapter.StartAsync(spec, ct);
 
-            await WaitForReadyOrThrowAsync(adapter, ct);
+            await WaitForReadyOrThrowAsync(adapter, session.Id, ct);
             session.Status = SessionStatus.Running;
             session.LastSeenAt = UtcNow();
             await _db.SaveChangesAsync(ct);
@@ -462,6 +467,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // brief enqueued at dispatch time is sitting Pending right now. If the launch note
             // above started a turn, this no-ops and the turn-end flush takes over.
             await _messageQueue.FlushSessionAsync(session.Id, ct);
+
+            // CARD-0312 S2, LAST: the one launch shape that ends with Status=Running, an
+            // AgentChanged event, and zero evidence that anything can be reached.
+            await TryEnqueueBootProbeAsync(session, agentId, initialPrompt, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -565,7 +574,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
             await ((IAttachableProtocolAdapter)adapter).AttachAsync(session.Id, ct);
             attached = true;
-            await WaitForReadyOrThrowAsync(adapter, ct);
+            await WaitForReadyOrThrowAsync(adapter, session.Id, ct);
 
             session.Status = SessionStatus.Running;
             session.LastSeenAt = UtcNow();
@@ -1250,7 +1259,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             var spec = await BuildRuntimeLaunchSpecAsync(launchSpec, session, cwd, resumeMode, ct);
             EnsureHerdrLaunchAllowed(session, spec);
             await adapter.StartAsync(spec, ct);
-            await WaitForReadyOrThrowAsync(adapter, ct);
+            await WaitForReadyOrThrowAsync(adapter, session.Id, ct);
 
             session.Status = SessionStatus.Running;
             session.LastSeenAt = UtcNow();
@@ -1613,7 +1622,17 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         || arg.StartsWith("--resume=", StringComparison.Ordinal)
         || arg.StartsWith("--continue=", StringComparison.Ordinal);
 
-    private static async Task WaitForReadyOrThrowAsync(IAgentProtocolAdapter adapter, CancellationToken ct)
+    /// <summary>
+    /// Rung 1 of the delivery evidence ladder: did a process paint a composer and go quiet?
+    ///
+    /// <para>CARD-0312 S3 / CARD-0311 item 1: when the failure happens on a session whose context
+    /// fullness is known, the message NAMES it. "Agent process did not become ready" was true and
+    /// useless on 2026-08 when an Antiphon-Orchestrator resume at 168% context failed the 60-second
+    /// readiness budget twice and succeeded on the third try — the fullness was the whole
+    /// explanation and it was nowhere in the sentence a human read.</para>
+    /// </summary>
+    private async Task WaitForReadyOrThrowAsync(
+        IAgentProtocolAdapter adapter, Guid sessionId, CancellationToken ct)
     {
         if (await adapter.WaitForReadyAsync(ct))
             return;
@@ -1621,7 +1640,44 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         if (adapter.LaunchBlock is { } block)
             throw new AgentLaunchBlockedException(block);
 
-        throw new InvalidOperationException("Agent process did not become ready.");
+        throw new InvalidOperationException(NotReadyMessage(await TryReadFullnessAsync(sessionId, ct)));
+    }
+
+    internal const string NotReadyBase = "Agent process did not become ready.";
+
+    internal static string NotReadyMessage(double? fullness) =>
+        fullness is double value
+            ? $"Agent process did not become ready (resuming a session at {value:P0} context)."
+            : NotReadyBase;
+
+    /// <summary>
+    /// Context fullness for one session, or null when it cannot be computed. Never throws: a
+    /// diagnostic that fails must not replace the launch failure it was decorating.
+    /// </summary>
+    private async Task<double?> TryReadFullnessAsync(Guid sessionId, CancellationToken ct)
+    {
+        try
+        {
+            var session = await _db.AgentSessions.AsNoTracking()
+                .Where(s => s.Id == sessionId)
+                .Select(s => new { s.Id, s.EffectiveModelId, s.AgentKind })
+                .FirstOrDefaultAsync(ct);
+            if (session is null)
+                return null;
+
+            var usage = await SessionContextUsage.LoadFullnessAsync(
+                _db,
+                [(session.Id, session.EffectiveModelId, session.AgentKind)],
+                _contextWindow,
+                _logger,
+                ct);
+            return usage.TryGetValue(session.Id, out var snapshot) ? snapshot.Fullness : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Could not read context fullness for session {SessionId}", sessionId);
+            return null;
+        }
     }
 
     // Cap on how long we wait for each remote-control slash command to echo output before moving on.
@@ -2134,6 +2190,86 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     // Mode.Now into a composer that is already answering a chat. Failure falls back to a WhenIdle
     // enqueue (watchdog / next turn-end recovery) and must never fail the launch. No reply
     // correlation is tracked — notes never route to a chat.
+    /// <summary>
+    /// CARD-0312 S2: the synthetic boot probe, for exactly one launch shape — an UNATTENDED launch
+    /// that typed nothing at all.
+    ///
+    /// <para><b>Wherever a launch already types a real prompt, that prompt IS the probe.</b> The
+    /// brief, the launch note, the resume-continue and a cardless initial prompt all exercise
+    /// composer, submit, transcript and reply through the identical path, so a synthetic "reply
+    /// OK" typed after one would be a second turn buying no evidence the first already carries.
+    /// Every one of them goes through <c>_messageQueue.EnqueueAsync</c>, so "this session has no
+    /// queued message row at all" is the exact, evidence-based test for "typed nothing" — and it
+    /// is why POOL DELEGATES ARE STRUCTURALLY EXCLUDED: a delegate always carries a brief, so it
+    /// pays nothing, which is the direct answer to the card's cost worry.</para>
+    ///
+    /// <para><b>Unattended</b> is <c>AlwaysOn</c>, channel-bound, or the standing check
+    /// interpreter — the same three the launch-note gate already knows about. An interactive
+    /// session a human started and is watching gets nothing.</para>
+    ///
+    /// <para><b>This is not the periodic probe.</b> It fires at most once, inside a launch, never
+    /// on a schedule and never against a session that is already up. <c>WhenIdle</c>, never
+    /// <c>Now</c>, so it cannot race a channel bootstrap into one composer (the CARD-0233 trap).
+    /// Failure to enqueue is logged and never fatal to the launch — the
+    /// <see cref="DeliverLaunchNoteAsync"/> posture.</para>
+    /// </summary>
+    private async Task TryEnqueueBootProbeAsync(
+        AgentSession session, Guid agentId, string? initialPrompt, CancellationToken ct)
+    {
+        try
+        {
+            if (!_settings.BootProbeEnabled || string.IsNullOrWhiteSpace(_settings.BootProbeBody))
+                return;
+            if (!string.IsNullOrWhiteSpace(initialPrompt))
+                return;
+
+            // No transcript, no verdict. An OpenCode/Raw session has no ground truth to judge
+            // silence against, and a screen-only verdict is what CARD-0055/CARD-0264 forbid —
+            // better a session with no probe than a probe nobody can answer for.
+            if (ProviderContractCatalog.For(session.AgentKind).DeliveryVerification.State
+                != AgentTuiCapabilityState.Supported)
+            {
+                return;
+            }
+
+            if (await _db.SessionQueuedMessages.AsNoTracking()
+                    .AnyAsync(m => m.AgentSessionId == session.Id, ct))
+            {
+                return;
+            }
+
+            var agent = await _db.Agents.AsNoTracking()
+                .Where(a => a.Id == agentId)
+                .Select(a => new { a.Id, a.AlwaysOn, a.Slug })
+                .FirstOrDefaultAsync(ct);
+            if (agent is null)
+                return;
+
+            var unattended = agent.AlwaysOn
+                || string.Equals(
+                    agent.Slug,
+                    CheckInterpreterProvisioner.Slug(_delegationSettings),
+                    StringComparison.OrdinalIgnoreCase)
+                || await _db.ChatChannels.AsNoTracking().AnyAsync(c => c.AgentId == agent.Id, ct);
+            if (!unattended)
+                return;
+
+            await _messageQueue.EnqueueAsync(
+                session.Id, _settings.BootProbeBody.Trim(), MessageSendMode.WhenIdle, ct,
+                origin: QueuedMessageOrigin.System);
+            _logger.LogInformation(
+                "Session {SessionId} launched without typing anything on an unattended agent; "
+                + "queued the one-line boot probe so rung 5 has something to watch",
+                session.Id);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex, "Boot probe enqueue failed for session {SessionId}; the launch stands",
+                session.Id);
+        }
+    }
+
     private async Task DeliverLaunchNoteAsync(
         Guid sessionId, AgentSessionResumeMode? resumeMode, LaunchNotes? notes, CancellationToken ct)
     {

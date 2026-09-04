@@ -263,6 +263,12 @@ namespace Antiphon.Server.Migrations
                     b.Property<int>("Cols")
                         .HasColumnType("integer");
 
+                    b.Property<long?>("BootPromptSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("BootReplyDueAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<long?>("CompactionRecoveryWatermark")
                         .HasColumnType("bigint");
 
@@ -376,6 +382,9 @@ namespace Antiphon.Server.Migrations
                         .HasColumnType("integer");
 
                     b.Property<DateTime?>("LastHealthyAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LivenessLatchedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<DateTime?>("NextRestartAt")

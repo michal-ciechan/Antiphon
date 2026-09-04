@@ -203,6 +203,7 @@ public sealed class AttentionService
         items.AddRange(BuildFailureUnacknowledgedItems(unacknowledged, costs, checkDigests));
         items.AddRange(await BuildOrchestratorInvestigationItemsAsync(since, ct));
         items.AddRange(await BuildQueuedInputStuckItemsAsync(since, ct));
+        items.AddRange(await BuildBootReplyMissingItemsAsync(since, ct));
         items.AddRange(await BuildAgentOutlivedTaskItemsAsync(now, ct));
         items.AddRange(await BuildModelAvailabilityHoldItemsAsync(now, ct));
         items.AddRange(await BuildScheduleMisfireItemsAsync(now, ct));
@@ -911,12 +912,26 @@ public sealed class AttentionService
                         ? $"Past its deadline — the next sweep will fail it. {deadline.Summary}"
                         : $"Closing on the deadline that will fail it. {deadline.Summary}",
                     Evidence(
-                        deadline.Kind == TaskDeadlinePolicy.DeadlineKind.Ceiling
-                            ? "The hard wall-clock ceiling for this role. Crossing it fails the task "
-                              + "with the phase named; nothing is killed and nothing is retried, so "
-                              + "a reply, a check or a cancel are all still open to you."
-                            : "The session is mid-turn and the phase it is in has run past its own "
-                              + "deadline. Crossing it fails the task; the session is not killed.",
+                        deadline.Kind switch
+                        {
+                            TaskDeadlinePolicy.DeadlineKind.Ceiling =>
+                                "The hard wall-clock ceiling for this role. Crossing it fails the task "
+                                + "with the phase named; nothing is killed and nothing is retried, so "
+                                + "a reply, a check or a cancel are all still open to you.",
+                            // CARD-0353 S1/S2: the boot arm is the one deadline that DOES kill and
+                            // retry, so the row must say so — a human reading it has three real
+                            // options (wait, cancel, retry now), not the usual two.
+                            TaskDeadlinePolicy.DeadlineKind.BootModelWait =>
+                                "The prompt was delivered and the session has produced nothing since "
+                                + "— no assistant, thinking or tool row. That is a provider that has "
+                                + "not answered, not work in progress. Crossing this deadline kills "
+                                + "the session (it has produced nothing, so nothing is lost) and "
+                                + "retries the task once at the same kind and tier; a second stall "
+                                + "fails it without retrying. Wait, cancel, or retry now.",
+                            _ =>
+                                "The session is mid-turn and the phase it is in has run past its own "
+                                + "deadline. Crossing it fails the task; the session is not killed.",
+                        },
                         digest),
                     task.DispatchedAt,
                     cost,
@@ -1490,6 +1505,101 @@ public sealed class AttentionService
                 Excerpt(
                     "Input was accepted by the TUI and never became a prompt — the swallowed-input "
                     + "shape a blocking modal produces. Detection only: nothing is killed or typed. "
+                    + (episode.FailureReason ?? "")),
+                episode.CreatedAt,
+                null,
+                actions));
+        }
+
+        return items;
+    }
+
+    // ---- CARD-0312: the boot prompt the model never answered -------------------------------------
+
+    /// <summary>
+    /// Projects <see cref="AttentionKind.LivenessProbeFailed"/> from open
+    /// <see cref="AgentIncidentKind.LivenessProbeFailed"/> incidents, on the
+    /// <see cref="BuildQueuedInputStuckItemsAsync"/> pattern: one row per episode, re-verified at
+    /// read time against a live session AND a boot prompt that is still unanswered, so the row
+    /// exists because the condition holds NOW rather than because it once did.
+    ///
+    /// <para>This is where the human escalation lives, per AGENTS.md — a decision belongs on the
+    /// attention feed, never a new column or an alert sink.</para>
+    /// </summary>
+    private async Task<List<AttentionItemDto>> BuildBootReplyMissingItemsAsync(
+        DateTime since, CancellationToken ct)
+    {
+        var rows = await _db.AgentIncidents.AsNoTracking()
+            .Where(i => i.Kind == AgentIncidentKind.LivenessProbeFailed
+                && i.CreatedAt >= since
+                && i.SessionId != null
+                && i.FailureReason != null
+                && i.FailureReason.StartsWith("bootSeq="))
+            .Select(i => new { i.AgentId, i.SessionId, i.Severity, i.Message, i.CreatedAt, i.FailureReason })
+            .ToListAsync(ct);
+        if (rows.Count == 0)
+            return [];
+
+        var episodes = rows
+            .GroupBy(r => (r.SessionId!.Value, r.FailureReason))
+            .Select(g => g.OrderByDescending(r => r.CreatedAt).First())
+            .ToList();
+
+        var sessionIds = episodes.Select(e => e.SessionId!.Value).Distinct().ToList();
+        var liveSessions = (await _db.AgentSessions.AsNoTracking()
+                .Where(s => sessionIds.Contains(s.Id)
+                    && (s.Status == SessionStatus.Starting
+                        || s.Status == SessionStatus.Running
+                        || s.Status == SessionStatus.Stopping))
+                .Select(s => s.Id)
+                .ToListAsync(ct))
+            .ToHashSet();
+
+        var agentIds = episodes.Where(r => r.AgentId is not null).Select(r => r.AgentId!.Value).Distinct().ToList();
+        var agentNames = agentIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await _db.Agents.AsNoTracking()
+                .Where(a => agentIds.Contains(a.Id))
+                .Select(a => new { a.Id, a.Name })
+                .ToDictionaryAsync(a => a.Id, a => a.Name, ct);
+
+        var items = new List<AttentionItemDto>();
+        foreach (var episode in episodes)
+        {
+            var sessionId = episode.SessionId!.Value;
+            if (!liveSessions.Contains(sessionId))
+                continue;
+            if (!long.TryParse(episode.FailureReason.AsSpan("bootSeq=".Length), out var bootSequence))
+                continue;
+
+            // Read-time re-verification: any qualifying model row past the boot prompt closes the
+            // episode, whoever produced it — the retry, a late first token, or a human.
+            var answered = await _db.TranscriptEntries.AsNoTracking()
+                .Where(t => t.AgentSessionId == sessionId && t.Sequence > bootSequence)
+                .Select(t => t.Kind)
+                .ToListAsync(ct);
+            if (answered.Any(BootReplyWatch.IsModelReply))
+                continue;
+
+            var title = episode.AgentId is Guid agentId && agentNames.TryGetValue(agentId, out var name)
+                ? name
+                : $"Session {DelegationReportFormatter.Short(sessionId)}";
+            var actions = episode.AgentId is null
+                ? new[] { AttentionAction.OpenDrawer }
+                : new[] { AttentionAction.OpenAgent, AttentionAction.OpenDrawer };
+            items.Add(new AttentionItemDto(
+                AttentionKind.LivenessProbeFailed,
+                episode.Severity,
+                null,
+                sessionId,
+                episode.AgentId,
+                null,
+                title,
+                episode.Message,
+                Excerpt(
+                    "The prompt reached the transcript — delivery is not the problem. The model "
+                    + "produced no assistant, thinking, tool or turn-end row within the boot-turn "
+                    + "deadline, which is a provider that has not answered. "
                     + (episode.FailureReason ?? "")),
                 episode.CreatedAt,
                 null,

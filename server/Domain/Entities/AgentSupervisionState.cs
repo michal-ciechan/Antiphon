@@ -21,6 +21,18 @@ public class AgentSupervisionState
     public int LastEscalationTier { get; set; }
 
     public DateTime? LastHealthyAt { get; set; }
+
+    /// <summary>
+    /// CARD-0312 S4. When the boot-reply watch STOPPED restarting this agent. The mechanism gets
+    /// at most two consecutive probe-driven restarts; the third consecutive failure latches it off
+    /// and raises the incident at <c>AlertSeverity.Error</c> instead of restarting again. Null is
+    /// unlatched. Cleared by a human <c>StartAsync</c> (which already lifts the supervision latch)
+    /// or by any successful reply. This is the 2026-07 lesson held in a column: the periodic
+    /// liveness probe was deleted twice for false-positive-killing healthy sessions, and an
+    /// unbounded restart ladder driven by a liveness verdict is that failure by another route.
+    /// </summary>
+    public DateTime? LivenessLatchedAt { get; set; }
+
     public DateTime UpdatedAt { get; set; }
 
     public Agent? Agent { get; set; }

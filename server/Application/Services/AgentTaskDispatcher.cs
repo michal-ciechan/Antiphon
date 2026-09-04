@@ -1507,6 +1507,32 @@ public sealed class AgentTaskDispatcher
         if (await TryRecoverBindRefusalAsync(task, sessionId, ct))
             return false;
 
+        // Gate 4 — CARD-0353 S2. The boot arm is the ONE deadline here that kills and retries, so
+        // it gets its own guard and its own tail. Everything below stays the non-destructive
+        // failure the other two clocks have always been.
+        if (verdict.Kind == TaskDeadlinePolicy.DeadlineKind.BootModelWait)
+        {
+            var acted = await TryFailBootStallAsync(task, sessionId, verdict, ct);
+            if (acted is not null)
+                return acted.Value;
+
+            // The workspace says work happened, so the boot arm's licence to kill is gone. Its
+            // tighter clock goes with it: failing here would apply an 8-minute deadline to a
+            // session the 20-minute one has not yet judged. Decline until the GENERAL model-wait
+            // clock is breached too, then fall through to the ordinary non-killing failure — which
+            // is also what stops the guard from stranding the task forever.
+            var general = TimeSpan.FromMinutes(_settings.ModelWaitDeadlineMinutes);
+            if (general <= TimeSpan.Zero || verdict.Elapsed < general)
+            {
+                _logger.LogInformation(
+                    "Task {ShortId} is past the boot-turn deadline but its workspace shows progress "
+                    + "since dispatch — not killed, not failed; the general {Minutes}-minute "
+                    + "model-wait clock will judge it",
+                    DelegationReportFormatter.Short(task.Id), _settings.ModelWaitDeadlineMinutes);
+                return false;
+            }
+        }
+
         // The Summary already names the clock, the phase and the last entry's age — the failure
         // reason and the attention row are deliberately the same sentence, so a human who saw the
         // Overdue row reads the failure it became in the words it was previewed in.
@@ -1518,6 +1544,168 @@ public sealed class AgentTaskDispatcher
 
         await FailAndNotifyAsync(task, reason, "overdue-task deadline", ct);
         return true;
+    }
+
+    /// <summary>
+    /// CARD-0353 S2: the boot-turn stall tail. The provider never answered a prompt it was
+    /// confirmed to have received, and the session has produced nothing at all — so unlike every
+    /// other deadline in this file there is provably no work to protect (CARD-0056's line), which
+    /// is what earns this arm the right to kill.
+    ///
+    /// <para>Returns <c>true</c> when the task was failed here, and <c>null</c> when the workspace
+    /// guard declined — the caller then decides whether the GENERAL clock has anything to say.
+    /// Never returns <c>false</c>; that shape exists only so "declined" and "failed but not
+    /// retried" cannot be confused.</para>
+    ///
+    /// <para>The order is fail then kill then retry. <c>RequeueAsync</c> stops the delegate before
+    /// it requeues, so the killed process has released its pool slot before the retry can claim
+    /// one.</para>
+    /// </summary>
+    private async Task<bool?> TryFailBootStallAsync(
+        AgentTask task, Guid sessionId, TaskDeadlinePolicy.Verdict verdict, CancellationToken ct)
+    {
+        // The guard. The transcript arm has already been re-read post-pull (the BootModelWait
+        // classification itself re-runs the boot predicate at gate 2); this is the second,
+        // independent subsystem. Available-and-quiet is the only reading that permits a kill.
+        var workspace = await ProbeWorkspaceAsync(task, ct);
+        if (workspace is { Available: true }
+            && (workspace.LastFileChangeAt is not null || workspace.LastCommitAt is not null))
+        {
+            return null;
+        }
+
+        var alias = ModelLevelAliases.For(task.AgentKind, task.ModelLevel);
+        var retrying = task.Attempt < task.MaxAttempts;
+        var prompted = verdict.LastEntryAge is TimeSpan age
+            ? $"{TaskDeadlinePolicy.Duration(age)} ago"
+            : "at an unrecorded time";
+        var reason =
+            "Provider never answered the boot prompt: the prompt was delivered and "
+            + $"transcript-confirmed {prompted}, and session {sessionId} produced no assistant, "
+            + $"thinking, tool or turn-end row in {TaskDeadlinePolicy.Duration(verdict.Elapsed)} "
+            + $"against a {(int)verdict.Limit.TotalMinutes}-minute boot-turn deadline. The session "
+            + "was killed (it had produced nothing, so nothing is lost) and the task "
+            + (retrying
+                ? $"is being retried once at {task.AgentKind}/{alias}."
+                : $"is NOT being retried — this is boot stall {task.Attempt} of "
+                  + $"{task.MaxAttempts} on {task.AgentKind}/{alias}, so the provider, not the "
+                  + "task, is what needs attention. Reroute to another kind or retry by hand.");
+
+        if (task.AgentId is Guid incidentAgentId)
+        {
+            _db.AgentIncidents.Add(new AgentIncident
+            {
+                Id = Guid.NewGuid(),
+                AgentId = incidentAgentId,
+                SessionId = sessionId,
+                Kind = AgentIncidentKind.ProviderUnresponsive,
+                Severity = retrying ? AlertSeverity.Warning : AlertSeverity.Error,
+                Message = reason,
+                FailureReason = nameof(AgentTaskFailureCode.ProviderUnresponsive),
+                CreatedAt = UtcNow(),
+            });
+            await _db.SaveChangesAsync(ct);
+        }
+
+        await FailAndNotifyAsync(
+            task, reason, "boot-turn provider stall", ct,
+            AgentTaskFailureCode.ProviderUnresponsive);
+
+        // Read from the FAILED rows, so it counts stalls across tasks and is unaffected by the
+        // retry that follows.
+        await TryHoldOnBootStallRepeatAsync(task, sessionId, alias, reason, ct);
+
+        if (!retrying)
+        {
+            try
+            {
+                await _sessions.KillAsync(sessionId, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(
+                    ex, "Could not stop boot-stalled session {SessionId} for task {ShortId}",
+                    sessionId, DelegationReportFormatter.Short(task.Id));
+            }
+
+            return true;
+        }
+
+        try
+        {
+            // RetryAsync is the SAME path a human's Retry takes: it stops the delegate, requeues at
+            // the same tier and re-arms the token. ProviderUnresponsive is deliberately absent from
+            // FindLaunchFailureRepeatAsync's block list, so this cannot block itself.
+            await _tasks.RetryAsync(task.Id, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex, "Task {ShortId}: boot-turn stall could not be retried automatically; the task "
+                + "stays Failed with {Code}",
+                DelegationReportFormatter.Short(task.Id),
+                nameof(AgentTaskFailureCode.ProviderUnresponsive));
+            try
+            {
+                await _sessions.KillAsync(sessionId, ct);
+            }
+            catch (Exception kill) when (kill is not OperationCanceledException)
+            {
+                _logger.LogWarning(
+                    kill, "Could not stop boot-stalled session {SessionId}", sessionId);
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// CARD-0353 S2 step 5. A SECOND boot stall on the same <c>(AgentKind, alias)</c> inside
+    /// <see cref="DelegationSettings.BootStallRepeatHoldMinutes"/> holds the alias for the same
+    /// window (CARD-0022's queue-until-clear then holds new dispatches). Never on the first: one
+    /// hung request is not evidence about a provider — on 2026-09-03 a dispatch 38 minutes after
+    /// the first stall, inside the same incident, succeeded.
+    /// </summary>
+    private async Task TryHoldOnBootStallRepeatAsync(
+        AgentTask task, Guid sessionId, string alias, string reason, CancellationToken ct)
+    {
+        var window = _settings.BootStallRepeatHoldMinutes;
+        if (_modelAvailability is null || window <= 0)
+            return;
+        // A stub alias is not a hold key (ModelAvailability throws on it), and a kind-wide hold is
+        // never AutoDetected.
+        if (string.IsNullOrWhiteSpace(alias)
+            || alias == ModelAlias.KindWide
+            || string.Equals(alias, "<synthetic>", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var now = UtcNow();
+        var since = now - TimeSpan.FromMinutes(window);
+        var stalls = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.FailureCode == AgentTaskFailureCode.ProviderUnresponsive
+                && t.AgentKind == task.AgentKind
+                && t.ModelLevel == task.ModelLevel
+                && t.CompletedAt != null && t.CompletedAt >= since)
+            .CountAsync(ct);
+        if (stalls < 2)
+            return;
+
+        try
+        {
+            await _modelAvailability.UpsertAutoDetectedAsync(
+                task.AgentKind, alias, now.AddMinutes(window),
+                $"provider unresponsive: {stalls} boot turns hung in the last {window} minutes",
+                reason, sessionId, task.Id, ct);
+            _logger.LogWarning(
+                "Held {Kind}/{Alias} until {Until:o}: {Count} boot-turn stalls in {Window} minutes",
+                task.AgentKind, alias, now.AddMinutes(window), stalls, window);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex, "Could not hold {Kind}/{Alias} after repeated boot-turn stalls",
+                task.AgentKind, alias);
+        }
     }
 
     /// <summary>
@@ -2800,12 +2988,21 @@ public sealed class AgentTaskDispatcher
         }
 
         var cwd = task.WorktreePath ?? task.WorkingDirectory;
+        // CARD-0312 S4: the relaunch is no longer Codex-only, so the last-resort definition name
+        // is the OLD session's rather than the literal "codex" — a Grok relaunch that could not
+        // resolve a program must not come back wearing Codex's name. Where the program resolves
+        // (every production path) this changes nothing.
+        var previousDefinition = await _db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == oldSessionId)
+            .Select(s => s.DefinitionName)
+            .FirstOrDefaultAsync(ct);
         var session = new AgentSession
         {
             Id = Guid.NewGuid(),
             CardId = null,
             WorktreeId = null,
-            DefinitionName = program?.DefinitionName ?? "codex",
+            DefinitionName = program?.DefinitionName
+                ?? (string.IsNullOrWhiteSpace(previousDefinition) ? "codex" : previousDefinition),
             AgentKind = program?.Kind ?? task.AgentKind,
             SessionBackend = agent.SessionBackend,
             Status = SessionStatus.Starting,

@@ -59,6 +59,15 @@ internal static class TaskDeadlinePolicy
 
         /// <summary>Mid-turn with a local tool (build, test suite, grep) owing its result.</summary>
         LocalExecution = 2,
+
+        /// <summary>
+        /// The BOOT turn: the session has produced nothing at all since its own first prompt, so
+        /// the model owes its FIRST token (CARD-0353 S1). A tightening of
+        /// <see cref="ModelWait"/> and never a widening — it applies only where the general arm
+        /// would have applied, and only where there is provably nothing to protect. That is what
+        /// earns it the right to kill and retry, which <see cref="ModelWait"/> does not have.
+        /// </summary>
+        BootModelWait = 3,
     }
 
     /// <summary>
@@ -119,7 +128,9 @@ internal static class TaskDeadlinePolicy
         var ceiling = Minutes(CeilingMinutes(settings, task.Role));
         var modelWait = Minutes(settings.ModelWaitDeadlineMinutes);
         var localExecution = Minutes(settings.LocalExecutionDeadlineMinutes);
-        if (ceiling <= TimeSpan.Zero && modelWait <= TimeSpan.Zero && localExecution <= TimeSpan.Zero)
+        var bootWait = Minutes(settings.BootModelWaitDeadlineMinutes);
+        if (ceiling <= TimeSpan.Zero && modelWait <= TimeSpan.Zero
+            && localExecution <= TimeSpan.Zero && bootWait <= TimeSpan.Zero)
             return null;
 
         var elapsed = NonNegative(now - dispatched);
@@ -128,7 +139,7 @@ internal static class TaskDeadlinePolicy
         // wall clock since dispatch (a phase deadline uses min(last-entry age, elapsed)), so a task
         // younger than the smallest armed limit cannot be near any of them and needs no query at
         // all — which is the ordinary case on every 5 s tick.
-        var smallest = SmallestArmed(ceiling, modelWait, localExecution);
+        var smallest = SmallestArmed(ceiling, modelWait, localExecution, bootWait);
         if (smallest <= TimeSpan.Zero || elapsed < smallest * PreviewFraction)
             return null;
 
@@ -147,7 +158,7 @@ internal static class TaskDeadlinePolicy
         // The phase arm. Working is asked BEFORE Kind is looked at, and only for a task that could
         // actually be near a phase deadline — see the class comment for why that order is the whole
         // point rather than an optimisation.
-        var phaseLimitFloor = SmallestArmed(modelWait, localExecution);
+        var phaseLimitFloor = SmallestArmed(modelWait, localExecution, bootWait);
         if (last is not null
             && lastAge is TimeSpan age
             && phaseLimitFloor > TimeSpan.Zero
@@ -155,18 +166,39 @@ internal static class TaskDeadlinePolicy
             && await SessionMessageQueueService.IsWorkingAsync(db, sessionId, ct))
         {
             var (phaseKind, phaseLimit) = ClassifyPhase(last.Kind, modelWait, localExecution);
+
+            // The BOOT arm (CARD-0353 S1). Asked only where the general model-wait arm already
+            // applies, so it can only ever TIGHTEN: a session that has produced nothing since its
+            // own first prompt is not "mid-turn holding work", it is a first token that never
+            // came. One extra query, and only for a task already past 80% of the smallest armed
+            // limit — the cheap gate above has already turned the ordinary tick away.
+            if (bootWait > TimeSpan.Zero && phaseKind == DeadlineKind.ModelWait)
+            {
+                var boot = await BootReplyWatch.LoadBootTurnAsync(
+                    db, sessionId, await LaunchClockAsync(db, task, sessionId, ct), ct);
+                if (boot is not null)
+                    (phaseKind, phaseLimit) = (DeadlineKind.BootModelWait, bootWait);
+            }
+
             if (phaseLimit > TimeSpan.Zero)
             {
                 // A warm delegate's session carries the PREVIOUS task's tail, so the phase clock is
                 // capped at this task's own age: nothing is ever failed for a stall it inherited.
                 var phaseElapsed = Smaller(age, elapsed);
-                var label = phaseKind == DeadlineKind.ModelWait
-                    ? "waiting on the model"
-                    : "waiting on a local tool";
+                var label = phaseKind switch
+                {
+                    DeadlineKind.BootModelWait => "waiting on the model's FIRST token",
+                    DeadlineKind.ModelWait => "waiting on the model",
+                    _ => "waiting on a local tool",
+                };
                 var candidate = new Verdict(
                     phaseKind, phaseLimit, phaseElapsed, last.Kind, lastAge,
                     $"Mid-turn and {label} for {Duration(phaseElapsed)}, against a "
-                    + $"{(int)phaseLimit.TotalMinutes}-minute deadline. {DescribeLast(last, lastAge)}");
+                    + $"{(int)phaseLimit.TotalMinutes}-minute deadline. {DescribeLast(last, lastAge)}"
+                    + (phaseKind == DeadlineKind.BootModelWait
+                        ? " The session has produced no assistant, thinking or tool row since its"
+                          + " own prompt — this is a boot turn, so nothing it did would be lost."
+                        : string.Empty));
                 if (best is null || candidate.Fraction > best.Fraction)
                     best = candidate;
             }
@@ -199,6 +231,23 @@ internal static class TaskDeadlinePolicy
 
             _ => (DeadlineKind.Ceiling, TimeSpan.Zero),
         };
+
+    /// <summary>
+    /// The clock a boot turn is measured from: <c>max(DispatchedAt, LaunchResumedAt)</c>
+    /// (CARD-0340 S2). A launch the reconciler resumed starts its boot turn at the resume, not at
+    /// the original dispatch — otherwise a restart longer than the boot deadline would fail a
+    /// session that had only just been handed its prompt.
+    /// </summary>
+    internal static async Task<DateTime> LaunchClockAsync(
+        AppDbContext db, AgentTask task, Guid sessionId, CancellationToken ct)
+    {
+        var clock = task.DispatchedAt ?? DateTime.MinValue;
+        var resumed = await db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId)
+            .Select(s => s.LaunchResumedAt)
+            .FirstOrDefaultAsync(ct);
+        return resumed is DateTime at && at > clock ? at : clock;
+    }
 
     /// <summary>
     /// The session's last transcript entry, with the timestamp tie-break.

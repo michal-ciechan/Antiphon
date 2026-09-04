@@ -123,6 +123,12 @@ export type AttentionKind =
    * Cleared by the next good fire or by disabling. SkippedLate is not this.
    */
   | 'ScheduleMisfired'
+  /**
+   * A launch's boot prompt was delivered and transcript-confirmed and the model never
+   * answered it (CARD-0312) — rung 5 of the delivery evidence ladder. Warning; Error once
+   * the mechanism has stopped restarting. Delivery is NOT the problem here.
+   */
+  | 'LivenessProbeFailed'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =

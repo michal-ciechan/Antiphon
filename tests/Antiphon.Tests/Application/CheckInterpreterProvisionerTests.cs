@@ -139,7 +139,7 @@ public class CheckInterpreterProvisionerTests
         reconciled.SystemPromptAppend.ShouldBe(CheckInterpretation.Contract);
         reconciled.SystemPromptAppend!.ShouldContain("NEVER say the **checked** task is complete");
         reconciled.SystemPromptAppend!.ShouldContain($"contract v{CheckInterpretation.ContractVersion}");
-        reconciled.SystemPromptAppend!.ShouldContain("contract v4");
+        reconciled.SystemPromptAppend!.ShouldContain("contract v5");
         reconciled.SystemPromptAppend!.ShouldContain("task-owned");
         reconciled.SystemPromptAppend!.ShouldContain("shared-checkout disclaimer");
     }
@@ -181,7 +181,7 @@ public class CheckInterpreterProvisionerTests
         // CARD-0227: the interpreter must not read the Shared-checkout digest line as PRODUCED.
         // The digest itself is the safety boundary (DelegateCheckProbeTests); this pins that the
         // standing contract the specialist is reconciled onto agrees with that fact shape.
-        CheckInterpretation.ContractVersion.ShouldBe("4");
+        CheckInterpretation.ContractVersion.ShouldBe("5");
         CheckInterpretation.Contract.ShouldContain($"contract v{CheckInterpretation.ContractVersion}");
         CheckInterpretation.Contract.ShouldContain("exactly one physical line, at most 240 characters");
         CheckInterpretation.Contract.ShouldNotContain("3-5 lines");

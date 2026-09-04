@@ -287,7 +287,7 @@ public static class DelegationReportFormatter
     }
 
     /// <summary>
-    /// CARD-0339 contract v4: a Check-role closer. The reading is one physical line; the
+    /// CARD-0339 contract v5: a Check-role closer. The reading is one physical line; the
     /// report token is a separate protocol line. <c>done</c> means this interpretation is
     /// finished (including LOOKS STUCK); <c>failed</c> only if there is no reading. Never
     /// <c>blocked</c> — that token would settle the Check row itself as waiting on a human.

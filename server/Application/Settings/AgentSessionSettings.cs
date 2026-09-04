@@ -13,6 +13,25 @@ public sealed class AgentSessionSettings
     public int MemoryLimitMb { get; set; } = 0;
 
     /// <summary>
+    /// CARD-0312 S2: the kill switch for the synthetic boot probe, in the shape of
+    /// <c>TranscriptConfirmEnabled</c>. <c>false</c> leaves the reply WATCH intact — the watch
+    /// costs nothing and needs no probe wherever a launch already types a real prompt.
+    /// </summary>
+    public bool BootProbeEnabled { get; set; } = true;
+
+    /// <summary>
+    /// CARD-0312 S2: the body of the synthetic boot probe. Deliberately one line with NO WORK in
+    /// it — a probe with content invites a long turn, which is the cost the 2026-07-23 removal of
+    /// the periodic pong probe complained about. Sent at most once per launch, only on an
+    /// unattended launch that typed nothing at all, as
+    /// <c>QueuedMessageOrigin.System</c>/<c>WhenIdle</c>, so a human reading the transcript sees
+    /// the same class of row as the restart note that has always been there. Blank disables the
+    /// probe as surely as <see cref="BootProbeEnabled"/> does.
+    /// </summary>
+    public string BootProbeBody { get; set; } =
+        "Antiphon liveness check — reply with the single word: ready. Do not do any other work.";
+
+    /// <summary>
     /// How long the boot sequence waits for the TUI to print "remote-control is active" after
     /// a successful /remote-control submit. Inner bound inside <see cref="RemoteControlSetupTimeoutMs"/>:
     /// the marker wait cannot exceed this even when the outer setup budget still has time left.

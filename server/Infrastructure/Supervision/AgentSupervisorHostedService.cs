@@ -43,6 +43,7 @@ public sealed class AgentSupervisorHostedService : BackgroundService
     private readonly HerdrStatusCorroborationService _herdrCorroboration;
     private readonly OrchestratorInvestigationSweepService _investigation;
     private readonly QueuedInputWatchdogService _queuedInput;
+    private readonly BootReplyWatchdogService _bootReply;
     private readonly SupervisionSettings _settings;
     private readonly ILogger<AgentSupervisorHostedService> _logger;
     private DateTime _lastPruneUtc = DateTime.MinValue;
@@ -62,6 +63,7 @@ public sealed class AgentSupervisorHostedService : BackgroundService
         HerdrStatusCorroborationService herdrCorroboration,
         OrchestratorInvestigationSweepService investigation,
         QueuedInputWatchdogService queuedInput,
+        BootReplyWatchdogService bootReply,
         IOptions<SupervisionSettings> settings,
         ILogger<AgentSupervisorHostedService> logger)
     {
@@ -72,6 +74,7 @@ public sealed class AgentSupervisorHostedService : BackgroundService
         _herdrCorroboration = herdrCorroboration;
         _investigation = investigation;
         _queuedInput = queuedInput;
+        _bootReply = bootReply;
         _settings = settings.Value;
         _logger = logger;
     }
@@ -181,6 +184,17 @@ public sealed class AgentSupervisorHostedService : BackgroundService
                                 "Raised {Count} QueuedInputNeverConverted incident(s) (detection only)",
                                 stuck);
                         }
+                    }
+
+                    // CARD-0312 S3: every tick. The watch's whole value is being TIGHTER than the
+                    // 10-minute delivery watchdog, so a minute-scale sweep period would spend most
+                    // of the margin it exists to buy.
+                    var boots = await _bootReply.SweepAsync(stoppingToken);
+                    if (boots > 0)
+                    {
+                        _logger.LogWarning(
+                            "Raised {Count} LivenessProbeFailed incident(s): the boot prompt was "
+                            + "delivered and the model never answered", boots);
                     }
 
                     if (DateTime.UtcNow - _lastModelAvailabilitySweepUtc >= TimeSpan.FromMinutes(1))

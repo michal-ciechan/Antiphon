@@ -51,17 +51,23 @@ public sealed class DelegateCheckProbe
     private readonly GitWorkspaceService _git;
     private readonly TimeProvider _timeProvider;
     private readonly SupervisionSettings _supervision;
+    // CARD-0353 S3. Configuration only, like SupervisionSettings above — the read-only guarantee in
+    // the class comment still holds. Optional so every harness that predates the card keeps
+    // constructing this; absent, the shipped defaults are used, never a missing DEADLINE line.
+    private readonly DelegationSettings _delegation;
 
     public DelegateCheckProbe(
         AppDbContext db,
         GitWorkspaceService git,
         TimeProvider timeProvider,
-        IOptions<SupervisionSettings> supervision)
+        IOptions<SupervisionSettings> supervision,
+        IOptions<DelegationSettings>? delegation = null)
     {
         _db = db;
         _git = git;
         _timeProvider = timeProvider;
         _supervision = supervision.Value;
+        _delegation = delegation?.Value ?? new DelegationSettings();
     }
 
     // ---- the fact bundle -----------------------------------------------------------------------
@@ -116,13 +122,36 @@ public sealed class DelegateCheckProbe
     /// not a second implementation of it. A check that disagreed with the agent card about whether
     /// a delegate is mid-turn would be worse than no check.
     /// </param>
+    /// <param name="BootTurn">
+    /// CARD-0353 S3: non-null when everything this session has written since its launch clock is
+    /// its own prompt(s) — no assistant, thinking, tool or turn-end row. This is the fact the
+    /// check interpreter lacked on 2026-09-03, when it read a delivered pointer prompt on a
+    /// WORKING session as "brief delivery failed" twice.
+    /// </param>
     public sealed record CheckSessionFacts(
         Guid SessionId,
         SessionStatus Status,
         bool Working,
         int TranscriptEntries,
         DateTime? LastEntryAt,
-        TimeSpan? SinceLastEntry);
+        TimeSpan? SinceLastEntry,
+        CheckBootTurn? BootTurn = null);
+
+    /// <param name="PromptAt">When the latest real prompt landed.</param>
+    /// <param name="SincePrompt">How long the session has been silent since it.</param>
+    public sealed record CheckBootTurn(DateTime PromptAt, TimeSpan SincePrompt);
+
+    /// <summary>
+    /// The phase/ceiling deadline this task is closest to, read through the SAME
+    /// <see cref="TaskDeadlinePolicy"/> the overdue sweep acts on and the attention feed previews
+    /// (CARD-0353 S3). Read-only: <c>EvaluateAsync</c> writes nothing.
+    /// </summary>
+    public sealed record CheckDeadlineFacts(
+        string Kind,
+        TimeSpan Limit,
+        TimeSpan Elapsed,
+        bool Breached,
+        string Summary);
 
     public sealed record CheckTranscriptLine(
         long Sequence,
@@ -204,7 +233,8 @@ public sealed class DelegateCheckProbe
         CheckGitFacts? Git,
         IReadOnlyList<CheckQueuedMessage> PendingMessages,
         IReadOnlyList<CheckIncident> Incidents,
-        DateTime? PreviousCheckAt = null);
+        DateTime? PreviousCheckAt = null,
+        CheckDeadlineFacts? Deadline = null);
 
     // ---- gathering -----------------------------------------------------------------------------
 
@@ -247,8 +277,10 @@ public sealed class DelegateCheckProbe
             ? await GatherIncidentsAsync(incidentSession, ct)
             : [];
         var git = await GatherGitAsync(task, ct);
+        var deadline = await GatherDeadlineAsync(task, now, ct);
 
-        return new CheckFacts(now, taskFacts, session, tail, git, pending, incidents, previousCheckAt);
+        return new CheckFacts(
+            now, taskFacts, session, tail, git, pending, incidents, previousCheckAt, deadline);
     }
 
     private async Task<CheckSessionFacts?> GatherSessionAsync(AgentTask task, DateTime now, CancellationToken ct)
@@ -272,8 +304,40 @@ public sealed class DelegateCheckProbe
         // The shared verdict, not a private reimplementation of it.
         var working = await SessionMessageQueueService.IsWorkingAsync(_db, sessionId, ct);
 
+        // CARD-0353 S3. The same predicate the boot-turn deadline classifies on, on the same
+        // max(DispatchedAt, LaunchResumedAt) clock — a digest whose BOOT TURN line disagreed with
+        // the sweep that is about to kill the session would be worse than no line.
+        CheckBootTurn? bootTurn = null;
+        if (task.DispatchedAt is not null)
+        {
+            var clock = await TaskDeadlinePolicy.LaunchClockAsync(_db, task, sessionId, ct);
+            if (await BootReplyWatch.LoadBootTurnAsync(_db, sessionId, clock, ct) is { } boot)
+            {
+                var since = now - boot.PromptAt;
+                bootTurn = new CheckBootTurn(
+                    boot.PromptAt, since < TimeSpan.Zero ? TimeSpan.Zero : since);
+            }
+        }
+
         return new CheckSessionFacts(
-            sessionId, sessionStatus, working, count, lastAt, lastAt is { } at ? now - at : null);
+            sessionId, sessionStatus, working, count, lastAt,
+            lastAt is { } at ? now - at : null, bootTurn);
+    }
+
+    /// <summary>
+    /// CARD-0353 S3. The deadline the task is closest to, or null when it is nowhere near one.
+    /// This is the same read-only call <c>AttentionService</c> makes, so the digest, the attention
+    /// row and the failure the sweep will write are three renderings of one verdict.
+    /// </summary>
+    private async Task<CheckDeadlineFacts?> GatherDeadlineAsync(
+        AgentTask task, DateTime now, CancellationToken ct)
+    {
+        var verdict = await TaskDeadlinePolicy.EvaluateAsync(_db, task, now, _delegation, ct);
+        return verdict is null
+            ? null
+            : new CheckDeadlineFacts(
+                verdict.Kind.ToString(), verdict.Limit, verdict.Elapsed, verdict.Breached,
+                verdict.Summary);
     }
 
     private async Task<IReadOnlyList<CheckTranscriptLine>> GatherTranscriptTailAsync(
@@ -465,10 +529,29 @@ public sealed class DelegateCheckProbe
               .Append(" last=")
               .Append(session.SinceLastEntry is { } quiet ? $"{Duration(quiet)} ago" : "never")
               .AppendLine();
+            if (session.BootTurn is { } boot)
+            {
+                sb.Append("  BOOT TURN — prompt confirmed ").Append(Stamp(boot.PromptAt))
+                  .Append(", no model response since (").Append(Duration(boot.SincePrompt))
+                  .AppendLine("). The prompt was DELIVERED; the provider has not answered it.");
+            }
         }
         else
         {
             sb.AppendLine("SESSION: none — this task has no live session row.");
+        }
+
+        sb.Append("DEADLINE: ");
+        if (facts.Deadline is { } deadline)
+        {
+            sb.Append(deadline.Breached ? "PAST " : "closing on ")
+              .Append(deadline.Kind).Append(' ')
+              .Append((int)deadline.Limit.TotalMinutes).Append("m — ")
+              .AppendLine(deadline.Summary);
+        }
+        else
+        {
+            sb.AppendLine("none near.");
         }
 
         sb.AppendLine();
