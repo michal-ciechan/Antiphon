@@ -168,10 +168,13 @@ no pin exists. A Human pin survives a RolePolicy edit and an Auto rewrite (409 `
 Required. A pin naming a held alias is still 409 `model_disabled` (CARD-0309) — pins consume
 `Require`, they do not write a hold, and `ignoreRoutingPin` is not `ignoreModelDisabled`.
 
-**Complexity chains (CARD-0090).** Pass `-Complexity Hard|Medium|Easy` when the work's hardness
+**Complexity chains (CARD-0090, CARD-0332).** Pass `-Complexity Hard|Medium|Easy` when the work's hardness
 should pick (kind, level) from an ordered fallback list, instead of an explicit `-Kind`/`-Level`.
+The list is a sparse (role × complexity) matrix: the walk reads the role cell, then the any-role
+chain, then the config default, then Blocked. A Required stage pin still bypasses the cell.
 An explicit pair is never rerouted — combining `-Complexity` with `-Kind` or `-Level` is 422.
-Config defaults ship empty; write the live lists with `complexity-chain.ps1 set`. When the chain
+Config defaults ship empty; write the live lists with `complexity-chain.ps1 set` (`-Role Plan` for
+a cell, omit `-Role` for the any-role row). When the chain
 is exhausted the task is **Blocked** (or 409 `routing_exhausted` with `-RefuseIfExhausted`):
 **relay that to the operator and never pick a kind yourself.** A human answers with Retry,
 `delegate.ps1 -Reroute <id> -Kind … -Level …`, Cancel, or by clearing a hold. Auto-resume onto

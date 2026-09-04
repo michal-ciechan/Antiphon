@@ -362,5 +362,7 @@ Delete `bin-card0090*` after. Shared-Postgres tests seed by id.
   ```
   Stage pins (`routing-pin.ps1`) keep working unchanged; a Required stage pin wins over the chain for that role, which is how "Plan is fable, full stop" coexists with `-Complexity`.
 - Orchestrator habit: `delegate.ps1 -Role Plan -Complexity Hard -Card CARD-x` instead of `-Kind ClaudeCode -Level Frontier`; the latter remains correct when the operator named the model.
+- **Keying (CARD-0332):** chains are now `(Role?, Complexity)`. A CARD-0090 row is the any-role
+  fallback; a role cell outranks it as a whole. Walker contract unchanged. See CARD-0332.
 - The CARD-0022 plan's "CARD-0090: unavailable = `ModelAvailability.IsHeld`; do not invent a second pause list" is honoured by construction — `WalkAsync` has no other availability input.
 - Enum values, `available` list membership and 409 sentence shapes cite CARD-0022/0309; do not restate them differently here.

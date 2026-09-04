@@ -109,6 +109,82 @@ public class ComplexityCreateTests
     }
 
     [Test]
+    public async Task Plan_Hard_cell_with_head_held_creates_on_candidate_2_and_names_chain_Plan_Hard()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        await SeedHardChainAsync(db, AgentTaskRole.Plan);
+        await SeedHoldAsync(db, AgentKind.ClaudeCode, "fable", until: DateTime.UtcNow.AddDays(1));
+
+        var created = await Service(db, workspace).CreateAsync(
+            new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan, Complexity: TaskComplexity.Hard),
+            Manual(workspace.Path),
+            CancellationToken.None);
+
+        created.Status.ShouldBe(AgentTaskStatus.Queued);
+        created.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+        created.ModelLevel.ShouldBe(AgentModelLevel.High);
+        created.Warning.ShouldNotBeNull();
+        created.Warning.ShouldContain("fable");
+        created.Routing!.ChainRole.ShouldBe(AgentTaskRole.Plan);
+        var createdEvent = await db.AgentTaskEvents.SingleAsync(
+            e => e.AgentTaskId == created.Id && e.Type == AgentTaskEventType.Created);
+        createdEvent.Detail.ShouldContain("chain=Plan/Hard");
+        createdEvent.Detail.ShouldContain("candidate 2/");
+        createdEvent.Detail.ShouldContain("opus");
+    }
+
+    [Test]
+    public async Task Code_Hard_with_only_the_any_role_row_names_chain_Hard()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        await SeedHardChainAsync(db);
+
+        var created = await Service(db, workspace).CreateAsync(
+            new CreateAgentTaskRequest("write it", Role: AgentTaskRole.Code, Complexity: TaskComplexity.Hard),
+            Manual(workspace.Path),
+            CancellationToken.None);
+
+        created.Status.ShouldBe(AgentTaskStatus.Queued);
+        created.Routing!.ChainRole.ShouldBeNull();
+        var createdEvent = await db.AgentTaskEvents.SingleAsync(
+            e => e.AgentTaskId == created.Id && e.Type == AgentTaskEventType.Created);
+        createdEvent.Detail.ShouldContain("chain=Hard");
+        createdEvent.Detail.ShouldNotContain("chain=Code/Hard");
+        createdEvent.Detail.ShouldNotContain("chain=Plan/Hard");
+    }
+
+    [Test]
+    public async Task All_cells_empty_blocks_with_the_D3_sentence_and_a_parent_note()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var sessionId = await SeedSessionAsync(db, workspace.Path);
+
+        var created = await Service(db, workspace).CreateAsync(
+            new CreateAgentTaskRequest("plan it", Role: AgentTaskRole.Plan, Complexity: TaskComplexity.Hard),
+            new AgentTaskService.Caller(null, sessionId, workspace.Path),
+            CancellationToken.None);
+
+        created.Status.ShouldBe(AgentTaskStatus.Blocked);
+        created.Warning.ShouldNotBeNull();
+        created.Warning.ShouldContain("Plan/Hard chain is empty");
+        created.Warning.ShouldContain("no Plan/Hard row");
+        created.Warning.ShouldContain("no any-role Hard row");
+        created.Warning.ShouldContain("no config default");
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == created.Id);
+        task.FailureReason.ShouldContain("Plan/Hard chain is empty");
+        (await db.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == created.Id && e.Type == AgentTaskEventType.Blocked)).ShouldBe(1);
+        var note = await db.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == created.Id);
+        note.Body.ShouldContain("Plan/Hard chain is empty");
+    }
+
+    [Test]
     public async Task Explicit_kind_plus_complexity_is_422()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -329,11 +405,12 @@ public class ComplexityCreateTests
         created.Routing.Candidates[1].Reason.ShouldBe("not a delegate kind");
     }
 
-    private static async Task SeedHardChainAsync(AppDbContext db)
+    private static async Task SeedHardChainAsync(AppDbContext db, AgentTaskRole? role = null)
     {
         db.ComplexityChains.Add(new ComplexityChain
         {
             Id = Guid.NewGuid(),
+            Role = role,
             Complexity = TaskComplexity.Hard,
             CandidatesJson = ComplexityChain.SerializeCandidates(
             [

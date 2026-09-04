@@ -14,9 +14,9 @@
 #
 # GRAIN. One active chain per (Role?, Hard/Medium/Easy). Role omitted or Any writes the any-role
 # row. A walk on (role, complexity) reads the cell, then the any-role row, then the config default,
-# then Blocked. Config defaults (Delegation:ComplexityChains) fill a tier with no row and ship
-# EMPTY until a human sets them. Auto never overwrites Human (409 complexity_chain_human), and an
-# Auto cell write is refused when the any-role row is Human.
+# then Blocked. A Required pin still bypasses the cell. Config defaults (Delegation:ComplexityChains)
+# fill a tier with no row and ship EMPTY until a human sets them. Auto never overwrites Human
+# (409 complexity_chain_human), and an Auto cell write is refused when the any-role row is Human.
 #
 # -Candidates is Kind/Level pairs, comma-separated, order preserved. This is not a routing-pin.ps1
 # verb: that script is card+stage grain and this is neither. The script always uses the

@@ -1,9 +1,20 @@
 import { Badge, Group, Loader, Paper, Stack, Table, Text, Title } from '@mantine/core'
-import { useComplexityChains } from '../../api/complexityChains'
+import { useComplexityChains, type ComplexityChainDto } from '../../api/complexityChains'
 
 /**
- * Read-only view of Hard/Medium/Easy chains (CARD-0090). Writes are scripts/complexity-chain.ps1.
+ * Read-only view of Hard/Medium/Easy chains (CARD-0090, CARD-0332). Writes are
+ * scripts/complexity-chain.ps1. CARD-0333 builds the real grid; this panel only
+ * labels a cell distinctly from the any-role row so two Hard rows are not twins.
  */
+
+function chainRowLabel(chain: ComplexityChainDto): string {
+  return chain.role ? `${chain.role}/${chain.complexity}` : `${chain.complexity} (any role)`
+}
+
+function chainRowKey(chain: ComplexityChainDto): string {
+  return `${chain.role}-${chain.complexity}`
+}
+
 export function ComplexityChainPanel() {
   const snapshot = useComplexityChains()
 
@@ -40,10 +51,10 @@ export function ComplexityChainPanel() {
           </Text>
         ) : (
           chains.map((chain) => (
-            <Stack key={chain.complexity} gap={4}>
+            <Stack key={chainRowKey(chain)} gap={4}>
               <Group gap="xs">
                 <Text size="sm" fw={600}>
-                  {chain.complexity}
+                  {chainRowLabel(chain)}
                 </Text>
                 <Badge size="xs" variant="light">
                   {chain.source}/{chain.provenance ?? 'none'}

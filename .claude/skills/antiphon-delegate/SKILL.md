@@ -73,7 +73,7 @@ A sub-orchestrator defaults to `Plan` and never runs below opus.
 | `-OnAgent <taskId>` | follow-up on the SAME agent that ran that task — it keeps its context. Use the short id from its report |
 | `-Agent <name>` | run this task on an existing standing agent by name, slug, or guid. The task queues while that agent is busy; you get the normal `[task … done]` note when it settles. Ambiguous or unknown references are refused 422, and so are pool delegates (that's `-OnAgent`'s job). Combined with `-OnAgent` is refused |
 | `-Level <tier>` | override the role's tier — `Frontier`/`High`/`Medium`/`Low`. Say why in `-Goal` |
-| `-Complexity Hard\|Medium\|Easy` | walk the complexity chain instead of an explicit `-Kind`/`-Level` (CARD-0090). Combined with `-Kind` or `-Level` is refused. Exhausted → Blocked for a human; **do not pick a kind yourself**. `-RefuseIfExhausted` 409s instead. `-Reroute <id> -Kind … -Level …` is the explicit human pick |
+| `-Complexity Hard\|Medium\|Easy` | walk the (role, complexity) cell, falling back to the any-role chain (CARD-0090 / CARD-0332). Combined with `-Kind` or `-Level` is refused. Exhausted → Blocked for a human; **do not pick a kind yourself**. `-RefuseIfExhausted` 409s instead. `-Reroute <id> -Kind … -Level …` is the explicit human pick |
 | `-Dir <path>` | run somewhere else — another repo, another checkout. Defaults to yours |
 | `-Worktree` | isolate a worker in a fresh git worktree, merged back when it finishes |
 | `-Shared` | force the shared directory — opts a sub-orchestrator OUT of its worktree (warned) |

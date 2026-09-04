@@ -563,8 +563,16 @@ switch ($PSCmdlet.ParameterSetName) {
                         $skipBits += ("{0} ({1})" -f $s.alias, $why)
                     }
                     $skipText = if ($skipBits.Count -gt 0) { '; skipped ' + ($skipBits -join ', ') } else { '' }
-                    Write-Output ("routed {0} -> {1} (candidate {2}/{3}){4}" -f `
-                            $created.complexity, $chosen.alias, $idx, $all.Count, $skipText)
+                    $cellRole = $created.routing.chainRole
+                    if (-not $cellRole) { $cellRole = $created.routing.role }
+                    if (-not $cellRole) { $cellRole = $body.role }
+                    $cellLabel = '{0}/{1}' -f $cellRole, $created.complexity
+                    $via = ''
+                    if (-not $created.routing.chainRole -and $created.routing.chainSource -ne 'config') {
+                        $via = '; via any-role {0} chain' -f $created.complexity
+                    }
+                    Write-Output ("routed {0} -> {1} (candidate {2}/{3}{4}){5}" -f `
+                            $cellLabel, $chosen.alias, $idx, $all.Count, $via, $skipText)
                 }
             }
             # A warning at creation is the caller's one chance to reconsider before the collision.
@@ -593,8 +601,9 @@ switch ($PSCmdlet.ParameterSetName) {
                 $pinLine = "pinned {0} {1} to {2}/{3} (human, required)" -f `
                     $created.cardIdentifier, $pinned.role, $pinned.agentKind, $pinned.modelLevel
                 if ($Complexity) {
+                    $cell = '{0}/{1}' -f $body.role, $Complexity
                     $pinLine = $pinLine + (" (this removes {0} {1} from {2}-chain fallback; clear the pin to restore it)" -f `
-                            $created.cardIdentifier, $body.role, $Complexity)
+                            $created.cardIdentifier, $body.role, $cell)
                 }
                 Write-Output $pinLine
             }

@@ -24,6 +24,77 @@ namespace Antiphon.Tests.Application;
 public class ComplexityDispatcherTests
 {
     [Test]
+    public async Task A_queued_Plan_Hard_task_rewalks_a_replaced_cell_and_names_Plan_Hard_chain()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        await SeedChainAsync(schema, TaskComplexity.Hard, AgentTaskRole.Plan,
+            (AgentKind.ClaudeCode, AgentModelLevel.Frontier),
+            (AgentKind.Grok, AgentModelLevel.Frontier));
+        await SeedHoldAsync(schema, "fable", DateTime.UtcNow.AddHours(1));
+        var (agentId, _) = await SeedWarmAgentAsync(schema, workspace.Path);
+        var task = await SeedQueuedChainTaskAsync(schema, workspace.Path, agentId);
+        await ReplaceChainAsync(schema, AgentTaskRole.Plan, TaskComplexity.Hard,
+            (AgentKind.ClaudeCode, AgentModelLevel.High));
+        var dispatcher = CreateDispatcher(schema);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using var verify = CreateContext(schema);
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.ModelLevel.ShouldBe(AgentModelLevel.High);
+        stored.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+        var rerouted = await verify.AgentTaskEvents.SingleAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Rerouted);
+        rerouted.Detail.ShouldContain("Plan/Hard chain");
+    }
+
+    [Test]
+    public async Task A_blocked_Plan_Hard_task_resumes_when_the_operator_adds_an_available_cell()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var taskId = Guid.NewGuid();
+        await using (var db = CreateContext(schema))
+        {
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = taskId,
+                RootTaskId = taskId,
+                Title = "blocked plan hard",
+                Goal = "plan it",
+                Role = AgentTaskRole.Plan,
+                AgentKind = AgentKind.ClaudeCode,
+                ModelLevel = AgentModelLevel.Frontier,
+                Complexity = TaskComplexity.Hard,
+                Workspace = WorkspaceMode.Shared,
+                WorkingDirectory = workspace.Path,
+                Status = AgentTaskStatus.Blocked,
+                FailureReason = ComplexityRoutingService.RoutingExhaustedPrefix
+                    + "Plan/Hard chain is empty (no Plan/Hard row, no any-role Hard row, no config default).",
+                CreatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await SeedChainAsync(schema, TaskComplexity.Hard, AgentTaskRole.Plan,
+            (AgentKind.ClaudeCode, AgentModelLevel.Frontier));
+        var dispatcher = CreateDispatcher(schema);
+
+        var result = await dispatcher.TickAsync(CancellationToken.None);
+
+        result.ResumedRoutingBlocked.ShouldBe(1);
+        await using var verify = CreateContext(schema);
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == taskId);
+        stored.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        stored.FailureReason.ShouldBeNull();
+        var rerouted = await verify.AgentTaskEvents.SingleAsync(
+            e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Rerouted);
+        rerouted.Detail.ShouldContain("Plan/Hard chain");
+        rerouted.Detail.ShouldContain("capacity returned");
+    }
+
+    [Test]
     public async Task A_held_head_is_rerouted_to_the_next_candidate_at_dispatch()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -318,24 +389,46 @@ public class ComplexityDispatcherTests
             modelAvailability: availability);
     }
 
-    private static async Task SeedHardChainAsync(IsolatedTestSchema schema)
+    private static Task SeedHardChainAsync(IsolatedTestSchema schema) =>
+        SeedChainAsync(schema, TaskComplexity.Hard, role: null,
+            (AgentKind.ClaudeCode, AgentModelLevel.Frontier),
+            (AgentKind.ClaudeCode, AgentModelLevel.High),
+            (AgentKind.Grok, AgentModelLevel.Frontier));
+
+    private static async Task SeedChainAsync(
+        IsolatedTestSchema schema,
+        TaskComplexity complexity,
+        AgentTaskRole? role,
+        params (AgentKind Kind, AgentModelLevel Level)[] pairs)
     {
         await using var db = CreateContext(schema);
         db.ComplexityChains.Add(new ComplexityChain
         {
             Id = Guid.NewGuid(),
-            Complexity = TaskComplexity.Hard,
+            Role = role,
+            Complexity = complexity,
             CandidatesJson = ComplexityChain.SerializeCandidates(
-            [
-                new(AgentKind.ClaudeCode, AgentModelLevel.Frontier),
-                new(AgentKind.ClaudeCode, AgentModelLevel.High),
-                new(AgentKind.Grok, AgentModelLevel.Frontier),
-            ]),
+                pairs.Select(p => new ComplexityCandidatePair(p.Kind, p.Level)).ToList()),
             Provenance = RoutingPinProvenance.Human,
             Reason = "test",
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow,
         });
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task ReplaceChainAsync(
+        IsolatedTestSchema schema,
+        AgentTaskRole? role,
+        TaskComplexity complexity,
+        params (AgentKind Kind, AgentModelLevel Level)[] pairs)
+    {
+        await using var db = CreateContext(schema);
+        var row = await db.ComplexityChains.SingleAsync(c =>
+            c.ClearedAt == null && c.Complexity == complexity && c.Role == role);
+        row.CandidatesJson = ComplexityChain.SerializeCandidates(
+            pairs.Select(p => new ComplexityCandidatePair(p.Kind, p.Level)).ToList());
+        row.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync();
     }
 

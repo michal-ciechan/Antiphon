@@ -334,10 +334,13 @@ without it is 422 `auto_continue_needs_authority`).
 > coda that the list does not satisfy the pin — do not silently pick from `available`.
 >
 > Create may also send **`complexity`** (`Hard`/`Medium`/`Easy`) and **`refuseIfExhausted`**
-> (CARD-0090). Combined with explicit `agentKind`/`modelLevel` or with `ignoreModelDisabled` is
-> 422. Exhausted chains insert the task **Blocked** (200) unless `refuseIfExhausted` is true,
+> (CARD-0090 / CARD-0332). Combined with explicit `agentKind`/`modelLevel` or with `ignoreModelDisabled` is
+> 422. The walk reads the `(role, complexity)` cell, then the any-role row, then the config
+> default. Exhausted chains insert the task **Blocked** (200) unless `refuseIfExhausted` is true,
 > which is **409 `routing_exhausted`** with a `complexityRouting` extension. Auto-over-Human
-> chain writes are **409 `complexity_chain_human`**.
+> chain writes are **409 `complexity_chain_human`**. An Auto PUT to a role cell is the same 409
+> when the any-role row for that complexity is Human (write it as Human, or clear the any-role
+> row).
 >
 > Routing pins (CARD-0305) can also refuse create with **409 `routing_pin_conflict`** (explicit
 > kind/level/agent disagrees with a Required pin), **409 `routing_pin_forbidden`** (resolved alias
@@ -357,14 +360,24 @@ Stage-wide: omit `card`. Check role is 422. Script: `scripts/routing-pin.ps1 get
 refused (that would be a stage-wide pin).
 
 ```
-GET    /api/complexity-chains                          three tiers, live availableNow per candidate
-PUT    /api/complexity-chains/{complexity}             upsert active row (Human cannot be overwritten by Auto)
-DELETE /api/complexity-chains/{complexity}             clear → config default (204 if already clear)
+GET    /api/complexity-chains                          any-role ×3 first (Hard/Medium/Easy), then every
+                                                       active role cell; + roles[], complexities[]. Each
+                                                       entry carries role (null = any) and resolvedFrom
+                                                       (role | any | config | none).
+GET    /api/complexity-chains?role=Plan                the three EFFECTIVE Plan cells, each with
+                                                       resolvedFrom
+PUT    /api/complexity-chains/{role}/{complexity}      upsert the cell; role = any|Plan|Code|…;
+                                                       body unchanged
+DELETE /api/complexity-chains/{role}/{complexity}      clear the cell (204 if already clear)
+PUT    /api/complexity-chains/{complexity}             alias of /any/{complexity}
+DELETE /api/complexity-chains/{complexity}             alias of /any/{complexity}
 POST   /api/agent-tasks/{id}/reroute                   { agentKind, modelLevel } — Blocked-for-routing or Queued
 ```
 
-Config defaults for chains ship **empty**. Script: `scripts/complexity-chain.ps1 get|set|clear`.
-`delegate.ps1 -Complexity Hard|Medium|Easy`, `-RefuseIfExhausted`, `-Reroute <id> -Kind … -Level …`.
+Config defaults for chains ship **empty**. Script: `scripts/complexity-chain.ps1 get|set|clear`
+(`-Role` omitted or `Any` writes the any-role row). `delegate.ps1 -Complexity Hard|Medium|Easy`,
+`-RefuseIfExhausted`, `-Reroute <id> -Kind … -Level …`. 422 for Check/Distill/Diagnose as a cell
+role ("seat-pinned roles are not routed by chains") and for an unknown role.
 
 ```
 GET    /api/model-availability                         active holds + remaining aliases

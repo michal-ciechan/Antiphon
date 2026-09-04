@@ -20,6 +20,52 @@ namespace Antiphon.Tests.Application;
 public class ComplexityAttentionTests
 {
     [Test]
+    public async Task Three_Plan_Hard_and_two_Code_Hard_with_no_cells_are_one_Hard_row()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var planIds = new List<Guid>();
+        for (var i = 0; i < 3; i++)
+            planIds.Add(await SeedRoutingBlockedAsync(db, $"plan-{i}", AgentTaskRole.Plan, minutesAgo: 10 - i));
+        for (var i = 0; i < 2; i++)
+            await SeedRoutingBlockedAsync(db, $"code-{i}", AgentTaskRole.Code, minutesAgo: 5 - i);
+
+        var items = await Service(db).GetAsync(CancellationToken.None);
+        var row = items.Items.Single(i => i.Kind == AttentionKind.RoutingExhausted);
+
+        row.Title.ShouldBe("Hard chain exhausted");
+        row.Headline.ShouldContain("5 tasks waiting");
+        row.TaskId.ShouldBe(planIds[0]);
+    }
+
+    [Test]
+    public async Task Adding_a_Plan_Hard_cell_splits_Plan_and_any_role_into_two_rows()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        for (var i = 0; i < 3; i++)
+            await SeedRoutingBlockedAsync(db, $"plan-{i}", AgentTaskRole.Plan, minutesAgo: 10 - i);
+        for (var i = 0; i < 2; i++)
+            await SeedRoutingBlockedAsync(db, $"code-{i}", AgentTaskRole.Code, minutesAgo: 5 - i);
+        await SeedCellAsync(db, AgentTaskRole.Plan, TaskComplexity.Hard,
+            (AgentKind.ClaudeCode, AgentModelLevel.Frontier));
+
+        var items = await Service(db).GetAsync(CancellationToken.None);
+        var rows = items.Items
+            .Where(i => i.Kind == AttentionKind.RoutingExhausted)
+            .OrderBy(i => i.Title)
+            .ToList();
+
+        rows.Count.ShouldBe(2);
+        rows.Select(r => r.Title).ShouldBe([
+            "Hard chain exhausted",
+            "Plan/Hard chain exhausted",
+        ]);
+        rows.Single(r => r.Title == "Plan/Hard chain exhausted").Headline.ShouldContain("3 tasks waiting");
+        rows.Single(r => r.Title == "Hard chain exhausted").Headline.ShouldContain("2 tasks waiting");
+    }
+
+    [Test]
     public async Task Three_blocked_Hard_tasks_are_one_RoutingExhausted_row()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -72,7 +118,11 @@ public class ComplexityAttentionTests
             .ShouldNotContain(i => i.Kind == AttentionKind.RoutingExhausted);
     }
 
-    private static async Task<Guid> SeedRoutingBlockedAsync(AppDbContext db, string title)
+    private static async Task<Guid> SeedRoutingBlockedAsync(
+        AppDbContext db,
+        string title,
+        AgentTaskRole role = AgentTaskRole.Plan,
+        int minutesAgo = 5)
     {
         var id = Guid.NewGuid();
         db.AgentTasks.Add(Task(
@@ -80,20 +130,49 @@ public class ComplexityAttentionTests
             title,
             AgentTaskStatus.Blocked,
             ComplexityRoutingService.RoutingExhaustedPrefix + "Hard chain — all held",
-            TaskComplexity.Hard));
+            TaskComplexity.Hard,
+            role,
+            DateTime.UtcNow.AddMinutes(-minutesAgo)));
         await db.SaveChangesAsync();
         return id;
     }
 
+    private static async Task SeedCellAsync(
+        AppDbContext db,
+        AgentTaskRole? role,
+        TaskComplexity complexity,
+        params (AgentKind Kind, AgentModelLevel Level)[] pairs)
+    {
+        db.ComplexityChains.Add(new ComplexityChain
+        {
+            Id = Guid.NewGuid(),
+            Role = role,
+            Complexity = complexity,
+            CandidatesJson = ComplexityChain.SerializeCandidates(
+                pairs.Select(p => new ComplexityCandidatePair(p.Kind, p.Level)).ToList()),
+            Provenance = RoutingPinProvenance.Human,
+            Reason = "test cell",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+    }
+
     private static AgentTask Task(
-        Guid id, string title, AgentTaskStatus status, string? failure, TaskComplexity? complexity) =>
+        Guid id,
+        string title,
+        AgentTaskStatus status,
+        string? failure,
+        TaskComplexity? complexity,
+        AgentTaskRole role = AgentTaskRole.Plan,
+        DateTime? createdAt = null) =>
         new()
         {
             Id = id,
             RootTaskId = id,
             Title = title,
             Goal = title,
-            Role = AgentTaskRole.Plan,
+            Role = role,
             AgentKind = AgentKind.ClaudeCode,
             ModelLevel = AgentModelLevel.Frontier,
             Complexity = complexity,
@@ -101,7 +180,7 @@ public class ComplexityAttentionTests
             WorkingDirectory = Path.GetTempPath(),
             Status = status,
             FailureReason = failure,
-            CreatedAt = DateTime.UtcNow.AddMinutes(-5),
+            CreatedAt = createdAt ?? DateTime.UtcNow.AddMinutes(-5),
         };
 
     private static AttentionService Service(AppDbContext db) =>

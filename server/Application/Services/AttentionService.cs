@@ -350,9 +350,19 @@ public sealed class AttentionService
         if (blocked.Count == 0)
             return [];
 
+        // D7: group per governing cell — (role cell exists ? role : null, complexity), recomputed
+        // from the rows now, so three Plan/Hard and two Code/Hard are one Hard row until Plan
+        // owns a cell.
+        var liveCells = await LoadLiveGoverningCellsAsync(blocked, ct);
         var grouped = blocked
-            .GroupBy(t => t.Complexity)
-            .OrderBy(g => g.Key)
+            .GroupBy(t =>
+            {
+                var complexity = t.Complexity!.Value;
+                var role = liveCells.Contains((t.Role, complexity)) ? t.Role : (AgentTaskRole?)null;
+                return (Role: role, Complexity: complexity);
+            })
+            .OrderBy(g => g.Key.Complexity)
+            .ThenBy(g => g.Key.Role)
             .ToList();
         var cardIds = blocked.Where(t => t.CardId is not null).Select(t => t.CardId!.Value).Distinct().ToList();
         var cards = cardIds.Count == 0
@@ -366,11 +376,14 @@ public sealed class AttentionService
         {
             var ordered = group.OrderBy(t => t.CreatedAt).ToList();
             var oldest = ordered[0];
-            var complexity = group.Key!.Value;
+            var complexity = group.Key.Complexity;
+            var title = group.Key.Role is { } role
+                ? $"{role}/{complexity} chain exhausted"
+                : $"{complexity} chain exhausted";
             Guid? cardId = ordered.Select(t => t.CardId).Distinct().Count() == 1 ? oldest.CardId : null;
             Guid? boardId = cardId is Guid id && cards.TryGetValue(id, out var card) ? card.BoardId : null;
             var headline = oldest.FailureReason
-                ?? $"{complexity} chain exhausted";
+                ?? title;
             if (ordered.Count > 1)
                 headline += $" {ordered.Count} tasks waiting";
 
@@ -389,7 +402,7 @@ public sealed class AttentionService
                 null,
                 oldest.AgentId,
                 null,
-                $"{complexity} chain exhausted",
+                title,
                 headline,
                 string.Join("\n", evidenceBits),
                 oldest.CreatedAt,
@@ -400,6 +413,49 @@ public sealed class AttentionService
         }
 
         return items;
+    }
+
+    /// <summary>
+    /// Live (Role, Complexity) cells among the blocked tasks' keys. Expired <c>NotAfter</c>
+    /// rows are treated as absent (read-only; the walker lazily clears them on the next walk).
+    /// </summary>
+    private async Task<HashSet<(AgentTaskRole Role, TaskComplexity Complexity)>> LoadLiveGoverningCellsAsync(
+        IReadOnlyList<AgentTask> blocked,
+        CancellationToken ct)
+    {
+        var pairs = blocked
+            .Where(t => t.Complexity is not null)
+            .Select(t => (t.Role, Complexity: t.Complexity!.Value))
+            .Distinct()
+            .ToList();
+        if (pairs.Count == 0)
+            return [];
+
+        var roles = pairs.Select(p => p.Role).Distinct().ToList();
+        var complexities = pairs.Select(p => p.Complexity).Distinct().ToList();
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        var live = await _db.ComplexityChains.AsNoTracking()
+            .Where(c => c.ClearedAt == null
+                && c.Role != null
+                && complexities.Contains(c.Complexity)
+                && (c.NotAfter == null || c.NotAfter > now))
+            .Select(c => new { c.Role, c.Complexity })
+            .ToListAsync(ct);
+
+        var wanted = pairs.ToHashSet();
+        var cells = new HashSet<(AgentTaskRole Role, TaskComplexity Complexity)>();
+        foreach (var row in live)
+        {
+            if (row.Role is not { } role)
+                continue;
+            if (!roles.Contains(role))
+                continue;
+            var key = (role, row.Complexity);
+            if (wanted.Contains(key))
+                cells.Add(key);
+        }
+
+        return cells;
     }
 
     // ---- condition 2: a card is parked on a human decision --------------------------------------

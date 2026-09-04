@@ -1912,6 +1912,12 @@ public sealed class AgentTaskService
 
     private static string FormatComplexityCreatedDetail(ComplexityRoutingService.Walk walk)
     {
+        // chain= names the cell that answered: Plan/Hard, Hard (any-role), or config.
+        var chain = walk.ChainRole is null
+            && string.Equals(walk.ChainSource, "config", StringComparison.Ordinal)
+            ? "config"
+            : walk.CellLabel;
+
         if (walk.Chosen is { } chosen)
         {
             var index = 0;
@@ -1925,7 +1931,7 @@ public sealed class AgentTaskService
             }
 
             var skipped = walk.SkippedWarning();
-            return $" complexity={walk.Complexity} candidate {index}/{walk.Outcomes.Count} {chosen.Alias}"
+            return $" complexity={walk.Complexity} chain={chain} candidate {index}/{walk.Outcomes.Count} {chosen.Alias}"
                 + (skipped.Length > 0 ? $"; {skipped}" : string.Empty);
         }
 

@@ -148,6 +148,51 @@ public sealed class DelegateScriptKindTests
     }
 
     [Test]
+    public async Task Complexity_routed_line_names_the_cell_and_via_any_role()
+    {
+        using var server = new StubApi(createJson: """
+            {"id":"11111111-1111-1111-1111-111111111111","shortId":"11111111",
+             "status":"Queued","modelLevel":"Frontier","warning":null,"agentKind":"Grok",
+             "complexity":"Hard",
+             "routing":{"complexity":"Hard","chainProvenance":"Human","chainSource":"pin",
+               "source":"chain:Hard","role":"Plan","chainRole":null,"walked":true,
+               "available":["grok-4.6"],
+               "candidates":[
+                 {"agentKind":"ClaudeCode","modelLevel":"Frontier","alias":"fable","outcome":"skipped","reason":"held","origin":"chain"},
+                 {"agentKind":"Grok","modelLevel":"Frontier","alias":"grok-4.6","outcome":"chosen","reason":null,"origin":"chain"}
+               ]}}
+            """);
+        var run = await RunDelegateAsync(
+            server, "-Role", "Plan", "-Goal", "plan it", "-Complexity", "Hard");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        run.Output.ShouldContain("routed Plan/Hard -> grok-4.6 (candidate 2/2; via any-role Hard chain)");
+        run.Output.ShouldContain("skipped fable");
+    }
+
+    [Test]
+    public async Task Complexity_routed_line_names_a_role_cell_without_via()
+    {
+        using var server = new StubApi(createJson: """
+            {"id":"11111111-1111-1111-1111-111111111111","shortId":"11111111",
+             "status":"Queued","modelLevel":"Frontier","warning":null,"agentKind":"Grok",
+             "complexity":"Hard",
+             "routing":{"complexity":"Hard","chainProvenance":"Human","chainSource":"pin",
+               "source":"chain:Plan/Hard","role":"Plan","chainRole":"Plan","walked":true,
+               "available":["grok-4.6"],
+               "candidates":[
+                 {"agentKind":"Grok","modelLevel":"Frontier","alias":"grok-4.6","outcome":"chosen","reason":null,"origin":"chain"}
+               ]}}
+            """);
+        var run = await RunDelegateAsync(
+            server, "-Role", "Plan", "-Goal", "plan it", "-Complexity", "Hard");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        run.Output.ShouldContain("routed Plan/Hard -> grok-4.6 (candidate 1/1)");
+        run.Output.ShouldNotContain("via any-role");
+    }
+
+    [Test]
     public async Task Complexity_plus_Kind_is_refused_locally()
     {
         using var server = new StubApi();
@@ -556,13 +601,15 @@ public sealed class DelegateScriptKindTests
         private readonly Task _pump;
         private readonly string _agentKind;
         private readonly Mode _mode;
+        private readonly string? _createJson;
 
         public enum Mode { Create, WorktreeHealth, WorktreeHealthEmpty }
 
-        public StubApi(string agentKind = "ClaudeCode", Mode mode = Mode.Create)
+        public StubApi(string agentKind = "ClaudeCode", Mode mode = Mode.Create, string? createJson = null)
         {
             _agentKind = agentKind;
             _mode = mode;
+            _createJson = createJson;
             BaseUrl = EphemeralHttpListener.BindLoopback(_listener);
             _pump = Task.Run(PumpAsync);
         }
@@ -616,7 +663,8 @@ public sealed class DelegateScriptKindTests
                 else
                 {
                     payload = Encoding.UTF8.GetBytes(
-                        $$"""
+                        _createJson
+                        ?? $$"""
                         {"id":"11111111-1111-1111-1111-111111111111","shortId":"11111111",
                          "status":"Queued","modelLevel":"High","warning":null,"agentKind":"{{_agentKind}}"}
                         """);

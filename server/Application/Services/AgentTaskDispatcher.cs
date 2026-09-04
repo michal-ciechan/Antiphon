@@ -629,7 +629,7 @@ public sealed class AgentTaskDispatcher
             Type = AgentTaskEventType.Rerouted,
             ModelLevel = chosen.Level,
             Detail =
-                $"{from} held → {chosen.Alias} ({task.Complexity} chain {index}/{walk.Outcomes.Count}) at dispatch",
+                $"{from} held → {chosen.Alias} ({walk.CellLabel} chain {index}/{walk.Outcomes.Count}) at dispatch",
             At = UtcNow(),
         });
         await _db.SaveChangesAsync(ct);
@@ -708,7 +708,7 @@ public sealed class AgentTaskDispatcher
                 Type = AgentTaskEventType.Rerouted,
                 ModelLevel = chosen.Level,
                 Detail =
-                    $"capacity returned: requeued on {chosen.Alias} ({task.Complexity} chain {index}/{walk.Outcomes.Count})",
+                    $"capacity returned: requeued on {chosen.Alias} ({walk.CellLabel} chain {index}/{walk.Outcomes.Count})",
                 At = UtcNow(),
             });
             resumed++;

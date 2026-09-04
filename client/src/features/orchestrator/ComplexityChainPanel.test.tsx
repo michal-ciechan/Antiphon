@@ -56,10 +56,66 @@ describe('ComplexityChainPanel', () => {
       ),
     )
     renderWithProviders(<ComplexityChainPanel />)
-    expect(await screen.findByText('Hard')).toBeInTheDocument()
-    expect(screen.getByText('Medium')).toBeInTheDocument()
-    expect(screen.getByText('Easy')).toBeInTheDocument()
+    expect(await screen.findByText('Hard (any role)')).toBeInTheDocument()
+    expect(screen.getByText('Medium (any role)')).toBeInTheDocument()
+    expect(screen.getByText('Easy (any role)')).toBeInTheDocument()
     expect(screen.getByText(/held until/)).toBeInTheDocument()
     expect(screen.getByText('available')).toBeInTheDocument()
+  })
+
+  it('labels a Plan/Hard cell distinctly from the any-role Hard row', async () => {
+    server.use(
+      http.get('/api/complexity-chains', () =>
+        HttpResponse.json({
+          roles: ['Plan', 'Code'],
+          complexities: ['Hard', 'Medium', 'Easy'],
+          chains: [
+            {
+              complexity: 'Hard',
+              role: null,
+              resolvedFrom: 'any',
+              candidates: [
+                {
+                  agentKind: 'Grok',
+                  modelLevel: 'Frontier',
+                  alias: 'grok-4.6',
+                  availableNow: true,
+                  unavailableReason: null,
+                },
+              ],
+              provenance: 'Human',
+              source: 'pin',
+              reason: 'any-role Hard',
+              notAfter: null,
+              updatedAt: '2026-09-04T00:00:00Z',
+            },
+            { complexity: 'Medium', role: null, resolvedFrom: 'none', candidates: [], provenance: null, source: 'config', reason: null, notAfter: null, updatedAt: null },
+            { complexity: 'Easy', role: null, resolvedFrom: 'none', candidates: [], provenance: null, source: 'config', reason: null, notAfter: null, updatedAt: null },
+            {
+              complexity: 'Hard',
+              role: 'Plan',
+              resolvedFrom: 'role',
+              candidates: [
+                {
+                  agentKind: 'ClaudeCode',
+                  modelLevel: 'Frontier',
+                  alias: 'fable',
+                  availableNow: true,
+                  unavailableReason: null,
+                },
+              ],
+              provenance: 'Human',
+              source: 'pin',
+              reason: 'Plan/Hard',
+              notAfter: null,
+              updatedAt: '2026-09-04T00:00:00Z',
+            },
+          ],
+        } satisfies ComplexityChainListDto),
+      ),
+    )
+    renderWithProviders(<ComplexityChainPanel />)
+    expect(await screen.findByText('Plan/Hard')).toBeInTheDocument()
+    expect(screen.getByText('Hard (any role)')).toBeInTheDocument()
   })
 })
