@@ -8,9 +8,10 @@ using Microsoft.EntityFrameworkCore;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// Read model and Merge-cost attachment for <see cref="StageOutcome"/> (CARD-0272 S1).
-/// Recording of live land rows lives on <see cref="AgentTaskLandService"/> — that is the actor
-/// that ran the step.
+/// Read model, Merge-cost attachment, and orchestrator finding override for
+/// <see cref="StageOutcome"/> (CARD-0272). Live land rows live on
+/// <see cref="AgentTaskLandService"/>; live delegate rows live on
+/// <see cref="AgentTaskReplyService"/>.
 /// </summary>
 public sealed class StageOutcomeService
 {
@@ -118,13 +119,96 @@ public sealed class StageOutcomeService
         o.CostUsd, o.TokensIn, o.TokensOut, o.DurationSeconds, o.ResolutionTaskId,
         o.ResolutionCostUsd, o.Detail, o.Ref, o.SupersedesId, o.RecordedAt);
 
+    /// <summary>
+    /// CARD-0272 S3. An orchestrator override of a stage run. Appends a row with
+    /// <see cref="StageOutcomeSource.Orchestrator"/> pointing at the latest row for this
+    /// (task, stage) when one exists, plus a <see cref="AgentTaskEventType.FindingRecorded"/>
+    /// event so the drawer shows it. A task with no stage still gets a row at the given stage.
+    /// </summary>
+    public async Task<StageOutcomeDto> RecordFindingAsync(
+        Guid taskId,
+        RecordStageFindingRequest request,
+        CancellationToken ct)
+    {
+        var stage = ParseRequiredStage(request.Stage);
+        var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.Id == taskId, ct)
+            ?? throw new NotFoundException(nameof(AgentTask), taskId);
+
+        var now = DateTime.UtcNow;
+        var existing = await _db.StageOutcomes
+            .Where(o => o.Stage == stage && (o.StageTaskId == taskId || o.SubjectTaskId == taskId))
+            .OrderByDescending(o => o.RecordedAt)
+            .ThenByDescending(o => o.Id)
+            .FirstOrDefaultAsync(ct);
+
+        var detail = (request.Detail ?? string.Empty).Trim();
+        if (detail.Length > StageOutcome.DetailMaxLength)
+            detail = detail[..StageOutcome.DetailMaxLength];
+
+        var duration = 0;
+        if (task.CompletedAt is DateTime completed && task.DispatchedAt is DateTime dispatched)
+            duration = (int)Math.Clamp(Math.Round((completed - dispatched).TotalSeconds), 0, int.MaxValue);
+
+        var row = new StageOutcome
+        {
+            Id = Guid.NewGuid(),
+            Stage = stage,
+            Outcome = request.Found ? StageOutcomeKind.Found : StageOutcomeKind.Clean,
+            Source = StageOutcomeSource.Orchestrator,
+            SubjectTaskId = existing?.SubjectTaskId ?? task.FollowUpOfTaskId,
+            StageTaskId = task.Id,
+            CardId = existing?.CardId ?? task.CardId,
+            CostUsd = existing?.CostUsd ?? (task.CostUsd == 0m ? null : task.CostUsd),
+            TokensIn = existing?.TokensIn ?? (task.TokensIn == 0 ? null : task.TokensIn),
+            TokensOut = existing?.TokensOut ?? (task.TokensOut == 0 ? null : task.TokensOut),
+            DurationSeconds = existing?.DurationSeconds > 0 ? existing.DurationSeconds : duration,
+            Detail = detail,
+            SupersedesId = existing?.Id,
+            RecordedAt = now,
+        };
+        _db.StageOutcomes.Add(row);
+
+        var eventDetail = $"{stage} {(request.Found ? "Found" : "Clean")}"
+            + (detail.Length > 0 ? $": {detail}" : string.Empty);
+        _db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = task.Id,
+            Type = AgentTaskEventType.FindingRecorded,
+            Detail = eventDetail.Length <= 4000 ? eventDetail : eventDetail[..4000],
+            At = now,
+        });
+        await _db.SaveChangesAsync(ct);
+        return ToDto(row);
+    }
+
+    public static OrchestrationStage ParseRequiredStage(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new ValidationException(
+                "stage",
+                "stage is required. Use Rebase, Verify, Cleanup, Review, FollowUp, or Deploy.");
+        }
+
+        return ParseStage(value)
+            ?? throw new ValidationException(
+                "stage",
+                $"'{value}' is not an orchestration stage. Use Rebase, Verify, Cleanup, Review, FollowUp, or Deploy.");
+    }
+
     private static OrchestrationStage? ParseStage(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
             return null;
         if (!Enum.TryParse<OrchestrationStage>(value, ignoreCase: true, out var stage)
             || !Enum.IsDefined(stage))
-            throw new ValidationException("stage", $"'{value}' is not an orchestration stage.");
+        {
+            throw new ValidationException(
+                "stage",
+                $"'{value}' is not an orchestration stage. Use Rebase, Verify, Cleanup, Review, FollowUp, or Deploy.");
+        }
+
         return stage;
     }
 }

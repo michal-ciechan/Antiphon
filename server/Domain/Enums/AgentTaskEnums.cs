@@ -218,6 +218,14 @@ public enum AgentTaskEventType
     /// diagnosed work — the event names what was written and which diagnose task produced it.
     /// </summary>
     Diagnosed = 26,
+
+    /// <summary>
+    /// An orchestrator recorded a finding override for a stage run (CARD-0272 S3). The
+    /// <see cref="Entities.StageOutcome"/> row is the structured record; this event is the
+    /// drawer line. Appended after shipped 26 — the plan named 24 before
+    /// <see cref="LandedWithResidue"/> occupied it. Do not renumber.
+    /// </summary>
+    FindingRecorded = 27,
 }
 
 /// <summary>

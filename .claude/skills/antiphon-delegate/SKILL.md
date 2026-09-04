@@ -86,6 +86,8 @@ A sub-orchestrator defaults to `Plan` and never runs below opus.
 | `-NoInheritEnv` | do not forward this shell's `X_LLM_PROJECT` / `X_LLM_KEY`; server-side stored-env inheritance remains the fallback |
 | `-Authority "<text>"` | the caller's own words for what this task is already authorised to do. Injected into the child's brief so it does not stop to ask for a go-ahead this already grants. Long text: `-AuthorityFile <path>` |
 | `-Continue <taskId>` | replay that standing authority as the answer to a Blocked-on-question task. One action; the child resumes and reports back |
+| `-Stage <name>` | which landing-step question this task answers: `Rebase`/`Verify`/`Cleanup`/`Review`/`FollowUp`/`Deploy` (CARD-0272). Omitted, the role maps: Review, Test→Verify, Merge→Rebase, Deploy; `-OnAgent` → FollowUp. Code and Plan never default. **Not** `-Role` (pipeline seat). A Debug titled "verify" is `-Stage Verify`. Unknown names 422 |
+| `-Finding <id> -Stage … -Found "…" / -Clean` | orchestrator override of a stage finding (rare: the delegate said clean and you acted). Writes an Orchestrator row that supersedes the latest for that (task, stage) |
 
 **LLM project routing follows the caller by default.** `delegate.ps1` forwards the live shell's
 `X_LLM_PROJECT` and `X_LLM_KEY` into the child's inherited routing layer, because the server cannot
@@ -265,6 +267,11 @@ automatically — see "What the delegate is told" below; don't type them into `-
   refinement arrived, and the task's timeline records what you said. A still-queued task gets the
   message folded into its brief instead; a Blocked one needs `-Reply`, not this.
 - **Need a task's full text later?** `pwsh -NoProfile -File scripts/delegate.ps1 -Status <taskId>`
+- **A stage run self-reports a finding line.** Review/Test/Merge/Deploy/`-OnAgent` get a stage by default; pass `-Stage` for a Debug/Docs/Custom dispatch that is actually a verify, cleanup, etc. The brief asks for `[antiphon-finding:<id> found\|clean]` on the line before the report token. If you judged differently from the delegate:
+  ```powershell
+  pwsh -NoProfile -File scripts/delegate.ps1 -Finding <taskId> -Stage Review -Found "hole in X; dispatched a fix"
+  pwsh -NoProfile -File scripts/delegate.ps1 -Finding <taskId> -Stage Review -Clean
+  ```
 
 ## What the delegate is told
 

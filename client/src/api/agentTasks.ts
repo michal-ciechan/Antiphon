@@ -100,6 +100,8 @@ export type AgentTaskEventType =
   | 'Distilled'
   /** The diagnose seat applied a title or labels (CARD-0352). */
   | 'Diagnosed'
+  /** An orchestrator recorded a finding override for a stage run (CARD-0272 S3). */
+  | 'FindingRecorded'
 
 export interface AgentTaskSummaryDto {
   id: string

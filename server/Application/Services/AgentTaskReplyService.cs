@@ -723,6 +723,9 @@ public sealed class AgentTaskReplyService
         if (gitWarning is not null)
             callerWarning = callerWarning is null ? gitWarning : $"{callerWarning}\n\n{gitWarning}";
 
+        if (task.Stage is not null)
+            await RecordDelegateStageOutcomeAsync(services, db, task, report, now, ct);
+
         // A finished Merge task is what un-blocks the conflicted task it was spawned for.
         if (task.Status == AgentTaskStatus.Succeeded && task.Role == AgentTaskRole.Merge)
             await ResolveConflictedParentAsync(services, db, task, now, ct);
@@ -2829,6 +2832,84 @@ public sealed class AgentTaskReplyService
     private async Task PublishAsync(AgentTask task, CancellationToken ct) =>
         await _eventBus.PublishToAllAsync(
             "AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
+
+    /// <summary>
+    /// CARD-0272 S2. One Delegate row when <see cref="AgentTask.Stage"/> is set. Missing finding
+    /// line is Unreported, never a guess. Worktree rows gain <c>commits=n</c> corroboration and
+    /// stay Unreported if the line was absent.
+    /// </summary>
+    private async Task RecordDelegateStageOutcomeAsync(
+        IServiceProvider services, AppDbContext db, AgentTask task, string report, DateTime now,
+        CancellationToken ct)
+    {
+        if (task.Stage is not { } stage)
+            return;
+
+        try
+        {
+            var outcome = StageOutcomeKind.Unreported;
+            var detail = string.Empty;
+            if (DelegationReportFormatter.TryReadFindingLine(task.Id, report, out var parsed, out var parsedDetail))
+            {
+                outcome = parsed;
+                detail = parsedDetail;
+            }
+
+            int? commits = null;
+            if (task.Workspace == WorkspaceMode.Worktree)
+                commits = await TryCountWorktreeCommitsAsync(services, task, ct);
+            if (commits is int n)
+                detail = string.IsNullOrEmpty(detail) ? $"commits={n}" : $"{detail} commits={n}";
+
+            var duration = 0;
+            if (task.CompletedAt is DateTime completed && task.DispatchedAt is DateTime dispatched)
+                duration = (int)Math.Clamp(Math.Round((completed - dispatched).TotalSeconds), 0, int.MaxValue);
+
+            db.StageOutcomes.Add(new StageOutcome
+            {
+                Id = Guid.NewGuid(),
+                Stage = stage,
+                Outcome = outcome,
+                Source = StageOutcomeSource.Delegate,
+                SubjectTaskId = task.FollowUpOfTaskId,
+                StageTaskId = task.Id,
+                CardId = task.CardId,
+                CostUsd = task.CostUsd,
+                TokensIn = task.TokensIn,
+                TokensOut = task.TokensOut,
+                DurationSeconds = duration,
+                Detail = AgentTaskLandService.Clip(detail),
+                RecordedAt = now,
+            });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex, "Could not record stage outcome for task {ShortId}.",
+                DelegationReportFormatter.Short(task.Id));
+        }
+    }
+
+    private static async Task<int?> TryCountWorktreeCommitsAsync(
+        IServiceProvider services, AgentTask task, CancellationToken ct)
+    {
+        var git = services.GetService<GitWorkspaceService>();
+        if (git is null)
+            return null;
+
+        var directory = task.WorktreePath is { Length: > 0 } wt && Directory.Exists(wt)
+            ? wt
+            : null;
+        if (directory is null)
+            return null;
+
+        var gitBase = DelegationGitFacts.ResolveBase(task);
+        if (string.IsNullOrWhiteSpace(gitBase))
+            return null;
+
+        var (commits, _) = await git.CountRangeAsync(directory, gitBase, "HEAD", ct);
+        return commits;
+    }
 
     private static AgentTaskEvent NewEvent(Guid taskId, AgentTaskEventType type, string detail, DateTime at) =>
         new()

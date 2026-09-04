@@ -191,7 +191,7 @@ public static class DelegationReportFormatter
         {
             AgentTaskRole.Check => CheckReportingContract(task.Id, inlineMax),
             AgentTaskRole.Diagnose => DiagnoseReportingContract(task.Id, inlineMax),
-            _ => ReportingContract(task.Id, task.Kind, inlineMax, task.Role),
+            _ => ReportingContract(task.Id, task.Kind, inlineMax, task.Role, task.Stage),
         });
         return sb.ToString();
     }
@@ -248,6 +248,72 @@ public static class DelegationReportFormatter
         """;
 
     /// <summary>
+    /// CARD-0272. The self-report finding line for an <see cref="OrchestrationStage"/> pass.
+    /// Distinct from <see cref="StageHandoffContract"/> (CARD-0146 pipeline next-stage).
+    /// </summary>
+    public static string FindingContract(Guid taskId, OrchestrationStage stage) =>
+        $"""
+        This task is a **{stage}** pass. On the line before the report marker, write
+        `{FindingToken(taskId, "found")} <one line: what you found or changed>` if you found a defect,
+        resolved a conflict, or changed a file because of what this pass found; write
+        `{FindingToken(taskId, "clean")}` if it ran clean. Running tests or reading code is not a
+        finding; a change you had to make is.
+        """;
+
+    public static string FindingToken(Guid taskId, string verdict) =>
+        $"[antiphon-finding:{Short(taskId)} {verdict.Trim().ToLowerInvariant()}]";
+
+    /// <summary>
+    /// Reads <c>[antiphon-finding:&lt;id&gt; found|clean]</c> from anywhere in the last 20 lines
+    /// (CARD-0272). A token naming a different task is ignored. When both markers are present,
+    /// the last one in that window wins. False means Unreported — never a guess.
+    /// </summary>
+    public static bool TryReadFindingLine(
+        Guid taskId, string? text, out StageOutcomeKind outcome, out string detail)
+    {
+        outcome = StageOutcomeKind.Unreported;
+        detail = string.Empty;
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        var prefix = $"[antiphon-finding:{Short(taskId)} ";
+        var normalized = text.ReplaceLineEndings("\n");
+        var lines = normalized.Split('\n');
+        var start = Math.Max(0, lines.Length - 20);
+        for (var i = lines.Length - 1; i >= start; i--)
+        {
+            var line = lines[i].Trim();
+            if (line.Length == 0)
+                continue;
+            if (!line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var rest = line[prefix.Length..];
+            var close = rest.IndexOf(']');
+            if (close < 0)
+                continue;
+
+            var word = rest[..close].Trim();
+            var tail = rest[(close + 1)..].Trim();
+            if (word.Equals("found", StringComparison.OrdinalIgnoreCase))
+            {
+                outcome = StageOutcomeKind.Found;
+                detail = tail;
+                return true;
+            }
+
+            if (word.Equals("clean", StringComparison.OrdinalIgnoreCase))
+            {
+                outcome = StageOutcomeKind.Clean;
+                detail = tail;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// How to report back. The delegate's final message IS the report, so this is the highest-leverage
     /// text in the system — and the spill rule is the primary size mechanism, because the delegate is
     /// the only party that knows which 20 000 characters mattered.
@@ -263,7 +329,8 @@ public static class DelegationReportFormatter
     /// correlates whichever fragment lands.
     /// </summary>
     public static string ReportingContract(
-        Guid taskId, AgentTaskKind kind, int inlineMaxChars, AgentTaskRole role = AgentTaskRole.Custom)
+        Guid taskId, AgentTaskKind kind, int inlineMaxChars, AgentTaskRole role = AgentTaskRole.Custom,
+        OrchestrationStage? stage = null)
     {
         var rollup = kind == AgentTaskKind.Orchestrator
             ? """
@@ -276,6 +343,9 @@ public static class DelegationReportFormatter
             : string.Empty;
         var stageBlock = AgentTaskRoles.IsStage(role)
             ? "\n" + StageHandoffContract + "\n"
+            : string.Empty;
+        var findingBlock = stage is { } s
+            ? "\n" + FindingContract(taskId, s) + "\n"
             : string.Empty;
 
         return $"""
@@ -301,7 +371,7 @@ public static class DelegationReportFormatter
             is complete, `{ReportToken(taskId, "blocked")}` if you need a decision or an answer to continue,
             `{ReportToken(taskId, "failed")}` if you could not do it. Nothing after it. Without that line the
             harness cannot tell your report from a status update and will ask you once.
-
+            {findingBlock}
             {TaskMarker(taskId)}
             """;
     }
@@ -624,13 +694,15 @@ public static class DelegationReportFormatter
         }
         else
         {
-            var stageLine = AgentTaskRoles.IsStage(task.Role)
-                ? "\nClose with the `--- next stage ---` block above the token."
-                : "";
+            var extra = "";
+            if (AgentTaskRoles.IsStage(task.Role))
+                extra += "\nClose with the `--- next stage ---` block above the token.";
+            if (task.Stage is not null)
+                extra += "\nOn the line before the report token, write the `[antiphon-finding:…]` found or clean marker.";
             sb.AppendLine($"""
                 --- how to report back ---
                 The full reporting contract is in the brief above — read it there.
-                Your final message is the entire report the caller receives.{stageLine}
+                Your final message is the entire report the caller receives.{extra}
                 """).AppendLine();
         }
 

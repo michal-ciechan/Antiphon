@@ -18,6 +18,29 @@ public enum OrchestrationStage
 }
 
 /// <summary>
+/// CARD-0272 role → stage defaults. Distinct from <see cref="AgentTaskRoles.IsStage"/> (CARD-0146
+/// pipeline seats: Investigate/Plan/TestDesign/Code/Review). Do not unify the two vocabularies.
+/// </summary>
+public static class OrchestrationStages
+{
+    /// <summary>
+    /// Role → default stage when <c>-Stage</c> is omitted. A follow-up wins over the role.
+    /// Code, Plan, and every other role → null (not a stage run).
+    /// </summary>
+    public static OrchestrationStage? DefaultFor(AgentTaskRole role, bool followUp) =>
+        followUp
+            ? OrchestrationStage.FollowUp
+            : role switch
+            {
+                AgentTaskRole.Review => OrchestrationStage.Review,
+                AgentTaskRole.Test => OrchestrationStage.Verify,
+                AgentTaskRole.Merge => OrchestrationStage.Rebase,
+                AgentTaskRole.Deploy => OrchestrationStage.Deploy,
+                _ => null,
+            };
+}
+
+/// <summary>
 /// What a stage run produced. Hit rate is Found / (Found + Clean); Skipped, Failed and Unreported
 /// are counted in runs and excluded from the denominator.
 /// </summary>

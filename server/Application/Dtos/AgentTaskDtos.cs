@@ -147,7 +147,14 @@ public sealed record CreateAgentTaskRequest(
     /// True queues anyway and records a Warning naming the counts; it does not raise
     /// <see cref="Settings.DelegationSettings.MaxConcurrentTasks"/>.
     /// </summary>
-    bool IgnoreConcurrencyLimit = false);
+    bool IgnoreConcurrencyLimit = false,
+    /// <summary>
+    /// CARD-0272. Which landing-step question this task answers (Rebase/Verify/Cleanup/Review/
+    /// FollowUp/Deploy). Null takes the role default (Review, Test→Verify, Merge→Rebase, Deploy;
+    /// a <see cref="FollowUpOnTask"/> → FollowUp). Distinct from <see cref="Role"/> / CARD-0146
+    /// pipeline seats. An unknown name is 422.
+    /// </summary>
+    OrchestrationStage? Stage = null);
 
 public sealed record AgentTaskSummaryDto(
     Guid Id,

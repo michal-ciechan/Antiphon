@@ -208,6 +208,26 @@ param(
     [Parameter(ParameterSetName = 'Land')]
     [string]$Verify,
 
+    # CARD-0272. Which landing-step question this task answers: Rebase, Verify, Cleanup, Review,
+    # FollowUp, Deploy. Omitted, the role maps (Review, Test->Verify, Merge->Rebase, Deploy;
+    # -OnAgent -> FollowUp). Code and Plan never default. Distinct from -Role (pipeline seat).
+    # Unknown names are 422. Same names as GET /api/stage-outcomes?stage=.
+    [Parameter(ParameterSetName = 'Create')]
+    [Parameter(ParameterSetName = 'Finding', Mandatory = $true)]
+    [ValidateSet('Rebase', 'Verify', 'Cleanup', 'Review', 'FollowUp', 'Deploy')]
+    [string]$Stage,
+
+    # CARD-0272. Orchestrator override of a stage finding: the delegate said clean and you acted,
+    # or the reverse. Writes an Orchestrator row that supersedes the latest for that (task, stage).
+    [Parameter(ParameterSetName = 'Finding', Mandatory = $true)]
+    [string]$Finding,
+
+    [Parameter(ParameterSetName = 'Finding')]
+    [string]$Found,
+
+    [Parameter(ParameterSetName = 'Finding')]
+    [switch]$Clean,
+
     # Explicit pick of kind/level for a Blocked-for-routing or Queued chain task (CARD-0090).
     # Ends chain governance for that task. Use with -Kind and -Level.
     [Parameter(ParameterSetName = 'Reroute', Mandatory = $true)]
@@ -364,6 +384,26 @@ switch ($PSCmdlet.ParameterSetName) {
         return
     }
 
+    'Finding' {
+        if ($Clean -and -not [string]::IsNullOrWhiteSpace($Found)) {
+            Write-Error 'Pass -Found "what" or -Clean, not both.'
+            exit 1
+        }
+        if (-not $Clean -and [string]::IsNullOrWhiteSpace($Found)) {
+            Write-Error 'Pass -Found "what you found" or -Clean.'
+            exit 1
+        }
+        $body = @{
+            stage = $Stage
+            found = -not [bool]$Clean
+        }
+        if (-not $Clean) { $body['detail'] = $Found }
+        Invoke-Antiphon -Method POST -Path "/api/agent-tasks/$Finding/finding" -Body $body | Out-Null
+        $word = if ($Clean) { 'clean' } else { 'found' }
+        Write-Output ("recorded {0} {1} on task {2}" -f $Stage, $word, $Finding)
+        return
+    }
+
     'Create' {
         if ([string]::IsNullOrWhiteSpace($Goal)) {
             Write-Error 'A -Goal is required. Write it as an outcome, not a procedure.'
@@ -433,6 +473,7 @@ switch ($PSCmdlet.ParameterSetName) {
         if ($AllowDirectEdits) { $body['denyDirectEdits'] = $false }
         if ($OnAgent) { $body['followUpOnTask'] = $OnAgent }
         if ($Agent) { $body['agent'] = $Agent }
+        if ($Stage) { $body['stage'] = $Stage }
         if ($titleText) { $body['title'] = $titleText }
         if ($Level) { $body['modelLevel'] = $Level }
         # Sent only when chosen - an omitted -Kind leaves the decision to the role policy, which

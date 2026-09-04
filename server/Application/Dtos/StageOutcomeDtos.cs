@@ -43,3 +43,12 @@ public sealed record StageOutcomeSummaryRowDto(
     decimal UsdSpent,
     decimal? UsdPerFinding,
     int ServerSecs);
+
+/// <summary>
+/// POST /api/agent-tasks/{id}/finding (CARD-0272 S3). <see cref="Stage"/> is a name, not an ordinal,
+/// so an unknown value is 422 rather than a bind 400.
+/// </summary>
+public sealed record RecordStageFindingRequest(
+    string Stage,
+    bool Found,
+    string? Detail = null);

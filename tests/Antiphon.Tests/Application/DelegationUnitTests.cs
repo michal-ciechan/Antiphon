@@ -591,6 +591,106 @@ public class DelegationReportFormatterTests
     }
 
     [Test]
+    public void TryReadFindingLine_reads_found_with_the_detail()
+    {
+        var task = NewTask();
+        var text = $"Looked.\n{DelegationReportFormatter.FindingToken(task.Id, "found")} hole in Foo.cs\n"
+            + DelegationReportFormatter.ReportToken(task.Id, "done");
+
+        DelegationReportFormatter.TryReadFindingLine(task.Id, text, out var outcome, out var detail)
+            .ShouldBeTrue();
+        outcome.ShouldBe(StageOutcomeKind.Found);
+        detail.ShouldBe("hole in Foo.cs");
+    }
+
+    [Test]
+    public void TryReadFindingLine_reads_clean()
+    {
+        var task = NewTask();
+        var text = $"{DelegationReportFormatter.FindingToken(task.Id, "clean")}\n"
+            + DelegationReportFormatter.ReportToken(task.Id, "done");
+
+        DelegationReportFormatter.TryReadFindingLine(task.Id, text, out var outcome, out var detail)
+            .ShouldBeTrue();
+        outcome.ShouldBe(StageOutcomeKind.Clean);
+        detail.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void TryReadFindingLine_absent_is_false_and_unreported()
+    {
+        var task = NewTask();
+        var text = "No marker here.\n" + DelegationReportFormatter.ReportToken(task.Id, "done");
+
+        DelegationReportFormatter.TryReadFindingLine(task.Id, text, out var outcome, out _)
+            .ShouldBeFalse();
+        outcome.ShouldBe(StageOutcomeKind.Unreported);
+    }
+
+    [Test]
+    public void TryReadFindingLine_accepts_the_marker_mid_report()
+    {
+        var task = NewTask();
+        var text = "Preamble.\n"
+            + DelegationReportFormatter.FindingToken(task.Id, "found") + " conflict in Bar.cs\n"
+            + "more after the finding\n"
+            + DelegationReportFormatter.ReportToken(task.Id, "done");
+
+        DelegationReportFormatter.TryReadFindingLine(task.Id, text, out var outcome, out var detail)
+            .ShouldBeTrue();
+        outcome.ShouldBe(StageOutcomeKind.Found);
+        detail.ShouldBe("conflict in Bar.cs");
+    }
+
+    [Test]
+    public void TryReadFindingLine_both_markers_the_last_in_the_window_wins()
+    {
+        var task = NewTask();
+        var text = DelegationReportFormatter.FindingToken(task.Id, "found") + " first\n"
+            + DelegationReportFormatter.FindingToken(task.Id, "clean") + "\n"
+            + DelegationReportFormatter.ReportToken(task.Id, "done");
+
+        DelegationReportFormatter.TryReadFindingLine(task.Id, text, out var outcome, out _)
+            .ShouldBeTrue();
+        outcome.ShouldBe(StageOutcomeKind.Clean);
+    }
+
+    [Test]
+    public void TryReadFindingLine_ignores_a_token_for_a_different_task()
+    {
+        var task = NewTask();
+        var other = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000000");
+        var text = DelegationReportFormatter.FindingToken(other, "found") + " not this task\n"
+            + DelegationReportFormatter.ReportToken(task.Id, "done");
+
+        DelegationReportFormatter.TryReadFindingLine(task.Id, text, out var outcome, out _)
+            .ShouldBeFalse();
+        outcome.ShouldBe(StageOutcomeKind.Unreported);
+    }
+
+    [Test]
+    public void the_finding_contract_is_present_only_when_orchestration_stage_is_set()
+    {
+        var task = NewTask();
+        var without = DelegationReportFormatter.ReportingContract(
+            task.Id, AgentTaskKind.Worker, 20_000, AgentTaskRole.Review);
+        without.ShouldNotContain("[antiphon-finding:");
+        without.ShouldNotContain("This task is a **Review** pass");
+
+        var with = DelegationReportFormatter.ReportingContract(
+            task.Id, AgentTaskKind.Worker, 20_000, AgentTaskRole.Review, OrchestrationStage.Review);
+        with.ShouldContain(DelegationReportFormatter.FindingToken(task.Id, "found"));
+        with.ShouldContain(DelegationReportFormatter.FindingToken(task.Id, "clean"));
+        with.ShouldContain("This task is a **Review** pass");
+        with.ShouldContain("--- next stage ---");
+
+        task.Stage = OrchestrationStage.Verify;
+        var brief = DelegationReportFormatter.BuildBrief(task, Settings);
+        brief.ShouldContain(DelegationReportFormatter.FindingContract(task.Id, OrchestrationStage.Verify));
+        brief.ShouldNotContain("--- next stage ---", customMessage: "Docs role is not a CARD-0146 pipeline stage");
+    }
+
+    [Test]
     public void the_reporting_contract_asks_for_the_closing_verdict_line()
     {
         var task = NewTask();

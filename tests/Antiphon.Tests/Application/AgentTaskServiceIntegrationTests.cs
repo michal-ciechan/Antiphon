@@ -1114,6 +1114,98 @@ public class AgentTaskServiceIntegrationTests
         created.FollowUpMessage.ShouldBe("agent retired - fresh delegate with inherited context");
     }
 
+    // ---- CARD-0272 S2: role → orchestration stage, FollowUpOfTaskId -------------------------
+
+    [Test]
+    [Arguments(AgentTaskRole.Review, OrchestrationStage.Review)]
+    [Arguments(AgentTaskRole.Test, OrchestrationStage.Verify)]
+    [Arguments(AgentTaskRole.Merge, OrchestrationStage.Rebase)]
+    [Arguments(AgentTaskRole.Deploy, OrchestrationStage.Deploy)]
+    public async Task role_defaults_to_its_orchestration_stage(
+        AgentTaskRole role, OrchestrationStage expected)
+    {
+        using var workspace = new TempWorkspace();
+        await using var db = CreateContext();
+        var created = await CreateService(db).CreateAsync(
+            NewRequest("run the stage", role: role),
+            ManualCaller(workspace.Path),
+            CancellationToken.None);
+
+        var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
+        stored.Stage.ShouldBe(expected);
+        stored.FollowUpOfTaskId.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task a_code_task_has_no_stage_by_default()
+    {
+        using var workspace = new TempWorkspace();
+        await using var db = CreateContext();
+        var created = await CreateService(db).CreateAsync(
+            NewRequest("write it", role: AgentTaskRole.Code),
+            ManualCaller(workspace.Path),
+            CancellationToken.None);
+
+        var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
+        stored.Stage.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task OnAgent_defaults_stage_to_FollowUp_and_sets_FollowUpOfTaskId()
+    {
+        using var workspace = new TempWorkspace();
+        var agentId = await SeedPoolAgentAsync(workspace.Path, AgentModelLevel.Low);
+        var prior = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Succeeded);
+        await PinTaskAgentAsync(prior.Id, agentId);
+
+        await using var db = CreateContext();
+        var created = await CreateService(db).CreateAsync(
+            NewRequest("now add the edge cases", role: AgentTaskRole.Code) with
+            {
+                FollowUpOnTask = DelegationReportFormatter.Short(prior.Id),
+            },
+            ManualCaller(workspace.Path),
+            CancellationToken.None);
+
+        var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
+        stored.Stage.ShouldBe(OrchestrationStage.FollowUp);
+        stored.FollowUpOfTaskId.ShouldBe(prior.Id);
+    }
+
+    [Test]
+    public async Task an_explicit_Stage_wins_over_the_role_and_follow_up_defaults()
+    {
+        using var workspace = new TempWorkspace();
+        var agentId = await SeedPoolAgentAsync(workspace.Path, AgentModelLevel.Low);
+        var prior = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Succeeded);
+        await PinTaskAgentAsync(prior.Id, agentId);
+
+        await using var db = CreateContext();
+        var debug = await CreateService(db).CreateAsync(
+            NewRequest("verify the diagnosis", role: AgentTaskRole.Debug) with
+            {
+                Stage = OrchestrationStage.Verify,
+            },
+            ManualCaller(workspace.Path),
+            CancellationToken.None);
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == debug.Id))
+            .Stage.ShouldBe(OrchestrationStage.Verify);
+
+        var followUp = await CreateService(db).CreateAsync(
+            NewRequest("ask again", role: AgentTaskRole.Code) with
+            {
+                FollowUpOnTask = DelegationReportFormatter.Short(prior.Id),
+                Stage = OrchestrationStage.Review,
+            },
+            ManualCaller(workspace.Path),
+            CancellationToken.None);
+        var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == followUp.Id);
+        stored.Stage.ShouldBe(OrchestrationStage.Review, "explicit -Stage wins over -OnAgent → FollowUp");
+        stored.FollowUpOfTaskId.ShouldBe(prior.Id);
+    }
+
     // ---- short ids: the id the caller actually has -------------------------------------------
 
     [Test]

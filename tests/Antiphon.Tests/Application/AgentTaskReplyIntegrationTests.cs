@@ -1665,6 +1665,76 @@ public class AgentTaskReplyIntegrationTests
     }
 
     [Test]
+    public async Task a_stage_task_settlement_writes_a_delegate_row_with_copied_cost()
+    {
+        using var workspace = new TempWorkspace();
+        var followUpOf = Guid.NewGuid();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, configure: t =>
+        {
+            t.Role = AgentTaskRole.Review;
+            t.Stage = OrchestrationStage.Review;
+            t.FollowUpOfTaskId = followUpOf;
+            t.DispatchedAt = DateTime.UtcNow.AddMinutes(-8);
+        });
+
+        var finding = DelegationReportFormatter.FindingToken(task.Id, "found") + " hole in Foo.cs";
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id),
+            $"No blocking defects.\n{finding}",
+            inputTokens: 50_000, outputTokens: 4_000);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        var row = await verify.StageOutcomes.SingleAsync(o => o.StageTaskId == task.Id);
+        row.Stage.ShouldBe(OrchestrationStage.Review);
+        row.Outcome.ShouldBe(StageOutcomeKind.Found);
+        row.Source.ShouldBe(StageOutcomeSource.Delegate);
+        row.SubjectTaskId.ShouldBe(followUpOf);
+        row.CostUsd.ShouldBe(settled.CostUsd);
+        row.TokensIn.ShouldBe(50_000);
+        row.TokensOut.ShouldBe(4_000);
+        row.Detail.ShouldContain("hole in Foo.cs");
+        row.DurationSeconds.ShouldBeGreaterThanOrEqualTo(480);
+        settled.CostUsd.ShouldBeGreaterThan(0m);
+    }
+
+    [Test]
+    public async Task a_stage_task_without_a_finding_line_is_unreported()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, configure: t =>
+        {
+            t.Role = AgentTaskRole.Test;
+            t.Stage = OrchestrationStage.Verify;
+        });
+
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id), "142 passed.");
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var row = await verify.StageOutcomes.SingleAsync(o => o.StageTaskId == task.Id);
+        row.Outcome.ShouldBe(StageOutcomeKind.Unreported);
+        row.Source.ShouldBe(StageOutcomeSource.Delegate);
+        row.Stage.ShouldBe(OrchestrationStage.Verify);
+    }
+
+    [Test]
+    public async Task a_task_without_stage_writes_no_outcome_row()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id), "Rewrote the section.");
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.StageOutcomes.CountAsync(o => o.StageTaskId == task.Id)).ShouldBe(0);
+    }
+
+    [Test]
     public async Task the_three_input_counters_are_kept_apart_and_priced_apart()
     {
         // CARD-0023: collapsing them and applying the input rate to the total prices a cache READ

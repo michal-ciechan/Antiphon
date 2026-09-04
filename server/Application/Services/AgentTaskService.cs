@@ -186,6 +186,7 @@ public sealed class AgentTaskService
         Agent? pinnedStandingAgent = null;
         // CARD-0040: a follow-up continues the earlier task's work, so it continues its card too.
         Guid? followUpCardId = null;
+        Guid? followUpOfTaskId = null;
         string? followUpMessage = null;
         var liveFollowUp = false;
 
@@ -224,6 +225,7 @@ public sealed class AgentTaskService
         {
             var priorId = await ResolveTaskIdAsync(request.FollowUpOnTask, ct);
             var prior = await _db.AgentTasks.AsNoTracking().FirstAsync(t => t.Id == priorId, ct);
+            followUpOfTaskId = priorId;
             followUpCardId = prior.CardId;
             var followAgent = prior.AgentId is Guid followAgentId
                 ? await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == followAgentId, ct)
@@ -653,11 +655,20 @@ public sealed class AgentTaskService
         if (unknownInheritedNamesWarning is not null)
             warning = warning is null ? unknownInheritedNamesWarning : warning + " " + unknownInheritedNamesWarning;
 
+        if (request.Stage is { } explicitStage && !Enum.IsDefined(explicitStage))
+        {
+            throw new ValidationException(
+                nameof(request.Stage),
+                $"'{explicitStage}' is not an orchestration stage. Use Rebase, Verify, Cleanup, Review, FollowUp, or Deploy.");
+        }
+
         var task = new AgentTask
         {
             Id = id,
             RootTaskId = parent?.RootTaskId ?? id,
             ParentTaskId = parent?.Id,
+            FollowUpOfTaskId = followUpOfTaskId,
+            Stage = request.Stage ?? OrchestrationStages.DefaultFor(request.Role, followUpOfTaskId is not null),
             // Where the report goes. The dispatcher fills the parent's session id at dispatch time
             // for a task created before its parent's session existed.
             ParentSessionId = caller.SessionId,

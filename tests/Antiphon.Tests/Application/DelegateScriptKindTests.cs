@@ -422,6 +422,73 @@ public sealed class DelegateScriptKindTests
     }
 
     [Test]
+    public async Task Stage_is_posted_as_stage()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(
+            server, "-Role", "Debug", "-Goal", "verify the diagnosis", "-Stage", "Verify");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.GetProperty("stage").GetString().ShouldBe("Verify");
+    }
+
+    [Test]
+    public async Task an_omitted_Stage_sends_no_stage_at_all()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(server, "-Role", "Review", "-Goal", "judge it");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.TryGetProperty("stage", out _)
+            .ShouldBeFalse("an omitted -Stage must leave the role default to the server");
+    }
+
+    [Test]
+    public async Task an_unknown_Stage_is_refused_by_the_script_before_any_request()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(
+            server, "-Role", "Debug", "-Goal", "verify", "-Stage", "PlanReview");
+
+        run.ExitCode.ShouldNotBe(0);
+        run.Output.ShouldContain("PlanReview");
+        server.RequestCount.ShouldBe(0, "a rejected flag must not reach the server");
+    }
+
+    [Test]
+    public async Task Finding_Found_posts_stage_and_detail()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(
+            server, "-Finding", "abcd1234", "-Stage", "Review", "-Found", "hole in X");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        server.LastMethod.ShouldBe("POST");
+        server.LastPath.ShouldBe("/api/agent-tasks/abcd1234/finding");
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.GetProperty("stage").GetString().ShouldBe("Review");
+        body.RootElement.GetProperty("found").GetBoolean().ShouldBeTrue();
+        body.RootElement.GetProperty("detail").GetString().ShouldBe("hole in X");
+        run.Output.ShouldContain("recorded Review found on task abcd1234");
+    }
+
+    [Test]
+    public async Task Finding_Clean_posts_found_false()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(
+            server, "-Finding", "abcd1234", "-Stage", "Review", "-Clean");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.GetProperty("found").GetBoolean().ShouldBeFalse();
+        body.RootElement.TryGetProperty("detail", out _).ShouldBeFalse();
+        run.Output.ShouldContain("recorded Review clean on task abcd1234");
+    }
+
+    [Test]
     public async Task WorktreeHealth_with_no_findings_says_so()
     {
         using var server = new StubApi(mode: StubApi.Mode.WorktreeHealthEmpty);

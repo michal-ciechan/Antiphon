@@ -160,6 +160,19 @@ public static class AgentTaskEndpoints
             return Results.Ok(await replies.RefineAsync(taskId, request.Message, ct));
         });
 
+        // CARD-0272 S3. Orchestrator override of a stage finding. Declared before /{id}/land
+        // only for grouping; {id}/finding cannot collide with {id}.
+        tasks.MapPost("/{id}/finding", async (
+            string id,
+            RecordStageFindingRequest request,
+            AgentTaskService service,
+            StageOutcomeService outcomes,
+            CancellationToken ct) =>
+        {
+            var taskId = await service.ResolveTaskIdAsync(id, ct);
+            return Results.Ok(await outcomes.RecordFindingAsync(taskId, request, ct));
+        });
+
         // Explicit and ordered: a succeeded Worktree task is left for review until the caller
         // chooses to land it. The request only queues deterministic git work; it never waits for it.
         tasks.MapPost("/{id}/land", async (
