@@ -16,6 +16,8 @@ export interface ChatChannelDto {
   lastMessageAt: string | null
   lastMessagePreview: string | null
   lastAuthor: string | null
+  lastReplyAt: string | null
+  lastReplyPreview: string | null
   messageCount: number
   createdAt: string
   /** Non-null = this channel is an alert sink for severities >= the value. */

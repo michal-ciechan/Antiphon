@@ -113,6 +113,7 @@ function ChannelRow({ channel }: { channel: ChatChannelDto }) {
             {channel.lastAuthor ? `${channel.lastAuthor} · ` : ''}
             {relativeTime(channel.lastMessageAt)} · {channel.messageCount} msg
             {channel.messageCount === 1 ? '' : 's'}
+            {channel.lastReplyAt ? ` · ↩ ${relativeTime(channel.lastReplyAt)}` : ''}
           </Text>
         </Stack>
       </Table.Td>

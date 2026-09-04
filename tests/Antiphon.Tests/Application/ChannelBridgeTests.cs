@@ -89,6 +89,39 @@ public class ChannelBridgeTests
         (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(0);
     }
 
+    [Test]
+    public async Task Main_path_send_stamps_LastReplyAt_without_touching_inbound_columns()
+    {
+        await using var h = await HarnessAsync();
+        await h.BindChannelAsync();
+
+        var msg = TelegramText(h.ChatId, "What's for dinner?", title: "Family", author: "Mike");
+        await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
+        var deliveredPrompt = h.Adapter.Inputs[0];
+
+        await using (var beforeScope = h.Provider.CreateAsyncScope())
+        {
+            var before = await beforeScope.ServiceProvider.GetRequiredService<AppDbContext>()
+                .ChatChannels.AsNoTracking().SingleAsync(c => c.ExternalId == h.ChatId);
+            before.LastMessageAt.ShouldNotBeNull();
+            before.LastAuthor.ShouldBe("Mike");
+            before.LastChannelMessageId.ShouldBe(msg.ChannelMessageId);
+            before.LastReplyAt.ShouldBeNull();
+
+            await h.InsertTurnAsync(deliveredPrompt, "Pasta tonight — Ola already started the sauce.");
+            await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+            await using var afterScope = h.Provider.CreateAsyncScope();
+            var after = await afterScope.ServiceProvider.GetRequiredService<AppDbContext>()
+                .ChatChannels.AsNoTracking().SingleAsync(c => c.ExternalId == h.ChatId);
+            after.LastReplyAt.ShouldNotBeNull();
+            after.LastReplyPreview.ShouldBe("Pasta tonight — Ola already started the sauce.");
+            after.LastMessageAt.ShouldBe(before.LastMessageAt);
+            after.LastAuthor.ShouldBe(before.LastAuthor);
+            after.LastChannelMessageId.ShouldBe(before.LastChannelMessageId);
+        }
+    }
+
     // CARD-0154: a channel message typed into a busy composer lands as QueuedUserPrompt with no
     // accompanying UserPrompt. Before the kind-set widen the reply-match query missed it, the
     // correlation aged out, and CARD-0067's ChannelReplyLost incident fired with a human waiting.

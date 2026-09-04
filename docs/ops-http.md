@@ -99,6 +99,11 @@ Invoke-RestMethod "$api/api/agents/$agentId/start" -Method Post -Headers $h `
   `name` or `slug`, then use the guid. A non-guid segment does not 400 with a helpful message — it
   simply does not match the route.
 
+- **`working` IS TRANSCRIPT-DERIVED, NEVER CHANNEL SILENCE.** `GET /api/agents` `working` is
+  `IsWorkingAsync`. A channel-bound agent idle between Antiphon notes is waiting; read `working`
+  and the transcript, never the chat's silence. Catalog `lastMessageAt` is inbound only;
+  `lastReplyAt` is the last outbound reply.
+
 - **`POST /api/agents/{id}/start` REQUIRES A JSON BODY.** `{}` is the minimum and inherits the
   agent's persisted settings; no body at all is a **400** from model binding before the request
   ever reaches the agent. `{"fresh":true}` forces a brand-new conversation — the default resumes

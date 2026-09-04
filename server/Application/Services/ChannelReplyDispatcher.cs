@@ -390,6 +390,7 @@ public sealed class ChannelReplyDispatcher
         // One reply per distinct conversation. With same-conversation batching this loop is
         // degenerate (exactly one send) — the fan-out is a deliberate latent safety net in case
         // batching scope ever widens to cross-conversation.
+        var produced = false;
         try
         {
             foreach (var target in targets)
@@ -408,6 +409,7 @@ public sealed class ChannelReplyDispatcher
                     "Sent {Kind} reply ({Chars} chars, {AttachmentCount} attachment(s)) to {Provider} conversation {ConversationId} from session {SessionId}",
                     reply.Kind, text.Length, attachments.Count, target.Provider, target.ConversationId, sessionId);
             }
+            produced = true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -421,6 +423,13 @@ public sealed class ChannelReplyDispatcher
                 "Producing the channel reply for session {SessionId} failed; {Count} correlation(s) returned to "
                 + "owed for the next turn end", sessionId, matches.Count);
             failed.UnionWith(matches.Select(m => m.Id));
+        }
+
+        if (produced)
+        {
+            var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
+            foreach (var target in targets)
+                await channels.StampLastReplyAsync(target.Provider, target.ConversationId, text, ct);
         }
 
         return new ChannelReplyDispatchResult(
@@ -1003,6 +1012,7 @@ public sealed class ChannelReplyDispatcher
         var (bodyText, attachments) = PrepareReplyBody(joined, sessionId);
         var text = Truncate(bodyText);
         var kind = ClassifyKind(bodyText);
+        var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
         foreach (var target in turn.Targets)
         {
             var reply = new ChannelReply
@@ -1015,6 +1025,7 @@ public sealed class ChannelReplyDispatcher
                 Attachments = attachments,
             };
             await _producer.SendAsync(reply, ct);
+            await channels.StampLastReplyAsync(target.Provider, target.ConversationId, text, ct);
             _logger.LogInformation(
                 "Sent follow-up {Kind} reply ({Chars} chars, {AttachmentCount} attachment(s)) to {Provider} conversation {ConversationId} from session {SessionId} — text arrived after the turn's dispatch",
                 reply.Kind, text.Length, attachments.Count, target.Provider, target.ConversationId, sessionId);
@@ -1188,7 +1199,11 @@ public sealed class ChannelReplyDispatcher
                 "Producing the machine-turn follow-up for session {SessionId} failed; "
                 + "{Count} injection row(s) returned to unclaimed for the next turn end",
                 sessionId, matches.Count);
+            return;
         }
+
+        var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
+        await channels.StampLastReplyAsync(provider, conversationId, text, ct);
     }
 
     private bool AdmitsMachineTurnText(IReadOnlyList<SessionQueuedMessage> matches)

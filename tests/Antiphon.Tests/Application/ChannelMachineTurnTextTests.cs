@@ -83,6 +83,40 @@ public class ChannelMachineTurnTextTests
     }
 
     [Test]
+    public async Task Follow_up_send_stamps_LastReplyAt_without_touching_inbound_columns()
+    {
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var inboundAt = DateTime.UtcNow.AddHours(-6);
+        await using (var db = CreateContext())
+        {
+            await db.ChatChannels.Where(c => c.ExternalId == chatId).ExecuteUpdateAsync(u => u
+                .SetProperty(c => c.LastMessageAt, inboundAt)
+                .SetProperty(c => c.LastAuthor, "Mike Ciechan")
+                .SetProperty(c => c.LastChannelMessageId, "msg-inbound"));
+        }
+
+        var prompt = "[Telegram \"Family\" — Mike 23:31] CARD-0003";
+        await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
+        await h.InsertTurnAsync(prompt, "On it.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        var note = "[task 15ed2644 done] CARD-0003 implemented";
+        await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation);
+        await h.InsertTurnAsync(note, "CARD-0003 implemented, 665 tests pass; review dispatched.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var row = await verify.ChatChannels.AsNoTracking().SingleAsync(c => c.ExternalId == chatId);
+        row.LastReplyAt.ShouldNotBeNull();
+        row.LastReplyPreview.ShouldBe("CARD-0003 implemented, 665 tests pass; review dispatched.");
+        row.LastAuthor.ShouldBe("Mike Ciechan");
+        row.LastChannelMessageId.ShouldBe("msg-inbound");
+        row.LastMessageAt.ShouldNotBeNull();
+        (row.LastMessageAt!.Value - inboundAt).Duration().ShouldBeLessThan(TimeSpan.FromSeconds(1));
+    }
+
+    [Test]
     [Arguments(QueuedMessageOrigin.Check, "[check 27b19b2f #1] still looping?", "review looping on claude-fable-5, canceling")]
     [Arguments(QueuedMessageOrigin.Scheduled, "scheduled status please", "still waiting on the review")]
     public async Task Check_and_Scheduled_origins_deliver_plain_text(

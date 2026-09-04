@@ -14,6 +14,18 @@ long-poll pattern), normalizes updates onto the `channels.inbound` Kafka topic, 
 `src/Antiphon.Messaging.Telegram/TelegramChannelAdapter.cs` — raw Bot API over `HttpClient`, no
 third-party client.
 
+## What the chat sees
+
+The chat sees the turn that answers an inbound message, and the agent's reply to an Antiphon
+note — a `[task … done|failed|blocked|canceled]` report, a `[check …]` note, or a scheduled
+prompt — delivered as a follow-up to the most recent conversation, text and any `[[attach:]]`
+files, unless the whole reply is exactly `NO_REPLY`. A bootstrap, restart or compaction note is
+never delivered unless it carries `[[attach:]]`. Server-composed pings (blocked-task, decision,
+and `ChannelReplyLost` incident pages) also arrive through the same outbound topic when
+`Digest:Enabled` and the catalog row is `DigestEnabled`. Catalog `lastMessageAt` is the last
+*inbound* message; `lastReplyAt` is the last *outbound* reply — idle between notes is waiting,
+not dead.
+
 ## Outbound formatting (Markdown → Telegram HTML)
 
 Agents write standard Markdown. Since 2026-07-28 the gateway renders it to **Telegram HTML**

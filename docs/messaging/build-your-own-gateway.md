@@ -165,9 +165,11 @@ A `ChannelReply` may also arrive for a conversation with **nothing pending**.
 Antiphon has a proactive send (`POST /api/channels/{id}/send`) for scheduled
 jobs and operator scripts, and the reply-durability model (CARD-0067) resolves
 a reply's target from the stored prompt row at dispatch time rather than from
-an in-memory correlation. `SendAsync` must therefore not assume it is
-answering the last thing it received — address `ReplyHandle` /
-`ConversationId` and send.
+an in-memory correlation. Server-composed sends also use that path: blocked-task
+and decision pings, and a third — `ChannelReplyLost` incident pages to
+`DigestEnabled` channels (`IncidentPageNotifier`, CARD-0338 S3). `SendAsync`
+must therefore not assume it is answering the last thing it received — address
+`ReplyHandle` / `ConversationId` and send.
 
 ## 4. Host it
 
@@ -272,9 +274,12 @@ bytes are base64.
 
 - **A lost reply is a server incident, not a gateway incident.**
   `ChannelReplyLost` (Critical when the agent is channel-bound) is raised
-  by Antiphon when a Channel-origin prompt ages out unanswered. Your
-  `SendAsync` failures are your logs; the library logs them and does not
-  retry. Do not swallow a send failure with a silent `return`.
+  by Antiphon when a Channel-origin prompt ages out unanswered. When
+  `Digest:Enabled` and a catalog row is `DigestEnabled`, that incident is
+  also a server-composed send to the operator's pager (the third such
+  send, after blocked-task and decision pings). Your `SendAsync` failures
+  are your logs; the library logs them and does not retry. Do not swallow
+  a send failure with a silent `return`.
 - **Unknown outbound `Channel`:** logged, not dropped-on-the-floor without
   a line. Fix the key; the message is already consumed.
 - **Ingress restart:** if `ReceiveAsync` throws or ends, the library waits

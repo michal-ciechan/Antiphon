@@ -120,6 +120,24 @@ public sealed class ChatChannelService
                 RawOverrides = rawOverrides,
             },
             ct);
+        await StampLastReplyAsync(channel.Provider, channel.ExternalId, text, ct);
+    }
+
+    /// <summary>
+    /// CARD-0338 S4: stamp the last outbound reply without touching inbound
+    /// <see cref="ChatChannel.LastMessageAt"/> / <see cref="ChatChannel.LastAuthor"/> /
+    /// <see cref="ChatChannel.LastChannelMessageId"/>.
+    /// </summary>
+    public Task StampLastReplyAsync(string provider, string conversationId, string? preview, CancellationToken ct)
+    {
+        var now = UtcNow();
+        var truncated = Truncate(preview);
+        return _db.ChatChannels
+            .Where(c => c.Provider == provider && c.ExternalId == conversationId)
+            .ExecuteUpdateAsync(u => u
+                .SetProperty(c => c.LastReplyAt, now)
+                .SetProperty(c => c.LastReplyPreview, truncated)
+                .SetProperty(c => c.UpdatedAt, now), ct);
     }
 
     /// <summary>
@@ -179,7 +197,8 @@ public sealed class ChatChannelService
     private static ChatChannelDto ToDto(ChatChannel c) => new(
         c.Id, c.Provider, c.ExternalId, c.Kind, c.Title,
         c.AgentId, c.Agent?.Name, c.Enabled,
-        c.LastMessageAt, c.LastMessagePreview, c.LastAuthor, c.MessageCount, c.CreatedAt,
+        c.LastMessageAt, c.LastMessagePreview, c.LastAuthor,
+        c.LastReplyAt, c.LastReplyPreview, c.MessageCount, c.CreatedAt,
         c.AlertMinSeverity, c.DigestEnabled, c.DigestLastSentAt);
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;

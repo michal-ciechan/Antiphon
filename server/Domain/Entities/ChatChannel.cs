@@ -50,6 +50,17 @@ public class ChatChannel
     public DateTime? LastMessageAt { get; set; }
     public string? LastMessagePreview { get; set; }
     public string? LastAuthor { get; set; }
+
+    /// <summary>
+    /// CARD-0338 S4: last outbound reply (agent or server-composed). Distinct from
+    /// <see cref="LastMessageAt"/> / <see cref="LastAuthor"/> / <see cref="LastChannelMessageId"/>,
+    /// which track the last inbound message only.
+    /// </summary>
+    public DateTime? LastReplyAt { get; set; }
+
+    /// <summary>Short truncated preview of the last outbound reply.</summary>
+    public string? LastReplyPreview { get; set; }
+
     public long MessageCount { get; set; }
 
     public DateTime CreatedAt { get; set; }

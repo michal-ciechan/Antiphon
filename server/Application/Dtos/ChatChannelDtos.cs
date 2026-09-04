@@ -14,6 +14,8 @@ public sealed record ChatChannelDto(
     DateTime? LastMessageAt,
     string? LastMessagePreview,
     string? LastAuthor,
+    DateTime? LastReplyAt,
+    string? LastReplyPreview,
     long MessageCount,
     DateTime CreatedAt,
     // Non-null = this channel is an alert sink for severities >= the value.

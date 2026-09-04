@@ -1962,6 +1962,13 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
+                    b.Property<DateTime?>("LastReplyAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastReplyPreview")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
                     b.Property<long>("MessageCount")
                         .HasColumnType("bigint");
 

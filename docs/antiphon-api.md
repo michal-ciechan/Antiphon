@@ -166,7 +166,7 @@ GET    /api/agents/definitions               the configured Agents:Definitions c
 GET    /api/agents/preamble-preset?provider=  telegram | slack (404 for anything else)
 GET    /api/agents/bundles                   attachable instruction bundles (read-only; the catalog is code)
 POST   /api/agents        POST /api/agents/draft        PATCH /api/agents/{id}    DELETE /api/agents/{id}
-GET    /api/agents/{id}/incidents
+GET    /api/agents/{id}/incidents            AgentIncidentDto (Kind, Severity, Message, FailureReason, CreatedAt). `HumanNotifiedAt` is the digest-pager stamp on the `AgentIncidents` row, not an acknowledgement and not on this DTO — a second Critical `ChannelReplyLost` an hour later is a second page.
 POST   /api/agents/{id}/start  |  /stop      start refuses 409 `remote_control_refused` when `remoteControl: true` on a kind whose catalog row is not Supported
 POST   /api/agents/{id}/attach-herdr         bind a standing Herdr agent to an existing operator pane `{ "paneId": "w2:p3" }`. 409 `herdr_refused` / `session_active` / `herdr_kind_mismatch` / `herdr_pane_bound` / `herdr_native_id_unknown` / `herdr_transcript_not_found` / `herdr_pane_changed` / `session_id_taken`; 404 `herdr_pane_not_found`; 503 `herdr_unreachable`. Stop on an attached session detaches.
 POST   /api/agents/{id}/ensure-directory     create the agent's configured working directory (CARD-0214 readiness `create-directory` fix). Idempotent. 404 if the agent is missing; 422 if mkdir fails. Never takes a path from the caller.
@@ -391,6 +391,16 @@ POST   /api/channels/{id}/send               proactive send — {"text": "..."}
 anything inbound: it bypasses the alert throttle/digest path entirely and produces a `ChannelReply`
 straight onto `channels.outbound`. A disabled channel is `409 channel_disabled`. It was landed as
 pre-design groundwork on CARD-0171 and is unratified — treat it as present but provisional.
+
+`ChatChannelDto` (`server/Application/Dtos/ChatChannelDtos.cs`): `lastMessageAt` / `lastAuthor` /
+`lastMessagePreview` are inbound only. `lastReplyAt` / `lastReplyPreview` are the last outbound
+reply (agent or server-composed). Do not read inbound silence as agent idleness.
+
+`ChannelBridge:MachineTurnTextOrigins` (default `Delegation`, `Check`, `Scheduled`) is the
+dial for delivering a machine-triggered turn's plain text as a follow-up; empty is attachments
+only. `Channel` / `Ui` / `Supervision` are rejected. Exact `NO_REPLY` opts out. System stays
+marker-only unless listed. `Digest:WakeOnIncidentKinds` (default `ChannelReplyLost`) is the
+pager kinds for `IncidentPageNotifier`.
 
 The whole inbound/outbound model is [messaging/build-your-own-gateway.md](messaging/build-your-own-gateway.md).
 
