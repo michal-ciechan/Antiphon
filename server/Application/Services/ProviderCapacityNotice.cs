@@ -34,6 +34,58 @@ public static partial class ProviderCapacityNotice
         return $"{first} {second}";
     }
 
+    /// <summary>
+    /// CARD-0360: one channel-safe sentence for a transport-class death. The
+    /// <c> [after N retries]</c> suffix is consumed into "after N attempts" and stripped from
+    /// the detail; URLs and tokens are scrubbed the same way as <see cref="Format"/>.
+    /// </summary>
+    public static string FormatTransport(AgentKind kind, string? alias, int retryCount, string? detail)
+    {
+        _ = alias;
+        var provider = ProviderLabel(kind);
+        var (parsedCount, stripped) = SplitRetrySuffix(detail);
+        if (retryCount <= 0)
+            retryCount = parsedCount;
+        var scrubbed = Scrub(stripped);
+        var attempts = retryCount > 0 ? $" after {retryCount} attempts" : "";
+        var detailBit = string.IsNullOrWhiteSpace(scrubbed) ? "" : $" — {scrubbed}";
+        return $"⚠️ I can't answer right now: I couldn't reach the {provider} model endpoint "
+            + $"(connection error{attempts}{detailBit}). Your message was not answered — please send it "
+            + "again once the connection is restored.";
+    }
+
+    /// <summary>
+    /// CARD-0360: parked or exhausted Transient/Unknown death. Same scrub as <see cref="Format"/>.
+    /// </summary>
+    public static string FormatProviderError(
+        AgentKind kind, string? alias, int? status, string? reasonPhrase, string? detail = null)
+    {
+        _ = alias;
+        var provider = ProviderLabel(kind);
+        var scrubbedDetail = Scrub(detail);
+        var scrubbedPhrase = Scrub(reasonPhrase);
+        var failure = status is int s
+            ? $"HTTP {s}{PhraseBit(scrubbedPhrase)}{DetailBit(scrubbedDetail)}"
+            : $"{(string.IsNullOrWhiteSpace(scrubbedPhrase) ? "a provider error" : scrubbedPhrase)}{DetailBit(scrubbedDetail)}";
+        return $"⚠️ I can't answer right now: the {provider} provider kept failing ({failure}) "
+            + "and automatic retries are parked. Please send it again later.";
+    }
+
+    internal static (int Count, string? Stripped) SplitRetrySuffix(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return (0, text);
+        var match = RetrySuffixRegex().Match(text.Trim());
+        if (!match.Success)
+            return (0, text.Trim());
+        var count = int.TryParse(match.Groups[2].Value, out var n) ? n : 0;
+        var stripped = match.Groups[1].Value.Trim();
+        return (count, string.IsNullOrEmpty(stripped) ? null : stripped);
+    }
+
+    [GeneratedRegex(@"^(.*?)\s+\[after (\d+) retries\]\s*$", RegexOptions.CultureInvariant)]
+    private static partial Regex RetrySuffixRegex();
+
     private static string ProviderLabel(AgentKind kind) => kind switch
     {
         AgentKind.ClaudeCode => "Claude",

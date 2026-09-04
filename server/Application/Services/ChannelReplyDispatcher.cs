@@ -97,6 +97,18 @@ public sealed class ChannelReplyDispatcher
         /// CARD-0281: a terminal provider-capacity/auth wall killed the turn. Raised now, not at TTL.
         /// </summary>
         ProviderCapacity,
+
+        /// <summary>
+        /// CARD-0360: the model endpoint was unreachable (transport-class death). Raised now,
+        /// not at TTL. Pages; unlike ProviderCapacity there is no hold incident.
+        /// </summary>
+        ProviderTransport,
+
+        /// <summary>
+        /// CARD-0360: Transient/Unknown recovery resolved terminally (parked or exhausted).
+        /// Raised now, not at TTL.
+        /// </summary>
+        ProviderError,
     }
 
     /// <summary>
@@ -439,10 +451,12 @@ public sealed class ChannelReplyDispatcher
     }
 
     /// <summary>
-    /// CARD-0281 / CARD-0071: a turn killed by the API is never published as a chat reply.
-    /// Retryable classes stay owed for a resumed turn. Terminal classes send one capacity
-    /// notice per conversation, settle the rows, and raise ChannelReplyLost/ProviderCapacity
-    /// now so the TTL sweep cannot send the contradictory "no turn completed" sentence.
+    /// CARD-0281 / CARD-0071 / CARD-0360: a turn killed by the API is never published as a
+    /// chat reply. Retryable non-transport classes stay owed for a resumed turn. Terminal
+    /// classes — and a transport-class death, which is terminal for the <em>correlation</em>
+    /// even while the session ladder stays Transient — send one class-appropriate notice,
+    /// settle the rows, and raise ChannelReplyLost now so the TTL sweep cannot send the
+    /// contradictory "no turn completed" sentence.
     /// </summary>
     private async Task HandleApiErrorWithholdAsync(
         AppDbContext db,
@@ -465,7 +479,10 @@ public sealed class ChannelReplyDispatcher
             }
         }
 
-        if (recovery is null || recovery.ResolvedAt is null)
+        var isTransport = string.Equals(
+            stub?.ApiErrorClass, TranscriptKinds.ApiErrorClasses.Transport, StringComparison.Ordinal);
+
+        if (!isTransport && (recovery is null || recovery.ResolvedAt is null))
         {
             _logger.LogWarning(
                 "Turn on session {SessionId} (prompt seq {PromptSeq}) was killed by an API error; withholding "
@@ -480,22 +497,53 @@ public sealed class ChannelReplyDispatcher
         var kind = session?.AgentKind ?? AgentKind.ClaudeCode;
         var alias = ModelAlias.Normalize(kind, session?.EffectiveModelId)
             ?? ModelLevelAliases.For(kind, AgentModelLevel.High);
-        var notice = ProviderCapacityNotice.Format(
-            kind,
-            alias,
-            stub?.ApiErrorStatus ?? recovery.ApiErrorStatus,
-            ReasonPhraseOf(stub?.ApiErrorClass ?? recovery.ApiErrorClass),
-            fallbackDeclared: false,
-            detail: stub?.Text ?? recovery.ApiErrorClass);
+
+        LossReason lossReason;
+        string notice;
+        if (isTransport)
+        {
+            notice = ProviderCapacityNotice.FormatTransport(kind, alias, retryCount: 0, stub?.Text);
+            lossReason = LossReason.ProviderTransport;
+        }
+        else if (IsCapacityTerminal(recovery?.ResolvedReason))
+        {
+            notice = ProviderCapacityNotice.Format(
+                kind,
+                alias,
+                stub?.ApiErrorStatus ?? recovery?.ApiErrorStatus,
+                ReasonPhraseOf(stub?.ApiErrorClass ?? recovery?.ApiErrorClass),
+                fallbackDeclared: false,
+                detail: stub?.Text ?? recovery?.ApiErrorClass);
+            lossReason = LossReason.ProviderCapacity;
+        }
+        else
+        {
+            notice = ProviderCapacityNotice.FormatProviderError(
+                kind,
+                alias,
+                stub?.ApiErrorStatus ?? recovery?.ApiErrorStatus,
+                ReasonPhraseOf(stub?.ApiErrorClass ?? recovery?.ApiErrorClass),
+                stub?.Text ?? recovery?.ApiErrorClass);
+            lossReason = LossReason.ProviderError;
+        }
 
         await NotifyCapacityAsync(db, open, notice, ct);
         await SettleAsync(db, open, ct);
-        await ReportLostAsync(sessionId, open, LossReason.ProviderCapacity, ct);
+        await ReportLostAsync(
+            sessionId, open, lossReason, ct,
+            apiErrorClass: stub?.ApiErrorClass ?? recovery?.ApiErrorClass,
+            apiErrorStatus: stub?.ApiErrorStatus ?? recovery?.ApiErrorStatus);
         _logger.LogWarning(
             "Turn on session {SessionId} (prompt seq {PromptSeq}) died on a terminal API error "
-            + "({Reason}); {Count} correlation(s) settled with a provider-capacity notice.",
-            sessionId, promptSeq, recovery.ResolvedReason, open.Count);
+            + "({Reason}); {Count} correlation(s) settled with a {Loss} notice.",
+            sessionId, promptSeq, recovery?.ResolvedReason ?? "transport", open.Count, lossReason);
     }
+
+    private static bool IsCapacityTerminal(string? resolvedReason) =>
+        resolvedReason is ApiErrorRecoveryReasons.WallModelPaused
+            or ApiErrorRecoveryReasons.WallParked
+            or ApiErrorRecoveryReasons.NeedsHuman
+            or ApiErrorRecoveryService.WallUnparsedFailureReason;
 
     private async Task NotifyCapacityAsync(
         AppDbContext db,
@@ -698,7 +746,9 @@ public sealed class ChannelReplyDispatcher
         LossReason reason,
         CancellationToken ct,
         TranscriptEntry? unmatchedPrompt = null,
-        int assistantChars = 0)
+        int assistantChars = 0,
+        string? apiErrorClass = null,
+        int? apiErrorStatus = null)
     {
         var conversations = DescribeConversations(lost);
         var why = reason switch
@@ -711,6 +761,12 @@ public sealed class ChannelReplyDispatcher
                 $"a turn completed (prompt seq {unmatchedPrompt?.Sequence}, {assistantChars} chars) but the dispatcher did not route it",
             LossReason.ProviderCapacity =>
                 "the provider refused the request (capacity/auth wall)",
+            LossReason.ProviderTransport =>
+                "the model endpoint was unreachable (connection error)",
+            LossReason.ProviderError =>
+                $"the turn died on a provider error ({apiErrorClass ?? "unknown"}"
+                + (apiErrorStatus is int s ? $", HTTP {s}" : "")
+                + ") and no automatic resume answered",
             _ => $"no turn matching the message completed within {_settings.PendingReplyTtlMinutes} minutes",
         };
         var oldest = lost.Min(m => m.SentAt ?? m.CreatedAt);
@@ -780,9 +836,13 @@ public sealed class ChannelReplyDispatcher
             // (every AlertMinSeverity is null today; filling one would dump every Critical into
             // Family). Unroutable has nowhere to send. A send failure is a Warning, never a
             // failed sweep — the incident has already committed.
-            // ProviderCapacity already sent its own notice at withhold time; do not follow
-            // with the contradictory "no turn completed" sentence.
-            if (reason is not LossReason.Unroutable and not LossReason.ProviderCapacity)
+            // ProviderCapacity / ProviderTransport / ProviderError already sent their own
+            // notice at withhold time; do not follow with the contradictory "no turn completed"
+            // sentence.
+            if (reason is not LossReason.Unroutable
+                and not LossReason.ProviderCapacity
+                and not LossReason.ProviderTransport
+                and not LossReason.ProviderError)
                 await NotifyOriginatingConversationsAsync(scope.ServiceProvider, lost, why, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

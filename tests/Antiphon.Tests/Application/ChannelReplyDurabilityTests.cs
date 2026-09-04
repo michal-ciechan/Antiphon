@@ -5,6 +5,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -691,5 +692,200 @@ public class ChannelReplyDurabilityTests
         await db.ModelAvailabilityHolds
             .Where(x => x.SourceSessionId == h.SessionId)
             .ExecuteDeleteAsync();
+    }
+
+    private const string TransportPrompt = "[Telegram \"Family\" — Mike 11:00] ping the grok proxy";
+    private const string TransportDetail =
+        "error sending request for url (http://localhost:10746/v1/chat/completions)";
+    private const string TransportText = TransportDetail + " [after 15 retries]";
+
+    [Test]
+    public async Task A_grok_transport_death_sends_the_error_now_settles_and_skips_ttl()
+    {
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var conversationKey = $"telegram:{chatId}";
+        await StampGrokAsync(h.SessionId);
+
+        var messageId = await h.SeedChannelCorrelationAsync(TransportPrompt, conversationKey);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, TransportPrompt);
+        await h.InsertTranscriptEntryAsync(
+            TranscriptKinds.TurnEnd,
+            TransportText,
+            stopReason: TranscriptKinds.StopReasons.Error,
+            isApiError: true,
+            apiErrorClass: TranscriptKinds.ApiErrorClasses.Transport,
+            apiErrorStatus: null);
+
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        await AssertTransportNoticeAsync(h, chatId, messageId);
+    }
+
+    [Test]
+    public async Task The_measured_transport_fixture_dispatches_the_error_through_the_runtime()
+    {
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var conversationKey = $"telegram:{chatId}";
+        await StampGrokAsync(h.SessionId);
+
+        var messageId = await h.SeedChannelCorrelationAsync(TransportPrompt, conversationKey);
+        h.Runner.SetTranscript(TransportFixtureBatch(h.SessionId));
+
+        await h.Runtime.SyncTranscriptAsync(h.SessionId, CancellationToken.None);
+
+        await AssertTransportNoticeAsync(h, chatId, messageId);
+    }
+
+    [Test]
+    public async Task A_second_transport_death_on_the_same_session_notifies_again()
+    {
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var conversationKey = $"telegram:{chatId}";
+        await StampGrokAsync(h.SessionId);
+
+        var firstId = await h.SeedChannelCorrelationAsync(TransportPrompt, conversationKey);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, TransportPrompt);
+        await h.InsertTranscriptEntryAsync(
+            TranscriptKinds.TurnEnd,
+            TransportText,
+            stopReason: TranscriptKinds.StopReasons.Error,
+            isApiError: true,
+            apiErrorClass: TranscriptKinds.ApiErrorClasses.Transport);
+
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        h.Messaging.SentReplies.Where(r => r.ConversationId == chatId).Count().ShouldBe(1);
+        (await RowAsync(firstId)).ChannelReplySettledAt.ShouldNotBeNull();
+
+        const string secondPrompt = "[Telegram \"Family\" — Mike 11:05] try the grok proxy again";
+        var secondId = await h.SeedChannelCorrelationAsync(secondPrompt, conversationKey);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, secondPrompt);
+        await h.InsertTranscriptEntryAsync(
+            TranscriptKinds.TurnEnd,
+            TransportText,
+            stopReason: TranscriptKinds.StopReasons.Error,
+            isApiError: true,
+            apiErrorClass: TranscriptKinds.ApiErrorClasses.Transport);
+
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.Where(r => r.ConversationId == chatId).Count().ShouldBe(2,
+            "ApiErrorTurnDied dedup must not swallow the second channel notice");
+        foreach (var notice in h.Messaging.SentReplies.Where(r => r.ConversationId == chatId))
+        {
+            notice.Text.ShouldNotBeNull();
+            notice.Text.ShouldContain("couldn't reach");
+        }
+
+        (await RowAsync(secondId)).ChannelReplySettledAt.ShouldNotBeNull();
+
+        await using var db = CreateContext();
+        (await db.AgentIncidents.CountAsync(i =>
+            i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.ChannelReplyLost
+            && i.FailureReason == "ProviderTransport")).ShouldBe(2);
+        (await db.AgentIncidents.CountAsync(i =>
+            i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.ApiErrorTurnDied)).ShouldBe(1);
+    }
+
+    [Test]
+    public async Task A_grok_transient_5xx_death_stays_owed_and_sends_nothing_at_withhold()
+    {
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var conversationKey = $"telegram:{chatId}";
+        await StampGrokAsync(h.SessionId);
+
+        var messageId = await h.SeedChannelCorrelationAsync(TransportPrompt, conversationKey);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, TransportPrompt);
+        await h.InsertTranscriptEntryAsync(
+            TranscriptKinds.TurnEnd,
+            "The model is currently at capacity",
+            stopReason: TranscriptKinds.StopReasons.Error,
+            isApiError: true,
+            apiErrorClass: "server_error",
+            apiErrorStatus: 500);
+
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.Where(r => r.ConversationId == chatId).ShouldBeEmpty();
+        (await RowAsync(messageId)).ChannelReplySettledAt.ShouldBeNull();
+        (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(1);
+
+        await using var db = CreateContext();
+        (await db.AgentIncidents.AnyAsync(i =>
+            i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.ChannelReplyLost))
+            .ShouldBeFalse();
+        var recovery = await db.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == h.SessionId);
+        recovery.Classification.ShouldBe(ApiErrorClassification.Transient);
+        recovery.ResolvedAt.ShouldBeNull();
+        recovery.NextAttemptAt.ShouldNotBeNull();
+    }
+
+    private static async Task StampGrokAsync(Guid sessionId)
+    {
+        await using var stamp = CreateContext();
+        await stamp.AgentSessions.Where(s => s.Id == sessionId)
+            .ExecuteUpdateAsync(u => u
+                .SetProperty(s => s.AgentKind, AgentKind.Grok)
+                .SetProperty(s => s.EffectiveModelId, "grok-4.6"));
+    }
+
+    private static async Task AssertTransportNoticeAsync(
+        BridgeQueueHarness h, string chatId, Guid messageId)
+    {
+        var notice = h.Messaging.SentReplies.Where(r => r.ConversationId == chatId).ShouldHaveSingleItem();
+        notice.Text.ShouldNotBeNull();
+        notice.Text.ShouldContain("couldn't reach");
+        notice.Text.ShouldContain("Grok");
+        notice.Text.ShouldContain("after 15 attempts");
+        notice.Text.ShouldNotContain("http://");
+        notice.ReplyHandle.ShouldBe(chatId);
+        (await RowAsync(messageId)).ChannelReplySettledAt.ShouldNotBeNull();
+        (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(0);
+
+        await using var db = CreateContext();
+        var incident = (await db.AgentIncidents
+                .Where(i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.ChannelReplyLost)
+                .ToListAsync())
+            .ShouldHaveSingleItem();
+        incident.FailureReason.ShouldBe("ProviderTransport");
+        incident.Severity.ShouldBe(AlertSeverity.Critical);
+
+        var recovery = await db.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == h.SessionId);
+        recovery.Classification.ShouldBe(ApiErrorClassification.Transient);
+        recovery.NextAttemptAt.ShouldNotBeNull();
+
+        var beforeSweep = h.Messaging.SentReplies.Count;
+        _ = await h.Dispatcher.SweepStaleCorrelationsAsync(CancellationToken.None);
+        h.Messaging.SentReplies.Skip(beforeSweep)
+            .Where(r => r.ConversationId == chatId && r.Text != null
+                && r.Text.StartsWith(ChannelReplyDispatcher.LostReplyNoticePrefix, StringComparison.Ordinal))
+            .ShouldBeEmpty("TTL must not send a follow-up notice after a transport death");
+    }
+
+    private static SessionRunnerTranscriptDto TransportFixtureBatch(Guid sessionId)
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "Fixtures", "grok-transport-error.jsonl");
+        File.Exists(path).ShouldBeTrue($"fixture missing at {path}");
+        var n = new GrokTranscriptNormalizer();
+        var events = new List<SessionRunnerTranscriptEvent>();
+        long seq = 0;
+        foreach (var line in File.ReadAllLines(path))
+        {
+            if (string.IsNullOrWhiteSpace(line) || line.StartsWith('#'))
+                continue;
+            foreach (var p in n.Normalize(line))
+            {
+                events.Add(new SessionRunnerTranscriptEvent(
+                    sessionId, ++seq, p.Kind, p.Uuid, p.ParentUuid, p.Timestamp,
+                    p.Role, p.Text, p.ToolName, p.ToolInput, p.ToolUseId, p.ToolIsError, p.StopReason,
+                    p.ApiCallId, p.InputTokens, p.OutputTokens, p.CacheReadTokens, p.CacheCreationTokens,
+                    p.IsApiError, p.ApiErrorClass, p.ApiErrorStatus, p.Model, p.ModelCalls));
+            }
+        }
+
+        return new(sessionId, events, seq);
     }
 }
