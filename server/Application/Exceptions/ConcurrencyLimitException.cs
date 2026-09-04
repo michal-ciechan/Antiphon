@@ -1,9 +1,10 @@
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Exceptions;
 
 /// <summary>
-/// CARD-0147: a create that would push the fleet or this role past the in-flight cap.
+/// CARD-0147 / CARD-0366: a create that would push this project — or this role within it — past the in-flight cap.
 /// HTTP 409, <c>code: concurrency_limit</c>, with a <c>concurrency</c> problem-details extension.
 /// </summary>
 public sealed class ConcurrencyLimitException : HttpException
@@ -29,9 +30,12 @@ public sealed class ConcurrencyLimitException : HttpException
 
     public static string FormatDetail(ConcurrencyLimitProblemDto concurrency)
     {
+        var scope = concurrency.ProjectId is { } projectId
+            ? $" in project {DelegationReportFormatter.Short(projectId)}"
+            : string.Empty;
         var axis = concurrency.Axis == "role" && concurrency.Role is { Length: > 0 } role
-            ? $"{concurrency.Count} {role} task{(concurrency.Count == 1 ? "" : "s")} already in flight (limit {concurrency.Limit})"
-            : $"{concurrency.Count} task{(concurrency.Count == 1 ? "" : "s")} already in flight (limit {concurrency.Limit})";
+            ? $"{concurrency.Count} {role} task{(concurrency.Count == 1 ? "" : "s")} already in flight{scope} (limit {concurrency.Limit})"
+            : $"{concurrency.Count} task{(concurrency.Count == 1 ? "" : "s")} already in flight{scope} (limit {concurrency.Limit})";
 
         var shown = concurrency.Open.Take(OccupantListCap).Select(FormatOccupant).ToList();
         var extra = concurrency.Open.Count - shown.Count;
@@ -57,14 +61,18 @@ public sealed class ConcurrencyLimitException : HttpException
         int absoluteLimit,
         AgentTaskRole role,
         int roleCount,
-        int? roleLimit)
+        int? roleLimit,
+        Guid? projectId)
     {
         var absolute = $"{openCount}/{absoluteLimit} open (limit {absoluteLimit})";
         var roleBit = roleLimit is int limit
             ? $"{roleCount}/{limit} {role} (limit {limit})"
             : $"{role} has no per-role cap";
+        var scope = projectId is { } id
+            ? $" in project {DelegationReportFormatter.Short(id)}"
+            : string.Empty;
         return
-            $"Concurrency limit ignored: {absolute}, {roleBit}. Proceeding because {OverrideFlag}=true.";
+            $"Concurrency limit ignored: {absolute}, {roleBit}{scope}. Proceeding because {OverrideFlag}=true.";
     }
 }
 
@@ -75,7 +83,8 @@ public sealed record ConcurrencyLimitProblemDto(
     int Count,
     int Limit,
     IReadOnlyList<ConcurrencyLimitOccupantDto> Open,
-    string Override);
+    string Override,
+    Guid? ProjectId);
 
 /// <summary>One occupant named by a 409 <c>concurrency_limit</c>.</summary>
 public sealed record ConcurrencyLimitOccupantDto(

@@ -10,8 +10,9 @@
 # ASCII-only on purpose: daemon/agent scripts must parse under Windows PowerShell 5.1, which reads
 # a no-BOM .ps1 as CP1252 and mangles non-ASCII characters.
 #
-# CARD-0147: create is sequential-by-default. A 409 concurrency_limit names the occupants and
-# the cap; re-send with -IgnoreConcurrencyLimit only when the user asked for parallel work.
+# CARD-0147 / CARD-0366: create is sequential-by-default. A 409 concurrency_limit names the
+# occupants and the cap (counts and occupants are the calling session's project only);
+# re-send with -IgnoreConcurrencyLimit only when the user asked for parallel work.
 [CmdletBinding(DefaultParameterSetName = 'Create')]
 param(
     [Parameter(ParameterSetName = 'Create', Position = 0)]
@@ -123,8 +124,9 @@ param(
     [switch]$IgnoreModelDisabled,
 
     # Bypass the CARD-0147 create-time 409 concurrency_limit. Queues this one task past the
-    # fleet/role in-flight cap (default 3 absolute, 1 per named role). One-shot: it does
-    # not raise Delegation:MaxConcurrentTasks, and the dispatcher still skips past 6.
+    # project/role in-flight cap (default 3 absolute, 1 per named role). Counts and occupants
+    # are the calling session's project only. One-shot: it does not raise
+    # Delegation:MaxConcurrentTasks, and the dispatcher still skips past 6.
     # Use only when the user asked for parallel work this turn.
     [Parameter(ParameterSetName = 'Create')]
     [switch]$IgnoreConcurrencyLimit,

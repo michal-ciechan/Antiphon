@@ -23,8 +23,9 @@ public sealed class DelegationSettings
 
     /// <summary>
     /// CARD-0147: absolute create-time cap on non-specialist tasks in Queued, Dispatched, or
-    /// Working. Distinct from <see cref="MaxConcurrentTasks"/> (the dispatcher process ceiling).
-    /// Must be a positive integer; there is always an absolute cap.
+    /// Working, per project scope (<c>AgentTask.ProjectId</c>; tasks with no project scope form
+    /// their own bucket). Distinct from <see cref="MaxConcurrentTasks"/> (the dispatcher process
+    /// ceiling). Must be a positive integer; there is always an absolute cap.
     /// </summary>
     public int MaxOpenTasks { get; set; } = 3;
 
@@ -857,12 +858,13 @@ public sealed class DelegationSettings
         public AgentKind? Kind { get; set; }
 
         /// <summary>
-        /// In-flight recommendation for this role (CARD-0304 / CARD-0147). Global, not per-board.
-        /// Null means unbounded. A configured value must be positive. Create refuses when this
-        /// role's open (Queued/Dispatched/Working) count meets the number, unless
-        /// <c>ignoreConcurrencyLimit</c>. Does not change <see cref="DelegationSettings.MaxConcurrentTasks"/>
-        /// dispatch — the pipeline endpoint still reports whether the current in-flight count is
-        /// at or over it.
+        /// In-flight recommendation for this role (CARD-0304 / CARD-0147). Global, not per-board;
+        /// the count is per project scope (<c>AgentTask.ProjectId</c>; tasks with no project scope
+        /// form their own bucket). Null means unbounded. A configured value must be positive.
+        /// Create refuses when this role's open (Queued/Dispatched/Working) count meets the number,
+        /// unless <c>ignoreConcurrencyLimit</c>. Does not change
+        /// <see cref="DelegationSettings.MaxConcurrentTasks"/> dispatch — the pipeline endpoint
+        /// still reports whether the current in-flight count is at or over it.
         /// </summary>
         public int? RecommendedInFlight { get; set; } = 1;
     }

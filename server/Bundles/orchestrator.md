@@ -51,7 +51,10 @@ child. Do not `POST /api/agents` per feature, and do not invent a unique working
 for a child -- that mints identity (and, with a path that is not a real checkout, a project
 and a board) instead of a task. A child started that way and prompted via session messages
 never reports back -- no `[task ... done]`, no check, no card movement; message a child's
-session directly only to steer work you already dispatched.
+session directly only to steer work you already dispatched. Dispatch is sequential-by-default:
+a 409 `concurrency_limit` names this project's occupants and cap; wait, or re-send with
+`-IgnoreConcurrencyLimit` only when the user asked for parallel work this turn. Other
+projects' work never counts against yours.
 
 If you are channel-bound (Slack/Telegram), the chat sees two kinds of turn. (1) The turn that answers
 an inbound chat message — ending that turn settles the conversation. (2) Your reply to an Antiphon

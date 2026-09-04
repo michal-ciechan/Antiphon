@@ -741,7 +741,7 @@ public sealed class AgentTaskService
         {
             if (gateCreate)
                 openSnapshot = await _openGate!.EnsureCanCreateAsync(
-                    request.Role, request.IgnoreConcurrencyLimit, ct);
+                    projectId, request.Role, request.IgnoreConcurrencyLimit, ct);
 
         _db.AgentTasks.Add(task);
         _db.AgentTaskEvents.Add(new AgentTaskEvent
@@ -791,7 +791,8 @@ public sealed class AgentTaskService
                     openSnapshot.AbsoluteLimit,
                     openSnapshot.Role,
                     openSnapshot.RoleCount,
-                    openSnapshot.RoleLimit),
+                    openSnapshot.RoleLimit,
+                    projectId),
                 now);
         }
 

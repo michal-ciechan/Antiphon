@@ -8,9 +8,10 @@ using Microsoft.Extensions.Options;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// CARD-0147 S1: serialize count-and-insert for the create-time concurrency cap.
-/// Lives on create, not on the dispatcher tick — a tick-level skip would leave the
-/// orchestrator thinking the task started.
+/// CARD-0147 S1: serialize count-and-insert for the create-time concurrency cap,
+/// keyed by the task's project scope (CARD-0366). Lives on create, not on the
+/// dispatcher tick — a tick-level skip would leave the orchestrator thinking the
+/// task started.
 /// </summary>
 public sealed class DelegationOpenGate
 {
@@ -43,7 +44,8 @@ public sealed class DelegationOpenGate
         IReadOnlyList<Occupant> Open,
         AgentTaskRole Role,
         int AbsoluteLimit,
-        int? RoleLimit)
+        int? RoleLimit,
+        Guid? ProjectId)
     {
         public int AbsoluteCount => Open.Count;
         public int RoleCount => Open.Count(o => o.Role == Role);
@@ -53,17 +55,19 @@ public sealed class DelegationOpenGate
     }
 
     /// <summary>
-    /// Take the xact lock, count open non-specialists, and throw 409 unless
+    /// Take the xact lock, count open non-specialists in <paramref name="projectId"/>
+    /// (null is its own bucket), and throw 409 unless
     /// <paramref name="ignoreConcurrencyLimit"/> is set. Caller must already be
     /// inside an EF transaction so the lock is held through insert.
     /// </summary>
     public async Task<Snapshot> EnsureCanCreateAsync(
+        Guid? projectId,
         AgentTaskRole role,
         bool ignoreConcurrencyLimit,
         CancellationToken ct)
     {
         await TakeLockAsync(ct);
-        var snapshot = await LoadSnapshotAsync(role, ct);
+        var snapshot = await LoadSnapshotAsync(projectId, role, ct);
         if (ignoreConcurrencyLimit || !snapshot.WouldRefuse)
             return snapshot;
 
@@ -87,7 +91,8 @@ public sealed class DelegationOpenGate
             Count: axis == "absolute" ? snapshot.AbsoluteCount : snapshot.RoleCount,
             Limit: axis == "absolute" ? snapshot.AbsoluteLimit : snapshot.RoleLimit ?? 0,
             Open: listed,
-            Override: ConcurrencyLimitException.OverrideFlag);
+            Override: ConcurrencyLimitException.OverrideFlag,
+            ProjectId: snapshot.ProjectId);
     }
 
     public static ConcurrencyLimitOccupantDto ToOccupantDto(Occupant occupant) =>
@@ -104,12 +109,13 @@ public sealed class DelegationOpenGate
             $"SELECT pg_advisory_xact_lock(hashtext('{AdvisoryLockKey}'))",
             cancellationToken: ct);
 
-    private async Task<Snapshot> LoadSnapshotAsync(AgentTaskRole role, CancellationToken ct)
+    private async Task<Snapshot> LoadSnapshotAsync(Guid? projectId, AgentTaskRole role, CancellationToken ct)
     {
         var rows = await _db.AgentTasks
             .AsNoTracking()
             .Where(AgentTaskRoles.NotSpecialist)
             .Where(t => OpenStatuses.Contains(t.Status))
+            .Where(t => t.ProjectId == projectId)
             .Select(t => new { t.Id, t.Role, t.Status, t.Title })
             .ToListAsync(ct);
 
@@ -123,7 +129,7 @@ public sealed class DelegationOpenGate
                 stuck.GetValueOrDefault(r.Id)))
             .ToList();
 
-        return new Snapshot(open, role, _settings.MaxOpenTasks, _settings.RecommendedInFlightFor(role));
+        return new Snapshot(open, role, _settings.MaxOpenTasks, _settings.RecommendedInFlightFor(role), projectId);
     }
 
     /// <summary>

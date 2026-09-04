@@ -15,8 +15,9 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-0147 S1: create-time 409 <c>concurrency_limit</c>. Isolated schema so fleet-wide
-/// counts do not collide with other suites writing the shared Postgres container.
+/// CARD-0147 S1 / CARD-0366: create-time 409 <c>concurrency_limit</c>, keyed by project
+/// scope. Isolated schema so counts do not collide with other suites writing the shared
+/// Postgres container.
 /// </summary>
 [Category("Integration")]
 public class AgentTaskConcurrencyLimitTests
@@ -79,6 +80,8 @@ public class AgentTaskConcurrencyLimitTests
         payload.Override.ShouldBe("ignoreConcurrencyLimit");
         payload.Open.Count.ShouldBe(3);
         payload.Open.Select(o => o.TaskId).OrderBy(id => id).ShouldBe(seeded.Select(t => t.Id).OrderBy(id => id));
+        payload.ProjectId.ShouldBeNull();
+        ex.Message.ShouldNotContain("in project");
 
         await using var verify = CreateContext(schema);
         (await verify.AgentTasks.CountAsync(t => t.Goal == goal))
@@ -404,6 +407,231 @@ public class AgentTaskConcurrencyLimitTests
     }
 
     [Test]
+    public async Task two_projects_each_near_their_own_cap_do_not_block_each_other()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var projectP = await SeedProjectAsync(db);
+        var projectQ = await SeedProjectAsync(db);
+        var parentP = await SeedOrchestratorParentAsync(db, workspace.Path, projectP);
+        var parentQ = await SeedOrchestratorParentAsync(db, workspace.Path, projectQ);
+        await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Custom, AgentTaskStatus.Queued, Unique("p-queued"), projectP);
+        await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Custom, AgentTaskStatus.Queued, Unique("q-queued"), projectQ);
+
+        var createdP = await CreateService(db).CreateAsync(
+            Request(Unique("p-create"), AgentTaskRole.Custom),
+            ParentCaller(parentP, workspace.Path),
+            CancellationToken.None);
+        var createdQ = await CreateService(db).CreateAsync(
+            Request(Unique("q-create"), AgentTaskRole.Custom),
+            ParentCaller(parentQ, workspace.Path),
+            CancellationToken.None);
+
+        createdP.Status.ShouldBe(AgentTaskStatus.Queued);
+        createdQ.Status.ShouldBe(AgentTaskStatus.Queued);
+
+        await using var verify = CreateContext(schema);
+        (await verify.AgentTasks.SingleAsync(t => t.Id == createdP.Id)).ProjectId.ShouldBe(projectP);
+        (await verify.AgentTasks.SingleAsync(t => t.Id == createdQ.Id)).ProjectId.ShouldBe(projectQ);
+    }
+
+    [Test]
+    public async Task a_role_slot_taken_in_another_project_is_free_in_this_one()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var projectP = await SeedProjectAsync(db);
+        var projectQ = await SeedProjectAsync(db);
+        var parentP = await SeedOrchestratorParentAsync(db, workspace.Path, projectP);
+        await SeedOrchestratorParentAsync(db, workspace.Path, projectQ);
+        await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Debug, AgentTaskStatus.Working, Unique("q-debug"), projectQ);
+
+        var created = await CreateService(db).CreateAsync(
+            Request(Unique("p-debug"), AgentTaskRole.Debug),
+            ParentCaller(parentP, workspace.Path),
+            CancellationToken.None);
+
+        created.Status.ShouldBe(AgentTaskStatus.Queued);
+    }
+
+    [Test]
+    public async Task null_project_tasks_form_their_own_bucket()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var projectP = await SeedProjectAsync(db);
+        var parentP = await SeedOrchestratorParentAsync(db, workspace.Path, projectP);
+        var nullOpen = await SeedOpenAsync(db, workspace.Path,
+            (AgentTaskRole.Custom, AgentTaskStatus.Queued),
+            (AgentTaskRole.Custom, AgentTaskStatus.Queued),
+            (AgentTaskRole.Custom, AgentTaskStatus.Queued));
+
+        var created = await CreateService(db).CreateAsync(
+            Request(Unique("p-beside-null"), AgentTaskRole.Custom),
+            ParentCaller(parentP, workspace.Path),
+            CancellationToken.None);
+        created.Status.ShouldBe(AgentTaskStatus.Queued);
+
+        var goal = Unique("null-fourth");
+        var ex = await Should.ThrowAsync<ConcurrencyLimitException>(
+            () => CreateService(db).CreateAsync(
+                Request(goal, AgentTaskRole.Custom),
+                ManualCaller(workspace.Path),
+                CancellationToken.None));
+
+        ex.Concurrency.Axis.ShouldBe("absolute");
+        ex.Concurrency.ProjectId.ShouldBeNull();
+        ex.Concurrency.Open.Select(o => o.TaskId).OrderBy(id => id)
+            .ShouldBe(nullOpen.Select(t => t.Id).OrderBy(id => id));
+        ex.Concurrency.Open.ShouldNotContain(o => o.TaskId == parentP.Id);
+
+        await using var verify = CreateContext(schema);
+        (await verify.AgentTasks.CountAsync(t => t.Goal == goal)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task same_project_at_the_cap_is_refused_and_names_only_its_own_occupants()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var projectP = await SeedProjectAsync(db);
+        var projectQ = await SeedProjectAsync(db);
+        var parentP = await SeedOrchestratorParentAsync(db, workspace.Path, projectP);
+        var pOpen = new List<AgentTask> { parentP };
+        pOpen.Add(await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Custom, AgentTaskStatus.Queued, Unique("p-open-1"), projectP));
+        pOpen.Add(await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Custom, AgentTaskStatus.Queued, Unique("p-open-2"), projectP));
+        var qTitles = new[] { "q-occupant-alpha", "q-occupant-bravo", "q-occupant-charlie" };
+        var qOpen = new List<AgentTask>();
+        foreach (var title in qTitles)
+            qOpen.Add(await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Custom, AgentTaskStatus.Queued, title, projectQ));
+        var goal = Unique("p-fourth");
+
+        var ex = await Should.ThrowAsync<ConcurrencyLimitException>(
+            () => CreateService(db).CreateAsync(
+                Request(goal, AgentTaskRole.Test),
+                ParentCaller(parentP, workspace.Path),
+                CancellationToken.None));
+
+        ex.Concurrency.Axis.ShouldBe("absolute");
+        ex.Concurrency.Count.ShouldBe(3);
+        ex.Concurrency.Limit.ShouldBe(3);
+        ex.Concurrency.ProjectId.ShouldBe(projectP);
+        ex.Concurrency.Open.Select(o => o.TaskId).OrderBy(id => id)
+            .ShouldBe(pOpen.Select(t => t.Id).OrderBy(id => id));
+        qOpen.Select(t => t.Id).ShouldAllBe(id => ex.Concurrency.Open.All(o => o.TaskId != id));
+        ex.Message.ShouldContain($"in project {DelegationReportFormatter.Short(projectP)}");
+        ex.Message.ShouldNotContain(DelegationReportFormatter.Short(projectQ));
+        foreach (var title in qTitles)
+            ex.Message.ShouldNotContain(title);
+
+        await using var verify = CreateContext(schema);
+        (await verify.AgentTasks.CountAsync(t => t.Goal == goal)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task same_project_role_axis_still_refuses_and_lists_only_this_projects_role_occupant()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var projectP = await SeedProjectAsync(db);
+        var projectQ = await SeedProjectAsync(db);
+        var parentP = await SeedOrchestratorParentAsync(db, workspace.Path, projectP);
+        var pDebug = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Debug, AgentTaskStatus.Working, Unique("p-debug"), projectP);
+        await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Debug, AgentTaskStatus.Working, Unique("q-debug"), projectQ);
+        var goal = Unique("p-second-debug");
+
+        var ex = await Should.ThrowAsync<ConcurrencyLimitException>(
+            () => CreateService(db).CreateAsync(
+                Request(goal, AgentTaskRole.Debug),
+                ParentCaller(parentP, workspace.Path),
+                CancellationToken.None));
+
+        ex.Concurrency.Axis.ShouldBe("role");
+        ex.Concurrency.Role.ShouldBe("Debug");
+        ex.Concurrency.Count.ShouldBe(1);
+        ex.Concurrency.ProjectId.ShouldBe(projectP);
+        ex.Concurrency.Open.ShouldHaveSingleItem().TaskId.ShouldBe(pDebug.Id);
+        await using (var verify = CreateContext(schema))
+            (await verify.AgentTasks.CountAsync(t => t.Goal == goal)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task override_at_the_project_cap_creates_and_the_warning_names_the_project()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var projectP = await SeedProjectAsync(db);
+        var parentP = await SeedOrchestratorParentAsync(db, workspace.Path, projectP);
+        await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Custom, AgentTaskStatus.Queued, Unique("p-open-1"), projectP);
+        await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Custom, AgentTaskStatus.Queued, Unique("p-open-2"), projectP);
+
+        var created = await CreateService(db).CreateAsync(
+            Request(Unique("p-override"), AgentTaskRole.Plan) with { IgnoreConcurrencyLimit = true },
+            ParentCaller(parentP, workspace.Path),
+            CancellationToken.None);
+
+        created.Status.ShouldBe(AgentTaskStatus.Queued);
+
+        await using var verify = CreateContext(schema);
+        var warning = await verify.AgentTaskEvents.SingleAsync(
+            e => e.AgentTaskId == created.Id && e.Type == AgentTaskEventType.Warning);
+        warning.Detail.ShouldContain("3/3");
+        warning.Detail.ShouldContain("limit 3");
+        warning.Detail.ShouldContain("Plan");
+        warning.Detail.ShouldContain("ignoreConcurrencyLimit");
+        warning.Detail.ShouldContain($"in project {DelegationReportFormatter.Short(projectP)}");
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task the_lock_still_serialises_creates_within_one_project(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var settings = new DelegationSettings
+        {
+            MaxOpenTasks = 2,
+            MaxDepth = 5,
+            MaxTasksPerRoot = 40,
+            MaxCostUsdPerRoot = 50.00m,
+        };
+        await using var seedDb = CreateContext(schema);
+        var projectP = await SeedProjectAsync(seedDb);
+        var parentP = await SeedOrchestratorParentAsync(seedDb, workspace.Path, projectP);
+        var goalA = Unique("lock-a");
+        var goalB = Unique("lock-b");
+
+        await using var dbA = CreateContext(schema);
+        await using var dbB = CreateContext(schema);
+        var serviceA = CreateService(dbA, settings);
+        var serviceB = CreateService(dbB, settings);
+        var caller = ParentCaller(parentP, workspace.Path);
+
+        var attemptA = AttemptCreate(serviceA, goalA, caller, ct);
+        var attemptB = AttemptCreate(serviceB, goalB, caller, ct);
+        await Task.WhenAll(attemptA, attemptB);
+
+        var outcomes = new[] { attemptA.Result, attemptB.Result };
+        outcomes.Count(o => o.Created is not null).ShouldBe(1);
+        outcomes.Count(o => o.Error is ConcurrencyLimitException).ShouldBe(1);
+        var refused = outcomes.Select(o => o.Error).OfType<ConcurrencyLimitException>().Single();
+        refused.Code.ShouldBe("concurrency_limit");
+        refused.Concurrency.ProjectId.ShouldBe(projectP);
+
+        await using var verify = CreateContext(schema);
+        var inserted = await verify.AgentTasks
+            .Where(t => t.Goal == goalA || t.Goal == goalB)
+            .ToListAsync();
+        inserted.ShouldHaveSingleItem();
+    }
+
+    [Test]
     public async Task a_plan_and_a_code_together_are_under_the_absolute_cap()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -463,6 +691,9 @@ public class AgentTaskConcurrencyLimitTests
 
     private static AgentTaskService.Caller ManualCaller(string directory) => new(null, null, directory);
 
+    private static AgentTaskService.Caller ParentCaller(AgentTask parent, string directory) =>
+        new(parent, null, directory);
+
     private static string Unique(string label) => $"c0147-{label}-{Guid.NewGuid():N}";
 
     private static async Task<List<AgentTask>> SeedOpenAsync(
@@ -476,12 +707,52 @@ public class AgentTaskConcurrencyLimitTests
         return seeded;
     }
 
+    private static async Task<Guid> SeedProjectAsync(AppDbContext db)
+    {
+        var now = DateTime.UtcNow;
+        var project = new Project
+        {
+            Id = Guid.NewGuid(),
+            Name = $"c0366-{Guid.NewGuid():N}",
+            GitRepositoryUrl = "https://example.test/c0366.git",
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        db.Projects.Add(project);
+        await db.SaveChangesAsync();
+        return project.Id;
+    }
+
+    private static async Task<AgentTask> SeedOrchestratorParentAsync(
+        AppDbContext db, string directory, Guid projectId)
+    {
+        var id = Guid.NewGuid();
+        var task = new AgentTask
+        {
+            Id = id,
+            RootTaskId = id,
+            Title = Unique("parent"),
+            Goal = Unique("parent"),
+            Kind = AgentTaskKind.Orchestrator,
+            Role = AgentTaskRole.Custom,
+            ProjectId = projectId,
+            Status = AgentTaskStatus.Working,
+            Workspace = WorkspaceMode.Shared,
+            WorkingDirectory = directory,
+            CreatedAt = DateTime.UtcNow,
+        };
+        db.AgentTasks.Add(task);
+        await db.SaveChangesAsync();
+        return task;
+    }
+
     private static async Task<AgentTask> SeedTaskAsync(
         AppDbContext db,
         string directory,
         AgentTaskRole role,
         AgentTaskStatus status,
-        string title)
+        string title,
+        Guid? projectId = null)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -492,6 +763,7 @@ public class AgentTaskConcurrencyLimitTests
             Goal = title,
             Role = role,
             Status = status,
+            ProjectId = projectId,
             Workspace = WorkspaceMode.Shared,
             WorkingDirectory = directory,
             CreatedAt = DateTime.UtcNow,

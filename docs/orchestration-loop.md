@@ -188,7 +188,9 @@ Frontier maps to fable (Claude) by default, or `grok-4.6` when `Kind=Grok` is pa
 If `delegate.ps1` 409s `model_disabled`, pick an alias from `available` or wait until
 `disabledUntil`; do not retry the same kind/tier. If the 409 also says the available list does
 not satisfy a routing pin, wait, pass `-IgnoreModelDisabled` to queue, or replace the pin — do
-not pick from `available`.
+not pick from `available`. Dispatch is sequential-by-default: a 409 `concurrency_limit` names
+this project's occupants and cap; wait, or re-send with `-IgnoreConcurrencyLimit` only when
+the user asked for parallel work this turn. Other projects' work never counts against yours.
 
 ### Reuse first
 

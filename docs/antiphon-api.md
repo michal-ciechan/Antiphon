@@ -255,7 +255,7 @@ API and is fully commented in place. The fields that change behaviour most: `rol
 (`Worker` / `Orchestrator`), `modelLevel`, `agentKind` (ClaudeCode / Grok / Codex — see
 [agent-kinds.md](agent-kinds.md)), `workspace`, `workingDirectory`, `scope`, `followUpOnTask`,
 `expectedMinutes`, `envOverride`, `ignoreSubscriptionQuota`, `ignoreModelDisabled`,
-`ignoreRoutingPin`, `ignoreConcurrencyLimit` (CARD-0147; omits the create-time fleet/role cap for this request only), `authority` (CARD-0294 standing authority, ≤ 2000 chars; `autoContinue`
+`ignoreRoutingPin`, `ignoreConcurrencyLimit` (CARD-0147; omits the create-time project/role cap for this request only), `authority` (CARD-0294 standing authority, ≤ 2000 chars; `autoContinue`
 without it is 422 `auto_continue_needs_authority`).
 
 `role` is `AgentTaskRole`. Dispatchable: `Investigate`, `Plan`, `TestDesign`, `Code`, `Review`,
@@ -268,11 +268,12 @@ without it is 422 `auto_continue_needs_authority`).
 > `ignoreSubscriptionQuota: true`, or pick another `agentKind`/agent. The dispatcher never refuses;
 > it only records an informational warning.
 >
-> It can also refuse with **409 `concurrency_limit`** (CARD-0147) when a new non-specialist task
-> would push the fleet past `Delegation:MaxOpenTasks` (default 3) or that role past
+> It can also refuse with **409 `concurrency_limit`** (CARD-0147 / CARD-0366) when a new non-specialist task
+> would push its project scope past `Delegation:MaxOpenTasks` (default 3) or that role within the project past
 > `RolePolicy[role].RecommendedInFlight` (default 1). Queued, Dispatched and Working count; Blocked
-> does not; specialists and live follow-ups are exempt. The `concurrency` extension names the axis,
-> the occupants, and `override: "ignoreConcurrencyLimit"`. Retry with `ignoreConcurrencyLimit: true`
+> does not; specialists and live follow-ups are exempt; tasks with no project scope form their own bucket.
+> The `concurrency` extension names the axis, `projectId`, the occupants (same project only), and
+> `override: "ignoreConcurrencyLimit"`. Retry with `ignoreConcurrencyLimit: true`
 > if the user asked for parallel work this turn — that records a Warning and still does not raise
 > `MaxConcurrentTasks`.
 >
