@@ -40,7 +40,10 @@ Read directly only what you must quote exactly or must judge personally.
 The canonical copy is `server/Bundles/orchestrator.md`, which every sub-orchestrator launch
 composes and which a standing orchestrator carries when the `orchestrator` bundle is attached;
 this copy exists so AGENTS.md has an owner to route to. A standing orchestrator's register is
-`ReplyStyle`, chosen per agent, not prose in its prompt append.
+`ReplyStyle`, chosen per agent, not prose in its prompt append. A standing orchestrator's bundle
+composition is kept current automatically: an idle seat with drifted bundles is relaunched with
+`--resume` at its next idle window (CARD-0334), so a bundle edit reaches it without a manual
+restart.
 
 **Also delegated: the landing mechanics.** For a delegated Worktree task, the orchestrator orders
 the landing with `delegate.ps1 -Land <id>` (optionally `-Verify <filter>`); the server fetches,
@@ -260,8 +263,10 @@ take and this section is still too gentle.
 
 Bundles reach a delegate **at launch**, which has one bounded consequence worth knowing: a warm
 pool delegate keeps the bundles it started with until it retires (60 minutes idle). Nothing types
-bundles into a live session, deliberately — if a rule change matters urgently for work in flight,
-say it in the brief for that dispatch.
+bundles into a live session; instead a standing agent that is idle is relaunched with `--resume`
+and the new composition (CARD-0334), keeping its conversation. For a pool delegate or work in
+flight there is no such relaunch — if a rule change matters urgently there, say it in the brief for
+that dispatch.
 
 **Goal length never affects delivery, and shortening a goal buys nothing (CARD-0353).** A Claude
 delegate types its brief inline up to ~40 KB on the modern ConPTY. **Every non-Claude delegate —

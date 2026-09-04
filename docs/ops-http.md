@@ -31,6 +31,7 @@ header when it is set. Inside a running agent session both are already in the en
 | Every agent, with its live session | GET | `/api/agents` |
 | One agent | GET | `/api/agents/{id:guid}` |
 | Start / stop an agent | POST | `/api/agents/{id}/start`, `/api/agents/{id}/stop` |
+| Manually refresh an agent's policy (CARD-0334) | POST | `/api/agents/{id}/refresh-policy` (`{ force?: bool }`) — idle-gated like the sweep: kill+resume, or a `Notify`-lane message, without suspending supervision. `force` skips only the idle-minutes floor and the cooldown; a working session is always 409 `session_working`, and a Codex/unbound-transcript agent is 409 `not_resumable`. Returns `{ refreshed, notified, agent }`; a Notify-lane 200 is `refreshed: false, notified: true`. |
 | Delete an agent | DELETE | `/api/agents/{id}` |
 | Boards | GET | `/api/boards` (`?includeArchived=true`) |
 | One board | GET | `/api/boards/{id}` (`?view=summary`, `?includeArchived=`) |

@@ -18,7 +18,11 @@ accidentally-embedded file fails a test instead of reaching an agent.
   bundle changes its version automatically — there is nothing to bump by hand.
 - A change reaches an agent at its **next launch**. AlwaysOn agents are guaranteed one by
   supervision; a fresh delegate gets it on dispatch; a warm pool delegate keeps what it launched with
-  until it retires (`PoolIdleRetireMinutes`, 60 min idle). Nothing types bundles into a live session.
+  until it retires (`PoolIdleRetireMinutes`, 60 min idle). Nothing types bundles into a live session;
+  instead a standing agent that is idle is relaunched with `--resume` and the new composition
+  (CARD-0334), keeping its conversation. `Agent.PolicyRefreshMode` picks the lane: `Auto` relaunches
+  when idle and past cooldown, `Relaunch` is the same but never falls back to Notify, `Notify` posts
+  a queued message describing the drift instead of killing the session, and `Off` does neither.
 - Never write `{agentName}` or `{channels}` into a bundle: `ChannelPreamble.Render` substitutes those
   over the whole composed append, so they would be replaced inside the bundle text too. A test pins
   this.
