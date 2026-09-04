@@ -6,8 +6,17 @@ import { ProjectConfig } from './ProjectConfig'
 import { StatusTab } from './StatusTab'
 import { AgentTuiConfig } from './AgentTuiConfig'
 import { ApiKeysSection } from './ApiKeysSection'
+import { RoutingSettingsTab } from './RoutingSettingsTab'
 
-const SETTINGS_TABS = ['templates', 'llm-providers', 'projects', 'api-keys', 'agent-tui', 'status'] as const
+const SETTINGS_TABS = [
+  'templates',
+  'llm-providers',
+  'projects',
+  'api-keys',
+  'agent-tui',
+  'routing',
+  'status',
+] as const
 
 export function SettingsPage() {
   const [searchParams] = useSearchParams()
@@ -26,6 +35,7 @@ export function SettingsPage() {
             <Tabs.Tab value="projects">Projects</Tabs.Tab>
             <Tabs.Tab value="api-keys">API Keys</Tabs.Tab>
             <Tabs.Tab value="agent-tui">AI Agent TUI</Tabs.Tab>
+            <Tabs.Tab value="routing">Routing</Tabs.Tab>
             <Tabs.Tab value="status">Status</Tabs.Tab>
           </Tabs.List>
 
@@ -47,6 +57,10 @@ export function SettingsPage() {
 
           <Tabs.Panel value="agent-tui" pt="md">
             <AgentTuiConfig />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="routing" pt="md">
+            <RoutingSettingsTab />
           </Tabs.Panel>
 
           <Tabs.Panel value="status" pt="md">

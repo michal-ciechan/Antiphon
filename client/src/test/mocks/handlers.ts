@@ -24,6 +24,15 @@ export const handlers: HttpHandler[] = [
       ],
     }),
   ),
+  http.get('/api/complexity-chains', () =>
+    HttpResponse.json({
+      chains: [],
+      roles: [],
+      complexities: ['Hard', 'Medium', 'Easy'],
+    }),
+  ),
+  http.get('/api/routing-pins', () => HttpResponse.json({ pins: [] })),
+  http.get('/api/subscription-usage', () => HttpResponse.json([])),
   // CARD-0255: AgentCreateModal loads the setup catalog for preset chips.
   http.get('/api/projects/setup-catalog', () => HttpResponse.json({
     modelLevels: [],
