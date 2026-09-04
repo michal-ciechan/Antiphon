@@ -779,6 +779,7 @@ try
     app.MapOrchestratorEndpoints();
     app.MapAgentTaskEndpoints();
     app.MapModelAvailabilityEndpoints();
+    app.MapSubscriptionUsageEndpoints();
     app.MapRoutingPinEndpoints();
     app.MapStageOutcomeEndpoints();
     app.MapComplexityChainEndpoints();
