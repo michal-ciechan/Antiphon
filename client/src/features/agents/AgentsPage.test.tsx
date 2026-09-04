@@ -739,7 +739,7 @@ describe('AgentsPage', () => {
     expect(await screen.findByText('Agent name is required.')).toBeInTheDocument()
   })
 
-  it('creates a new card, queues it, and starts the agent in remote control', async () => {
+  it('creates a new card, queues it, and starts the agent', async () => {
     const createSpy = vi.fn()
     const assignSpy = vi.fn()
     const startSpy = vi.fn()
@@ -790,8 +790,8 @@ describe('AgentsPage', () => {
     await waitFor(() => expect(createSpy).toHaveBeenCalledTimes(1))
     expect(createSpy.mock.calls[0][0]).toMatchObject({ title: 'Wire the thing', description: 'do it well' })
     await waitFor(() => expect(assignSpy).toHaveBeenCalledWith({ cardId: 'new-card' }))
-    // Remote control is on by default, so the booted agent should be put into remote control.
-    await waitFor(() => expect(startSpy).toHaveBeenCalledWith({ remoteControl: true }))
+    // Remote control comes from the persisted agent setting; the start call itself carries no flag.
+    await waitFor(() => expect(startSpy).toHaveBeenCalledWith({}))
   })
 
   it('starts the agent process from the detail panel', async () => {

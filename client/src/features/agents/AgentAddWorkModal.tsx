@@ -1,11 +1,10 @@
-import { Button, Checkbox, Group, Modal, Select, Stack, TextInput, Textarea } from '@mantine/core'
+import { Button, Group, Modal, Select, Stack, TextInput, Textarea } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useMemo, useState } from 'react'
 import type { AgentSummaryDto } from '../../api/agents'
 import { useAssignAgentCard, useStartAgent } from '../../api/agents'
 import { useBoards, useCreateCard, type CardImportance } from '../../api/boards'
 import { getApiErrorMessage } from '../../api/client'
-import { useRemoteControlSupport } from './useRemoteControlSupport'
 
 interface AgentAddWorkModalProps {
   agent: AgentSummaryDto
@@ -24,25 +23,19 @@ export function AgentAddWorkModal({ agent, opened, onClose }: AgentAddWorkModalP
   const [description, setDescription] = useState('')
   const [importance, setImportance] = useState<CardImportance>('Normal')
   const [pickedBoardId, setPickedBoardId] = useState<string | null>(agent.boardId)
-  const rc = useRemoteControlSupport({ tuiProfileId: agent.tuiProfileId, kind: agent.kind })
-  const [remoteControl, setRemoteControl] = useState(rc.supported)
 
   // Each open starts a fresh form — adjusted during render, not in an effect, so the previous
   // card's text can never flash before the reset lands. Keyed on the agent's board too: the
   // default board can arrive after the modal is already open, and must still pre-select.
-  const [prevKey, setPrevKey] = useState({ opened, boardId: agent.boardId, rcSupported: rc.supported })
+  const [prevKey, setPrevKey] = useState({ opened, boardId: agent.boardId })
   if (opened !== prevKey.opened || agent.boardId !== prevKey.boardId) {
-    setPrevKey({ opened, boardId: agent.boardId, rcSupported: rc.supported })
+    setPrevKey({ opened, boardId: agent.boardId })
     if (opened) {
       setTitle('')
       setDescription('')
       setImportance('Normal')
       setPickedBoardId(agent.boardId)
-      setRemoteControl(rc.supported)
     }
-  } else if (rc.supported !== prevKey.rcSupported) {
-    setPrevKey({ ...prevKey, rcSupported: rc.supported })
-    if (opened) setRemoteControl(rc.supported)
   }
 
   const targetBoardId = pickedBoardId ?? ''
@@ -70,15 +63,15 @@ export function AgentAddWorkModal({ agent, opened, onClose }: AgentAddWorkModalP
             { cardId: card.id },
             {
               onSuccess: () => {
-                // Boot the agent process (no-op if it's already running). When remote control is
-                // ticked a freshly booted agent is renamed + put into /remote-control first.
+                // Boot the agent process (no-op if it's already running). Remote control comes
+                // from the agent's persisted setting; this start does not override it.
                 startAgent.mutate(
-                  { remoteControl: rc.supported && remoteControl },
+                  {},
                   {
                     onSuccess: () => {
                       notifications.show({
                         color: 'green',
-                        message: rc.supported && remoteControl ? 'Work added — agent starting (remote control)' : 'Work added — agent starting',
+                        message: 'Work added — agent starting',
                       })
                       onClose()
                     },
@@ -146,14 +139,6 @@ export function AgentAddWorkModal({ agent, opened, onClose }: AgentAddWorkModalP
           disabled={boards.isLoading || boardOptions.length === 0}
           searchable
         />
-        {rc.supported && (
-          <Checkbox
-            label="Remote control"
-            description="Rename the agent and put it into /remote-control before the work, so you can monitor it."
-            checked={remoteControl}
-            onChange={(event) => setRemoteControl(event.currentTarget.checked)}
-          />
-        )}
         <Group justify="flex-end">
           <Button variant="subtle" onClick={onClose}>
             Cancel

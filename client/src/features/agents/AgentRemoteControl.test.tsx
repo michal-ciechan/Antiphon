@@ -283,7 +283,7 @@ describe('CARD-0212 remote control capability gate', () => {
     expect(submitted!.remoteControlEnabled).toBe(false)
   })
 
-  it('add-work modal hides the checkbox for Grok and starts with remoteControl false', async () => {
+  it('add-work modal has no per-launch remote-control checkbox for Grok and starts with no override', async () => {
     let started: StartAgentRequest | null = null
     server.use(
       http.get('/api/boards', () => HttpResponse.json([boardSummary])),
@@ -304,10 +304,10 @@ describe('CARD-0212 remote control capability gate', () => {
     await userEvent.type(screen.getByLabelText('Title'), 'Do the thing')
     await userEvent.click(screen.getByRole('button', { name: 'Add' }))
     await waitFor(() => expect(started).not.toBeNull())
-    expect(started).toEqual({ remoteControl: false })
+    expect(started).toEqual({})
   })
 
-  it('add-work modal shows the checkbox for Claude and defaults it on', async () => {
+  it('add-work modal has no per-launch remote-control checkbox for Claude and starts with no override', async () => {
     let started: StartAgentRequest | null = null
     server.use(
       http.get('/api/boards', () => HttpResponse.json([boardSummary])),
@@ -323,12 +323,11 @@ describe('CARD-0212 remote control capability gate', () => {
 
     renderWithProviders(<AgentAddWorkModal agent={claudeAgent} opened onClose={() => {}} />)
 
-    const checkbox = await screen.findByRole('checkbox', { name: /Remote control/i })
-    expect(checkbox).toBeChecked()
+    expect(screen.queryByRole('checkbox', { name: /Remote control/i })).not.toBeInTheDocument()
 
     await userEvent.type(screen.getByLabelText('Title'), 'Do the thing')
     await userEvent.click(screen.getByRole('button', { name: 'Add' }))
     await waitFor(() => expect(started).not.toBeNull())
-    expect(started).toEqual({ remoteControl: true })
+    expect(started).toEqual({})
   })
 })
