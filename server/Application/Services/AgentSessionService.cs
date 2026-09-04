@@ -2258,9 +2258,17 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             if (!unattended)
                 return;
 
+            // deliverIfIdle: false — the LAUNCH must not be held by this. CARD-0312 rejects
+            // blocking a launch on rung 5 for exactly this reason, and an inline delivery here
+            // would run the whole verification budget on the launch's thread (measured: it timed
+            // out the Herdr launch-parity suite). The row is durable; the turn-end flush or
+            // FlushStrandedQueuesAsync types it within StrandedAgeSeconds. Every agent in this
+            // population is always-on in practice — a channel-bound or standing agent that is not
+            // would have typed a note and never reached here — which is exactly the population
+            // that sweep covers.
             await _messageQueue.EnqueueAsync(
                 session.Id, _settings.BootProbeBody.Trim(), MessageSendMode.WhenIdle, ct,
-                origin: QueuedMessageOrigin.System);
+                origin: QueuedMessageOrigin.System, deliverIfIdle: false);
             _logger.LogInformation(
                 "Session {SessionId} launched without typing anything on an unattended agent; "
                 + "queued the one-line boot probe so rung 5 has something to watch",

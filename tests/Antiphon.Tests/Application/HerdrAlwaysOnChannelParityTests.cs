@@ -506,6 +506,15 @@ public class HerdrAlwaysOnChannelParityTests
             SessionLogPath = Path.Combine(tempRoot, "session-logs"),
             RemoteControlArmTimeoutMs = 200,
             RemoteControlSetupTimeoutMs = 500,
+            // CARD-0312 S2 off in THIS harness, and the reason is the harness, not the probe:
+            // FakeHerdrServer models the transcript round trip only for the one nonce body a test
+            // drives through ConfirmHerdrDeliveryAsync. Any other typed body — the launch's own
+            // one-line probe included — is never confirmed, so its delivery burns the whole
+            // verification budget and fails, which is a fact about the fake rather than about a
+            // Herdr pane. Every agent here is always-on with no preamble, i.e. exactly the probe's
+            // population, so leaving it on would make this suite assert the fake's limits. The
+            // probe's own scope and cost are pinned in BootLivenessProbeScopeTests.
+            BootProbeEnabled = false,
         }));
         services.AddSingleton<IOptions<OrchestratorSettings>>(Options.Create(new OrchestratorSettings
         {

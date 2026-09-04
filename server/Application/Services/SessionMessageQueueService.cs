@@ -162,7 +162,15 @@ public sealed class SessionMessageQueueService
         QueuedMessageOrigin origin = QueuedMessageOrigin.Ui, string? conversationKey = null,
         Guid? sourceTaskId = null, string? contentDigest = null, string? noteHeader = null,
         Guid? sourceScheduleId = null,
-        Action<Guid>? onCreated = null)
+        Action<Guid>? onCreated = null,
+        // CARD-0312 S2. WhenIdle on a live, idle session delivers INLINE, which is right for a
+        // note somebody is waiting on and wrong for a body enqueued from inside a launch: the
+        // delivery's own verification budget then runs on the launch's thread and holds the
+        // launch-queue slot (measured — it timed out HerdrAlwaysOnChannelParityTests' launches).
+        // false enqueues the row and leaves delivery to the machinery that already exists: the
+        // turn-end flush, or FlushStrandedQueuesAsync within StrandedAgeSeconds on an always-on
+        // session. Ignored by Mode.Now, which has no row at all.
+        bool deliverIfIdle = true)
     {
         var trimmed = (body ?? string.Empty).Trim();
         if (trimmed.Length == 0)
@@ -346,7 +354,8 @@ public sealed class SessionMessageQueueService
             // 2m41s). A Starting session's messages stay Pending; the launch path flushes the
             // queue itself the moment boot completes (FlushSessionAsync).
             var working = await IsWorkingAsync(db, sessionId, ct);
-            if (_runtime.ListLiveSessions().Contains(sessionId)
+            if (deliverIfIdle
+                && _runtime.ListLiveSessions().Contains(sessionId)
                 && await IsAcceptingInputAsync(sessionId, ct)
                 && !working)
             {

@@ -114,10 +114,17 @@ public class AgentSystemPromptLaunchTests
         AssertNamed(adapter.StartedArgs, "BridgeQueue");
         // CARD-0312 S2 turned this one line around, and this is exactly the population it names:
         // an unattended launch that types NOTHING ends Running, with an AgentChanged event and
-        // zero evidence that anything can be reached. It now gets the one-line boot probe — still
-        // no bootstrap note, still no workspace ritual, and still nothing else.
-        adapter.SubmittedBodies.ShouldBe([new AgentSessionSettings().BootProbeBody],
+        // zero evidence that anything can be reached. It now QUEUES the one-line boot probe —
+        // still no bootstrap note, still no workspace ritual, and nothing typed by the launch
+        // itself, because the launch must not be held by a delivery it is not waiting on.
+        adapter.SubmittedBodies.ShouldBeEmpty("the launch types nothing and is not held");
+        await using var db = CreateContext();
+        var queued = await db.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == Guid.Parse(started.PersistentSessionId!))
+            .ToListAsync();
+        queued.Select(m => m.Body).ShouldBe([new AgentSessionSettings().BootProbeBody],
             "no preamble means no bootstrap note; it does not mean nobody checks the agent answers");
+        queued.ShouldAllBe(m => m.Origin == QueuedMessageOrigin.System);
     }
 
     // CARD-0283: Details is standing-job metadata (CLAUDE.md "## Your job"), not a first prompt.
@@ -403,18 +410,18 @@ public class AgentSystemPromptLaunchTests
         // ritual. What it does get is CARD-0312 S2's one-line boot probe: the standing check
         // interpreter is named in that card as unattended, and it is a launch that would otherwise
         // type nothing at all and be believed alive on no evidence.
-        adapter.SubmittedBodies.ShouldBe([new AgentSessionSettings().BootProbeBody],
-            "the ritual is suppressed; the liveness check is not the ritual");
-        adapter.SubmittedBodies.ShouldNotContain(ChannelPreamble.BootstrapBody);
+        adapter.SubmittedBodies.ShouldBeEmpty("the launch itself types nothing");
         // The contract itself must still ride the launch — suppressing the note must not suppress
         // the thing that makes the specialist a specialist.
         adapter.StartedArgs.ShouldContain("--append-system-prompt");
 
         await using var verify = CreateContext();
         var newSessionId = Guid.Parse(started.PersistentSessionId!);
-        (await verify.SessionQueuedMessages.Where(m => m.AgentSessionId == newSessionId).ToListAsync())
-            .ShouldAllBe(m => m.Status == QueuedMessageStatus.Sent,
-                "nothing is left deferred — the note is not sent at all and the probe went out");
+        var rows = await verify.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == newSessionId).ToListAsync();
+        rows.Select(m => m.Body).ShouldBe([new AgentSessionSettings().BootProbeBody],
+            "the ritual is suppressed; the liveness check is not the ritual");
+        rows.ShouldAllBe(m => !m.Body.Contains(ChannelPreamble.BootstrapBody));
     }
 
     // ---------- reply style (CARD-0060) ----------
@@ -480,9 +487,15 @@ public class AgentSystemPromptLaunchTests
         var flagIndex = args.ToList().IndexOf("--append-system-prompt");
         flagIndex.ShouldBeGreaterThanOrEqualTo(0);
         args[flagIndex + 1].ShouldBe(InstructionBundles.Get("style-terse").Render());
-        adapter.SubmittedBodies.ShouldBe([new AgentSessionSettings().BootProbeBody],
-            "no preamble, so no bootstrap — style is not a preamble. The one line that IS sent is "
-            + "CARD-0312 S2's boot probe, which is keyed on 'typed nothing', not on the style.");
+        adapter.SubmittedBodies.ShouldBeEmpty("the launch types nothing and is not held");
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages
+                .Where(m => m.AgentSessionId == Guid.Parse(started.PersistentSessionId!))
+                .Select(m => m.Body)
+                .ToListAsync())
+            .ShouldBe([new AgentSessionSettings().BootProbeBody],
+                "no preamble, so no bootstrap — style is not a preamble. The one line that IS "
+                + "queued is CARD-0312 S2's boot probe, keyed on 'typed nothing', not on style.");
     }
 
     private static async Task SetStyleAsync(BridgeQueueHarness h, AgentReplyStyle style)
