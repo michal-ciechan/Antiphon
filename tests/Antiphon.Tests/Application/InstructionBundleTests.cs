@@ -232,6 +232,7 @@ public class InstructionBundleTests
         var reporting = DelegationReportFormatter.CheckReportingContract(Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"), 20_000);
         reporting.ShouldContain("exactly one physical line, at most 240 characters");
         reporting.ShouldNotContain("3-5 lines");
+        reporting.ShouldNotContain("--- next stage ---");
     }
 
     [Test]
@@ -256,6 +257,9 @@ public class InstructionBundleTests
         Diagnosis.Contract.ShouldContain("explanation, no sign-off, no second option.");
         Diagnosis.TitleFormatReminder.ShouldContain("never `blocked`");
         Diagnosis.LabelsFormatReminder.ShouldContain("never `blocked`");
+        DelegationReportFormatter.DiagnoseReportingContract(
+            Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"), 20_000)
+            .ShouldNotContain("--- next stage ---");
     }
 
     [Test]

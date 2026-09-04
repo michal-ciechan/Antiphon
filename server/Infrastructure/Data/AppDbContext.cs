@@ -1517,6 +1517,9 @@ public class AppDbContext : DbContext
             entity.Property(t => t.StandingAuthority).HasMaxLength(2000);
             entity.Property(t => t.AutoContinueOnWait).IsRequired().HasDefaultValue(false);
             entity.Property(t => t.AutoContinuedAt).IsRequired(false);
+            // CARD-0146 S2. Null on every pre-existing row: enrichment at settlement, never a gate.
+            entity.Property(t => t.NextStage).IsRequired(false);
+            entity.Property(t => t.NextHandoff).HasMaxLength(400);
 
             entity.HasIndex(t => new { t.RootTaskId, t.CreatedAt }).HasDatabaseName("IX_AgentTasks_RootTaskId_CreatedAt");
             entity.HasIndex(t => t.Status).HasDatabaseName("IX_AgentTasks_Status");

@@ -267,7 +267,13 @@ public sealed record AgentTaskDetailDto(
     /// <summary>CARD-0294 S1. The caller's standing authority, or null when none was given.</summary>
     string? StandingAuthority = null,
     /// <summary>CARD-0294 S3's stored switch. The fire-once auto-continue is a follow-on.</summary>
-    bool AutoContinueOnWait = false);
+    bool AutoContinueOnWait = false,
+    /// <summary>
+    /// CARD-0146: the parsed <c>next:</c> token. Null when the block was missing or unrecognised.
+    /// </summary>
+    PipelineHandoffKind? NextStage = null,
+    /// <summary>CARD-0146: the parsed <c>handoff:</c> line, clipped at 400 characters.</summary>
+    string? NextHandoff = null);
 
 /// <summary>Why a task is Blocked — CARD-0033. RoutingExhausted is CARD-0090, added after the original three.</summary>
 public enum BlockedKind

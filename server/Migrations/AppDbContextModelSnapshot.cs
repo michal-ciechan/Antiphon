@@ -585,6 +585,13 @@ namespace Antiphon.Server.Migrations
                     b.Property<DateTime?>("NextCheckAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("NextHandoff")
+                        .HasMaxLength(400)
+                        .HasColumnType("character varying(400)");
+
+                    b.Property<int?>("NextStage")
+                        .HasColumnType("integer");
+
                     b.Property<string>("ObservedScope")
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");

@@ -1223,7 +1223,7 @@ public sealed class AgentTaskService
             ToSummary(task, family, await LoadCardIdentifiersAsync([task], ct)), task.Goal, task.Result,
             task.ResultFilePath, task.DeliverablePath, task.DeliverableRef,
             task.FailureReason, task.MergeTargetRef, events, task.FailureCode, blocked,
-            task.StandingAuthority, task.AutoContinueOnWait);
+            task.StandingAuthority, task.AutoContinueOnWait, task.NextStage, task.NextHandoff);
     }
 
     /// <summary>Record the first operator read; repeat opens deliberately preserve that timestamp.</summary>

@@ -35,6 +35,7 @@ import {
   useMarkAgentTaskRead,
   useRerouteAgentTask,
   type AgentTaskDetailDto,
+  type PipelineHandoffKind,
 } from '../../api/agentTasks'
 import type { AgentKind } from '../../api/boards'
 import { useModelAvailability } from '../../api/modelAvailability'
@@ -266,6 +267,27 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
         </Section>
       )}
 
+      {(detail.deliverablePath || detail.nextStage || detail.nextHandoff) && (
+        <Section title="Handoff">
+          {detail.deliverablePath && (
+            <Text size="sm" data-testid="task-deliverable">
+              deliverable: <Code>{detail.deliverablePath}</Code>
+              {detail.deliverableRef ? ` @ ${detail.deliverableRef}` : ''}
+            </Text>
+          )}
+          {detail.nextStage && (
+            <Text size="sm" data-testid="task-next-stage">
+              next: {nextStageToken(detail.nextStage)}
+            </Text>
+          )}
+          {detail.nextHandoff && (
+            <Text size="sm" data-testid="task-next-handoff">
+              handoff: {detail.nextHandoff}
+            </Text>
+          )}
+        </Section>
+      )}
+
       <Section title="Timeline">
         <Timeline active={detail.events.length - 1} bulletSize={12} lineWidth={1}>
           {detail.events.map((event, index) => (
@@ -413,6 +435,21 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
       </Group>
     </Stack>
   )
+}
+
+const NEXT_STAGE_TOKEN: Record<PipelineHandoffKind, string> = {
+  Investigate: 'investigate',
+  Plan: 'plan',
+  TestDesign: 'test-design',
+  Code: 'code',
+  Review: 'review',
+  Land: 'land',
+  Decide: 'decide',
+  None: 'none',
+}
+
+function nextStageToken(kind: PipelineHandoffKind): string {
+  return NEXT_STAGE_TOKEN[kind] ?? kind.toLowerCase()
 }
 
 function Metric({ label, value }: { label: string; value: ReactNode }) {

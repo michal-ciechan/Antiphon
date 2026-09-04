@@ -3243,6 +3243,148 @@ public class AgentTaskReplyIntegrationTests
         await db.SaveChangesAsync();
     }
 
+    // ---- CARD-0146 S2: next-stage handoff at settlement ------------------------------------
+
+    [Test]
+    public async Task a_settled_investigate_report_stamps_next_stage_plan_and_header_next_plan()
+    {
+        using var workspace = new TempWorkspace();
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, parentSessionId, t =>
+            t.Role = AgentTaskRole.Investigate);
+
+        await SeedTurnAsync(
+            sessionId,
+            DelegationReportFormatter.TaskMarker(task.Id),
+            """
+            Root cause confirmed.
+
+            --- next stage ---
+            next: plan
+            handoff: root cause confirmed - fix belongs in the probe
+            """);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.NextStage.ShouldBe(PipelineHandoffKind.Plan);
+        settled.NextHandoff.ShouldBe("root cause confirmed - fix belongs in the probe");
+
+        var note = await verify.SessionQueuedMessages.SingleAsync(
+            m => m.AgentSessionId == parentSessionId && m.Origin == QueuedMessageOrigin.Delegation);
+        note.Body.ShouldContain("next=plan");
+    }
+
+    [Test]
+    public async Task a_stage_role_without_the_block_gets_next_unmarked()
+    {
+        using var workspace = new TempWorkspace();
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, parentSessionId, t =>
+            t.Role = AgentTaskRole.Plan);
+
+        await SeedTurnAsync(
+            sessionId,
+            DelegationReportFormatter.TaskMarker(task.Id),
+            "Wrote the plan in chat.");
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.NextStage.ShouldBeNull();
+        settled.NextHandoff.ShouldBeNull();
+
+        var note = await verify.SessionQueuedMessages.SingleAsync(
+            m => m.AgentSessionId == parentSessionId && m.Origin == QueuedMessageOrigin.Delegation);
+        note.Body.ShouldContain("next=unmarked");
+    }
+
+    [Test]
+    public async Task a_docs_task_without_the_block_gets_no_next_bit()
+    {
+        using var workspace = new TempWorkspace();
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, parentSessionId);
+
+        await SeedTurnAsync(
+            sessionId,
+            DelegationReportFormatter.TaskMarker(task.Id),
+            "Rewrote the section.");
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Role.ShouldBe(AgentTaskRole.Docs);
+        settled.NextStage.ShouldBeNull();
+
+        var note = await verify.SessionQueuedMessages.SingleAsync(
+            m => m.AgentSessionId == parentSessionId && m.Origin == QueuedMessageOrigin.Delegation);
+        note.Body.ShouldNotContain("next=");
+    }
+
+    [Test]
+    public async Task artifact_wins_over_the_regex_first_match_when_it_resolves()
+    {
+        using var workspace = new TempWorkspace();
+        var cited = Path.Combine(workspace.Path, "docs", "superpowers", "plans", "cited.md");
+        var real = Path.Combine(workspace.Path, "docs", "investigations", "real.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(cited)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(real)!);
+        await File.WriteAllTextAsync(cited, "# cited\n");
+        await File.WriteAllTextAsync(real, "# real\n");
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, configure: t =>
+            t.Role = AgentTaskRole.Investigate);
+
+        await SeedTurnAsync(
+            sessionId,
+            DelegationReportFormatter.TaskMarker(task.Id),
+            """
+            See also `docs/superpowers/plans/cited.md` for background.
+
+            --- next stage ---
+            next: plan
+            handoff: root cause confirmed
+            artifact: docs/investigations/real.md
+            """);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.DeliverablePath.ShouldBe("docs/investigations/real.md");
+        settled.NextStage.ShouldBe(PipelineHandoffKind.Plan);
+    }
+
+    [Test]
+    public async Task a_missing_artifact_file_falls_back_to_the_regex_path()
+    {
+        using var workspace = new TempWorkspace();
+        var cited = Path.Combine(workspace.Path, "docs", "superpowers", "plans", "cited.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(cited)!);
+        await File.WriteAllTextAsync(cited, "# cited\n");
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, configure: t =>
+            t.Role = AgentTaskRole.Investigate);
+
+        await SeedTurnAsync(
+            sessionId,
+            DelegationReportFormatter.TaskMarker(task.Id),
+            """
+            See also `docs/superpowers/plans/cited.md` for background.
+
+            --- next stage ---
+            next: plan
+            handoff: root cause confirmed
+            artifact: docs/investigations/missing.md
+            """);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.DeliverablePath.ShouldBe("docs/superpowers/plans/cited.md");
+        settled.NextStage.ShouldBe(PipelineHandoffKind.Plan);
+    }
+
     // ---- helpers ---------------------------------------------------------------------------
 
     // Most cases pin the ceiling explicitly so they stay readable as the shipped default moves;

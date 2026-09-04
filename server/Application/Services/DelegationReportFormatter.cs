@@ -191,7 +191,7 @@ public static class DelegationReportFormatter
         {
             AgentTaskRole.Check => CheckReportingContract(task.Id, inlineMax),
             AgentTaskRole.Diagnose => DiagnoseReportingContract(task.Id, inlineMax),
-            _ => ReportingContract(task.Id, task.Kind, inlineMax),
+            _ => ReportingContract(task.Id, task.Kind, inlineMax, task.Role),
         });
         return sb.ToString();
     }
@@ -232,6 +232,22 @@ public static class DelegationReportFormatter
     }
 
     /// <summary>
+    /// CARD-0146 S2. The <c>--- next stage ---</c> block spec. Interpolated into
+    /// <see cref="ReportingContract"/> only when <see cref="AgentTaskRoles.IsStage"/>;
+    /// pinned at ≤ 700 characters.
+    /// </summary>
+    public const string StageHandoffContract = """
+        Close with this block immediately above the report token (required for this stage role; a missing block still settles as next=unmarked):
+
+        --- next stage ---
+        next: <investigate|plan|test-design|code|review|land|decide|none>
+        handoff: <one physical line, at most 400 characters — the sentence the next brief is built from>
+        artifact: <optional repo-relative docs/**/*.md path>
+
+        Aliases: design→plan, build|execute→code, verify→review, merge|cleanup→land, testdesign|test design→test-design. next: decide means the artifact exists under stated defaults; use blocked + asks: when you cannot produce it without an answer.
+        """;
+
+    /// <summary>
     /// How to report back. The delegate's final message IS the report, so this is the highest-leverage
     /// text in the system — and the spill rule is the primary size mechanism, because the delegate is
     /// the only party that knows which 20 000 characters mattered.
@@ -246,7 +262,8 @@ public static class DelegationReportFormatter
     /// all seven deliveries measured across both mangling shapes, so a marker at each end
     /// correlates whichever fragment lands.
     /// </summary>
-    public static string ReportingContract(Guid taskId, AgentTaskKind kind, int inlineMaxChars)
+    public static string ReportingContract(
+        Guid taskId, AgentTaskKind kind, int inlineMaxChars, AgentTaskRole role = AgentTaskRole.Custom)
     {
         var rollup = kind == AgentTaskKind.Orchestrator
             ? """
@@ -256,6 +273,9 @@ public static class DelegationReportFormatter
               unresolved. Do not paste your delegates' reports — you read them so the caller
               doesn't have to.
               """
+            : string.Empty;
+        var stageBlock = AgentTaskRoles.IsStage(role)
+            ? "\n" + StageHandoffContract + "\n"
             : string.Empty;
 
         return $"""
@@ -276,7 +296,7 @@ public static class DelegationReportFormatter
             If your report would run past {inlineMaxChars:N0} characters, write the full detail to
             .antiphon/task-{Short(taskId)}.md and make your final message a summary that points
             at that path.
-
+            {stageBlock}
             End your final message with one line, on its own: `{ReportToken(taskId, "done")}` if the work
             is complete, `{ReportToken(taskId, "blocked")}` if you need a decision or an answer to continue,
             `{ReportToken(taskId, "failed")}` if you could not do it. Nothing after it. Without that line the
@@ -391,7 +411,7 @@ public static class DelegationReportFormatter
         AgentTask task, DelegationSettings settings, string report, string? workspaceNote = null,
         int? replyInlineMaxChars = null, string? warning = null, string? overlappingRunning = null,
         string? drift = null, string? reportEvidence = null, string? git = null,
-        DeliverableNote? deliverable = null)
+        DeliverableNote? deliverable = null, string? next = null)
     {
         var header = new StringBuilder();
         header.Append('[').Append("task ").Append(Short(task.Id)).Append(' ')
@@ -426,6 +446,8 @@ public static class DelegationReportFormatter
             bits.Add($"git={git.Trim()}");
         if (deliverable is not null)
             bits.Add($"deliverable={deliverable.HeaderBit}");
+        if (!string.IsNullOrWhiteSpace(next))
+            bits.Add($"next={next.Trim()}");
         if (bits.Count > 0) header.Append(' ').Append(string.Join(" · ", bits));
 
         var (body, excerpted) = FitReport(report ?? string.Empty, task, settings, replyInlineMaxChars);
@@ -602,10 +624,13 @@ public static class DelegationReportFormatter
         }
         else
         {
-            sb.AppendLine("""
+            var stageLine = AgentTaskRoles.IsStage(task.Role)
+                ? "\nClose with the `--- next stage ---` block above the token."
+                : "";
+            sb.AppendLine($"""
                 --- how to report back ---
                 The full reporting contract is in the brief above — read it there.
-                Your final message is the entire report the caller receives.
+                Your final message is the entire report the caller receives.{stageLine}
                 """).AppendLine();
         }
 
