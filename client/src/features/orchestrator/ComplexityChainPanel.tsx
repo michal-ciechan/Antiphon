@@ -1,4 +1,5 @@
-import { Badge, Group, Loader, Paper, Stack, Table, Text, Title } from '@mantine/core'
+import { Anchor, Badge, Group, Loader, Paper, Stack, Table, Text, Title } from '@mantine/core'
+import { Link } from 'react-router'
 import { useComplexityChains, type ComplexityChainDto } from '../../api/complexityChains'
 
 /**
@@ -18,33 +19,26 @@ function chainRowKey(chain: ComplexityChainDto): string {
 export function ComplexityChainPanel() {
   const snapshot = useComplexityChains()
 
-  if (snapshot.isLoading) {
-    return (
-      <Paper withBorder p="md" data-testid="complexity-chain-panel">
-        <Group justify="center" py="sm">
-          <Loader size="sm" />
-        </Group>
-      </Paper>
-    )
-  }
-
-  if (snapshot.error) {
-    return (
-      <Paper withBorder p="md" data-testid="complexity-chain-panel">
-        <Text size="sm" c="dimmed">
-          Could not load complexity chains.
-        </Text>
-      </Paper>
-    )
-  }
-
   const chains = snapshot.data?.chains ?? []
 
   return (
     <Paper withBorder p="md" data-testid="complexity-chain-panel">
       <Stack gap="sm">
-        <Title order={5}>Complexity chains</Title>
-        {chains.every((c) => c.candidates.length === 0) ? (
+        <Group justify="space-between" align="flex-start">
+          <Title order={5}>Complexity chains</Title>
+          <Anchor component={Link} to="/settings?tab=routing" size="sm">
+            Manage routing settings
+          </Anchor>
+        </Group>
+        {snapshot.isLoading ? (
+          <Group justify="center" py="sm">
+            <Loader size="sm" />
+          </Group>
+        ) : snapshot.error ? (
+          <Text size="sm" c="dimmed">
+            Could not load complexity chains.
+          </Text>
+        ) : chains.every((c) => c.candidates.length === 0) ? (
           <Text size="sm" c="dimmed">
             No chains set. Defaults stay empty until a human writes them with complexity-chain.ps1
             set.

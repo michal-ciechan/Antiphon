@@ -18,6 +18,10 @@ describe('ComplexityChainPanel', () => {
     server.use(http.get('/api/complexity-chains', () => HttpResponse.json(threeEmpty)))
     renderWithProviders(<ComplexityChainPanel />)
     expect(await screen.findByText(/No chains set/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Manage routing settings' })).toHaveAttribute(
+      'href',
+      '/settings?tab=routing',
+    )
   })
 
   it('renders three chains with live available/held reasons', async () => {

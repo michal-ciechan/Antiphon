@@ -192,6 +192,21 @@ describe('OrchestratorPage', () => {
     expect(screen.getByTestId('backlog-box-Someday')).toBeInTheDocument()
   })
 
+  it('the attention summaries link to Manage routing settings and stay read-only', async () => {
+    serve([])
+    renderWithProviders(<OrchestratorPage />)
+
+    await userEvent.click(await screen.findByRole('tab', { name: /Needs attention/ }))
+    const links = await screen.findAllByRole('link', { name: 'Manage routing settings' })
+    expect(links).toHaveLength(2)
+    for (const link of links) {
+      expect(link).toHaveAttribute('href', '/settings?tab=routing')
+    }
+    expect(screen.getByTestId('model-availability-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('complexity-chain-panel')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Configure' })).not.toBeInTheDocument()
+  })
+
   it('the backlog request is deferred while another tab is open', async () => {
     const requests = serve([])
     window.history.pushState({}, '', '/orchestrator?tab=history')

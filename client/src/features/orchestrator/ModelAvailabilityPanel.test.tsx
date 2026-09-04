@@ -18,6 +18,50 @@ describe('ModelAvailabilityPanel', () => {
     renderWithProviders(<ModelAvailabilityPanel />)
     expect(await screen.findByText('All models available.')).toBeInTheDocument()
     expect(await screen.findByText(/available: fable, opus/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Manage routing settings' })).toHaveAttribute(
+      'href',
+      '/settings?tab=routing',
+    )
+  })
+
+  it('shows the reset timestamp, or until cleared when a hold has none', async () => {
+    server.use(
+      http.get('/api/model-availability', () =>
+        HttpResponse.json({
+          available: ['opus'],
+          holds: [
+            {
+              id: 'hold-dated',
+              kind: 'ClaudeCode',
+              modelAlias: 'fable',
+              source: 'Manual',
+              disabledUntil: '2026-09-04T00:00:00Z',
+              hitAt: '2026-09-01T12:00:00Z',
+              reason: 'weekly cap',
+              rawText: null,
+              sourceSessionId: null,
+              sourceTaskId: null,
+            },
+            {
+              id: 'hold-open',
+              kind: 'Grok',
+              modelAlias: 'grok-4.6',
+              source: 'AutoDetected',
+              disabledUntil: null,
+              hitAt: '2026-09-02T08:00:00Z',
+              reason: 'usage wall',
+              rawText: null,
+              sourceSessionId: null,
+              sourceTaskId: null,
+            },
+          ],
+        } satisfies ModelAvailabilityDto),
+      ),
+    )
+    renderWithProviders(<ModelAvailabilityPanel />)
+    expect(await screen.findByText('2026-09-04T00:00:00Z')).toBeInTheDocument()
+    expect(screen.getByText('until cleared')).toBeInTheDocument()
+    expect(screen.getByText('usage wall')).toBeInTheDocument()
   })
 
   it('Hold PUTs kind, alias and until; Clear DELETEs that row', async () => {
