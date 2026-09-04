@@ -34,13 +34,18 @@ namespace Antiphon.SessionRunner;
 /// (<c>end_turn</c>; <c>cancelled</c> for Esc; <c>error</c> for an API death — CARD-0281).
 /// On <c>stop_reason=error</c>, <c>agent_result</c> is parsed into
 /// <c>IsApiError</c>/<c>ApiErrorStatus</c>/<c>ApiErrorClass</c>/<c>Text</c> (bounded, Codex
-/// shape). No synthetic AssistantText stub: the diagnostic lives on the TurnEnd. The usage
-/// block is carried when present (a cancelled stop has none). <c>prompt_id</c> rides as
-/// ApiCallId.</item>
-/// <item><c>retry_state</c> is skipped. A <c>type=failed</c> row duplicates
+/// shape). A grammar miss that matches <see cref="TranscriptKinds.TransportVocabulary"/>
+/// stamps class <c>transport</c> (CARD-0360); a blank <c>agent_result</c> falls back to
+/// the last <c>retry_state</c> payload of the turn. Retry count rides as a
+/// <c> [after N retries]</c> suffix when N &gt; 0. No synthetic AssistantText stub: the
+/// diagnostic lives on the TurnEnd. The usage block is carried when present (a cancelled
+/// stop has none). <c>prompt_id</c> rides as ApiCallId.</item>
+/// <item><c>retry_state</c> is still not emitted. A <c>type=failed</c> row duplicates
 /// <c>agent_result</c> on the following <c>turn_completed</c>; a <c>type=retrying</c> row is
-/// Grok's internal 5xx ladder (up to 15 attempts) and must not become a stub — a stub per
-/// retry would park a healthy session at WallDeathCap.</item>
+/// Grok's internal ladder (up to 15 attempts) and must not become a stub — a stub per
+/// retry would park a healthy session at WallDeathCap. Both accumulate
+/// <c>RetryCount</c>/<c>LastRetryReason</c> on the in-flight prompt, cleared at
+/// <c>turn_completed</c> (CARD-0360).</item>
 /// <item><c>auto_compact_completed</c> → one usage-bearing <c>CompactBoundary</c> (CARD-0157):
 /// Text is <c>Context compacted (auto): tokens {before} -&gt; {after}</c> (never
 /// <c>(manual)</c> — housekeeping to every working rule; Grok writes no user chunk and no
@@ -96,6 +101,11 @@ public sealed class GrokTranscriptNormalizer
 
     private readonly record struct ToolCallMeta(string? Name, string? Kind);
 
+    // CARD-0360: last retry_state of the in-flight turn. retry_state rows typically carry no
+    // promptId, so this is instance-level and cleared on every turn_completed.
+    private int _retryCount;
+    private string? _lastRetryReason;
+
     public IReadOnlyList<TranscriptPart> Normalize(string jsonLine)
     {
         if (string.IsNullOrWhiteSpace(jsonLine))
@@ -129,6 +139,7 @@ public sealed class GrokTranscriptNormalizer
                 "tool_call" => FromToolCall(update, uuid, ts, promptId),
                 "tool_call_update" => FromToolCallUpdate(update, uuid, ts),
                 "turn_completed" => FromTurnCompleted(update, uuid, ts),
+                "retry_state" => FromRetryState(update),
                 "auto_compact_completed" => FromAutoCompactCompleted(update, uuid, ts),
                 _ => [],
             };
@@ -377,7 +388,15 @@ public sealed class GrokTranscriptNormalizer
         {
             (isApiError, apiErrorClass, apiErrorStatus, diagnostic) =
                 ReadApiError(GetString(update, "agent_result"));
+            if (_retryCount > 0)
+            {
+                var suffix = $" [after {_retryCount} retries]";
+                diagnostic = string.IsNullOrEmpty(diagnostic) ? suffix.TrimStart() : diagnostic + suffix;
+            }
         }
+
+        _retryCount = 0;
+        _lastRetryReason = null;
 
         parts.Add(new TranscriptPart(
             TranscriptKinds.TurnEnd, uuid, null, ts, "assistant", diagnostic, null, null, null, null,
@@ -391,25 +410,61 @@ public sealed class GrokTranscriptNormalizer
     }
 
     /// <summary>
-    /// CARD-0281: parse <c>agent_result</c> on an error TurnEnd. Grammar is stable across
-    /// 402/400/404: <c>API error (status &lt;code&gt; &lt;reason phrase&gt;): &lt;detail&gt;</c>.
-    /// No match still stamps <c>IsApiError=true</c> so the classifier's Unknown arm is the
-    /// designed fallback.
+    /// CARD-0281 / CARD-0360: parse <c>agent_result</c> on an error TurnEnd. Grammar is stable
+    /// across 402/400/404: <c>API error (status &lt;code&gt; &lt;reason phrase&gt;): &lt;detail&gt;</c>.
+    /// A grammar miss that matches transport vocabulary stamps class <c>transport</c>. A blank
+    /// result falls back to the last <c>retry_state</c> payload of the turn. Anything else still
+    /// stamps <c>IsApiError=true</c> so the classifier's Unknown arm is the designed fallback.
     /// </summary>
-    private static (bool IsApiError, string? Class, int? Status, string? Diagnostic) ReadApiError(
+    private (bool IsApiError, string? Class, int? Status, string? Diagnostic) ReadApiError(
         string? agentResult)
     {
-        if (string.IsNullOrWhiteSpace(agentResult))
+        var source = string.IsNullOrWhiteSpace(agentResult) ? _lastRetryReason : agentResult;
+        if (string.IsNullOrWhiteSpace(source))
             return (true, null, null, null);
 
-        var match = ApiErrorPattern.Match(agentResult.Trim());
-        if (!match.Success)
-            return (true, null, null, BoundDiagnostic(agentResult));
+        var match = ApiErrorPattern.Match(source.Trim());
+        if (match.Success)
+        {
+            int? status = int.TryParse(match.Groups[1].Value, out var code) ? code : null;
+            var cls = SnakeCase(match.Groups[2].Value);
+            var detail = BoundDiagnostic(match.Groups[3].Value);
+            return (true, string.IsNullOrEmpty(cls) ? null : cls, status, detail);
+        }
 
-        int? status = int.TryParse(match.Groups[1].Value, out var code) ? code : null;
-        var cls = SnakeCase(match.Groups[2].Value);
-        var detail = BoundDiagnostic(match.Groups[3].Value);
-        return (true, string.IsNullOrEmpty(cls) ? null : cls, status, detail);
+        var transport = TranscriptKinds.MatchesTransportVocabulary(source);
+        return (true,
+            transport ? TranscriptKinds.ApiErrorClasses.Transport : null,
+            null,
+            BoundDiagnostic(source));
+    }
+
+    /// <summary>
+    /// Accumulate retry count and last reason; emit nothing. <c>retrying.attempt</c> is the
+    /// count; <c>failed.message</c> (else last <c>retrying.reason</c>) is the fallback diagnostic.
+    /// </summary>
+    private List<TranscriptPart> FromRetryState(JsonElement update)
+    {
+        var type = GetString(update, "type");
+        if (string.Equals(type, "retrying", StringComparison.OrdinalIgnoreCase))
+        {
+            var attempt = GetInt(update, "attempt");
+            if (attempt is int n && n > _retryCount)
+                _retryCount = n;
+            else if (attempt is null)
+                _retryCount++;
+            var reason = GetString(update, "reason");
+            if (!string.IsNullOrWhiteSpace(reason))
+                _lastRetryReason = reason;
+        }
+        else if (string.Equals(type, "failed", StringComparison.OrdinalIgnoreCase))
+        {
+            var message = GetString(update, "message");
+            if (!string.IsNullOrWhiteSpace(message))
+                _lastRetryReason = message;
+        }
+
+        return [];
     }
 
     private static string SnakeCase(string phrase)

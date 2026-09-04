@@ -329,6 +329,56 @@ public static class TranscriptKinds
     }
 
     /// <summary>
+    /// Structural <c>ApiErrorClass</c> values stamped by a normalizer (CARD-0360). Fits the
+    /// 60-char column. The classifier keys on these before falling back to HTTP status.
+    /// </summary>
+    public static class ApiErrorClasses
+    {
+        /// <summary>
+        /// Grok connection/transport death: <c>agent_result</c> (or the last <c>retry_state</c>
+        /// fallback) failed the <c>API error (status …)</c> grammar and matched
+        /// <see cref="TransportVocabulary"/>.
+        /// </summary>
+        public const string Transport = "transport";
+    }
+
+    /// <summary>
+    /// Case-insensitive substrings applied only when the <c>API error (status …)</c> grammar
+    /// did not match, so a "504 Gateway Timeout" stays a status-class error. Shared by the
+    /// Grok normalizer and anything that needs the same list.
+    /// </summary>
+    public static readonly string[] TransportVocabulary =
+    [
+        "error sending request",
+        "connection refused",
+        "tcp connect error",
+        "connect error",
+        "failed to connect",
+        "dns error",
+        "failed to lookup address",
+        "connection reset",
+        "broken pipe",
+        "timed out",
+        "network unreachable",
+        "no route to host",
+        "os error",
+    ];
+
+    /// <summary>True when <paramref name="text"/> matches any <see cref="TransportVocabulary"/> entry.</summary>
+    public static bool MatchesTransportVocabulary(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+        foreach (var needle in TransportVocabulary)
+        {
+            if (text.Contains(needle, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// A <see cref="TurnEnd"/> the delegate FINISHED, as opposed to one that ended because
     /// something stopped it. Null is the legacy/synthetic/Codex row and keeps today's behaviour;
     /// only a measured interrupt value is excluded (CARD-0159).

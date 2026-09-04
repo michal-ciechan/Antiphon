@@ -116,7 +116,8 @@ public static partial class UsageLimitWallParser
         detail = null;
         if (string.IsNullOrWhiteSpace(text))
             return false;
-        var match = ApiErrorStatusRegex().Match(text);
+        var stripped = RetrySuffixRegex().Replace(text.Trim(), "");
+        var match = ApiErrorStatusRegex().Match(stripped);
         if (!match.Success)
             return false;
         status = int.TryParse(match.Groups[1].Value, out var code) ? code : null;
@@ -126,6 +127,13 @@ public static partial class UsageLimitWallParser
             detail = detail[..80].Trim();
         return status is not null;
     }
+
+    /// <summary>
+    /// CARD-0360: Grok TurnEnd text may carry <c> [after N retries]</c>. Strip it so a 402
+    /// status/phrase/detail parse is byte-identical to the unsuffixed form.
+    /// </summary>
+    [GeneratedRegex(@"\s+\[after \d+ retries\]\s*$", RegexOptions.CultureInvariant)]
+    private static partial Regex RetrySuffixRegex();
 
     private static bool ContainsIgnoreCase(ReadOnlySpan<char> haystack, string needle) =>
         haystack.Contains(needle, StringComparison.OrdinalIgnoreCase);

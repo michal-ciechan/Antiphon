@@ -1,4 +1,5 @@
 using Antiphon.Server.Domain.Enums;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -28,6 +29,7 @@ public static class ApiErrorClassifier
             case "rate_limit":
                 return ApiErrorClassification.Wall;
             case "server_error":
+            case TranscriptKinds.ApiErrorClasses.Transport:
                 return ApiErrorClassification.Transient;
             case "authentication_failed":
             case "model_not_found":
