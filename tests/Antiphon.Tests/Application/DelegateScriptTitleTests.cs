@@ -159,10 +159,7 @@ public sealed class DelegateScriptTitleTests
                 {"id":"11111111-1111-1111-1111-111111111111","shortId":"11111111",
                  "status":"Queued","modelLevel":"High","warning":null,"agentKind":"ClaudeCode"}
                 """;
-            var port = FreePort();
-            BaseUrl = $"http://localhost:{port}/";
-            _listener.Prefixes.Add(BaseUrl);
-            _listener.Start();
+            BaseUrl = EphemeralHttpListener.BindLoopback(_listener);
             _pump = Task.Run(PumpAsync);
         }
 
@@ -193,15 +190,6 @@ public sealed class DelegateScriptTitleTests
                 await context.Response.OutputStream.WriteAsync(payload);
                 context.Response.Close();
             }
-        }
-
-        private static int FreePort()
-        {
-            var probe = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
-            probe.Start();
-            var port = ((IPEndPoint)probe.LocalEndpoint).Port;
-            probe.Stop();
-            return port;
         }
 
         public void Dispose()

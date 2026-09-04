@@ -1016,9 +1016,7 @@ internal sealed class DelegateTaskApiRelay : IDisposable
     {
         _callerDirectory = callerDirectory;
         _settings = settings;
-        BaseUrl = $"http://localhost:{FreePort()}/";
-        _listener.Prefixes.Add(BaseUrl);
-        _listener.Start();
+        BaseUrl = EphemeralHttpListener.BindLoopback(_listener);
         _pump = Task.Run(PumpAsync);
     }
 
@@ -1083,15 +1081,6 @@ internal sealed class DelegateTaskApiRelay : IDisposable
         context.Response.ContentType = "application/json";
         await context.Response.OutputStream.WriteAsync(payload);
         context.Response.Close();
-    }
-
-    private static int FreePort()
-    {
-        var probe = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
-        probe.Start();
-        var port = ((IPEndPoint)probe.LocalEndpoint).Port;
-        probe.Stop();
-        return port;
     }
 
     public void Dispose()

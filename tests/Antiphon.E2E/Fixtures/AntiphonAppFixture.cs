@@ -107,14 +107,12 @@ public class AntiphonAppFixture
         }
 
         var connectionString = _container.GetConnectionString();
-        var port = GetRandomAvailablePort();
         _workspacePath = Path.Combine(Path.GetTempPath(), "antiphon-e2e", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_workspacePath);
 
         _factory = new KestrelWebApplicationFactory(
             UsePrebuiltFrontend ? FindClientDistPath() : null,
             connectionString,
-            port,
             UseMockExecutor,
             _workspacePath,
             DiagnosticsDirectory,
@@ -138,7 +136,11 @@ public class AntiphonAppFixture
         _kestrelHost = kestrelFactory.KestrelHost
             ?? throw new InvalidOperationException("Kestrel host was not started.", startupException);
 
-        BaseAddress = $"http://127.0.0.1:{port}";
+        var addresses = _kestrelHost.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()
+            ?? throw new InvalidOperationException("Kestrel did not expose server addresses.", startupException);
+        var address = addresses.Addresses.FirstOrDefault()
+            ?? throw new InvalidOperationException("Kestrel bound no address.", startupException);
+        BaseAddress = $"http://127.0.0.1:{new Uri(address).Port}";
         HttpClient = CreateClient();
 
         await RecordSessionRunnerReachabilityAsync();
@@ -527,7 +529,6 @@ public class AntiphonAppFixture
     {
         private readonly string? _clientDistPath;
         private readonly string _connectionString;
-        private readonly int _port;
         private readonly bool _useMockExecutor;
         private readonly string _workspacePath;
         private readonly string? _diagnosticsDirectory;
@@ -538,7 +539,6 @@ public class AntiphonAppFixture
         public KestrelWebApplicationFactory(
             string? clientDistPath,
             string connectionString,
-            int port,
             bool useMockExecutor,
             string workspacePath,
             string? diagnosticsDirectory,
@@ -547,7 +547,6 @@ public class AntiphonAppFixture
         {
             _clientDistPath = clientDistPath;
             _connectionString = connectionString;
-            _port = port;
             _useMockExecutor = useMockExecutor;
             _workspacePath = workspacePath;
             _diagnosticsDirectory = diagnosticsDirectory;
@@ -645,7 +644,8 @@ public class AntiphonAppFixture
             builder.ConfigureWebHost(wb =>
             {
                 wb.UseKestrel();
-                wb.UseUrls($"http://127.0.0.1:{_port}");
+                // ListenLocalhost(0) refuses dynamic ports; bind 127.0.0.1:0 explicitly.
+                wb.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, 0));
             });
 
             KestrelHost = builder.Build();

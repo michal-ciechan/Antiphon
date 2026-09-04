@@ -1,5 +1,3 @@
-using System.Net;
-using System.Net.Sockets;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
@@ -51,23 +49,17 @@ public sealed class FakeTelegramServer : IAsyncDisposable
     public FakeTelegramServer(string botToken = "test-bot-token")
     {
         BotToken = botToken;
-        BaseUrl = $"http://127.0.0.1:{GetFreePort()}";   // pin a known free port up front
         var builder = WebApplication.CreateSlimBuilder();
-        builder.WebHost.UseUrls(BaseUrl);
+        KestrelLoopback.ListenEphemeral(builder.WebHost);
         builder.Logging.ClearProviders();
         _app = builder.Build();
         MapEndpoints(_app);
     }
 
-    public Task StartAsync() => _app.StartAsync();
-
-    private static int GetFreePort()
+    public async Task StartAsync()
     {
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
+        await _app.StartAsync();
+        BaseUrl = KestrelLoopback.BoundUrl(_app);
     }
 
     /// <summary>Enqueue a plain text direct-message update, as Telegram would deliver via getUpdates.</summary>

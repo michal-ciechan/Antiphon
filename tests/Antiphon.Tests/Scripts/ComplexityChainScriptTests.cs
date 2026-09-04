@@ -164,13 +164,7 @@ public sealed class ComplexityChainScriptTests
 
         public StubApi()
         {
-            var probe = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
-            probe.Start();
-            var port = ((IPEndPoint)probe.LocalEndpoint).Port;
-            probe.Stop();
-            BaseUrl = $"http://localhost:{port}/";
-            _listener.Prefixes.Add(BaseUrl);
-            _listener.Start();
+            BaseUrl = EphemeralHttpListener.BindLoopback(_listener);
             _pump = Task.Run(PumpAsync);
         }
 

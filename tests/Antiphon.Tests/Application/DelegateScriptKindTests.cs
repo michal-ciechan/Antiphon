@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Services;
+using Antiphon.Tests.TestHelpers;
 using Antiphon.Server.Domain.Enums;
 using Shouldly;
 using TUnit.Core;
@@ -495,10 +496,7 @@ public sealed class DelegateScriptKindTests
         {
             _agentKind = agentKind;
             _mode = mode;
-            var port = FreePort();
-            BaseUrl = $"http://localhost:{port}/";
-            _listener.Prefixes.Add(BaseUrl);
-            _listener.Start();
+            BaseUrl = EphemeralHttpListener.BindLoopback(_listener);
             _pump = Task.Run(PumpAsync);
         }
 
@@ -562,15 +560,6 @@ public sealed class DelegateScriptKindTests
                 await context.Response.OutputStream.WriteAsync(payload);
                 context.Response.Close();
             }
-        }
-
-        private static int FreePort()
-        {
-            var probe = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
-            probe.Start();
-            var port = ((IPEndPoint)probe.LocalEndpoint).Port;
-            probe.Stop();
-            return port;
         }
 
         public void Dispose()
