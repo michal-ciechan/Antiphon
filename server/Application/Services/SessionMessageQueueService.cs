@@ -2744,10 +2744,8 @@ public sealed class SessionMessageQueueService
     /// rung 5 being stamped by rung 4 — the first point at which "our bytes became a prompt" is
     /// ground truth, so it is the only honest place to start waiting for an answer.
     ///
-    /// <para>Gated on <see cref="IsVerifiedDeliverySessionAsync"/>: a kind whose delivery is not
-    /// transcript-verified (OpenCode/Raw) has no ground truth to judge silence against, and a
-    /// screen-only verdict one rung up is exactly what CARD-0055/CARD-0264 forbid. Better a
-    /// session with no watch than a watch that kills healthy sessions on a redraw.</para>
+    /// <para>The delivery-verified gate lives inside <c>BootReplyWatch.TryArmAsync</c>, not here,
+    /// so this path and the sweep cannot disagree about which kinds are watchable at all.</para>
     ///
     /// <para>Never fatal: the arm is a convenience over the sweep, which re-derives an unarmed
     /// watch from the same predicate on its next tick.</para>
@@ -2756,8 +2754,6 @@ public sealed class SessionMessageQueueService
     {
         try
         {
-            if (!await IsVerifiedDeliverySessionAsync(sessionId, ct))
-                return;
             await BootReplyWatch.TryArmAsync(
                 db, sessionId, _delegationSettings.BootModelWaitDeadlineMinutes, ct);
         }

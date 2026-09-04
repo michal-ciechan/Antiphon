@@ -1591,28 +1591,33 @@ public sealed class AgentTaskDispatcher
                   + $"{task.MaxAttempts} on {task.AgentKind}/{alias}, so the provider, not the "
                   + "task, is what needs attention. Reroute to another kind or retry by hand.");
 
-        if (task.AgentId is Guid incidentAgentId)
-        {
-            _db.AgentIncidents.Add(new AgentIncident
-            {
-                Id = Guid.NewGuid(),
-                AgentId = incidentAgentId,
-                SessionId = sessionId,
-                Kind = AgentIncidentKind.ProviderUnresponsive,
-                Severity = retrying ? AlertSeverity.Warning : AlertSeverity.Error,
-                Message = reason,
-                FailureReason = nameof(AgentTaskFailureCode.ProviderUnresponsive),
-                CreatedAt = UtcNow(),
-            });
-            await _db.SaveChangesAsync(ct);
-        }
-
+        var agentId = task.AgentId;
         await FailAndNotifyAsync(
             task, reason, "boot-turn provider stall", ct,
             AgentTaskFailureCode.ProviderUnresponsive);
 
-        // Read from the FAILED rows, so it counts stalls across tasks and is unaffected by the
-        // retry that follows.
+        // AFTER the fail, not before: FailAndNotifyAsync retires an ephemeral pool delegate, and
+        // an incident written against an Agent row that is then deleted cascades away with it. A
+        // pool delegate therefore records the incident with a NULL AgentId — the session id is
+        // what identifies it — while a pinned or standing agent keeps it on its own list, which
+        // is the case where that list is read at all.
+        var agentSurvives = agentId is Guid id
+            && await _db.Agents.AsNoTracking().AnyAsync(a => a.Id == id, ct);
+        _db.AgentIncidents.Add(new AgentIncident
+        {
+            Id = Guid.NewGuid(),
+            AgentId = agentSurvives ? agentId : null,
+            SessionId = sessionId,
+            Kind = AgentIncidentKind.ProviderUnresponsive,
+            Severity = retrying ? AlertSeverity.Warning : AlertSeverity.Error,
+            Message = ColumnText.Clip(reason, AgentIncident.MessageMaxLength),
+            // Doubles as the repeat LEDGER's key — see TryHoldOnBootStallRepeatAsync for why the
+            // task rows cannot serve as one.
+            FailureReason = BootStallLedgerKey(task.AgentKind, alias),
+            CreatedAt = UtcNow(),
+        });
+        await _db.SaveChangesAsync(ct);
+
         await TryHoldOnBootStallRepeatAsync(task, sessionId, alias, reason, ct);
 
         if (!retrying)
@@ -1666,6 +1671,13 @@ public sealed class AgentTaskDispatcher
     /// hung request is not evidence about a provider — on 2026-09-03 a dispatch 38 minutes after
     /// the first stall, inside the same incident, succeeded.
     /// </summary>
+    /// <summary>
+    /// The <c>(kind, alias)</c> key the boot-stall incident carries in its <c>FailureReason</c>,
+    /// which is what makes those rows a countable ledger across tasks and across retries.
+    /// </summary>
+    internal static string BootStallLedgerKey(AgentKind kind, string alias) =>
+        $"{nameof(AgentTaskFailureCode.ProviderUnresponsive)}:{kind}/{alias}";
+
     private async Task TryHoldOnBootStallRepeatAsync(
         AgentTask task, Guid sessionId, string alias, string reason, CancellationToken ct)
     {
@@ -1679,13 +1691,17 @@ public sealed class AgentTaskDispatcher
             || string.Equals(alias, "<synthetic>", StringComparison.OrdinalIgnoreCase))
             return;
 
+        // The INCIDENT rows are the ledger, not the task rows. A retried task has its
+        // CompletedAt and DispatchedAt cleared by RequeueAsync (correctly — it is open again), so
+        // counting tasks in a time window would miss exactly the first stall of every pair the
+        // automatic retry recovers, which is every pair that matters here.
         var now = UtcNow();
         var since = now - TimeSpan.FromMinutes(window);
-        var stalls = await _db.AgentTasks.AsNoTracking()
-            .Where(t => t.FailureCode == AgentTaskFailureCode.ProviderUnresponsive
-                && t.AgentKind == task.AgentKind
-                && t.ModelLevel == task.ModelLevel
-                && t.CompletedAt != null && t.CompletedAt >= since)
+        var key = BootStallLedgerKey(task.AgentKind, alias);
+        var stalls = await _db.AgentIncidents.AsNoTracking()
+            .Where(i => i.Kind == AgentIncidentKind.ProviderUnresponsive
+                && i.FailureReason == key
+                && i.CreatedAt >= since)
             .CountAsync(ct);
         if (stalls < 2)
             return;

@@ -1,4 +1,5 @@
 using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
@@ -199,6 +200,19 @@ internal static class BootReplyWatch
             return null;
 
         if (deadlineMinutes <= 0)
+        {
+            session.BootPromptSequence = null;
+            session.BootReplyDueAt = null;
+            return null;
+        }
+
+        // No transcript, no verdict. A kind whose delivery is not transcript-verified
+        // (OpenCode/Raw) has no ground truth to judge silence against, and a screen-only verdict
+        // one rung up is exactly what CARD-0055/CARD-0264 forbid. Better a session with no watch
+        // than a watch that kills healthy sessions on a redraw. Gated HERE so the delivery path
+        // and the sweep cannot disagree about who is watchable.
+        if (ProviderContractCatalog.For(session.AgentKind).DeliveryVerification.State
+            != AgentTuiCapabilityState.Supported)
         {
             session.BootPromptSequence = null;
             session.BootReplyDueAt = null;

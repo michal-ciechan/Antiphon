@@ -657,6 +657,89 @@ public class DelegateCheckProbeTests
         digest.ShouldContain("Read", customMessage: "the tool the delegate ran is part of the shape");
     }
 
+    // ---- CARD-0353 S3: the two facts the interpreter lacked --------------------------------------
+
+    [Test]
+    public async Task a_session_whose_only_row_is_its_own_prompt_is_named_a_boot_turn()
+    {
+        // The misdiagnosis this fixes, twice on 2026-09-03: "task booted but brief not delivered"
+        // and "only initial prompt received (brief delivery failed)" — both about a session whose
+        // pointer prompt HAD been delivered and whose model had simply not answered.
+        var seed = await SeedAsync(dispatchedMinutesAgo: 30);
+        await SeedAgedTranscriptAsync(
+            seed.SessionId, (TranscriptKinds.UserPrompt, "YOUR BRIEF IS NOT IN THIS MESSAGE …", 25));
+
+        var facts = await Probe().GatherAsync(seed.Task, CancellationToken.None);
+
+        facts.Session.ShouldNotBeNull();
+        facts.Session!.BootTurn.ShouldNotBeNull();
+        var digest = DelegateCheckProbe.RenderDigest(facts);
+        digest.ShouldContain("BOOT TURN");
+        digest.ShouldContain("prompt confirmed");
+        digest.ShouldContain("The prompt was DELIVERED", customMessage:
+            "the bundle has to close the reading the interpreter got wrong, not just hint at it");
+    }
+
+    [Test]
+    public async Task a_session_with_an_assistant_row_carries_no_boot_turn_line()
+    {
+        var seed = await SeedAsync(dispatchedMinutesAgo: 30);
+        await SeedAgedTranscriptAsync(
+            seed.SessionId,
+            (TranscriptKinds.UserPrompt, "the brief", 25),
+            (TranscriptKinds.AssistantText, "on it", 24));
+
+        var facts = await Probe().GatherAsync(seed.Task, CancellationToken.None);
+
+        facts.Session!.BootTurn.ShouldBeNull();
+        DelegateCheckProbe.RenderDigest(facts).ShouldNotContain("BOOT TURN");
+    }
+
+    [Test]
+    public async Task the_digest_names_the_deadline_the_sweep_will_act_on()
+    {
+        var seed = await SeedAsync(dispatchedMinutesAgo: 30);
+        await SeedAgedTranscriptAsync(
+            seed.SessionId, (TranscriptKinds.UserPrompt, "the brief", 25));
+
+        var facts = await Probe().GatherAsync(seed.Task, CancellationToken.None);
+
+        facts.Deadline.ShouldNotBeNull();
+        facts.Deadline!.Kind.ShouldBe(nameof(TaskDeadlinePolicy.DeadlineKind.BootModelWait));
+        facts.Deadline.Breached.ShouldBeTrue("25 minutes silent is past the 8-minute boot deadline");
+        var digest = DelegateCheckProbe.RenderDigest(facts);
+        digest.ShouldContain("DEADLINE: PAST BootModelWait");
+    }
+
+    [Test]
+    public async Task a_task_nowhere_near_a_deadline_says_so_rather_than_omitting_the_line()
+    {
+        // A missing section reads as "not gathered". Every section that could not be gathered has
+        // to say so — the class's own rule.
+        var seed = await SeedAsync(dispatchedMinutesAgo: 1);
+        await SeedTranscriptAsync(seed.SessionId, (TranscriptKinds.UserPrompt, "the brief", null, null, null));
+
+        var facts = await Probe().GatherAsync(seed.Task, CancellationToken.None);
+
+        facts.Deadline.ShouldBeNull();
+        DelegateCheckProbe.RenderDigest(facts).ShouldContain("DEADLINE: none near.");
+    }
+
+    [Test]
+    public async Task the_pointer_prompt_itself_is_rendered_unchanged_in_the_tail()
+    {
+        // The interpreter reads it; the bundle now explains it. Nothing rewrites it here.
+        const string pointer =
+            "YOUR BRIEF IS NOT IN THIS MESSAGE — it was too long to type, so it was written out "
+            + "instead. Read it in full before you do anything else: 'C:\\x\\.antiphon\\t-brief.md'";
+        var seed = await SeedAsync(dispatchedMinutesAgo: 30);
+        await SeedAgedTranscriptAsync(seed.SessionId, (TranscriptKinds.UserPrompt, pointer, 25));
+
+        var facts = await Probe().GatherAsync(seed.Task, CancellationToken.None);
+
+        DelegateCheckProbe.RenderDigest(facts).ShouldContain("YOUR BRIEF IS NOT IN THIS MESSAGE");
+    }
+
     // ---- the read-only guarantee --------------------------------------------------------------
 
     [Test]
@@ -815,6 +898,37 @@ public class DelegateCheckProbeTests
                 CreatedAt = at.AddSeconds(seq),
             });
         }
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Transcript rows at a chosen age, which the deadline and boot-turn arms both need — the
+    /// helper above pins everything two minutes ago, which is inside every deadline.
+    /// </summary>
+    private static async Task SeedAgedTranscriptAsync(
+        Guid sessionId, params (string Kind, string? Text, int MinutesAgo)[] entries)
+    {
+        var seq = 0L;
+        await using var db = CreateContext();
+        foreach (var (kind, text, minutesAgo) in entries)
+        {
+            seq++;
+            var at = DateTime.UtcNow.AddMinutes(-minutesAgo);
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = sessionId,
+                Sequence = seq,
+                Kind = kind,
+                Uuid = $"probe-{Guid.NewGuid():N}",
+                Text = text,
+                Role = kind == TranscriptKinds.UserPrompt ? "user" : "assistant",
+                StopReason = kind == TranscriptKinds.TurnEnd ? "end_turn" : null,
+                Timestamp = at,
+                CreatedAt = at,
+            });
+        }
+
         await db.SaveChangesAsync();
     }
 

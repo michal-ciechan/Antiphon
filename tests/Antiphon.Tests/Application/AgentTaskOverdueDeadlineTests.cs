@@ -43,6 +43,15 @@ public class AgentTaskOverdueDeadlineTests
     private const int ModelWait = 50_000;
     private const int LocalExecution = 60_000;
 
+    /// <summary>
+    /// CARD-0353 S1's fourth clock, armed hermetically and TIGHTER than <see cref="ModelWait"/> —
+    /// which is the relationship it has in production too (8 &lt; 20). Every test below that means
+    /// to exercise the GENERAL arm therefore has to seed a model row, because a lone prompt is a
+    /// boot turn by definition now.
+    /// </summary>
+    private const int BootModelWait = 40_000;
+    private const int BootStallRepeatHold = 30;
+
     [Test]
     public async Task a_task_past_its_role_ceiling_is_failed_with_the_clock_and_the_phase_named()
     {
@@ -98,7 +107,12 @@ public class AgentTaskOverdueDeadlineTests
         await using var scenario = new Scenario();
         var task = await scenario.SeedTaskAsync(
             dispatchedMinutesAgo: 70_000, status: AgentTaskStatus.Dispatched);
-        await scenario.SeedEntriesAsync((TranscriptKinds.UserPrompt, "the brief", 69_000));
+        // The assistant row is what makes this the GENERAL arm: the session has produced
+        // something, so CARD-0353's boot arm (which kills) is out and CARD-0117 D8's non-killing
+        // deadline is the one under test.
+        await scenario.SeedEntriesAsync(
+            (TranscriptKinds.AssistantText, "some earlier work", 69_500),
+            (TranscriptKinds.UserPrompt, "the brief", 69_000));
         await scenario.SeedPendingBriefAsync(task);
 
         await harness.FailOverdueTasksAsync(CancellationToken.None);
@@ -120,7 +134,11 @@ public class AgentTaskOverdueDeadlineTests
         var (harness, stopper) = CreateHarness();
         await using var scenario = new Scenario();
         var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 70_000);
-        await scenario.SeedEntriesAsync((TranscriptKinds.UserPrompt, "the brief", 69_000));
+        // Mid-TASK, not mid-boot: the session has answered before, so the general 20-minute-class
+        // arm applies and nothing is killed (CARD-0353 S1 owns the lone-prompt shape).
+        await scenario.SeedEntriesAsync(
+            (TranscriptKinds.AssistantText, "some earlier work", 69_500),
+            (TranscriptKinds.UserPrompt, "the brief", 69_000));
 
         await harness.FailOverdueTasksAsync(CancellationToken.None);
 
@@ -267,6 +285,170 @@ public class AgentTaskOverdueDeadlineTests
             "the completion note carries the same reason the board shows");
     }
 
+    // ---- CARD-0353 S2: the boot-turn stall tail ---------------------------------------------------
+
+    [Test]
+    public async Task a_boot_stall_fails_with_the_code_kills_the_session_and_retries_once()
+    {
+        // The one deadline in this file that IS destructive, and the reason it may be: the
+        // session has produced nothing at all since its own prompt, so there is provably no work
+        // to protect (CARD-0056's line). Measured cause, 2026-09-03: an xAI capacity incident
+        // left three Grok requests accepted and never answered, with no retry and no error.
+        var (harness, stopper) = CreateHarness();
+        await using var scenario = new Scenario();
+        var parent = await scenario.SeedSessionAsync();
+        var task = await scenario.SeedTaskAsync(
+            dispatchedMinutesAgo: 45_000, withAgent: true, replyToSession: parent);
+        await scenario.SeedEntriesAsync((TranscriptKinds.UserPrompt, "the brief", 44_000));
+
+        await harness.FailOverdueTasksAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var retried = await verify.AgentTasks.SingleAsync(t => t.Id == task);
+        retried.FailureCode.ShouldBe(AgentTaskFailureCode.ProviderUnresponsive);
+        retried.FailureReason.ShouldNotBeNull();
+        retried.FailureReason.ShouldContain("Provider never answered the boot prompt");
+        retried.FailureReason.ShouldContain("is being retried once");
+        retried.Status.ShouldBe(AgentTaskStatus.Queued, "the automatic retry requeues it");
+        retried.Attempt.ShouldBe(2);
+        stopper.Killed.ShouldContain(scenario.SessionId, customMessage:
+            "leaving a hung process alive costs a pool slot and re-adopts nothing");
+
+        (await verify.AgentIncidents.AnyAsync(
+            i => i.SessionId == scenario.SessionId
+                && i.Kind == AgentIncidentKind.ProviderUnresponsive)).ShouldBeTrue(
+            "the incident has to explain why a healthy-looking session was killed — and it is "
+            + "written with a null AgentId for a pool delegate, whose Agent row the failure "
+            + "retires, so it survives the retirement");
+        var note = await verify.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == parent && m.Origin == QueuedMessageOrigin.Delegation)
+            .SingleAsync();
+        note.Body.ShouldContain("Provider never answered", customMessage:
+            "the orchestrator sees the failure AND the retry in one line");
+    }
+
+    [Test]
+    public async Task a_session_that_produced_one_thinking_row_takes_the_old_non_killing_failure()
+    {
+        // The guard that keeps the boot arm a tightening rather than a widening.
+        var (harness, stopper) = CreateHarness();
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 70_000, withAgent: true);
+        await scenario.SeedEntriesAsync(
+            (TranscriptKinds.Thinking, "considering", 69_500),
+            (TranscriptKinds.UserPrompt, "the brief", 69_000));
+
+        await harness.FailOverdueTasksAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureCode.ShouldBeNull("the general arm has no failure code and no retry");
+        failed.FailureReason.ShouldNotBeNull();
+        failed.FailureReason.ShouldContain("The session was NOT killed");
+        stopper.Killed.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task a_second_boot_stall_on_the_same_task_fails_without_retrying()
+    {
+        // MaxAttempts is 2, so exactly ONE automatic attempt. A second stall is evidence about the
+        // provider, not about the task, and the reason has to say so and name the alias.
+        var (harness, stopper) = CreateHarness();
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedTaskAsync(
+            dispatchedMinutesAgo: 45_000, withAgent: true, attempt: 2);
+        await scenario.SeedEntriesAsync((TranscriptKinds.UserPrompt, "the brief", 44_000));
+
+        await harness.FailOverdueTasksAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed, "not requeued a second time");
+        failed.Attempt.ShouldBe(2);
+        failed.FailureCode.ShouldBe(AgentTaskFailureCode.ProviderUnresponsive);
+        failed.FailureReason.ShouldNotBeNull();
+        failed.FailureReason.ShouldContain("is NOT being retried");
+        failed.FailureReason.ShouldContain(
+            ModelLevelAliases.For(AgentKind.ClaudeCode, AgentModelLevel.Frontier));
+        stopper.Killed.ShouldContain(scenario.SessionId);
+    }
+
+    [Test]
+    public async Task the_first_boot_stall_never_holds_the_model_but_the_second_does()
+    {
+        // One hung request is not evidence about a provider: on 2026-09-03 a dispatch 38 minutes
+        // after the first stall, inside the SAME incident, succeeded. Hold on a repeat only.
+        var (harness, _) = CreateHarness();
+        await using var scenario = new Scenario();
+        var alias = ModelLevelAliases.For(AgentKind.ClaudeCode, AgentModelLevel.Frontier);
+        var first = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 45_000, withAgent: true);
+        await scenario.SeedEntriesAsync((TranscriptKinds.UserPrompt, "the brief", 44_000));
+
+        await harness.FailOverdueTasksAsync(CancellationToken.None);
+
+        await using (var afterFirst = CreateContext())
+        {
+            (await afterFirst.ModelAvailabilityHolds.AnyAsync(
+                h => h.Kind == AgentKind.ClaudeCode && h.ModelAlias == alias && h.ClearedAt == null))
+                .ShouldBeFalse("one hung request is not evidence about a provider");
+        }
+
+        // A SECOND task, on a second session, stalls the same way inside the window.
+        await using var second = new Scenario();
+        await second.SeedTaskAsync(dispatchedMinutesAgo: 45_000, withAgent: true);
+        await second.SeedEntriesAsync((TranscriptKinds.UserPrompt, "the brief", 44_000));
+
+        var (harness2, _) = CreateHarness();
+        await harness2.FailOverdueTasksAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var hold = await verify.ModelAvailabilityHolds.FirstOrDefaultAsync(
+            h => h.Kind == AgentKind.ClaudeCode && h.ModelAlias == alias && h.ClearedAt == null);
+        try
+        {
+            hold.ShouldNotBeNull("two boot stalls on one alias inside the window IS evidence");
+            hold.Source.ShouldBe(ModelAvailabilitySource.AutoDetected);
+            hold.Reason.ShouldNotBeNull();
+            hold.Reason.ShouldContain("provider unresponsive");
+            hold.DisabledUntil.ShouldNotBeNull();
+            hold.DisabledUntil.Value.ShouldBeGreaterThan(DateTime.UtcNow);
+            first.ShouldNotBe(Guid.Empty);
+        }
+        finally
+        {
+            await verify.ModelAvailabilityHolds
+                .Where(h => h.Kind == AgentKind.ClaudeCode && h.ModelAlias == alias)
+                .ExecuteDeleteAsync();
+        }
+    }
+
+    [Test]
+    public async Task a_boot_stall_whose_workspace_shows_progress_is_neither_killed_nor_failed_early()
+    {
+        // The second, independent subsystem. If files moved, the boot arm's licence to kill is
+        // gone — and so is its tighter clock: failing here would apply the boot deadline to a
+        // session the general one has not yet judged.
+        using var repo = new ScratchGitRepo("card0353-boot-progress");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "work.txt"), "the delegate wrote this\n");
+
+        var (harness, stopper) = CreateHarness();
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedTaskAsync(
+            dispatchedMinutesAgo: 45_000, workingDirectory: repo.Path, withAgent: true);
+        await scenario.SeedEntriesAsync((TranscriptKinds.UserPrompt, "the brief", 44_000));
+
+        await harness.FailOverdueTasksAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var untouched = await verify.AgentTasks.SingleAsync(t => t.Id == task);
+        untouched.Status.ShouldBe(AgentTaskStatus.Working, customMessage:
+            "45 000 minutes is past the boot deadline but not the general one");
+        untouched.FailureCode.ShouldBeNull();
+        stopper.Killed.ShouldBeEmpty();
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     private static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper) CreateHarness()
@@ -284,6 +466,8 @@ public class AgentTaskOverdueDeadlineTests
             DefaultTimeoutMinutes = Ceiling,
             ModelWaitDeadlineMinutes = ModelWait,
             LocalExecutionDeadlineMinutes = LocalExecution,
+            BootModelWaitDeadlineMinutes = BootModelWait,
+            BootStallRepeatHoldMinutes = BootStallRepeatHold,
             RolePolicy = new(StringComparer.OrdinalIgnoreCase)
             {
                 ["Code"] = new DelegationSettings.RolePolicyEntry { TimeoutMinutes = Ceiling },
@@ -307,6 +491,13 @@ public class AgentTaskOverdueDeadlineTests
         // GitWorkspaceService comes from AddDelegationWorktreeGraph above.
         services.AddSingleton(Options.Create(new DelegateBindRefusalRecoverySettings()));
         services.AddSingleton<DelegateBindRefusalRecovery>();
+        // CARD-0353 S2 step 5: the repeat hold. Scoped like production; absent, the hold arm is
+        // simply not armed and the rest of the boot tail behaves identically.
+        services.AddScoped<ModelAvailability>();
+        // CARD-0153 S2's workspace arm, which CARD-0353 S2 reuses as the boot arm's second,
+        // independent guard: files that moved mean the kill is off.
+        services.AddScoped<AgentReviewCheckpointService>();
+        services.AddScoped<AgentFilesService>();
         services.AddScoped<AgentTaskDispatcher>();
 
         var provider = services.BuildServiceProvider();
@@ -326,6 +517,8 @@ public class AgentTaskOverdueDeadlineTests
 
         public Scenario() => _sessions.Add(_sessionId);
 
+        public Guid SessionId => _sessionId;
+
         public async Task<Guid> SeedSessionAsync()
         {
             var id = Guid.NewGuid();
@@ -342,7 +535,8 @@ public class AgentTaskOverdueDeadlineTests
             string? title = null,
             bool withAgent = false,
             Guid? replyToSession = null,
-            AgentTaskStatus status = AgentTaskStatus.Working)
+            AgentTaskStatus status = AgentTaskStatus.Working,
+            int attempt = 1)
         {
             var dispatched = DateTime.UtcNow.AddMinutes(-dispatchedMinutesAgo);
             var cwd = workingDirectory ?? Path.GetTempPath();
@@ -386,6 +580,7 @@ public class AgentTaskOverdueDeadlineTests
                 AgentId = agentId,
                 AgentSessionId = _sessionId,
                 Status = status,
+                Attempt = attempt,
                 ReplyTo = replyToSession is null ? AgentTaskReplyTo.None : AgentTaskReplyTo.Session,
                 ParentSessionId = replyToSession,
                 CreatedAt = dispatched,
@@ -477,6 +672,10 @@ public class AgentTaskOverdueDeadlineTests
             await db.SessionQueuedMessages.Where(m => _sessions.Contains(m.AgentSessionId)).ExecuteDeleteAsync();
             await db.AgentTaskEvents.Where(e => _tasks.Contains(e.AgentTaskId)).ExecuteDeleteAsync();
             await db.AgentIncidents.Where(i => i.AgentId != null && _agents.Contains(i.AgentId.Value)).ExecuteDeleteAsync();
+            // CARD-0353 S2 writes the boot-stall incident with a NULL AgentId for a pool delegate
+            // (its Agent row is retired by the failure), and those rows are the repeat-hold
+            // LEDGER — left behind they would make the next test in this class read as a repeat.
+            await db.AgentIncidents.Where(i => i.SessionId != null && _sessions.Contains(i.SessionId.Value)).ExecuteDeleteAsync();
             await db.AgentTasks.Where(t => _tasks.Contains(t.Id)).ExecuteDeleteAsync();
             await db.AgentSessions.Where(s => _sessions.Contains(s.Id)).ExecuteDeleteAsync();
             await db.Agents.Where(a => _agents.Contains(a.Id)).ExecuteDeleteAsync();
