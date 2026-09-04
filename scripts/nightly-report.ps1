@@ -776,7 +776,7 @@ try {
         labels           = $mergedLabels
         editedBy         = 'nightly'
     }
-    if ($importance -eq 'High') { $patchObj['importance'] = 'High' }
+    $patchObj['importance'] = $importance
     $patchBody = ConvertTo-NightlyJson $patchObj
     $discText = ('still red on {0}: {1}' -f $dateOnly, $countPhrase)
     $discBody = ConvertTo-NightlyJson @{ body = $discText; author = 'nightly' }
