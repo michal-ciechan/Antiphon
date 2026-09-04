@@ -244,6 +244,17 @@ pool delegate keeps the bundles it started with until it retires (60 minutes idl
 bundles into a live session, deliberately — if a rule change matters urgently for work in flight,
 say it in the brief for that dispatch.
 
+**Goal length never affects delivery, and shortening a goal buys nothing (CARD-0353).** A Claude
+delegate types its brief inline up to ~40 KB on the modern ConPTY. **Every non-Claude delegate —
+Grok, Codex — receives a POINTER at any length**: the ceiling for those kinds is 0 bytes by design
+(CARD-0084/CARD-0099 default-deny), so the brief is written to
+`.antiphon/task-<short>-brief.md` and the typed message says so, beginning `YOUR BRIEF IS NOT IN
+THIS MESSAGE`. That pointer IS complete delivery — nothing further is queued, and the delegate
+reads the file before it does anything else. So "shorten the goal to avoid the spill" avoids
+nothing and drops context the delegate needed; it also fights §0's rule that the orchestrator hands
+over full context. If a session shows only that pointer and nothing else, see §4: it is a provider
+stall, not a delivery failure.
+
 ---
 
 ## 4. Checking on a delegate
@@ -274,6 +285,20 @@ header adds `after reply (dispatched … ago)` and the completion note carries b
 `since dispatch`. An orchestrator judging a stall reads `elapsed` together with `last activity` —
 `elapsed` after a reply is "how long since we answered", not "how long since dispatch". This is not
 `AgentSession.LaunchResumedAt` (CARD-0340's interrupted-launch clock).
+
+**A session showing only its own prompt, and WORKING, is a provider stall (CARD-0353/CARD-0312).**
+The prompt reached the transcript, so delivery is not the problem; the model has not produced its
+first token. The check digest names it — a `BOOT TURN` line on `SESSION`, and a `DEADLINE:` line
+naming `BootModelWait` — and the harness handles it: at
+`Delegation:BootModelWaitDeadlineMinutes` (8, measured) the task is failed with
+`ProviderUnresponsive`, the session is killed (it produced nothing, so nothing is lost) and the
+task is **retried once** at the same kind and tier. A second stall on the same task fails without
+retrying and names the alias; two stalls on the same `(kind, alias)` inside
+`Delegation:BootStallRepeatHoldMinutes` (30) put that alias on an AutoDetected hold. Cancel and
+retry by hand only if you cannot wait out the deadline — and if you do, expect the same provider.
+For a Grok session, `~/.grok/sessions/<id>/events.jsonl` (`phase_changed: waiting_for_model` with
+no `first_token`) and `~/.grok/logs/unified.jsonl` (`shell.turn.inference_start` with no
+`inference_done`) are the diagnostics; see `docs/agent-kinds.md`.
 
 **A Check-role task settles Succeeded when it has produced a reading (CARD-0302).** `LOOKS STUCK` /
 `BLOCKED` in that reading is evidence on the **checked** task (its Check event / parent `[check …]`

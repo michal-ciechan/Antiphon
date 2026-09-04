@@ -1,5 +1,15 @@
 # Session runtime invariants
 
+- **A delivered boot prompt with no assistant row is a PROVIDER STALL, never a delivery
+  re-attempt** (CARD-0353/CARD-0312). Once a prompt is transcript-confirmed, our bytes arrived —
+  re-typing it, pressing Enter again or resending the brief can only double-submit. The next
+  expected event is the model's first token, and its absence is the boot-turn deadline's business:
+  `Delegation:BootModelWaitDeadlineMinutes` (8, measured) fails the task with
+  `ProviderUnresponsive`, kills the session because it provably produced nothing, and retries it
+  once. The evidence ladder has five rungs, and only the fifth is about the MODEL: ready → composer
+  → submit → transcript confirm → **a reply**. Screen movement is wedge evidence at rung 3, never
+  reply evidence at rung 5.
+
 
 <!-- CARD-0254 preserved source begins -->
 

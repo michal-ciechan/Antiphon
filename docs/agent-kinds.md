@@ -275,6 +275,21 @@ the whole session (reads must share write/delete), and is flushed per update.
   and a raw OSC title are not submit evidence. A body still visible at that deadline is
   `NoSubmitOutput` and stays retryable via Enter-only recovery (CARD-0342, sharing CARD-0340 S3's
   persisted verdict). The named/card-launch `SendPromptAsync` path is unchanged.
+- **Grok Build 1.0.13 has no first-token timeout, and this is how a session hangs forever**
+  (CARD-0353). It retries an HTTP 500 up to 15 times per request, but a request the provider simply
+  never answers is never abandoned: measured 2026-09-03, three inference calls (13:22Z, 13:47Z,
+  14:03Z) were accepted and produced no `first_token`, no retry and no error for the full 16
+  minutes until the orchestrator cancelled — inside an xAI capacity window that also logged 289
+  HTTP 500s ("The model is currently at capacity due to high demand") between 14:25Z and 15:39Z.
+  Antiphon's boot-turn deadline is what ends this (`Delegation:BootModelWaitDeadlineMinutes`).
+- **Grok's own diagnostics, for a human — never a verdict.** Next to the `updates.jsonl` the runner
+  tails, Grok writes `~/.grok/sessions/<id>/events.jsonl` (`turn_started` →
+  `phase_changed: waiting_for_model` → `first_token` → …) and `~/.grok/logs/unified.jsonl`
+  (`shell.turn.inference_start`, `inference_done` with `ttft_ms`, `inference_retry` with `kind` and
+  `reason`, `inference_failed` with `status_code`). A session sitting on "Waiting for response…"
+  whose `events.jsonl` ends at `waiting_for_model` is a hung provider call. Antiphon consumes
+  neither file and must not start: the transcript is the verdict
+  (`docs/session-runtime-invariants.md`), and these are where a human looks.
 
 ## 6. Codex (OpenAI codex-cli)
 
