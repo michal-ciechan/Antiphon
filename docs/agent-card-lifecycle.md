@@ -103,6 +103,8 @@ Review comments from the card diff include the card identifier, file path, side,
 
 The success transition targets the first board column whose `CardStatus` is `Review`, ordered by `ColumnOrder`. If a board has no review column, or if the card has already reached a terminal column, completion does not move the card.
 
+A `StageOutcome` finding row (CARD-0272 — a land op's own Rebase/Verify/Cleanup rows, a delegate's self-reported `[antiphon-finding:…]` line, or an orchestrator override) is evidence attached to a task and card, never a card move by itself; only the transitions above move a card.
+
 
 <!-- CARD-0254 preserved source begins -->
 

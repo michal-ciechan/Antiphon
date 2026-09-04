@@ -46,6 +46,8 @@ header when it is set. Inside a running agent session both are already in the en
 | Schedules for an agent / card | GET | `/api/schedules?agentId=` / `?cardId=` (`scripts/schedule.ps1`) |
 | Kill a session | POST | `/api/sessions/{id}/kill` |
 | Land a succeeded Worktree task | POST | `/api/agent-tasks/{id}/land` (`{ verify?: string }`) — 202 `{ status: "queued" \| "requeued" }`. 409 means a land is running in this server now. Read `Landed` / `LandedWithResidue` / `LandRefused` on the task. `GET /api/agent-tasks/{id}` exposes `landRequestedAt`, `landStartedAt`, `landAttempt`. Re-POST retries leftover cleanup. |
+| Record/override a stage finding (CARD-0272) | POST | `/api/agent-tasks/{id}/finding` (`RecordStageFindingRequest`: `stage` name, `found` bool, `detail?`). Writes a `Source=Orchestrator` `StageOutcome` row that supersedes the latest for that (task, stage); `delegate.ps1 -Finding <id> -Stage … -Found "…"` / `-Clean`. |
+| Per-stage hit rate vs. cost (CARD-0272) | GET | `/api/stage-outcomes` (`since`, `until`, `stage`, `cardId`, `latestOnly` default true) — rows plus a per-stage summary (runs, found/clean/skipped/failed/unreported, hit %, USD spent, USD per finding, server seconds). `scripts/stage-value-report.ps1` prints it as a table. |
 | Live runner sessions / rendered screen | GET | `:17204/sessions`, `:17204/sessions/{id}/snapshot` |
 
 ```powershell

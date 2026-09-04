@@ -256,6 +256,14 @@ POST   /api/agent-tasks/{id}/continue        replay the standing authority given
                                              Returns `AgentTaskSummaryDto` like
                                              `/reply`.
 POST   /api/agent-tasks/{id}/refine          steer a running delegate without cancelling it
+POST   /api/agent-tasks/{id}/finding         CARD-0272: orchestrator override of a stage
+                                             finding. Body `RecordStageFindingRequest`:
+                                             `stage` (name, not ordinal — unknown is 422),
+                                             `found` bool, optional `detail`. Writes a
+                                             `Source=Orchestrator` `StageOutcome` row that
+                                             supersedes the latest for that (task, stage).
+                                             `delegate.ps1 -Finding <id> -Stage … -Found
+                                             "…"` / `-Clean`.
 POST   /api/agent-tasks/{id}/land            queue an explicit land of a Succeeded Worktree
                                              task (`{ verify?: string }`). 202
                                              `{ status: "queued" | "requeued" }`; git
@@ -266,6 +274,19 @@ POST   /api/agent-tasks/{id}/land            queue an explicit land of a Succeed
                                              (target did not advance). 409 if a land is
                                              running in this server now (never for a
                                              request no process holds).
+GET    /api/stage-outcomes                   CARD-0272 per-stage hit rate vs. cost. Query
+                                             `since`, `until`, `stage` (name), `cardId`
+                                             (guid), `latestOnly` (default true — one row
+                                             per (task, stage), the latest superseding any
+                                             orchestrator override). Returns
+                                             `StageOutcomeListDto`: `rows` plus `summary`
+                                             (one `StageOutcomeSummaryRowDto` per stage —
+                                             runs, found, clean, skipped, failed,
+                                             unreported, hitPercent = found/(found+clean),
+                                             usdSpent, usdPerFinding, serverSecs). Stages
+                                             are `Rebase`/`Verify`/`Cleanup`/`Review`/
+                                             `FollowUp`/`Deploy`. `scripts/stage-value-report.ps1`
+                                             wraps this as a table.
 GET    /api/agent-tasks/areas?directory=     the repo's named areas (antiphon.areas.json)
 GET    /api/agent-tasks/pipeline             fleet-wide advisory in-flight / queued / blocked / ready snapshot. Queued queueReason is one of sharedCheckoutLease, siblingLandInFlight, concurrencyCap, routingPinNotBefore, awaitingDispatch. In-flight, queued and blocked rows carry agentKind / modelLevel; in-flight and queued also carry workspace.
 ```

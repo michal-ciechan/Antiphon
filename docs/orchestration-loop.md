@@ -53,6 +53,12 @@ this server now — wait for its outcome event. A `Warning` "did not finish (ser
 re-running" is informational. The orchestrator decides the order and what a refusal means, but
 does none of those git operations itself.
 
+**Also automatic: what a stage run found.** A land op writes its own `StageOutcome` rows with no
+orchestrator action (§5). A Review/Test/Merge/Deploy delegate — or any dispatch given `-Stage`
+(§3) — is asked to end its report with a one-line `[antiphon-finding:<id> found|clean]` self-report
+instead; trusting that line is the same rule as trusting the report itself, and overriding it
+(`delegate.ps1 -Finding …`) is rare enough that it should feel like an exception, not a habit.
+
 Since CARD-0247, a `PreToolUse` hook in this repo nudges at the third consecutive cold source read
 (it never blocks; `ANTIPHON_ORCHESTRATOR=0` silences it for a hacking session) - the hook is the
 backstop at the third read; the rule is the bundle's - and a server sweep records each run as an
@@ -238,6 +244,14 @@ carry:
 - **Say the warning count, the flaky suites, the ports in use** — anything true this afternoon and
   false next month.
 - Give **outcomes, not procedures**. The delegate decides how.
+- **Pass `-Stage` on a Debug/Docs/Custom dispatch that is actually answering a landing-step
+  question** (CARD-0272) — a title like "verify CARD-nnnn still builds" or "clean up the stale
+  worktrees" gets `-Stage Verify` / `-Stage Cleanup` even though the role itself never defaults
+  one. Review/Test/Merge/Deploy and an `-OnAgent` follow-up already get a stage from their role;
+  Code and Plan never do, and don't need one. A staged dispatch's brief carries a self-report
+  finding line — `[antiphon-finding:<id> found|clean]` on the line before the report token — and
+  `delegate.ps1 -Finding <id> -Stage … -Found "…"` / `-Clean` is the orchestrator's override when
+  it judged differently. Full flag reference: `.claude/skills/antiphon-delegate/SKILL.md`.
 
 The test of whether this worked is mechanical: briefs are stored on task rows, so sample the next
 week's and grep for the six rule-paragraphs. If they are still being typed, the inversion did not
@@ -408,6 +422,22 @@ inspecting the branch directly.
 A refusal is a judgement call, not a silent gate: dispatch a follow-up to repair it, defer the
 landing, or drop the branch.
 
+**Each land outcome is also three `StageOutcome` rows (CARD-0272)** — Rebase, Verify, Cleanup —
+because those are three different questions even though one land op answers all three. `Landed`
+"build OK…" writes Rebase Clean, Verify Clean (with the verify detail), Cleanup Clean.
+`LandedWithResidue` writes the same Rebase/Verify but Cleanup Failed, naming what remains — the
+target still advanced, only cleanup did not finish. A bare `LandRefused` (fetch/rebase/push
+failed before any build ran) writes Rebase Failed alone. Historically, before CARD-0328 shipped
+`LandedWithResidue` as its own event (2026-09-03), a "could not delete branch/worktree" cleanup
+failure was reported under `LandRefused` too, which read as "did not land" even though the target
+had advanced — the plan behind this card flagged that as 9 of 47 backfilled runs misclassified.
+The backfill that derives `StageOutcome` rows from that older history still recognizes a
+`LandRefused` whose detail says "could not delete" and correctly writes Rebase Clean / Verify
+Unreported / Cleanup Failed for it, so the mapping is accurate even for pre-0328 rows; it is not
+an open problem, just a shape worth knowing when reading old rows. `GET /api/stage-outcomes` (via
+`scripts/stage-value-report.ps1`, §9) is where these land automatically alongside delegate
+self-reported and orchestrator-overridden stage rows for Review/Test/Merge/Deploy passes.
+
 ---
 
 ## 6. Deploy
@@ -514,6 +544,12 @@ and the card CLI (CARD-0051, `scripts/card.ps1`) have shipped. In rough order of
 
 1. **The unmerged-branch sweep** from §1 — a `Daily` schedule to the orchestrator that reports genuinely unapplied work.
 2. **A post-merge deploy script** that reads the diff and decides which restarts §6 requires.
+
+**Per-stage hit rate vs. cost has shipped** (CARD-0272, `GET /api/stage-outcomes`). Read it with
+`pwsh -File scripts/stage-value-report.ps1 [-Since iso] [-Until iso] [-Stage name] [-Card CARD-nnnn]
+[-Json]` — a table of runs, found/clean/skipped/failed/unreported, hit %, USD spent, USD per
+finding and server seconds per stage. Use it before deciding whether a stage-shaped dispatch (§3)
+is worth its cost, not just when the card asks for a report.
 
 
 <!-- CARD-0254 preserved source begins -->
