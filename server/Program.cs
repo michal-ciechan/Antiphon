@@ -131,6 +131,10 @@ try
     builder.Services.AddOptions<OrchestratorSettings>()
         .Bind(builder.Configuration.GetSection("Orchestrator"))
         .ValidateOnStart();
+    builder.Services.AddSingleton<IValidateOptions<TrackerSettings>, TrackerSettingsValidator>();
+    builder.Services.AddOptions<TrackerSettings>()
+        .Bind(builder.Configuration.GetSection(TrackerSettings.SectionName))
+        .ValidateOnStart();
     builder.Services.AddSingleton<IValidateOptions<DelegationSettings>, DelegationSettingsValidator>();
     builder.Services.AddOptions<DelegationSettings>()
         .Bind(builder.Configuration.GetSection("Delegation"))
@@ -530,6 +534,8 @@ try
     builder.Services.AddScoped<ApiKeyEnvResolver>();
     // CARD-0166 S2: tracker token_key -> ApiKeys resolution (project then global), env-var fallback.
     builder.Services.AddScoped<TrackerTokenResolver>();
+    // CARD-0347: per-card close/reopen state push, shared with the bidirectional run.
+    builder.Services.AddScoped<TrackerCardStatePushService>();
     // CARD-0166 S4+: bidirectional sync (never on the orchestrator tick — trigger endpoints in S7).
     builder.Services.AddScoped<TrackerBidirectionalSyncService>();
     // CARD-0171: opt-in change summary to the board's tracker.notify_channel, after a sync commits.

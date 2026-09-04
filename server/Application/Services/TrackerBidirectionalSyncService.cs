@@ -24,8 +24,15 @@ public sealed class TrackerBidirectionalSyncService
     private readonly IEventBus _eventBus;
     private readonly ILogger<TrackerBidirectionalSyncService> _logger;
     private readonly TimeProvider _timeProvider;
+    private readonly TrackerCardStatePushService _cardStatePush;
 
-    private const string TrackerActor = "external-tracker";
+    private const string TrackerActor = TrackerCardStatePushService.TrackerActor;
+
+    internal static bool IsRunning(Guid boardId) => RunningBoards.ContainsKey(boardId);
+
+    internal static bool TryHoldRunning(Guid boardId) => RunningBoards.TryAdd(boardId, 0);
+
+    internal static void ReleaseRunning(Guid boardId) => RunningBoards.TryRemove(boardId, out _);
 
     public TrackerBidirectionalSyncService(
         AppDbContext db,
@@ -34,7 +41,8 @@ public sealed class TrackerBidirectionalSyncService
         IEnumerable<IIssueTracker> trackers,
         IEventBus eventBus,
         ILogger<TrackerBidirectionalSyncService> logger,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        TrackerCardStatePushService cardStatePush)
     {
         _db = db;
         _readSync = readSync;
@@ -43,6 +51,7 @@ public sealed class TrackerBidirectionalSyncService
         _eventBus = eventBus;
         _logger = logger;
         _timeProvider = timeProvider;
+        _cardStatePush = cardStatePush;
     }
 
     public async Task<TrackerSyncRunResult> RunAsync(Guid? boardId, CancellationToken ct)
@@ -348,12 +357,14 @@ public sealed class TrackerBidirectionalSyncService
             // CARD-0198/CARD-0199: state before labels and content-edit comments. Either stamps
             // LastOutboundSyncedAt = utcNow, which makes SyncStateAsync's reopen.CreatedAt >
             // LastOutboundSyncedAt gate false for a reopen that belongs to this same pass.
-            stateChanges += await SyncStateAsync(tracker, config, issueRef, utcNow, changes, ct);
+            stateChanges += (await _cardStatePush.PushStateAsync(
+                tracker, config, issueRef, utcNow, changes, ct)).Changed;
 
             commentsOut += await PushContentEditCommentsAsync(tracker, config, issueRef, utcNow, changes, ct);
 
             if (issuesByExternalId.TryGetValue(issueRef.ExternalId, out var current))
-                labelsChanged += await SyncLabelsAsync(tracker, config, issueRef, current, utcNow, changes, ct);
+                labelsChanged += await _cardStatePush.SyncLabelsAsync(
+                    tracker, config, issueRef, current, utcNow, changes, ct);
 
             if (issueRef.Origin == ExternalIssueOrigin.AntiphonExport
                 && (issueRef.LastOutboundSyncedAt is null || card.UpdatedAt > issueRef.LastOutboundSyncedAt)
@@ -463,173 +474,6 @@ public sealed class TrackerBidirectionalSyncService
         issueRef.LastRevisionSynced = edits.Max(e => e.RevisionNumber);
         issueRef.LastOutboundSyncedAt = utcNow;
         return posted;
-    }
-
-    private async Task<int> SyncLabelsAsync(
-        IBidirectionalIssueTracker tracker,
-        IssueTrackerConfig config,
-        ExternalIssueRef issueRef,
-        TrackedIssue current,
-        DateTime utcNow,
-        List<TrackerSyncChange> changes,
-        CancellationToken ct)
-    {
-        var card = issueRef.Card;
-        var desiredStatus = TrackerSyncMarkers.StatusLabel(card.Status);
-        var desiredPriority = issueRef.Origin == ExternalIssueOrigin.AntiphonExport
-            ? TrackerSyncMarkers.PriorityLabel(card.Importance)
-            : null;
-
-        var currentLabels = current.Labels.ToList();
-        var changed = 0;
-        IReadOnlyList<string>? added = null;
-        IReadOnlyList<string>? removed = null;
-
-        if (issueRef.Origin == ExternalIssueOrigin.AntiphonExport)
-        {
-            var freeForm = BoardService.ParseLabels(card.LabelsJson);
-            var desired = freeForm
-                .Concat([desiredStatus])
-                .Concat(desiredPriority is null ? [] : new[] { desiredPriority })
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
-            var currentSet = currentLabels.ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var desiredSet = desired.ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (!currentSet.SetEquals(desiredSet))
-            {
-                // CARD-0346: compute the case-insensitive remote→desired delta before writing;
-                // attach it only after ReplaceLabelsAsync succeeds.
-                added = SortedUnique(desiredSet.Where(l => !currentSet.Contains(l)));
-                removed = SortedUnique(currentSet.Where(l => !desiredSet.Contains(l)));
-                await tracker.ReplaceLabelsAsync(config, issueRef.ExternalId, desired, ct);
-                changed++;
-            }
-        }
-        else
-        {
-            // Import-origin: managed prefixes via sub-resource only.
-            var addedList = new List<string>();
-            var removedList = new List<string>();
-            var staleManaged = currentLabels
-                .Where(TrackerSyncMarkers.IsManagedLabel)
-                .Where(l => !string.Equals(l, desiredStatus, StringComparison.OrdinalIgnoreCase)
-                            && (desiredPriority is null
-                                || !string.Equals(l, desiredPriority, StringComparison.OrdinalIgnoreCase)))
-                .ToList();
-            foreach (var stale in staleManaged)
-            {
-                await tracker.RemoveLabelAsync(config, issueRef.ExternalId, stale, ct);
-                changed++;
-                removedList.Add(stale);
-            }
-
-            if (!currentLabels.Any(l => string.Equals(l, desiredStatus, StringComparison.OrdinalIgnoreCase)))
-            {
-                await tracker.AddLabelsAsync(config, issueRef.ExternalId, [desiredStatus], ct);
-                changed++;
-                addedList.Add(desiredStatus);
-            }
-
-            if (changed > 0)
-            {
-                added = SortedUnique(addedList);
-                removed = SortedUnique(removedList);
-            }
-        }
-
-        if (changed > 0)
-        {
-            issueRef.LastOutboundSyncedAt = utcNow;
-            // One change per ISSUE that had any label write, while the counter keeps counting
-            // writes as it always has. Delta is attached only after the GitHub write(s) succeeded.
-            changes.Add(Change(TrackerSyncChangeKind.LabelsChanged, issueRef, added, removed));
-        }
-
-        return changed;
-    }
-
-    private static List<string> SortedUnique(IEnumerable<string> labels) =>
-        labels
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(l => l, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-    private async Task<int> SyncStateAsync(
-        IBidirectionalIssueTracker tracker,
-        IssueTrackerConfig config,
-        ExternalIssueRef issueRef,
-        DateTime utcNow,
-        List<TrackerSyncChange> changes,
-        CancellationToken ct)
-    {
-        var card = issueRef.Card;
-        var cursor = issueRef.LastKnownExternalState;
-        var terminal = card.BoardColumn.IsTerminal
-            || card.Status is CardStatus.Done or CardStatus.Canceled;
-        var changed = 0;
-
-        // IN arm for external reopen is handled after we know cursor — applied when issue is open
-        // while cursor says closed. Detected via RawPayload / LastKnown — callers pass current
-        // state through LastKnown updates from read sync. Here we act on card-side OUT transitions.
-
-        if (terminal && !string.Equals(cursor, "closed", StringComparison.OrdinalIgnoreCase))
-        {
-            var reason = card.Status == CardStatus.Canceled ? "not_planned" : "completed";
-            var closeBody = TrackerSyncMarkers.AppendSystemCommentMarker(
-                $"Card {card.Identifier} reached terminal status **{card.Status}**"
-                + (string.IsNullOrWhiteSpace(card.TerminalReason) ? "" : $": {card.TerminalReason}"),
-                card.Id);
-            try
-            {
-                await tracker.PostCommentAsync(config, issueRef.ExternalId, closeBody, ct);
-                await tracker.SetStateAsync(config, issueRef.ExternalId, "closed", reason, ct);
-                issueRef.LastKnownExternalState = "closed";
-                issueRef.LastOutboundSyncedAt = utcNow;
-                changed++;
-                changes.Add(Change(TrackerSyncChangeKind.ClosedOnGitHub, issueRef));
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.LogWarning(ex, "Close push failed for {ExternalId}", issueRef.ExternalId);
-            }
-
-            return changed;
-        }
-
-        if (!terminal
-            && string.Equals(cursor, "closed", StringComparison.OrdinalIgnoreCase))
-        {
-            // Antiphon-side reopen: a Reopen revision newer than LastOutboundSyncedAt
-            var reopen = card.Revisions
-                .Where(r => r.Kind == CardRevisionKind.Reopen
-                            && !string.Equals(r.EditedBy, TrackerActor, StringComparison.Ordinal))
-                .OrderByDescending(r => r.RevisionNumber)
-                .FirstOrDefault();
-            if (reopen is not null
-                && (issueRef.LastOutboundSyncedAt is null || reopen.CreatedAt > issueRef.LastOutboundSyncedAt))
-            {
-                var body = TrackerSyncMarkers.AppendSystemCommentMarker(
-                    $"Card {card.Identifier} was reopened on Antiphon"
-                    + (string.IsNullOrWhiteSpace(reopen.Reason) ? "" : $": {reopen.Reason}"),
-                    card.Id);
-                try
-                {
-                    await tracker.PostCommentAsync(config, issueRef.ExternalId, body, ct);
-                    await tracker.SetStateAsync(config, issueRef.ExternalId, "open", "reopened", ct);
-                    issueRef.LastKnownExternalState = "open";
-                    issueRef.LastOutboundSyncedAt = utcNow;
-                    changed++;
-                    changes.Add(Change(TrackerSyncChangeKind.ReopenedOnGitHub, issueRef));
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.LogWarning(ex, "Reopen push failed for {ExternalId}", issueRef.ExternalId);
-                }
-            }
-        }
-
-        return changed;
     }
 
     private static async Task PushExportTitleBodyAsync(

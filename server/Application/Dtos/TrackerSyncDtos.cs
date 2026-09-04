@@ -1,3 +1,5 @@
+using Antiphon.Server.Domain.Enums;
+
 namespace Antiphon.Server.Application.Dtos;
 
 public sealed record TrackerSyncRunResult(
@@ -81,4 +83,19 @@ public sealed record TrackerSyncNotificationResult(
     Guid BoardId,
     bool Sent,
     Guid? ChannelId,
+    string? Reason);
+
+/// <summary>CARD-0347: outcome of a per-card close/reopen push to the linked issue.</summary>
+public enum TrackerCardStatePushOutcome { Closed, Reopened, InSync, Skipped, Failed }
+
+/// <summary>
+/// CARD-0347: what the per-card GitHub (or other bidirectional tracker) push did.
+/// <paramref name="Reason"/> is set for <see cref="TrackerCardStatePushOutcome.Skipped"/> and
+/// <see cref="TrackerCardStatePushOutcome.Failed"/>.
+/// </summary>
+public sealed record TrackerCardStatePushResult(
+    TrackerCardStatePushOutcome Outcome,
+    TrackerKind TrackerKind,
+    string ExternalKey,
+    string Url,
     string? Reason);
