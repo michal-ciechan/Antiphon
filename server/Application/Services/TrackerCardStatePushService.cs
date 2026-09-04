@@ -209,7 +209,10 @@ public sealed class TrackerCardStatePushService
     {
         var card = issueRef.Card;
         var desiredStatus = TrackerSyncMarkers.StatusLabel(card.Status);
+        // Export-origin always mirrors importance. Import-origin only once a human has rated
+        // the card (CARD-0327 decision 9); while Auto the issue keeps its own labels.
         var desiredPriority = issueRef.Origin == ExternalIssueOrigin.AntiphonExport
+            || card.ImportanceProvenance == CardImportanceProvenance.Human
             ? TrackerSyncMarkers.PriorityLabel(card.Importance)
             : null;
 
@@ -259,6 +262,14 @@ public sealed class TrackerCardStatePushService
                 await tracker.AddLabelsAsync(config, issueRef.ExternalId, [desiredStatus], ct);
                 changed++;
                 addedList.Add(desiredStatus);
+            }
+
+            if (desiredPriority is not null
+                && !currentLabels.Any(l => string.Equals(l, desiredPriority, StringComparison.OrdinalIgnoreCase)))
+            {
+                await tracker.AddLabelsAsync(config, issueRef.ExternalId, [desiredPriority], ct);
+                changed++;
+                addedList.Add(desiredPriority);
             }
 
             if (changed > 0)

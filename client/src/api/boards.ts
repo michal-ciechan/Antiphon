@@ -64,6 +64,8 @@ export interface CardDto {
   title: string
   description: string
   importance: CardImportance
+  /** Auto until an explicit create/edit sets importance; older payloads omit it. */
+  importanceProvenance?: 'Auto' | 'Human'
   urgency: CardUrgency
   dueAt: string | null
   urgentSince: string | null
@@ -114,6 +116,12 @@ export interface ExternalIssueDto {
   trackerKind: TrackerKind
   key: string
   url: string
+  /** Tracker login of the issue author. Null when the adapter did not capture one. */
+  author?: string | null
+  /** Null = the board has no operator_logins, so the author was never judged. */
+  authorIsOperator?: boolean | null
+  /** Derived: import-origin, non-operator, unrated, still in Backlog. */
+  needsHumanReview?: boolean
 }
 
 /**
@@ -234,7 +242,8 @@ export interface CreateCardRequest {
   boardColumnId?: string | null
   title: string
   description?: string | null
-  importance?: CardImportance
+  /** Null/omitted → Normal with provenance Auto; an explicit value is Human. */
+  importance?: CardImportance | null
   urgency?: CardUrgency
   dueAt?: string | null
   labels?: string[]

@@ -3,6 +3,7 @@ import { TbTerminal2 } from 'react-icons/tb'
 import type { CardDto } from '../../api/boards'
 import { displayIdentifier, externalIssueTag } from '../../shared/cardIdentifier'
 import { CardAxisBadges } from './CardAxisBadges'
+import { ReviewChip } from './ReviewChip'
 
 interface BoardCardProps {
   card: CardDto
@@ -39,6 +40,7 @@ export function BoardCard({ card, onOpen }: BoardCardProps) {
             {card.externalIssue && (
               <Text size="xs" c="dimmed">{externalIssueTag(card.externalIssue)}</Text>
             )}
+            {card.externalIssue?.needsHumanReview && <ReviewChip />}
           </Group>
           <Text fw={600} size="sm" lineClamp={2}>{card.title}</Text>
         </Stack>

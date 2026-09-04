@@ -86,6 +86,71 @@ public class AttentionServiceTests
         rows[0].SinceUtc!.Value.ShouldBeInRange(movedAt.AddTicks(-10), movedAt.AddTicks(10));
     }
 
+    // ---- CARD-0327: ImportedIssueNeedsReview -----------------------------------------------------
+
+    [Test]
+    public async Task An_unrated_non_operator_Backlog_import_is_a_warning_review_row()
+    {
+        await using var scenario = new Scenario();
+        var createdAt = new DateTime(2026, 9, 2, 12, 0, 0, DateTimeKind.Utc);
+        var (cardId, boardId) = await scenario.AddImportedIssueCardAsync(
+            identifier: "CARD-0325",
+            title: "From GitHub",
+            description: "First line of the body.\nSecond line stays off the row.",
+            author: "bob",
+            authorIsOperator: false,
+            createdAt: createdAt);
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.CardId == cardId);
+
+        item.Kind.ShouldBe(AttentionKind.ImportedIssueNeedsReview);
+        item.Severity.ShouldBe(AlertSeverity.Warning);
+        item.Title.ShouldBe("CARD-0325 — From GitHub");
+        item.Headline.ShouldBe("Raised on GitHub by bob (not an operator) — nobody has rated it.");
+        item.Actions.ShouldBe([AttentionAction.OpenCard]);
+        item.BoardId.ShouldBe(boardId);
+        item.SinceUtc.ShouldBe(createdAt);
+        item.Evidence.ShouldContain("#30");
+        item.Evidence.ShouldContain("https://github.test/acme/app/issues/30");
+        item.Evidence.ShouldContain("First line of the body.");
+        item.Evidence.ShouldNotContain("Second line stays off the row.");
+        item.Evidence.ShouldContain("pwsh -File scripts/delegate.ps1 -Card CARD-0325 -Role Debug");
+        item.Evidence.ShouldContain("Triage GitHub issue #30 (raised by bob, not an operator)");
+        item.Evidence.ShouldContain("Do NOT edit the card's");
+        item.Evidence.ShouldContain("the rating is the human's act");
+    }
+
+    [Test]
+    public async Task A_human_rating_clears_the_imported_issue_review_row()
+    {
+        await using var scenario = new Scenario();
+        var (cardId, _) = await scenario.AddImportedIssueCardAsync(
+            identifier: "CARD-0326",
+            title: "Rated import",
+            description: "body",
+            author: "bob",
+            authorIsOperator: false,
+            provenance: CardImportanceProvenance.Human);
+
+        (await ItemsForAsync(scenario)).ShouldNotContain(
+            i => i.CardId == cardId && i.Kind == AttentionKind.ImportedIssueNeedsReview);
+    }
+
+    [Test]
+    public async Task An_operator_author_is_not_an_imported_issue_review_row()
+    {
+        await using var scenario = new Scenario();
+        var (cardId, _) = await scenario.AddImportedIssueCardAsync(
+            identifier: "CARD-0327",
+            title: "Operator import",
+            description: "body",
+            author: "michal-ciechan",
+            authorIsOperator: true);
+
+        (await ItemsForAsync(scenario)).ShouldNotContain(
+            i => i.CardId == cardId && i.Kind == AttentionKind.ImportedIssueNeedsReview);
+    }
+
     // ---- 1. BlockedQuestion ---------------------------------------------------------------------
 
     [Test]
@@ -2968,6 +3033,87 @@ public class AttentionServiceTests
                 .ExecuteUpdateAsync(u => u.SetProperty(s => s.CardId, cardId));
         }
 
+        public async Task<(Guid CardId, Guid BoardId)> AddImportedIssueCardAsync(
+            string identifier,
+            string title,
+            string description,
+            string author,
+            bool? authorIsOperator,
+            CardImportanceProvenance provenance = CardImportanceProvenance.Auto,
+            DateTime? createdAt = null)
+        {
+            var now = createdAt ?? DateTime.UtcNow;
+            var projectId = Guid.NewGuid();
+            var boardId = Guid.NewGuid();
+            var backlogId = Guid.NewGuid();
+            var cardId = Guid.NewGuid();
+            await using var db = CreateContext();
+            db.Projects.Add(new Project
+            {
+                Id = projectId,
+                Name = $"import-project-{projectId:N}"[..30],
+                GitRepositoryUrl = "https://example.test/import.git",
+                LocalRepositoryPath = Path.Combine(Path.GetTempPath(), $"import-{projectId:N}"),
+                BaseBranch = "main",
+                CreatedAt = now,
+                UpdatedAt = now,
+            });
+            db.Boards.Add(new Board
+            {
+                Id = boardId,
+                ProjectId = projectId,
+                Name = $"import-board-{boardId:N}"[..30],
+                CreatedAt = now,
+                UpdatedAt = now,
+            });
+            db.BoardColumns.Add(new BoardColumn
+            {
+                Id = backlogId,
+                BoardId = boardId,
+                StateKey = "backlog",
+                Name = "Backlog",
+                ColumnOrder = 0,
+                CardStatus = CardStatus.Backlog,
+                CreatedAt = now,
+                UpdatedAt = now,
+            });
+            var card = new Card
+            {
+                Id = cardId,
+                BoardId = boardId,
+                BoardColumnId = backlogId,
+                Identifier = identifier,
+                Title = title,
+                Description = description,
+                Status = CardStatus.Backlog,
+                Importance = CardImportance.Normal,
+                ImportanceProvenance = provenance,
+                CreatedAt = now,
+                UpdatedAt = now,
+            };
+            db.Cards.Add(card);
+            db.ExternalIssueRefs.Add(new ExternalIssueRef
+            {
+                Id = Guid.NewGuid(),
+                CardId = cardId,
+                TrackerKind = TrackerKind.GitHubIssues,
+                ExternalId = $"acme/app#{cardId:N}",
+                ExternalKey = "#30",
+                Url = "https://github.test/acme/app/issues/30",
+                RawPayloadJson = "{}",
+                LastSyncedAt = now,
+                Origin = ExternalIssueOrigin.ExternalImport,
+                Author = author,
+                AuthorIsOperator = authorIsOperator,
+                Card = card,
+            });
+            await db.SaveChangesAsync();
+            _projects.Add(projectId);
+            _boards.Add(boardId);
+            _cards.Add(cardId);
+            return (cardId, boardId);
+        }
+
         public async Task<(Guid CardId, Guid BoardId, DateTime MovedAt)> AddNeedsDecisionCardAsync(
             string reason, int minutesAgo, CardRevisionKind kind = CardRevisionKind.Move)
         {
@@ -3127,6 +3273,7 @@ public class AttentionServiceTests
             await db.AgentSessions.Where(s => s.CardId != null && _cards.Contains(s.CardId!.Value))
                 .ExecuteUpdateAsync(u => u.SetProperty(x => x.CardId, (Guid?)null));
             await db.CardRevisions.Where(r => _cards.Contains(r.CardId)).ExecuteDeleteAsync();
+            await db.ExternalIssueRefs.Where(r => _cards.Contains(r.CardId)).ExecuteDeleteAsync();
             await db.Cards.Where(c => _cards.Contains(c.Id)).ExecuteDeleteAsync();
             await db.BoardColumns.Where(c => _boards.Contains(c.BoardId)).ExecuteDeleteAsync();
             await db.Boards.Where(b => _boards.Contains(b.Id)).ExecuteDeleteAsync();

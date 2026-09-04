@@ -226,6 +226,15 @@ public enum AttentionKind
     /// Appended after shipped 26; do not renumber.
     /// </summary>
     LivenessProbeFailed = 27,
+
+    /// <summary>
+    /// An import-origin card from a non-operator author that nobody has rated, still in Backlog
+    /// (CARD-0327). Warning, not a decision — <see cref="AttentionSummaryDto"/> is unchanged.
+    /// Cleared by a human rating, a move out of Backlog, or archive. Appended after shipped 27;
+    /// do not renumber. The plan named this 27 when <see cref="ScheduleMisfired"/> was last;
+    /// <see cref="LivenessProbeFailed"/> already occupies 27.
+    /// </summary>
+    ImportedIssueNeedsReview = 28,
 }
 
 /// <summary>

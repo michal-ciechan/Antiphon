@@ -13,6 +13,7 @@ import { CardHistory } from './CardHistory'
 import { DiffReview } from './DiffReview'
 import { MoveMenu } from './MoveMenu'
 import { CardAxisBadges } from './CardAxisBadges'
+import { ReviewChip } from './ReviewChip'
 import { CardSchedulesList } from './CardSchedulesList'
 import { stateLabel } from './boardVisuals'
 import { SessionTabs } from './SessionTabs'
@@ -124,6 +125,10 @@ export function CardModal({ boardId, card: summaryCard, columns = [], opened, on
                 ) : (
                   <Text size="sm" c="dimmed">{externalIssueTag(card.externalIssue)}</Text>
                 )
+              )}
+              {card.externalIssue?.needsHumanReview && <ReviewChip />}
+              {card.externalIssue?.author && (
+                <Text size="sm" c="dimmed">raised by {card.externalIssue.author}</Text>
               )}
               <Title order={3} className="card-page__title">
                 {card.title}
@@ -309,7 +314,7 @@ function CardCreateModal({ boardId, opened, onClose }: { boardId: string; opened
   const createCard = useCreateCard(boardId)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
-  const [importance, setImportance] = useState<CardImportance>('Normal')
+  const [importance, setImportance] = useState<CardImportance | null>(null)
   const [urgency, setUrgency] = useState<CardUrgency>('Normal')
   const [dueAt, setDueAt] = useState('')
   const [labels, setLabels] = useState('')
@@ -337,6 +342,7 @@ function CardCreateModal({ boardId, opened, onClose }: { boardId: string; opened
         <Textarea label="Description" value={description} onChange={(event) => setDescription(event.currentTarget.value)} autosize minRows={3} />
         <Select
           label="Importance"
+          placeholder="Normal (auto)"
           data={['Low', 'Normal', 'High', 'Critical']}
           value={importance}
           onChange={(value) => setImportance((value as CardImportance) ?? 'Normal')}
@@ -381,7 +387,10 @@ function CardDetails({ card, description }: { card: CardDto; description: string
         <Text size="xs" c="dimmed">Status</Text>
         <Text size="xs" fw={600}>{card.status}</Text>
         <Text size="xs" c="dimmed">Importance</Text>
-        <Text size="xs" fw={600}>{card.importance}</Text>
+        <Stack gap={0}>
+          <Text size="xs" fw={600}>{card.importance}</Text>
+          <Text size="xs" c="dimmed">{card.importanceProvenance === 'Human' ? 'rated by human' : 'auto'}</Text>
+        </Stack>
         <Text size="xs" c="dimmed">Urgency</Text>
         <Text size="xs" fw={600}>{card.effectiveUrgency}</Text>
         <Text size="xs" c="dimmed">Sessions</Text>

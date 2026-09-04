@@ -305,4 +305,98 @@ describe('CardModal', () => {
     await waitFor(() => expect(getAgentInput()).toHaveValue('claude (ClaudeCode, default)'))
     expect(screen.getByRole('button', { name: 'Spawn' })).toBeDisabled()
   })
+
+  it('shows the review chip and raised-by line on an unrated import', async () => {
+    const imported: CardDto = {
+      ...card,
+      identifier: 'CARD-0325',
+      importanceProvenance: 'Auto',
+      externalIssue: {
+        trackerKind: 'GitHubIssues',
+        key: '#30',
+        url: 'https://github.com/acme/app/issues/30',
+        author: 'bob',
+        authorIsOperator: false,
+        needsHumanReview: true,
+      },
+    }
+    server.use(agentDefinitionsHandler(), discussionHandler(), cardHandler(imported))
+    renderWithProviders(
+      <CardModal boardId="board-1" card={imported} opened onClose={() => undefined} />,
+    )
+
+    expect(await screen.findByRole('link', { name: /GH #30/ })).toBeInTheDocument()
+    expect(screen.getByText('review')).toBeInTheDocument()
+    expect(screen.getByText('raised by bob')).toBeInTheDocument()
+    expect(screen.getAllByText('auto').length).toBeGreaterThan(0)
+  })
+
+  it('prints rated by human under importance once provenance is Human', async () => {
+    const rated: CardDto = {
+      ...card,
+      importance: 'High',
+      importanceProvenance: 'Human',
+      externalIssue: {
+        trackerKind: 'GitHubIssues',
+        key: '#30',
+        url: 'https://github.com/acme/app/issues/30',
+        author: 'bob',
+        authorIsOperator: false,
+        needsHumanReview: false,
+      },
+    }
+    server.use(agentDefinitionsHandler(), discussionHandler(), cardHandler(rated))
+    renderWithProviders(
+      <CardModal boardId="board-1" card={rated} opened onClose={() => undefined} />,
+    )
+
+    expect(await screen.findByText('rated by human')).toBeInTheDocument()
+    expect(screen.queryByText('review')).not.toBeInTheDocument()
+  })
+
+  it('sends null importance until the create-form select is touched', async () => {
+    const createSpy = vi.fn()
+    server.use(
+      http.post('/api/boards/board-1/cards', async ({ request }) => {
+        createSpy(await request.json())
+        return HttpResponse.json(card, { status: 201 })
+      }),
+    )
+    renderWithProviders(
+      <CardModal boardId="board-1" card={null} opened onClose={() => undefined} />,
+    )
+
+    await userEvent.type(screen.getByLabelText('Title'), 'A new card')
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+
+    await waitFor(() => expect(createSpy).toHaveBeenCalled())
+    expect(createSpy.mock.calls[0][0]).toMatchObject({
+      title: 'A new card',
+      importance: null,
+    })
+  })
+
+  it('sends the chosen importance after the create-form select is touched', async () => {
+    const createSpy = vi.fn()
+    server.use(
+      http.post('/api/boards/board-1/cards', async ({ request }) => {
+        createSpy(await request.json())
+        return HttpResponse.json(card, { status: 201 })
+      }),
+    )
+    renderWithProviders(
+      <CardModal boardId="board-1" card={null} opened onClose={() => undefined} />,
+    )
+
+    await userEvent.type(screen.getByLabelText('Title'), 'A rated card')
+    await userEvent.click(screen.getByPlaceholderText('Normal (auto)'))
+    await userEvent.click(await screen.findByRole('option', { name: 'High' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+
+    await waitFor(() => expect(createSpy).toHaveBeenCalled())
+    expect(createSpy.mock.calls[0][0]).toMatchObject({
+      title: 'A rated card',
+      importance: 'High',
+    })
+  })
 })

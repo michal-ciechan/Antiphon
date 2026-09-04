@@ -17,6 +17,7 @@ import {
   TbUserOff,
   TbX,
   TbCalendarOff,
+  TbFlag,
 } from 'react-icons/tb'
 import type { AlertSeverity } from '../../api/agents'
 import type { AttentionItemDto, AttentionKind } from '../../api/attention'
@@ -205,6 +206,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     color: 'warning',
     icon: TbAlertTriangle,
     hint: 'The prompt reached the transcript, so delivery is not the problem — the model produced nothing within the boot-turn deadline. A delegate task is retried once; a standing agent goes through the restart ladder and then latches off.',
+  },
+  ImportedIssueNeedsReview: {
+    label: 'Needs review',
+    color: 'warning',
+    icon: TbFlag,
+    hint: 'A GitHub import from someone who is not an operator has no human rating yet. Rate it to clear this.',
   },
 }
 

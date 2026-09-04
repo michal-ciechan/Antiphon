@@ -129,6 +129,11 @@ export type AttentionKind =
    * the mechanism has stopped restarting. Delivery is NOT the problem here.
    */
   | 'LivenessProbeFailed'
+  /**
+   * An import-origin card from a non-operator author that nobody has rated, still in
+   * Backlog (CARD-0327). Warning. Rate it, move it, or archive it to clear.
+   */
+  | 'ImportedIssueNeedsReview'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =

@@ -191,6 +191,7 @@ public sealed class AttentionService
         items.AddRange(await BuildBlockedAsync(questionBlocked, costs, checkDigests, ct));
         items.AddRange(await BuildRoutingExhaustedItemsAsync(routingBlocked, costs, ct));
         items.AddRange(await BuildCardNeedsDecisionAsync(ct));
+        items.AddRange(await BuildImportedIssueNeedsReviewAsync(ct));
         items.AddRange(await BuildCardStalledAsync(now, ct));
         var openItems = await BuildOpenTaskItemsAsync(
             open, now, costs, checkDigests, attachedIncidents, includeProgressProbe, ct);
@@ -431,6 +432,80 @@ public sealed class AttentionService
                 r.CardId,
                 r.Card.BoardId))
             .ToList();
+    }
+
+    // ---- CARD-0327: an unrated import from a non-operator, still in Backlog ---------------------
+
+    /// <summary>
+    /// Import-origin, judged not an operator, still Auto, still Backlog, not archived. Every
+    /// input is a durable column, so this is a read-time projection with nothing stored — the
+    /// <see cref="BuildCardNeedsDecisionAsync"/> precedent. Rating, moving, or archiving
+    /// clears it.
+    /// </summary>
+    private async Task<List<AttentionItemDto>> BuildImportedIssueNeedsReviewAsync(CancellationToken ct)
+    {
+        var refs = await _db.ExternalIssueRefs.AsNoTracking()
+            .Include(r => r.Card)
+            .Where(r => r.Origin == ExternalIssueOrigin.ExternalImport
+                && r.AuthorIsOperator == false
+                && r.Card.ImportanceProvenance == CardImportanceProvenance.Auto
+                && r.Card.Status == CardStatus.Backlog
+                && r.Card.ArchivedAt == null)
+            .ToListAsync(ct);
+
+        return refs
+            .Select(r =>
+            {
+                var author = string.IsNullOrWhiteSpace(r.Author) ? "unknown" : r.Author.Trim();
+                return new AttentionItemDto(
+                    AttentionKind.ImportedIssueNeedsReview,
+                    AlertSeverity.Warning,
+                    null,
+                    null,
+                    null,
+                    null,
+                    $"{r.Card.Identifier} — {r.Card.Title}",
+                    $"Raised on GitHub by {author} (not an operator) — nobody has rated it.",
+                    BuildImportedIssueReviewEvidence(r.Card, r, author),
+                    r.Card.CreatedAt,
+                    null,
+                    [AttentionAction.OpenCard],
+                    r.CardId,
+                    r.Card.BoardId);
+            })
+            .ToList();
+    }
+
+    private static string BuildImportedIssueReviewEvidence(Card card, ExternalIssueRef issueRef, string author)
+    {
+        var firstLine = FirstLine(card.Description);
+        var command = $"""
+            pwsh -File scripts/delegate.ps1 -Card {card.Identifier} -Role Debug -Goal @'
+            Triage GitHub issue {issueRef.ExternalKey} (raised by {author}, not an operator). Answer, in under 300 words:
+            (1) is it real — reproduce or cite the code path; (2) is it feasible — name the owner file(s)
+            and rough size (S/M/L); (3) suggested importance (Low|Normal|High) and why. Post the answer
+            with POST /api/cards/{card.Identifier}/discussion (author "triage-delegate"). Do NOT edit the card's
+            importance — the rating is the human's act and is what clears the review marker.
+            '@
+            """;
+
+        var bits = new List<string>();
+        if (!string.IsNullOrWhiteSpace(issueRef.ExternalKey))
+            bits.Add(issueRef.ExternalKey);
+        if (!string.IsNullOrWhiteSpace(issueRef.Url))
+            bits.Add(issueRef.Url);
+        if (firstLine.Length > 0)
+            bits.Add(firstLine);
+        bits.Add(command);
+        return string.Join('\n', bits);
+    }
+
+    private static string FirstLine(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return "";
+        var newline = text.IndexOfAny(['\r', '\n']);
+        return (newline < 0 ? text : text[..newline]).Trim();
     }
 
     // ---- a card in In Progress with nobody on it (CARD-0040) ------------------------------------

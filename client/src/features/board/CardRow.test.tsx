@@ -109,6 +109,35 @@ describe('CardRow', () => {
     expect(screen.queryByText(/two post-compaction records/)).not.toBeInTheDocument()
   })
 
+  it('shows a review chip next to the GitHub key when the import needs a human rating', () => {
+    renderRow({
+      externalIssue: {
+        trackerKind: 'GitHubIssues',
+        key: '#30',
+        url: 'https://github.test/acme/app/issues/30',
+        author: 'bob',
+        authorIsOperator: false,
+        needsHumanReview: true,
+      },
+    })
+    const row = screen.getByRole('article', { name: /CARD-0041/ })
+    expect(within(row).getByText('GH #30')).toBeInTheDocument()
+    expect(within(row).getByText('review')).toBeInTheDocument()
+  })
+
+  it('does not show the review chip once the import has been rated', () => {
+    renderRow({
+      externalIssue: {
+        trackerKind: 'GitHubIssues',
+        key: '#30',
+        url: 'https://github.test/acme/app/issues/30',
+        needsHumanReview: false,
+      },
+    })
+    expect(screen.getByText('GH #30')).toBeInTheDocument()
+    expect(screen.queryByText('review')).not.toBeInTheDocument()
+  })
+
   it('shows the live agent when a session is running', () => {
     renderRow({
       assignedAgentName: 'Antiphon-Opus',

@@ -665,6 +665,64 @@ public class TrackerBidirectionalSyncTests
     }
 
     [Test]
+    public async Task Import_origin_Human_High_adds_priority_high()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
+        try
+        {
+            var graph = await SeedLinkedBoardAsync(db, tempRoot, clock);
+            graph.Card.Importance = CardImportance.High;
+            graph.Card.ImportanceProvenance = CardImportanceProvenance.Human;
+            await db.SaveChangesAsync();
+
+            var fake = new FakeBidirectionalTracker(TrackerKind.GitHubIssues)
+            {
+                Candidates = [Issue("acme/app#1", "open", "Title", "Body", ["status:backlog"])]
+            };
+            var sut = NewSut(db, fake, clock);
+            await sut.RunAsync(graph.Board.Id, CancellationToken.None);
+
+            fake.AddLabelCalls.ShouldBe(1);
+            fake.Candidates.Single().Labels.ShouldContain("priority:high");
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Import_origin_Auto_does_not_write_a_priority_label()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
+        try
+        {
+            var graph = await SeedLinkedBoardAsync(db, tempRoot, clock);
+            graph.Card.Importance = CardImportance.High;
+            graph.Card.ImportanceProvenance = CardImportanceProvenance.Auto;
+            await db.SaveChangesAsync();
+
+            var fake = new FakeBidirectionalTracker(TrackerKind.GitHubIssues)
+            {
+                Candidates = [Issue("acme/app#1", "open", "Title", "Body", ["status:backlog"])]
+            };
+            var sut = NewSut(db, fake, clock);
+            await sut.RunAsync(graph.Board.Id, CancellationToken.None);
+
+            fake.AddLabelCalls.ShouldBe(0);
+            fake.Candidates.Single().Labels.ShouldNotContain(l => l.StartsWith("priority:", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
     public void PriorityLabel_emits_the_importance_name_and_omits_normal()
     {
         TrackerSyncMarkers.PriorityLabel(CardImportance.Critical).ShouldBe("priority:critical");

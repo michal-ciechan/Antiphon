@@ -47,6 +47,7 @@ const ALL_KINDS: AttentionKind[] = [
   'RoutingExhausted',
   'ScheduleMisfired',
   'LivenessProbeFailed',
+  'ImportedIssueNeedsReview',
 ]
 
 function item(overrides: Partial<AttentionItemDto> & { kind: AttentionKind }): AttentionItemDto {
@@ -183,6 +184,7 @@ describe('attentionVisuals', () => {
     expect(homeBucketOf(item({ kind: 'AgentOutlivedTask', severity: 'Warning' }))).toBe('review')
     expect(homeBucketOf(item({ kind: 'ReportUnsettled', severity: 'Warning' }))).toBe('review')
     expect(homeBucketOf(item({ kind: 'UnmarkedWaiting', severity: 'Warning' }))).toBe('review')
+    expect(homeBucketOf(item({ kind: 'ImportedIssueNeedsReview', severity: 'Warning' }))).toBe('review')
     expect(homeBucketOf(item({ kind: 'RecentFailure', severity: 'Warning' }))).toBe('hidden')
   })
 

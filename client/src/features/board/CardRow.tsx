@@ -5,6 +5,7 @@ import { displayIdentifier, externalIssueTag } from '../../shared/cardIdentifier
 import { ageInDays, hasLiveSession } from './boardShapeModel'
 import { CardAxisBadges } from './CardAxisBadges'
 import { MoveMenu } from './MoveMenu'
+import { ReviewChip } from './ReviewChip'
 
 interface CardRowProps {
   card: CardDto
@@ -48,6 +49,7 @@ export function CardRow({ card, boardId, columns, now, onOpen, layout = 'row' }:
           {externalIssueTag(card.externalIssue)}
         </Text>
       )}
+      {card.externalIssue?.needsHumanReview && <ReviewChip />}
     </Group>
   )
 
