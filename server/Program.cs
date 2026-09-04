@@ -167,6 +167,10 @@ try
     builder.Services.AddOptions<ZombieCensusSettings>()
         .Bind(builder.Configuration.GetSection("ZombieCensus"))
         .ValidateOnStart();
+    builder.Services.AddSingleton<IValidateOptions<WorktreeResidueSettings>, WorktreeResidueSettingsValidator>();
+    builder.Services.AddOptions<WorktreeResidueSettings>()
+        .Bind(builder.Configuration.GetSection("WorktreeResidue"))
+        .ValidateOnStart();
     // CARD-0040: cards move themselves from the delegated work bound to them.
     builder.Services.Configure<CardWorkTransitionSettings>(builder.Configuration.GetSection("CardTransitions"));
     builder.Services.AddSingleton<IValidateOptions<ScheduleSettings>, ScheduleSettingsValidator>();
@@ -379,6 +383,8 @@ try
     builder.Services.AddSingleton<IZombieProcessCensus, WindowsZombieProcessCensus>();
     builder.Services.AddScoped<ZombieCensusService>();
     builder.Services.AddScoped<ZombieCensusJob>();
+    builder.Services.AddScoped<WorktreeResidueSweepService>();
+    builder.Services.AddScoped<WorktreeResidueJob>();
     builder.Services.AddScoped<AgentSupervisorService>();
     builder.Services.AddScoped<IAgentIncidentRecorder>(sp => sp.GetRequiredService<AgentSupervisorService>());
     builder.Services.AddScoped<AppHostWatchdogStateAttentionService>();
@@ -731,10 +737,14 @@ try
 
         var hangfire = scope.ServiceProvider.GetRequiredService<IOptions<HangfireSettings>>().Value;
         var census = scope.ServiceProvider.GetRequiredService<IOptions<ZombieCensusSettings>>().Value;
-        if (hangfire.ServerEnabled && census.Enabled)
+        var residue = scope.ServiceProvider.GetRequiredService<IOptions<WorktreeResidueSettings>>().Value;
+        if (hangfire.ServerEnabled)
         {
             var recurringJobManager = scope.ServiceProvider.GetRequiredService<IRecurringJobManager>();
-            HangfireConfiguration.AddOrUpdateCensusJob(recurringJobManager, census);
+            if (census.Enabled)
+                HangfireConfiguration.AddOrUpdateCensusJob(recurringJobManager, census);
+            if (residue.Enabled)
+                HangfireConfiguration.AddOrUpdateWorktreeResidueJob(recurringJobManager, residue);
         }
     }
 

@@ -401,6 +401,17 @@ are configuration as well; 5 days at 40.9 MB/hour needs ~4.8 GB.
 `Antiphon` is pinned to Information explicitly, so delegation, session, orchestration and supervision
 logging survives any future turn-down of `Default`. Do not remove that override.
 
+### Hangfire jobs
+
+In-process Hangfire dashboard: `http://localhost:17202/hangfire` (loopback only). Recurring jobs
+register at process start when `Hangfire:ServerEnabled` is true. "Trigger now" on the dashboard is
+the one-shot rollout pass.
+
+| Id | Cron (Europe/London) | Default | What it does |
+|---|---|---|---|
+| `antiphon:zombie-census` | `30 9 * * *` | report-only | OS-process zombie census (CARD-0298). No execute switch. |
+| `antiphon:worktree-residue` | `0 10 * * *` | `WorktreeResidue:Execute = false` | Classifies leftover `feat/card-task-*` worktrees, `card-task-*` directories, and local branches against `AgentTasks`. Removes `Eligible` rows only after `Execute` is flipped true (CARD-0328 D5). |
+
 ### Start the frontend (React/Vite — port 17282)
 
 ```

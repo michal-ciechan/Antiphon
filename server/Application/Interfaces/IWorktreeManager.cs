@@ -40,4 +40,23 @@ public interface IWorktreeManager
     /// </summary>
     Task<IReadOnlyList<string>> ListKnownDelegateRepoPathsAsync(CancellationToken ct)
         => Task.FromResult<IReadOnlyList<string>>([]);
+
+    /// <summary>
+    /// CARD-0328 S3: registered worktrees under <c>Git:WorktreeBasePath</c>, leftover
+    /// <c>card-task-*</c> directories, and local <c>feat/card-task-*</c> branches.
+    /// <paramref name="extraRepoPaths"/> are task <c>RepoPath</c> values the metadata may miss.
+    /// Default empty so existing test fakes compile unchanged.
+    /// </summary>
+    Task<IReadOnlyList<WorktreeResidueScanEntry>> ScanResidueCandidatesAsync(
+        IReadOnlyList<string> extraRepoPaths, CancellationToken ct)
+        => Task.FromResult<IReadOnlyList<WorktreeResidueScanEntry>>([]);
+
+    /// <summary>
+    /// CARD-0328 S3: ancestor/ahead and porcelain dirtiness for one residue candidate.
+    /// A missing repo, branch, or directory degrades to "no branch, ancestor, clean".
+    /// Default so existing test fakes compile unchanged.
+    /// </summary>
+    Task<WorktreeResidueGitState> InspectResidueAsync(
+        string? repoPath, string? worktreePath, string? branch, string targetRef, CancellationToken ct)
+        => Task.FromResult(new WorktreeResidueGitState(false, true, 0, false, false));
 }

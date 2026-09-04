@@ -241,6 +241,192 @@ public sealed class WorktreeManager : IWorktreeManager
         return repos.ToList();
     }
 
+    public async Task<IReadOnlyList<WorktreeResidueScanEntry>> ScanResidueCandidatesAsync(
+        IReadOnlyList<string> extraRepoPaths, CancellationToken ct)
+    {
+        var worktreeRoot = ResolveWorktreeRoot(create: false);
+        var comparer = OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+        var byPath = new Dictionary<string, WorktreeResidueScanEntry>(comparer);
+        var dangling = new List<WorktreeResidueScanEntry>();
+
+        var repos = new HashSet<string>(comparer);
+        foreach (var known in await ListKnownDelegateRepoPathsAsync(ct))
+            AddRepoIfPresent(repos, known);
+        foreach (var extra in extraRepoPaths)
+            AddRepoIfPresent(repos, extra);
+
+        foreach (var repo in repos)
+        {
+            ct.ThrowIfCancellationRequested();
+            IReadOnlyList<DelegateWorktreeScanEntry> scan;
+            try
+            {
+                scan = await ScanDelegateWorktreesAsync(repo, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Worktree residue scan skipped for {RepoPath}", repo);
+                continue;
+            }
+
+            foreach (var entry in scan)
+            {
+                if (entry.Registered)
+                {
+                    if (!Directory.Exists(worktreeRoot) || !IsPathUnderRoot(entry.Path, worktreeRoot))
+                        continue;
+                    var path = Path.GetFullPath(entry.Path);
+                    byPath[NormalizePathForComparison(path)] = new WorktreeResidueScanEntry(
+                        path,
+                        entry.Branch,
+                        repo,
+                        Registered: true,
+                        DirectoryExists: entry.DirectoryExists);
+                    continue;
+                }
+
+                var expected = Directory.Exists(worktreeRoot) && TryParseDelegateTaskBranch(entry.Branch, out var shortId)
+                    ? Path.GetFullPath(Path.Combine(worktreeRoot, $"card-task-{shortId}"))
+                    : string.Empty;
+                if (expected.Length > 0 && byPath.ContainsKey(NormalizePathForComparison(expected)))
+                    continue;
+                dangling.Add(new WorktreeResidueScanEntry(
+                    expected,
+                    entry.Branch,
+                    repo,
+                    Registered: false,
+                    DirectoryExists: expected.Length > 0 && Directory.Exists(expected)));
+            }
+        }
+
+        if (Directory.Exists(worktreeRoot))
+        {
+            var metadataByPath = await LoadMetadataByPathAsync(worktreeRoot, ct);
+            foreach (var dir in Directory.EnumerateDirectories(worktreeRoot))
+            {
+                ct.ThrowIfCancellationRequested();
+                var name = Path.GetFileName(dir);
+                if (string.IsNullOrEmpty(name)
+                    || !name.StartsWith("card-task-", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var path = Path.GetFullPath(dir);
+                var key = NormalizePathForComparison(path);
+                if (byPath.ContainsKey(key))
+                    continue;
+                if (dangling.Any(d => d.Path.Length > 0 && PathsEqual(d.Path, path)))
+                    continue;
+
+                var branch = InferAntiphonBranchFromDirectory(path) ?? $"feat/{name}";
+                string? repo = null;
+                if (metadataByPath.TryGetValue(key, out var metadata)
+                    && !string.IsNullOrWhiteSpace(metadata.RepoPath))
+                {
+                    repo = metadata.RepoPath;
+                    branch = string.IsNullOrWhiteSpace(metadata.Branch) ? branch : metadata.Branch;
+                }
+                else
+                {
+                    repo = TryRepoFromGitFile(path);
+                }
+
+                byPath[key] = new WorktreeResidueScanEntry(
+                    path,
+                    branch,
+                    repo,
+                    Registered: false,
+                    DirectoryExists: true);
+            }
+        }
+
+        foreach (var entry in dangling)
+        {
+            if (entry.Path.Length > 0 && byPath.ContainsKey(NormalizePathForComparison(entry.Path)))
+                continue;
+            if (entry.Path.Length > 0)
+                byPath[NormalizePathForComparison(entry.Path)] = entry;
+            else
+                byPath[$"branch:{entry.RepoPath}:{entry.Branch}"] = entry;
+        }
+
+        return byPath.Values.ToList();
+    }
+
+    public async Task<WorktreeResidueGitState> InspectResidueAsync(
+        string? repoPath, string? worktreePath, string? branch, string targetRef, CancellationToken ct)
+    {
+        var branchExists = false;
+        var isAncestor = true;
+        var ahead = 0;
+        var tracked = false;
+        var untracked = false;
+
+        var repo = !string.IsNullOrWhiteSpace(repoPath) && Directory.Exists(repoPath)
+            ? Path.GetFullPath(repoPath)
+            : null;
+        var normalizedBranch = string.IsNullOrWhiteSpace(branch) ? null : NormalizeBranchName(branch);
+
+        if (repo is not null && normalizedBranch is not null)
+        {
+            branchExists = await BranchExistsAsync(repo, normalizedBranch, ct);
+            if (branchExists && !string.IsNullOrWhiteSpace(targetRef))
+            {
+                var ancestor = await RunGitAsync(
+                    repo,
+                    ["merge-base", "--is-ancestor", normalizedBranch, targetRef],
+                    ct,
+                    throwOnError: false);
+                isAncestor = ancestor.ExitCode == 0;
+                var count = await RunGitAsync(
+                    repo,
+                    ["rev-list", "--count", $"{targetRef}..{normalizedBranch}"],
+                    ct,
+                    throwOnError: false);
+                if (count.ExitCode == 0)
+                    _ = int.TryParse(count.Stdout.Trim(), out ahead);
+            }
+        }
+
+        var tree = !string.IsNullOrWhiteSpace(worktreePath) && Directory.Exists(worktreePath)
+            ? Path.GetFullPath(worktreePath)
+            : null;
+        if (tree is not null)
+        {
+            var status = await RunGitAsync(
+                tree,
+                ["status", "--porcelain", "-z", "--untracked-files=all"],
+                ct,
+                throwOnError: false);
+            if (status.ExitCode == 0)
+                (tracked, untracked) = ParsePorcelainDirtiness(status.Stdout);
+        }
+
+        return new WorktreeResidueGitState(branchExists, isAncestor, ahead, tracked, untracked);
+    }
+
+    internal static (bool Tracked, bool Untracked) ParsePorcelainDirtiness(string stdout)
+    {
+        var tracked = false;
+        var untracked = false;
+        var records = stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        for (var i = 0; i < records.Length; i++)
+        {
+            var record = records[i];
+            if (record.Length < 2)
+                continue;
+            if (record[0] == '?' || (record.Length > 1 && record[1] == '?'))
+                untracked = true;
+            else
+                tracked = true;
+            if (record[0] is 'R' or 'C')
+                i++;
+        }
+
+        return (tracked, untracked);
+    }
+
     internal static bool TryParseDelegateTaskBranch(string? branch, out string shortId)
     {
         shortId = string.Empty;
@@ -761,6 +947,47 @@ public sealed class WorktreeManager : IWorktreeManager
 
         var branch = "feat/" + name;
         return IsAntiphonBranch(branch) ? branch : null;
+    }
+
+    private static void AddRepoIfPresent(HashSet<string> repos, string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+            return;
+        repos.Add(Path.GetFullPath(path));
+    }
+
+    /// <summary>
+    /// A leftover worktree's <c>.git</c> file is <c>gitdir: &lt;repo&gt;/.git/worktrees/&lt;name&gt;</c>.
+    /// </summary>
+    internal static string? TryRepoFromGitFile(string worktreePath)
+    {
+        var gitFile = Path.Combine(worktreePath, ".git");
+        if (!File.Exists(gitFile))
+            return null;
+
+        try
+        {
+            var text = File.ReadAllText(gitFile).Trim();
+            const string prefix = "gitdir:";
+            if (!text.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return null;
+            var gitdir = text[prefix.Length..].Trim();
+            if (string.IsNullOrWhiteSpace(gitdir))
+                return null;
+            if (!Path.IsPathRooted(gitdir))
+                gitdir = Path.GetFullPath(Path.Combine(worktreePath, gitdir));
+            var worktreesDir = Path.GetDirectoryName(gitdir);
+            if (worktreesDir is null
+                || !string.Equals(Path.GetFileName(worktreesDir), "worktrees", StringComparison.OrdinalIgnoreCase))
+                return null;
+            var gitDir = Path.GetDirectoryName(worktreesDir);
+            var repo = gitDir is null ? null : Path.GetDirectoryName(gitDir);
+            return repo is not null && Directory.Exists(repo) ? Path.GetFullPath(repo) : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     private async Task<(bool Deleted, string? Residue)> TryDeleteBranchAsync(

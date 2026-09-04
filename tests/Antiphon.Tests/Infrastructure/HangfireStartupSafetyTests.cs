@@ -100,6 +100,39 @@ public class HangfireStartupSafetyTests
     }
 
     [Test]
+    public async Task Recurring_residue_job_is_re_added_on_a_fresh_in_memory_host_with_London_daily_cron()
+    {
+        var settings = new WorktreeResidueSettings();
+        var storage = new InMemoryStorage(HangfireConfiguration.CreateStorageOptions(new HangfireSettings()));
+        var manager = new RecurringJobManager(storage);
+        HangfireConfiguration.AddOrUpdateWorktreeResidueJob(manager, settings);
+        using var connection = storage.GetConnection();
+        var job = connection.GetRecurringJobs().ShouldHaveSingleItem();
+        job.Id.ShouldBe("antiphon:worktree-residue");
+        job.Cron.ShouldBe("0 10 * * *");
+        job.TimeZoneId.ShouldBe("Europe/London");
+
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task AddOrUpdateWorktreeResidueJob_works_from_a_DI_resolved_manager_without_priming_JobStorage_Current()
+    {
+        var services = new ServiceCollection();
+        services.AddHangfire(config =>
+            config.UseInMemoryStorage(HangfireConfiguration.CreateStorageOptions(new HangfireSettings())));
+        await using var provider = services.BuildServiceProvider();
+        var manager = provider.GetRequiredService<IRecurringJobManager>();
+        var settings = new WorktreeResidueSettings();
+
+        HangfireConfiguration.AddOrUpdateWorktreeResidueJob(manager, settings);
+
+        var storage = provider.GetRequiredService<JobStorage>();
+        using var connection = storage.GetConnection();
+        connection.GetRecurringJobs().ShouldHaveSingleItem().Id.ShouldBe("antiphon:worktree-residue");
+    }
+
+    [Test]
     public async Task Loopback_request_reaches_the_Hangfire_dashboard()
     {
         var context = await _factory.Server.SendAsync(ctx =>

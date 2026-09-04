@@ -21,4 +21,17 @@ internal static class HangfireConfiguration
                 TimeZone = TimeZoneInfo.FindSystemTimeZoneById(settings.TimeZoneId)
             });
     }
+
+    public static void AddOrUpdateWorktreeResidueJob(
+        IRecurringJobManager manager, WorktreeResidueSettings settings)
+    {
+        manager.AddOrUpdate<WorktreeResidueJob>(
+            settings.RecurringJobId,
+            job => job.ExecuteAsync(CancellationToken.None),
+            settings.Cron,
+            new RecurringJobOptions
+            {
+                TimeZone = TimeZoneInfo.FindSystemTimeZoneById(settings.TimeZoneId)
+            });
+    }
 }
