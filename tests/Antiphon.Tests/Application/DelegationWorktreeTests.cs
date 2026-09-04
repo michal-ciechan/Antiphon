@@ -2,8 +2,10 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -313,6 +315,84 @@ public class DelegationWorktreeTests
         Directory.Exists(task.WorktreePath).ShouldBeTrue("a merge delegate must receive the original worktree");
         (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "status", "--porcelain")).StdOut.Trim().ShouldBeEmpty(
             "the rebase is aborted before the Merge delegate starts it again");
+    }
+
+    [Test]
+    public async Task prepare_land_aborts_an_interrupted_rebase_first()
+    {
+        using var repo = new ScratchGitRepo("antiphon-land-rebase-heal");
+        using var remote = new TemporaryDirectory("antiphon-land-rebase-heal-remote");
+        await ScratchGitRepo.GitInAsync(remote.Path, "init", "--bare");
+        await repo.CommitFileAsync("shared.md", "base\n");
+        await repo.GitAsync("remote", "add", "origin", remote.Path);
+        await repo.GitAsync("push", "-u", "origin", "master");
+
+        var (service, _) = CreateService(repo);
+        var task = NewTask(repo.Path, mergeTarget: null);
+        await service.CreateForTaskAsync(task, CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "shared.md"), "task version\n");
+        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "shared.md");
+        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "task edit");
+        await repo.CommitFileAsync("shared.md", "target version\n");
+        await repo.GitAsync("push", "origin", "master");
+
+        var interrupted = await ScratchGitRepo.GitInAsync(task.WorktreePath!, "rebase", "master");
+        interrupted.Ok.ShouldBeFalse("the hand-run rebase must stop on the conflict");
+        (await RebaseStateDirectoryAsync(task.WorktreePath!)).ShouldNotBeNull("the worktree must be left mid-rebase");
+
+        var prepared = await service.PrepareLandAsync(task, CancellationToken.None);
+
+        prepared.Conflicted.ShouldBeTrue(prepared.Detail);
+        prepared.Succeeded.ShouldBeFalse();
+        prepared.ConflictFiles.ShouldContain("shared.md");
+        prepared.Detail.ShouldNotBeNull();
+        prepared.Detail.ShouldContain("aborted an interrupted rebase");
+        prepared.Detail.ShouldNotContain("Rebase onto master failed");
+        Directory.Exists(task.WorktreePath).ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "status", "--porcelain")).StdOut.Trim()
+            .ShouldBeEmpty("the healed rebase still aborts cleanly for the Merge delegate");
+    }
+
+    [Test]
+    public async Task already_landed_arm_pushes_a_target_that_is_ahead_of_origin()
+    {
+        using var repo = new ScratchGitRepo("antiphon-land-ahead");
+        using var remote = new TemporaryDirectory("antiphon-land-ahead-remote");
+        await ScratchGitRepo.GitInAsync(remote.Path, "init", "--bare");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("remote", "add", "origin", remote.Path);
+        await repo.GitAsync("push", "-u", "origin", "master");
+
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var (land, worktrees) = CreateLand(db, repo);
+        var task = NewTask(repo.Path, mergeTarget: null);
+        task.Status = AgentTaskStatus.Succeeded;
+        task.CompletedAt = DateTime.UtcNow;
+        task.LandRequestedAt = DateTime.UtcNow;
+        await worktrees.CreateForTaskAsync(task, CancellationToken.None);
+        db.AgentTasks.Add(task);
+        await db.SaveChangesAsync();
+
+        await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "land me\n");
+        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "feature.md");
+        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "feature");
+        (await ScratchGitRepo.GitInAsync(repo.Path, "merge", "--ff-only", task.WorktreeBranch!))
+            .Ok.ShouldBeTrue("ff-merge into local master without pushing");
+
+        var localSha = (await repo.GitReadAsync("rev-parse", "master")).Trim();
+        var originBefore = (await ScratchGitRepo.GitInAsync(remote.Path, "rev-parse", "master")).StdOut.Trim();
+        originBefore.ShouldNotBe(localSha);
+
+        var result = await land.RunAsync(task.Id, null, CancellationToken.None);
+
+        result.ShouldBe(LandRunResult.Complete);
+        var originAfter = (await ScratchGitRepo.GitInAsync(remote.Path, "rev-parse", "master")).StdOut.Trim();
+        originAfter.ShouldBe(localSha);
+        var landed = await db.AgentTaskEvents.AsNoTracking()
+            .SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Landed);
+        landed.Detail.ShouldContain($"origin/master={originAfter}");
+        landed.Detail.ShouldContain(originAfter);
     }
 
     [Test]
@@ -671,6 +751,31 @@ public class DelegationWorktreeTests
         CreatedAt = DateTime.UtcNow,
     };
 
+    private static (AgentTaskLandService Land, DelegationWorktreeService Worktrees) CreateLand(
+        AppDbContext db, ScratchGitRepo repo)
+    {
+        var (worktrees, _) = CreateService(repo);
+        var tasks = new AgentTaskService(
+            db,
+            new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
+            Options.Create(new DelegationSettings { MaxTasksPerRoot = 40, MaxDepth = 5 }),
+            new MockEventBus(),
+            new RecordingSessionStopper(),
+            TimeProvider.System,
+            NullLogger<AgentTaskService>.Instance);
+        var land = new AgentTaskLandService(
+            db,
+            worktrees,
+            tasks,
+            new AgentTaskLandQueue(),
+            null!,
+            new MockEventBus(),
+            TimeProvider.System,
+            Options.Create(new DelegationSettings()),
+            NullLogger<AgentTaskLandService>.Instance);
+        return (land, worktrees);
+    }
+
     private static (DelegationWorktreeService Service, WorktreeManager Manager) CreateService(
         ScratchGitRepo repo,
         int? worktreeAddTimeoutSeconds = null)
@@ -709,6 +814,23 @@ public class DelegationWorktreeTests
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
         }
+    }
+
+    private static async Task<string?> RebaseStateDirectoryAsync(string worktree)
+    {
+        foreach (var name in new[] { "rebase-merge", "rebase-apply" })
+        {
+            var parsed = await ScratchGitRepo.GitInAsync(worktree, "rev-parse", "--git-path", name);
+            var path = parsed.StdOut.Trim();
+            if (path.Length == 0)
+                continue;
+            if (!Path.IsPathRooted(path))
+                path = Path.GetFullPath(Path.Combine(worktree, path));
+            if (Directory.Exists(path))
+                return path;
+        }
+
+        return null;
     }
 
     private static (string Branch, string WorktreePath) ExpectedCoordinates(ScratchGitRepo repo, AgentTask task)

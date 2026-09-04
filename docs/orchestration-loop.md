@@ -48,8 +48,10 @@ rebases, verifies when required, fast-forwards, pushes, and cleans up. The resul
 `Landed` / `LandedWithResidue` / `LandRefused` outcome line is the confirmation. `Landed` means
 the target advanced and cleanup finished; `LandedWithResidue` means the target advanced and
 cleanup left a branch or directory (re-run `-Land` to retry cleanup); `LandRefused` means the
-target did not advance. The orchestrator decides the order and what a refusal means, but does
-none of those git operations itself.
+target did not advance. A request survives a server restart. A 409 means a land is running in
+this server now — wait for its outcome event. A `Warning` "did not finish (server restarted);
+re-running" is informational. The orchestrator decides the order and what a refusal means, but
+does none of those git operations itself.
 
 Since CARD-0247, a `PreToolUse` hook in this repo nudges at the third consecutive cold source read
 (it never blocks; `ANTIPHON_ORCHESTRATOR=0` silences it for a hacking session) - the hook is the
@@ -379,15 +381,23 @@ pwsh -NoProfile -File scripts/delegate.ps1 -Land <id>
 ```
 
 The server performs the fetch, rebase, conditional build and optional named test, fast-forward,
-push, worktree removal, and branch deletion. Read the resulting `Landed`, `LandedWithResidue`, or
-`LandRefused` event and its outcome line. `Landed` reports the merged SHA, pushed remote ref,
-verification result, and `worktree removed`. `LandedWithResidue` keeps the `landed …` prefix and
-ends `cleanup incomplete: <what remains>` — the target advanced; re-run `-Land` to retry
-cleanup. `LandRefused` means the target did not advance (fetch, remote-ahead, rebase, verify,
-fast-forward, or push failed) and leaves the branch and worktree in place naming why. A `Landed`
-line that also carries `unlanded-sibling=<id>:<branch>` (comma-separated if several) means a
-same-card kept branch is not an ancestor of the rebased HEAD — land or drop that sibling; the
-server warns rather than refusing.
+push, worktree removal, and branch deletion. The request is a row (`LandRequestedAt`); the
+in-process channel is only a hand-off. A restart re-runs anything still pending that this
+process does not hold. `delegate.ps1 -Land` prints "Queued land" or "Requeued land" from the
+202 `{ status: "queued" | "requeued" }`. A 409 means a land is running in this server now —
+wait for the outcome event; it never fires for a request no process holds. Three interrupted
+attempts refuse (`LandRefused`); `-Land` again starts a new request. A `Warning` "did not
+finish (server restarted); re-running" is informational.
+
+Read the resulting `Landed`, `LandedWithResidue`, or `LandRefused` event and its outcome line.
+`Landed` reports the merged SHA, pushed remote ref, verification result, and `worktree removed`.
+`LandedWithResidue` keeps the `landed …` prefix and ends `cleanup incomplete: <what remains>` —
+the target advanced; re-run `-Land` to retry cleanup. `LandRefused` means the target did not
+advance (fetch, remote-ahead, rebase, verify, fast-forward, or push failed) and leaves the
+branch and worktree in place naming why. A `Landed` line that also carries
+`unlanded-sibling=<id>:<branch>` (comma-separated if several) means a same-card kept branch is
+not an ancestor of the rebased HEAD — land or drop that sibling; the server warns rather than
+refusing.
 
 After `-Land`, the orchestrator's own git involvement is **zero**. Do not re-run `git show`,
 `git diff`, `gh run view`, or tests to double-check a `Landed` outcome. This is the same

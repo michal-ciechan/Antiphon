@@ -97,6 +97,13 @@ public sealed class DelegationWorktreeService
             return new(false, false, false, null, branch, "The task worktree is no longer registered.", []);
 
         var target = task.MergeTargetRef ?? "master";
+        // A hard kill mid-rebase leaves rebase-merge / rebase-apply; `git rebase` then fails
+        // "already a rebase-merge directory" with no unmerged files → a spurious LandRefused.
+        // Abort first so this attempt actually rebases (CARD-0331 S3).
+        var abortNote = await AbortInterruptedRebaseAsync(worktree, ct);
+        if (abortNote is { Ok: false, Detail: { } abortFailure })
+            return new(false, false, false, target, branch, abortFailure, []);
+
         var fetch = await GitAsync(repo, ct, "fetch", "origin");
         if (!fetch.Ok)
             return new(false, false, false, target, branch, $"git fetch origin failed: {fetch.StdErr.Trim()}", []);
@@ -126,12 +133,14 @@ public sealed class DelegationWorktreeService
             await GitAsync(worktree, ct, "rebase", "--abort");
 
             return files.Count > 0
-                ? new(false, true, baseMoved, target, branch, rebase.StdErr.Trim(), files)
+                ? new(false, true, baseMoved, target, branch,
+                    AnnotateInterruptedRebase(abortNote.Detail, rebase.StdErr.Trim()), files)
                 : new(false, false, baseMoved, target, branch,
-                    $"Rebase onto {target} failed: {rebase.StdErr.Trim()}", []);
+                    AnnotateInterruptedRebase(abortNote.Detail, $"Rebase onto {target} failed: {rebase.StdErr.Trim()}"),
+                    []);
         }
 
-        return new(true, false, baseMoved, target, branch, null, []);
+        return new(true, false, baseMoved, target, branch, abortNote.Detail, []);
     }
 
     /// <summary>Advance, push, and remove a branch whose explicit land verification passed.</summary>
@@ -232,7 +241,17 @@ public sealed class DelegationWorktreeService
     public async Task<LandCleanup> CleanupAlreadyLandedAsync(AgentTask task, CancellationToken ct)
     {
         var target = task.MergeTargetRef ?? "master";
-        var sha = await TryRevParseAsync(task.RepoPath, $"origin/{target}", ct)
+        string? sha = null;
+        if (task.RepoPath is { } pushRepo && Directory.Exists(pushRepo)
+            && task.WorktreeBranch is { } branch)
+        {
+            var push = await PushLocalTargetIfAheadAsync(pushRepo, branch, target, ct);
+            if (push.Failure is { } failure)
+                return new LandCleanup(WorktreeRemoval.Clean, target, null, failure);
+            sha = push.Sha;
+        }
+
+        sha ??= await TryRevParseAsync(task.RepoPath, $"origin/{target}", ct)
             ?? await TryRevParseAsync(task.RepoPath, target, ct);
 
         if (task.WorktreePath is not { } worktree || task.RepoPath is not { } repo)
@@ -242,7 +261,8 @@ public sealed class DelegationWorktreeService
         return new LandCleanup(removal, target, sha);
     }
 
-    public sealed record LandCleanup(WorktreeRemoval Removal, string Target, string? Sha);
+    public sealed record LandCleanup(
+        WorktreeRemoval Removal, string Target, string? Sha, string? PushFailure = null);
 
     private async Task<string?> TryRevParseAsync(string? repo, string rev, CancellationToken ct)
     {
@@ -252,6 +272,72 @@ public sealed class DelegationWorktreeService
         var sha = result.StdOut.Trim();
         return result.Ok && sha.Length > 0 ? sha : null;
     }
+
+    /// <summary>
+    /// Push <paramref name="target"/> when local is ahead of origin and <paramref name="branch"/>
+    /// is already an ancestor of local target — the kill-after-ff-merge-before-push window
+    /// (CARD-0331 D6). Same push <see cref="FinalizeLandAsync"/> would have made.
+    /// </summary>
+    private async Task<(string? Sha, string? Failure)> PushLocalTargetIfAheadAsync(
+        string repo, string branch, string target, CancellationToken ct)
+    {
+        var exists = await GitAsync(repo, ct, "show-ref", "--verify", "--quiet", $"refs/heads/{branch}");
+        if (!exists.Ok)
+            return (null, null);
+
+        var ancestor = await GitAsync(repo, ct, "merge-base", "--is-ancestor", branch, target);
+        if (!ancestor.Ok)
+            return (null, null);
+
+        var ahead = await GitAsync(repo, ct, "rev-list", "--count", $"origin/{target}..{target}");
+        if (!ahead.Ok || !int.TryParse(ahead.StdOut.Trim(), out var count) || count <= 0)
+            return (null, null);
+
+        var push = await GitAsync(repo, ct, "push", "origin", target);
+        if (!push.Ok)
+            return (null, $"git push origin {target} rejected: {push.StdErr.Trim()}");
+
+        var sha = await GitAsync(repo, ct, "rev-parse", target);
+        return (sha.Ok ? sha.StdOut.Trim() : null, null);
+    }
+
+    /// <summary>
+    /// Abort a leftover rebase-merge / rebase-apply before starting a new rebase. Returns
+    /// <c>Detail = "aborted an interrupted rebase"</c> when it actually aborted.
+    /// </summary>
+    private static async Task<(bool Ok, string? Detail)> AbortInterruptedRebaseAsync(
+        string worktree, CancellationToken ct)
+    {
+        if (!await RebaseInProgressAsync(worktree, ct))
+            return (true, null);
+
+        var abort = await GitAsync(worktree, ct, "rebase", "--abort");
+        return abort.Ok
+            ? (true, "aborted an interrupted rebase")
+            : (false, $"Could not abort interrupted rebase: {abort.StdErr.Trim()}");
+    }
+
+    private static async Task<bool> RebaseInProgressAsync(string worktree, CancellationToken ct)
+    {
+        foreach (var name in new[] { "rebase-merge", "rebase-apply" })
+        {
+            var parsed = await GitAsync(worktree, ct, "rev-parse", "--git-path", name);
+            if (!parsed.Ok)
+                continue;
+            var path = parsed.StdOut.Trim();
+            if (path.Length == 0)
+                continue;
+            if (!Path.IsPathRooted(path))
+                path = Path.GetFullPath(Path.Combine(worktree, path));
+            if (Directory.Exists(path))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static string AnnotateInterruptedRebase(string? abortNote, string detail) =>
+        abortNote is null ? detail : $"{abortNote}. {detail}";
 
     /// <summary>
     /// Create the task's worktree and record its coordinates on the row. Branches from the merge

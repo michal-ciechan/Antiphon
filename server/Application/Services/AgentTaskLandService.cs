@@ -243,6 +243,13 @@ public sealed class AgentTaskLandService
         var cleanupWatch = Stopwatch.StartNew();
         var cleaned = await _worktrees.CleanupAlreadyLandedAsync(task, ct);
         var cleanupSeconds = ElapsedSeconds(cleanupWatch);
+        if (cleaned.PushFailure is { } pushFailure)
+        {
+            Record(task, OrchestrationStage.Cleanup, StageOutcomeKind.Failed, cleanupSeconds, pushFailure);
+            await RefuseAsync(task, pushFailure, ct);
+            return LandRunResult.Complete;
+        }
+
         var sha = cleaned.Sha ?? "unknown";
         var branch = task.WorktreeBranch ?? "(branch)";
         var target = cleaned.Target;
@@ -473,6 +480,8 @@ public sealed class AgentTaskLandService
     {
         try
         {
+            // CARD-0331: a kill mid-build leaves bin-land/; the next VerifyAsync overwrites it
+            // and the finally still deletes it.
             var build = await RunProcessAsync(worktree, ct, "dotnet", "build", "--property:OutputPath=bin-land/");
             if (!build.Ok)
                 return LandVerification.Failure("build", Tail(build));

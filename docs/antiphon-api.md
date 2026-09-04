@@ -221,7 +221,10 @@ GET    /api/agent-tasks/{id}                 {id} accepts the 8-char short id.
                                              canAnswer, plus CARD-0294 `reason`,
                                              `authority`, `canContinue`.
                                              Detail also exposes `standingAuthority`
-                                             and `autoContinueOnWait`.
+                                             and `autoContinueOnWait`, and CARD-0331
+                                             `landRequestedAt`, `landStartedAt`,
+                                             `landAttempt` (a pending land without
+                                             reading events).
 GET    /api/agent-tasks/summary              fleet-wide counters (active, blocked, runs,
                                              totalCostUsd, byStatus), independent of the list window
 POST   /api/agent-tasks/{id}/cancel  |  /retry  |  /escalate
@@ -240,12 +243,15 @@ POST   /api/agent-tasks/{id}/continue        replay the standing authority given
                                              `/reply`.
 POST   /api/agent-tasks/{id}/refine          steer a running delegate without cancelling it
 POST   /api/agent-tasks/{id}/land            queue an explicit land of a Succeeded Worktree
-                                             task (`{ verify?: string }`). 202; git runs in
-                                             the background. Outcomes: `Landed` (pushed and
-                                             cleaned), `LandedWithResidue` (pushed, cleanup
-                                             left a branch/directory — re-POST to retry
-                                             cleanup), `LandRefused` (target did not
-                                             advance). 409 if a land is already queued.
+                                             task (`{ verify?: string }`). 202
+                                             `{ status: "queued" | "requeued" }`; git
+                                             runs in the background. Outcomes: `Landed`
+                                             (pushed and cleaned), `LandedWithResidue`
+                                             (pushed, cleanup left a branch/directory —
+                                             re-POST to retry cleanup), `LandRefused`
+                                             (target did not advance). 409 if a land is
+                                             running in this server now (never for a
+                                             request no process holds).
 GET    /api/agent-tasks/areas?directory=     the repo's named areas (antiphon.areas.json)
 GET    /api/agent-tasks/pipeline             fleet-wide advisory in-flight / queued / blocked / ready snapshot. Queued queueReason is one of sharedCheckoutLease, siblingLandInFlight, concurrencyCap, routingPinNotBefore, awaitingDispatch. In-flight, queued and blocked rows carry agentKind / modelLevel; in-flight and queued also carry workspace.
 ```
