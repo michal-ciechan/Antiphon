@@ -1,5 +1,5 @@
 import { HttpResponse, http } from 'msw'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 import type { AgentDetailDto, AgentSummaryDto, UpdateAgentRequest } from '../../api/agents'
 import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
@@ -9,6 +9,10 @@ import { AgentsPage } from './AgentsPage'
 vi.mock('@mantine/notifications', () => ({
   notifications: { show: vi.fn() },
 }))
+
+beforeAll(() => {
+  Element.prototype.scrollIntoView = vi.fn()
+})
 
 /**
  * CARD-0060 slice 5 — the style is visible, changeable, and submitted; the bundles it composes are
@@ -148,5 +152,44 @@ describe('reply style chip', () => {
 
     await screen.findByText('Frontend Claude')
     expect(screen.queryByText('normal')).not.toBeInTheDocument()
+  })
+})
+
+describe('AgentSettingsModal policy refresh mode', () => {
+  it('defaults to Auto when the server sent no mode', async () => {
+    server.use(...handlers())
+
+    renderWithProviders(
+      <AgentSettingsModal agent={agent} opened onClose={() => {}} onDeleted={() => {}} />,
+    )
+
+    expect(await screen.findByRole('textbox', { name: /policy refresh/i })).toHaveValue(
+      'Auto (relaunch when idle)',
+    )
+  })
+
+  it('submits the chosen mode with the update', async () => {
+    let submitted: UpdateAgentRequest | null = null
+    server.use(
+      ...handlers(),
+      http.patch('/api/agents/:id', async ({ request }) => {
+        submitted = (await request.json()) as UpdateAgentRequest
+        return HttpResponse.json({
+          ...detail,
+          policyDrift: { bundles: [], files: [], mode: submitted.policyRefreshMode ?? 'Auto' },
+        })
+      }),
+    )
+
+    renderWithProviders(
+      <AgentSettingsModal agent={agent} opened onClose={() => {}} onDeleted={() => {}} />,
+    )
+    await userEvent.click(await screen.findByRole('textbox', { name: /policy refresh/i }))
+    await userEvent.click(await screen.findByRole('option', { name: 'Notify only' }))
+    await waitFor(() => expect(screen.queryByRole('listbox')).not.toBeInTheDocument())
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(submitted).not.toBeNull())
+    expect(submitted!.policyRefreshMode).toBe('Notify')
   })
 })

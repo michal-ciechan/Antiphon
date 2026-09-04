@@ -49,6 +49,7 @@ public sealed class AgentControlService
     private readonly ModelAvailability? _modelAvailability;
     private readonly ISessionRunnerClient? _sessionRunner;
     private readonly HerdrLaunchContextResolver? _herdrContext;
+    private readonly PolicyRefreshService? _policyRefresh;
 
     public AgentControlService(
         AppDbContext db,
@@ -70,7 +71,8 @@ public sealed class AgentControlService
         SubscriptionQuotaGate? quotaGate = null,
         ISessionRunnerClient? sessionRunner = null,
         HerdrLaunchContextResolver? herdrContext = null,
-        ModelAvailability? modelAvailability = null)
+        ModelAvailability? modelAvailability = null,
+        PolicyRefreshService? policyRefresh = null)
     {
         _db = db;
         _agentService = agentService;
@@ -90,6 +92,28 @@ public sealed class AgentControlService
         _sessionRunner = sessionRunner;
         _herdrContext = herdrContext;
         _modelAvailability = modelAvailability;
+        _policyRefresh = policyRefresh;
+    }
+
+    /// <summary>
+    /// CARD-0334 S3. Idle-gated like the policy-refresh sweep: kill+resume, or a WhenIdle
+    /// notify, without suspending supervision. <paramref name="force"/> skips only the
+    /// idle-minutes floor and the cooldown; a session that reads working is always 409
+    /// <c>session_working</c>.
+    /// </summary>
+    public async Task<RefreshPolicyResultDto> RefreshPolicyAsync(
+        Guid agentId, bool force, CancellationToken ct)
+    {
+        if (_policyRefresh is null)
+            throw new InvalidOperationException("PolicyRefreshService is not registered.");
+
+        var exists = await _db.Agents.AsNoTracking().AnyAsync(a => a.Id == agentId, ct);
+        if (!exists)
+            throw new NotFoundException(nameof(Agent), agentId);
+
+        var outcome = await _policyRefresh.RefreshAgentAsync(agentId, force, ct);
+        var detail = await _agentService.GetByIdAsync(agentId, ct);
+        return new RefreshPolicyResultDto(outcome.Refreshed, outcome.Notified, detail);
     }
 
     /// <summary>

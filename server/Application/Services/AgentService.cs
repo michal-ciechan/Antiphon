@@ -90,6 +90,7 @@ public sealed class AgentService
             .Select(session => session.Dto.Id)
             .ToList();
         var working = await SessionMessageQueueService.IsWorkingBatchAsync(_db, runningSessionIds, ct);
+        var lastRefreshed = await LoadLastRefreshedAtAsync(agents.Select(a => a.Id), ct);
         var result = new List<AgentSummaryDto>(agents.Count);
         foreach (var a in agents)
         {
@@ -99,7 +100,9 @@ public sealed class AgentService
                 live?.Dto,
                 supervision.GetValueOrDefault(a.Id),
                 live is { Dto.Status: SessionStatus.Running } && working.GetValueOrDefault(live.Dto.Id),
-                DriftOf(a, live, Compose(a, attachments.GetValueOrDefault(a.Id, [])))));
+                DriftOf(
+                    a, live, Compose(a, attachments.GetValueOrDefault(a.Id, [])),
+                    lastRefreshed.TryGetValue(a.Id, out var refreshedAt) ? refreshedAt : null)));
         }
         return result;
     }
@@ -118,11 +121,12 @@ public sealed class AgentService
     /// session with no recorded stamp, is NO EVIDENCE — never drift. CARD-0213: an attached
     /// operator pane writes both stamps null on purpose; null here is "unknown", not out of date.
     /// </summary>
-    private PolicyDrift DriftOf(Agent agent, LiveSession? live, ComposedInstructions current)
+    private PolicyDrift DriftOf(
+        Agent agent, LiveSession? live, ComposedInstructions current, DateTime? lastRefreshedAt = null)
     {
         var mode = agent.PolicyRefreshMode ?? PolicyRefreshMode.Auto;
         if (live is null)
-            return PolicyDrift.None with { Mode = mode };
+            return PolicyDrift.None with { Mode = mode, LastRefreshedAt = lastRefreshedAt };
 
         var files = InstructionFileStamps.Compute(
             agent.WorkingDirectory,
@@ -132,7 +136,8 @@ public sealed class AgentService
             current.StampLine,
             live.FileStamp,
             files.StampLine,
-            mode);
+            mode,
+            lastRefreshedAt);
     }
 
     /// <summary>
@@ -152,8 +157,10 @@ public sealed class AgentService
             : null;
         var live = ResolveLiveSession(liveSessions, agent.PersistentSessionId);
         var attachedKeys = await AgentBundleAttachments.LoadAsync(_db, agent.Id, _logger, ct);
+        var lastRefreshed = await LoadLastRefreshedAtAsync([agent.Id], ct);
         return ToDetailDto(
-            agent, live?.Dto, supervision, await IsSessionWorkingAsync(live?.Dto, ct), live, attachedKeys);
+            agent, live?.Dto, supervision, await IsSessionWorkingAsync(live?.Dto, ct), live, attachedKeys,
+            lastRefreshed.TryGetValue(agent.Id, out var refreshedAt) ? refreshedAt : null);
     }
 
     /// <summary>
@@ -631,6 +638,8 @@ public sealed class AgentService
         // checked against the NEW profile, not the one this request is replacing.
         if (request.Kind is { } requestedKind)
             await ApplyKindAssertOrSetAsync(agent, requestedKind, ct);
+        if (request.PolicyRefreshMode is { } policyRefreshMode)
+            agent.PolicyRefreshMode = policyRefreshMode;
         agent.UpdatedAt = UtcNow();
 
         await SaveChangesOrConflictAsync($"Agent '{agent.Name}' was modified by another operation.", ct);
@@ -1122,9 +1131,26 @@ public sealed class AgentService
             policyDrift);
     }
 
+    private async Task<Dictionary<Guid, DateTime>> LoadLastRefreshedAtAsync(
+        IEnumerable<Guid> agentIds, CancellationToken ct)
+    {
+        var ids = agentIds.Distinct().ToList();
+        if (ids.Count == 0)
+            return [];
+
+        return await _db.AgentIncidents.AsNoTracking()
+            .Where(i => i.AgentId != null
+                && ids.Contains(i.AgentId.Value)
+                && i.Kind == AgentIncidentKind.PolicyRefreshed)
+            .GroupBy(i => i.AgentId!.Value)
+            .Select(g => new { g.Key, At = g.Max(i => i.CreatedAt) })
+            .ToDictionaryAsync(x => x.Key, x => x.At, ct);
+    }
+
     private AgentDetailDto ToDetailDto(
         Agent agent, AgentSessionSummaryDto? liveSession, AgentSupervisionDto? supervision = null,
-        bool working = false, LiveSession? live = null, IReadOnlyList<string>? attachedKeys = null)
+        bool working = false, LiveSession? live = null, IReadOnlyList<string>? attachedKeys = null,
+        DateTime? lastRefreshedAt = null)
     {
         var queue = agent.QueueCards
             .Where(c => c.AgentQueuePosition is not null)
@@ -1146,7 +1172,7 @@ public sealed class AgentService
         var (configured, liveSelection) = MapTuiSelection(agent, liveSession);
         var keys = attachedKeys ?? [];
         var composed = Compose(agent, keys);
-        var drift = DriftOf(agent, live, composed);
+        var drift = DriftOf(agent, live, composed, lastRefreshedAt);
 
         return new AgentDetailDto(
             agent.Id,

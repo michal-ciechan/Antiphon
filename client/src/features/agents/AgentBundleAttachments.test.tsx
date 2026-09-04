@@ -19,10 +19,8 @@ vi.mock('@mantine/notifications', () => ({
  * CARD-0058 slice 6 — attaching a bundle to one agent, and the badge that says a running session is
  * carrying older instructions.
  *
- * <p>The behaviour worth pinning hardest is the one the badge does NOT have: it never offers to fix
- * anything. Reconciliation is recompute-at-launch, a running session keeps what it started with, and
- * nothing is ever typed into a live composer — so the notice describes what will happen at the next
- * launch rather than presenting a button.</p>
+ * The settings modal stays informational (nothing is typed into a live composer). The list/detail
+ * badge offers "Refresh now" for Auto/Relaunch/Notify, which hits POST /refresh-policy with force.
  */
 const agent: AgentSummaryDto = {
   id: 'agent-1',
@@ -239,5 +237,56 @@ describe('bundle drift badge', () => {
 
     await screen.findByText('Current Claude')
     expect(screen.getAllByText('bundles')).toHaveLength(1)
+  })
+
+  it('offers Refresh now and says it refreshes at the next idle window', async () => {
+    let refreshBody: { force?: boolean } | null = null
+    server.use(
+      ...handlers([
+        {
+          ...agent,
+          id: 'agent-1',
+          name: 'Drifted Claude',
+          bundlesOutOfDate: true,
+          policyDrift: { bundles: ['orchestrator'], files: ['AGENTS.md'], mode: 'Auto' },
+        },
+      ]),
+      http.post('/api/agents/:id/refresh-policy', async ({ request }) => {
+        refreshBody = (await request.json()) as { force?: boolean }
+        return HttpResponse.json({
+          refreshed: true,
+          notified: false,
+          agent: { ...detail, id: 'agent-1', name: 'Drifted Claude', bundlesOutOfDate: false },
+        })
+      }),
+    )
+
+    renderWithProviders(<AgentsPage />)
+
+    const buttons = await screen.findAllByRole('button', { name: 'Refresh now' })
+    expect(buttons.length).toBeGreaterThanOrEqual(1)
+    await userEvent.click(buttons[0])
+    await waitFor(() => expect(refreshBody).not.toBeNull())
+    expect(refreshBody!.force).toBe(true)
+  })
+
+  it('does not offer Refresh now when policy refresh is Off', async () => {
+    server.use(
+      ...handlers([
+        {
+          ...agent,
+          id: 'agent-1',
+          name: 'Drifted Claude',
+          bundlesOutOfDate: true,
+          policyDrift: { bundles: ['orchestrator'], files: [], mode: 'Off' },
+        },
+      ]),
+    )
+
+    renderWithProviders(<AgentsPage />)
+
+    await screen.findByText('Drifted Claude')
+    expect(screen.getByText('bundles')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Refresh now' })).not.toBeInTheDocument()
   })
 })

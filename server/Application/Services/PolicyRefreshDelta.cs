@@ -32,6 +32,36 @@ public static class PolicyRefreshDelta
         return string.Join("; ", parts);
     }
 
+    /// <summary>
+    /// Notify-lane delta: the same key/version facts as <see cref="Format"/>, plus the
+    /// parentheticals that say a bundle change is not live until the next launch and that
+    /// changed instruction files should be re-read now.
+    /// </summary>
+    public static string FormatNotify(
+        string? launchedBundles,
+        string currentBundles,
+        string? launchedFiles,
+        string currentFiles)
+    {
+        var parts = new List<string>();
+        var bundleBits = DescribeBundles(
+            PolicyDrift.ParseStampLine(launchedBundles ?? ""),
+            PolicyDrift.ParseStampLine(currentBundles ?? "")).ToList();
+        if (bundleBits.Count > 0)
+        {
+            parts.Add(string.Join("; ", bundleBits)
+                + " (in your system prompt only at your next launch)");
+        }
+
+        var files = PolicyDrift.DiffKeys(launchedFiles, currentFiles ?? "");
+        if (files.Count == 1)
+            parts.Add($"{files[0]} changed (re-read them now, before your next dispatch)");
+        else if (files.Count > 1)
+            parts.Add(string.Join(", ", files) + " changed (re-read them now, before your next dispatch)");
+
+        return string.Join("; ", parts);
+    }
+
     private static IEnumerable<string> DescribeBundles(
         Dictionary<string, string> launched,
         Dictionary<string, string> current)

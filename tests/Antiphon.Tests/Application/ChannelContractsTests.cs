@@ -170,6 +170,18 @@ public class ChannelContractsTests
         policy.ShouldContain(ChannelContracts.NoReplyToken);
         foreach (var bundle in InstructionBundles.All.Values)
             policy.ShouldNotContain(bundle.Text);
+
+        var notifyDelta =
+            "orchestrator v26dea68f → v3c1f0a9e (in your system prompt only at your next launch); "
+            + "AGENTS.md, docs/orchestration-loop.md changed (re-read them now, before your next dispatch)";
+        var notify = ChannelPreamble.PolicyDriftNotifyBody(notifyDelta);
+        notify.ShouldContain(notifyDelta);
+        notify.ShouldContain("standing instructions changed");
+        notify.ShouldContain("in your system prompt only at your next launch");
+        notify.ShouldContain("re-read them now");
+        notify.ShouldContain(ChannelContracts.NoReplyToken);
+        foreach (var bundle in InstructionBundles.All.Values)
+            notify.ShouldNotContain(bundle.Text);
     }
 
     [Test]

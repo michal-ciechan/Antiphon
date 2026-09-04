@@ -130,6 +130,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         services.AddSingleton<ISessionRunnerClient>(runner);
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionMessageQueueService>();
+        services.AddSingleton<PolicyRefreshService>();
         services.AddSingleton<ApiErrorRecoveryService>();
         services.AddScoped<ModelAvailability>();
         services.AddSingleton<ChannelReplyDispatcher>();

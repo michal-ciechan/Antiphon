@@ -120,6 +120,18 @@ public static class ChannelPreamble
         + ChannelContracts.NoReplyToken
         + " unless you have something for the user.]";
 
+    /// <summary>
+    /// CARD-0334 S3. WhenIdle System note for the Notify lane (agents that cannot relaunch,
+    /// or that opted out of it). <paramref name="delta"/> is stamps and file names only
+    /// (never bundle text). Honest that a bundle change is not in the live system prompt.
+    /// </summary>
+    public static string PolicyDriftNotifyBody(string delta) =>
+        "[System note from Antiphon: your standing instructions changed since you launched — "
+        + delta
+        + ". Reply "
+        + ChannelContracts.NoReplyToken
+        + " unless you have something for the user.]";
+
     /// <summary>Eight hex chars, same short-id as <c>[task …]</c> / <c>[check …]</c>.</summary>
     public static string SessionShortId(Guid sessionId) => sessionId.ToString("N")[..8];
 

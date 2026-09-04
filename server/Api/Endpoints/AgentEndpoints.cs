@@ -140,6 +140,18 @@ public static class AgentEndpoints
             return Results.Ok(await service.StopAsync(id, cancellationToken));
         });
 
+        // CARD-0334 S3. The stop/start an operator did by hand, without suspending supervision.
+        // force skips only the idle-minutes floor and the cooldown; a working session is 409
+        // session_working. Notify-lane 200 is { refreshed: false, notified: true }.
+        agents.MapPost("/{id:guid}/refresh-policy", async (
+            Guid id,
+            RefreshPolicyRequest request,
+            AgentControlService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.RefreshPolicyAsync(id, request.Force, cancellationToken));
+        });
+
         agents.MapPost("/{id:guid}/attach-herdr", async (
             Guid id,
             AttachHerdrPaneRequest request,

@@ -206,6 +206,36 @@ export interface AgentSummaryDto {
 
 export type PolicyRefreshMode = 'Auto' | 'Relaunch' | 'Notify' | 'Off'
 
+export const POLICY_REFRESH_MODE_OPTIONS: Array<{
+  value: PolicyRefreshMode
+  label: string
+  description: string
+}> = [
+  {
+    value: 'Auto',
+    label: 'Auto (relaunch when idle)',
+    description:
+      'Always-on Claude agents relaunch with --resume at the next idle window; everything else gets a note.',
+  },
+  {
+    value: 'Relaunch',
+    label: 'Relaunch',
+    description:
+      'Kill and resume with rebuilt launch args at the next idle boundary. Falls back to a note when resume is not possible.',
+  },
+  {
+    value: 'Notify',
+    label: 'Notify only',
+    description:
+      'WhenIdle system note naming what changed. The process keeps its current prompt until the next launch.',
+  },
+  {
+    value: 'Off',
+    label: 'Off',
+    description: 'Neither lane. Drift is still visible on the badge.',
+  },
+]
+
 export interface PolicyDriftDto {
   bundles: string[]
   files: string[]
@@ -238,6 +268,7 @@ export type AgentIncidentKind =
   | 'LaunchInterruptedByRestart'
   | 'PolicyRefreshed'
   | 'PolicyRefreshFailed'
+  | 'PolicyDriftNotified'
 
 export type AlertSeverity = 'Info' | 'Warning' | 'Error' | 'Critical'
 
@@ -379,6 +410,11 @@ export interface UpdateAgentRequest {
    * Written only for a non-pool agent with no profile. Pool delegates always 409.
    */
   kind?: AgentKind | null
+  /**
+   * CARD-0334 S3. Omit/null = leave unchanged, so an older client cannot reset a chosen mode
+   * to Auto. `Auto` is the stored default (AlwaysOn Claude relaunches; others are notified).
+   */
+  policyRefreshMode?: PolicyRefreshMode | null
 }
 
 export interface DraftAgentRequest {
@@ -578,6 +614,29 @@ export function useEnsureAgentWorkingDirectory() {
       // Readiness keys are `['projects', …, 'readiness']` — prefix-invalidating the list
       // is what makes the readiness panel re-evaluate after mkdir.
       queryClient.invalidateQueries({ queryKey: ['projects'] })
+    },
+  })
+}
+
+export interface RefreshPolicyRequest {
+  force?: boolean
+}
+
+export interface RefreshPolicyResultDto {
+  refreshed: boolean
+  notified: boolean
+  agent: AgentDetailDto
+}
+
+export function useRefreshAgentPolicy(agentId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (request: RefreshPolicyRequest = {}) =>
+      apiPost<RefreshPolicyResultDto>(`/agents/${agentId}/refresh-policy`, request),
+    onSuccess: (result) => {
+      queryClient.setQueryData(agentKeys.detail(agentId), result.agent)
+      queryClient.invalidateQueries({ queryKey: agentKeys.all })
+      queryClient.invalidateQueries({ queryKey: agentKeys.incidents(agentId) })
     },
   })
 }

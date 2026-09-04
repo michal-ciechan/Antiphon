@@ -1181,6 +1181,46 @@ public class AgentServiceIntegrationTests
     }
 
     [Test]
+    public async Task PolicyRefreshMode_round_trips_through_update_and_omitting_it_leaves_it()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db, new MockEventBus());
+        var created = await service.CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("Policy Mode"), "D:/src/policy-mode"),
+            CancellationToken.None);
+        created.PolicyDrift.ShouldNotBeNull();
+        created.PolicyDrift!.Mode.ShouldBe(PolicyRefreshMode.Auto);
+
+        var notified = await service.UpdateAsync(
+            created.Id,
+            new UpdateAgentRequest(
+                created.Name,
+                created.WorkingDirectory,
+                created.Details,
+                created.DefaultWorkflowTemplateId,
+                created.AssignmentPolicy,
+                PolicyRefreshMode: PolicyRefreshMode.Notify),
+            CancellationToken.None);
+        notified.PolicyDrift!.Mode.ShouldBe(PolicyRefreshMode.Notify);
+
+        var omitted = await service.UpdateAsync(
+            created.Id,
+            new UpdateAgentRequest(
+                created.Name,
+                created.WorkingDirectory,
+                "edited details",
+                created.DefaultWorkflowTemplateId,
+                created.AssignmentPolicy),
+            CancellationToken.None);
+        omitted.PolicyDrift!.Mode.ShouldBe(PolicyRefreshMode.Notify);
+        omitted.Details.ShouldBe("edited details");
+
+        await using var verify = CreateContext();
+        (await verify.Agents.SingleAsync(a => a.Id == created.Id))
+            .PolicyRefreshMode.ShouldBe(PolicyRefreshMode.Notify);
+    }
+
+    [Test]
     public async Task UpdateAsync_Kind_on_a_pool_delegate_is_refused_even_when_it_agrees()
     {
         // CARD-0139 T5 / D3 — the dangerous edit. Refused unconditionally; the row is unchanged.
