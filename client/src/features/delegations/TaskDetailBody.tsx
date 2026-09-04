@@ -99,10 +99,12 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
   const [rerouteLevel, setRerouteLevel] = useState<string | null>('Frontier')
   const [expandedEvent, setExpandedEvent] = useState<number | null>(null)
   const stampedTask = useRef<string | null>(null)
-  const wasBlocked = useRef(Boolean(detail.blocked))
-  if (detail.blocked) wasBlocked.current = true
+  // "Storing information from previous renders" (react.dev): a guarded set during render, not a
+  // ref read in render, which eslint react-hooks/refs rejects (CARD-0378).
+  const [wasBlocked, setWasBlocked] = useState(Boolean(detail.blocked))
+  if (detail.blocked && !wasBlocked) setWasBlocked(true)
   const answeredElsewhere =
-    wasBlocked.current && !detail.blocked && (summary.status === 'Working' || summary.status === 'Dispatched')
+    wasBlocked && !detail.blocked && (summary.status === 'Working' || summary.status === 'Dispatched')
 
   const running = summary.status === 'Dispatched' || summary.status === 'Working'
   const settled = summary.status === 'Succeeded' || summary.status === 'Failed' || summary.status === 'Canceled'

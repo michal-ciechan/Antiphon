@@ -131,6 +131,22 @@ function detailFor(task: AgentTaskSummaryDto): AgentTaskDetailDto {
     events: [
       { type: 'Created', modelLevel: task.modelLevel, detail: 'Created.', at: task.createdAt },
     ],
+    // CARD-0033: a Blocked drawer renders from `blocked`, never from `result`.
+    blocked:
+      task.status === 'Blocked'
+        ? {
+            kind: 'Question',
+            round: 1,
+            blockedAt: task.createdAt,
+            question: 'Should I keep the old cmd examples alongside?',
+            context: null,
+            priorRounds: [],
+            progress: null,
+            canAnswer: true,
+            cannotAnswerReason: null,
+            mergeTaskId: null,
+          }
+        : null,
   }
 }
 

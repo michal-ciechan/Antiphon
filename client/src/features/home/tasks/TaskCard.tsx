@@ -12,6 +12,7 @@ import {
   UnstyledButton,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
+import { useState } from 'react'
 import {
   TbDotsVertical,
   TbTerminal2,
@@ -60,7 +61,7 @@ export function TaskCard({
   liveness = null,
   pipelineRow = null,
   pipeline = null,
-  now = Date.now(),
+  now: nowProp = null,
   onOpen,
   onOpenTask,
   onSelectAgent,
@@ -71,7 +72,7 @@ export function TaskCard({
   liveness?: AttentionItemDto | null
   pipelineRow?: HomeTaskPipelineRow | null
   pipeline?: AgentTaskPipelineDto | null
-  now?: number
+  now?: number | null
   onOpen: () => void
   onOpenTask?: (taskId: string) => void
   onSelectAgent?: (agentId: string) => void
@@ -80,6 +81,10 @@ export function TaskCard({
   const retry = useRetryAgentTask()
   const escalate = useEscalateAgentTask()
   const cancel = useCancelAgentTask()
+  // Callers that care about time pass `now`; otherwise the card's clock is its mount time. A
+  // `Date.now()` default parameter is an impure call during render (react-hooks/purity, CARD-0378).
+  const [mountedAt] = useState(() => Date.now())
+  const now = nowProp ?? mountedAt
 
   const reason = item.humanReason
   const borderColor =

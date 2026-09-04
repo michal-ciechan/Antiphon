@@ -158,11 +158,14 @@ function PipelineRow({
     </Group>
   )
 
-  if ('to' in row.target) {
+  // A const binding: TypeScript keeps the `in` narrowing inside the onClick closure below, which it
+  // drops for `row.target` (a property of a parameter) — `tsc -b` failed on that (CARD-0378).
+  const target = row.target
+  if ('to' in target) {
     return (
       <UnstyledButton
         component={Link}
-        to={row.target.to}
+        to={target.to}
         w="100%"
         py={6}
         aria-label={row.ariaLabel}
@@ -179,7 +182,7 @@ function PipelineRow({
       py={6}
       aria-label={row.ariaLabel}
       data-testid={`pipeline-row-${row.key}`}
-      onClick={() => onOpen(row.target.drawer)}
+      onClick={() => onOpen(target.drawer)}
     >
       {body}
     </UnstyledButton>

@@ -31,8 +31,8 @@ export function BacklogSection() {
   const isMobile = useMediaQuery('(max-width: 48em)') ?? false
   const [now] = useState(() => new Date())
 
-  const list = cards.data?.cards ?? []
-  const boxes = useMemo(() => groupBacklog(list), [cards.data?.cards])
+  const list = useMemo(() => cards.data?.cards ?? [], [cards.data?.cards])
+  const boxes = useMemo(() => groupBacklog(list), [list])
   const boardCount = boardsPresent(list)
   const showBoard = boardCount > 1
   const boardNameById = useMemo(

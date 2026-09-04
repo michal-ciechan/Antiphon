@@ -67,10 +67,31 @@ function serve(body: AgentTaskDetailDto, extra: Parameters<typeof server.use> = 
 
 describe('DelegationTaskModal', () => {
   it('opens with a Blocked detail and shows the question plus the answer box', async () => {
-    serve(detail({ status: 'Blocked', completedAt: null }, { result: 'Should I accept negative inputs?' }))
+    // CARD-0033: a Blocked detail carries the question in `blocked`, and the modal renders the
+    // question-first card from it — `result` alone renders nothing when Blocked.
+    serve(
+      detail(
+        { status: 'Blocked', completedAt: null },
+        {
+          result: 'Should I accept negative inputs?',
+          blocked: {
+            kind: 'Question',
+            round: 1,
+            blockedAt: '2026-08-07T10:12:00Z',
+            question: 'Should I accept negative inputs?',
+            context: null,
+            priorRounds: [],
+            progress: null,
+            canAnswer: true,
+            cannotAnswerReason: null,
+            mergeTaskId: null,
+          },
+        },
+      ),
+    )
     renderWithProviders(<DelegationTaskModal taskId={TASK_ID} onClose={() => {}} />)
 
-    expect(await screen.findByText('The delegate asked')).toBeInTheDocument()
+    expect(await screen.findByTestId('blocked-question')).toHaveTextContent('Should I accept negative inputs?')
     expect(screen.getByPlaceholderText('e.g. yes, accept negatives')).toBeInTheDocument()
     expect(screen.getByText('Should I accept negative inputs?')).toBeInTheDocument()
   })
