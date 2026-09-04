@@ -83,7 +83,8 @@ pick a card
 ```
 
 Landing (fetch, rebase, verify, fast-forward, push, worktree removal, branch deletion) is the
-`-Land` operation's job, not a manual step — see §5.
+`-Land` operation's job, not a manual step — see §5. The fleet's stage glance — one line per card,
+in-flight / queued / ready / blocked per role — is `/orchestrator?tab=pipeline`.
 
 A Worktree task branches from its merge target, or from master HEAD when none is set — never from
 a sibling task's branch (CARD-0215). Land a Plan with `delegate.ps1 -Land <id>` before dispatching

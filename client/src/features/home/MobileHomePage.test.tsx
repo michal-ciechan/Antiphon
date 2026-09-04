@@ -413,6 +413,14 @@ describe('MobileHomePage', () => {
     expect(screen.queryByText(/Needs you ·/)).not.toBeInTheDocument()
   })
 
+  it('the In motion band links by stage to the pipeline tab', async () => {
+    seed({})
+    renderWithProviders(<MobileHomePage />)
+
+    const link = await screen.findByRole('link', { name: /by stage/ })
+    expect(link).toHaveAttribute('href', '/orchestrator?tab=pipeline')
+  })
+
   it('hides RecentFailure from the glance so a settled-failure day still reads as calm', async () => {
     seed({
       attention: [

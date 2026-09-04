@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Box,
   Divider,
   Group,
@@ -142,19 +143,34 @@ function byWatchOrder(a: AgentTaskSummaryDto, b: AgentTaskSummaryDto): number {
   return Date.parse(b.createdAt) - Date.parse(a.createdAt)
 }
 
-function BandTitle({ children, color }: { children: React.ReactNode; color?: string }) {
-  return (
+function BandTitle({
+  children,
+  color,
+  right,
+}: {
+  children: React.ReactNode
+  color?: string
+  right?: React.ReactNode
+}) {
+  const title = (
     <Text
       size="xs"
       fw={700}
       c={color ?? 'dimmed'}
       tt="uppercase"
-      mt="md"
-      mb={4}
+      mt={right ? undefined : 'md'}
+      mb={right ? undefined : 4}
       style={{ letterSpacing: 1 }}
     >
       {children}
     </Text>
+  )
+  if (!right) return title
+  return (
+    <Group justify="space-between" align="baseline" wrap="nowrap" mt="md" mb={4}>
+      {title}
+      {right}
+    </Group>
   )
 }
 
@@ -338,7 +354,21 @@ function AwayRow({ to, label, line, sub }: { to: string; label: string; line: st
 function InMotionBand({ tasks }: { tasks: AgentTaskSummaryDto[] }) {
   return (
     <>
-      <BandTitle>In motion{tasks.length > 0 ? ` · ${tasks.length}` : ''}</BandTitle>
+      <BandTitle
+        right={
+          <Anchor
+            component={Link}
+            to="/orchestrator?tab=pipeline"
+            size="xs"
+            c="dimmed"
+            style={{ flexShrink: 0 }}
+          >
+            by stage ›
+          </Anchor>
+        }
+      >
+        In motion{tasks.length > 0 ? ` · ${tasks.length}` : ''}
+      </BandTitle>
       {tasks.length === 0 ? (
         <Text size="sm" c="dimmed" px={4}>
           Nothing running.
