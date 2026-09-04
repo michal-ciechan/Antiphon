@@ -390,6 +390,22 @@ value or `*` (kind-wide, OR'd with per-alias rows). PUT body: `{ disabledUntil?:
 string }`. Omitted `disabledUntil` is open-ended. Past UTC is 422. Script:
 `scripts/model-availability.ps1 get|hold|clear`.
 
+```
+GET    /api/subscription-usage                        latest stored observation per (kind, profile)
+```
+
+`SubscriptionUsageEndpoints.cs` (CARD-0333 S1) is a **read-only** projection of
+`SubscriptionUsageReader`'s stored samples. It never polls a provider, starts a monitoring sweep, or
+flips `SubscriptionUsageMonitoringSettings.Enabled`; no samples is an empty array, not an error.
+Each `SubscriptionUsageObservationDto` carries only display-safe fields: `provider` (`AgentKind`),
+`planLabel`, `remainingPercent`, `resetsAt`, `observedAt`, `age` — nulls are preserved (a missing
+percent/reset is JSON `null`, never a manufactured 0/100). It never returns raw command output,
+subscription/profile keys, paths, credentials, or session identifiers, and the observation is
+provider/profile-level, not per-model-alias — there is no aggregate fleet percentage and no
+"usage remaining" field on a model-availability row. Treat an old `observedAt`/`age` as stale
+evidence, not current capacity; monitoring being off or having no sample for a provider looks
+identical to this endpoint (empty/absent entry) — the client renders both as "unknown," not "zero."
+
 ### Schedules
 
 `ScheduleEndpoints.cs` — the API behind `scripts/schedule.ps1` (CARD-0057: prompt delivery and card actions).

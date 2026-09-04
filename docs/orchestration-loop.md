@@ -168,6 +168,31 @@ no pin exists. A Human pin survives a RolePolicy edit and an Auto rewrite (409 `
 Required. A pin naming a held alias is still 409 `model_disabled` (CARD-0309) — pins consume
 `Require`, they do not write a hold, and `ignoreRoutingPin` is not `ignoreModelDisabled`.
 
+Precedence between a stage-wide pin and a role's complexity cell: a **Required** pin *bypasses* the
+matrix cell for that role entirely — the cell is never consulted while the pin stands. A
+**Preferred** pin *prepends* to the matrix candidates and falls through to the cell if the pinned
+target is unavailable. A **card-scoped** pin applies only to that one card, never to every task in
+that role stage-wide — do not read a card pin's banner as a global change. `RolePolicy` itself is
+unrelated to this matrix: it remains the non-complexity fallback (default kind/level, escalation,
+timeout, WIP) for work not launched with `-Complexity`; CARD-0333's matrix does not govern or
+supersede it (CARD-0097 is the separate, still-open RolePolicy visibility/editing follow-up).
+
+**Operators read and reason about all of this at `/settings?tab=routing`** (CARD-0333): the global
+Routing settings tab shows live model availability, best-effort subscription-usage observations
+(explicitly provider/profile-level, never a per-model quota, and "Unknown" rather than a guessed
+number when monitoring is off or no sample exists), the active stage-wide/card pins with the
+Required/Preferred wording above, and the effective (role × complexity) matrix with inline
+Configure/Clear. It is the read path for diagnosing "why did this route where it did," not a new
+way to change RolePolicy or to control a running session.
+
+**Deployment note:** as of tonight there is a live stage-wide **Human Required Code → Grok** pin.
+It bypasses every Code-role complexity cell — an operator looking only at the Code row of the
+matrix will see candidates that are not actually being used. This is expected, not a bug; check
+`/settings?tab=routing` (or `GET /api/routing-pins?role=Code`) for the pin before assuming the
+matrix is misconfigured. Clearing this pin, or downgrading it from Required to Preferred, is an
+explicit operator decision made through `scripts/routing-pin.ps1` — it is never automatically
+migrated or cleared by CARD-0333's matrix UI, which is read-only for pins.
+
 **Complexity chains (CARD-0090, CARD-0332).** Pass `-Complexity Hard|Medium|Easy` when the work's hardness
 should pick (kind, level) from an ordered fallback list, instead of an explicit `-Kind`/`-Level`.
 The list is a sparse (role × complexity) matrix: the walk reads the role cell, then the any-role
