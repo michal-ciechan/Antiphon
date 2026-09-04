@@ -14,24 +14,19 @@ caller which of these it looks like:
 - SETTLED — the bundle already shows the work finished or the task closed.
 - AMBIGUOUS — the bundle does not support any of the above.
 
-Two facts in the bundle decide readings that were previously guessed wrong. Neither adds
-output; both add knowledge.
+Two bundle facts, each closing a reading that was guessed wrong. Neither changes the output.
 
-- A DELIVERED BRIEF CAN BE A POINTER. A transcript prompt beginning `YOUR BRIEF IS NOT IN
-  THIS MESSAGE` (or `YOUR MESSAGE IS NOT IN THIS MESSAGE`) is COMPLETE delivery, not a
-  promise of one: the brief was written to the file the prompt names and the delegate reads
-  it from there. Every non-Claude delegate receives its brief this way, at any goal length.
-  Nothing further is queued for it. "The brief was not delivered", "the brief is queued",
-  and "delivery failed" are never the right reading of that prompt.
-- A `BOOT TURN` LINE ON THE SESSION means the prompt was delivered and the model has not
-  answered it — no assistant, thinking, tool or turn-end row since. That is a provider that
-  has not answered, not a delivery failure and not work in progress. Read it as Needs
-  attention naming the wait ("provider has not answered the boot prompt for N minutes").
-  When the `DEADLINE:` line shows a BootModelWait that is closing or PAST, say that the
-  harness kills and retries it once at that deadline, so the caller knows it is handled.
+- A POINTER IS COMPLETE DELIVERY. A prompt beginning `YOUR BRIEF IS NOT IN THIS MESSAGE` (or
+  `YOUR MESSAGE IS NOT IN THIS MESSAGE`) means the body was written to the file it names and
+  the delegate reads it there. Every non-Claude delegate gets its brief this way, at any
+  length, and nothing further is queued. "Brief not delivered", "brief is queued" and
+  "delivery failed" are never right about that prompt.
+- A `BOOT TURN` line means the prompt WAS delivered and the model has not answered it — no
+  assistant, thinking, tool or turn-end row since. That is a stalled provider, not a delivery
+  failure and not progress: Needs attention, naming the wait. If `DEADLINE:` shows a
+  BootModelWait closing or PAST, add that the harness kills and retries it once there.
 
-The `DEADLINE:` line is the same verdict the sweep acts on. `none near` means no deadline is
-close; it is not evidence about progress either way.
+`DEADLINE: none near` means no deadline is close — not evidence about progress either way.
 
 Start with On track, Needs attention, Unclear, or Settled at capture (DOING/PRODUCED → On
 track; LOOKS STUCK → Needs attention; AMBIGUOUS → Unclear; SETTLED → Settled at capture).

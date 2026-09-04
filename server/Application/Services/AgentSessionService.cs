@@ -440,14 +440,14 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // the resume-not-found fallback, which re-enters here with resumeMode=null), the cheaper
             // restart note on a successful resume. This branch point is where the truth lives —
             // AgentControlService cannot know whether a resume will fall back.
-            await DeliverLaunchNoteAsync(session.Id, resumeMode, notes, ct);
+            var typedSomething = await DeliverLaunchNoteAsync(session.Id, resumeMode, notes, ct);
 
             // LAST, and only on a genuine --resume (a fresh conversation has nothing to continue):
             // queue the auto-continue for the interrupted turn. WhenIdle deliberately serialises it
             // AFTER the launch note's turn — enqueued any earlier it would race the remote-control
             // commands and the note into one garbled composer.
             if (interruptedTurn && resumeMode == AgentSessionResumeMode.Resume)
-                await EnqueueResumeContinueAsync(session.Id, ct);
+                typedSomething |= await EnqueueResumeContinueAsync(session.Id, ct);
 
             // CARD-0283: optional cardless work body, after notes and the resume-continue so a
             // channel bootstrap / interrupted-turn continue still go first. WhenIdle: a live idle
@@ -459,6 +459,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 await _messageQueue.EnqueueAsync(
                     session.Id, initialPrompt.Trim(), MessageSendMode.WhenIdle, ct,
                     origin: QueuedMessageOrigin.Ui);
+                typedSomething = true;
             }
 
             // Boot is complete — deliver anything queued while the session was Starting. The
@@ -470,7 +471,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
             // CARD-0312 S2, LAST: the one launch shape that ends with Status=Running, an
             // AgentChanged event, and zero evidence that anything can be reached.
-            await TryEnqueueBootProbeAsync(session, agentId, initialPrompt, ct);
+            await TryEnqueueBootProbeAsync(session, agentId, typedSomething, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -2198,10 +2199,13 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     /// brief, the launch note, the resume-continue and a cardless initial prompt all exercise
     /// composer, submit, transcript and reply through the identical path, so a synthetic "reply
     /// OK" typed after one would be a second turn buying no evidence the first already carries.
-    /// Every one of them goes through <c>_messageQueue.EnqueueAsync</c>, so "this session has no
-    /// queued message row at all" is the exact, evidence-based test for "typed nothing" — and it
-    /// is why POOL DELEGATES ARE STRUCTURALLY EXCLUDED: a delegate always carries a brief, so it
-    /// pays nothing, which is the direct answer to the card's cost worry.</para>
+    /// <b>Each of those four paths reports whether it typed</b>, and the queue is consulted only
+    /// for a body enqueued BEFORE the launch (the delegate brief, queued at dispatch) — which is
+    /// why POOL DELEGATES ARE STRUCTURALLY EXCLUDED and pay nothing, the direct answer to the
+    /// card's cost worry. Inferring "typed nothing" from the queue ALONE would be wrong and was:
+    /// a launch note goes out at <see cref="MessageSendMode.Now"/>, which leaves no queue row at
+    /// all, so a channel-bound agent that received its whole bootstrap read as silent
+    /// (<c>AgentSystemPromptLaunchTests</c> caught it).</para>
     ///
     /// <para><b>Unattended</b> is <c>AlwaysOn</c>, channel-bound, or the standing check
     /// interpreter — the same three the launch-note gate already knows about. An interactive
@@ -2214,13 +2218,13 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     /// <see cref="DeliverLaunchNoteAsync"/> posture.</para>
     /// </summary>
     private async Task TryEnqueueBootProbeAsync(
-        AgentSession session, Guid agentId, string? initialPrompt, CancellationToken ct)
+        AgentSession session, Guid agentId, bool typedSomething, CancellationToken ct)
     {
         try
         {
             if (!_settings.BootProbeEnabled || string.IsNullOrWhiteSpace(_settings.BootProbeBody))
                 return;
-            if (!string.IsNullOrWhiteSpace(initialPrompt))
+            if (typedSomething)
                 return;
 
             // No transcript, no verdict. An OpenCode/Raw session has no ground truth to judge
@@ -2270,14 +2274,20 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         }
     }
 
-    private async Task DeliverLaunchNoteAsync(
+    /// <summary>
+    /// Returns whether this launch actually put a body into the session — CARD-0312 S2's
+    /// "did this launch type anything" signal. It cannot be inferred from the queue: a
+    /// <see cref="MessageSendMode.Now"/> delivery leaves NO <c>SessionQueuedMessages</c> row, so a
+    /// channel-bound agent that received its whole bootstrap would have looked silent.
+    /// </summary>
+    private async Task<bool> DeliverLaunchNoteAsync(
         Guid sessionId, AgentSessionResumeMode? resumeMode, LaunchNotes? notes, CancellationToken ct)
     {
         if (notes is null)
-            return;
+            return false;
         var body = resumeMode is null ? notes.FreshBody : notes.ResumeBody;
         if (string.IsNullOrWhiteSpace(body))
-            return;
+            return false;
 
         body = ChannelPreamble.WithSessionTag(body, sessionId);
 
@@ -2295,6 +2305,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             await _messageQueue.EnqueueAsync(
                 sessionId, body, mode, ct,
                 origin: yieldToChannel ? QueuedMessageOrigin.System : QueuedMessageOrigin.Ui);
+            return true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -2304,6 +2315,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             {
                 await _messageQueue.EnqueueAsync(
                     sessionId, body, MessageSendMode.WhenIdle, ct, origin: QueuedMessageOrigin.System);
+                return true;
             }
             catch (Exception fallbackEx) when (fallbackEx is not OperationCanceledException)
             {
@@ -2311,6 +2323,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                     "Launch note fallback enqueue failed for session {SessionId}; giving up (note lost)", sessionId);
             }
         }
+
+        // The note was composed for this launch and could not be put anywhere. The launch is not
+        // silent by design, so it is not the probe's population either.
+        return true;
     }
 
     /// <summary>
@@ -2364,10 +2380,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     // Queues the interrupted-turn continue prompt (see AgentSessionSettings.ResumeAutoContinue).
     // WhenIdle: the restart boundary already makes the session read idle, so this flushes
     // immediately when nothing else is talking — and waits its turn when a launch note is.
-    private async Task EnqueueResumeContinueAsync(Guid sessionId, CancellationToken ct)
+    private async Task<bool> EnqueueResumeContinueAsync(Guid sessionId, CancellationToken ct)
     {
         if (!_settings.ResumeAutoContinue || string.IsNullOrWhiteSpace(_settings.ResumeContinuePrompt))
-            return;
+            return false;
 
         try
         {
@@ -2376,11 +2392,16 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 origin: QueuedMessageOrigin.System);
             _logger.LogInformation(
                 "Session {SessionId} resumed an interrupted turn; queued the auto-continue prompt", sessionId);
+            return true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "Auto-continue enqueue failed for session {SessionId}", sessionId);
         }
+
+        // The continue was composed for this launch and could not be put anywhere. Same reading as
+        // the launch note's: a launch that MEANT to type is not the boot probe's population.
+        return true;
     }
 
     private static bool IsClaudeSessionNotFound(IAgentProtocolAdapter? adapter, Exception ex)

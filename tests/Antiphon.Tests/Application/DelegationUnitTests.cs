@@ -1255,8 +1255,9 @@ public class UnmarkedWaitingContractTests
         ((int)AttentionKind.ModelAvailabilityHold).ShouldBe(24);
         ((int)AttentionKind.RoutingExhausted).ShouldBe(25);
         ((int)AttentionKind.ScheduleMisfired).ShouldBe(26);
-        Enum.GetValues<AttentionKind>().Max(v => (int)v).ShouldBe(26,
-            "CARD-0057 S5 must append after RoutingExhausted=25; do not renumber");
+        ((int)AttentionKind.LivenessProbeFailed).ShouldBe(27);
+        Enum.GetValues<AttentionKind>().Max(v => (int)v).ShouldBe(27,
+            "CARD-0312 S3 must append after ScheduleMisfired=26; do not renumber");
     }
 
     [Test]
