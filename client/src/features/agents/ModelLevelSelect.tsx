@@ -1,4 +1,5 @@
 import { Select, Stack, Text } from '@mantine/core'
+import type { ReactNode } from 'react'
 import type { AgentModelLevel } from '../../api/agents'
 import { AGENT_MODEL_LEVEL_OPTIONS } from '../../api/agents'
 
@@ -11,19 +12,45 @@ import { AGENT_MODEL_LEVEL_OPTIONS } from '../../api/agents'
 export function ModelLevelSelect({
   value,
   onChange,
+  label = 'Model level',
+  withDescription = true,
+  size,
+  w,
+  error,
+  disabled,
+  'aria-label': ariaLabel,
 }: {
   value: AgentModelLevel
   onChange: (value: AgentModelLevel) => void
+  label?: string
+  withDescription?: boolean
+  size?: 'xs' | 'sm' | 'md'
+  w?: number | string
+  error?: ReactNode
+  disabled?: boolean
+  'aria-label'?: string
 }) {
   const selected = AGENT_MODEL_LEVEL_OPTIONS.find((o) => o.value === value)
   return (
     <Select
-      label="Model level"
-      description={selected?.description ?? 'Capability level for the agent’s sessions.'}
-      data={AGENT_MODEL_LEVEL_OPTIONS.map(({ value: v, label }) => ({ value: v, label }))}
+      label={label || undefined}
+      aria-label={ariaLabel}
+      description={
+        withDescription
+          ? (selected?.description ?? 'Capability level for the agent’s sessions.')
+          : undefined
+      }
+      data={AGENT_MODEL_LEVEL_OPTIONS.map(({ value: v, label: optionLabel }) => ({
+        value: v,
+        label: optionLabel,
+      }))}
       value={value}
       onChange={(v) => onChange((v as AgentModelLevel | null) ?? 'High')}
       allowDeselect={false}
+      size={size}
+      w={w}
+      error={error}
+      disabled={disabled}
       renderOption={({ option }) => {
         const full = AGENT_MODEL_LEVEL_OPTIONS.find((o) => o.value === option.value)
         return (

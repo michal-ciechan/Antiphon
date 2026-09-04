@@ -12,6 +12,7 @@ import {
   Title,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
+import { useState } from 'react'
 import type { AgentTaskRole } from '../../api/agentTasks'
 import { getApiErrorMessage } from '../../api/client'
 import {
@@ -33,6 +34,10 @@ import {
 } from '../../api/subscriptionUsage'
 import { ModelAvailabilityHoldForm } from '../orchestrator/ModelAvailabilityHoldForm'
 import {
+  ComplexityChainCellEditor,
+  type ComplexityChainEditorTarget,
+} from './ComplexityChainCellEditor'
+import {
   CARD_PIN_SCOPE,
   COMPLEXITY_ROUTING_BOUNDARY,
   COMPLEXITY_ROUTING_BOUNDARY_TITLE,
@@ -43,8 +48,10 @@ import {
   candidateLabel,
   cardPinCopy,
   cellByComplexity,
+  cellEditorTitle,
   complexitiesOf,
   effectiveResolvedFrom,
+  fallbackResolvedFromForRoleCell,
   groupPins,
   pinEffectCopy,
   resolvedFromLabel,
@@ -276,6 +283,7 @@ function UsageRow({ sample }: { sample: SubscriptionUsageObservationDto }) {
 function MatrixSection() {
   const list = useComplexityChains()
   const pinsQuery = useRoutingPins()
+  const [editor, setEditor] = useState<ComplexityChainEditorTarget | null>(null)
 
   if (list.isLoading) {
     return (
@@ -348,7 +356,19 @@ function MatrixSection() {
                 </Table.Td>
                 {anyChains.map((chain) => (
                   <Table.Td key={`any-${chain.complexity}`}>
-                    <MatrixCell chain={chain} isAnyRoleRow />
+                    <MatrixCell
+                      chain={chain}
+                      isAnyRoleRow
+                      onConfigure={() =>
+                        setEditor({
+                          role: null,
+                          complexity: chain.complexity,
+                          chain,
+                          isAnyRoleRow: true,
+                          fallbackResolvedFrom: 'none',
+                        })
+                      }
+                    />
                   </Table.Td>
                 ))}
               </Table.Tr>
@@ -358,12 +378,25 @@ function MatrixSection() {
                   role={role}
                   complexities={complexities}
                   pins={stagePinsForRole(stageWide, role)}
+                  anyChains={anyChains}
+                  onConfigure={(target) => setEditor(target)}
                 />
               ))}
             </Table.Tbody>
           </Table>
         </Box>
         <CardPinsList pins={cardSpecific} />
+        {editor ? (
+          <ComplexityChainCellEditor
+            opened
+            onClose={() => setEditor(null)}
+            role={editor.role}
+            complexity={editor.complexity}
+            chain={editor.chain}
+            isAnyRoleRow={editor.isAnyRoleRow}
+            fallbackResolvedFrom={editor.fallbackResolvedFrom}
+          />
+        ) : null}
       </Stack>
     </Paper>
   )
@@ -373,10 +406,14 @@ function RoleMatrixRow({
   role,
   complexities,
   pins,
+  anyChains,
+  onConfigure,
 }: {
   role: AgentTaskRole
   complexities: TaskComplexity[]
   pins: RoutingPinDto[]
+  anyChains: ComplexityChainDto[]
+  onConfigure: (target: ComplexityChainEditorTarget) => void
 }) {
   const snapshot = useComplexityChainEffective(role)
 
@@ -432,16 +469,30 @@ function RoleMatrixRow({
           ))}
         </Stack>
       </Table.Td>
-      {complexities.map((complexity) => (
-        <Table.Td key={`${role}-${complexity}`}>
-          <MatrixCell
-            chain={cellByComplexity(snapshot.data?.chains, complexity)}
-            isAnyRoleRow={false}
-            role={role}
-            complexity={complexity}
-          />
-        </Table.Td>
-      ))}
+      {complexities.map((complexity) => {
+        const chain = cellByComplexity(snapshot.data?.chains, complexity)
+        return (
+          <Table.Td key={`${role}-${complexity}`}>
+            <MatrixCell
+              chain={chain}
+              isAnyRoleRow={false}
+              role={role}
+              complexity={complexity}
+              onConfigure={() =>
+                onConfigure({
+                  role,
+                  complexity,
+                  chain,
+                  isAnyRoleRow: false,
+                  fallbackResolvedFrom: fallbackResolvedFromForRoleCell(
+                    cellByComplexity(anyChains, complexity),
+                  ),
+                })
+              }
+            />
+          </Table.Td>
+        )
+      })}
     </Table.Tr>
   )
 }
@@ -451,15 +502,18 @@ function MatrixCell({
   isAnyRoleRow,
   role,
   complexity,
+  onConfigure,
 }: {
   chain: ComplexityChainDto | undefined
   isAnyRoleRow: boolean
   role?: AgentTaskRole
   complexity?: TaskComplexity
+  onConfigure: () => void
 }) {
   const resolved = chain ? effectiveResolvedFrom(chain) : 'none'
   const cellRole = chain?.role ?? role ?? 'any'
   const cellComplexity = chain?.complexity ?? complexity ?? 'Hard'
+  const configureLabel = cellEditorTitle(isAnyRoleRow ? null : (role ?? null), cellComplexity)
   return (
     <Stack gap={4} data-testid={`routing-matrix-cell-${cellRole}-${cellComplexity}`}>
       <Badge
@@ -487,6 +541,9 @@ function MatrixCell({
         </Text>
       ) : null}
       <CandidateList candidates={chain?.candidates ?? []} />
+      <Button size="compact-xs" variant="light" onClick={onConfigure} aria-label={configureLabel}>
+        Configure
+      </Button>
     </Stack>
   )
 }

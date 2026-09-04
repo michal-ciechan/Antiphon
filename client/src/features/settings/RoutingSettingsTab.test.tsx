@@ -11,7 +11,7 @@ import type {
 import type { ModelAvailabilityDto } from '../../api/modelAvailability'
 import type { RoutingPinDto } from '../../api/routingPins'
 import type { SubscriptionUsageObservationDto } from '../../api/subscriptionUsage'
-import { renderWithProviders, screen, within } from '../../test/utils'
+import { renderWithProviders, screen, userEvent, within } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { RoutingSettingsTab } from './RoutingSettingsTab'
 import {
@@ -434,5 +434,20 @@ describe('RoutingSettingsTab', () => {
     const codeRow = await screen.findByTestId('routing-matrix-row-Code')
     expect(within(codeRow).getByText('Configuration fallback')).toBeInTheDocument()
     expect(screen.queryByTestId('routing-matrix-cell-Plan-Hard')).not.toBeInTheDocument()
+  })
+
+  it('opens the cell editor from Configure without leaving the matrix read-only until then', async () => {
+    serveRouting()
+    renderWithProviders(<RoutingSettingsTab />)
+
+    const planHard = await screen.findByTestId('routing-matrix-cell-Plan-Hard')
+    expect(within(planHard).getByRole('button', { name: 'Configure Plan / Hard' })).toBeInTheDocument()
+    expect(screen.queryByTestId('routing-cell-editor')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Configure Plan / Hard' }))
+    expect(await screen.findByRole('dialog', { name: 'Configure Plan / Hard' })).toBeInTheDocument()
+    expect(screen.getByTestId('routing-cell-editor')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Clear override' })).toBeInTheDocument()
   })
 })
