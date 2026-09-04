@@ -247,7 +247,22 @@ export interface AgentTaskDetailDto {
   standingAuthority?: string | null
   /** CARD-0294 S3's stored switch. The fire-once auto-continue is a follow-on. */
   autoContinueOnWait?: boolean
+  /** CARD-0146: parsed `next:` token. Null when the block was missing or unrecognised. */
+  nextStage?: PipelineHandoffKind | null
+  /** CARD-0146: parsed `handoff:` line, clipped at 400 characters. */
+  nextHandoff?: string | null
 }
+
+/** CARD-0146. The `next:` token a stage-role report declared. */
+export type PipelineHandoffKind =
+  | 'Investigate'
+  | 'Plan'
+  | 'TestDesign'
+  | 'Code'
+  | 'Review'
+  | 'Land'
+  | 'Decide'
+  | 'None'
 
 /** Fleet-wide header counters; unlike the board list, these never use its history window. */
 export interface AgentTaskListSummaryDto {

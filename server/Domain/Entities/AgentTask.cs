@@ -195,6 +195,18 @@ public class AgentTask
     public string? DeliverableRef { get; set; }
 
     /// <summary>
+    /// CARD-0146: parsed from the report's <c>--- next stage ---</c> block at settlement.
+    /// Null when the block was missing or the token was unrecognised. Never a settlement gate.
+    /// Distinct from <see cref="Stage"/> (the CARD-0272 landing-step axis).
+    /// </summary>
+    public PipelineHandoffKind? NextStage { get; set; }
+
+    /// <summary>
+    /// The <c>handoff:</c> line from the same block, clipped at 400 characters. Null when absent.
+    /// </summary>
+    public string? NextHandoff { get; set; }
+
+    /// <summary>
     /// CARD-0337: directory of the settlement document bundle (PDF + sources) under
     /// <c>.antiphon/deliverables/</c>. Null when the task produced no documents.
     /// </summary>

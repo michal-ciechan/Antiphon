@@ -72,6 +72,30 @@ function serve(body: AgentTaskDetailDto, extra: Parameters<typeof server.use> = 
 }
 
 describe('TaskDrawer', () => {
+  it('shows next and handoff under the deliverable', async () => {
+    serve(
+      detail(
+        { role: 'Investigate', status: 'Succeeded' },
+        {
+          deliverablePath: 'docs/investigations/example.md',
+          nextStage: 'Plan',
+          nextHandoff: 'root cause confirmed - fix belongs in the probe',
+          result: 'Found it.',
+          failureReason: null,
+        },
+      ),
+    )
+    renderWithProviders(<TaskDrawer taskId={TASK_ID} onClose={() => {}} />)
+
+    expect(await screen.findByTestId('task-deliverable')).toHaveTextContent(
+      'docs/investigations/example.md',
+    )
+    expect(screen.getByTestId('task-next-stage')).toHaveTextContent('next: plan')
+    expect(screen.getByTestId('task-next-handoff')).toHaveTextContent(
+      'handoff: root cause confirmed - fix belongs in the probe',
+    )
+  })
+
   it('shows what the task cost and what stopped it', async () => {
     serve(detail())
     renderWithProviders(<TaskDrawer taskId={TASK_ID} onClose={() => {}} />)

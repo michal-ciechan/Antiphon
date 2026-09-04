@@ -658,7 +658,11 @@ public sealed class AgentTaskReplyService
         // The delegate was told to spill a long report to a file. Note it if it did — and if it
         // ignored the instruction, write the file ourselves so the excerpt has somewhere to point.
         task.ResultFilePath = await ResolveSpillFileAsync(task, settledBody, ct);
-        (task.DeliverablePath, task.DeliverableRef) = await ResolveDeliverableAsync(services, task, settledBody, ct);
+        var handoff = PipelineHandoff.TryParse(settledBody);
+        task.NextStage = handoff.Kind;
+        task.NextHandoff = handoff.Handoff;
+        (task.DeliverablePath, task.DeliverableRef) = await ResolveDeliverableAsync(
+            services, task, settledBody, handoff.ArtifactPath, ct);
         if (task.Status == AgentTaskStatus.Succeeded)
             await TryBuildDeliverableBundleAsync(services, db, task, settledBody, ct);
 
@@ -1567,7 +1571,8 @@ public sealed class AgentTaskReplyService
             task, _settings, report, workspaceNote, ReplyInlineMaxChars, warning,
             await DescribeOverlappingRunningAsync(task, ct), drift,
             ReportEvidenceHeader(task.ReportEvidence), git,
-            DescribeDeliverable(task));
+            DescribeDeliverable(task),
+            PipelineHandoff.HeaderBit(task.Role, PipelineHandoff.TryParse(report)));
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
@@ -2101,13 +2106,12 @@ public sealed class AgentTaskReplyService
         }
     }
 
-    private static readonly Regex DeliverablePathPattern = new(
-        "`?(?<path>docs/[\\w./-]+\\.md)`?", RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
     /// <summary>
     /// The report is immutable at settlement, so this is a one-time pointer extraction rather than
     /// a second, drifting index of the workspace. Disk wins: a merged plan remains readable after
     /// its transient worktree branch has gone. Only a branch-only hit retains its ref.
+    /// CARD-0146: when <paramref name="preferredPath"/> (the block's <c>artifact:</c>) resolves,
+    /// it wins over the regex's first match — a cited doc must not beat the named deliverable.
     /// </summary>
     /// <summary>
     /// CARD-0230: an enrichment of the report, not a requirement of it — a harness/host missing
@@ -2116,29 +2120,24 @@ public sealed class AgentTaskReplyService
     /// holds itself to for the same reason.
     /// </summary>
     private async Task<(string? Path, string? Ref)> ResolveDeliverableAsync(
-        IServiceProvider services, AgentTask task, string report, CancellationToken ct)
+        IServiceProvider services, AgentTask task, string report, string? preferredPath, CancellationToken ct)
     {
         try
         {
             var git = services.GetRequiredService<GitWorkspaceService>();
-            foreach (Match match in DeliverablePathPattern.Matches(report))
+            if (!string.IsNullOrWhiteSpace(preferredPath)
+                && await TryResolveDeliverablePathAsync(git, task, preferredPath, ct) is { } preferred)
+            {
+                return preferred;
+            }
+
+            foreach (Match match in PipelineHandoff.DeliverablePathPattern.Matches(report))
             {
                 var relative = match.Groups["path"].Value;
                 if (string.IsNullOrWhiteSpace(relative))
                     continue;
-
-                foreach (var root in new[] { task.WorkingDirectory, task.RepoPath }.Where(root => !string.IsNullOrWhiteSpace(root)).Distinct(StringComparer.OrdinalIgnoreCase))
-                {
-                    if (File.Exists(Path.Combine(root!, relative.Replace('/', Path.DirectorySeparatorChar))))
-                        return (relative, null);
-                }
-
-                if (task.Workspace == WorkspaceMode.Worktree && !string.IsNullOrWhiteSpace(task.WorktreeBranch))
-                {
-                    var repository = task.RepoPath ?? task.WorkingDirectory;
-                    if (await git.GetContentAtAsync(repository, relative, task.WorktreeBranch, ct) is not null)
-                        return (relative, task.WorktreeBranch);
-                }
+                if (await TryResolveDeliverablePathAsync(git, task, relative, ct) is { } resolved)
+                    return resolved;
             }
 
             return (null, null);
@@ -2150,6 +2149,27 @@ public sealed class AgentTaskReplyService
                 DelegationReportFormatter.Short(task.Id));
             return (null, null);
         }
+    }
+
+    private static async Task<(string Path, string? Ref)?> TryResolveDeliverablePathAsync(
+        GitWorkspaceService git, AgentTask task, string relative, CancellationToken ct)
+    {
+        foreach (var root in new[] { task.WorkingDirectory, task.RepoPath }
+                     .Where(root => !string.IsNullOrWhiteSpace(root))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (File.Exists(Path.Combine(root!, relative.Replace('/', Path.DirectorySeparatorChar))))
+                return (relative, null);
+        }
+
+        if (task.Workspace == WorkspaceMode.Worktree && !string.IsNullOrWhiteSpace(task.WorktreeBranch))
+        {
+            var repository = task.RepoPath ?? task.WorkingDirectory;
+            if (await git.GetContentAtAsync(repository, relative, task.WorktreeBranch, ct) is not null)
+                return (relative, task.WorktreeBranch);
+        }
+
+        return null;
     }
 
     /// <summary>

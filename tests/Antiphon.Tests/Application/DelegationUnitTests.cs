@@ -602,6 +602,66 @@ public class DelegationReportFormatterTests
     }
 
     [Test]
+    public void the_stage_handoff_contract_is_at_most_700_characters()
+    {
+        DelegationReportFormatter.StageHandoffContract.Length.ShouldBeLessThanOrEqualTo(700);
+        DelegationReportFormatter.StageHandoffContract.ShouldContain("--- next stage ---");
+        DelegationReportFormatter.StageHandoffContract.ShouldContain("next:");
+        DelegationReportFormatter.StageHandoffContract.ShouldContain("handoff:");
+        DelegationReportFormatter.StageHandoffContract.ShouldContain("artifact:");
+    }
+
+    [Test]
+    [Arguments(AgentTaskRole.Investigate)]
+    [Arguments(AgentTaskRole.Plan)]
+    [Arguments(AgentTaskRole.TestDesign)]
+    [Arguments(AgentTaskRole.Code)]
+    [Arguments(AgentTaskRole.Review)]
+    public void the_handoff_block_paragraph_appears_for_every_stage_role(AgentTaskRole role)
+    {
+        var task = NewTask();
+        task.Role = role;
+        var contract = DelegationReportFormatter.ReportingContract(
+            task.Id, AgentTaskKind.Worker, 20_000, role);
+        contract.ShouldContain("--- next stage ---");
+        contract.ShouldContain(DelegationReportFormatter.StageHandoffContract);
+        DelegationReportFormatter.BuildBrief(task, Settings).ShouldContain("--- next stage ---");
+        DelegationReportFormatter.BuildBriefPointer(task, Settings, spillPath: null, fullLength: 5_203)
+            .ShouldContain("Close with the `--- next stage ---` block above the token");
+    }
+
+    [Test]
+    [Arguments(AgentTaskRole.Docs)]
+    [Arguments(AgentTaskRole.Debug)]
+    [Arguments(AgentTaskRole.Custom)]
+    [Arguments(AgentTaskRole.Test)]
+    [Arguments(AgentTaskRole.Coverage)]
+    [Arguments(AgentTaskRole.Commit)]
+    [Arguments(AgentTaskRole.Deploy)]
+    [Arguments(AgentTaskRole.Merge)]
+    public void the_handoff_block_paragraph_is_absent_for_helper_roles(AgentTaskRole role)
+    {
+        // Positive control: drop the IsStage guard in ReportingContract and this test goes red
+        // for Docs (and the rest of the helpers).
+        var task = NewTask();
+        task.Role = role;
+        var contract = DelegationReportFormatter.ReportingContract(
+            task.Id, AgentTaskKind.Worker, 20_000, role);
+        contract.ShouldNotContain("--- next stage ---");
+        DelegationReportFormatter.BuildBrief(task, Settings).ShouldNotContain("--- next stage ---");
+        DelegationReportFormatter.BuildBriefPointer(task, Settings, spillPath: null, fullLength: 5_203)
+            .ShouldNotContain("--- next stage ---");
+    }
+
+    [Test]
+    public void a_docs_brief_does_not_include_the_stage_handoff_block()
+    {
+        var brief = DelegationReportFormatter.BuildBrief(NewTask(), Settings);
+        brief.ShouldNotContain("--- next stage ---");
+        brief.ShouldNotContain("next=unmarked");
+    }
+
+    [Test]
     public void a_check_role_brief_asks_for_done_and_never_offers_blocked()
     {
         // CARD-0302 S2: the generic done|blocked|failed paragraph taught the interpreter to
@@ -678,6 +738,21 @@ public class DelegationReportFormatterTests
         note.Header.ShouldContain("report=marked");
         note.Header.ShouldContain("git=3 commits, 7 files");
         note.Body.ShouldStartWith(note.Header);
+    }
+
+    [Test]
+    public void a_completion_note_header_carries_next_after_deliverable()
+    {
+        var deliverable = new DelegationReportFormatter.DeliverableNote("1 md", []);
+        var note = DelegationReportFormatter.BuildCompletionNote(
+            NewTask(), Settings, "Rewrote the section.",
+            deliverable: deliverable, next: "plan");
+
+        note.Header.ShouldContain("deliverable=1 md");
+        note.Header.ShouldContain("next=plan");
+        var deliverableAt = note.Header.IndexOf("deliverable=", StringComparison.Ordinal);
+        var nextAt = note.Header.IndexOf("next=", StringComparison.Ordinal);
+        nextAt.ShouldBeGreaterThan(deliverableAt);
     }
 
     [Test]
@@ -930,6 +1005,20 @@ public class DelegationReportFormatterTests
             new DelegationSettings().BriefInlineMaxBytes,
             "a pointer over the brief ceiling could lose its own head, which is the whole failure "
             + "it exists to prevent");
+    }
+
+    [Test]
+    public void a_stage_role_brief_pointer_still_fits_in_one_transport_chunk()
+    {
+        var task = NewTask();
+        task.Role = AgentTaskRole.Investigate;
+        var pointer = DelegationReportFormatter.BuildBriefPointer(
+            task, Settings, spillPath: null, fullLength: 2_320);
+
+        pointer.ShouldContain("Close with the `--- next stage ---` block above the token");
+        pointer.Length.ShouldBeLessThanOrEqualTo(
+            new DelegationSettings().BriefInlineMaxBytes,
+            "the extra stage-handoff line must not push the pointer over one transport chunk");
     }
 
     [Test]
