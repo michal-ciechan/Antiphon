@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -66,7 +67,9 @@ public class BootReplyWatchdogTests
     public async Task a_standing_agent_goes_through_the_existing_restart_ladder()
     {
         // S4: no new relaunch ladder. ConsecutiveFailures is what drives the EXISTING Backoff and
-        // FreshAfterResumeFailures, so incrementing it is the whole integration.
+        // FreshAfterResumeFailures — but SuperviseAsync only schedules a restart when the agent
+        // has no live session, so the raise must also STOP the hung session. A test that only
+        // pins ConsecutiveFailures == 1 would stay green against the no-op.
         await using var scenario = new Scenario();
         await scenario.SeedAgentAsync(alwaysOn: true);
         await scenario.SeedPromptAsync(minutesAgo: 30);
@@ -78,6 +81,9 @@ public class BootReplyWatchdogTests
         var state = await verify.AgentSupervisionStates.SingleAsync(s => s.AgentId == scenario.AgentId);
         state.ConsecutiveFailures.ShouldBe(1);
         state.LivenessLatchedAt.ShouldBeNull("one failure is not a latch");
+        scenario.Stopper.Killed.ShouldBe(
+            [scenario.SessionId],
+            "the hung Running session must be stopped so the supervisor's not-running branch fires");
     }
 
     [Test]
@@ -100,6 +106,8 @@ public class BootReplyWatchdogTests
             i => i.SessionId == scenario.SessionId && i.Kind == AgentIncidentKind.LivenessProbeFailed);
         incident.Severity.ShouldBe(AlertSeverity.Error);
         incident.Message.ShouldContain("stopped restarting");
+        scenario.Stopper.Killed.ShouldBeEmpty(
+            "the latching third strike stops restarting; it must not kill the session either");
     }
 
     // ---- negative controls -----------------------------------------------------------------------
@@ -250,6 +258,7 @@ public class BootReplyWatchdogTests
 
         public Guid SessionId { get; }
         public Guid AgentId { get; private set; }
+        public RecordingSessionStopper Stopper { get; } = new();
 
         public async Task SeedAgentAsync(bool alwaysOn, int consecutiveFailures = 0)
         {
@@ -347,6 +356,7 @@ public class BootReplyWatchdogTests
             var services = new ServiceCollection();
             services.AddLogging();
             services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
+            services.AddSingleton<IDelegateSessionStopper>(Stopper);
             var provider = services.BuildServiceProvider();
             var sweep = new BootReplyWatchdogService(
                 provider.GetRequiredService<IServiceScopeFactory>(),

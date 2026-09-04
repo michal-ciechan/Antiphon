@@ -108,6 +108,20 @@ public class BootReplyWatchTests
             (TranscriptKinds.Thinking, "…", 4));
 
         (await scenario.LoadBootTurnAsync(clockMinutesAgo: 10)).ShouldBeNull();
+        (await scenario.HasModelReplySinceAsync(clockMinutesAgo: 10))
+            .ShouldBeTrue("the cheap EXISTS must agree with LoadBootTurnAsync");
+    }
+
+    [Test]
+    public async Task a_prompt_alone_is_not_a_model_reply_for_the_cheap_exists()
+    {
+        // D2: the sweep's self-heal must not load every row+text just to learn the session is
+        // still silent. The EXISTS is false here; LoadBootTurnAsync then reads only prompt rows.
+        await using var scenario = new Scenario();
+        await scenario.SeedEntriesAsync((TranscriptKinds.UserPrompt, "the brief", 5));
+
+        (await scenario.HasModelReplySinceAsync(clockMinutesAgo: 10)).ShouldBeFalse();
+        (await scenario.LoadBootTurnAsync(clockMinutesAgo: 10)).ShouldNotBeNull();
     }
 
     [Test]
@@ -289,6 +303,15 @@ public class BootReplyWatchTests
             await EnsureSessionAsync(db);
             await db.SaveChangesAsync();
             return await BootReplyWatch.LoadBootTurnAsync(
+                db, SessionId, DateTime.UtcNow.AddMinutes(-clockMinutesAgo), CancellationToken.None);
+        }
+
+        public async Task<bool> HasModelReplySinceAsync(int clockMinutesAgo)
+        {
+            await using var db = CreateContext();
+            await EnsureSessionAsync(db);
+            await db.SaveChangesAsync();
+            return await BootReplyWatch.HasModelReplySinceAsync(
                 db, SessionId, DateTime.UtcNow.AddMinutes(-clockMinutesAgo), CancellationToken.None);
         }
 

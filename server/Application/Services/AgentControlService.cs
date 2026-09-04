@@ -105,10 +105,11 @@ public sealed class AgentControlService
     {
         var agent = await LockAgentAsync(agentId, ct);
 
-        // Any Start (human, bridge, supervisor) lifts the supervision suspend latch and cancels a
-        // pending scheduled restart — a start IS the intent supervision waits for. The failure
-        // counter is deliberately NOT reset here (only sustained healthy uptime resets it), so a
-        // manual retry of a still-broken agent doesn't collapse the backoff ladder back to 5s.
+        // Any Start (human, bridge, supervisor) lifts the supervision suspend latch, cancels a
+        // pending scheduled restart, and clears CARD-0312's LivenessLatchedAt — a start IS the
+        // intent supervision waits for. The failure counter is deliberately NOT reset here (only
+        // sustained healthy uptime resets it), so a manual retry of a still-broken agent doesn't
+        // collapse the backoff ladder back to 5s.
         await ClearSupervisionLatchAsync(agent, ct);
 
         // Already running — leave the existing process (and its remote-control state) untouched.
@@ -671,12 +672,14 @@ public sealed class AgentControlService
     private async Task ClearSupervisionLatchAsync(Agent agent, CancellationToken ct)
     {
         var state = await _db.AgentSupervisionStates.FirstOrDefaultAsync(s => s.AgentId == agent.Id, ct);
-        if (state is null || (!state.Suspended && state.NextRestartAt is null))
+        if (state is null
+            || (!state.Suspended && state.NextRestartAt is null && state.LivenessLatchedAt is null))
             return;
 
         var wasSuspended = state.Suspended;
         state.Suspended = false;
         state.NextRestartAt = null;
+        state.LivenessLatchedAt = null;
         state.UpdatedAt = UtcNow();
         if (wasSuspended)
         {

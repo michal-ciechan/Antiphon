@@ -66,6 +66,35 @@ internal static class BootReplyWatch
         is TranscriptKinds.UserPrompt
         or TranscriptKinds.QueuedUserPrompt;
 
+    /// <summary>
+    /// The launch clock the boot predicate measures from: a resume that post-dates
+    /// <see cref="AgentSession.StartedAt"/> is a new boot turn; inherited rows before it are
+    /// invisible (CARD-0077).
+    /// </summary>
+    internal static DateTime LaunchClock(AgentSession session) =>
+        session.LaunchResumedAt is DateTime resumed && resumed > session.StartedAt
+            ? resumed
+            : session.StartedAt;
+
+    /// <summary>
+    /// Cheap EXISTS: has the model produced anything on this session since
+    /// <paramref name="clock"/>? The sweep's self-heal must ask this BEFORE loading rows — every
+    /// healthy session after its first answer has null watch columns forever, and pulling every
+    /// row+text since the launch clock on a 10s tick is how this cost ~4.4MB in steady state.
+    /// EF cannot translate <see cref="IsModelReply"/>; the kind list is the same five kinds.
+    /// </summary>
+    internal static Task<bool> HasModelReplySinceAsync(
+        AppDbContext db, Guid sessionId, DateTime clock, CancellationToken ct) =>
+        db.TranscriptEntries.AsNoTracking().AnyAsync(
+            t => t.AgentSessionId == sessionId
+                && (t.Timestamp ?? t.CreatedAt) >= clock
+                && (t.Kind == TranscriptKinds.AssistantText
+                    || t.Kind == TranscriptKinds.Thinking
+                    || t.Kind == TranscriptKinds.ToolCall
+                    || t.Kind == TranscriptKinds.ToolResult
+                    || t.Kind == TranscriptKinds.TurnEnd),
+            ct);
+
     internal enum Status
     {
         /// <summary>No watch is armed, or the arming data is incomplete.</summary>
@@ -139,21 +168,20 @@ internal static class BootReplyWatch
     internal static async Task<BootTurn?> LoadBootTurnAsync(
         AppDbContext db, Guid sessionId, DateTime clock, CancellationToken ct)
     {
-        var rows = await db.TranscriptEntries.AsNoTracking()
+        // EXISTS first: do not load Sequence/Kind/Text/At for every row since the clock just to
+        // discover the session already answered. Text is loaded only for the prompt rows the
+        // housekeeping check actually needs.
+        if (await HasModelReplySinceAsync(db, sessionId, clock, ct))
+            return null;
+
+        var prompts = await db.TranscriptEntries.AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId
-                && (t.Timestamp ?? t.CreatedAt) >= clock)
+                && (t.Timestamp ?? t.CreatedAt) >= clock
+                && (t.Kind == TranscriptKinds.UserPrompt
+                    || t.Kind == TranscriptKinds.QueuedUserPrompt))
             .OrderBy(t => t.Sequence)
             .Select(t => new { t.Sequence, t.Kind, t.Text, At = t.Timestamp ?? t.CreatedAt })
             .ToListAsync(ct);
-        if (rows.Count == 0)
-            return null;
-
-        // Any model row since the clock means the boot turn is over — the general ModelWait arm
-        // (or nothing at all) applies from here.
-        if (rows.Any(r => IsModelReply(r.Kind)))
-            return null;
-
-        var prompts = rows.Where(r => IsPromptRow(r.Kind)).ToList();
         if (prompts.Count == 0)
             return null;
 
@@ -219,10 +247,7 @@ internal static class BootReplyWatch
             return null;
         }
 
-        var clock = session.LaunchResumedAt is DateTime resumed && resumed > session.StartedAt
-            ? resumed
-            : session.StartedAt;
-        var boot = await LoadBootTurnAsync(db, sessionId, clock, ct);
+        var boot = await LoadBootTurnAsync(db, sessionId, LaunchClock(session), ct);
         if (boot is null)
         {
             session.BootPromptSequence = null;

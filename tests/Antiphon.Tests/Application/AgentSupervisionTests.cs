@@ -176,6 +176,57 @@ public class AgentSupervisionTests
     }
 
     [Test]
+    public async Task StartAsync_clears_the_liveness_latch_on_an_already_running_agent()
+    {
+        // CARD-0312 S4: a human StartAsync is what lifts LivenessLatchedAt. The agent already
+        // has a live session, so this is a no-op launch — the latch clear is the whole test,
+        // and it would stay green against the previous early-return that ignored the column.
+        var tempRoot = NewTempRoot();
+        try
+        {
+            await using var harness = BuildHarness(tempRoot, [new FakeAgentProtocolAdapter()]);
+            var agent = await CreateAlwaysOnAgentAsync(harness, tempRoot);
+
+            await harness.Control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            // Same context StartAsync uses, so the tracked row is the one the latch-clear sees.
+            var db = harness.Scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var now = DateTime.UtcNow;
+            var seeded = await db.AgentSupervisionStates.SingleOrDefaultAsync(s => s.AgentId == agent.Id);
+            if (seeded is null)
+            {
+                db.AgentSupervisionStates.Add(new AgentSupervisionState
+                {
+                    AgentId = agent.Id,
+                    LivenessLatchedAt = now,
+                    UpdatedAt = now,
+                });
+            }
+            else
+            {
+                seeded.LivenessLatchedAt = now;
+                seeded.UpdatedAt = now;
+            }
+
+            await db.SaveChangesAsync();
+
+            await harness.Control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
+
+            await using (var verify = CreateContext())
+            {
+                var state = await verify.AgentSupervisionStates.SingleAsync(s => s.AgentId == agent.Id);
+                state.LivenessLatchedAt.ShouldBeNull(
+                    "a human StartAsync clears CARD-0312's liveness latch");
+            }
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task Backoff_ladder_reaches_30_day_cap_and_escalates_once_per_tier()
     {
         var tempRoot = NewTempRoot();

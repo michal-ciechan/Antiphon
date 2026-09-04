@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -111,8 +112,15 @@ public sealed class BootReplyWatchdogService
         // message queue, or a row that predates this card) is re-derived from the same predicate,
         // on the same prompt-anchored clock — so a restart cannot lose a watch and an unarmed
         // launch is not unwatched.
+        //
+        // Cheap EXISTS first. Every healthy session after its first answer has null watch
+        // columns forever; walking its whole transcript (with Text) every tick is how this
+        // sweep cost ~10k rows / 4.4MB in steady state.
         if (session.BootPromptSequence is null || session.BootReplyDueAt is null)
         {
+            if (await BootReplyWatch.HasModelReplySinceAsync(
+                    db, session.Id, BootReplyWatch.LaunchClock(session), ct))
+                return false;
             if (await BootReplyWatch.TryArmAsync(db, session.Id, deadlineMinutes, ct) is null)
                 return false;
             await db.SaveChangesAsync(ct);
@@ -281,8 +289,10 @@ public sealed class BootReplyWatchdogService
             {
                 // The EXISTING ladder: Backoff, FreshAfterResumeFailures (so the second restart is
                 // a fresh conversation — the measured cure) and EscalateIfTierCrossedAsync all
-                // apply with no new policy. Nothing is killed here: a session that is producing
-                // output was never armed, and a working session is never restarted from a sweep.
+                // apply with no new policy. SuperviseAsync only schedules a restart when the
+                // agent has no live session, so a hung-but-Running session must be stopped here
+                // (same stopper the task arm uses for a "produced nothing" kill) or this increment
+                // is a no-op. A session that is producing output was never armed.
                 state.ConsecutiveFailures++;
                 state.NextRestartAt = null;
                 state.UpdatedAt = now;
@@ -295,10 +305,37 @@ public sealed class BootReplyWatchdogService
         session.BootReplyDueAt = null;
         await db.SaveChangesAsync(ct);
 
+        if (!latching && agent is { AlwaysOn: true })
+            await StopHungStandingSessionAsync(scope, session.Id, ct);
+
         _logger.LogWarning(
             "Boot reply never came on session {SessionId} ({Severity}): {Message}",
             session.Id, latching ? "Error" : "Warning", message);
         return true;
+    }
+
+    /// <summary>
+    /// Stops the hung standing-agent session so the supervisor's not-running branch applies its
+    /// normal backoff / <c>FreshAfterResumeFailures</c> policy. Resolved from the sweep scope
+    /// because this service is a singleton and <see cref="IDelegateSessionStopper"/> is scoped.
+    /// A missing stopper (a harness that did not register one) is a no-op, not a throw.
+    /// </summary>
+    private async Task StopHungStandingSessionAsync(
+        IServiceScope scope, Guid sessionId, CancellationToken ct)
+    {
+        var stopper = scope.ServiceProvider.GetService<IDelegateSessionStopper>();
+        if (stopper is null)
+            return;
+
+        try
+        {
+            await stopper.KillAsync(sessionId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex, "Could not stop boot-stalled standing-agent session {SessionId}", sessionId);
+        }
     }
 
     /// <summary>
