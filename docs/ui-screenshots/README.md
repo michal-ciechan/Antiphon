@@ -90,6 +90,14 @@ here before anyone opens the app.
 
 ![home-taskssection--rail](./home-taskssection--rail.png)
 
+## Orchestrator/Pipeline stages — Live
+
+![orchestrator-pipeline-stages--live](./orchestrator-pipeline-stages--live.png)
+
+## Orchestrator/Pipeline stages — Calm
+
+![orchestrator-pipeline-stages--calm](./orchestrator-pipeline-stages--calm.png)
+
 ## Proposals/Card thread — Open
 
 ![proposals-card-thread--open](./proposals-card-thread--open.png)

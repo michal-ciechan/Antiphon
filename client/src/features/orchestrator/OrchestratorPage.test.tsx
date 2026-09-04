@@ -50,6 +50,15 @@ function serve(items: AttentionItemDto[]) {
     http.get('/api/agent-tasks/summary', () =>
       HttpResponse.json({ active: 0, blocked: 0, runs: 0, totalCostUsd: 0, byStatus: {} }),
     ),
+    http.get('/api/agent-tasks/pipeline', () =>
+      HttpResponse.json({
+        asOf: '2026-08-17T10:00:00Z',
+        recommendationsAreAdvisory: true,
+        maxConcurrentTasks: 6,
+        inFlightAgainstCap: 0,
+        stages: [],
+      }),
+    ),
     http.get('/api/boards', () => HttpResponse.json([])),
     http.get('/api/cards', () => {
       cardsRequests += 1
@@ -147,6 +156,17 @@ describe('OrchestratorPage', () => {
 
     const tab = await screen.findByRole('tab', { name: /Decisions/ })
     await waitFor(() => expect(tab).toHaveTextContent('1'))
+  })
+
+  it('?tab=pipeline renders the Pipeline panel, and the Delegations panel is not mounted', async () => {
+    serve([])
+    window.history.pushState({}, '', '/orchestrator?tab=pipeline')
+    renderWithProviders(<OrchestratorPage />)
+
+    expect(await screen.findByTestId('pipeline-strip')).toBeInTheDocument()
+    expect(screen.getByTestId('pipeline-empty')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Delegations' })).not.toBeInTheDocument()
+    expect(screen.queryByTestId('lane-working')).not.toBeInTheDocument()
   })
 
   it('?tab=history renders the History panel, and the Delegations panel is not mounted', async () => {

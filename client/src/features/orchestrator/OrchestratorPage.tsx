@@ -1,6 +1,6 @@
 import { Badge, Stack, Tabs } from '@mantine/core'
 import { useSearchParams } from 'react-router'
-import { TbAlertHexagon, TbCards, TbHelpCircle, TbHistory, TbSitemap } from 'react-icons/tb'
+import { TbAlertHexagon, TbCards, TbHelpCircle, TbHistory, TbSitemap, TbTimeline } from 'react-icons/tb'
 import { useAttention } from '../../api/attention'
 import { AttentionPanel } from '../attention/AttentionPanel'
 import { DecisionsPanel } from '../attention/DecisionsPanel'
@@ -10,8 +10,9 @@ import { BacklogSection } from './BacklogSection'
 import { ComplexityChainPanel } from './ComplexityChainPanel'
 import { ModelAvailabilityPanel } from './ModelAvailabilityPanel'
 import { OrchestratorPanel } from './OrchestratorPanel'
+import { PipelineStagesPanel } from './PipelineStagesPanel'
 
-const TABS = ['cards', 'delegations', 'history', 'attention', 'decisions'] as const
+const TABS = ['cards', 'delegations', 'pipeline', 'history', 'attention', 'decisions'] as const
 type TabValue = (typeof TABS)[number]
 
 /**
@@ -49,6 +50,9 @@ export function OrchestratorPage() {
         </Tabs.Tab>
         <Tabs.Tab value="delegations" leftSection={<TbSitemap size={16} />}>
           Delegations
+        </Tabs.Tab>
+        <Tabs.Tab value="pipeline" leftSection={<TbTimeline size={16} />}>
+          Pipeline
         </Tabs.Tab>
         <Tabs.Tab value="history" leftSection={<TbHistory size={16} />}>
           History
@@ -88,6 +92,9 @@ export function OrchestratorPage() {
       </Tabs.Panel>
       <Tabs.Panel value="delegations">
         <DelegationsBoard />
+      </Tabs.Panel>
+      <Tabs.Panel value="pipeline">
+        <PipelineStagesPanel />
       </Tabs.Panel>
       <Tabs.Panel value="history">
         <DelegationsHistory />
