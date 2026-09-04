@@ -22,6 +22,7 @@ Parsed by `IssueTrackerConfigParser.TryParse` / `TryResolveBoardTrackerKind`.
 | `import_column` | no | CARD-0170. Where newly imported (and GitHub-reopened) issues land. `backlog` (default): the board's `CardStatus.Backlog` column, matching manual creates; the tracker then moves a card only across the terminal boundary. `active`: first `IsActive && !IsTerminal` column, and the tracker owns the non-terminal column (the original E10 behaviour). Any other value is a validation error on workflow save. |
 | `project` / `project_key` | Linear/Jira | Project key. |
 | `jql` | Jira | Extra JQL filter. |
+| `operator_logins` | no | CARD-0327. List, or a comma-separated scalar, of tracker logins treated as operators for this board. Compared to the issue author case-insensitively after trimming a leading `@`. Unset (every board before this card) means `AuthorIsOperator` stays null and the operator-default-importance and needs-human-review rules never fire — behaviour is exactly pre-CARD-0327. |
 
 Any other scalar key under `tracker:` is retained in `IssueTrackerConfig.Options` (that is how
 `sync_out_create`, `export_since` and `import_column` are read).
@@ -74,10 +75,57 @@ Work on {{ issue.identifier }}.
   exception, never a failed sync, because the writes have already committed. A per-board
   `error` is not a change and is never announced; `github-sync.ps1` exits 1 for it instead.
 
+## Field authority for importance (CARD-0327)
+
+`Card.ImportanceProvenance` (`Auto | Human`) says who last set `importance`. `Auto` means a
+default or an automatic writer produced the value — today that is only the tracker sync, applying
+`CardRanking.FromTrackedIssue`: an explicit `priority:*` label always wins; absent one, an
+operator-authored import-origin issue defaults `High`, everything else defaults `Normal`. `Human`
+means an explicit content edit (`PATCH /api/cards/{id}/content` with `importance` set, or
+`card.ps1 edit -Importance`) set it. The guard is one rule: the sync skips the importance branch
+entirely whenever `ImportanceProvenance == Human`, so a hand-rated card is never reverted by the
+next tick, and no 409 is raised — a background tick has no caller to receive one. Any other content
+field the sync overwrites (title, description, labels) is preceded by one `ContentEdit` revision
+authored `external-tracker` so the overwrite is visible in history, even while importance itself is
+left alone. `ImportanceProvenance` can be handed back to `Auto` explicitly (an optional
+`importanceProvenance` field on the content PATCH, or `card.ps1 edit -ImportanceProvenance Auto`) —
+"let the tracker own it again" is an explicit act, never an accident.
+
+An import-origin card with `AuthorIsOperator == false` (a non-operator raised it) that is still
+`Auto`, still in `Backlog`, and not archived is `needsHumanReview` — derived at read time, nothing
+stored. It clears the moment a human rates the card (an explicit `Normal` counts — the review *is*
+the rating), moves it out of Backlog, or archives it. It shows as a `review` chip beside the GitHub
+key on the board and in `card.ps1 get`, as `needs_human_review:` in `docs/cards/` front matter, and
+as an `ImportedIssueNeedsReview` row on `GET /api/attention` (see
+[antiphon-api.md](antiphon-api.md)).
+
+**Triage brief (decision 8).** There is no automatic dispatch on a `needsHumanReview` card — the
+card says "if needed", and a tick that spends tokens on every external issue is a spend policy
+nobody asked for. The seam is a documented, on-demand `delegate.ps1` brief, run by the operator (or
+an orchestrator reading the attention feed) via the ready-to-paste command in that row's evidence:
+
+```
+pwsh -File scripts/delegate.ps1 -Card CARD-nnnn -Role Debug -Goal @'
+Triage GitHub issue #N (raised by <author>, not an operator). Answer, in under 300 words:
+(1) is it real - reproduce or cite the code path; (2) is it feasible - name the owner file(s)
+and rough size (S/M/L); (3) suggested importance (Low|Normal|High) and why. Post the answer
+with POST /api/cards/CARD-nnnn/discussion (author "triage-delegate"). Do NOT edit the card's
+importance - the rating is the human's act and is what clears the review marker.
+'@
+```
+
+Use `Role Debug` for "is this real"; `Role Plan` for a feature-shaped issue. The finding lands as a
+`CardComment`, which the next bidirectional sync mirrors onto the GitHub issue as a comment, so the
+external author sees the triage without anyone copying text. The delegate never sets importance —
+only a human rating (or an explicit `importanceProvenance: Human` edit) clears the review marker.
+
 ## Ownership / out of scope (v1)
 
-- Sync owns managed labels `status:*` (always) and `priority:*` (export-origin only). The
-  priority label carries the importance *name*: `priority:critical`, `priority:high`,
+- Sync owns managed labels `status:*` (always) and `priority:*` (export-origin, and import-origin
+  once a human has rated the card — CARD-0327 decision 9: while an import-origin card's importance
+  is still `Auto`, the issue keeps its own labels and the card follows them, as before; once a human
+  rates it, the sync adds the matching `priority:*` label if missing so GitHub and the card agree).
+  The priority label carries the importance *name*: `priority:critical`, `priority:high`,
   `priority:low`. `Normal` importance exports no priority label. A human
   edit of those on GitHub is rewritten on the next sync. **Known noise mode (CARD-0171):** a human
   who re-adds a managed label every cycle produces `labelsChanged=1` on every run, so a

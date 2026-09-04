@@ -30,6 +30,8 @@ Cards store two named axes; a single `priority` number is not an API field (a re
 - **Rank** is derived at read time: `rank = 13 − (3·importance + 2·effectiveUrgency)`, lower sorts first. Board columns, orchestrator dispatch, the Home *Up next* rail and the `docs/cards/` index all sort by this. Ties break by `dueAt` (earliest first, null last) then `CreatedAt`.
 - **Quadrant** is the Eisenhower cell for grouping, not the sort key: important = `High` or `Critical`; urgent = effective urgency ≠ `Normal`. The four cells are `DoFirst`, `Schedule`, `Clear` and `Someday`. Rank is not monotone across those bands.
 
+- **Importance carries a provenance** (`Auto | Human`, CARD-0327). The tracker sync writes `importance` on an import-origin card only while provenance is `Auto` (an explicit `priority:*` label wins; absent one, an operator-authored issue defaults `High`, else `Normal`); any explicit content edit that sets `importance` makes it `Human`, and a `Human` card is never touched by the sync again. A non-operator-authored import-origin card that is still `Auto` and still in Backlog is `needsHumanReview` — shown as a `review` chip and an attention row — and is cleared only by a human rating it (an explicit `Normal` counts), moving it out of Backlog, or archiving it.
+
 Blocking is its own signal (CARD-0100) and does not feed urgency. The board shows an importance chip for `Critical`/`High`/`Low` only and an urgency badge when effective urgency is not `Normal`; the undifferentiated default is unbadged.
 
 ## Delegated work — cards move themselves (CARD-0040)

@@ -92,6 +92,20 @@ reject unknown JSON members, so a stale `priority` write is **400**, not a silen
 (the tri-state for the date; null `dueAt` means unchanged). `GET /api/cards/limits` includes
 `importanceValues` and `urgencyValues` from `Enum.GetNames`.
 
+**Importance provenance (CARD-0327).** `CardDto.importanceProvenance` (`Auto | Human`) says who
+last set `importance`. Setting `importance` on the content PATCH always flips it to `Human`; a
+title-only edit (no `importance` in the body) leaves it unchanged. The optional
+`importanceProvenance` field on that same PATCH hands it back explicitly — `"Auto"` lets the
+tracker sync own the field again, the analogue of `DELETE /api/routing-pins/{id}`. The tracker sync
+itself never overwrites a `Human` card's importance; it only ever writes `Auto`. On an import-origin
+card (one with an `externalIssue`), `ExternalIssueDto` carries `author` (the tracker login, or null
+if the tracker does not report one), `authorIsOperator` (`true | false | null` — null means the
+board's `tracker.operator_logins` is unset and the author was never judged), and
+`needsHumanReview` (`true` when the card is import-origin, `authorIsOperator == false`, still
+`Auto`, still in Backlog, and not archived). See
+[workflow-tracker-block.md](workflow-tracker-block.md) for the full authority rule and
+[agent-card-lifecycle.md](agent-card-lifecycle.md) for the review marker.
+
 `Identifier` is unique per **board**, not globally. Every `{id}` card route walks the same scope
 `delegate.ps1 -Card` uses (CARD-0218), narrowed by two query parameters:
 
@@ -484,6 +498,14 @@ POST   /api/diagnostics/bundle               Report-bug zip (application/zip); b
 state. Each row carries the card and board IDs, the move/reopen reason as its evidence, and the
 `OpenCard` action. The dedicated human-decision surface is
 `/orchestrator?tab=decisions`; it uses this same feed rather than a second decisions endpoint.
+
+`AttentionKind.ImportedIssueNeedsReview = 28` (CARD-0327; appended, not renumbered — `27` is
+`LivenessProbeFailed`) is a `Warning`, not a decision, so it does not count toward
+`AttentionSummaryDto`'s decision total. One row per card with `needsHumanReview == true`: `Title`
+is `CARD-nnnn — title`, `Headline` is `Raised on GitHub by <author> (not an operator) — nobody has
+rated it.`, `Evidence` carries the issue key/URL, the first line of the body, and the ready-to-paste
+`delegate.ps1` triage command (see [workflow-tracker-block.md](workflow-tracker-block.md)), and
+`Actions` is `[OpenCard]`.
 
 ## 3. Real-time (SignalR)
 
