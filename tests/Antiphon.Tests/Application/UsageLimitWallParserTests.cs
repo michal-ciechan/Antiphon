@@ -146,6 +146,27 @@ public class UsageLimitWallParserTests
     }
 
     [Test]
+    public void A_trailing_retry_suffix_leaves_402_status_phrase_and_detail_unchanged()
+    {
+        var withSuffix = UsageLimitWallParser.Parse(
+            SummerAfternoonUtc,
+            "API error (status 402 Payment Required): Grok Build usage balance exhausted [after 3 retries]",
+            "grok-4.6");
+        var without = UsageLimitWallParser.Parse(
+            SummerAfternoonUtc,
+            "API error (status 402 Payment Required): Grok Build usage balance exhausted",
+            "grok-4.6");
+
+        withSuffix.ShouldNotBeNull();
+        without.ShouldNotBeNull();
+        UsageLimitWallParser.FormatReason(withSuffix!).ShouldBe(UsageLimitWallParser.FormatReason(without!));
+        var reason = UsageLimitWallParser.FormatReason(withSuffix!);
+        reason.ShouldContain("HTTP 402 Payment Required");
+        reason.ShouldContain("usage balance exhausted");
+        reason.ShouldNotContain("after 3 retries");
+    }
+
+    [Test]
     public void Twenty_four_hour_reset_form_parses()
     {
         var wall = UsageLimitWallParser.Parse(

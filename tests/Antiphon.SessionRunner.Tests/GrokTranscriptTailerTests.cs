@@ -600,6 +600,63 @@ public class GrokTranscriptTailerTests
     }
 
     [Test]
+    public void Transport_fixture_stamps_transport_class_no_status_and_retry_count()
+    {
+        var parts = NormalizeFixture("grok-transport-error.jsonl");
+        parts.Count.ShouldBe(2, "exactly UserPrompt + TurnEnd; retry_state emits nothing");
+        parts[0].Kind.ShouldBe(TranscriptKinds.UserPrompt);
+        var end = parts[1];
+        end.Kind.ShouldBe(TranscriptKinds.TurnEnd);
+        end.StopReason.ShouldBe(TranscriptKinds.StopReasons.Error);
+        end.IsApiError.ShouldBe(true);
+        end.ApiErrorClass.ShouldBe("transport");
+        end.ApiErrorStatus.ShouldBeNull();
+        end.Text.ShouldNotBeNull();
+        end.Text.ShouldContain("error sending request for url (http://localhost:10746/v1/chat/completions)");
+        end.Text.ShouldEndWith("[after 15 retries]");
+        parts.ShouldNotContain(p => p.Kind == TranscriptKinds.AssistantText);
+        parts.ShouldNotContain(p => p.Kind == TranscriptKinds.Thinking);
+    }
+
+    [Test]
+    public void Blank_agent_result_falls_back_to_the_last_retry_state_message()
+    {
+        var parts = NormalizeFixture("grok-transport-error-blank.jsonl");
+        var end = parts.Single(p => p.Kind == TranscriptKinds.TurnEnd);
+        end.IsApiError.ShouldBe(true);
+        end.ApiErrorClass.ShouldBe("transport");
+        end.ApiErrorStatus.ShouldBeNull();
+        end.Text.ShouldNotBeNull();
+        end.Text.ShouldContain("error sending request for url (http://localhost:10746/v1/chat/completions)");
+        end.Text.ShouldEndWith("[after 2 retries]");
+        parts.ShouldNotContain(p => p.Kind == TranscriptKinds.AssistantText);
+    }
+
+    [Test]
+    public void Status_bearing_agent_result_never_gets_the_transport_class()
+    {
+        var n = new GrokTranscriptNormalizer();
+        var row =
+            """{"timestamp":1,"method":"_x.ai/session/update","params":{"sessionId":"x","update":{"sessionUpdate":"turn_completed","prompt_id":"p","stop_reason":"error","agent_result":"API error (status 504 Gateway Timeout): upstream timed out"},"_meta":{"eventId":"x-1","agentTimestampMs":1}}}""";
+        var end = n.Normalize(row).ShouldHaveSingleItem();
+        end.IsApiError.ShouldBe(true);
+        end.ApiErrorStatus.ShouldBe(504);
+        end.ApiErrorClass.ShouldBe("gateway_timeout");
+        end.Text.ShouldBe("upstream timed out");
+    }
+
+    [Test]
+    public void Error_402_fixture_text_is_unchanged_by_the_retry_suffix()
+    {
+        var parts = NormalizeFixture("grok-api-error-402.jsonl");
+        var end = parts.ShouldHaveSingleItem();
+        end.Text.ShouldBe("Grok Build usage balance exhausted");
+        end.Text.ShouldNotContain("[after");
+        end.ApiErrorStatus.ShouldBe(402);
+        end.ApiErrorClass.ShouldBe("payment_required");
+    }
+
+    [Test]
     public void Error_402_fixture_stamps_IsApiError_status_class_text_and_usage()
     {
         var parts = NormalizeFixture("grok-api-error-402.jsonl");

@@ -145,4 +145,20 @@ public class ApiErrorClassifierTests
         ApiErrorClassifier.Classify("mystery", null, null).ShouldBe(ApiErrorClassification.Unknown);
         ApiErrorClassifier.Classify("mystery", 404, null).ShouldBe(ApiErrorClassification.Unknown);
     }
+
+    [Test]
+    public void Transport_class_is_Transient()
+    {
+        ApiErrorClassifier
+            .Classify("transport", null, "error sending request for url (http://localhost:10746/v1/chat/completions)")
+            .ShouldBe(ApiErrorClassification.Transient);
+    }
+
+    [Test]
+    public void Classless_statusless_text_stays_Unknown()
+    {
+        ApiErrorClassifier
+            .Classify(null, null, "error sending request for url (http://localhost:10746/v1/chat/completions)")
+            .ShouldBe(ApiErrorClassification.Unknown);
+    }
 }
