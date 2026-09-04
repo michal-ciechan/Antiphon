@@ -5,12 +5,10 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
-using Antiphon.Server.Infrastructure.Git;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -296,12 +294,10 @@ public class SessionMessageQueueBootWedgeTests
     private static void RegisterDispatcher(IServiceCollection services)
     {
         services.AddSingleton<DelegationWorkspaceResolver>();
-        services.AddSingleton(Options.Create(new GitSettings
+        services.AddDelegationWorktreeGraph(new GitSettings
         {
             WorktreeBasePath = Path.Combine(Path.GetTempPath(), "antiphon-bootwedge-wt"),
-        }));
-        services.AddSingleton<IGitService, GitService>();
-        services.AddScoped<DelegationWorktreeService>();
+        });
         services.AddScoped<AgentTaskService>();
         services.AddScoped<IDelegateSessionStopper>(sp => sp.GetRequiredService<AgentSessionService>());
         services.AddSingleton<BootWedgeRelaunchState>();

@@ -226,6 +226,7 @@ public class AgentTaskCatchUpSettlementTests
         {
             var services = new ServiceCollection();
             services.AddLogging();
+            services.AddGitWorkspaceService();
             if (logs is not null)
                 services.AddSingleton<ILogger<AgentSessionRuntime>>(new ListLogger<AgentSessionRuntime>(logs));
             services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
