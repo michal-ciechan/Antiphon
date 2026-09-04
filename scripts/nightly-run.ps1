@@ -56,6 +56,7 @@ $script:testExit = 0
 $script:reportExit = 0
 $script:unchanged = $false
 $script:hopped = $false
+$script:hopExit = 0
 $script:recordRun = $false
 $script:summaryPath = $null
 
@@ -225,13 +226,13 @@ function Invoke-SelfUpdateHop {
     $cloneScript = Join-Path $CheckoutRoot 'scripts\nightly-run.ps1'
     if (-not (Test-Path -LiteralPath $cloneScript)) {
         Write-RunLine 'clone has no nightly-run.ps1; continuing with this copy.'
-        return $false
+        return
     }
     $running = $PSCommandPath
     if ([string]::IsNullOrWhiteSpace($running)) { $running = $MyInvocation.MyCommand.Path }
     $left = (Get-FileHash -LiteralPath $running -Algorithm SHA256).Hash
     $right = (Get-FileHash -LiteralPath $cloneScript -Algorithm SHA256).Hash
-    if ($left -eq $right) { return $false }
+    if ($left -eq $right) { return }
 
     Write-RunLine ('self-update: re-exec {0}' -f $cloneScript)
     $pwshArgs = @(
@@ -246,11 +247,11 @@ function Invoke-SelfUpdateHop {
         $pwshArgs += '-Suites'
         $pwshArgs += ($Suites -join ',')
     }
-    & pwsh @pwshArgs
-    $code = $LASTEXITCODE
-    if ($null -eq $code) { $code = 1 }
+    $hop = Start-Process -FilePath 'pwsh' -ArgumentList $pwshArgs -Wait -PassThru -NoNewWindow
+    $code = 1
+    if ($null -ne $hop) { $code = [int]$hop.ExitCode }
     $script:hopped = $true
-    return $code
+    $script:hopExit = $code
 }
 
 $exitCode = 0
@@ -291,9 +292,9 @@ try {
         }
 
         if ($runTests) {
-            $hopCode = Invoke-SelfUpdateHop
+            Invoke-SelfUpdateHop
             if ($script:hopped) {
-                $exitCode = $hopCode
+                $exitCode = $script:hopExit
                 $script:recordRun = $false
                 $runTests = $false
             }

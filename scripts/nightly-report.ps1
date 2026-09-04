@@ -250,14 +250,38 @@ function Invoke-Antiphon {
         return Invoke-RestMethod @params
     }
     try {
-        return & $invokeOnce $Method $Uri $Body
+        $result = & $invokeOnce $Method $Uri $Body
     } catch {
         if ($script:didRetry) { throw }
         $script:didRetry = $true
         Write-ReportLine 'API failed; retrying once after 60s.'
         Start-Sleep -Seconds 60
-        return & $invokeOnce $Method $Uri $Body
+        $result = & $invokeOnce $Method $Uri $Body
     }
+    # A JSON array returned from a nested scriptblock arrives as one Object[].
+    # Streaming the elements so @() at the caller collects boards/columns correctly.
+    if ($result -is [System.Array]) {
+        foreach ($item in $result) { $item }
+    } else {
+        $result
+    }
+}
+
+function ConvertTo-FlatArray {
+    param($Value)
+    $out = @()
+    if ($null -eq $Value) { return $out }
+    if ($Value -is [System.Array]) {
+        foreach ($v in $Value) {
+            if ($v -is [System.Array]) {
+                foreach ($inner in $v) { $out += $inner }
+            } else {
+                $out += $v
+            }
+        }
+        return $out
+    }
+    return @($Value)
 }
 
 function Write-CardMdFile {
@@ -589,7 +613,7 @@ foreach ($s in @($summaryObject.suites)) {
 $countPhrase = if ($failCounts.Count -gt 0) { $failCounts -join ', ' } else { $outcome }
 
 try {
-    $boards = @(Invoke-Antiphon -Method GET -Uri ($Api + '/api/boards'))
+    $boards = ConvertTo-FlatArray (Invoke-Antiphon -Method GET -Uri ($Api + '/api/boards'))
     $boardRow = $null
     $parsed = [guid]::Empty
     if ([guid]::TryParse($Board, [ref]$parsed)) {
@@ -599,7 +623,8 @@ try {
         $boardRow = @($boards | Where-Object { [string]$_.name -eq $Board }) | Select-Object -First 1
     }
     if ($null -eq $boardRow) {
-        throw ("No board named '{0}'." -f $Board)
+        $names = @($boards | ForEach-Object { [string]$_.name }) -join ', '
+        throw ("No board named '{0}'. Known: {1}" -f $Board, $names)
     }
     $boardId = [string]$boardRow.id
 
@@ -610,8 +635,8 @@ try {
         $uri = '{0}/api/cards?boardId={1}&status={2}' -f $Api, $boardId, $st
         $page = Invoke-Antiphon -Method GET -Uri $uri
         $cards = @()
-        if ($page -and $page.cards) { $cards = @($page.cards) }
-        elseif ($page -is [System.Array]) { $cards = @($page) }
+        if ($page -and $null -ne $page.cards) { $cards = ConvertTo-FlatArray $page.cards }
+        elseif ($page -is [System.Array]) { $cards = ConvertTo-FlatArray $page }
         $truncated = $false
         if ($page -and $page.truncated) { $truncated = [bool]$page.truncated }
         $matched = @($cards | Where-Object {
@@ -624,7 +649,7 @@ try {
         else { $openNightly += $matched }
     }
 
-    $columns = @(Invoke-Antiphon -Method GET -Uri ('{0}/api/boards/{1}/columns' -f $Api, $boardId))
+    $columns = ConvertTo-FlatArray (Invoke-Antiphon -Method GET -Uri ('{0}/api/boards/{1}/columns' -f $Api, $boardId))
     $terminal = @($columns | Where-Object { $_.isTerminal } | Sort-Object columnOrder) | Select-Object -First 1
 
     if ($succeeded) {

@@ -14,7 +14,7 @@ import agentTasksFixture from '../../test/fixtures/contract/agent-tasks.json'
 import agentTaskDetailFixture from '../../test/fixtures/contract/agent-task-detail.json'
 
 const tasks = agentTasksFixture as AgentTaskSummaryDto[]
-const detail = agentTaskDetailFixture as AgentTaskDetailDto
+const detail = agentTaskDetailFixture as unknown as AgentTaskDetailDto
 const settled = tasks.filter((task) => isSettled(task.status))
 const listSummary: AgentTaskListSummaryDto = {
   active: tasks.filter((task) => task.status === 'Dispatched' || task.status === 'Working').length,
