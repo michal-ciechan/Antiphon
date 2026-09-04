@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -14,10 +15,9 @@ using Microsoft.Extensions.Options;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// CARD-0334 S2: once-a-minute idle-boundary relaunch when a live standing agent's bundles or
-/// instruction files have drifted from the repo. Notify-lane delivery is S3; this sweep only
-/// resolves that lane so it does not kill. Singleton so the in-memory per-agent attempt stamp
-/// survives the hosted service's per-tick scope.
+/// CARD-0334 S2/S3: once-a-minute idle-boundary relaunch or WhenIdle notify when a live
+/// standing agent's bundles or instruction files have drifted from the repo. Singleton so
+/// the in-memory per-agent attempt stamp survives the hosted service's per-tick scope.
 ///
 /// <para>Kill uses <see cref="SessionTerminationSource.PolicyRefresh"/>, never
 /// <c>StopAsync</c> (that suspends supervision). A failed <c>StartAsync</c> leaves supervision
@@ -27,6 +27,9 @@ namespace Antiphon.Server.Application.Services;
 public sealed class PolicyRefreshService
 {
     internal static readonly TimeSpan KillConfirmTimeout = TimeSpan.FromSeconds(30);
+
+    public const string SessionWorkingCode = "session_working";
+    public const string NotResumableCode = "not_resumable";
 
     private readonly ConcurrentDictionary<Guid, DateTime> _attempts = new();
     private readonly IServiceScopeFactory _scopeFactory;
@@ -55,8 +58,8 @@ public sealed class PolicyRefreshService
     /// <summary>
     /// Scan standing agents with a live PtyHost session; relaunch at most one idle drifted
     /// AlwaysOn ClaudeCode per agent this pass. Returns how many relaunches
-    /// <c>StartAsync</c> accepted. Other agents may ride along on a shared database — callers
-    /// must not assert on this number as a global count.
+    /// <c>StartAsync</c> accepted. Notify-lane deliveries are not counted — callers must not
+    /// assert on this number as a global count.
     /// </summary>
     public async Task<int> SweepAsync(CancellationToken ct)
     {
@@ -116,7 +119,8 @@ public sealed class PolicyRefreshService
 
             try
             {
-                if (await ProcessAgentAsync(agent, session, ct))
+                var outcome = await ActAsync(agent, session, force: false, throwOnBlock: false, ct);
+                if (outcome.Refreshed)
                     fired++;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -134,18 +138,57 @@ public sealed class PolicyRefreshService
         return fired;
     }
 
-    private async Task<bool> ProcessAgentAsync(Agent agent, AgentSession session, CancellationToken ct)
+    /// <summary>
+    /// CARD-0334 S3. Manual front door. Idle-gated like the sweep; <paramref name="force"/>
+    /// skips only the idle-minutes floor and the cooldown. A working session is always
+    /// 409 <see cref="SessionWorkingCode"/>; an agent that cannot be resumed or is out of
+    /// population is 409 <see cref="NotResumableCode"/>.
+    /// </summary>
+    public async Task<PolicyRefreshOutcome> RefreshAgentAsync(
+        Guid agentId, bool force, CancellationToken ct)
     {
-        if (session.SessionBackend == SessionBackend.Herdr)
-            return false;
-        if (session.CardId is not null)
-            return false;
-        if (session.ComposedBundleStamp is null && session.InstructionFileStamp is null)
-            return false;
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var agent = await db.Agents.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.Id == agentId, ct)
+            ?? throw new NotFoundException(nameof(Agent), agentId);
+
+        if (agent.IsPoolDelegate
+            || !Guid.TryParse(agent.PersistentSessionId, out var sessionId))
+        {
+            throw new ConflictException(
+                "This agent has no live session to refresh.", NotResumableCode);
+        }
+
+        var session = await db.AgentSessions.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == sessionId && s.Status == SessionStatus.Running, ct)
+            ?? throw new ConflictException(
+                "This agent has no live session to refresh.", NotResumableCode);
+
+        return await ActAsync(agent, session, force, throwOnBlock: true, ct);
+    }
+
+    private async Task<PolicyRefreshOutcome> ActAsync(
+        Agent agent,
+        AgentSession session,
+        bool force,
+        bool throwOnBlock,
+        CancellationToken ct)
+    {
+        if (session.SessionBackend == SessionBackend.Herdr
+            || session.CardId is not null
+            || (session.ComposedBundleStamp is null && session.InstructionFileStamp is null))
+        {
+            return Refuse(
+                throwOnBlock,
+                "This session cannot be policy-refreshed (no stamp, a card session, or a Herdr pane).");
+        }
 
         var mode = agent.PolicyRefreshMode ?? PolicyRefreshMode.Auto;
         if (mode == PolicyRefreshMode.Off)
-            return false;
+        {
+            return Refuse(throwOnBlock, "Policy refresh is off for this agent.");
+        }
 
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -165,29 +208,144 @@ public sealed class PolicyRefreshService
             files.StampLine,
             mode);
         if (!drift.HasDrift)
+            return PolicyRefreshOutcome.None;
+
+        var lane = ResolveLane(agent, session, mode, IsTranscriptBound(session.Id));
+        if (lane == Lane.None)
+            return Refuse(throwOnBlock, "This agent cannot be policy-refreshed.");
+
+        if (!await PrepareToActAsync(scope, db, agent, session.Id, force, throwOnBlock, ct))
+            return PolicyRefreshOutcome.None;
+
+        if (lane == Lane.Notify)
+        {
+            return await NotifyAsync(
+                scope, db, agent, session, composed.StampLine, files.StampLine, ct);
+        }
+
+        return await RelaunchAsync(
+            scope, db, agent, session, composed.StampLine, files.StampLine, ct);
+    }
+
+    private async Task<bool> PrepareToActAsync(
+        IServiceScope scope,
+        AppDbContext db,
+        Agent agent,
+        Guid sessionId,
+        bool force,
+        bool throwOnBlock,
+        CancellationToken ct)
+    {
+        var block = await EvaluateGatesAsync(scope, db, agent, sessionId, force, ct);
+        if (!ApplyBlock(block, throwOnBlock))
             return false;
 
-        var lane = ResolveLane(agent, session, mode);
-        if (lane != Lane.Relaunch)
+        // Pull before acting: never kill or notify on a stale working/idle read (gotchas #49/#50).
+        await _runtime.CatchUpTranscriptAsync(sessionId, ct);
+
+        block = await EvaluateGatesAsync(scope, db, agent, sessionId, force, ct);
+        return ApplyBlock(block, throwOnBlock);
+    }
+
+    private static bool ApplyBlock(GateBlock block, bool throwOnBlock)
+    {
+        if (block.Working || block.QueueBusy)
+        {
+            if (throwOnBlock)
+            {
+                throw new ConflictException(
+                    "The session is working; wait until it is idle.", SessionWorkingCode);
+            }
+
             return false;
+        }
 
-        if (await IsTickBlockedAsync(scope, db, agent, session.Id, ct))
+        if (block.NotLive || block.Suspended || block.HeldModel)
+        {
+            if (throwOnBlock)
+            {
+                throw new ConflictException(
+                    block.NotLive
+                        ? "This agent has no live session to refresh."
+                        : block.Suspended
+                            ? "Supervision is suspended for this agent."
+                            : "This agent's model is held.",
+                    NotResumableCode);
+            }
+
             return false;
+        }
 
-        // Pull before acting: never kill on a stale working/idle read (gotchas #49/#50).
-        await _runtime.CatchUpTranscriptAsync(session.Id, ct);
+        // Idle floor / cooldown: force already folded these off. Sweep and a non-force
+        // POST skip the same way — not a 409.
+        return !block.IdleTooRecent && !block.Cooldown;
+    }
 
-        if (await IsTickBlockedAsync(scope, db, agent, session.Id, ct))
-            return false;
+    private static PolicyRefreshOutcome Refuse(bool throwOnBlock, string message)
+    {
+        if (throwOnBlock)
+            throw new ConflictException(message, NotResumableCode);
+        return PolicyRefreshOutcome.None;
+    }
 
+    private async Task<PolicyRefreshOutcome> NotifyAsync(
+        IServiceScope scope,
+        AppDbContext db,
+        Agent agent,
+        AgentSession session,
+        string currentBundles,
+        string currentFiles,
+        CancellationToken ct)
+    {
+        var stamp = ComposeNotifyStamp(currentBundles, currentFiles);
+        var live = await db.AgentSessions.FirstAsync(s => s.Id == session.Id, ct);
+        if (string.Equals(live.PolicyNotifiedStamp, stamp, StringComparison.Ordinal))
+            return PolicyRefreshOutcome.None;
+
+        var delta = PolicyRefreshDelta.FormatNotify(
+            session.ComposedBundleStamp,
+            currentBundles,
+            session.InstructionFileStamp,
+            currentFiles);
+        var body = ChannelPreamble.PolicyDriftNotifyBody(delta);
+
+        var queue = scope.ServiceProvider.GetRequiredService<SessionMessageQueueService>();
+        await queue.EnqueueAsync(
+            session.Id, body, MessageSendMode.WhenIdle, ct, origin: QueuedMessageOrigin.System);
+
+        live.PolicyNotifiedStamp = stamp;
+        await db.SaveChangesAsync(ct);
+
+        Stamp(agent.Id, UtcNow());
+        await RecordAsync(
+            scope, db, agent.Id, session.Id,
+            AgentIncidentKind.PolicyDriftNotified, AlertSeverity.Info,
+            $"Policy drift notified: {delta}",
+            raiseAlert: false, ct);
+
+        _logger.LogInformation(
+            "Policy-refresh notified agent {AgentName} ({AgentId}) session {SessionId}: {Delta}",
+            agent.Name, agent.Id, session.Id, delta);
+        return new PolicyRefreshOutcome(Refreshed: false, Notified: true);
+    }
+
+    private async Task<PolicyRefreshOutcome> RelaunchAsync(
+        IServiceScope scope,
+        AppDbContext db,
+        Agent agent,
+        AgentSession session,
+        string currentBundles,
+        string currentFiles,
+        CancellationToken ct)
+    {
         var now = UtcNow();
         Stamp(agent.Id, now);
 
         var delta = PolicyRefreshDelta.Format(
             session.ComposedBundleStamp,
-            composed.StampLine,
+            currentBundles,
             session.InstructionFileStamp,
-            files.StampLine);
+            currentFiles);
 
         var sessions = scope.ServiceProvider.GetRequiredService<AgentSessionService>();
         try
@@ -201,7 +359,7 @@ public sealed class PolicyRefreshService
                 AgentIncidentKind.PolicyRefreshFailed, AlertSeverity.Warning,
                 $"Policy refresh kill failed: {ex.Message}",
                 raiseAlert: true, ct);
-            return false;
+            return PolicyRefreshOutcome.None;
         }
 
         if (!await WaitUntilStoppedAsync(session.Id, ct))
@@ -211,7 +369,7 @@ public sealed class PolicyRefreshService
                 AgentIncidentKind.PolicyRefreshFailed, AlertSeverity.Warning,
                 "Policy refresh kill did not reach Stopped within 30s; not starting.",
                 raiseAlert: true, ct);
-            return false;
+            return PolicyRefreshOutcome.None;
         }
 
         var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
@@ -233,7 +391,7 @@ public sealed class PolicyRefreshService
                 AgentIncidentKind.PolicyRefreshFailed, AlertSeverity.Warning,
                 $"Policy refresh start failed: {ex.Message}",
                 raiseAlert: true, ct);
-            return false;
+            return PolicyRefreshOutcome.None;
         }
 
         var fresh = !string.Equals(
@@ -250,14 +408,16 @@ public sealed class PolicyRefreshService
         _logger.LogInformation(
             "Policy-refresh relaunched agent {AgentName} ({AgentId}) session {SessionId} ({Mode}): {Delta}",
             agent.Name, agent.Id, session.Id, fresh ? "fresh" : "resume", delta);
-        return true;
+        return new PolicyRefreshOutcome(Refreshed: true, Notified: false);
     }
 
     /// <summary>
-    /// D4 lane. Notify is S3 — this sweep returns <see cref="Lane.Notify"/> so the caller
-    /// does not kill. Tick-skips (suspended, held model, NextRestartAt) are not a lane.
+    /// D4 lane. Unbound transcript demotes Relaunch to Notify (a resume would fall back
+    /// to fresh and lose the conversation). Tick-skips (suspended, held model, NextRestartAt)
+    /// are not a lane.
     /// </summary>
-    internal static Lane ResolveLane(Agent agent, AgentSession session, PolicyRefreshMode mode)
+    internal static Lane ResolveLane(
+        Agent agent, AgentSession session, PolicyRefreshMode mode, bool transcriptBound)
     {
         if (mode == PolicyRefreshMode.Off)
             return Lane.None;
@@ -266,9 +426,7 @@ public sealed class PolicyRefreshService
         if (session.SessionBackend == SessionBackend.Herdr)
             return Lane.None;
 
-        var kind = agent.Kind;
-        var alwaysOn = agent.AlwaysOn;
-        var relaunchEligible = kind == AgentKind.ClaudeCode && alwaysOn;
+        var relaunchEligible = agent.Kind == AgentKind.ClaudeCode && agent.AlwaysOn && transcriptBound;
         return mode switch
         {
             PolicyRefreshMode.Relaunch when relaunchEligible => Lane.Relaunch,
@@ -280,6 +438,9 @@ public sealed class PolicyRefreshService
         };
     }
 
+    internal static string ComposeNotifyStamp(string? bundles, string? files) =>
+        $"{bundles ?? ""}\n{files ?? ""}";
+
     internal enum Lane
     {
         None,
@@ -287,57 +448,48 @@ public sealed class PolicyRefreshService
         Relaunch,
     }
 
-    private async Task<bool> IsTickBlockedAsync(
+    private readonly record struct GateBlock(
+        bool NotLive,
+        bool Suspended,
+        bool HeldModel,
+        bool Working,
+        bool QueueBusy,
+        bool IdleTooRecent,
+        bool Cooldown);
+
+    private async Task<GateBlock> EvaluateGatesAsync(
         IServiceScope scope,
         AppDbContext db,
         Agent agent,
         Guid sessionId,
+        bool force,
         CancellationToken ct)
     {
-        if (!_runtime.ListLiveSessions().Contains(sessionId)
-            && !_runtime.TryGetLiveMetadata(sessionId, out _))
-        {
-            // Kill already disposed the adapter, or the runtime never had it. Before kill this
-            // means "not actually live" — skip. After kill the caller does not use this method.
-            return true;
-        }
-
-        if (!IsTranscriptBound(sessionId))
-            return true;
+        var notLive = !_runtime.ListLiveSessions().Contains(sessionId)
+            && !_runtime.TryGetLiveMetadata(sessionId, out _);
 
         var state = await db.AgentSupervisionStates.AsNoTracking()
             .FirstOrDefaultAsync(s => s.AgentId == agent.Id, ct);
-        if (state is { Suspended: true })
-            return true;
-        if (state?.NextRestartAt is not null)
-            return true;
+        var suspended = state is { Suspended: true } || state?.NextRestartAt is not null;
 
+        var held = false;
         var availability = scope.ServiceProvider.GetService<IModelAvailability>()
             ?? scope.ServiceProvider.GetService<ModelAvailability>();
         if (availability is not null)
         {
             var alias = ModelAlias.Normalize(agent.Kind, agent.ModelId)
                 ?? ModelLevelAliases.For(agent.Kind, agent.ModelLevel);
-            if (await availability.IsHeldAsync(agent.Kind, alias, ct))
-                return true;
+            held = await availability.IsHeldAsync(agent.Kind, alias, ct);
         }
 
-        if (await SessionMessageQueueService.IsWorkingAsync(db, sessionId, ct))
-            return true;
+        var working = await SessionMessageQueueService.IsWorkingAsync(db, sessionId, ct);
+        var queueBusy = await HasBlockingQueueRowAsync(db, sessionId, ct);
+        var idleTooRecent = !force && !await HasBeenIdleLongEnoughAsync(db, sessionId, ct);
+        var cooldown = !force
+            && (RecentlyAttempted(agent.Id, UtcNow())
+                || await HasRecentPolicyActionAsync(db, agent.Id, ct));
 
-        if (await HasBlockingQueueRowAsync(db, sessionId, ct))
-            return true;
-
-        if (!await HasBeenIdleLongEnoughAsync(db, sessionId, ct))
-            return true;
-
-        if (RecentlyAttempted(agent.Id, UtcNow())
-            || await HasRecentPolicyActionAsync(db, agent.Id, ct))
-        {
-            return true;
-        }
-
-        return false;
+        return new GateBlock(notLive, suspended, held, working, queueBusy, idleTooRecent, cooldown);
     }
 
     private bool IsTranscriptBound(Guid sessionId)
@@ -380,7 +532,8 @@ public sealed class PolicyRefreshService
         return await db.AgentIncidents.AsNoTracking()
             .AnyAsync(i => i.AgentId == agentId
                 && (i.Kind == AgentIncidentKind.PolicyRefreshed
-                    || i.Kind == AgentIncidentKind.PolicyRefreshFailed)
+                    || i.Kind == AgentIncidentKind.PolicyRefreshFailed
+                    || i.Kind == AgentIncidentKind.PolicyDriftNotified)
                 && i.CreatedAt >= since, ct);
     }
 
@@ -432,4 +585,10 @@ public sealed class PolicyRefreshService
     private void Stamp(Guid agentId, DateTime now) => _attempts[agentId] = now;
 
     private DateTime UtcNow() => _time.GetUtcNow().UtcDateTime;
+}
+
+/// <summary>CARD-0334 S3. Result of one notify or relaunch attempt.</summary>
+public readonly record struct PolicyRefreshOutcome(bool Refreshed, bool Notified)
+{
+    public static PolicyRefreshOutcome None { get; } = new(false, false);
 }

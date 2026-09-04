@@ -23,9 +23,11 @@ import type {
   AgentAssignmentPolicy,
   AgentReplyStyle,
   AgentSummaryDto,
+  PolicyRefreshMode,
   SessionBackend,
 } from '../../api/agents'
 import {
+  POLICY_REFRESH_MODE_OPTIONS,
   SESSION_BACKEND_OPTIONS,
   fetchPreamblePreset,
   useAgent,
@@ -74,6 +76,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
   const [launchEnvText, setLaunchEnvText] = useState('')
   const [systemPromptAppend, setSystemPromptAppend] = useState('')
   const [replyStyle, setReplyStyle] = useState<AgentReplyStyle>('Normal')
+  const [policyRefreshMode, setPolicyRefreshMode] = useState<PolicyRefreshMode>('Auto')
   const [sessionBackend, setSessionBackend] = useState<SessionBackend>('PtyHost')
   const [bundleKeys, setBundleKeys] = useState<string[]>([])
   const [seededBundlesFor, setSeededBundlesFor] = useState<string | null>(null)
@@ -122,6 +125,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
     setSystemPromptAppend(agent.systemPromptAppend ?? '')
     // An older server response omits the field entirely; Normal is what that means.
     setReplyStyle(agent.replyStyle ?? 'Normal')
+    setPolicyRefreshMode(agent.policyDrift?.mode ?? 'Auto')
     // Older server omits the field — PtyHost is what that means.
     setSessionBackend(agent.sessionBackend ?? 'PtyHost')
     setConfirmingDelete(false)
@@ -186,6 +190,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
         tuiProfileId,
         modelId,
         replyStyle,
+        policyRefreshMode,
         sessionBackend,
         // Always sent, so an emptied picker detaches: null on the request means "leave unchanged".
         bundleKeys,
@@ -361,6 +366,21 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
         </Group>
 
         <ReplyStyleControl value={replyStyle} onChange={setReplyStyle} />
+
+        <Select
+          label="Policy refresh"
+          description={
+            POLICY_REFRESH_MODE_OPTIONS.find((option) => option.value === policyRefreshMode)
+              ?.description ??
+            'How this running agent picks up standing-instruction changes.'
+          }
+          data={POLICY_REFRESH_MODE_OPTIONS.map(({ value, label }) => ({ value, label }))}
+          value={policyRefreshMode}
+          onChange={(value) =>
+            setPolicyRefreshMode((value as PolicyRefreshMode | null) ?? 'Auto')
+          }
+          allowDeselect={false}
+        />
 
         <MultiSelect
           label="Attached bundles"

@@ -47,6 +47,7 @@ import {
   useAgentIncidents,
   useAgentList,
   useAttachHerdrPane,
+  useRefreshAgentPolicy,
   useStartAgent,
   useStopAgent,
 } from '../../api/agents'
@@ -621,26 +622,74 @@ function ReplyStyleBadge({ agent }: { agent: AgentSummaryDto }) {
 
 /**
  * The running session was launched with standing instructions the repo has since moved on from
- * (CARD-0058 bundles, CARD-0334 instruction files). Deliberately quiet and deliberately inert
- * until S3's refresh action: the agent picks the new instructions up at its NEXT launch, and
- * nothing here offers to make that happen now.
+ * (CARD-0058 bundles, CARD-0334 instruction files). Relaunch/Notify/Auto modes refresh at the
+ * next idle window; Off still waits for the next launch. "Refresh now" calls the idle-gated
+ * endpoint with force (skips the idle-minutes floor and cooldown, never a working session).
  */
 function BundleDriftBadge({ agent }: { agent: AgentSummaryDto }) {
+  const refresh = useRefreshAgentPolicy(agent.id)
   const bundles = agent.policyDrift?.bundles ?? []
   const files = agent.policyDrift?.files ?? []
   const names = [...bundles, ...files]
   const hasDrift = names.length > 0 || !!agent.bundlesOutOfDate
   if (!hasDrift) return null
 
+  const mode = agent.policyDrift?.mode ?? 'Auto'
+  const idleRefresh = mode !== 'Off'
   const what = names.length > 0 ? names.join(', ') : 'instruction bundles'
-  const label = `Running with older standing instructions (${what}). It restarts with the current ones at its next launch.`
+  const when = idleRefresh
+    ? 'It refreshes at its next idle window.'
+    : 'It restarts with the current ones at its next launch.'
+  const label = `Running with older standing instructions (${what}). ${when}`
 
   return (
-    <Tooltip label={label} withArrow>
-      <Badge size="sm" color="yellow" variant="light" leftSection={<TbRefreshAlert size={12} />}>
-        bundles
-      </Badge>
-    </Tooltip>
+    <Group
+      gap={4}
+      wrap="nowrap"
+      onClick={(event) => event.stopPropagation()}
+      onMouseDown={(event) => event.stopPropagation()}
+    >
+      <Tooltip label={label} withArrow>
+        <Badge size="sm" color="yellow" variant="light" leftSection={<TbRefreshAlert size={12} />}>
+          bundles
+        </Badge>
+      </Tooltip>
+      {idleRefresh && (
+        <Badge
+          component="span"
+          size="sm"
+          color="yellow"
+          variant="outline"
+          style={{ cursor: refresh.isPending ? 'wait' : 'pointer' }}
+          role="button"
+          aria-label="Refresh now"
+          onClick={() => {
+            if (refresh.isPending) return
+            refresh.mutate(
+              { force: true },
+              {
+                onSuccess: (result) =>
+                  notifications.show({
+                    color: 'green',
+                    message: result.refreshed
+                      ? 'Relaunching with current instructions'
+                      : result.notified
+                        ? 'Refresh note queued'
+                        : 'This drift was already notified',
+                  }),
+                onError: (error) =>
+                  notifications.show({
+                    color: 'red',
+                    message: getApiErrorMessage(error, 'Could not refresh policy'),
+                  }),
+              },
+            )
+          }}
+        >
+          {refresh.isPending ? 'Refreshing…' : 'Refresh now'}
+        </Badge>
+      )}
+    </Group>
   )
 }
 

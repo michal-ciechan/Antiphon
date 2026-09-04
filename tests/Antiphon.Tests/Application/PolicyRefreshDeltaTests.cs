@@ -35,6 +35,37 @@ public class PolicyRefreshDeltaTests
     }
 
     [Test]
+    public void FormatNotify_adds_the_next_launch_and_re_read_parentheticals()
+    {
+        var delta = PolicyRefreshDelta.FormatNotify(
+            launchedBundles: "orchestrator v26dea68f",
+            currentBundles: "orchestrator v3c1f0a9e",
+            launchedFiles: "AGENTS.md v11111111, docs/orchestration-loop.md v22222222",
+            currentFiles: "AGENTS.md v33333333, docs/orchestration-loop.md v44444444");
+
+        delta.ShouldContain("orchestrator v26dea68f → v3c1f0a9e (in your system prompt only at your next launch)");
+        delta.ShouldContain("AGENTS.md, docs/orchestration-loop.md changed (re-read them now, before your next dispatch)");
+        foreach (var bundle in InstructionBundles.All.Values)
+            delta.ShouldNotContain(bundle.Text);
+    }
+
+    [Test]
+    public void PolicyDriftNotifyBody_never_contains_bundle_text()
+    {
+        var delta = PolicyRefreshDelta.FormatNotify(
+            "", InstructionBundles.Get(InstructionBundles.Orchestrator).Stamp,
+            "AGENTS.md v00000000", "AGENTS.md v11111111");
+        var body = ChannelPreamble.PolicyDriftNotifyBody(delta);
+
+        body.ShouldContain("orchestrator added v");
+        body.ShouldContain("in your system prompt only at your next launch");
+        body.ShouldContain("AGENTS.md changed (re-read them now, before your next dispatch)");
+        body.ShouldContain(ChannelContracts.NoReplyToken);
+        foreach (var bundle in InstructionBundles.All.Values)
+            body.ShouldNotContain(bundle.Text);
+    }
+
+    [Test]
     public void PolicyRefreshResumeBody_never_contains_bundle_text()
     {
         var delta = PolicyRefreshDelta.Format(

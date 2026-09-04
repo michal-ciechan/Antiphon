@@ -502,4 +502,12 @@ public enum AgentIncidentKind
     /// the new bundles.
     /// </summary>
     PolicyRefreshFailed = 50,
+
+    /// <summary>
+    /// CARD-0334 S3. The Notify lane queued a WhenIdle System note naming the stamp delta;
+    /// the process kept its current prompt. Info; timeline only (no alert). Deduped by
+    /// <c>AgentSession.PolicyNotifiedStamp</c> so a later sweep or a server restart does
+    /// not re-send the same drift.
+    /// </summary>
+    PolicyDriftNotified = 51,
 }

@@ -364,7 +364,22 @@ public sealed record UpdateAgentRequest(
     // one this same request supplies — Kind is DERIVED from that profile (CARD-0138 D1) and this
     // value is only checked against it; a disagreement is refused rather than written. It is applied
     // as a value only for an agent with no profile at all, and never for a pool delegate.
-    AgentKind? Kind = null);
+    AgentKind? Kind = null,
+    // CARD-0334 S3. Null = leave unchanged (an older caller must not reset a chosen mode to Auto).
+    PolicyRefreshMode? PolicyRefreshMode = null);
+
+/// <summary>CARD-0334 S3. Body of <c>POST /api/agents/{id}/refresh-policy</c>.</summary>
+public sealed record RefreshPolicyRequest(bool Force = false);
+
+/// <summary>
+/// CARD-0334 S3. Manual refresh result. <see cref="Agent"/> is the post-action detail DTO.
+/// A Notify-lane 200 is <c>refreshed: false, notified: true</c>; a no-op (already current,
+/// already notified of this drift, or idle/cooldown without force) is both false.
+/// </summary>
+public sealed record RefreshPolicyResultDto(
+    bool Refreshed,
+    bool Notified,
+    AgentDetailDto Agent);
 
 // Fresh forces a brand-new conversation; by default a cardless (interactive) start resumes the
 // agent's previous Claude session so the terminal picks up where it left off.

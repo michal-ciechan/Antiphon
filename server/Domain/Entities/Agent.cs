@@ -66,7 +66,7 @@ public class Agent
     /// <summary>
     /// Per-agent override of the policy-refresh lane (CARD-0334). Null means
     /// <see cref="PolicyRefreshMode.Auto"/> (AlwaysOn ClaudeCode relaunches at idle; others
-    /// are notified). S3 owns the PATCH / settings-modal writer; S1 only stores the column.
+    /// are notified). PATCH <c>policyRefreshMode</c> and the settings-modal select write it.
     /// </summary>
     public PolicyRefreshMode? PolicyRefreshMode { get; set; }
 

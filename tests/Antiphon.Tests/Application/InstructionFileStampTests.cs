@@ -261,6 +261,13 @@ public class InstructionFileStampTests
         back.LastRefreshedAt.ShouldBe(drift.LastRefreshedAt);
     }
 
+    [Test]
+    public void an_update_that_omits_policyRefreshMode_leaves_it_alone()
+    {
+        new UpdateAgentRequest("A", "C:\\tmp", null, null, AgentAssignmentPolicy.AutoPick)
+            .PolicyRefreshMode.ShouldBeNull();
+    }
+
     private static string NewCwd()
     {
         var cwd = Path.Combine(Path.GetTempPath(), $"antiphon-file-stamp-{Guid.NewGuid():N}");

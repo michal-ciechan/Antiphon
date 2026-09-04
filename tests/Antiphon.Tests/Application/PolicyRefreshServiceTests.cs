@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -183,6 +184,10 @@ public class PolicyRefreshServiceTests
         await using var db = CreateContext();
         (await db.AgentIncidents.CountAsync(
             i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.PolicyRefreshed)).ShouldBe(0);
+        var notified = await db.AgentIncidents.SingleAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.PolicyDriftNotified);
+        notified.Severity.ShouldBe(AlertSeverity.Info);
+        h.Adapter.SubmittedBodies.ShouldContain(b => b.Contains("standing instructions changed"));
     }
 
     [Test]
@@ -200,6 +205,15 @@ public class PolicyRefreshServiceTests
 
         (await SweepAsync(h)).ShouldBe(0);
         h.Adapter.Killed.ShouldBeFalse();
+        await using var verify = CreateContext();
+        (await verify.AgentIncidents.CountAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.PolicyDriftNotified)).ShouldBe(1);
+        (await verify.AgentSessions.SingleAsync(s => s.Id == h.SessionId))
+            .PolicyNotifiedStamp.ShouldNotBeNull();
+        h.Adapter.SubmittedBodies.ShouldContain(b =>
+            b.Contains("standing instructions changed") && b.Contains("in your system prompt only at your next launch"));
+        foreach (var bundle in InstructionBundles.All.Values)
+            h.Adapter.SubmittedBodies.ShouldAllBe(b => !b.Contains(bundle.Text));
     }
 
     [Test]
@@ -318,6 +332,158 @@ public class PolicyRefreshServiceTests
         }
     }
 
+    [Test]
+    public async Task Notify_dedupes_across_sweeps_and_a_new_service_instance()
+    {
+        await using var h = await CreateHarnessAsync();
+        await SeedRelaunchReadyAsync(h);
+        await using (var db = CreateContext())
+        {
+            await db.Agents.Where(a => a.Id == h.AgentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.PolicyRefreshMode, PolicyRefreshMode.Notify));
+        }
+
+        (await SweepAsync(h)).ShouldBe(0);
+        h.Adapter.Killed.ShouldBeFalse();
+        var firstCount = h.Adapter.SubmittedBodies.Count(b => b.Contains("standing instructions changed"));
+        firstCount.ShouldBe(1);
+
+        await BackdateTranscriptAsync(h);
+
+        (await SweepAsync(h)).ShouldBe(0, "the same drift must not re-notify in-process");
+        h.Adapter.SubmittedBodies.Count(b => b.Contains("standing instructions changed")).ShouldBe(1);
+
+        await using (var db = CreateContext())
+        {
+            await db.AgentIncidents
+                .Where(i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.PolicyDriftNotified)
+                .ExecuteDeleteAsync();
+        }
+
+        var fresh = new PolicyRefreshService(
+            h.Provider.GetRequiredService<IServiceScopeFactory>(),
+            h.Runtime,
+            h.Provider.GetRequiredService<ISessionRunnerClient>(),
+            h.Provider.GetRequiredService<IOptions<SupervisionSettings>>(),
+            TimeProvider.System,
+            NullLogger<PolicyRefreshService>.Instance);
+        (await fresh.SweepAsync(CancellationToken.None))
+            .ShouldBe(0, "PolicyNotifiedStamp is the cross-restart notify dedupe");
+        h.Adapter.SubmittedBodies.Count(b => b.Contains("standing instructions changed")).ShouldBe(1);
+
+        await File.WriteAllTextAsync(Path.Combine(h.TempRoot, "workspace", "AGENTS.md"), "floor v4\n");
+        await BackdateTranscriptAsync(h);
+        (await fresh.SweepAsync(CancellationToken.None)).ShouldBe(0);
+        h.Adapter.SubmittedBodies.Count(b => b.Contains("standing instructions changed"))
+            .ShouldBe(2, "a new file stamp is a distinct drift");
+    }
+
+    [Test]
+    public async Task RefreshPolicyAsync_force_skips_idle_minutes_and_relaunches()
+    {
+        await using var h = await CreateHarnessAsync();
+        await SeedRelaunchReadyAsync(h);
+        await h.InsertTranscriptEntryAsync(
+            TranscriptKinds.TurnEnd, stopReason: "end_turn", timestamp: DateTime.UtcNow);
+
+        (await SweepAsync(h)).ShouldBe(0, "not idle long enough");
+        h.Adapter.Killed.ShouldBeFalse();
+
+        using var scope = h.Provider.CreateScope();
+        var result = await scope.ServiceProvider.GetRequiredService<AgentControlService>()
+            .RefreshPolicyAsync(h.AgentId, force: true, CancellationToken.None);
+
+        result.Refreshed.ShouldBeTrue();
+        result.Notified.ShouldBeFalse();
+        result.Agent.Id.ShouldBe(h.AgentId);
+        await WaitForLaunchAsync(h);
+        h.Adapter.Killed.ShouldBeTrue();
+        Factory(h).Created.ShouldHaveSingleItem().Started.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task RefreshPolicyAsync_working_is_409_session_working_even_with_force()
+    {
+        await using var h = await CreateHarnessAsync();
+        await SeedRelaunchReadyAsync(h);
+        await h.MarkWorkingAsync();
+
+        using var scope = h.Provider.CreateScope();
+        var ex = await Should.ThrowAsync<ConflictException>(() =>
+            scope.ServiceProvider.GetRequiredService<AgentControlService>()
+                .RefreshPolicyAsync(h.AgentId, force: true, CancellationToken.None));
+
+        ex.StatusCode.ShouldBe(409);
+        ex.Code.ShouldBe(PolicyRefreshService.SessionWorkingCode);
+        h.Adapter.Killed.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task RefreshPolicyAsync_without_a_live_session_is_409_not_resumable()
+    {
+        await using var h = await CreateHarnessAsync();
+        await h.Runtime.DisposeSessionAsync(h.SessionId);
+        await using (var db = CreateContext())
+        {
+            await db.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Stopped));
+        }
+
+        using var scope = h.Provider.CreateScope();
+        var ex = await Should.ThrowAsync<ConflictException>(() =>
+            scope.ServiceProvider.GetRequiredService<AgentControlService>()
+                .RefreshPolicyAsync(h.AgentId, force: true, CancellationToken.None));
+
+        ex.StatusCode.ShouldBe(409);
+        ex.Code.ShouldBe(PolicyRefreshService.NotResumableCode);
+    }
+
+    [Test]
+    public async Task RefreshPolicyAsync_notify_lane_returns_notified()
+    {
+        await using var h = await CreateHarnessAsync();
+        await SeedRelaunchReadyAsync(h);
+        await using (var db = CreateContext())
+        {
+            await db.Agents.Where(a => a.Id == h.AgentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.PolicyRefreshMode, PolicyRefreshMode.Notify));
+        }
+
+        using var scope = h.Provider.CreateScope();
+        var result = await scope.ServiceProvider.GetRequiredService<AgentControlService>()
+            .RefreshPolicyAsync(h.AgentId, force: true, CancellationToken.None);
+
+        result.Refreshed.ShouldBeFalse();
+        result.Notified.ShouldBeTrue();
+        h.Adapter.Killed.ShouldBeFalse();
+        h.Adapter.SubmittedBodies.ShouldContain(b => b.Contains("standing instructions changed"));
+        await using var verify = CreateContext();
+        (await verify.AgentIncidents.SingleAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.PolicyDriftNotified))
+            .Severity.ShouldBe(AlertSeverity.Info);
+    }
+
+    [Test]
+    public async Task Off_mode_is_neither_lane()
+    {
+        await using var h = await CreateHarnessAsync();
+        await SeedRelaunchReadyAsync(h);
+        await using (var db = CreateContext())
+        {
+            await db.Agents.Where(a => a.Id == h.AgentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.PolicyRefreshMode, PolicyRefreshMode.Off));
+        }
+
+        (await SweepAsync(h)).ShouldBe(0);
+        h.Adapter.Killed.ShouldBeFalse();
+
+        using var scope = h.Provider.CreateScope();
+        var ex = await Should.ThrowAsync<ConflictException>(() =>
+            scope.ServiceProvider.GetRequiredService<AgentControlService>()
+                .RefreshPolicyAsync(h.AgentId, force: true, CancellationToken.None));
+        ex.Code.ShouldBe(PolicyRefreshService.NotResumableCode);
+    }
+
     private static Task<BridgeQueueHarness> CreateHarnessAsync() =>
         BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
@@ -369,16 +535,17 @@ public class PolicyRefreshServiceTests
         await db.SaveChangesAsync();
     }
 
-    private static async Task<int> SweepAsync(BridgeQueueHarness h)
+    private static Task<int> SweepAsync(BridgeQueueHarness h) =>
+        h.Provider.GetRequiredService<PolicyRefreshService>().SweepAsync(CancellationToken.None);
+
+    private static async Task BackdateTranscriptAsync(BridgeQueueHarness h)
     {
-        var service = new PolicyRefreshService(
-            h.Provider.GetRequiredService<IServiceScopeFactory>(),
-            h.Runtime,
-            h.Provider.GetRequiredService<ISessionRunnerClient>(),
-            h.Provider.GetRequiredService<IOptions<SupervisionSettings>>(),
-            TimeProvider.System,
-            NullLogger<PolicyRefreshService>.Instance);
-        return await service.SweepAsync(CancellationToken.None);
+        var aged = DateTime.UtcNow.AddHours(-3);
+        await using var db = CreateContext();
+        await db.TranscriptEntries.Where(t => t.AgentSessionId == h.SessionId)
+            .ExecuteUpdateAsync(u => u
+                .SetProperty(t => t.Timestamp, aged)
+                .SetProperty(t => t.CreatedAt, aged));
     }
 
     private static Task WaitForLaunchAsync(BridgeQueueHarness h) =>
