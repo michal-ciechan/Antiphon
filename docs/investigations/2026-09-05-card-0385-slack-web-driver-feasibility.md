@@ -1,16 +1,23 @@
 # CARD-0385 — Slack Web Driver feasibility
 
-**Date:** 2026-09-05 (task `dbf28fc6`; CDP-sniff follow-up `0c93073f`)
+**Date:** 2026-09-05 (task `dbf28fc6`; CDP-sniff follow-up `0c93073f`; bounded
+per-thread-tab follow-up `b13d0092`)
 **Card:** CARD-0385 (`6da0d468-327f-4ed7-95a0-509cb1a24d58`)
-**Status:** investigation complete, including the CDP-sniff follow-up in §6. No app
-code was changed. No live Slack session credential was extracted or persisted.
+**Status:** investigation complete, including the CDP-sniff follow-up in §6 and
+the bounded per-thread-tab follow-up in §7. No app code was changed. No live
+Slack session credential was extracted or persisted. No Slack tab was CDP-attached.
 **Verified against:** worktree `feat/card-task-dbf28fc6` (original) and
-`feat/card-task-0c93073f` (follow-up), `docs/external-site-operations.md`,
-`docs/telegram.md`, `docs/slack-bot-ops.md`, `src/Antiphon.Messaging.Slack`, Slack's current
+`feat/card-task-0c93073f` (follow-up); this pass on `master` at the `b13d0092`
+dispatch; `docs/external-site-operations.md`, `docs/telegram.md`,
+`docs/slack-bot-ops.md`, `src/Antiphon.Messaging.Slack`, Slack's current
 User Terms / API Terms / Developer Policy / Salesforce AUP, the Chrome DevTools Protocol
-Network domain (stable 1-3 and tot, retrieved 2026-09-05), Slack's live connection-help
-page, and the public unofficial-client corpus cited below. Nothing here was confirmed by
-talking to a live Slack session.
+Network domain (stable 1-3 and tot) plus DOM 1-3 and Page tot (retrieved 2026-09-05),
+Slack's live connection-help page, the public unofficial-client corpus cited below,
+`C:\src\browser-harness` (`daemon.py`, `helpers.py`, `SKILL.md`,
+`interaction-skills/tabs.md`, `tests/unit/test_daemon.py`), and
+`C:\src\claudebot\launch-edge-cdp.ps1`. Live CDP target *list* only:
+`GET http://127.0.0.1:9222/json` (URLs/titles; no attach). Nothing here was
+confirmed by talking to a live Slack session.
 
 ---
 
@@ -31,6 +38,12 @@ plaintext JSON over `wss-primary.slack.com` — but it is still reverse-engineer
 unpublished first-party protocol, still the wrong process for a gateway, and still ends at
 DOM-automation replies (occasional use) or the token you already saw in the handshake
 (standing use).
+
+The bounded per-thread-tab follow-up (§7) does not change it either. One already-logged-in
+tab per watched thread is a *lamp*, not a gateway: mechanically a plausible attended ops
+recipe, ToS-cleaner than token-pair, and **not** the same object as a human leaving Slack
+open in a few tabs. Do not build a standing watcher or a bounded prototype; the existing
+CDP lane cannot host N Slack SPAs 24/7 without new infra.
 
 ---
 
@@ -597,6 +610,305 @@ the messaging gateway, and it does not stay token-free if anyone asks it to be r
 
 ---
 
+## 7. Follow-up: bounded per-thread tabs (task `b13d0092`)
+
+New question from the operator after the card was closed as "do not build" and then
+reopened: instead of a 24/7 gateway across the whole workspace, open **one** already-logged-in
+browser tab per *watched Slack thread* (a handful, not the inbox) via this repo's existing
+shared CDP lane, observe only that tab — DOM mutation/read, or `Network.webSocketFrameReceived`
+on that tab's CDP target — and signal Antiphon to go check. Never extract, persist, or reuse
+the `xoxc`/`xoxd` pair outside the live browser context.
+
+This section does not redo §1–§6. Token-pair remains a Developer Policy / API Terms "no."
+A full-workspace CDP gateway remains the wrong shape. The question is whether *bounding
+the tabs* changes either verdict.
+
+### Verdict for this angle
+
+**Still do not build as a standing Antiphon service or channel. Do not build a bounded
+prototype either.** On its own terms the idea is a *lamp* (nudge when this thread moved),
+not `IChannelAdapter`. A DOM-only lamp on two or three tabs the operator already has open
+is mechanically plausible as an attended ops recipe in the existing lane. Bounding the
+tabs does **not** make unattended CDP observation the same object as a human leaving Slack
+open, does not change the ToS category enough to ship, and cannot be hosted 24/7 by the
+browser-harness tooling this repo already has.
+
+### 7.1 ToS: does bounding the tabs change the analysis?
+
+Three comparisons, because they are different questions.
+
+**Vs. the token-pair unofficial API client (§5.1).** Yes, still meaningfully better, for
+the same reasons as §6.4: no independent `slack.com/api` calls, the `d` cookie stays in
+the real browser, no second User-Agent/IP replaying it. The number of threads is irrelevant
+to that comparison; staying inside the official client is what matters.
+
+**Vs. a 24/7 full-workspace CDP gateway / full Flannel sniffer (§4, §6).** Yes, smaller.
+Less Customer Data in scope, less resemblance to an inbox replacement, closer to the
+existing "occasional real-site ops" convention in `docs/external-site-operations.md`. A
+detector that only fires "this thread moved" and then a human (or an attended agent) looks
+at the already-open tab is the product §6.5 already called coherent as occasional attended
+ops.
+
+**Vs. a human leaving Slack open in a few browser tabs.** No. That is the analogy the
+question asked for, and it does not hold.
+
+A human with three Slack tabs open is using Slack's official client the way Slack designed
+it. "Open in new window" is a first-party desktop feature
+([Open separate windows in Slack](https://slack.com/help/articles/4403608802963-Open-separate-windows-in-Slack)).
+The bytes that move are Slack's own JS talking to Flannel. Presence heartbeats, connection
+tests, and session-duration rules all assume this.
+
+A standing CDP subscriber on those same tabs is a different actor:
+
+1. **Purpose.** The output is a signal into Antiphon — automated ingest of Customer Data
+   (User Terms: the employer Customer owns it). Slack's May–October 2025 API ToS updates
+   targeted "unsanctioned data scraping." Scoping the scrape to three threads does not
+   stop it being a scrape. Volume is a rate-limit concern; category is a policy concern.
+2. **Unattended duration.** A human glancing at DevTools' Network/Elements panel is the
+   same *protocol* (`Network.enable` / `DOM.enable` is what DevTools itself uses). A
+   process that holds those domains open 24/7 and forwards events is not a human with
+   DevTools open. Slack policy talks about Applications and automated access, not about
+   whether you used the DOM or the socket.
+3. **WS sniff is still unpublished-protocol reverse engineering**, whether the tab's URL
+   is a thread permalink or the workspace root. Developer Policy still forbids using
+   unpublished APIs and reverse-engineering the Slack API. §6.4's grey bit ("is a CDP
+   sniffer an Application that uses the Slack APIs?") is unchanged by tab count.
+4. **DOM-only is the cleanest variant of this angle**, and the only one that actually
+   resembles "watching the UI." Salesforce AUP 6.A.XXIV still does not ban RPA on your
+   own tab. The employer overlay (unsanctioned automation of workplace chat) is still a
+   second, independent "no" on a Customer workspace.
+5. **N full Slack SPAs is not quieter than one.** A thread permalink
+   (`https://<workspace>.slack.com/archives/<id>/p<ts>?thread_ts=…&cid=…`,
+   [`chat.getPermalink`](https://docs.slack.dev/reference/methods/chat.getPermalink/))
+   still boots the full web client, not a lightweight thread widget. If each tab opens
+   its own Flannel socket (the usual web-chat default; Slack-specific SharedWorker sharing
+   was **not** confirmed — no live attach this pass), N tabs is N `client.userBoot`s and
+   N sockets from one user. That is *more* visible than one tab, not less. Flannel's 2017
+   pub/sub plan was explicitly to stop idle clients receiving every team event; slackcli
+   (docs 2026-08-31) still reads workspace-wide `message` events off the first-party
+   gateway. A "thread tab" does not, on current public evidence, give you a thread-scoped
+   socket.
+
+Honest ranking, lowest to highest legal/policy heat, inserting this angle into §6.4's
+list:
+
+1. Shipped bot / official `xoxp` (supported).
+2. Occasional, operator-attended CDP clicks (existing lane).
+3. **Bounded per-thread tabs, DOM-mutation lamp only, no `Network.enable`, no persist,
+   operator (not a 24/7 agent) goes to look** — closest to (2); still unattended
+   monitoring if the process is standing.
+4. CDP-sniff detection only (§6.4 item 3) — unpublished protocol, and possibly
+   workspace-wide frames even on a thread URL.
+5. Bounded-tab WS sniff + "signal Antiphon to go check" as a standing service — this
+   follow-up's proposal used as a product.
+6. Full CDP-sniff + DOM-reply gateway (§6).
+7. Token-pair unofficial API client.
+
+(3) is the only version of this angle that is ToS-distinct from §6 in a way that matters.
+It is still not "just like leaving tabs open," and it is not something this repo should
+ship unattended on an employer workspace. If the workspace is one the operator admins
+(personal / family), the employer overlay drops and (3) becomes an attended recipe in
+the existing lane — which is already allowed, and does not need a prototype.
+
+### 7.2 Mechanics: can CDP notice a new message in seconds without looking like scraping?
+
+Two detectors. They are not equivalent, and only one is actually bounded to the thread.
+
+**A. DOM mutation / read — thread-scoped, renderer-dependent**
+
+CDP can observe DOM changes without polling Slack:
+
+- `DOM.enable` + `DOM.getDocument` implicitly starts DOM events.
+  `DOM.childNodeInserted` / `childNodeRemoved` / `characterDataModified` fire for nodes
+  the client has already requested
+  ([CDP DOM 1-3](https://chromedevtools.github.io/devtools-protocol/1-3/DOM/#event-childNodeInserted):
+  "Backend keeps track of the nodes that were sent to the client and never sends the
+  same node twice").
+- More robust for a React SPA: inject a `MutationObserver` via `Runtime.evaluate` or
+  `Page.addScriptToEvaluateOnNewDocument`
+  ([CDP Page tot](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-addScriptToEvaluateOnNewDocument))
+  in an isolated world, and have it signal the CDP client. That is event-driven. It does
+  not hit Slack's HTTP/WS as a scraper. Local `drain_events()` polling of the CDP daemon
+  is not Slack traffic.
+
+Why this can work in seconds on a *visible, unfrozen* thread tab: Slack's web client
+already renders new thread replies into that pane; the observer sees the `childList`
+mutation when the SPA commits it.
+
+Why it is not a reliable 24/7 detector:
+
+- Slack web is a virtualized React list with hashed class names (§4). The observer has
+  to watch a region, not a stable CSS selector. `DOM.documentUpdated` invalidates all
+  node ids on document replacement.
+- **Hidden tabs.** browser-harness `SKILL.md`: `document.visibilityState === 'hidden'`
+  means Chrome throttled the page. Chrome 57+ throttles background timers; WebSockets
+  are exempt from the *timer-budget* kill
+  ([Background tabs in Chrome 57](https://developer.chrome.com/blog/background_tabs/)),
+  but the SPA may not *paint* new messages into a virtualized list while hidden.
+  `MutationObserver` only fires if the renderer actually mutates the DOM.
+- **Freeze.** Chrome 133+ (February 2025) freezes CPU-intensive hidden tabs when Energy
+  Saver is on: event handlers including network/sensor, timers, and promise resolvers
+  are suspended
+  ([Freezing on Energy Saver](https://developer.chrome.com/blog/freezing-on-energy-saver)).
+  A frozen tab will not run the observer. CDP `Page.setWebLifecycleState` can force
+  `active` / `frozen` (experimental,
+  [Page tot](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-setWebLifecycleState))
+  — using it to keep Slack "active" while hidden is itself a tell and is not a
+  human-like tab.
+- **Discard.** Memory Saver unloads the tab; DOM is gone; WS is gone; next look is a
+  full reload. `document.wasDiscarded` is only visible after that reload.
+- Catch-up: if the tab was frozen or discarded, the SPA heals itself via HTTP when it
+  next runs. A DOM observer that was dead during the gap has no record. Same "no
+  history" hole as §6.3, on the renderer side.
+
+Latency when it works: sub-second to a few seconds after Slack's own UI commit — inside
+"seconds, not minutes." Latency when the tab is hidden, frozen, or discarded: unbounded
+until the tab is foregrounded again.
+
+**B. `Network.webSocketFrameReceived` on that tab's CDP target — not thread-scoped**
+
+Capability is unchanged from §6.1: first-class CDP, plaintext JSON on
+`wss-primary.slack.com`, `type: "message"` is a coarse detector.
+
+What bounding the tab does **not** do:
+
+- It does not give you a thread-only socket. The first-party gateway slackcli still
+  consumes is workspace-scoped. Filtering `thread_ts` / `channel` in the sniffer is
+  *our* filter after seeing every frame — i.e. we still parsed the unpublished stream.
+- It may not even live on the page target. §6.1: the socket may be on a worker; a CDP
+  client must `Target.setAutoAttach` and `Network.enable` on that session too.
+  browser-harness does not call `Target.setAutoAttach` (only `Target.attachToTarget`,
+  `daemon.py` / `helpers.py`).
+- Events only after `Network.enable`. Attach to an already-open tab and you see nothing
+  until reconnect or reload.
+- The handshake URL still contains `token=xoxc-…` and the cookie. A "purely passive"
+  subscriber still *sees* the pair. Not persisting it remains a coding discipline.
+
+Latency: seconds, when the socket is up and the sniffer is attached. Not polling Slack.
+The scraping-look problem for WS is not request rate; it is that we are a third-party
+decoder of Flannel.
+
+**Which detector matches the brief?** The brief wants "observe only that tab" and
+"scoped to just that page's own connection." DOM mutation is the one that is actually
+scoped to the thread the tab is showing. WS sniff on that tab is a workspace sniffer
+that happens to be attached to a thread-shaped URL.
+
+Polling `js("messagePane.innerText")` every 500 ms would look like scraping *and* would
+trip freeze / CPU-intensive heuristics. Event-driven DOM or WS is the only shape that
+satisfies "seconds without aggressive polling."
+
+### 7.3 Keeping N tabs open long-term with this repo's browser-harness
+
+The existing lane is **occasional, operator-attended, one-current-tab**. It is not a
+standing N-tab watcher. Evidence from the tooling, not from a design:
+
+| Need | What the harness actually is |
+|---|---|
+| Long-lived attach to N targets | One daemon, one `self.session` / `self.target_id` (`C:\src\browser-harness\src\browser_harness\daemon.py` around the `Daemon` fields and `attach_first_page`). `switch_tab` replaces the current session. Named daemons get one dedicated tab, not N. |
+| Event stream from background tabs | Global `deque(maxlen=500)` (`BUF = 500` in `daemon.py`). Helpers already document that a previously-attached background tab keeps emitting `Network.*` into this buffer and poisons `wait_for_network_idle` (`helpers.py`). One Slack Flannel socket will rotate that buffer in well under a minute. |
+| DOM-only (no credential in events) | Every attach / `set_session` runs `_enable_default_domains` = `Page`, `DOM`, `Runtime`, **`Network.enable`** (`daemon.py`; regression-tested in `tests/unit/test_daemon.py`). There is no "don't enable Network" switch. Enabling Network is how the handshake URL with `xoxc` lands in `drain_events()`. |
+| Don't deface the tab | `_mark_tab()` prepends a horse emoji to `document.title` on attach and on every `Page.loadEventFired`. |
+| Shared lane | `docs/external-site-operations.md`: dedicated Edge profile `C:\Users\lndco\edge-cdp`, port 9222, "never open a second, uncoordinated CDP browser." `C:\src\claudebot\launch-edge-cdp.ps1` without `-KeepTabs` / `-EnsureOnly` **kills every `msedge` process** and relaunches. |
+| Visible vs hidden | `switch_tab` does not change Chrome's visible tab (`interaction-skills/tabs.md`). Screenshots and CDP input work on background tabs; pages that pause while `visibilityState=hidden` need `activate_tab` or `Emulation.setFocusEmulationEnabled`. Slack's SPA is in the latter class. |
+| Worker sockets | No `Target.setAutoAttach`. |
+| Standing process | `browser-harness` is a CLI that execs a script and exits. The daemon holds the browser WS, not a user-supplied watcher loop. |
+
+Live check this pass (2026-09-05, `GET http://127.0.0.1:9222/json` only — no target
+attach, no cookies, no frames): the shared lane is up. Open page targets were a HiBob
+login tab and the Links dashboard, plus extension backgrounds. **No Slack tab.** The
+profile is already doing other real-site work. Pinning 3–5 Slack SPAs here would fight
+that work and would be wiped by the next un-flagged `launch-edge-cdp.ps1`.
+
+What a standing watcher would actually have to do (mechanism, not a recommendation):
+
+1. Persist the list of **thread permalinks** (public URL shape, not credentials).
+2. Own a CDP client that is *not* the harness CLI: `Target.attachToTarget` per tab, keep
+   N sessions, do **not** `Network.enable` if the detector is DOM-only,
+   `Target.setAutoAttach` if the detector is WS.
+3. Detect death: `Target.targetDestroyed` / `Target.detachedFromTarget`; URL moving to a
+   sign-in / SSO host; `Page.lifecycleEvent` after `Page.setLifecycleEventsEnabled`;
+   `Runtime.evaluate` of `document.visibilityState` / login copy. Session duration can
+   also kill the cookies out from under the tabs (`admin.users.session.setSettings`,
+   including `desktop_app_browser_quit` — §2).
+4. After browser restart: `launch-edge-cdp.ps1 -EnsureOnly` brings the profile back;
+   cookies may survive; **tabs do not**, unless Edge "continue where you left off" is
+   on. Re-`createTarget` and navigate each permalink. If SSO is needed, stop and ask
+   (existing CDP login-wall rule).
+5. After Memory Saver discard: the target is a new renderer; re-inject the observer;
+   `Network.enable` again sees no frames until the SPA reconnects.
+6. Stay out of the way of every other tool on :9222, or use a **dedicated profile** —
+   which §4 already called new infra, not reuse.
+
+None of that is in the current harness. Reusing "the same pattern already used for other
+real external sites" covers *opening* a Slack tab the way we open `api.slack.com`. It
+does not cover keeping N of them observed unattended.
+
+### 7.4 Practical bound
+
+Constraint is memory and freeze/discard, not a CDP connection cap. Chromium will attach
+to tens of page targets; Slack will not.
+
+- Slack web memory: Slack Engineering (2017, [Reducing Slack's memory footprint](https://slack.engineering/reducing-slacks-memory-footprint/))
+  ~130 MB p10 to ~960 MB p99 **per team / webview**. A 2026 public RAM benchmark (Zovo)
+  put Slack around **190 MB initial / 340 MB active per tab**. Desktop Electron is
+  commonly 1–2 GB; that is a different process, but it is the same SPA.
+- 3 watched-thread tabs ≈ 0.6–1+ GB in the shared Edge profile that also runs
+  HiBob / Outlook / other ops, plus the rest of the operator's session.
+- Each tab is a full client boot, likely its own Flannel socket, plus presence
+  heartbeats (browser tabs count as a Slack client). N connections from one user is a
+  usage-pattern tell if anyone looks; it is also how a human with N windows looks, so
+  it is not dispositive.
+- Chrome Memory Saver will discard the least-recently-viewed Slack tabs first — they
+  are heavy and hidden. Energy Saver freeze hits CPU-intensive hidden tabs. Either
+  event blinds a DOM observer and kills catch-up.
+- Harness event buffer (500) is unusable as the WS ingest path at N≥1.
+
+**Reasonable bound: 2, at most 3, watched-thread tabs**, and only if they stay in a
+window that is not a discard candidate (pinned, or `slack.com` on Memory Saver's
+"always keep these sites active" list, or actually visible). At 4–5 this is its own
+reliability project (dedicated profile, freeze/discard policy, standing CDP client,
+login-wall runbook). Above that it is the 24/7 headed gateway §4 already rejected,
+just with more tabs.
+
+Detection risk from Slack-server, DOM-only, no extra API calls: low and similar to a
+power user with a few tabs. Detection risk from employer policy / "why is there a
+24/7 observer on our chat": unchanged by N.
+
+### 7.5 What this pass did and did not do
+
+Did:
+
+- Read CARD-0385 history (revision 6 reopen reason is this angle) and §1–§6 in full.
+- Read `docs/external-site-operations.md`, `C:\src\browser-harness\SKILL.md`,
+  `interaction-skills/tabs.md` / `connection.md`, `daemon.py`, `helpers.py`,
+  `launch-edge-cdp.ps1`, `tests/unit/test_daemon.py`.
+- Retrieved current CDP DOM 1-3 and Page tot (`childNodeInserted`,
+  `addScriptToEvaluateOnNewDocument`, `setWebLifecycleState`).
+- Listed live CDP targets on :9222 by HTTP `/json` (URLs/titles only).
+
+Did not:
+
+- Attach to any Slack tab.
+- Enable Network on a Slack target or drain frames.
+- Read cookies, localStorage, or handshake URLs.
+- Open Slack, inject a MutationObserver, or measure freeze/discard on this machine.
+- Confirm whether this operator's 2026 Slack web client shares one socket across tabs
+  via SharedWorker (public sources do not settle it; a live `chrome://inspect/#workers`
+  on a logged-in Slack tab would).
+
+Uncertainties that would change *mechanics*, not the ToS verdict:
+
+- SharedWorker vs per-tab Flannel (affects "scoped to that page's own connection" and
+  N-socket load).
+- Whether 2026 Flannel message fanout is per-view pub/sub (2017 plan) or still
+  workspace-wide (slackcli 2026). Affects whether WS sniff can be thread-scoped.
+- Whether this Edge profile's Memory Saver / Energy Saver would actually freeze a
+  hidden Slack tab overnight. Measurable only with a live tab.
+- Target workspace: employer Customer vs operator-admin. Employer overlay is the
+  difference between "do not" and "attended recipe in the existing lane."
+
+---
+
 ## What was not done
 
 - No implementation.
@@ -605,20 +917,27 @@ the messaging gateway, and it does not stay token-free if anyone asks it to be r
 - No browser automation of slack.com for this card.
 - No CDP attach to a live Slack tab, and no capture of real WebSocket frames. Frame shape
   in §6 is from Slack's public RTM docs plus current unofficial clients of the same
-  first-party gateway, not from this operator's session.
+  first-party gateway, not from this operator's session. §7 listed `:9222` target URLs
+  via HTTP `/json` only.
+- Not done, noted: a dedicated long-lived CDP client that attaches to N targets without
+  `Network.enable` and injects an isolated-world MutationObserver, persisting only
+  permalinks, would be the shape of a lamp if this were ever built.
 
 ---
 
 ## Decision this card is for
 
-The investigation's recommendation is **do not build** — including the CDP-sniff hybrid.
+The investigation's recommendation is **do not build** — including the CDP-sniff hybrid
+(§6) and the bounded per-thread-tab lamp as a standing service or prototype (§7).
 If that is accepted, the card can close (or move to a "won't: use existing Slack bot /
 consider official `xoxp` if user-identity is required"). If it is rejected, the only
 unofficial implementation that can work as a standing channel is still token-pair, and
 that needs an explicit accept of: Developer Policy violation, unpublished APIs, cookie
 rotation, Slack's hijack-invalidation pipeline, and employer-policy risk on any workspace
 the operator does not own. CDP-sniff does not offer a third implementation path that meets
-`IChannelAdapter` without becoming token-pair or remaining a headed ops tool.
+`IChannelAdapter` without becoming token-pair or remaining a headed ops tool. Bounding
+to a handful of thread tabs does not offer a fourth path either: it is an attended lamp
+in the existing lane, or new infra that is still automated ingest of Customer Data.
 
 Questions that change the recommendation only at the edges:
 
@@ -629,7 +948,8 @@ Questions that change the recommendation only at the edges:
 3. Must outbound messages appear as the human user, or is the existing bot identity acceptable?
 4. Is the actual want a 24/7 gateway, or an occasional "nudge me when this DM lands"? The
    latter can already be a headed CDP recipe in the existing lane; it is not CARD-0385 as
-   written.
+   written. §7 is that question asked with an explicit bound of "a handful of thread tabs."
+   Same answer: attended recipe, not a product.
 
 ---
 
@@ -657,11 +977,19 @@ Questions that change the recommendation only at the edges:
 - Slack Engineering, [Traffic 101](https://slack.engineering/traffic-101-packets-mostly-flow/) (2023) — `envoy-wss`, Gatewayserver vs Applink, Flannel.
 - Slack Engineering, [Flannel](https://slack.engineering/flannel-an-application-level-edge-cache-to-make-slack-scale/).
 
-**Chrome DevTools Protocol (follow-up §6)**
+**Chrome DevTools Protocol (follow-up §6, §7)**
 
 - [Network domain, stable 1-3](https://chromedevtools.github.io/devtools-protocol/1-3/Network/) — `webSocketFrameReceived` / `webSocketFrameSent` / `WebSocketFrame`.
 - [Network domain, tot](https://chromedevtools.github.io/devtools-protocol/tot/Network/#event-webSocketFrameReceived).
 - Chrome for Developers, [Network features reference — WebSocket messages](https://developer.chrome.com/docs/devtools/network/reference).
+- [DOM domain, stable 1-3](https://chromedevtools.github.io/devtools-protocol/1-3/DOM/#event-childNodeInserted) — `childNodeInserted` / `getDocument` / "events only for nodes known to the client."
+- [Page domain, tot](https://chromedevtools.github.io/devtools-protocol/tot/Page/) — `addScriptToEvaluateOnNewDocument`, experimental `setWebLifecycleState` (`frozen` / `active`).
+- Chrome for Developers, [Background tabs in Chrome 57](https://developer.chrome.com/blog/background_tabs/) — timer throttling; WebSocket exemption from the timer-budget kill.
+- Chrome for Developers, [Freezing on Energy Saver](https://developer.chrome.com/blog/freezing-on-energy-saver) (20 Jan 2025, Chrome 133) — hidden CPU-intensive tabs frozen; JS event handlers including network do not run.
+- [chat.getPermalink](https://docs.slack.dev/reference/methods/chat.getPermalink/) — thread permalink shape `…/archives/…/p…?thread_ts=…&cid=…`.
+- Slack Help, [Open separate windows in Slack](https://slack.com/help/articles/4403608802963-Open-separate-windows-in-Slack) — first-party "open thread in new window" is the desktop app, not a lightweight web widget.
+- Slack Engineering, [Reducing Slack's memory footprint](https://slack.engineering/reducing-slacks-memory-footprint/) (2017) — ~130–960 MB per team webview.
+- Zovo, [RAM Benchmark: Website Memory Usage](https://zovo.one/research/ram-benchmark) (2026) — Slack ~190 MB initial / ~340 MB active per tab.
 
 **Unofficial clients / write-ups (mechanism)**
 
@@ -681,3 +1009,18 @@ Questions that change the recommendation only at the edges:
   `docs/messaging/build-your-own-gateway.md`,
   `src/Antiphon.Messaging.Slack/SlackChannelAdapter.cs`,
   `src/Antiphon.Messaging/IChannelAdapter.cs`.
+
+**browser-harness / shared CDP lane (follow-up §7)**
+
+- `C:\src\browser-harness\src\browser_harness\daemon.py` — one session; `BUF = 500`;
+  `_enable_default_domains` always includes `Network.enable`.
+- `C:\src\browser-harness\src\browser_harness\helpers.py` — `switch_tab` /
+  `list_tabs` / `_mark_tab`; `wait_for_network_idle` notes background-tab event leak.
+- `C:\src\browser-harness\tests\unit\test_daemon.py` — `set_session` must enable
+  Page/DOM/Runtime/Network.
+- `C:\src\browser-harness\SKILL.md`, `interaction-skills/tabs.md`,
+  `interaction-skills/connection.md`.
+- `C:\src\claudebot\launch-edge-cdp.ps1` — kills every `msedge` unless
+  `-KeepTabs` / `-EnsureOnly`.
+- Live `GET http://127.0.0.1:9222/json` on 2026-09-05: shared lane up; HiBob + Links
+  page targets; no Slack tab.
