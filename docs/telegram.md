@@ -19,7 +19,8 @@ third-party client.
 The chat sees the turn that answers an inbound message, and the agent's reply to an Antiphon
 note — a `[task … done|failed|blocked|canceled]` report, a `[check …]` note, or a scheduled
 prompt — delivered as a follow-up to the most recent conversation, text and any `[[attach:]]`
-files, unless the whole reply is exactly `NO_REPLY`. A bootstrap, restart or compaction note is
+files, unless the whole reply is exactly `NO_REPLY`. Follow-up matching is by task id (and the
+note's first line), so a Grok transcript that joined the header onto the body still delivers. A bootstrap, restart or compaction note is
 never delivered unless it carries `[[attach:]]`. Server-composed pings (blocked-task, decision,
 and `ChannelReplyLost` incident pages) also arrive through the same outbound topic when
 `Digest:Enabled` and the catalog row is `DigestEnabled`. Catalog `lastMessageAt` is the last
