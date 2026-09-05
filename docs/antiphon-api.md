@@ -163,6 +163,7 @@ GET    /api/diagnoses/stats                  kind × outcome counts, p50/p90 wai
 GET    /api/boards  |  /api/boards/{id}  |  /api/boards/{id}/columns
 POST   /api/boards            DELETE /api/boards/{id}
 POST   /api/boards/{id}/cards                create a card on this board (importance/urgency names, optional dueAt; a `priority` field is 400)
+POST   /api/boards/{id}/card-order           bulk relative order (listed cards first per rank cell; required reason; skippedHumanRated when Human-rated axes are left alone)
 GET    /api/boards/{id}/workflow   PUT /api/boards/{id}/workflow    the board's workflow YAML
 POST   /api/boards/{id}/archive | /unarchive  hide/restore a board (reason body; not a delete)
 POST   /api/boards/{id}/card-files/sync      one-way card → docs/cards/<slug>/  (?dryRun=; CardFileSyncBoardResult; 409 card_file_sync_disabled | card_file_sync_running)

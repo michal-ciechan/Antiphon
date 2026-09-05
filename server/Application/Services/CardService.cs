@@ -667,6 +667,154 @@ public sealed class CardService : IScheduledCardActions
     }
 
     /// <summary>
+    /// Bulk order for a board (CARD-0098 S4). Listed cards come first in each rank cell, in
+    /// list order; unlisted cards keep their existing relative order. Axis changes on a
+    /// Human-rated card are skipped unless <see cref="ReorderBoardCardsRequest.OverrideHumanRatings"/>.
+    /// </summary>
+    public async Task<ReorderBoardCardsResult> ReorderBoardCardsAsync(
+        Guid boardId, ReorderBoardCardsRequest request, CancellationToken ct)
+    {
+        ValidateReorderBoardRequest(request);
+
+        var boardExists = await _db.Boards.AnyAsync(b => b.Id == boardId, ct);
+        if (!boardExists)
+            throw new NotFoundException(nameof(Board), boardId);
+
+        var now = UtcNow();
+        var scope = new CardScopeContext(boardId, null, null, null);
+        var resolved = new List<(ReorderBoardCardEntry Entry, Guid Id)>();
+        foreach (var entry in request.Cards)
+        {
+            if (string.IsNullOrWhiteSpace(entry.Id))
+            {
+                throw new ValidationException(
+                    nameof(request.Cards),
+                    "Each order entry needs a card id.");
+            }
+
+            Guid cardId;
+            try
+            {
+                cardId = await ResolveCardIdAsync(entry.Id, scope, ct);
+            }
+            catch (NotFoundException ex)
+            {
+                throw new ValidationException(nameof(request.Cards), ex.Message);
+            }
+
+            resolved.Add((entry, cardId));
+        }
+
+        await using var transaction = await _db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
+
+        var boardCards = await _db.Cards
+            .Where(c => c.BoardId == boardId && c.ArchivedAt == null)
+            .ToListAsync(ct);
+        var byId = boardCards.ToDictionary(c => c.Id);
+
+        var listed = new List<Card>();
+        var seen = new HashSet<Guid>();
+        foreach (var (entry, cardId) in resolved)
+        {
+            if (!byId.TryGetValue(cardId, out var card))
+            {
+                throw new ValidationException(
+                    nameof(request.Cards),
+                    $"'{entry.Id}' is not a live card on this board.");
+            }
+
+            if (!seen.Add(cardId))
+                continue;
+            listed.Add(card);
+        }
+
+        var skipped = new List<SkippedHumanRatedDto>();
+        var entryById = resolved.ToDictionary(r => r.Id, r => r.Entry);
+        var willChangeAxes = new HashSet<Guid>();
+        foreach (var card in listed)
+        {
+            var entry = entryById[card.Id];
+            var wantsAxes = entry.Importance is not null || entry.Urgency is not null;
+            if (!wantsAxes)
+                continue;
+
+            if (card.ImportanceProvenance == CardImportanceProvenance.Human
+                && !request.OverrideHumanRatings)
+            {
+                skipped.Add(new SkippedHumanRatedDto(card.Id, card.Identifier, card.Importance));
+                continue;
+            }
+
+            willChangeAxes.Add(card.Id);
+        }
+
+        var beforeCells = listed
+            .Select(c => (c.BoardColumnId, Rank: CardRanking.Rank(c, now)))
+            .ToList();
+        var reason = request.Reason.Trim();
+        foreach (var card in listed)
+        {
+            CardRevisionLog.AppendReorder(
+                card,
+                $"{reason} (board order)",
+                request.EditedBy,
+                now,
+                willChangeAxes.Contains(card.Id));
+            if (willChangeAxes.Contains(card.Id))
+            {
+                var entry = entryById[card.Id];
+                ApplyPlacementAxes(
+                    card,
+                    entry.Importance ?? card.Importance,
+                    entry.Urgency ?? card.Urgency,
+                    now);
+            }
+
+            card.UpdatedAt = now;
+            card.ConcurrencyToken = Guid.NewGuid();
+        }
+
+        var afterCells = listed
+            .Select(c => (c.BoardColumnId, Rank: CardRanking.Rank(c, now)))
+            .ToList();
+        var touched = beforeCells.Concat(afterCells).Distinct().ToList();
+        var listedSet = listed.Select(c => c.Id).ToHashSet();
+
+        foreach (var (columnId, rank) in touched)
+        {
+            var cell = boardCards
+                .Where(c => c.BoardColumnId == columnId && CardRanking.Rank(c, now) == rank)
+                .OrderBy(c => CardRanking.OrderKey(c, now))
+                .ToList();
+            var listedInCell = listed
+                .Where(c => c.BoardColumnId == columnId && CardRanking.Rank(c, now) == rank)
+                .ToList();
+            var unlisted = cell.Where(c => !listedSet.Contains(c.Id)).ToList();
+            RenumberCell([.. listedInCell, .. unlisted], now);
+        }
+
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            throw new ConflictException("Board card order was modified by another operation.", ex);
+        }
+
+        await transaction.CommitAsync(ct);
+
+        foreach (var card in listed)
+            await _eventBus.PublishToAllAsync("CardChanged", new { boardId, cardId = card.Id }, ct);
+
+        var dtos = new List<CardDto>();
+        foreach (var card in listed)
+            dtos.Add(await GetByIdAsync(card.Id, ct));
+
+        return new ReorderBoardCardsResult(dtos, skipped);
+    }
+
+    /// <summary>
     /// Write a diagnose-seat label pair onto a card (CARD-0352 D4). There is no caller token —
     /// the writer handles its own conflict. Non-forced keeps a family a human already set;
     /// forced replaces diagnosis-prefixed labels only. Topic tags are never touched.
@@ -1500,6 +1648,19 @@ public sealed class CardService : IScheduledCardActions
     {
         var errors = new Dictionary<string, string[]>();
         RequireWithinLimit(errors, nameof(request.Reason), request.Reason?.Trim(), MaxReasonLength);
+        if (errors.Count > 0)
+            throw new ValidationException(errors);
+    }
+
+    private static void ValidateReorderBoardRequest(ReorderBoardCardsRequest request)
+    {
+        var errors = new Dictionary<string, string[]>();
+        if (string.IsNullOrWhiteSpace(request.Reason))
+            errors[nameof(request.Reason)] = ["A reason is required for a bulk reorder."];
+        RequireWithinLimit(errors, nameof(request.Reason), request.Reason?.Trim(), MaxReasonLength);
+        RequireWithinLimit(errors, nameof(request.EditedBy), request.EditedBy?.Trim(), MaxActorLength);
+        if (request.Cards is null || request.Cards.Count == 0)
+            errors[nameof(request.Cards)] = ["At least one card is required."];
         if (errors.Count > 0)
             throw new ValidationException(errors);
     }
