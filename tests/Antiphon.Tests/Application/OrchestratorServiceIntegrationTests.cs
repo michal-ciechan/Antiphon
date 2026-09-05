@@ -1059,7 +1059,7 @@ public class OrchestratorServiceIntegrationTests
             var state = await harness.Orchestrator.GetStateAsync(CancellationToken.None);
             var result = await harness.Orchestrator.PollTickAsync(CancellationToken.None);
 
-            state.RetryQueueLength.ShouldBe(0);
+            state.RetryQueue.ShouldNotContain(r => r.CardId == graph.Card.Id);
             result.Dispatched.ShouldBe(0);
             result.EligibleCards.ShouldBe(0);
         }

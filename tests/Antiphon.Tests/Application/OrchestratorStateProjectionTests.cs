@@ -18,8 +18,9 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-0092 S1: the /orchestrator Running Sessions projection. Isolated schema per test so
-/// assertions name the rows they created. Read-only — not <c>[NotInParallel]</c>.
+/// CARD-0092 S1 + CARD-0095 S3: the /orchestrator Running Sessions, totals, and retry-queue
+/// projection. Isolated schema per test so assertions name the rows they created.
+/// Read-only — not <c>[NotInParallel]</c>.
 /// </summary>
 [Category("Integration")]
 public class OrchestratorStateProjectionTests
@@ -239,6 +240,152 @@ public class OrchestratorStateProjectionTests
         (after.RunningCardSessions + after.RunningDelegateSessions).ShouldBe(after.RunningSessions);
     }
 
+    [Test]
+    public async Task mixed_ledgers_sum_task_rows_directly_and_keep_settled_and_specialist_spend()
+    {
+        await using var world = await World.CreateAsync();
+        var card = await world.SeedCardAsync("Usage card");
+        var cardSession = await world.SeedSessionAsync(card.Id);
+        await world.SeedRunAttemptAsync(cardSession.Id, card.Id, tokensIn: 100, tokensOut: 10, costUsd: 1.00m);
+
+        var openSession = await world.SeedSessionAsync(cardId: null);
+        await world.SeedTaskAsync(
+            openSession.Id, cardId: null, AgentTaskStatus.Working,
+            tokensIn: 20, tokensOut: 2, costUsd: 0.20m);
+        await world.SeedTaskAsync(
+            sessionId: null, cardId: null, AgentTaskStatus.Blocked,
+            tokensIn: 30, tokensOut: 3, costUsd: 0.30m, title: "Blocked spend");
+        await world.SeedTaskAsync(
+            sessionId: null, cardId: null, AgentTaskStatus.Succeeded,
+            tokensIn: 40, tokensOut: 4, costUsd: 0.40m, title: "Settled spend");
+        await world.SeedTaskAsync(
+            sessionId: null, cardId: null, AgentTaskStatus.Succeeded,
+            role: AgentTaskRole.Check,
+            tokensIn: 5, tokensOut: 1, costUsd: 0.05m, title: "Specialist spend");
+
+        var parent = await world.SeedTaskAsync(
+            sessionId: null, cardId: null, AgentTaskStatus.Succeeded,
+            tokensIn: 8, tokensOut: 1, costUsd: 0.08m, title: "Parent spend");
+        await world.SeedTaskAsync(
+            sessionId: null, cardId: null, AgentTaskStatus.Succeeded,
+            parent: parent, tokensIn: 2, tokensOut: 1, costUsd: 0.02m, title: "Child spend");
+
+        var totals = (await world.GetAsync()).Totals;
+        totals.TokensIn.ShouldBe(205);
+        totals.TokensOut.ShouldBe(22);
+        totals.CostUsd.ShouldBe(2.05m);
+    }
+
+    [Test]
+    public async Task accounting_scope_keeps_unbound_task_spend_and_drops_out_of_scope_card_ledgers()
+    {
+        await using var world = await World.CreateAsync(pathPrefix: "C:\\in-scope");
+        var outsideBoard = await world.SeedBoardAsync("Outside", "C:\\other\\repo");
+        var outsideCard = await world.SeedCardAsync("Outside card", boardId: outsideBoard);
+
+        var outsideSession = await world.SeedSessionAsync(outsideCard.Id);
+        await world.SeedRunAttemptAsync(
+            outsideSession.Id, outsideCard.Id, tokensIn: 100, tokensOut: 20, costUsd: 1.00m);
+
+        await world.SeedTaskAsync(
+            sessionId: null, outsideCard.Id, AgentTaskStatus.Succeeded,
+            tokensIn: 50, tokensOut: 10, costUsd: 0.40m, title: "Out of scope bound");
+        await world.SeedTaskAsync(
+            sessionId: null, cardId: null, AgentTaskStatus.Succeeded,
+            tokensIn: 7, tokensOut: 3, costUsd: 0.05m, title: "Unbound spend");
+
+        var totals = (await world.GetAsync()).Totals;
+        totals.TokensIn.ShouldBe(7);
+        totals.TokensOut.ShouldBe(3);
+        totals.CostUsd.ShouldBe(0.05m);
+    }
+
+    [Test]
+    public async Task retry_queue_unions_due_card_schedule_with_queued_delegate_reattempt()
+    {
+        await using var world = await World.CreateAsync();
+        var card = await world.SeedCardAsync("Retry card");
+        await world.SeedRetryScheduleAsync(card.Id, lastError: "card blew up");
+
+        var boundCard = await world.SeedCardAsync("Delegate retry card");
+        var queuedRetry = await world.SeedTaskAsync(
+            sessionId: null, boundCard.Id, AgentTaskStatus.Queued,
+            title: "Retry delegate",
+            attempt: 2,
+            maxAttempts: 2,
+            failureReason: "prior attempt failed",
+            createdAt: world.Now.AddMinutes(-2));
+        await world.SeedTaskAsync(
+            sessionId: null, cardId: null, AgentTaskStatus.Queued,
+            title: "Fresh queued",
+            attempt: 1,
+            createdAt: world.Now.AddMinutes(-3));
+        var workingSession = await world.SeedSessionAsync(cardId: null);
+        await world.SeedTaskAsync(
+            workingSession.Id, cardId: null, AgentTaskStatus.Working,
+            title: "Working reattempt",
+            attempt: 2);
+        await world.SeedTaskAsync(
+            sessionId: null, cardId: null, AgentTaskStatus.Queued,
+            role: AgentTaskRole.Check,
+            title: "Check reattempt",
+            attempt: 2,
+            failureReason: "check failed");
+
+        var state = await world.GetAsync();
+        state.RetryQueueLength.ShouldBe(state.RetryQueue.Count);
+        state.RetryQueue.Count.ShouldBe(2);
+
+        var cardRetry = state.RetryQueue[0];
+        cardRetry.Source.ShouldBe(OrchestratorRetrySource.Card);
+        cardRetry.CardId.ShouldBe(card.Id);
+        cardRetry.CardIdentifier.ShouldBe(card.Identifier);
+        cardRetry.CardTitle.ShouldBe("Retry card");
+        cardRetry.BoardId.ShouldBe(world.BoardId);
+        cardRetry.BoardName.ShouldBe("Home");
+        cardRetry.Task.ShouldBeNull();
+        cardRetry.AttemptCount.ShouldBe(1);
+        cardRetry.MaxAttempts.ShouldBe(3);
+        cardRetry.NextRetryAt.ShouldNotBeNull();
+        cardRetry.LastAttemptAt.ShouldNotBeNull();
+        cardRetry.LastError.ShouldBe("card blew up");
+
+        var taskRetry = state.RetryQueue[1];
+        taskRetry.Source.ShouldBe(OrchestratorRetrySource.Delegation);
+        taskRetry.CardId.ShouldBe(boundCard.Id);
+        taskRetry.CardIdentifier.ShouldBe(boundCard.Identifier);
+        taskRetry.CardTitle.ShouldBe("Delegate retry card");
+        taskRetry.BoardId.ShouldBe(world.BoardId);
+        taskRetry.BoardName.ShouldBe("Home");
+        taskRetry.Task.ShouldNotBeNull();
+        taskRetry.Task!.TaskId.ShouldBe(queuedRetry.Id);
+        taskRetry.Task.ShortId.ShouldBe(DelegationReportFormatter.Short(queuedRetry.Id));
+        taskRetry.Task.Title.ShouldBe("Retry delegate");
+        taskRetry.AttemptCount.ShouldBe(2);
+        taskRetry.MaxAttempts.ShouldBe(2);
+        taskRetry.NextRetryAt.ShouldBeNull();
+        taskRetry.LastAttemptAt.ShouldBeNull();
+        taskRetry.LastError.ShouldBe("prior attempt failed");
+    }
+
+    [Test]
+    public async Task active_runtime_equals_sum_of_running_row_runtimes()
+    {
+        await using var world = await World.CreateAsync();
+        var card = await world.SeedCardAsync("Runtime card");
+        var cardSession = await world.SeedSessionAsync(card.Id, startedAt: world.Now.AddSeconds(-40));
+        var delegateSession = await world.SeedSessionAsync(cardId: null, startedAt: world.Now.AddSeconds(-15));
+        await world.SeedTaskAsync(delegateSession.Id, cardId: null, AgentTaskStatus.Working);
+
+        var state = await world.GetAsync();
+        state.Running.Count.ShouldBe(2);
+        state.Running.ShouldContain(r => r.SessionId == cardSession.Id
+            && r.Source == OrchestratorSessionSource.Card);
+        state.Running.ShouldContain(r => r.SessionId == delegateSession.Id
+            && r.Source == OrchestratorSessionSource.Delegation);
+        state.Totals.ActiveRuntimeSeconds.ShouldBe(state.Running.Sum(r => r.RuntimeSeconds));
+    }
+
     private sealed class World : IAsyncDisposable
     {
         private readonly IsolatedTestSchema _schema;
@@ -425,7 +572,7 @@ public class OrchestratorStateProjectionTests
         }
 
         public async Task<AgentTask> SeedTaskAsync(
-            Guid sessionId,
+            Guid? sessionId,
             Guid? cardId,
             AgentTaskStatus status,
             AgentTaskRole role = AgentTaskRole.Code,
@@ -435,11 +582,16 @@ public class OrchestratorStateProjectionTests
             string? agentName = "task-code",
             long tokensIn = 0,
             long tokensOut = 0,
-            decimal costUsd = 0)
+            decimal costUsd = 0,
+            int attempt = 1,
+            int maxAttempts = 2,
+            string? failureReason = null,
+            DateTime? createdAt = null)
         {
             await using var scope = _provider.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var id = Guid.NewGuid();
+            var at = createdAt ?? Now;
             var task = new AgentTask
             {
                 Id = id,
@@ -458,12 +610,37 @@ public class OrchestratorStateProjectionTests
                 TokensIn = tokensIn,
                 TokensOut = tokensOut,
                 CostUsd = costUsd,
-                CreatedAt = Now,
-                DispatchedAt = Now,
+                Attempt = attempt,
+                MaxAttempts = maxAttempts,
+                FailureReason = failureReason,
+                CreatedAt = at,
+                DispatchedAt = status == AgentTaskStatus.Queued ? null : at,
             };
             db.AgentTasks.Add(task);
             await db.SaveChangesAsync();
             return task;
+        }
+
+        public async Task SeedRetryScheduleAsync(
+            Guid cardId,
+            int attemptCount = 1,
+            int maxAttempts = 3,
+            DateTime? nextRetryAt = null,
+            string? lastError = "temporary failure")
+        {
+            await using var scope = _provider.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.RetrySchedules.Add(new RetrySchedule
+            {
+                Id = Guid.NewGuid(),
+                CardId = cardId,
+                AttemptCount = attemptCount,
+                MaxAttempts = maxAttempts,
+                NextRetryAt = nextRetryAt ?? Now.AddSeconds(-10),
+                LastAttemptAt = Now.AddMinutes(-5),
+                LastError = lastError,
+            });
+            await db.SaveChangesAsync();
         }
 
         public async Task SetTaskStatusAsync(Guid taskId, AgentTaskStatus status)

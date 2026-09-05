@@ -1,6 +1,6 @@
 import { HttpResponse, http } from 'msw'
 import { describe, expect, it } from 'vitest'
-import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
+import { renderWithProviders, screen, userEvent, waitFor, within } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { OrchestratorPanel } from './OrchestratorPanel'
 
@@ -34,7 +34,7 @@ function stateResponse(paused = false) {
     runningSessions: 4,
     runningCardSessions: 1,
     runningDelegateSessions: 3,
-    retryQueueLength: 1,
+    retryQueueLength: 2,
     totals: {
       tokensIn: 123,
       tokensOut: 45,
@@ -173,16 +173,36 @@ function stateResponse(paused = false) {
     ],
     retryQueue: [
       {
+        source: 'Card',
         cardId: 'card-2',
         cardIdentifier: 'CARD-0002',
         cardTitle: 'Retry failed card',
         boardId: 'board-1',
         boardName: 'Ops Board',
+        task: null,
         attemptCount: 1,
         maxAttempts: 3,
         nextRetryAt: '2026-05-16T00:02:00Z',
         lastAttemptAt: '2026-05-16T00:01:00Z',
         lastError: 'temporary failure',
+      },
+      {
+        source: 'Delegation',
+        cardId: null,
+        cardIdentifier: null,
+        cardTitle: null,
+        boardId: null,
+        boardName: null,
+        task: {
+          taskId: 'task-retry',
+          shortId: 'retry001',
+          title: 'Requeued delegate',
+        },
+        attemptCount: 2,
+        maxAttempts: 2,
+        nextRetryAt: null,
+        lastAttemptAt: null,
+        lastError: 'prior attempt failed',
       },
     ],
   }
@@ -242,5 +262,34 @@ describe('OrchestratorPanel', () => {
     expect(screen.getByText(
       'Pause and Tick govern card auto-dispatch. Delegate sessions are dispatched by the task pipeline and are listed here for visibility.',
     )).toBeInTheDocument()
+  })
+
+  it('renders mixed retry sources with chips, task link, dispatcher status and combined count', async () => {
+    server.use(
+      http.get('/api/orchestrator/state', () => HttpResponse.json(stateResponse())),
+    )
+
+    renderWithProviders(<OrchestratorPanel />)
+
+    expect(await screen.findByText('CARD-0002')).toBeInTheDocument()
+    expect(screen.getByText('Retry failed card')).toBeInTheDocument()
+    expect(screen.getByText('temporary failure')).toBeInTheDocument()
+    expect(screen.getByText('Requeued delegate')).toBeInTheDocument()
+    expect(screen.getByText('Queued for task dispatcher')).toBeInTheDocument()
+    expect(screen.getByText('prior attempt failed')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'retry001' })).toHaveAttribute(
+      'href',
+      '/orchestrator?tab=delegations&task=task-retry',
+    )
+
+    const retryMetricLabel = screen.getAllByText('Retry Queue').find(el => el.tagName.toLowerCase() !== 'h4')
+    expect(retryMetricLabel).toBeTruthy()
+    expect(within(retryMetricLabel!.closest('div')!).getByText('2')).toBeInTheDocument()
+
+    const retryHeading = screen.getByRole('heading', { name: 'Retry Queue' })
+    const retryTable = retryHeading.parentElement?.querySelector('table')
+    expect(retryTable).not.toBeNull()
+    expect(within(retryTable!).getAllByText('Card').length).toBeGreaterThanOrEqual(2)
+    expect(within(retryTable!).getByText('Task')).toBeInTheDocument()
   })
 })

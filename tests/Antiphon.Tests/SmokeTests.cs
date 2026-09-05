@@ -244,7 +244,8 @@ public class SmokeTests
                 && item.GetProperty("turnCount").GetInt32() == 1
                 && item.GetProperty("phase").GetString() == "StreamingTurn");
         state.GetProperty("retryQueue").EnumerateArray()
-            .ShouldContain(item => item.GetProperty("cardId").GetGuid() == retryCardId
+            .ShouldContain(item => item.GetProperty("cardId").ValueKind != JsonValueKind.Null
+                && item.GetProperty("cardId").GetGuid() == retryCardId
                 && item.GetProperty("lastError").GetString() == "retry me");
         state.GetRawText().ShouldNotContain("observe state");
     }
