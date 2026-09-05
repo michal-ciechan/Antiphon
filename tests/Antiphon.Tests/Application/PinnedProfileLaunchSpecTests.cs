@@ -98,7 +98,7 @@ public sealed class PinnedProfileLaunchSpecTests
                 tierTask, tierAgent, tierSession, tierProgram, null, CancellationToken.None))
                 .Args.ToList();
             tierArgs.Count(a => a == "--model").ShouldBe(1);
-            tierArgs[tierArgs.IndexOf("--model") + 1].ShouldBe("gpt-5.6-terra");
+            tierArgs[tierArgs.IndexOf("--model") + 1].ShouldBe("gpt-5.6-sol");
             tierArgs.ShouldNotContain("opus");
 
             var queued = await SeedQueuedPinnedAsync(
@@ -110,7 +110,7 @@ public sealed class PinnedProfileLaunchSpecTests
                 .SingleAsync();
             detail.ShouldContain("gpt-5.6-luna");
             detail.ShouldContain("agent ModelId");
-            detail.ShouldNotContain("gpt-5.6-terra");
+            detail.ShouldNotContain("gpt-5.6-sol");
         }
         finally
         {

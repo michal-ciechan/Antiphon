@@ -64,7 +64,7 @@ public class NamedCodexAgentLaunchTests
         // Rendered, not the raw template: {agentName} expands the same way it does for Claude.
         instructions.ShouldContain("You are BridgeQueue.");
         instructions.ShouldNotContain("{agentName}");
-        args[args.IndexOf("--model") + 1].ShouldBe("gpt-5.6-luna");
+        args[args.IndexOf("--model") + 1].ShouldBe("gpt-5.6-terra");
         ConfigValue(args, "model_reasoning_effort").ShouldBe("medium");
     }
 
@@ -91,7 +91,7 @@ public class NamedCodexAgentLaunchTests
         await StartAsync(h);
 
         var args = Factory(h).Created.ShouldHaveSingleItem().StartedArgs.ToList();
-        args[args.IndexOf("--model") + 1].ShouldBe("gpt-5.6-terra");
+        args[args.IndexOf("--model") + 1].ShouldBe("gpt-5.6-sol");
         ConfigValue(args, "model_reasoning_effort").ShouldBe("high");
         args.ShouldNotContain("--append-system-prompt");
         args.ShouldNotContain("--name");

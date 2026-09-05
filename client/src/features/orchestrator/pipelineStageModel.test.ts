@@ -345,9 +345,10 @@ describe('rightCell against a pinned now', () => {
 
 describe('compactAlias', () => {
   it('strips only the gpt-5.6- prefix', () => {
-    expect(compactAlias('High', 'Codex')).toBe('terra')
-    expect(compactAlias('Frontier', 'Codex')).toBe('sol')
-    expect(compactAlias('Medium', 'Codex')).toBe('luna')
+    expect(compactAlias('High', 'Codex')).toBe('sol')
+    expect(compactAlias('Frontier', 'Codex')).toBe('gpt-6-astra')
+    expect(compactAlias('Medium', 'Codex')).toBe('terra')
+    expect(compactAlias('Low', 'Codex')).toBe('luna')
     expect(compactAlias('Frontier', 'Grok')).toBe('grok-4.6')
     expect(compactAlias('Frontier', 'ClaudeCode')).toBe('fable')
   })

@@ -140,8 +140,8 @@ Antiphon dispatches at a *tier* (`Frontier` / `High` / `Medium` / `Low`), not a 
 | Tier | Claude | Grok | Codex |
 |---|---|---|---|
 | `Frontier` | `fable` | `grok-4.6` | `gpt-6-astra` |
-| `High` (default) | `opus` | `grok-4.6` | `gpt-5.6-terra` |
-| `Medium` | `sonnet` | `grok-4.6` | `gpt-5.6-luna` |
+| `High` (default) | `opus` | `grok-4.6` | `gpt-5.6-sol` |
+| `Medium` | `sonnet` | `grok-4.6` | `gpt-5.6-terra` |
 | `Low` | `haiku` | `grok-4.6` | `gpt-5.6-luna` |
 
 Three things worth knowing about that table:
@@ -154,12 +154,13 @@ Three things worth knowing about that table:
 - **Codex pins full slugs and needs a deliberate bump.** Measured against codex-cli 0.147.0:
   `-m luna` is rejected locally ("Model metadata for `luna` not found") *and* by the service
   (HTTP 400). Bare `-m astra` 400s the same way; the selectable id is `gpt-6-astra`. There are
-  no unversioned aliases in Codex's catalogue. Medium and Low deliberately share
-  `gpt-5.6-luna`, which is why a Low→Medium Codex escalation is told it bought a fresh
-  context rather than a bigger model. **Frontier Codex requires global `codex-cli` 0.153.4+**
+  no unversioned aliases in Codex's catalogue. All four rungs are distinct models (Astra >
+  Sol > Terra > Luna), so a Low→Medium Codex escalation is a real model change (luna → terra),
+  not a same-alias fresh-context note. **Frontier Codex requires global `codex-cli` 0.153.4+**
   (CARD-0396): older installs HTTP 400 `gpt-6-astra` with "requires a newer version of Codex",
-  so a fresh checkout on an older CLI breaks every Frontier Codex dispatch. High stays
-  `gpt-5.6-terra` because Sol is still a supported slug, not retired.
+  so a fresh checkout on an older CLI breaks every Frontier Codex dispatch. High is
+  `gpt-5.6-sol` (Sol's catalog includes `high` reasoning; Sol's own default is `low`, so the
+  launch still sets effort from the tier).
 
 `ModelLevelAliases.For(kind, level)` is what every *human-facing* string goes through — task
 events, escalation notes, the check digest, completion-note headers. Launch arguments deliberately
@@ -303,7 +304,7 @@ the whole session (reads must share write/delete), and is flushed per update.
 ## 6. Codex (OpenAI codex-cli)
 
 **Launch.** `codex.cmd --no-alt-screen --dangerously-bypass-approvals-and-sandbox
-[--model gpt-5.6-terra] -c model_reasoning_effort=<level> -c disable_paste_burst=true
+[--model gpt-5.6-sol] -c model_reasoning_effort=<level> -c disable_paste_burst=true
 [-c developer_instructions=<text>]`
 — **and no session-identity argument**, because `SessionResume` is `Unknown` for Codex and
 `BuildSessionIdentityArgs` only fires for kinds whose resume contract is `Supported`.

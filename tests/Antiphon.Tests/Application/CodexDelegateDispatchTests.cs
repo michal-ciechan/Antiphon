@@ -49,7 +49,7 @@ public class CodexDelegateDispatchTests
 
         args.ShouldNotContain("--name", customMessage:
             "Codex has no --name flag at all; the launch would die on an unknown argument");
-        args[args.IndexOf("--model") + 1].ShouldBe("gpt-5.6-terra");
+        args[args.IndexOf("--model") + 1].ShouldBe("gpt-5.6-sol");
         args.ShouldNotContain("--append-system-prompt", customMessage:
             "Codex's standing-instruction channel is a -c config override, not Claude's flag");
         args.ShouldNotContain("--rules", customMessage: "--rules is Grok's flag");
@@ -84,8 +84,8 @@ public class CodexDelegateDispatchTests
 
     [Test]
     [Arguments(AgentModelLevel.Frontier, "gpt-6-astra", "xhigh")]
-    [Arguments(AgentModelLevel.High, "gpt-5.6-terra", "high")]
-    [Arguments(AgentModelLevel.Medium, "gpt-5.6-luna", "medium")]
+    [Arguments(AgentModelLevel.High, "gpt-5.6-sol", "high")]
+    [Arguments(AgentModelLevel.Medium, "gpt-5.6-terra", "medium")]
     [Arguments(AgentModelLevel.Low, "gpt-5.6-luna", "low")]
     public void every_tier_pins_a_full_slug_and_names_its_own_reasoning_effort(
         AgentModelLevel level, string expectedSlug, string expectedEffort)
@@ -204,32 +204,31 @@ public class CodexDelegateDispatchTests
         await CreateService(db).EscalateAsync(task.Id, to: null, CancellationToken.None);
 
         var detail = await LatestEscalationDetailAsync(task.Id);
-        // The Debug role's policy escalates straight to Frontier, so this is luna -> astra: still a
+        // The Debug role's policy escalates straight to Frontier, so this is terra -> astra: still a
         // real model change, which is the whole point of the assertion.
-        detail.ShouldStartWith("Escalated gpt-5.6-luna -> gpt-6-astra.");
+        detail.ShouldStartWith("Escalated gpt-5.6-terra -> gpt-6-astra.");
         detail.ShouldNotContain("FRESH CONTEXT");
         detail.ShouldNotContain("opus", customMessage: "a Codex task never runs a Claude model");
         detail.ShouldNotContain("grok");
     }
 
     [Test]
-    public async Task escalating_a_codex_task_off_its_shared_bottom_rung_says_so()
+    public async Task escalating_a_codex_task_from_low_to_medium_is_a_real_model_change()
     {
-        // Codex's ONE short rung: Low and Medium are both gpt-5.6-luna. The generic alias comparison
-        // catches it, so the promise the operator reads stays honest at the bottom of the ladder too.
+        // All four Codex rungs are distinct slugs now: Low is luna, Medium is terra. SameModelEscalationNote
+        // compares aliases, so this must read as a bigger model, not a fresh-context-at-the-same-model note.
         using var workspace = new TempWorkspace();
         var task = await SeedSettledTaskAsync(workspace.Path, AgentKind.Codex, AgentModelLevel.Low);
 
         await using var db = CreateContext();
-        // Explicit target: the Debug role policy would otherwise jump the shared rung entirely and
-        // land on Frontier, which is a different (and already-covered) case.
+        // Explicit target: the Debug role policy would otherwise jump Low straight to Frontier.
         await CreateService(db).EscalateAsync(task.Id, to: AgentModelLevel.Medium, CancellationToken.None);
 
         var detail = await LatestEscalationDetailAsync(task.Id);
-        detail.ShouldContain("gpt-5.6-luna");
-        detail.ShouldContain("FRESH CONTEXT at the same model");
-        detail.ShouldContain("deeper reasoning effort (low → medium)");
-        detail.ShouldContain("Codex");
+        detail.ShouldStartWith("Escalated gpt-5.6-luna -> gpt-5.6-terra.");
+        detail.ShouldNotContain("FRESH CONTEXT");
+        detail.ShouldNotContain("opus", customMessage: "a Codex task never runs a Claude model");
+        detail.ShouldNotContain("grok");
     }
 
     // ---- the dispatch itself -------------------------------------------------------------------
@@ -330,7 +329,7 @@ public class CodexDelegateDispatchTests
     public async Task the_dispatch_event_names_the_codex_model_the_task_actually_runs()
     {
         // The event is what the operator and the check interpreter read. Before ModelLevelAliases
-        // grew its Codex arm this line said "sonnet" about a gpt-5.6-luna session.
+        // grew its Codex arm this line said "sonnet" about a gpt-5.6-luna session (Medium is terra now).
         using var workspace = new TempWorkspace();
         var dispatcher = CreateDispatchHarness();
         var task = await SeedQueuedTaskAsync(workspace.Path, AgentKind.Codex);
@@ -338,7 +337,7 @@ public class CodexDelegateDispatchTests
         await dispatcher.TickAsync(CancellationToken.None);
 
         var detail = await LatestDispatchDetailAsync(task.Id);
-        detail.ShouldContain("gpt-5.6-luna");
+        detail.ShouldContain("gpt-5.6-terra");
         detail.ShouldNotContain("sonnet");
     }
 

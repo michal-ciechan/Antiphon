@@ -14,10 +14,11 @@ namespace Antiphon.Server.Application.Services;
 /// twice over — "Model metadata for `luna` not found" locally, then HTTP 400 "the 'luna' model is
 /// not supported" from the service. There are no unversioned aliases in Codex's catalog (bare
 /// <c>astra</c> 400s the same way), so the Codex ladder pins full slugs
-/// (<c>gpt-6-astra</c> / <c>gpt-5.6-terra</c> / <c>gpt-5.6-luna</c>) and needs a deliberate bump
-/// when the catalog's priority-1 model changes. <c>gpt-6-astra</c> requires <b>codex-cli 0.153.4+</b>
-/// (older installs HTTP 400 "requires a newer version of Codex" on every Frontier Codex dispatch).
-/// Grok's ladder already pins versioned ids, so this breaks no rule Grok did not break first.</para>
+/// (<c>gpt-6-astra</c> / <c>gpt-5.6-sol</c> / <c>gpt-5.6-terra</c> / <c>gpt-5.6-luna</c>) and needs
+/// a deliberate bump when the catalog's priority-1 model changes. <c>gpt-6-astra</c> requires
+/// <b>codex-cli 0.153.4+</b> (older installs HTTP 400 "requires a newer version of Codex" on every
+/// Frontier Codex dispatch). Grok's ladder already pins versioned ids, so this breaks no rule Grok
+/// did not break first.</para>
 /// </summary>
 public static class ModelLevelAliases
 {
@@ -39,18 +40,16 @@ public static class ModelLevelAliases
     /// <summary>
     /// Codex's ladder (CARD-0099 S3, CARD-0396). Verified against the live CLI's own catalog
     /// (<c>codex debug models --bundled</c>, codex-cli 0.153.4, 2026-09-05): the capability order is
-    /// <b>Astra &gt; Sol &gt; Terra &gt; Luna</b> — priority 1/6/7/8. Dispatch is conservative:
-    /// Frontier is the new flagship <c>gpt-6-astra</c>; High stays <c>gpt-5.6-terra</c> because Sol
-    /// is still a supported slug, not retired, so High is not slid onto it; Medium and Low still
-    /// share <c>gpt-5.6-luna</c>.
+    /// <b>Astra &gt; Sol &gt; Terra &gt; Luna</b> — priority 1/6/7/8. Dispatch follows that order:
+    /// Frontier is the flagship <c>gpt-6-astra</c>; High is <c>gpt-5.6-sol</c>; Medium is
+    /// <c>gpt-5.6-terra</c>; Low is <c>gpt-5.6-luna</c>. All four rungs are distinct models.
     ///
-    /// <para>Medium and Low share Luna — a genuinely short rung, not an oversight, and it is why
-    /// <c>AgentTaskService.SameModelEscalationNote</c> — which compares ALIASES, not kinds — tells a
-    /// Low → Medium Codex escalation that it bought a fresh context at deeper reasoning effort
-    /// rather than a bigger model (CARD-0289). High and Frontier are real model changes.
-    /// <c>gpt-5.4-mini</c> exists if a cheaper bottom rung is ever wanted; Luna covers both. (Grok's
-    /// own ladder no longer has rungs to compare against — CARD-0169 collapsed
-    /// <see cref="ForGrok"/> to grok-4.6 for every level.)</para>
+    /// <para>A Low → Medium Codex escalation is therefore a real model change (luna → terra), not a
+    /// same-alias fresh-context note. <c>AgentTaskService.SameModelEscalationNote</c> still compares
+    /// ALIASES, not kinds (CARD-0289); it simply no longer fires on Codex. <c>gpt-5.4-mini</c>
+    /// exists if a cheaper bottom rung is ever wanted; Luna covers Low. (Grok's own ladder no
+    /// longer has rungs to compare against — CARD-0169 collapsed <see cref="ForGrok"/> to grok-4.6
+    /// for every level.)</para>
     ///
     /// <para><c>gpt-6-astra</c> is rejected by CLI &lt; 0.153.4. Do not pass the bare id
     /// <c>astra</c> — the backend 400s it the same way as a garbage slug.</para>
@@ -58,9 +57,10 @@ public static class ModelLevelAliases
     public static string ForCodex(AgentModelLevel level) => level switch
     {
         AgentModelLevel.Frontier => "gpt-6-astra",
-        AgentModelLevel.High => "gpt-5.6-terra",
-        AgentModelLevel.Medium or AgentModelLevel.Low => "gpt-5.6-luna",
-        _ => "gpt-5.6-terra",
+        AgentModelLevel.High => "gpt-5.6-sol",
+        AgentModelLevel.Medium => "gpt-5.6-terra",
+        AgentModelLevel.Low => "gpt-5.6-luna",
+        _ => "gpt-5.6-sol",
     };
 
     /// <summary>

@@ -32,13 +32,13 @@ const GROK_ALIASES: Record<AgentModelLevel, string> = {
 
 /**
  * Codex's ladder — byte for byte `ModelLevelAliases.ForCodex` (CARD-0099 S3 / CARD-0301 /
- * CARD-0396). Frontier is `gpt-6-astra` (codex-cli 0.153.4+); Medium and Low share `gpt-5.6-luna`;
- * there is no unversioned Codex alias (bare `astra` 400s).
+ * CARD-0396). Frontier is `gpt-6-astra` (codex-cli 0.153.4+); High is `gpt-5.6-sol`; Medium is
+ * `gpt-5.6-terra`; Low is `gpt-5.6-luna`. There is no unversioned Codex alias (bare `astra` 400s).
  */
 const CODEX_ALIASES: Record<AgentModelLevel, string> = {
   Frontier: 'gpt-6-astra',
-  High: 'gpt-5.6-terra',
-  Medium: 'gpt-5.6-luna',
+  High: 'gpt-5.6-sol',
+  Medium: 'gpt-5.6-terra',
   Low: 'gpt-5.6-luna',
 }
 

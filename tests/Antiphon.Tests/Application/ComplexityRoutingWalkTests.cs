@@ -225,7 +225,7 @@ public class ComplexityRoutingWalkTests
             TaskComplexity.Medium, AgentTaskKind.Worker, AgentTaskRole.Code,
             RoutingPinService.Decision.None, null, null, false, CancellationToken.None);
 
-        walk.Chosen!.Alias.ShouldBe("gpt-5.6-terra");
+        walk.Chosen!.Alias.ShouldBe("gpt-5.6-sol");
         walk.ChainSource.ShouldBe("config");
         walk.ChainProvenance.ShouldBe(RoutingPinProvenance.Auto);
         walk.Walked.ShouldBeTrue();
