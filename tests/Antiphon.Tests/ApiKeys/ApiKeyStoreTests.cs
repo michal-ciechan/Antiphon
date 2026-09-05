@@ -19,6 +19,7 @@ namespace Antiphon.Tests.ApiKeys;
 /// and other suites are writing throughout, so a count over an unscoped query would also be
 /// asserting "nobody else has a key right now".</para>
 /// </summary>
+[Category("Integration")]
 public class ApiKeyStoreTests
 {
     private static CancellationToken Ct => CancellationToken.None;

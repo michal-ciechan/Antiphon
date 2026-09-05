@@ -10,6 +10,7 @@ namespace Antiphon.Tests.Application;
 /// CARD-0187: every <see cref="AgentKind"/> is either mapped to a herdr kind string or listed
 /// refused. A new enum member fails this test, not a live launch.
 /// </summary>
+[Category("Unit")]
 public class HerdrAgentKindMapTests
 {
     [Test]

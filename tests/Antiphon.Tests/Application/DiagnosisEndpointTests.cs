@@ -22,6 +22,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [NotInParallel]
 [ClassDataSource<AntiphonWebAppFactory>(Shared = SharedType.PerTestSession)]
+[Category("Integration")]
 public class DiagnosisEndpointTests
 {
     private static readonly JsonSerializerOptions Json = new()

@@ -15,6 +15,7 @@ namespace Antiphon.Tests.Application;
 /// CARD-0162: disagreement matrix helpers + the never-act structural pin (no delivery/control
 /// deps on <see cref="HerdrStatusCorroborationService"/>).
 /// </summary>
+[Category("Unit")]
 public class HerdrStatusDisagreementTests
 {
     [Test]

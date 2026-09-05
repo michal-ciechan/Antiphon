@@ -16,6 +16,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [NotInParallel]
 [ClassDataSource<MockedFileSystemWebAppFactory>(Shared = SharedType.PerTestSession)]
+[Category("Integration")]
 public class FileSystemBrowseMockedTests
 {
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };

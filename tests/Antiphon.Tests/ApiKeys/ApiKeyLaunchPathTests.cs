@@ -27,6 +27,7 @@ namespace Antiphon.Tests.ApiKeys;
 /// <c>AgentTuiLaunchResolver.ResolveCoreAsync</c> — because a placeholder that resolves in isolation
 /// and not in the path a launch actually walks is a feature that does not exist.</para>
 /// </summary>
+[Category("Integration")]
 public class ApiKeyLaunchPathTests
 {
     private static CancellationToken Ct => CancellationToken.None;

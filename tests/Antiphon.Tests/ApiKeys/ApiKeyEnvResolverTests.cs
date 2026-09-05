@@ -22,6 +22,7 @@ namespace Antiphon.Tests.ApiKeys;
 /// pinned standing agent WITH a board gets that project's keys, which is what makes the
 /// "delegate on a project-specific credential" case actually work.</para>
 /// </summary>
+[Category("Integration")]
 public class ApiKeyEnvResolverTests
 {
     private static CancellationToken Ct => CancellationToken.None;

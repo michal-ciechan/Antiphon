@@ -16,6 +16,7 @@ namespace Antiphon.Tests.Application;
 /// different senders or conversations never do; window 0 is synchronous passthrough; continuous
 /// typing cannot defer past the cap; a throwing flush is contained.
 /// </summary>
+[Category("Unit")]
 public class ChannelInboundDebouncerTests
 {
     private static readonly JsonElement EmptyRaw = JsonDocument.Parse("{}").RootElement.Clone();

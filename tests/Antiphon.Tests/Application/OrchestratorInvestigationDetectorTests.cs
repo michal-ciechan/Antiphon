@@ -9,6 +9,7 @@ namespace Antiphon.Tests.Application;
 /// CARD-0247 S3 — the C# port of <c>scripts/hooks/orchestrator-investigation.mjs</c>, validated
 /// against the same cefed08a fixtures S1 used so the two implementations share ground truth.
 /// </summary>
+[Category("Unit")]
 public class OrchestratorInvestigationDetectorTests
 {
     private static string FixturesDir

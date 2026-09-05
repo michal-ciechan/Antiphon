@@ -18,6 +18,7 @@ namespace Antiphon.Tests.Application;
 /// row is not Supported. Positive Claude create is
 /// <see cref="AgentCreateSupervisionTests.CreateAsync_persists_create_time_always_on_and_remote_control"/>.
 /// </summary>
+[Category("Integration")]
 public class AgentRemoteControlGateTests
 {
     [Test]

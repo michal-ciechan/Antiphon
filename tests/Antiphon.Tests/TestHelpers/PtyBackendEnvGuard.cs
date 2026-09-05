@@ -46,6 +46,7 @@ public class PtyBackendEnvGuard
     }
 }
 
+[Category("Integration")]
 public class PtyBackendEnvGuardTests
 {
     /// <summary>

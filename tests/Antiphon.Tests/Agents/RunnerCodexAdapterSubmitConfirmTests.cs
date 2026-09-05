@@ -18,6 +18,7 @@ namespace Antiphon.Tests.Agents;
 /// inside the TUI's paste-detection window — while reporting success; one extra Enter ~4 s later
 /// submitted 6/6.
 /// </summary>
+[Category("Unit")]
 public class RunnerCodexAdapterSubmitConfirmTests
 {
     private const string Body = "Reply with exactly PONG and no other text.";

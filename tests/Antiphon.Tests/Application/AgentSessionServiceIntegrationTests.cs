@@ -26,6 +26,7 @@ namespace Antiphon.Tests.Application;
 [Category("GitIntegration")]
 [NotInParallel("Pty")]
 [ParallelLimiter<ProcessSpawnLimit>]
+[Category("Integration")]
 public class AgentSessionServiceIntegrationTests
 {
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");

@@ -13,6 +13,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [NotInParallel]
 [ClassDataSource<ModelAvailabilityApiWebAppFactory>(Shared = SharedType.PerClass)]
+[Category("Integration")]
 public sealed class ModelAvailabilityHttpTests
 {
     private readonly ModelAvailabilityApiWebAppFactory _factory;

@@ -21,6 +21,7 @@ namespace Antiphon.Tests.Agents;
 [Category("RealCliStubProxy")]
 [NotInParallel("RealCliStubProxy")]
 [ParallelLimiter<ProcessSpawnLimit>]
+[Category("Integration")]
 public class Card0168InteractiveProbeTests
 {
     private const int BudgetSeconds = 120;

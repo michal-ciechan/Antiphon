@@ -8,6 +8,7 @@ namespace Antiphon.Tests.Infrastructure;
 /// <summary>
 /// Unit tests for GitService branch/tag name generation and integration tests for git operations.
 /// </summary>
+[Category("Integration")]
 public class GitServiceTests
 {
     private static readonly Guid TestWorkflowId = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");

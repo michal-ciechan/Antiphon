@@ -27,6 +27,7 @@ namespace Antiphon.Tests.Agents;
 /// actually READING, which is the one thing a quiet screen cannot tell you. The scripted client
 /// below models a composer: it echoes what is typed and honours Ctrl+U.</para>
 /// </summary>
+[Category("Unit")]
 public class RunnerClaudeAdapterTrustPromptTests
 {
     private const string TrustScreen = """

@@ -9,6 +9,7 @@ namespace Antiphon.Tests.Application;
 /// <summary>
 /// CARD-0352 S2 — TITLE / LABELS grammars and the input clamp. Pure; no database.
 /// </summary>
+[Category("Unit")]
 public class DiagnosisTests
 {
     private const string Fallback = "Build a haiku-tier Diagnose agent: auto-title untitled tasks, auto-label card complexity";

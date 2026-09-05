@@ -16,6 +16,7 @@ namespace Antiphon.Tests.Agents;
 /// CARD-0187 S2: <see cref="SessionRunnerHttpClient"/> serializes <c>Herdr.AgentKind</c> and the
 /// CARD-0112 transcript-format contract (Claude = null, Grok = "grok") onto the launch POST.
 /// </summary>
+[Category("Integration")]
 public class SessionRunnerHttpClientHerdrWireTests
 {
     [Test]

@@ -7,6 +7,7 @@ namespace Antiphon.Tests.Agents;
 /// <summary>
 /// CARD-0113: sequence 0 is a real first-turn floor, so a failed fetch is not synonymous with it.
 /// </summary>
+[Category("Unit")]
 public class TranscriptTurnBaselineTests
 {
     [Test]

@@ -7,6 +7,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.AgentTui;
 
+[Category("Unit")]
 public sealed class AgentTuiOperationCoordinatorTests
 {
     [Test]

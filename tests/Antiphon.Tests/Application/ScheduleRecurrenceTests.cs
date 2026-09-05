@@ -7,6 +7,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>CARD-0057 S1 — the calendar is a pure function, table-tested, no clock and no database.</summary>
+[Category("Unit")]
 public class ScheduleRecurrenceTests
 {
     [Test]

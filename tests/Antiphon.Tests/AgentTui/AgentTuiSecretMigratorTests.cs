@@ -15,6 +15,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.AgentTui;
 
 [NotInParallel]
+[Category("Integration")]
 public sealed class AgentTuiSecretMigratorTests
 {
     [Test]

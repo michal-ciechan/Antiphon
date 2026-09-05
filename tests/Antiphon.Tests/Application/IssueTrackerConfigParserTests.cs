@@ -7,6 +7,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>CARD-0327: <c>tracker.operator_logins</c> accepts a list, a scalar, or absence.</summary>
+[Category("Unit")]
 public class IssueTrackerConfigParserTests
 {
     [Test]

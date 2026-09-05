@@ -71,6 +71,7 @@ public class WorktreeListParsingTests
 }
 
 [Category("GitIntegration")]
+[Category("Integration")]
 public class WorkspaceInfoGitIntegrationTests
 {
     [Test]

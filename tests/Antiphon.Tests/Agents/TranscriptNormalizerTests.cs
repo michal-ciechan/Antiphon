@@ -11,6 +11,7 @@ namespace Antiphon.Tests.Agents;
 /// live session (assistant text/thinking/tool_use, stop_reason, user string prompts, tool_result blocks,
 /// ai-title, isMeta).
 /// </summary>
+[Category("Unit")]
 public class TranscriptNormalizerTests
 {
     // The compact-boundary fixture is the single source of truth for the record shape (captured

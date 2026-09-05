@@ -11,6 +11,7 @@ namespace Antiphon.Tests.Application;
 /// CARD-0004 S1: the pure renderer. No database, no I/O — filename, frontmatter, body and INDEX
 /// shape are pinned here so the writer can treat the output as bytes.
 /// </summary>
+[Category("Unit")]
 public class CardTaskFileRendererTests
 {
     [Test]

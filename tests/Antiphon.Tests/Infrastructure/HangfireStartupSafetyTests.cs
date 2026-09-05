@@ -20,6 +20,7 @@ namespace Antiphon.Tests.Infrastructure;
 /// </summary>
 [NotInParallel]
 [ClassDataSource<AntiphonWebAppFactory>(Shared = SharedType.PerTestSession)]
+[Category("Integration")]
 public class HangfireStartupSafetyTests
 {
     private readonly AntiphonWebAppFactory _factory;

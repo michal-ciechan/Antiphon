@@ -23,6 +23,7 @@ namespace Antiphon.Tests.Agents;
 [Category("RealCliStubProxy")]
 [NotInParallel("RealCliStubProxy")]
 [ParallelLimiter<ProcessSpawnLimit>]
+[Category("Integration")]
 public class ClaudeRealCliStubProxyCanaryTests
 {
     private const int PerTestBudgetSeconds = 120;

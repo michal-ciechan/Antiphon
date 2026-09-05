@@ -18,6 +18,7 @@ namespace Antiphon.Tests;
 /// One shared testcontainer + factory per class; tests run sequentially within the class.
 /// </summary>
 [NotInParallel(nameof(SmokeTests))]
+[Category("Integration")]
 public class SmokeTests
 {
     private static readonly PostgreSqlContainer _container = new PostgreSqlBuilder()

@@ -6,6 +6,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>CARD-0225: pane title is the agent's name, never the shared TUI profile id.</summary>
+[Category("Unit")]
 public class HerdrLaunchContextResolverTests
 {
     [Test]

@@ -7,6 +7,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>CARD-0255 — create-time preset apply. Pure; no database.</summary>
+[Category("Unit")]
 public class AgentPresetsTests
 {
     [Test]

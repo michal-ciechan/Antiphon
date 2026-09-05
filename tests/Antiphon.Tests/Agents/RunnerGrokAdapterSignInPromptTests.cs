@@ -16,6 +16,7 @@ namespace Antiphon.Tests.Agents;
 /// the store plus <c>grok login</c>. Sign-in that also contains trust text still must not
 /// send <c>y</c>. Trust-only is unchanged from CARD-0315.
 /// </summary>
+[Category("Unit")]
 public class RunnerGrokAdapterSignInPromptTests
 {
     private const string SignInScreen = """

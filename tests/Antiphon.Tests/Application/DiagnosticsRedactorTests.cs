@@ -5,6 +5,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>CARD-0179 R1 — one case per redaction rule, plus a sweep that no secret-shaped string survives.</summary>
+[Category("Unit")]
 public class DiagnosticsRedactorTests
 {
     [Test]

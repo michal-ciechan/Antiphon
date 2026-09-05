@@ -18,6 +18,7 @@ namespace Antiphon.Tests.Application;
 /// <summary>CARD-0347 S2: PATCH /api/cards/{id} carries trackerPush only when the card is linked.</summary>
 [NotInParallel]
 [ClassDataSource<CardTrackerPushWebAppFactory>(Shared = SharedType.PerClass)]
+[Category("Integration")]
 public class CardTrackerPushApiTests
 {
     private static readonly JsonSerializerOptions Json = new()

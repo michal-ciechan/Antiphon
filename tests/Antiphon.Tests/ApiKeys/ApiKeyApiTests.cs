@@ -22,6 +22,7 @@ namespace Antiphon.Tests.ApiKeys;
 /// </summary>
 [NotInParallel]
 [ClassDataSource<ApiKeyApiWebAppFactory>(Shared = SharedType.PerTestSession)]
+[Category("Integration")]
 public sealed class ApiKeyApiTests
 {
     private const string Canary = "sk-canary-http-0106";

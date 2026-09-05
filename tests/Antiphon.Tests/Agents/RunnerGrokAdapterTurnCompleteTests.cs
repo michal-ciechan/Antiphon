@@ -16,6 +16,7 @@ namespace Antiphon.Tests.Agents;
 /// turn — and only falls back to the screen heuristic (whose patterns S1 found dead against real
 /// Grok and corrected: decimal-seconds "Worked for 1.7s", plain-"grok" idle title) when it does not.
 /// </summary>
+[Category("Unit")]
 public class RunnerGrokAdapterTurnCompleteTests
 {
     [Test]

@@ -18,6 +18,7 @@ namespace Antiphon.Tests.Application;
 /// <summary>CARD-0166 S3: GET/POST /api/cards/{id}/discussion; /comments session-inject stays untouched.</summary>
 [NotInParallel]
 [ClassDataSource<AntiphonWebAppFactory>(Shared = SharedType.PerTestSession)]
+[Category("Integration")]
 public class CardCommentApiTests
 {
     private static readonly JsonSerializerOptions Json = new()

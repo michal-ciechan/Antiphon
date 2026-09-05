@@ -16,6 +16,7 @@ namespace Antiphon.Tests.Infrastructure;
 ///
 /// Findings documented in docs/spike-git-diff-cascade.md.
 /// </summary>
+[Category("Integration")]
 public class GitDiffSpikeTests
 {
     private static readonly Guid TestWorkflowId = Guid.Parse("11111111-2222-3333-4444-555555555555");

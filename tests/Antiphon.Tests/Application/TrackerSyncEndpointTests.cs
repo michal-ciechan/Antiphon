@@ -24,6 +24,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [NotInParallel]
 [ClassDataSource<TrackerSyncEndpointWebAppFactory>(Shared = SharedType.PerClass)]
+[Category("Integration")]
 public class TrackerSyncEndpointTests
 {
     private static readonly JsonSerializerOptions Json = new()

@@ -10,6 +10,7 @@ namespace Antiphon.Tests.Application;
 /// <summary>CARD-0179 R1 — HTTP surface of <c>POST /api/diagnostics/bundle</c>.</summary>
 [NotInParallel]
 [ClassDataSource<AntiphonWebAppFactory>(Shared = SharedType.PerTestSession)]
+[Category("Integration")]
 public class DiagnosticsBundleEndpointTests
 {
     private readonly AntiphonWebAppFactory _factory;

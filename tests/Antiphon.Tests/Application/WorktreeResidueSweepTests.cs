@@ -20,6 +20,7 @@ namespace Antiphon.Tests.Application;
 /// <summary>
 /// CARD-0328 S3: first-match-wins residue labels, plus one real-git execute gate.
 /// </summary>
+[Category("Integration")]
 public sealed class WorktreeResidueSweepTests
 {
     private static readonly DateTime Now = new(2026, 9, 4, 12, 0, 0, DateTimeKind.Utc);

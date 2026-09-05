@@ -16,6 +16,7 @@ namespace Antiphon.Tests.Agents;
 /// composer evidence before pressing Enter, and a composer that never renders the body must fail
 /// the launch loudly with the Enter withheld, instead of stranding the prompt silently.
 /// </summary>
+[Category("Unit")]
 public class RunnerClaudeAdapterVerifiedPromptTests
 {
     [Test]

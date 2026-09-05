@@ -8,6 +8,7 @@ namespace Antiphon.Tests;
 /// <summary>
 /// Unit tests for the CachingChatClient normalizer and cache modes.
 /// </summary>
+[Category("Unit")]
 public class CachingChatClientTests : IDisposable
 {
     private readonly string _tempCacheDir;

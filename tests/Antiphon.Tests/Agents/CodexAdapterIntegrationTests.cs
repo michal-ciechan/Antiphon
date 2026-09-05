@@ -15,6 +15,7 @@ namespace Antiphon.Tests.Agents;
 [Category("Headed")]
 [Category("Card0108")]
 [ParallelLimiter<ProcessSpawnLimit>]
+[Category("Integration")]
 public class CodexAdapterIntegrationTests
 {
     /// <summary>

@@ -10,6 +10,7 @@ namespace Antiphon.Tests.Infrastructure;
 /// stay on the local Redpanda. Reads files relative to the repo root the way
 /// <c>AntiphonAppFixture.EnsureClientBundleIsCurrent</c> does.
 /// </summary>
+[Category("Unit")]
 public class AppHostBrokerSourceGuardTests
 {
     [Test]

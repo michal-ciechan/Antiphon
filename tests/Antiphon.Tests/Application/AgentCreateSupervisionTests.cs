@@ -14,6 +14,7 @@ namespace Antiphon.Tests.Application;
 /// <summary>
 /// CARD-0008 — AlwaysOn / RemoteControlEnabled are part of create, not a follow-up PATCH.
 /// </summary>
+[Category("Integration")]
 public class AgentCreateSupervisionTests
 {
     [Test]

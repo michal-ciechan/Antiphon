@@ -17,6 +17,7 @@ namespace Antiphon.Tests.Application;
 /// <summary>CARD-0217 S6 — cached, bounded readiness batches never fan out git processes.</summary>
 [Category("GitIntegration")]
 [ParallelLimiter<ProcessSpawnLimit>]
+[Category("Integration")]
 public class ProjectReadinessBatchTests
 {
     [Test]

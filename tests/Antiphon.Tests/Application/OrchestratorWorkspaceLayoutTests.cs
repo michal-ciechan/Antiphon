@@ -12,6 +12,7 @@ namespace Antiphon.Tests.Application;
 /// per state, each CLI, and the nested-for-Claude Warning.
 /// </summary>
 [Category("Card0251")]
+[Category("Unit")]
 public class OrchestratorWorkspaceLayoutTests
 {
     private static readonly Guid ProjectId = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");

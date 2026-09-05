@@ -174,9 +174,22 @@ public sealed class SubscriptionQuotaGateTests
             .Succeeded.ShouldBeTrue();
     }
 
+    private static SubscriptionUsageSnapshot Snap(double remaining, DateTime? resetsAt, TimeSpan age) =>
+        new(
+            AgentKind.Codex,
+            "test-key",
+            "SuperPlan",
+            remaining,
+            resetsAt,
+            ObservedAt: Now - age,
+            Age: age);
+}
+
+[Category("Integration")]
+[NotInParallel]
+public sealed class SubscriptionQuotaGateDispatchTests
+{
     [Test]
-    [Category("Integration")]
-    [NotInParallel]
     public async Task Dispatch_records_an_informational_warning_and_never_refuses_on_a_low_reading()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -199,16 +212,6 @@ public sealed class SubscriptionQuotaGateTests
         warning.Detail.ShouldContain("3% remaining");
         warning.Detail.ShouldContain("quota gate was passed/overridden at create");
     }
-
-    private static SubscriptionUsageSnapshot Snap(double remaining, DateTime? resetsAt, TimeSpan age) =>
-        new(
-            AgentKind.Codex,
-            "test-key",
-            "SuperPlan",
-            remaining,
-            resetsAt,
-            ObservedAt: Now - age,
-            Age: age);
 
     private static AppDbContext CreateContext(string connectionString) =>
         new(TestDbFixture.CreateDbContextOptions(connectionString));

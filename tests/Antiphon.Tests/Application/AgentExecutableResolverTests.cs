@@ -11,6 +11,7 @@ namespace Antiphon.Tests.Application;
 /// start silently failed. The resolver must find sibling flavors and reject unresolvable names with
 /// a clear error BEFORE any launch state is created.
 /// </summary>
+[Category("Unit")]
 public class AgentExecutableResolverTests
 {
     [Test]

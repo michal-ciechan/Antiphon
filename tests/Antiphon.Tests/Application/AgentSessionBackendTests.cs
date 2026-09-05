@@ -21,6 +21,7 @@ namespace Antiphon.Tests.Application;
 /// Kind gate (ClaudeCode/Grok/Codex allowed; OpenCode/Raw refused by name). AlwaysOn and
 /// channel-bound pairings are allowed.
 /// </summary>
+[Category("Integration")]
 public class AgentSessionBackendTests
 {
     [Test]

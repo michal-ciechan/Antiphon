@@ -22,6 +22,7 @@ namespace Antiphon.Tests.AgentTui;
 // or reconfiguring it before its first client is created.
 [NotInParallel]
 [ClassDataSource<AgentTuiApiWebAppFactory>(Shared = SharedType.PerTestSession)]
+[Category("Integration")]
 public sealed class AgentTuiApiTests
 {
     private readonly AgentTuiApiWebAppFactory _factory;

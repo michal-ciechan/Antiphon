@@ -13,6 +13,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [NotInParallel]
 [ClassDataSource<ComplexityChainApiWebAppFactory>(Shared = SharedType.PerClass)]
+[Category("Integration")]
 public sealed class ComplexityChainHttpTests
 {
     private readonly ComplexityChainApiWebAppFactory _factory;

@@ -19,6 +19,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [NotInParallel]
 [ClassDataSource<AntiphonWebAppFactory>(Shared = SharedType.PerTestSession)]
+[Category("Integration")]
 public class BoardProjectArchiveApiTests
 {
     private static readonly JsonSerializerOptions Json = new()

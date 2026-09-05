@@ -19,6 +19,7 @@ namespace Antiphon.Tests.Application;
 /// the first time an agent is started in it. It gets three tests, and they are the ones to read
 /// first if this ever needs changing.</para>
 /// </summary>
+[Category("Integration")]
 public class AgentWorkspaceProvisionerTests
 {
     // ---- writing, rewriting, and not writing ----------------------------------------------------
@@ -341,7 +342,6 @@ public class AgentWorkspaceProvisionerTests
     // ---- the specialist this was designed against ------------------------------------------------
 
     [Test]
-    [Category("Integration")]
     public async Task the_check_interpreter_gets_its_floor_when_it_is_provisioned()
     {
         // The agent the hand-written stopgap was written for: a bare scratch directory, a deny-all

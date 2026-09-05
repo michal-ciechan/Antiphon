@@ -18,6 +18,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.AgentTui;
 
+[Category("Integration")]
 public sealed class AgentTuiLaunchResolverTests
 {
     [Test]

@@ -13,6 +13,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Agents;
 
+[Category("Integration")]
 public class SessionRunnerCapabilityGateTests
 {
     [Test]

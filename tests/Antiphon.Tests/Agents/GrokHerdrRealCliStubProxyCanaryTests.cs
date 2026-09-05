@@ -26,6 +26,7 @@ namespace Antiphon.Tests.Agents;
 [Category("RealCliStubProxy")]
 [NotInParallel("RealCliStubProxy")]
 [ParallelLimiter<ProcessSpawnLimit>]
+[Category("Integration")]
 public class GrokHerdrRealCliStubProxyCanaryTests
 {
     [Test]

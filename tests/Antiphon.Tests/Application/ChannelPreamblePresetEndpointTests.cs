@@ -9,6 +9,7 @@ namespace Antiphon.Tests.Application;
 
 [NotInParallel]
 [ClassDataSource<AntiphonWebAppFactory>(Shared = SharedType.PerTestSession)]
+[Category("Integration")]
 public sealed class ChannelPreamblePresetEndpointTests(AntiphonWebAppFactory factory)
 {
     [Test]

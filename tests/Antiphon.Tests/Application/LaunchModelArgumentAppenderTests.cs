@@ -9,6 +9,7 @@ namespace Antiphon.Tests.Application;
 /// CARD-0182 T11 — structurally, only the resolver (profile path) or AgentRegistry (no-profile
 /// path) may emit --model. These two services used to append it themselves.
 /// </summary>
+[Category("Unit")]
 public sealed class LaunchModelArgumentAppenderTests
 {
     [Test]

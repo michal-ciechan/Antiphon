@@ -15,6 +15,7 @@ namespace Antiphon.Tests.Agents;
 /// PtyInputEncoding form (LF-normalized, bracket-wrapped when multi-line) followed by the
 /// submitting CR as a SEPARATE write.
 /// </summary>
+[Category("Unit")]
 public class RunnerTerminalSessionInputEncodingTests
 {
     [Test]

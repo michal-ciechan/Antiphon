@@ -13,6 +13,7 @@ namespace Antiphon.Tests.Application;
 /// Everything downstream (bridge, queue batching, recovery notes, fakeclaude, docs) cites these
 /// shapes — a change here is a deliberate contract change, reviewed as such.
 /// </summary>
+[Category("Unit")]
 public class ChannelContractsTests
 {
     private static readonly TimeZoneInfo Utc = TimeZoneInfo.Utc;

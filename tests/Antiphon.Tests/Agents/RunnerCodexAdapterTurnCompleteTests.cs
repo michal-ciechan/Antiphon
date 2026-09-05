@@ -22,6 +22,7 @@ namespace Antiphon.Tests.Agents;
 /// gated on the measured Working-indicator lifecycle, so the last test here — a session that never
 /// visibly works — is red against the old code and honest against the new.</para>
 /// </summary>
+[Category("Unit")]
 public class RunnerCodexAdapterTurnCompleteTests
 {
     [Test]

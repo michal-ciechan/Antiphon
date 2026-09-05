@@ -11,6 +11,7 @@ namespace Antiphon.Tests.Application;
 /// Required-pin-wins / Preferred-pin-prepends / empty chain live here so CARD-0322 can reuse
 /// the same composer as a second list source.
 /// </summary>
+[Category("Unit")]
 public sealed class ComplexityRoutingComposeTests
 {
     [Test]

@@ -21,6 +21,7 @@ namespace Antiphon.Tests.Agents;
 [Category("RealCliStubProxy")]
 [NotInParallel("RealCliStubProxy")]
 [ParallelLimiter<ProcessSpawnLimit>]
+[Category("Integration")]
 public class CodexRealCliStubProxyCanaryTests
 {
     private const int PerTestBudgetSeconds = 120;

@@ -5,6 +5,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
+[Category("Unit")]
 public class UsageLimitWallParserTests
 {
     // 2026-07-15 16:00 UTC is 17:00 BST (Europe/London UTC+1). 6:10pm London that day is 17:10 UTC.

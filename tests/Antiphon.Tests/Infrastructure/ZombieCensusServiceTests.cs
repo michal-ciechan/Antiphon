@@ -22,6 +22,7 @@ namespace Antiphon.Tests.Infrastructure;
 /// CARD-0298: fixture-parity classifier tests plus isolated-schema service tests.
 /// Never calls WMI or the production session-runner.
 /// </summary>
+[Category("Integration")]
 public class ZombieCensusServiceTests
 {
     private static readonly DateTimeOffset CensusNow = new(2026, 8, 28, 22, 0, 0, TimeSpan.Zero);

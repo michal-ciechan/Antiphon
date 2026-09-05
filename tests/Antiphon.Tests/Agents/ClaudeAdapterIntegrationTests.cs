@@ -12,6 +12,7 @@ namespace Antiphon.Tests.Agents;
 [NotInParallel("Headed")]
 [Category("Headed")]
 [ParallelLimiter<ProcessSpawnLimit>]
+[Category("Integration")]
 public class ClaudeAdapterIntegrationTests
 {
     [Test]

@@ -23,6 +23,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [NotInParallel]
 [ClassDataSource<AntiphonWebAppFactory>(Shared = SharedType.PerTestSession)]
+[Category("Integration")]
 public class CardCorrectionApiTests
 {
     private static readonly JsonSerializerOptions Json = new()

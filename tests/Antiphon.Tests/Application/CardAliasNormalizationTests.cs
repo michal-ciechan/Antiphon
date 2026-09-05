@@ -10,6 +10,7 @@ namespace Antiphon.Tests.Application;
 /// CARD-0350 S2: alias validation and read projection. No database — the service
 /// rejects at this helper, and <see cref="BoardService.ToCardDto"/> surfaces the stored value.
 /// </summary>
+[Category("Unit")]
 public class CardAliasNormalizationTests
 {
     [Test]

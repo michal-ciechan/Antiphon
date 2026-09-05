@@ -11,6 +11,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>CARD-0082 S2 — the three Agent columns round-trip through create/update DTOs.</summary>
+[Category("Integration")]
 public class ContextCompactionAgentTests
 {
     [Test]

@@ -17,6 +17,7 @@ namespace Antiphon.Tests.Agents;
 /// task dies <c>StoppedBeforeFirstPrompt</c>. These pin that <c>WaitForReadyAsync</c> answers
 /// <c>y</c> before reporting ready, and refuses ready when the dialog does not leave.
 /// </summary>
+[Category("Unit")]
 public class RunnerGrokAdapterTrustPromptTests
 {
     private const string TrustScreen = """

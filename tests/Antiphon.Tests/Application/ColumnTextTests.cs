@@ -8,6 +8,7 @@ namespace Antiphon.Tests.Application;
 /// The arithmetic behind CARD-0205's clip. The interesting property is not "it shortens things" —
 /// it is that the RESULT fits, including the marker, and that it is still a valid string.
 /// </summary>
+[Category("Unit")]
 public class ColumnTextTests
 {
     [Test]

@@ -30,6 +30,7 @@ namespace Antiphon.Tests.Infrastructure;
 /// Information without a rebuild — and <see cref="Turning_a_source_down_is_configuration_not_code"/>
 /// keeps it that way.
 /// </summary>
+[Category("Unit")]
 public class LogRetentionTests
 {
     /// <summary>Whole-window rate before the change: 1 316 776 105 B over 30.7381 h.</summary>

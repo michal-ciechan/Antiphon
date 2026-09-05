@@ -17,6 +17,7 @@ namespace Antiphon.Tests.Application;
 /// check interpreter's own suite still passes UNMODIFIED against the moved text is the proof the
 /// move was faithful, and it must stay that way.</para>
 /// </summary>
+[Category("Unit")]
 public class InstructionBundleTests
 {
     [Test]

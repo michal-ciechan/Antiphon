@@ -132,6 +132,7 @@ public class WorktreeManagerSafetyTests
 }
 
 [Category("GitIntegration")]
+[Category("Integration")]
 public class WorktreeManagerGitIntegrationTests
 {
     [Test]

@@ -10,6 +10,7 @@ namespace Antiphon.Tests.Application;
 /// CARD-0327 decision 7: needsHumanReview is derived at read time. Each clause that
 /// clears it is pinned here so a later rewrite cannot drop one.
 /// </summary>
+[Category("Unit")]
 public class BoardServiceNeedsHumanReviewTests
 {
     [Test]

@@ -19,6 +19,7 @@ namespace Antiphon.Tests.Application;
 /// migration's clothes. Slice 1 already pinned that the composer with no bundles and no style
 /// returns the append byte for byte; this leans on that property and pins the no-op end to end.</para>
 /// </summary>
+[Category("Integration")]
 public class AgentReplyStyleTests
 {
     // ---- the no-op that the migration rests on ---------------------------------------------------

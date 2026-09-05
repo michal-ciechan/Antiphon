@@ -169,6 +169,7 @@ public sealed class RefusingZombieProcessCensus : IZombieProcessCensus
     }
 }
 
+[Category("Integration")]
 public class ProductionRunnerGuardTests
 {
     /// <summary>The pin on the assembly guard: it has run before any test, and the port it chose is dead.</summary>

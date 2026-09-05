@@ -7,6 +7,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
+[Category("Unit")]
 public class AwayDigestFormatterTests
 {
     [Test]

@@ -17,6 +17,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [ClassDataSource<TestDbFixture>(Shared = SharedType.PerTestSession)]
+[Category("Integration")]
 public class WorkflowEngineTests : TransactionalTestBase
 {
     private readonly MockEventBus _eventBus = new();

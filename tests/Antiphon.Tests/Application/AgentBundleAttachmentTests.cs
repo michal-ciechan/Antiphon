@@ -30,6 +30,7 @@ namespace Antiphon.Tests.Application;
 /// comparison is therefore a string match against a freshly recomputed composition, and there is no
 /// second versioning scheme anywhere for it to disagree with.</para>
 /// </summary>
+[Category("Integration")]
 public class AgentBundleAttachmentTests
 {
     // ---- what may be attached --------------------------------------------------------------------

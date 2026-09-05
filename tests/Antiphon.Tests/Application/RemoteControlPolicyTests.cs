@@ -7,6 +7,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>CARD-0212 — catalog capability → refuse / ignore decision.</summary>
+[Category("Unit")]
 public class RemoteControlPolicyTests
 {
     [Test]

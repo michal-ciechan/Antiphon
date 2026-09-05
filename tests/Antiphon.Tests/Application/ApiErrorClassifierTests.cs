@@ -11,6 +11,7 @@ namespace Antiphon.Tests.Application;
 /// server_error/529, 1× server_error connection-drop (no status), 2× authentication_failed, plus
 /// the deliberately-provoked model_not_found/404 fixture. Pure: no session, no DB, no pty.
 /// </summary>
+[Category("Unit")]
 public class ApiErrorClassifierTests
 {
     // The 78% case: the quota wall. One resume at the stated reset (S4/S5); never a retry ladder.

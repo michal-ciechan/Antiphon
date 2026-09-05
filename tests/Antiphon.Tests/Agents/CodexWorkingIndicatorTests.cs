@@ -9,6 +9,7 @@ namespace Antiphon.Tests.Agents;
 /// <c>CodexDoneDetectionCanaryTests</c> proves the real TUI still renders them; this proves the
 /// matcher reads them the way that canary measures, without spending a model turn.
 /// </summary>
+[Category("Unit")]
 public class CodexWorkingIndicatorTests
 {
     [Test]

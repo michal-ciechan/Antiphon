@@ -10,6 +10,7 @@ namespace Antiphon.Tests.Application;
 /// <summary>
 /// CARD-0171 §5: the change summary a channel receives. Pure — no DB, no channel catalog.
 /// </summary>
+[Category("Unit")]
 public class TrackerSyncSummaryFormatterTests
 {
     [Test]

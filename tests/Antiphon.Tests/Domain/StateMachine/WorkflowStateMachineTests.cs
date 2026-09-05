@@ -5,6 +5,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Domain.StateMachine;
 
+[Category("Unit")]
 public class WorkflowStateMachineTests
 {
     // --- Valid transitions ---

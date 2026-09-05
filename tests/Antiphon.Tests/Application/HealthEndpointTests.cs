@@ -12,6 +12,7 @@ namespace Antiphon.Tests.Application;
 /// <summary>CARD-0179 R3 — the build-time git SHA is on <c>GET /api/version</c>, not /health.</summary>
 [NotInParallel]
 [ClassDataSource<AntiphonWebAppFactory>(Shared = SharedType.PerTestSession)]
+[Category("Integration")]
 public class HealthEndpointTests
 {
     private readonly AntiphonWebAppFactory _factory;

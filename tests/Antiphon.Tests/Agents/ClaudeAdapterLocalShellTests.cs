@@ -28,6 +28,7 @@ namespace Antiphon.Tests.Agents;
 [NotInParallel("Pty")]
 [Category("Pty")]
 [ParallelLimiter<ProcessSpawnLimit>]
+[Category("Integration")]
 public class ClaudeAdapterLocalShellTests
 {
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");

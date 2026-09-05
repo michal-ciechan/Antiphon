@@ -23,6 +23,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [NotInParallel]
 [ClassDataSource<SubscriptionUsageApiWebAppFactory>(Shared = SharedType.PerClass)]
+[Category("Integration")]
 public sealed class SubscriptionUsageHttpTests
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
