@@ -402,26 +402,40 @@ public sealed class AgentTaskService
                 new RoutingPinService.Ask(
                     request.AgentKind, request.ModelLevel, request.AgentId, request.IgnoreRoutingPin),
                 ct);
-            if (pinDecision.Applied)
-            {
-                request = request with
-                {
-                    // A complexity walk composes the pin itself; overlaying kind/level here
-                    // would make a Preferred pin look like an explicit request.
-                    AgentKind = request.Complexity is null
-                        ? pinDecision.AgentKind ?? request.AgentKind
-                        : request.AgentKind,
-                    ModelLevel = request.Complexity is null
-                        ? pinDecision.ModelLevel ?? request.ModelLevel
-                        : request.ModelLevel,
-                    // Only when the caller named none: an explicit -Agent has already been
-                    // reconciled against the pin above (or refused).
-                    AgentId = liveFollowUp ? request.AgentId : request.AgentId ?? pinDecision.AgentId,
-                };
-            }
-
             if (pinDecision.Warning is { } pinWarning)
                 warning = warning is null ? pinWarning : warning + " " + pinWarning;
+        }
+
+        RoutingCandidates.RoutingCandidateList? pinComposed = null;
+        if (request.Complexity is null)
+        {
+            pinComposed = RoutingCandidates.Compose(
+                pinDecision,
+                chain: null,
+                chainLabel: null,
+                request.AgentKind,
+                request.ModelLevel,
+                (k, l) => ResolveRoutingPair(request.Kind, request.Role, k, l));
+        }
+
+        if (pinDecision.Applied)
+        {
+            var skipKindOverlay = request.Complexity is not null
+                || pinComposed is { Walked: true };
+            request = request with
+            {
+                // A walked pin list (or a complexity walk) composes the pin itself; overlaying
+                // the head would make a multi-candidate pin look like an explicit request.
+                AgentKind = skipKindOverlay
+                    ? request.AgentKind
+                    : pinDecision.AgentKind ?? request.AgentKind,
+                ModelLevel = skipKindOverlay
+                    ? request.ModelLevel
+                    : pinDecision.ModelLevel ?? request.ModelLevel,
+                // Only when the caller named none: an explicit -Agent has already been
+                // reconciled against the pin above (or refused).
+                AgentId = liveFollowUp ? request.AgentId : request.AgentId ?? pinDecision.AgentId,
+            };
         }
 
         // CARD-0140 S1: a bare pin to a STANDING agent settles kind the same way a follow-up
@@ -453,6 +467,7 @@ public sealed class AgentTaskService
         var id = Guid.NewGuid();
         ComplexityRoutingService.Walk? routingWalk = null;
         var routingExhausted = false;
+        Guid? routingPinId = null;
         AgentModelLevel level;
         AgentKind agentKind;
         if (request.Complexity is { } complexity)
@@ -475,6 +490,9 @@ public sealed class AgentTaskService
                     $"complexity chain bypassed by {RoutingPinService.Describe(pinDecision.Pin, pinDecision.CardIdentifier)}.";
                 warning = warning is null ? bypass : warning + " " + bypass;
             }
+
+            if (routingWalk.Walked && pinDecision.Applied)
+                routingPinId = pinDecision.Pin!.Id;
 
             if (routingWalk.Chosen is { } chosen)
             {
@@ -526,7 +544,58 @@ public sealed class AgentTaskService
             else if (request.RefuseIfExhausted)
             {
                 throw new RoutingExhaustedException(
-                    routingWalk.ExhaustedSentence()
+                    routingWalk.ExhaustedSentence(pinDecision)
+                    + " A human decides: clear a hold, wait for a reset, or POST /api/agent-tasks/{id}/reroute. "
+                    + "Do NOT pick a kind yourself.",
+                    routingWalk.ToDto());
+            }
+            else
+            {
+                routingExhausted = true;
+                if (routingWalk.Outcomes.Count > 0)
+                {
+                    agentKind = routingWalk.Outcomes[0].Candidate.Kind;
+                    level = routingWalk.Outcomes[0].Candidate.Level;
+                }
+                else
+                {
+                    agentKind = ResolveAgentKind(request.Kind, request.Role, request.AgentKind);
+                    level = ResolveLevel(request.Kind, request.Role, request.ModelLevel);
+                }
+            }
+        }
+        else if (pinComposed is { Walked: true } && _complexityRouting is not null)
+        {
+            if (request.IgnoreModelDisabled)
+            {
+                var moot =
+                    $"ignoreModelDisabled had no effect: this pin lists {pinComposed.Candidates.Count} candidates and is walked";
+                warning = warning is null ? moot : warning + " " + moot;
+            }
+
+            routingWalk = await _complexityRouting.WalkComposedListAsync(
+                pinComposed,
+                request.Kind,
+                request.Role,
+                pinDecision,
+                subscriptionOwner,
+                request.IgnoreSubscriptionQuota,
+                ct);
+            if (pinDecision.Applied)
+                routingPinId = pinDecision.Pin!.Id;
+
+            if (routingWalk.Chosen is { } pinChosen)
+            {
+                agentKind = pinChosen.Kind;
+                level = pinChosen.Level;
+                var skipped = routingWalk.SkippedWarning();
+                if (skipped.Length > 0)
+                    warning = warning is null ? skipped : warning + " " + skipped;
+            }
+            else if (request.RefuseIfExhausted)
+            {
+                throw new RoutingExhaustedException(
+                    routingWalk.ExhaustedSentence(pinDecision)
                     + " A human decides: clear a hold, wait for a reset, or POST /api/agent-tasks/{id}/reroute. "
                     + "Do NOT pick a kind yourself.",
                     routingWalk.ToDto());
@@ -685,6 +754,7 @@ public sealed class AgentTaskService
             AgentKind = agentKind,
             ModelLevel = level,
             Complexity = request.Complexity,
+            RoutingPinId = routingPinId,
             Workspace = workspace,
             DenyDirectEdits = request.DenyDirectEdits,
             WorkingDirectory = resolved.WorkingDirectory,
@@ -729,7 +799,7 @@ public sealed class AgentTaskService
         else if (routingExhausted && routingWalk is not null)
         {
             task.Status = AgentTaskStatus.Blocked;
-            task.FailureReason = routingWalk.ExhaustedSentence()
+            task.FailureReason = routingWalk.ExhaustedSentence(pinDecision)
                 + " A human must choose; do not pick a kind yourself.";
             task.AgentSessionId = null;
         }
@@ -2108,6 +2178,30 @@ public sealed class AgentTaskService
 
     private static string FormatComplexityCreatedDetail(ComplexityRoutingService.Walk walk)
     {
+        var index = 0;
+        for (var i = 0; i < walk.Outcomes.Count; i++)
+        {
+            if (walk.Outcomes[i].Outcome == "chosen")
+            {
+                index = i + 1;
+                break;
+            }
+        }
+
+        var skipped = walk.SkippedWarning();
+        var pinSource = walk.Source.StartsWith("pin:", StringComparison.Ordinal)
+            || walk.Source.StartsWith("pin+chain:", StringComparison.Ordinal);
+        if (pinSource)
+        {
+            if (walk.Chosen is { } pinChosen)
+            {
+                return $" candidate {index}/{walk.Outcomes.Count} {pinChosen.Alias}"
+                    + (skipped.Length > 0 ? $"; {skipped}" : string.Empty);
+            }
+
+            return " exhausted";
+        }
+
         // chain= names the cell that answered: Plan/Hard, Hard (any-role), or config.
         var chain = walk.ChainRole is null
             && string.Equals(walk.ChainSource, "config", StringComparison.Ordinal)
@@ -2116,22 +2210,26 @@ public sealed class AgentTaskService
 
         if (walk.Chosen is { } chosen)
         {
-            var index = 0;
-            for (var i = 0; i < walk.Outcomes.Count; i++)
-            {
-                if (walk.Outcomes[i].Outcome == "chosen")
-                {
-                    index = i + 1;
-                    break;
-                }
-            }
-
-            var skipped = walk.SkippedWarning();
             return $" complexity={walk.Complexity} chain={chain} candidate {index}/{walk.Outcomes.Count} {chosen.Alias}"
                 + (skipped.Length > 0 ? $"; {skipped}" : string.Empty);
         }
 
         return $" complexity={walk.Complexity} exhausted";
+    }
+
+    private RoutingCandidates.Candidate ResolveRoutingPair(
+        AgentTaskKind kind, AgentTaskRole role, AgentKind? agentKind, AgentModelLevel? modelLevel)
+    {
+        if (_complexityRouting is not null)
+            return _complexityRouting.ResolveAgainstRolePolicy(kind, role, agentKind, modelLevel);
+
+        var resolvedKind = ResolveAgentKind(kind, role, agentKind);
+        var resolvedLevel = ResolveLevel(kind, role, modelLevel);
+        return new RoutingCandidates.Candidate(
+            resolvedKind,
+            resolvedLevel,
+            ModelLevelAliases.For(resolvedKind, resolvedLevel),
+            RoutingCandidates.OriginRolePolicy);
     }
 
     /// <summary>Internal so the attention projection rolls up subtree spend the SAME way the board

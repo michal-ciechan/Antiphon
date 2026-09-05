@@ -187,6 +187,7 @@ public sealed class RoutingPinScriptTests
         pin.RootElement.GetProperty("card").GetString()
             .ShouldBe("33333333-3333-3333-3333-333333333333");
         run.Output.ShouldContain("pinned CARD-0305");
+        run.Output.ShouldContain("REPLACES the 2-candidate pin");
     }
 
     [Test]
@@ -335,7 +336,12 @@ public sealed class RoutingPinScriptTests
             {"id":"44444444-4444-4444-4444-444444444444","shortId":"44444444","status":"Queued",
              "modelLevel":"High","warning":null,"agentKind":"Grok","noReplyRouting":true,
              "scopeOverlaps":[],"cardId":"33333333-3333-3333-3333-333333333333",
-             "cardIdentifier":"CARD-0305","followUpMessage":null}
+             "cardIdentifier":"CARD-0305","followUpMessage":null,
+             "routing":{"complexity":null,"chainProvenance":null,"chainSource":"config",
+              "source":"pin:CARD-0305 Code","candidates":[
+                {"agentKind":"Grok","modelLevel":"Frontier","alias":"grok-4.6","outcome":"chosen","reason":null,"origin":"pin"},
+                {"agentKind":"ClaudeCode","modelLevel":"High","alias":"opus","outcome":"skipped","reason":"already chose an earlier candidate","origin":"rolePolicy"}
+              ],"available":[],"walked":true,"role":"Code","chainRole":null}}
             """;
 
         public void Dispose()
