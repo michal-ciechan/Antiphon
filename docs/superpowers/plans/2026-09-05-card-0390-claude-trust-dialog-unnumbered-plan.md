@@ -467,10 +467,10 @@ Record here after the run:
 
 | Field | Value |
 |---|---|
-| Claude version | _fill in (`claude --version`)_ |
-| Rung that moved the highlight | _fill in: `j` / Down / Ctrl+N_ |
-| Detection time | _fill in_ |
-| T2 (seeded) showed a dialog? | _must be no_ |
+| Claude version | 2.1.258 (Claude Code) |
+| Rung that moved the highlight | `j` (on modern ConPTY). Inbox conhost delivers the bytes but the Select binding never fires (snapshot corrupts; highlight stays No). The canary therefore pins `new PtyAgentRunner("modern")`, matching production. Down / Ctrl+N were not needed; the ladder stays as a ladder under D-1. Tab/End/Right/Space were no-ops on inbox and were not re-tried on modern once `j` moved the highlight. |
+| Detection time | 0 ms after the dialog was already painted (`WaitForAsync` after `WaitForScreen`); T1 wall 3.55 s including boot + 1.5 s refuse window + `j` + Enter |
+| T2 (seeded) showed a dialog? | no |
 
 If T1 self-skips with "no trust dialog appeared", the temp root is trusted on that machine; pick a
 sibling under `C:\logs\antiphon\` for the canary directory instead (it is outside any git root and
