@@ -1448,8 +1448,8 @@ public sealed class AgentTaskService
             e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Rerouted, ct);
         // Each candidate at most once per wall cascade. Zero-length lists skip this so a
         // session-limit with an empty chain still keeps CARD-0022's same-session resume.
-        if (walk.Outcomes.Count > 0 && reroutedCount >= walk.Outcomes.Count)
-            return await BlockOnWallAsync(task, walk, ct);
+        if (ComplexityRoutingService.CascadeTriedEveryCandidate(reroutedCount, walk.Outcomes.Count))
+            return await BlockOnWallAsync(task, walk, ct, cascadeExhausted: true, reroutedCount);
 
         if (walk.Chosen is { } chosen
             && (chosen.Kind != task.AgentKind || chosen.Level != task.ModelLevel))
@@ -1458,7 +1458,7 @@ public sealed class AgentTaskService
         }
 
         if (walk.Chosen is null && !sessionLimitHasScheduledResume)
-            return await BlockOnWallAsync(task, walk, ct);
+            return await BlockOnWallAsync(task, walk, ct, cascadeExhausted: false, reroutedCount);
 
         return new WallRerouteDecision(WallRerouteKind.NotApplicable);
     }
@@ -1632,7 +1632,11 @@ public sealed class AgentTaskService
     }
 
     private async Task<WallRerouteDecision> BlockOnWallAsync(
-        AgentTask task, ComplexityRoutingService.Walk walk, CancellationToken ct)
+        AgentTask task,
+        ComplexityRoutingService.Walk walk,
+        CancellationToken ct,
+        bool cascadeExhausted,
+        int reroutedCount)
     {
         await StopDelegateAsync(task, ct);
         if (task.Ephemeral)
@@ -1642,7 +1646,10 @@ public sealed class AgentTaskService
         }
 
         var now = UtcNow();
-        var reason = walk.ExhaustedSentence() + " A human must choose; do not pick a kind yourself.";
+        var reason = cascadeExhausted
+            ? ComplexityRoutingService.CascadeExhaustedSentence(
+                walk.CellLabel, reroutedCount, walk.Outcomes.Count)
+            : walk.ExhaustedSentence() + " A human must choose; do not pick a kind yourself.";
         task.Status = AgentTaskStatus.Blocked;
         task.FailureReason = reason;
         task.AgentSessionId = null;

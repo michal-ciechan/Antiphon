@@ -691,6 +691,15 @@ public sealed class AgentTaskDispatcher
                 && t.FailureReason != null
                 && t.FailureReason.StartsWith(ComplexityRoutingService.RoutingExhaustedPrefix))
             .ToListAsync(ct);
+        var blockedIds = blocked.Select(t => t.Id).ToList();
+        var reroutedCounts = blockedIds.Count == 0
+            ? new Dictionary<Guid, int>()
+            : (await _db.AgentTaskEvents
+                .Where(e => blockedIds.Contains(e.AgentTaskId) && e.Type == AgentTaskEventType.Rerouted)
+                .GroupBy(e => e.AgentTaskId)
+                .Select(g => new { g.Key, Count = g.Count() })
+                .ToListAsync(ct))
+            .ToDictionary(x => x.Key, x => x.Count);
         var resumed = 0;
         foreach (var task in blocked)
         {
@@ -698,6 +707,11 @@ public sealed class AgentTaskDispatcher
             if (walk?.Chosen is not { } chosen)
                 continue;
             if (PinForbidsReroute(walk, task))
+                continue;
+            // Loop-guard Block: a candidate may be free (opus) but this cascade already tried
+            // every slot. Auto-resume would dispatch/wall/kill without bound.
+            if (ComplexityRoutingService.CascadeTriedEveryCandidate(
+                    reroutedCounts.GetValueOrDefault(task.Id), walk.Outcomes.Count))
                 continue;
 
             task.Status = AgentTaskStatus.Queued;

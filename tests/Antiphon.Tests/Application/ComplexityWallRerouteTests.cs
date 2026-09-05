@@ -322,10 +322,80 @@ public class ComplexityWallRerouteTests
         var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
         stored.Status.ShouldBe(AgentTaskStatus.Blocked);
         stored.FailureReason.ShouldContain(ComplexityRoutingService.RoutingExhaustedPrefix);
+        stored.FailureReason.ShouldContain("already rerouted 3/3");
         stored.ModelLevel.ShouldBe(AgentModelLevel.Frontier, "loop guard must not walk onto opus");
         (await verify.AgentTaskEvents.CountAsync(
             e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Rerouted)).ShouldBe(3);
         harness.Stopper.Killed.ShouldContain(sessionId);
+    }
+
+    [Test]
+    public async Task A_later_UserPrompt_does_not_reroute_or_kill_an_in_flight_turn()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        using var harness = new WallRerouteHarness(schema.ConnectionString, workspace.Path);
+        await SeedHardChainAsync(schema);
+        var (task, sessionId, agentId) = await SeedWorkingChainTaskAsync(schema, workspace.Path);
+        await StampSessionModelAsync(schema, sessionId, "fable");
+        await SeedApiErrorStubTurnAsync(
+            schema, sessionId, task.Id, UsageLimitWallParser.FableModelCapIncidentText);
+        await SeedInFlightTurnAfterStubAsync(schema, sessionId);
+        await ClearHoldsAsync(schema);
+
+        await harness.Reply.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext(schema);
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Working);
+        stored.AgentSessionId.ShouldBe(sessionId);
+        stored.AgentId.ShouldBe(agentId);
+        stored.ModelLevel.ShouldBe(AgentModelLevel.Frontier);
+        (await verify.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Rerouted)).ShouldBe(0);
+        harness.Stopper.Killed.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Loop_guard_Block_is_not_resumed_by_a_dispatcher_tick()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        using var harness = new WallRerouteHarness(schema.ConnectionString, workspace.Path);
+        await SeedHardChainAsync(schema);
+        var (task, sessionId, _) = await SeedWorkingChainTaskAsync(schema, workspace.Path);
+        await using (var db = CreateContext(schema))
+        {
+            for (var i = 0; i < 3; i++)
+            {
+                db.AgentTaskEvents.Add(new AgentTaskEvent
+                {
+                    Id = Guid.NewGuid(),
+                    AgentTaskId = task.Id,
+                    Type = AgentTaskEventType.Rerouted,
+                    Detail = $"prior cascade {i}",
+                    At = DateTime.UtcNow.AddMinutes(-3 + i),
+                });
+            }
+
+            await db.SaveChangesAsync();
+        }
+
+        await StampSessionModelAsync(schema, sessionId, "fable");
+        await SeedApiErrorStubTurnAsync(
+            schema, sessionId, task.Id, UsageLimitWallParser.FableModelCapIncidentText);
+        await harness.Reply.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        var dispatcher = CreateDispatcher(schema);
+        var result = await dispatcher.TickAsync(CancellationToken.None);
+
+        result.ResumedRoutingBlocked.ShouldBe(0);
+        await using var verify = CreateContext(schema);
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Blocked);
+        stored.ModelLevel.ShouldBe(AgentModelLevel.Frontier);
+        (await verify.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Rerouted)).ShouldBe(3);
     }
 
     private static async Task SeedHardChainAsync(IsolatedTestSchema schema) =>
@@ -504,6 +574,68 @@ public class ComplexityWallRerouteTests
         stubEnd.ApiErrorStatus = 429;
         db.TranscriptEntries.Add(stubEnd);
         await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedInFlightTurnAfterStubAsync(IsolatedTestSchema schema, Guid sessionId)
+    {
+        await using var db = CreateContext(schema);
+        var seq = await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == sessionId)
+            .MaxAsync(t => (long?)t.Sequence) ?? 0;
+        db.TranscriptEntries.Add(NewEntry(
+            sessionId, ++seq, TranscriptKinds.UserPrompt, "continue the work"));
+        db.TranscriptEntries.Add(NewEntry(
+            sessionId, ++seq, TranscriptKinds.AssistantText, "I'll keep going on the same session."));
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task ClearHoldsAsync(IsolatedTestSchema schema)
+    {
+        await using var db = CreateContext(schema);
+        var now = DateTime.UtcNow;
+        await db.ModelAvailabilityHolds
+            .Where(h => h.ClearedAt == null)
+            .ExecuteUpdateAsync(u => u.SetProperty(h => h.ClearedAt, now));
+    }
+
+    private static AgentTaskDispatcher CreateDispatcher(IsolatedTestSchema schema)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(schema.ConnectionString));
+        services.AddSingleton<IEventBus, MockEventBus>();
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton(Options.Create(new SupervisionSettings()));
+        services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
+        services.AddSingleton(Options.Create(new DelegationSettings
+        {
+            PoolReservedForCallerMinutes = 2,
+            PoolIdleRetireMinutes = 5,
+            PoolMaxIdlePerDirectory = 3,
+            MaxConcurrentTasks = 512,
+        }));
+        services.AddOptions<AgentRegistrySettings>().Configure(s =>
+        {
+            s.DefaultDefinition = "claude";
+            s.Definitions["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "claude" };
+        });
+        services.AddSingleton<AgentRegistry>();
+        services.AddSingleton<AgentSessionLaunchQueue>();
+        services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<SessionMessageQueueService>();
+        services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
+        services.AddSingleton<DelegationWorkspaceResolver>();
+        services.AddDelegationWorktreeGraph(new GitSettings
+        {
+            WorktreeBasePath = Path.Combine(Path.GetTempPath(), "antiphon-wall-reroute-tick"),
+        });
+        services.AddScoped<AgentTaskService>();
+        services.AddScoped<RoutingPinService>();
+        services.AddScoped<ModelAvailability>();
+        services.AddScoped<ComplexityRoutingService>();
+        services.AddScoped<AgentTaskDispatcher>();
+        return services.BuildServiceProvider().CreateScope().ServiceProvider
+            .GetRequiredService<AgentTaskDispatcher>();
     }
 
     private static TranscriptEntry NewEntry(Guid sessionId, long sequence, string kind, string? text) => new()

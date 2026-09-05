@@ -21,6 +21,20 @@ public sealed class ComplexityRoutingService
     public const int MaxCandidates = 8;
 
     /// <summary>
+    /// Loop-guard Block: every candidate has already been tried this cascade. Still starts with
+    /// <see cref="RoutingExhaustedPrefix"/> so attention / BlockedQuestion carve-out / human
+    /// reroute keep working; <see cref="AgentTaskDispatcher"/> must not auto-resume these.
+    /// </summary>
+    public static bool CascadeTriedEveryCandidate(int reroutedCount, int candidateCount) =>
+        candidateCount > 0 && reroutedCount >= candidateCount;
+
+    public static string CascadeExhaustedSentence(string cellLabel, int reroutedCount, int candidateCount) =>
+        RoutingExhaustedPrefix
+        + $"{cellLabel} chain already rerouted {reroutedCount}/{candidateCount} times; "
+        + "each candidate at most once this cascade. A human decides: reroute or cancel; "
+        + "do not pick a kind yourself.";
+
+    /// <summary>
     /// Roles that may own a chain cell. Check/Distill/Diagnose are seat-pinned and refused.
     /// Order is the grid-row order CARD-0333 renders.
     /// </summary>

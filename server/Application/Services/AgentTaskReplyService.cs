@@ -1020,6 +1020,16 @@ public sealed class AgentTaskReplyService
             && classification == ApiErrorClassification.Wall
             && services.GetService<AgentTaskService>() is { } tasks)
         {
+            // CARD-0022 FireOneAsync already treats a later UserPrompt as Superseded. AssistantText
+            // re-triggers OnTurnEndAsync while the newest TurnEnd is still this stub; without this
+            // guard, RerouteOnWallAsync would StopDelegateAsync a session that has already resumed.
+            var laterPrompt = await db.TranscriptEntries.AsNoTracking().AnyAsync(
+                t => t.AgentSessionId == sessionId
+                    && t.Kind == TranscriptKinds.UserPrompt
+                    && t.Sequence > stub.Sequence, ct);
+            if (laterPrompt)
+                return;
+
             var fallbackAlias = ModelLevelAliases.For(task.AgentKind, task.ModelLevel);
             var wall = UsageLimitWallParser.Parse(now, stub.ErrorText, fallbackAlias);
             var walledAlias = wall?.ModelAlias ?? fallbackAlias;
