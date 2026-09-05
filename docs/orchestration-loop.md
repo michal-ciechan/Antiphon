@@ -308,8 +308,8 @@ note still arrives separately, and a check note can never be mistaken for it or 
 
 **Elapsed counts from the latest reply (CARD-0348).** The check header's `elapsed` bit and the
 duration on a completion note use `max(DispatchedAt, RepliedAt)`. When a reply reset the clock, the
-header adds `after reply (dispatched … ago)` and the completion note carries both `since reply` and
-`since dispatch`. An orchestrator judging a stall reads `elapsed` together with `last activity` —
+header adds `after reply; dispatched … ago` and the completion note carries both `since reply` and
+`since dispatch`. An orchestrator judging a stall reads `elapsed` together with `activity` —
 `elapsed` after a reply is "how long since we answered", not "how long since dispatch". This is not
 `AgentSession.LaunchResumedAt` (CARD-0340's interrupted-launch clock).
 

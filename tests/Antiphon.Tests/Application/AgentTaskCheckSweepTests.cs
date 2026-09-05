@@ -336,8 +336,9 @@ public class AgentTaskCheckSweepTests
             .ShouldBe(AgentTaskCheckService.CheckOutcome.Delivered);
 
         var note = (await harness.NotesToCallerAsync(seed.CallerSessionId)).ShouldHaveSingleItem();
+        note.ShouldStartWith("[check ");
+        note.Split('\n')[0].ShouldContain("/15m");
         note.ShouldContain("TASK ");
-        note.ShouldContain("expected 15m");
         note.ShouldContain("SESSION ");
     }
 
