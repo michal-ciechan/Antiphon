@@ -100,6 +100,8 @@ internal static class CardTaskFileRenderer
         AppendLine(sb, $"id: {card.Id:D}");
         AppendLine(sb, $"identifier: {card.Identifier}");
         AppendLine(sb, $"title: {YamlQuote(card.Title)}");
+        if (card.Alias is { } alias && alias.Length > 0)
+            AppendLine(sb, $"alias: {YamlQuote(alias)}");
         AppendLine(sb, $"status: {card.Status}");
         AppendLine(sb, $"importance: {card.Importance}");
         AppendLine(sb, $"importance_provenance: {card.ImportanceProvenance}");

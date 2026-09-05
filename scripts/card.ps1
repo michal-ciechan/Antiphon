@@ -33,10 +33,10 @@
 #   card.ps1 get       CARD-0051 [-Json]
 #   card.ps1 history   CARD-0051 [-Json]
 #   card.ps1 new       -Board <name|guid> -Title <t> [-DescriptionFile p | -Description s]
-#                      [-Importance Low|Normal|High|Critical] [-Urgency Normal|Soon|Now]
+#                      [-Alias a] [-Importance Low|Normal|High|Critical] [-Urgency Normal|Soon|Now]
 #                      [-DueAt iso] [-Labels a,b]
 #   card.ps1 edit      CARD-0051 -Reason <r> | -ReasonFile <p> [-Title t]
-#                      [-DescriptionFile p | -Description s]
+#                      [-DescriptionFile p | -Description s] [-Alias a]
 #                      [-Importance Low|Normal|High|Critical] [-Urgency Normal|Soon|Now]
 #                      [-ImportanceProvenance Auto|Human]
 #                      [-DueAt iso] [-ClearDueAt] [-Labels a,b]
@@ -69,6 +69,11 @@ param(
 
     [Parameter(ParameterSetName = 'Verb')]
     [string]$Title,
+
+    # Optional short label (CARD-0350): trimmed, single-line, at most five words. Pass -Alias ''
+    # on edit to clear. Never generated.
+    [Parameter(ParameterSetName = 'Verb')]
+    [string]$Alias,
 
     [Parameter(ParameterSetName = 'Verb')]
     [string]$Description,
@@ -197,6 +202,24 @@ function Assert-WithinLimit {
     exit 1
 }
 
+# CARD-0350: reject at the CLI boundary, matching CardService.TryNormalizeAlias. Blank is "no
+# alias" (create omits; edit sends empty to clear) and is not an error.
+function Assert-Alias {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return }
+    if ($Value -match '[\r\n]') {
+        Write-Error 'Alias must be a single line.'
+        exit 1
+    }
+    $words = @($Value.Trim() -split '\s+' | Where-Object { $_ -ne '' })
+    $limitSet = Get-CardLimits
+    if ($words.Count -gt $limitSet.maxAliasWords) {
+        Write-Error ("Alias must be at most {0} words; got {1}." -f $limitSet.maxAliasWords, $words.Count)
+        exit 1
+    }
+    Assert-WithinLimit -Field 'Alias' -Value ($words -join ' ') -Limit $limitSet.maxAliasLength
+}
+
 # -XFile wins over -X: passing both is a mistake worth naming rather than silently resolving.
 function Read-TextArgument {
     param([string]$Name, [string]$Inline, [string]$Path)
@@ -323,6 +346,7 @@ if ($PSCmdlet.ParameterSetName -eq 'Limits') {
     Write-Output ("description {0}" -f $l.maxDescriptionLength)
     Write-Output ("reason      {0}" -f $l.maxReasonLength)
     Write-Output ("actor       {0}" -f $l.maxActorLength)
+    Write-Output ("alias       {0} ({1} words)" -f $l.maxAliasLength, $l.maxAliasWords)
     Write-Output ("importance  {0}" -f ($l.importanceValues -join ', '))
     Write-Output ("urgency     {0}" -f ($l.urgencyValues -join ', '))
     return
@@ -348,6 +372,9 @@ switch ($Verb) {
         Write-Output ("column      {0}" -f $theCard.boardColumnId)
         Write-Output ("importance  {0}" -f $theCard.importance)
         Write-Output ("urgency     {0}" -f $theCard.urgency)
+        if (-not [string]::IsNullOrWhiteSpace($theCard.alias)) {
+            Write-Output ("alias       {0}" -f $theCard.alias)
+        }
         Write-Output ("rank        {0}" -f $theCard.rank)
         if ($theCard.dueAt) { Write-Output ("due         {0}" -f $theCard.dueAt) }
         Write-Output ("token       {0}" -f $theCard.concurrencyToken)
@@ -405,9 +432,13 @@ switch ($Verb) {
         $limitSet = Get-CardLimits
         Assert-WithinLimit -Field 'Title' -Value $Title -Limit $limitSet.maxTitleLength
         Assert-WithinLimit -Field 'Description' -Value $desc -Limit $limitSet.maxDescriptionLength
+        if ($PSBoundParameters.ContainsKey('Alias')) { Assert-Alias -Value $Alias }
 
         $body = @{ title = $Title }
         if (-not [string]::IsNullOrEmpty($desc)) { $body['description'] = $desc }
+        if ($PSBoundParameters.ContainsKey('Alias') -and -not [string]::IsNullOrWhiteSpace($Alias)) {
+            $body['alias'] = $Alias
+        }
         if ($PSBoundParameters.ContainsKey('Importance')) { $body['importance'] = $Importance }
         if ($PSBoundParameters.ContainsKey('Urgency')) { $body['urgency'] = $Urgency }
         if (-not [string]::IsNullOrWhiteSpace($DueAt)) { $body['dueAt'] = $DueAt }
@@ -428,6 +459,7 @@ switch ($Verb) {
         Assert-WithinLimit -Field 'Title' -Value $Title -Limit $limitSet.maxTitleLength
         Assert-WithinLimit -Field 'Description' -Value $desc -Limit $limitSet.maxDescriptionLength
         Assert-WithinLimit -Field 'By' -Value $By -Limit $limitSet.maxActorLength
+        if ($PSBoundParameters.ContainsKey('Alias')) { Assert-Alias -Value $Alias }
 
         # Null means UNCHANGED for every content field, so send only what actually changed.
         $body = @{
@@ -442,9 +474,10 @@ switch ($Verb) {
         if ($ClearDueAt) { $body['clearDueAt'] = $true }
         elseif (-not [string]::IsNullOrWhiteSpace($DueAt)) { $body['dueAt'] = $DueAt }
         if ($Labels) { $body['labels'] = @($Labels) }
+        if ($PSBoundParameters.ContainsKey('Alias')) { $body['alias'] = $Alias }
         if (-not [string]::IsNullOrWhiteSpace($By)) { $body['editedBy'] = $By }
         if ($body.Count -le 2) {
-            Write-Error 'Nothing to change. Pass at least one of -Title, -Description/-DescriptionFile, -Importance, -ImportanceProvenance, -Urgency, -DueAt, -ClearDueAt, -Labels.'
+            Write-Error 'Nothing to change. Pass at least one of -Title, -Description/-DescriptionFile, -Alias, -Importance, -ImportanceProvenance, -Urgency, -DueAt, -ClearDueAt, -Labels.'
             exit 1
         }
 

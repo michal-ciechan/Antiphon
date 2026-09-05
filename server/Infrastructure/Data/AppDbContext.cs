@@ -886,6 +886,9 @@ public class AppDbContext : DbContext
             entity.Property(c => c.AgentQueuePosition);
             entity.Property(c => c.Identifier).IsRequired().HasMaxLength(100);
             entity.Property(c => c.Title).IsRequired().HasMaxLength(300);
+            // CARD-0350: optional short label. Cap matches CardService.MaxAliasLength; invalid
+            // input is a 422, not a Postgres 22001.
+            entity.Property(c => c.Alias).HasMaxLength(64);
             // text, not varchar(n): the ceiling belongs in CardService.MaxDescriptionLength, where
             // raising it is a one-line change instead of a migration. As varchar(4000) with no
             // application check, an over-long description sailed past validation and came back as a
@@ -974,6 +977,7 @@ public class AppDbContext : DbContext
             entity.Property(r => r.DueAt);
             entity.Property(r => r.Position);
             entity.Property(r => r.Title).HasMaxLength(300);
+            entity.Property(r => r.Alias).HasMaxLength(64);
             // text + application ceiling, matching Cards.Description — a revision holds a copy of
             // exactly that value, so a tighter column here would 500 on the very edit it records.
             entity.Property(r => r.Description).HasColumnType("text");

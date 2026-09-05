@@ -14,6 +14,13 @@ public class Card
     public Guid? ActiveWorkflowRunId { get; set; }
     public string Identifier { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Optional human-authored short label (CARD-0350). Shared by every delegated task on this
+    /// card. Null means none — never generated, never overwritten silently.
+    /// </summary>
+    public string? Alias { get; set; }
+
     public string Description { get; set; } = string.Empty;
     public CardImportance Importance { get; set; } = CardImportance.Normal;
 

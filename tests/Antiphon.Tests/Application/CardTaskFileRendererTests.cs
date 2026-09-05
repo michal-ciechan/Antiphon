@@ -62,6 +62,7 @@ public class CardTaskFileRendererTests
         rendered.ShouldContain("id: 86b6542a-5f1e-4107-b04b-46d81c636225");
         rendered.ShouldContain("identifier: CARD-0004");
         rendered.ShouldContain("title: \"Card: \\\"the #1\\\" task\"");
+        rendered.ShouldNotContain("alias:");
         rendered.ShouldContain("status: NeedsDecision");
         rendered.ShouldContain("importance: Normal");
         rendered.ShouldContain("importance_provenance: Auto");
@@ -95,6 +96,22 @@ public class CardTaskFileRendererTests
         rendered.ShouldNotContain("RevisionCount");
         rendered.ShouldNotContain("Worktree");
         rendered.ShouldNotContain("WorkflowRun");
+    }
+
+    [Test]
+    public void Alias_is_metadata_and_does_not_replace_the_canonical_title()
+    {
+        var card = MakeCard(Guid.NewGuid(), "CARD-0350", "bounded check headers and optional card aliases", "body", CardStatus.Backlog);
+        card.Alias = "Check header alias";
+
+        var rendered = CardTaskFileRenderer.RenderCard(card);
+
+        rendered.ShouldContain("title: \"bounded check headers and optional card aliases\"");
+        rendered.ShouldContain("alias: \"Check header alias\"");
+        rendered.ShouldContain("# CARD-0350 — bounded check headers and optional card aliases");
+        rendered.ShouldNotContain("# CARD-0350 — Check header alias");
+        CardTaskFileRenderer.CardFileName(card.Identifier, card.Title)
+            .ShouldBe("CARD-0350-bounded-check-headers-and-optional-card-aliases.md");
     }
 
     [Test]

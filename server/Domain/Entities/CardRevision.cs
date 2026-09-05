@@ -38,6 +38,9 @@ public class CardRevision
     /// <summary>The SUPERSEDED title.</summary>
     public string? Title { get; set; }
 
+    /// <summary>The SUPERSEDED alias (CARD-0350). Null on a row that did not snapshot one.</summary>
+    public string? Alias { get; set; }
+
     /// <summary>The SUPERSEDED description.</summary>
     public string? Description { get; set; }
 

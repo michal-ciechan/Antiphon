@@ -60,9 +60,15 @@ describe('CardEditModal', () => {
   it('prefills the card as it stands', () => {
     renderEdit()
     expect(titleInput()).toHaveValue('Cards cannot be corrected')
+    expect(screen.getByLabelText('Short alias')).toHaveValue('')
     expect(descriptionInput()).toHaveValue('a record you cannot correct is a record that rots')
     expect(screen.getByRole('textbox', { name: 'Importance' })).toHaveValue('High')
     expect(screen.getByLabelText('Labels')).toHaveValue('board, record')
+  })
+
+  it('prefills a stored short alias', () => {
+    renderEdit({ alias: 'Check header' })
+    expect(screen.getByLabelText('Short alias')).toHaveValue('Check header')
   })
 
   it('will not submit without a reason — a correction that does not say why is how a record rots', async () => {
@@ -96,6 +102,7 @@ describe('CardEditModal', () => {
       // Untouched fields go as null — the server reads null as "unchanged", so an untouched 20k
       // description is never rewritten by a one-word title fix.
       description: null,
+      alias: null,
       importance: null,
       urgency: null,
       dueAt: null,
@@ -104,6 +111,49 @@ describe('CardEditModal', () => {
       editedBy: 'operator',
     }))
     await waitFor(() => expect(onClose).toHaveBeenCalled())
+  })
+
+  it('sends a changed short alias and an emptied one as a clear', async () => {
+    const patchSpy = vi.fn()
+    server.use(http.patch('/api/cards/card-1/content', async ({ request }) => {
+      patchSpy(await request.json())
+      return HttpResponse.json(card({ alias: 'Check header' }))
+    }))
+    const { onClose } = renderEdit()
+
+    await userEvent.type(screen.getByLabelText('Short alias'), 'Check header')
+    await userEvent.type(reasonInput(), 'give it a short label')
+    await userEvent.click(saveButton())
+
+    await waitFor(() => expect(patchSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ alias: 'Check header', title: null }),
+    ))
+    await waitFor(() => expect(onClose).toHaveBeenCalled())
+  })
+
+  it('sends an emptied short alias as empty string so the server clears it', async () => {
+    const patchSpy = vi.fn()
+    server.use(http.patch('/api/cards/card-1/content', async ({ request }) => {
+      patchSpy(await request.json())
+      return HttpResponse.json(card({ alias: null }))
+    }))
+    renderEdit({ alias: 'Check header' })
+
+    await userEvent.clear(screen.getByLabelText('Short alias'))
+    await userEvent.type(reasonInput(), 'no longer needed')
+    await userEvent.click(saveButton())
+
+    await waitFor(() => expect(patchSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ alias: '', title: null }),
+    ))
+  })
+
+  it('will not submit a sixth-word alias', async () => {
+    renderEdit()
+    await userEvent.type(screen.getByLabelText('Short alias'), 'one two three four five six')
+    await userEvent.type(reasonInput(), 'too many words')
+    expect(saveButton()).toBeDisabled()
+    expect(screen.getByText('Alias must be at most 5 words.')).toBeInTheDocument()
   })
 
   it('sends a cleared description as empty string, which is a change, not "unchanged"', async () => {

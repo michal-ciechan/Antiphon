@@ -13,7 +13,7 @@ interface CardEditModalProps {
 }
 
 /** Which 422 keys this dialog has an input for. Anything else falls through to a notification. */
-const EDITABLE_FIELDS = ['Title', 'Description', 'Importance', 'Urgency', 'DueAt', 'ClearDueAt', 'Labels', 'Reason']
+const EDITABLE_FIELDS = ['Title', 'Description', 'Alias', 'Importance', 'Urgency', 'DueAt', 'ClearDueAt', 'Labels', 'Reason']
 
 /** The comma-separated labels field, both ways. Consistent with the create dialog, deliberately. */
 function parseLabels(value: string): string[] {
@@ -44,6 +44,7 @@ function sameLabels(a: string[], b: string[]): boolean {
 export function CardEditModal({ boardId, card, onClose }: CardEditModalProps) {
   const updateContent = useUpdateCardContent(boardId)
   const [title, setTitle] = useState(card.title)
+  const [alias, setAlias] = useState(card.alias ?? '')
   const [description, setDescription] = useState(card.description)
   const [importance, setImportance] = useState<CardImportance>(card.importance)
   const [urgency, setUrgency] = useState<CardUrgency>(card.urgency)
@@ -56,11 +57,19 @@ export function CardEditModal({ boardId, card, onClose }: CardEditModalProps) {
   const titleOverLimit = title.length > CARD_LIMITS.title
   const descriptionOverLimit = description.length > CARD_LIMITS.description
   const reasonOverLimit = reason.length > CARD_LIMITS.reason
+  const aliasTrimmed = alias.trim()
+  const aliasWords = aliasTrimmed === '' ? [] : aliasTrimmed.split(/\s+/)
+  const aliasOverWords = aliasWords.length > CARD_LIMITS.aliasWords
+  const aliasOverLimit = aliasTrimmed.length > CARD_LIMITS.alias
+  const aliasHasNewline = /[\r\n]/.test(alias)
   const canSubmit = reason.trim().length > 0
     && title.trim().length > 0
     && !titleOverLimit
     && !descriptionOverLimit
     && !reasonOverLimit
+    && !aliasOverWords
+    && !aliasOverLimit
+    && !aliasHasNewline
 
   const submit = () => {
     if (!canSubmit) return
@@ -76,6 +85,7 @@ export function CardEditModal({ boardId, card, onClose }: CardEditModalProps) {
           reason: reason.trim(),
           title: title.trim() === card.title ? null : title.trim(),
           description: description.trim() === card.description ? null : description.trim(),
+          alias: aliasTrimmed === (card.alias ?? '') ? null : aliasTrimmed,
           importance: importance === card.importance ? null : importance,
           urgency: urgency === card.urgency ? null : urgency,
           dueAt: clearDueAt || dueAt === currentDue ? null : (dueAt || null),
@@ -123,6 +133,21 @@ export function CardEditModal({ boardId, card, onClose }: CardEditModalProps) {
               ? `Title must be at most ${CARD_LIMITS.title.toLocaleString()} characters.`
               : undefined)}
           onChange={(event) => setTitle(event.currentTarget.value)}
+        />
+        <TextInput
+          label="Short alias"
+          value={alias}
+          placeholder="Optional — at most five words"
+          description="A stable short label for check notes. Does not replace the title."
+          error={fieldErrors.Alias
+            ?? (aliasHasNewline
+              ? 'Alias must be a single line.'
+              : aliasOverWords
+                ? `Alias must be at most ${CARD_LIMITS.aliasWords} words.`
+                : aliasOverLimit
+                  ? `Alias must be at most ${CARD_LIMITS.alias} characters.`
+                  : undefined)}
+          onChange={(event) => setAlias(event.currentTarget.value)}
         />
         <Textarea
           label="Description"

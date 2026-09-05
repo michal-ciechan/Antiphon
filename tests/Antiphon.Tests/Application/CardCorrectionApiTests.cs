@@ -185,6 +185,8 @@ public class CardCorrectionApiTests
         limits.MaxDescriptionLength.ShouldBe(CardService.MaxDescriptionLength);
         limits.MaxReasonLength.ShouldBe(CardService.MaxReasonLength);
         limits.MaxActorLength.ShouldBe(CardService.MaxActorLength);
+        limits.MaxAliasLength.ShouldBe(CardService.MaxAliasLength);
+        limits.MaxAliasWords.ShouldBe(CardService.MaxAliasWords);
         limits.ImportanceValues.ShouldBe(Enum.GetNames<CardImportance>());
         limits.UrgencyValues.ShouldBe(Enum.GetNames<CardUrgency>());
     }
