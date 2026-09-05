@@ -55,12 +55,28 @@
 
 ### Preserved Gotcha #74
 
-- **A full `Antiphon.Tests` run is ~28 minutes, and its last 15–18 minutes look exactly like a stall** (CARD-0165, measured 2026-08-29 on master and on the 2026-08-24 tree, three watched runs, none stalled; `docs/superpowers/plans/2026-08-29-card-0165-antiphon-tests-stall-investigation.md`): TUnit runs the global `[NotInParallel]` classes LAST, one at a time, and under the default `--output Normal` a passing test prints nothing — so after the `skipped Catalog_matches_live_claude_slash_menu` line (a *keyed* constraint, scheduled alongside the parallel phase, never the end of the run) there are 500–800 more results over 15–18 minutes at 4–7 CPU-s/min with stretches of 3–5 minutes under 1 CPU-s/min and a flat stdout. "Alive, ~10 CPU-seconds in 9 minutes, no output" is that phase, not a hang. Do not kill a run before ~35 minutes; run it with `--output Detailed` or under `pwsh -File scripts/run-tests-watched.ps1 -Exe <bin-x>/Antiphon.Tests.exe -Detailed`, which declares a stall only on flat stdout AND ~0 CPU and captures `dotnet-stack` + `dotnet-dump` before killing (`dotnet-dump analyze <dmp> -c dumpasync` is the only thing that names an async wedge). Separately, the suite currently exhausts its Postgres testcontainer (`53300: too many clients` / `53200: out of shared memory`, 46 of master's 53 failures on 2026-08-29; 104 connections measured against `max_connections=100`) — fast failures, not hangs, and their own card.
+- **A full `Antiphon.Tests` run is ~25.5 minutes** (CARD-0110 re-measure 2026-09-03, 3893 tests, after S2 migrate-once and CARD-0238 connection-exhaustion fix; was ~28 min on 2026-08-29). The "last 15–18 minutes are the sequential tail" claim is **pre-S2** (CARD-0165): the biggest `[NotInParallel]` classes now do ~21–24 s of real work. The remaining serial pole is the 1-wide `ProcessSpawnLimit` lane (~9–10 min). TUnit still runs global `[NotInParallel]` last, and `--output Normal` prints nothing for passing tests, so a long quiet stretch is not a hang. Do not kill a full run before ~35 minutes; use `--output Detailed` or `pwsh -File scripts/run-tests-watched.ps1 -Exe <bin-x>/Antiphon.Tests.exe -Detailed`. Postgres `53300`/`53200` exhaustion is fixed (CARD-0238). **The local foreground loop is the Unit lane, not the full assembly** (CARD-0110 S7′): `--treenode-filter "/*/*/*/*[Category=Unit]"` — a category predicate works; it is not an OR.
 
 ### Preserved Gotcha #75
 
 - **A `dotnet build` that sits for 20+ minutes at near-zero CPU is probably reading `obj/…/*.FileListAbsolute.txt`, not hung** (CARD-0222, same doc): every `--property:OutputPath=bin-<name>/` build shares the project's one `obj/` and appends to that ledger, `IncrementalClean` reads/filters/rewrites it on every build and prunes only entries under the CURRENT `OutDir`, so it grew to 228 MB / 770,706 lines for `Antiphon.SessionRunner` and 97 MB for `Antiphon.Tests` (nested `bin-X\bin-Y\…` trees from before CARD-0110's exclude). Measured: 157 s of a 181 s Tests build in `ReadLinesFromFile`+`FindUnderPath`; full graph 21m31s → 1m28s after a reset. `Directory.Build.targets` now deletes a ledger over 2 MB (`AntiphonCleanFileMaxBytes`, `0` to disable) with a warning naming the card. The tell from outside: the outer `dotnet` process has ~1 s of CPU, one MSBuild node ticks at ~10 % of a core in `FindUnderPath` (`dotnet-stack report -p <node>`), and no `Antiphon.Tests.exe` has been spawned yet — there is never a `testhost.exe` under the Microsoft.Testing.Platform runner.
 <!-- CARD-0254 preserved source ends -->
+
+## Fast lane (CARD-0110)
+
+The local default verification loop is the Unit category, not the full ~25.5 min assembly. A `[Category=X]` predicate works in `--treenode-filter` (measured; a single category is not an OR).
+
+```
+dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c110/ -- --treenode-filter "/*/*/*/*[Category=Unit]"
+```
+
+CI / nightly keep the full run. After a full run that wrote a TRX (`--report-trx --report-trx-filename run.trx`), check for new ≥5 s tests:
+
+```
+pwsh -File scripts/test-duration-tripwire.ps1 -Trx path\to\run.trx
+```
+
+The allowlist is `tests/Antiphon.Tests/slow-tests-allowlist.txt`. Every test class is tagged `Unit` xor `Integration` (`TestLaneCategoryGuardTests`).
 
 ## Hand-built ServiceCollections and the delegation worktree graph
 

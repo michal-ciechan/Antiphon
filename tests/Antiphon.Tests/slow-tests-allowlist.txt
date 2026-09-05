@@ -1,0 +1,28 @@
+# CARD-0110 S6: tests/classes allowed to run ≥5 s in a TRX of Antiphon.Tests.
+# One substring per line, matched against the TRX testName. # comments and blanks ignored.
+# A new ≥5 s test that does not match is a tripwire hit — shorten it or add it here with a reason.
+SessionMessageQueuePtyIntegrationTests
+SessionMessageQueueGrokPtyIntegrationTests
+RunnerProcessProbeTests
+ProgramStartupConcurrencyTests
+GitDiffSpikeTests
+GitServiceTests
+WorktreeManagerGitIntegrationTests
+DelegationWorktreeTests
+AgentSessionServiceIntegrationTests
+AgentSessionRuntimeTests
+RawPtyAdapterTests
+ClaudeAdapterLocalShellTests
+CodexAdapterLocalShellTests
+SlashCommandMenuReconciliationTests
+ProjectReadinessBatchTests
+SmokeTests
+ApiKeyLaunchPathTests
+AgentTuiLaunchResolverTests
+AttentionServiceTests
+AgentTaskDeliveryWatchdogTests
+ReviewLoopTests
+SessionMessageQueueDeliveryVerificationTests
+ApiErrorRecoveryServiceTests
+WorkspaceHookRunnerTests
+GitIgnorePreviewTests
