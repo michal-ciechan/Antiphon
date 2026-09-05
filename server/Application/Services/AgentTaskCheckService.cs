@@ -517,15 +517,58 @@ public sealed class AgentTaskCheckService
     }
 
     /// <summary>
+    /// One-line identity budget for the check header (CARD-0350 S1). The ellipsis is inside the
+    /// 64 characters, not added on top. The whole-note pty ceiling remains a separate transport
+    /// guard; this is the header-length policy.
+    /// </summary>
+    internal const int HeaderTitleMaxChars = 64;
+
+    internal const string HeaderTitleEllipsis = "...";
+
+    /// <summary>What a blank or whitespace-only task title renders as on the check header.</summary>
+    internal const string DefaultHeaderTitle = "Delegated task";
+
+    /// <summary>
+    /// Flatten a task title to one line and clip it at a word boundary so the check header cannot
+    /// dump a 300-character Goal excerpt (or a multi-line Title) into the caller's composer.
+    /// </summary>
+    internal static string ClipHeaderTitle(string? title)
+    {
+        var oneLine = string.Join(" ", (title ?? string.Empty)
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        if (oneLine.Length == 0)
+            return DefaultHeaderTitle;
+        if (oneLine.Length <= HeaderTitleMaxChars)
+            return oneLine;
+
+        var budget = HeaderTitleMaxChars - HeaderTitleEllipsis.Length;
+        var head = oneLine[..budget];
+        if (budget < oneLine.Length && !char.IsWhiteSpace(oneLine[budget]))
+        {
+            var lastWs = head.LastIndexOfAny([' ', '\t']);
+            if (lastWs > 0)
+                head = head[..lastWs];
+        }
+
+        head = head.TrimEnd();
+        if (head.Length == 0)
+            head = oneLine[..budget];
+        if (head.Length > 0 && char.IsHighSurrogate(head[^1]))
+            head = head[..^1];
+        return head + HeaderTitleEllipsis;
+    }
+
+    /// <summary>
     /// The note as the caller sees it. The first line has to be unmistakable at a glance: a check
     /// is an OBSERVATION about work still in flight, and a caller that read it as a completion
     /// would move on from a task that has not finished.
     ///
     /// <para>So the envelope is fixed: it opens with <see cref="HeaderPrefix"/>, never with
-    /// <c>[task </c>, its status vocabulary is the session's (Running/idle/working) and never the
+    /// <c>[task </c>, its status vocabulary is the session's (running/idle/working) and never the
     /// completion vocabulary (done/failed), and it carries NO task marker of any task — see
     /// <see cref="ScrubTaskMarkers"/>, which matters because the transcript tail legitimately
-    /// contains the delegate's own brief, marker and all.</para>
+    /// contains the delegate's own brief, marker and all. Identity is a clipped one-line title,
+    /// never the raw <see cref="AgentTask.Title"/>.</para>
     /// </summary>
     /// <param name="interpretation">
     /// The specialist's reading, which REPLACES the digest in the note when there is one (the digest
@@ -557,24 +600,22 @@ public sealed class AgentTaskCheckService
         if (degradedReason is { Length: > 0 } down
             && down.StartsWith("interpreter unavailable", StringComparison.Ordinal))
             bits.Add(InterpreterDownMarker);
-        if (!string.IsNullOrWhiteSpace(task.Title))
-            bits.Add(task.Title.Trim().ReplaceLineEndings(" "));
-        bits.Add($"captured {DelegateCheckProbe.Stamp(facts.At)}");
-        bits.Add($"{FormatAge(facts.Task.Age)} elapsed (expected {facts.Task.ExpectedDurationMinutes}m)");
+        bits.Add(ClipHeaderTitle(task.Title));
+        bits.Add($"elapsed {FormatAge(facts.Task.Age)}/{facts.Task.ExpectedDurationMinutes}m");
         if (facts.Task.RepliedAt > facts.Task.DispatchedAt)
-            bits.Add($"after reply (dispatched {FormatAge(facts.At - facts.Task.DispatchedAt!.Value)} ago)");
+            bits.Add($"after reply; dispatched {FormatAge(facts.At - facts.Task.DispatchedAt!.Value)} ago");
         if (facts.Session is { } session)
         {
-            bits.Add($"session {session.Status} · {(session.Working ? "working" : "idle")}");
-            bits.Add($"last activity {(session.SinceLastEntry is { } quiet ? $"{FormatAge(quiet)} ago" : "never")}");
+            bits.Add($"{session.Status.ToString().ToLowerInvariant()}/{(session.Working ? "working" : "idle")}");
+            bits.Add($"activity {(session.SinceLastEntry is { } quiet ? $"{FormatAge(quiet)} ago" : "never")}");
         }
         else
         {
             bits.Add("no session");
         }
         if (task.NextCheckAt is null)
-            bits.Add($"final check — the {_settings.CheckMaxCount}-check budget is spent");
-        header.Append(' ').Append(string.Join(" · ", bits));
+            bits.Add($"final check - the {_settings.CheckMaxCount}-check budget is spent");
+        header.Append(' ').Append(string.Join(" | ", bits));
 
         // The body is the interpretation when there is one, the digest otherwise — and the degraded
         // prefix rides ABOVE the digest, never above an interpretation.

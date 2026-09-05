@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -69,9 +70,9 @@ public class AgentTaskCheckInterpreterTests
         var header = note.Split('\n')[0];
         header.ShouldContain(DelegationReportFormatter.Short(seed.Task.Id));
         header.ShouldContain("#");
-        header.ShouldContain("elapsed (expected ");
-        header.ShouldContain("session Running");
-        header.ShouldContain("last activity");
+        header.ShouldContain("elapsed ");
+        header.ShouldContain("running/");
+        header.ShouldContain("activity");
         header.ShouldContain(" ago");
         note.Split('\n').Skip(1).First(l => l.Length > 0).ShouldBe(reading);
         note.ShouldNotContain(AgentTaskCheckService.InterpreterDownMarker);
@@ -93,23 +94,19 @@ public class AgentTaskCheckInterpreterTests
     }
 
     [Test]
-    public void a_live_session_with_no_entry_shows_last_activity_never()
+    public void a_live_session_with_no_entry_shows_activity_never()
     {
         using var h = new Harness();
         var task = HeaderTask();
         var facts = HeaderFacts(withSession: true, sinceLastEntry: null);
         var note = h.Checks.BuildNote(task, facts, digest: "CAPTURED — digest body");
 
-        var header = note.Split('\n')[0];
-        header.ShouldContain("session Running");
-        header.ShouldContain("last activity never");
-        header.ShouldNotContain("last activity unknown");
-        System.Text.RegularExpressions.Regex.IsMatch(header, @"last activity \d")
-            .ShouldBeFalse("a missing entry must not fabricate an age");
+        note.Split('\n')[0].ShouldBe(
+            $"[check {DelegationReportFormatter.Short(task.Id)} #3] channel tests | elapsed 11m/10m | running/working | activity never");
     }
 
     [Test]
-    public void a_captured_entry_puts_last_activity_age_on_the_header()
+    public void a_captured_entry_puts_activity_age_on_the_header()
     {
         using var h = new Harness();
         var task = HeaderTask();
@@ -119,24 +116,22 @@ public class AgentTaskCheckInterpreterTests
             interpretation: "On track — fixed a stale test pin; now verifying larger channel suites (no action needed).");
 
         var header = note.Split('\n')[0];
-        header.ShouldContain("last activity 0m ago");
-        header.ShouldContain("session Running · working");
+        header.ShouldBe(
+            $"[check {DelegationReportFormatter.Short(task.Id)} #3] channel tests | elapsed 11m/10m | running/working | activity 0m ago");
         note.Split('\n').Skip(1).First(l => l.Length > 0)
             .ShouldBe("On track — fixed a stale test pin; now verifying larger channel suites (no action needed).");
     }
 
     [Test]
-    public void a_note_with_no_session_does_not_invent_last_activity()
+    public void a_note_with_no_session_does_not_invent_activity()
     {
         using var h = new Harness();
         var task = HeaderTask();
         var facts = HeaderFacts(withSession: false, sinceLastEntry: null);
         var note = h.Checks.BuildNote(task, facts, digest: "CAPTURED — digest body");
 
-        var header = note.Split('\n')[0];
-        header.ShouldContain("no session");
-        header.ShouldNotContain("last activity");
-        header.ShouldNotContain("after reply");
+        note.Split('\n')[0].ShouldBe(
+            $"[check {DelegationReportFormatter.Short(task.Id)} #3] channel tests | elapsed 11m/10m | no session");
     }
 
     [Test]
@@ -154,9 +149,129 @@ public class AgentTaskCheckInterpreterTests
             taskAge: TimeSpan.FromSeconds(34));
         var note = h.Checks.BuildNote(task, facts, digest: "CAPTURED — digest body");
 
+        note.Split('\n')[0].ShouldBe(
+            $"[check {DelegationReportFormatter.Short(task.Id)} #3] channel tests | elapsed 0m/10m | after reply; dispatched 2h24m ago | no session");
+    }
+
+    [Test]
+    public void an_empty_title_renders_as_delegated_task()
+    {
+        using var h = new Harness();
+        var task = HeaderTask();
+        task.Title = "  \n  ";
+        var note = h.Checks.BuildNote(task, HeaderFacts(withSession: false, sinceLastEntry: null), digest: "CAPTURED — digest body");
+
         var header = note.Split('\n')[0];
-        header.ShouldContain("elapsed (expected ");
-        header.ShouldContain("after reply (dispatched 2h24m ago)");
+        header.ShouldBe(
+            $"[check {DelegationReportFormatter.Short(task.Id)} #3] Delegated task | elapsed 11m/10m | no session");
+        header.ShouldStartWith(AgentTaskCheckService.HeaderPrefix);
+    }
+
+    [Test]
+    public void a_final_check_keeps_the_budget_phrase_on_the_bounded_first_line()
+    {
+        using var h = new Harness();
+        var task = HeaderTask();
+        task.NextCheckAt = null;
+        var note = h.Checks.BuildNote(task, HeaderFacts(withSession: true, sinceLastEntry: null), digest: "CAPTURED — digest body");
+
+        var header = note.Split('\n')[0];
+        header.ShouldBe(
+            $"[check {DelegationReportFormatter.Short(task.Id)} #3] channel tests | elapsed 11m/10m | running/working | activity never | final check - the 10-check budget is spent");
+        header.Length.ShouldBeLessThanOrEqualTo(AgentTaskCheckService.HeaderTitleMaxChars + 160);
+    }
+
+    [Test]
+    public void a_direct_api_length_title_is_clipped_at_a_word_boundary()
+    {
+        using var h = new Harness();
+        var task = HeaderTask();
+        task.Title = string.Join(" ", Enumerable.Repeat("titleword", 30));
+        task.Title.Length.ShouldBe(299);
+        var note = h.Checks.BuildNote(task, HeaderFacts(withSession: false, sinceLastEntry: null), digest: "CAPTURED — digest body");
+
+        var header = note.Split('\n')[0];
+        var identity = "titleword titleword titleword titleword titleword titleword...";
+        identity.Length.ShouldBeLessThanOrEqualTo(AgentTaskCheckService.HeaderTitleMaxChars);
+        header.ShouldBe(
+            $"[check {DelegationReportFormatter.Short(task.Id)} #3] {identity} | elapsed 11m/10m | no session");
+        header.ShouldNotContain("titleword titleword titleword titleword titleword titleword titleword");
+        header.ShouldStartWith(AgentTaskCheckService.HeaderPrefix);
+    }
+
+    [Test]
+    public async Task a_300_char_api_title_is_clipped_on_the_header()
+    {
+        using var h = new Harness();
+        var title = new string('x', 300);
+        var created = await h.Tasks.CreateAsync(
+            new CreateAgentTaskRequest(Goal: "do the checked thing", Title: title, Role: AgentTaskRole.Code),
+            new AgentTaskService.Caller(null, null, h.Scratch),
+            CancellationToken.None);
+
+        created.CardId.ShouldBeNull();
+        var row = await h.ReloadAsync(created.Id);
+        row.Title.Length.ShouldBe(300);
+        var task = HeaderTask();
+        task.Id = row.Id;
+        task.Title = row.Title;
+        var note = h.Checks.BuildNote(task, HeaderFactsFor(task), digest: "CAPTURED — digest body");
+
+        var header = note.Split('\n')[0];
+        var identity = new string('x', 61) + "...";
+        header.ShouldBe(
+            $"[check {DelegationReportFormatter.Short(created.Id)} #3] {identity} | elapsed 11m/10m | no session");
+        header.ShouldStartWith(AgentTaskCheckService.HeaderPrefix);
+        identity.Length.ShouldBe(AgentTaskCheckService.HeaderTitleMaxChars);
+    }
+
+    [Test]
+    public async Task a_long_multi_line_title_through_create_is_clipped_on_the_header()
+    {
+        using var h = new Harness();
+        var title =
+            "Investigate the long-running check header dump that repeats the entire goal\n"
+            + "paragraph across several lines until the first check overflows the composer";
+        var created = await h.Tasks.CreateAsync(
+            new CreateAgentTaskRequest(Goal: "do the checked thing", Title: title, Role: AgentTaskRole.Code),
+            new AgentTaskService.Caller(null, null, h.Scratch),
+            CancellationToken.None);
+
+        created.CardId.ShouldBeNull("an unbound task still has to clip; CARD-NNNN is S3");
+        var row = await h.ReloadAsync(created.Id);
+        row.Title.ShouldContain('\n');
+        row.Title.Length.ShouldBeGreaterThan(AgentTaskCheckService.HeaderTitleMaxChars);
+
+        var task = HeaderTask();
+        task.Id = row.Id;
+        task.Title = row.Title;
+        task.CardId = row.CardId;
+        var note = h.Checks.BuildNote(task, HeaderFactsFor(task), digest: "CAPTURED — digest body");
+
+        var header = note.Split('\n')[0];
+        header.ShouldStartWith($"[check {DelegationReportFormatter.Short(row.Id)} #3]");
+        header.ShouldContain("...");
+        header.ShouldNotContain('\n');
+        header.ShouldNotContain("overflows the composer");
+        header.ShouldNotContain("CARD-");
+        header.Length.ShouldBeLessThan(row.Title.ReplaceLineEndings(" ").Length);
+        AgentTaskCheckService.ClipHeaderTitle(row.Title).Length
+            .ShouldBeLessThanOrEqualTo(AgentTaskCheckService.HeaderTitleMaxChars);
+        header.ShouldContain(AgentTaskCheckService.ClipHeaderTitle(row.Title));
+    }
+
+    [Test]
+    public void clip_header_title_normalizes_blanks_and_hard_cuts_unbroken_text()
+    {
+        AgentTaskCheckService.ClipHeaderTitle(null).ShouldBe("Delegated task");
+        AgentTaskCheckService.ClipHeaderTitle("").ShouldBe("Delegated task");
+        AgentTaskCheckService.ClipHeaderTitle(" \n\t ").ShouldBe("Delegated task");
+        AgentTaskCheckService.ClipHeaderTitle("short").ShouldBe("short");
+        AgentTaskCheckService.ClipHeaderTitle(new string('a', 64)).ShouldBe(new string('a', 64));
+        AgentTaskCheckService.ClipHeaderTitle(new string('a', 65))
+            .ShouldBe(new string('a', 61) + "...");
+        AgentTaskCheckService.ClipHeaderTitle("hello\nworld this is a short one")
+            .ShouldBe("hello world this is a short one");
     }
 
     /// <summary>
@@ -639,19 +754,25 @@ public class AgentTaskCheckInterpreterTests
         NextCheckAt = DateTime.UtcNow.AddMinutes(10),
     };
 
+    private static DelegateCheckProbe.CheckFacts HeaderFactsFor(AgentTask task) =>
+        HeaderFacts(withSession: false, sinceLastEntry: null, id: task.Id, title: task.Title);
+
     private static DelegateCheckProbe.CheckFacts HeaderFacts(
         bool withSession,
         TimeSpan? sinceLastEntry,
         DateTime? at = null,
         DateTime? dispatchedAt = null,
         DateTime? repliedAt = null,
-        TimeSpan? taskAge = null)
+        TimeSpan? taskAge = null,
+        Guid? id = null,
+        string? title = null)
     {
         var now = at ?? DateTime.UtcNow;
+        var taskId = id ?? HeaderTask().Id;
         var task = new DelegateCheckProbe.CheckTaskFacts(
-            HeaderTask().Id,
-            DelegationReportFormatter.Short(HeaderTask().Id),
-            "channel tests",
+            taskId,
+            DelegationReportFormatter.Short(taskId),
+            title ?? "channel tests",
             AgentTaskKind.Worker,
             AgentKind.ClaudeCode,
             AgentTaskRole.Code,
@@ -756,6 +877,7 @@ public class AgentTaskCheckInterpreterTests
 
         public FakeTimeProvider Clock { get; }
         public DateTime StartedAt { get; }
+        public string Scratch => _scratch;
         public string SpecialistSlug { get; }
         public AgentTaskDispatcher Dispatcher { get; }
         public AgentTaskCheckService Checks { get; }
