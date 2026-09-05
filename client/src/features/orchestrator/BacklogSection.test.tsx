@@ -1,6 +1,6 @@
 import { HttpResponse, http } from 'msw'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { BoardSummaryDto, CardDto, CardListDto, CardQuadrant } from '../../api/boards'
+import type { BoardColumnDto, BoardSummaryDto, CardDto, CardListDto, CardQuadrant } from '../../api/boards'
 import { renderWithProviders, screen, userEvent, waitFor, within } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { BacklogSection } from './BacklogSection'
@@ -60,16 +60,87 @@ function board(id: string, name: string): BoardSummaryDto {
   }
 }
 
+const DEFAULT_COLUMNS: BoardColumnDto[] = [
+  {
+    id: 'column-backlog',
+    stateKey: 'backlog',
+    name: 'Backlog',
+    columnOrder: 0,
+    cardStatus: 'Backlog',
+    isActive: false,
+    isTerminal: false,
+    maxConcurrentSessions: null,
+    cards: [],
+  },
+  {
+    id: 'column-in-progress',
+    stateKey: 'in-progress',
+    name: 'In Progress',
+    columnOrder: 1,
+    cardStatus: 'InProgress',
+    isActive: true,
+    isTerminal: false,
+    maxConcurrentSessions: null,
+    cards: [],
+  },
+  {
+    id: 'column-review',
+    stateKey: 'review',
+    name: 'Review',
+    columnOrder: 2,
+    cardStatus: 'Review',
+    isActive: false,
+    isTerminal: false,
+    maxConcurrentSessions: null,
+    cards: [],
+  },
+  {
+    id: 'column-needs-decision',
+    stateKey: 'needs-decision',
+    name: 'Needs decision',
+    columnOrder: 3,
+    cardStatus: 'NeedsDecision',
+    isActive: false,
+    isTerminal: false,
+    maxConcurrentSessions: null,
+    cards: [],
+  },
+  {
+    id: 'column-done',
+    stateKey: 'done',
+    name: 'Done',
+    columnOrder: 4,
+    cardStatus: 'Done',
+    isActive: false,
+    isTerminal: true,
+    maxConcurrentSessions: null,
+    cards: [],
+  },
+  {
+    id: 'column-canceled',
+    stateKey: 'canceled',
+    name: 'Canceled',
+    columnOrder: 5,
+    cardStatus: 'Canceled',
+    isActive: false,
+    isTerminal: true,
+    maxConcurrentSessions: null,
+    cards: [],
+  },
+]
+
 function serve({
   cards = [],
   truncated = false,
   boards = [board('board-1', 'Antiphon')],
   cardsError = false,
+  columns = DEFAULT_COLUMNS,
 }: {
   cards?: CardDto[]
   truncated?: boolean
   boards?: BoardSummaryDto[]
   cardsError?: boolean
+  columns?: BoardColumnDto[]
 } = {}) {
   server.use(
     http.get('/api/cards', () => {
@@ -77,6 +148,7 @@ function serve({
       return HttpResponse.json<CardListDto>({ cards, truncated })
     }),
     http.get('/api/boards', () => HttpResponse.json(boards)),
+    http.get('/api/boards/:id/columns', () => HttpResponse.json(columns)),
   )
 }
 
@@ -217,5 +289,33 @@ describe('BacklogSection', () => {
     renderWithProviders(<BacklogSection />)
     expect(await screen.findByTestId('backlog-error')).toBeInTheDocument()
     expect(screen.queryByTestId('backlog-box-DoFirst')).not.toBeInTheDocument()
+  })
+
+  it('with columns loaded, the kebab lists legal Move to targets for a Backlog card', async () => {
+    serve({ cards: [card({ identifier: 'CARD-0001' })] })
+    renderWithProviders(<BacklogSection />)
+
+    await userEvent.click(await screen.findByLabelText('Actions for CARD-0001'))
+    expect(await screen.findByTestId('move-to-in-progress')).toHaveTextContent('In Progress — spawns an agent')
+    expect(screen.getByTestId('move-to-review')).toHaveTextContent('Review')
+    expect(screen.getByTestId('move-to-needs-decision')).toHaveTextContent('Needs decision')
+    expect(screen.getByTestId('move-to-done')).toHaveTextContent('Done')
+    expect(screen.getByTestId('move-to-canceled')).toHaveTextContent('Canceled')
+    expect(screen.queryByTestId('move-to-backlog')).not.toBeInTheDocument()
+  })
+
+  it('without columns, there is no kebab and the row still opens', async () => {
+    serve({
+      cards: [card({ id: 'card-99', boardId: 'board-7', identifier: 'CARD-0099' })],
+      columns: [],
+    })
+    renderWithProviders(<BacklogSection />)
+
+    const row = await screen.findByTestId('backlog-row-CARD-0099')
+    expect(screen.queryByLabelText('Actions for CARD-0099')).not.toBeInTheDocument()
+    await userEvent.click(row)
+    await waitFor(() =>
+      expect(window.location.pathname + window.location.search).toBe('/boards/board-7?card=card-99'),
+    )
   })
 })

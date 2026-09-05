@@ -464,6 +464,34 @@ public class ContractSnapshotTests
             new HashSet<Guid> { PipelineReadyCardId });
     }
 
+    /// <summary>
+    /// CARD-0094 S3. Fleet-global <c>GET /api/cards?status=Backlog</c> is otherwise polluted by
+    /// whatever else SharedApp has written. Keep the scenario's own ids so the fixture is what
+    /// Storybook seeds, and leave timestamps/ids unscrubbed — they are fixed in the seed, and
+    /// quadrant/rank on the wire are computed at capture from those stored values.
+    /// </summary>
+    [Test]
+    public async Task Backlog_quadrant_contract()
+    {
+        var app = await SharedApp.GetAsync();
+        var t0 = new DateTime(2026, 2, 3, 9, 0, 0, DateTimeKind.Utc);
+
+        using (var scope = app.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await SeedBacklogScenarioAsync(db, t0);
+        }
+
+        var cardIds = new HashSet<Guid>
+        {
+            BacklogDoFirstCardId, BacklogScheduleCardId,
+            BacklogSomeday1CardId, BacklogSomeday2CardId, BacklogSomeday3CardId,
+            BacklogClearCardId, BacklogGymSomedayCardId,
+        };
+        await SnapshotCardsBacklogAsync(app, cardIds);
+        await SnapshotBoardsBacklogAsync(app, new HashSet<Guid> { BacklogAntiphonBoardId, BacklogGymBoardId });
+    }
+
     // ---- scenario helpers ----
 
     private static readonly Guid HomeProjectId = Guid.Parse("cccccccc-0000-0000-0000-000000000001");
@@ -482,6 +510,17 @@ public class ContractSnapshotTests
     private static readonly Guid PipelineProjectId = Guid.Parse("dddddddd-0000-0000-0000-000000000021");
     private static readonly Guid PipelineBoardId = Guid.Parse("dddddddd-0000-0000-0000-000000000022");
     private static readonly Guid PipelineReadyCardId = Guid.Parse("dddddddd-0000-0000-0000-000000000023");
+    private static readonly Guid BacklogAntiphonProjectId = Guid.Parse("eeeeeeee-0000-0000-0000-000000000001");
+    private static readonly Guid BacklogAntiphonBoardId = Guid.Parse("eeeeeeee-0000-0000-0000-000000000002");
+    private static readonly Guid BacklogGymProjectId = Guid.Parse("eeeeeeee-0000-0000-0000-000000000003");
+    private static readonly Guid BacklogGymBoardId = Guid.Parse("eeeeeeee-0000-0000-0000-000000000004");
+    private static readonly Guid BacklogDoFirstCardId = Guid.Parse("eeeeeeee-0000-0000-0000-000000000101");
+    private static readonly Guid BacklogScheduleCardId = Guid.Parse("eeeeeeee-0000-0000-0000-000000000102");
+    private static readonly Guid BacklogSomeday1CardId = Guid.Parse("eeeeeeee-0000-0000-0000-000000000103");
+    private static readonly Guid BacklogSomeday2CardId = Guid.Parse("eeeeeeee-0000-0000-0000-000000000104");
+    private static readonly Guid BacklogSomeday3CardId = Guid.Parse("eeeeeeee-0000-0000-0000-000000000105");
+    private static readonly Guid BacklogClearCardId = Guid.Parse("eeeeeeee-0000-0000-0000-000000000201");
+    private static readonly Guid BacklogGymSomedayCardId = Guid.Parse("eeeeeeee-0000-0000-0000-000000000202");
 
     private static async Task SeedHomeTasksScenarioAsync(AppDbContext db, string cwd, DateTime t0)
     {
@@ -701,6 +740,145 @@ public class ContractSnapshotTests
         await db.SaveChangesAsync();
     }
 
+    private static async Task SeedBacklogScenarioAsync(AppDbContext db, DateTime t0)
+    {
+        var cardIds = new[]
+        {
+            BacklogDoFirstCardId, BacklogScheduleCardId,
+            BacklogSomeday1CardId, BacklogSomeday2CardId, BacklogSomeday3CardId,
+            BacklogClearCardId, BacklogGymSomedayCardId,
+        };
+        db.Cards.RemoveRange(db.Cards.Where(c => cardIds.Contains(c.Id)));
+        await db.SaveChangesAsync();
+
+        await EnsureBacklogBoardAsync(
+            db, BacklogAntiphonProjectId, BacklogAntiphonBoardId, "Backlog contract", "Antiphon", t0,
+            Guid.Parse("eeeeeeee-0000-0000-0000-000000000011"));
+        await EnsureBacklogBoardAsync(
+            db, BacklogGymProjectId, BacklogGymBoardId, "Gym contract", "Gym Stat", t0,
+            Guid.Parse("eeeeeeee-0000-0000-0000-000000000021"));
+
+        var antiphonBacklog = await db.BoardColumns
+            .Where(c => c.BoardId == BacklogAntiphonBoardId && c.CardStatus == Server.Domain.Enums.CardStatus.Backlog)
+            .Select(c => c.Id)
+            .SingleAsync();
+        var gymBacklog = await db.BoardColumns
+            .Where(c => c.BoardId == BacklogGymBoardId && c.CardStatus == Server.Domain.Enums.CardStatus.Backlog)
+            .Select(c => c.Id)
+            .SingleAsync();
+
+        db.Cards.AddRange(
+            BacklogCard(BacklogDoFirstCardId, BacklogAntiphonBoardId, antiphonBacklog,
+                "CARD-0094", "Ship the Do-first incident", CardImportance.High, CardUrgency.Now,
+                dueAt: null, at: t0.AddDays(-2), token: Guid.Parse("eeeeeeee-0000-0000-0000-000000000301"),
+                urgentSince: t0.AddDays(-2)),
+            BacklogCard(BacklogScheduleCardId, BacklogAntiphonBoardId, antiphonBacklog,
+                "CARD-0095", "Schedule the importance axes follow-up", CardImportance.High, CardUrgency.Normal,
+                dueAt: null, at: t0.AddDays(-8), token: Guid.Parse("eeeeeeee-0000-0000-0000-000000000302")),
+            BacklogCard(BacklogSomeday1CardId, BacklogAntiphonBoardId, antiphonBacklog,
+                "CARD-0096", "Someday: tidy the screenshot README", CardImportance.Normal, CardUrgency.Normal,
+                dueAt: null, at: t0.AddDays(-20), token: Guid.Parse("eeeeeeee-0000-0000-0000-000000000303")),
+            BacklogCard(BacklogSomeday2CardId, BacklogAntiphonBoardId, antiphonBacklog,
+                "CARD-0097", "Someday: a third-board filter", CardImportance.Normal, CardUrgency.Normal,
+                dueAt: null, at: t0.AddDays(-30), token: Guid.Parse("eeeeeeee-0000-0000-0000-000000000304")),
+            BacklogCard(BacklogSomeday3CardId, BacklogAntiphonBoardId, antiphonBacklog,
+                "CARD-0098", "Someday: virtualise a huge box", CardImportance.Normal, CardUrgency.Normal,
+                dueAt: null, at: t0.AddDays(-40), token: Guid.Parse("eeeeeeee-0000-0000-0000-000000000305")),
+            BacklogCard(BacklogClearCardId, BacklogGymBoardId, gymBacklog,
+                "CARD-0007", "Clear the gym due date", CardImportance.Low, CardUrgency.Normal,
+                dueAt: t0.AddDays(10), at: t0.AddDays(-5), token: Guid.Parse("eeeeeeee-0000-0000-0000-000000000306")),
+            BacklogCard(BacklogGymSomedayCardId, BacklogGymBoardId, gymBacklog,
+                "CARD-0008", "Someday: gym labels", CardImportance.Normal, CardUrgency.Normal,
+                dueAt: null, at: t0.AddDays(-12), token: Guid.Parse("eeeeeeee-0000-0000-0000-000000000307")));
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task EnsureBacklogBoardAsync(
+        AppDbContext db, Guid projectId, Guid boardId, string projectName, string boardName, DateTime t0, Guid backlogColumnId)
+    {
+        if (!await db.Projects.AnyAsync(p => p.Id == projectId))
+        {
+            db.Projects.Add(new Project
+            {
+                Id = projectId,
+                Name = projectName,
+                GitRepositoryUrl = $"https://example.test/{boardName.Replace(" ", "-").ToLowerInvariant()}.git",
+                LocalRepositoryPath = $@"C:\src\{boardName.Replace(" ", "-").ToLowerInvariant()}",
+                BaseBranch = "master",
+                CreatedAt = t0,
+                UpdatedAt = t0,
+            });
+        }
+
+        if (await db.Boards.AnyAsync(b => b.Id == boardId))
+            return;
+
+        db.Boards.Add(new Board
+        {
+            Id = boardId,
+            ProjectId = projectId,
+            Name = boardName,
+            CreatedAt = t0,
+            UpdatedAt = t0,
+        });
+        var n = backlogColumnId.ToByteArray();
+        Guid Offset(byte delta)
+        {
+            var copy = (byte[])n.Clone();
+            copy[15] = (byte)(n[15] + delta);
+            return new Guid(copy);
+        }
+        var columns = new (Guid Id, string Key, string Name, Server.Domain.Enums.CardStatus Status, bool Active, bool Terminal)[]
+        {
+            (backlogColumnId, "backlog", "Backlog", Server.Domain.Enums.CardStatus.Backlog, false, false),
+            (Offset(1), "in-progress", "In Progress", Server.Domain.Enums.CardStatus.InProgress, true, false),
+            (Offset(2), "review", "Review", Server.Domain.Enums.CardStatus.Review, false, false),
+            (Offset(3), "needs-decision", "Needs decision", Server.Domain.Enums.CardStatus.NeedsDecision, false, false),
+            (Offset(4), "done", "Done", Server.Domain.Enums.CardStatus.Done, false, true),
+            (Offset(5), "canceled", "Canceled", Server.Domain.Enums.CardStatus.Canceled, false, true),
+        };
+        for (var i = 0; i < columns.Length; i++)
+        {
+            var col = columns[i];
+            db.BoardColumns.Add(new BoardColumn
+            {
+                Id = col.Id,
+                BoardId = boardId,
+                StateKey = col.Key,
+                Name = col.Name,
+                ColumnOrder = i,
+                CardStatus = col.Status,
+                IsActive = col.Active,
+                IsTerminal = col.Terminal,
+                CreatedAt = t0,
+                UpdatedAt = t0,
+            });
+        }
+        await db.SaveChangesAsync();
+    }
+
+    private static Card BacklogCard(
+        Guid id, Guid boardId, Guid columnId, string identifier, string title,
+        CardImportance importance, CardUrgency urgency, DateTime? dueAt, DateTime at, Guid token,
+        DateTime? urgentSince = null) =>
+        new()
+        {
+            Id = id,
+            BoardId = boardId,
+            BoardColumnId = columnId,
+            Identifier = identifier,
+            Title = title,
+            Status = Server.Domain.Enums.CardStatus.Backlog,
+            Importance = importance,
+            ImportanceProvenance = CardImportanceProvenance.Human,
+            Urgency = urgency,
+            DueAt = dueAt,
+            UrgentSince = urgentSince,
+            ConcurrencyToken = token,
+            CreatedAt = at,
+            UpdatedAt = at,
+        };
+
     private static Card HomeCard(
         Guid id, string identifier, string title, Server.Domain.Enums.CardStatus status,
         IReadOnlyDictionary<Server.Domain.Enums.CardStatus, BoardColumn> columns, DateTime at,
@@ -829,6 +1007,77 @@ public class ContractSnapshotTests
         Normalize(existing).ShouldBe(
             Normalize(pretty),
             $"Backend contract for /api/home/tasks drifted from {fixtureName}. If the change is intentional, "
+            + "verify the frontend stories against the new shape, delete the fixture, and re-run to re-capture.");
+    }
+
+    /// <summary>
+    /// CARD-0094 S3. Keep the scenario's own Backlog rows so Storybook seeds a four-cell fixture
+    /// rather than the live fleet.
+    /// </summary>
+    private static async Task SnapshotCardsBacklogAsync(AntiphonAppFixture app, IReadOnlySet<Guid> keepIds)
+    {
+        var response = await app.HttpClient.GetAsync("/api/cards?status=Backlog");
+        response.EnsureSuccessStatusCode();
+        var node = JsonNode.Parse(await response.Content.ReadAsStringAsync())!;
+        var cards = node["cards"]!.AsArray();
+        var kept = cards
+            .Where(item => keepIds.Contains(Guid.Parse(item!["id"]!.GetValue<string>())))
+            .ToList();
+        cards.Clear();
+        foreach (var item in kept)
+            cards.Add(item);
+        node["truncated"] = false;
+
+        var fixtureName = "cards-backlog.json";
+        var pretty = PrettyPrint(node.ToJsonString());
+        var fixturePath = Path.Combine(FixturesDir(), fixtureName);
+        if (!File.Exists(fixturePath))
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(fixturePath)!);
+            await File.WriteAllTextAsync(fixturePath, pretty);
+            Console.WriteLine($"CAPTURED contract fixture {fixtureName}");
+            return;
+        }
+
+        var existing = await File.ReadAllTextAsync(fixturePath);
+        Normalize(existing).ShouldBe(
+            Normalize(pretty),
+            $"Backend contract for /api/cards?status=Backlog drifted from {fixtureName}. If the change is intentional, "
+            + "verify the frontend stories against the new shape, delete the fixture, and re-run to re-capture.");
+    }
+
+    /// <summary>
+    /// The Backlog section names boards from <c>GET /api/boards</c>; keep only the two boards the
+    /// cards fixture spans so Storybook can seed <c>boardKeys.all</c> from a contract file.
+    /// </summary>
+    private static async Task SnapshotBoardsBacklogAsync(AntiphonAppFixture app, IReadOnlySet<Guid> keepIds)
+    {
+        var response = await app.HttpClient.GetAsync("/api/boards");
+        response.EnsureSuccessStatusCode();
+        var node = JsonNode.Parse(await response.Content.ReadAsStringAsync())!;
+        var boards = node.AsArray();
+        var kept = boards
+            .Where(item => keepIds.Contains(Guid.Parse(item!["id"]!.GetValue<string>())))
+            .ToList();
+        boards.Clear();
+        foreach (var item in kept)
+            boards.Add(item);
+
+        var fixtureName = "boards-backlog.json";
+        var pretty = PrettyPrint(node.ToJsonString());
+        var fixturePath = Path.Combine(FixturesDir(), fixtureName);
+        if (!File.Exists(fixturePath))
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(fixturePath)!);
+            await File.WriteAllTextAsync(fixturePath, pretty);
+            Console.WriteLine($"CAPTURED contract fixture {fixtureName}");
+            return;
+        }
+
+        var existing = await File.ReadAllTextAsync(fixturePath);
+        Normalize(existing).ShouldBe(
+            Normalize(pretty),
+            $"Backend contract for /api/boards (backlog story seed) drifted from {fixtureName}. If the change is intentional, "
             + "verify the frontend stories against the new shape, delete the fixture, and re-run to re-capture.");
     }
 

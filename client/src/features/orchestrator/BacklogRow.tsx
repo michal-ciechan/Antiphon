@@ -3,10 +3,11 @@ import { CSS } from '@dnd-kit/utilities'
 import { ActionIcon, Badge, Box, Group, Text, Tooltip } from '@mantine/core'
 import { TbGripVertical } from 'react-icons/tb'
 import { useNavigate } from 'react-router'
-import type { CardDto } from '../../api/boards'
+import type { BoardColumnDto, CardDto } from '../../api/boards'
 import { displayIdentifier, externalIssueTag } from '../../shared/cardIdentifier'
 import { ageInDays } from '../board/boardShapeModel'
 import { CardAxisBadges } from '../board/CardAxisBadges'
+import { MoveMenu } from '../board/MoveMenu'
 
 interface BacklogRowProps {
   card: CardDto
@@ -16,6 +17,8 @@ interface BacklogRowProps {
   /** `stacked` drops the title onto its own line — the phone layout. */
   layout?: 'row' | 'stacked'
   reorderable?: boolean
+  /** Hidden until this board's columns have loaded — same gate as DecisionsPanel. */
+  columns?: BoardColumnDto[]
 }
 
 /**
@@ -29,6 +32,7 @@ export function BacklogRow({
   now,
   layout = 'row',
   reorderable = false,
+  columns = [],
 }: BacklogRowProps) {
   const navigate = useNavigate()
   const stacked = layout === 'stacked'
@@ -122,6 +126,11 @@ export function BacklogRow({
         >
           {age}d
         </Text>
+        {columns.length > 0 && (
+          <Box style={{ flex: 'none' }} onClick={(event) => event.stopPropagation()}>
+            <MoveMenu boardId={card.boardId} card={card} columns={columns} />
+          </Box>
+        )}
       </Group>
       {stacked && <Box pl={46}>{title}</Box>}
     </Box>

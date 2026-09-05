@@ -1,0 +1,32 @@
+[
+  {
+    "id": "eeeeeeee-0000-0000-0000-000000000002",
+    "projectId": "eeeeeeee-0000-0000-0000-000000000001",
+    "projectName": "Backlog contract",
+    "name": "Antiphon",
+    "description": "",
+    "trackerKind": "Internal",
+    "maxConcurrentSessions": 1,
+    "cardCount": 5,
+    "createdAt": "2026-02-03T09:00:00Z",
+    "updatedAt": "2026-02-03T09:00:00Z",
+    "archivedAt": null,
+    "archivedReason": null,
+    "archivedBy": null
+  },
+  {
+    "id": "eeeeeeee-0000-0000-0000-000000000004",
+    "projectId": "eeeeeeee-0000-0000-0000-000000000003",
+    "projectName": "Gym contract",
+    "name": "Gym Stat",
+    "description": "",
+    "trackerKind": "Internal",
+    "maxConcurrentSessions": 1,
+    "cardCount": 2,
+    "createdAt": "2026-02-03T09:00:00Z",
+    "updatedAt": "2026-02-03T09:00:00Z",
+    "archivedAt": null,
+    "archivedReason": null,
+    "archivedBy": null
+  }
+]

@@ -15,7 +15,7 @@ import {
 import { useMediaQuery } from '@mantine/hooks'
 import { useMemo, useState } from 'react'
 import { TbAlertCircle, TbRefresh } from 'react-icons/tb'
-import { useBoards, useCards } from '../../api/boards'
+import { useBoardColumnsFor, useBoards, useCards, type BoardColumnDto } from '../../api/boards'
 import { SortableCardList } from '../board/SortableCardList'
 import { BACKLOG_BOX_CAP, boardsPresent, groupBacklog, type BacklogBox as BacklogBoxModel } from './backlogModel'
 import { BacklogRow } from './BacklogRow'
@@ -30,7 +30,7 @@ export function BacklogSection() {
   const cards = useCards({ status: 'Backlog' })
   const boards = useBoards()
   const isMobile = useMediaQuery('(max-width: 48em)') ?? false
-  const [now] = useState(() => new Date())
+  const [now] = useState(() => new Date(Date.now()))
 
   const list = useMemo(() => cards.data?.cards ?? [], [cards.data?.cards])
   const boxes = useMemo(() => groupBacklog(list), [list])
@@ -39,6 +39,12 @@ export function BacklogSection() {
   const boardNameById = useMemo(
     () => new Map((boards.data ?? []).map((board) => [board.id, board.name])),
     [boards.data],
+  )
+  const boardIds = useMemo(() => [...new Set(list.map((card) => card.boardId))], [list])
+  const columnQueries = useBoardColumnsFor(boardIds, cards.isSuccess)
+  const columnsByBoardId = useMemo(
+    () => new Map(boardIds.map((id, index) => [id, columnQueries[index]?.data ?? []])),
+    [columnQueries, boardIds],
   )
 
   if (cards.error || boards.error) {
@@ -91,6 +97,7 @@ export function BacklogSection() {
             box={box}
             showBoard={showBoard}
             boardNameById={boardNameById}
+            columnsByBoardId={columnsByBoardId}
             now={now}
             stacked={isMobile}
             reorderable={!showBoard}
@@ -105,6 +112,7 @@ function BacklogBox({
   box,
   showBoard,
   boardNameById,
+  columnsByBoardId,
   now,
   stacked,
   reorderable,
@@ -112,6 +120,7 @@ function BacklogBox({
   box: BacklogBoxModel
   showBoard: boolean
   boardNameById: Map<string, string>
+  columnsByBoardId: Map<string, BoardColumnDto[]>
   now: Date
   stacked: boolean
   reorderable: boolean
@@ -138,7 +147,7 @@ function BacklogBox({
         <SortableCardList
           cards={visible}
           boardId={visible[0].boardId}
-          columns={[]}
+          columns={columnsByBoardId.get(visible[0].boardId) ?? []}
           now={now}
           enabled
           renderItem={(card, canReorder) => (
@@ -149,6 +158,7 @@ function BacklogBox({
               now={now}
               layout={stacked ? 'stacked' : 'row'}
               reorderable={canReorder}
+              columns={columnsByBoardId.get(card.boardId) ?? []}
             />
           )}
         />
@@ -162,6 +172,7 @@ function BacklogBox({
               showBoard={showBoard}
               now={now}
               layout={stacked ? 'stacked' : 'row'}
+              columns={columnsByBoardId.get(card.boardId) ?? []}
             />
           ))}
         </Stack>

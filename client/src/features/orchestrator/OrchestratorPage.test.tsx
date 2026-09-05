@@ -60,6 +60,7 @@ function serve(items: AttentionItemDto[]) {
       }),
     ),
     http.get('/api/boards', () => HttpResponse.json([])),
+    http.get('/api/boards/:id/columns', () => HttpResponse.json([])),
     http.get('/api/cards', () => {
       cardsRequests += 1
       return HttpResponse.json({ cards: [], truncated: false })
