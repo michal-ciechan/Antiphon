@@ -1,5 +1,7 @@
-import { Badge, Box, Group, Text, Tooltip } from '@mantine/core'
-import { TbTerminal2 } from 'react-icons/tb'
+import { useSortable } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import { ActionIcon, Badge, Box, Group, Text, Tooltip } from '@mantine/core'
+import { TbGripVertical, TbTerminal2 } from 'react-icons/tb'
 import type { BoardColumnDto, CardDto } from '../../api/boards'
 import { displayIdentifier, externalIssueTag } from '../../shared/cardIdentifier'
 import { ageInDays, hasLiveSession } from './boardShapeModel'
@@ -15,6 +17,8 @@ interface CardRowProps {
   onOpen: (cardId: string) => void
   /** `stacked` drops the title onto its own line — the phone layout. */
   layout?: 'row' | 'stacked'
+  /** Grip handle + sortable styles. Hidden on terminal columns and archived rows. */
+  reorderable?: boolean
 }
 
 /**
@@ -24,16 +28,36 @@ interface CardRowProps {
  * The age shown is CARD AGE since creation, not time in this state — nothing records when a card
  * entered its state (feature 011 §3).
  */
-export function CardRow({ card, boardId, columns, now, onOpen, layout = 'row' }: CardRowProps) {
+export function CardRow({ card, boardId, columns, now, onOpen, layout = 'row', reorderable = false }: CardRowProps) {
   const live = hasLiveSession(card)
   const age = ageInDays(card.createdAt, now)
   const stacked = layout === 'stacked'
   // Only ever on screen under the board's Archived filter, so it needs to read as "not part of
   // the live board" without becoming unreadable — the row is still the record.
   const archived = !!card.archivedAt
+  const showHandle = reorderable && !archived
+  const sortable = useSortable({ id: card.id, disabled: !showHandle })
+  const sortableStyle = {
+    transform: CSS.Transform.toString(sortable.transform),
+    transition: sortable.transition,
+  }
 
   const identifier = (
     <Group gap={4} wrap="nowrap" style={{ flex: 'none' }}>
+      {showHandle && (
+        <ActionIcon
+          ref={sortable.setActivatorNodeRef}
+          {...sortable.listeners}
+          {...sortable.attributes}
+          variant="subtle"
+          size="sm"
+          color="gray"
+          aria-label={`Reorder ${card.identifier}`}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <TbGripVertical size={16} />
+        </ActionIcon>
+      )}
       <Tooltip label={card.identifier} withArrow openDelay={400}>
         <Text
           size="sm"
@@ -112,6 +136,7 @@ export function CardRow({ card, boardId, columns, now, onOpen, layout = 'row' }:
 
   return (
     <Box
+      ref={sortable.setNodeRef}
       role="article"
       aria-label={`${card.identifier} ${card.title}`}
       data-testid={`card-row-${card.identifier}`}
@@ -130,6 +155,7 @@ export function CardRow({ card, boardId, columns, now, onOpen, layout = 'row' }:
       px="xs"
       py={stacked ? 8 : 5}
       style={{
+        ...sortableStyle,
         cursor: 'pointer',
         borderRadius: 6,
         borderTop: stacked ? '1px solid var(--mantine-color-dark-5)' : undefined,

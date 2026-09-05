@@ -65,6 +65,7 @@ const KIND_LABEL: Record<CardRevisionDto['kind'], string> = {
   Archive: 'Archived',
   Unarchive: 'Unarchived',
   Reopen: 'Reopened',
+  Reorder: 'Reordered',
 }
 
 const KIND_COLOR: Record<CardRevisionDto['kind'], string> = {
@@ -73,6 +74,7 @@ const KIND_COLOR: Record<CardRevisionDto['kind'], string> = {
   Archive: 'red',
   Unarchive: 'green',
   Reopen: 'orange',
+  Reorder: 'blue',
 }
 
 function RevisionRow({ revision, columns }: { revision: CardRevisionDto; columns: BoardColumnDto[] }) {
@@ -100,6 +102,7 @@ function RevisionRow({ revision, columns }: { revision: CardRevisionDto; columns
           <Text size="xs" c="dimmed">by {revision.editedBy} (self-reported)</Text>
         )}
         {revision.kind === 'ContentEdit' && <SupersededContent revision={revision} />}
+        {revision.kind === 'Reorder' && <SupersededReorder revision={revision} />}
         {revision.kind === 'Reopen' && <SupersededClose revision={revision} />}
       </Stack>
     </Paper>
@@ -114,6 +117,21 @@ function describeMove(revision: CardRevisionDto, columns: BoardColumnDto[]): str
   const name = (columnId: string | null, status: string | null) =>
     columns.find((column) => column.id === columnId)?.name ?? status ?? '?'
   return `${name(revision.fromColumnId, revision.fromStatus)} → ${name(revision.toColumnId, revision.toStatus)}`
+}
+
+function SupersededReorder({ revision }: { revision: CardRevisionDto }) {
+  if (revision.importance === null && revision.urgency === null) return null
+  return (
+    <Group gap={6} wrap="wrap" data-testid={`superseded-reorder-${revision.revisionNumber}`}>
+      <Text size="xs" c="dimmed">was</Text>
+      {revision.importance !== null && (
+        <Badge size="xs" color="gray" variant="outline">{revision.importance}</Badge>
+      )}
+      {revision.urgency !== null && revision.urgency !== 'Normal' && (
+        <Badge size="xs" color="gray" variant="outline">{revision.urgency}</Badge>
+      )}
+    </Group>
+  )
 }
 
 /** The close this reopen undid — timestamp and the reason that was on the card. */

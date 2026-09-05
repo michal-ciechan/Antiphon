@@ -117,10 +117,11 @@ export function ageInDays(iso: string, now: Date): number {
   return Math.max(0, Math.floor((now.getTime() - created) / 86_400_000))
 }
 
-/** Lowest rank first, then earliest due date, then oldest created. */
+/** Lowest rank first, then placed position, then earliest due date, then oldest created. */
 export function orderCards(cards: CardDto[]): CardDto[] {
   return [...cards].sort((a, b) =>
     a.rank - b.rank
+    || (a.position ?? Number.MAX_SAFE_INTEGER) - (b.position ?? Number.MAX_SAFE_INTEGER)
     || (a.dueAt ?? '9999').localeCompare(b.dueAt ?? '9999')
     || a.createdAt.localeCompare(b.createdAt))
 }

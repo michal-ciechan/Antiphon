@@ -7,6 +7,7 @@ import {
   type CardDto,
   useArchiveCard,
   useMoveCard,
+  usePlaceCard,
   useReopenCard,
   useUnarchiveCard,
 } from '../../api/boards'
@@ -44,10 +45,31 @@ export function MoveMenu({ boardId, card, columns, variant = 'kebab', onArchived
   const [reopening, setReopening] = useState(false)
   const [reason, setReason] = useState('')
   const moveCard = useMoveCard(boardId)
+  const placeCard = usePlaceCard(boardId)
   const archiveCard = useArchiveCard(boardId)
   const unarchiveCard = useUnarchiveCard(boardId)
   const reopenCard = useReopenCard(boardId)
   const archived = !!card.archivedAt
+  const currentColumn = columns.find((column) => column.id === card.boardColumnId)
+  const canReorder = !archived && !currentColumn?.isTerminal
+
+  const place = (placement: 'Top' | 'Bottom') => {
+    placeCard.mutate(
+      {
+        cardId: card.id,
+        request: {
+          concurrencyToken: card.concurrencyToken,
+          placement,
+          editedBy: 'operator',
+        },
+      },
+      {
+        onError: (error) => {
+          notifications.show({ color: 'red', message: getApiErrorMessage(error, 'Reorder failed') })
+        },
+      },
+    )
+  }
   // An archived card cannot move — the server refuses with "unarchive it before…", so offering
   // targets would only produce a 409 the operator has to read to understand.
   const targets = archived ? [] : legalMoveTargets(card, columns)
@@ -217,6 +239,29 @@ export function MoveMenu({ boardId, card, columns, variant = 'kebab', onArchived
                   {column.name}{column.isActive ? ' — spawns an agent' : ''}
                 </Menu.Item>
               ))}
+              {canReorder && (
+                <>
+                  <Menu.Divider />
+                  <Menu.Item
+                    data-testid="move-to-top"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      place('Top')
+                    }}
+                  >
+                    Move to top
+                  </Menu.Item>
+                  <Menu.Item
+                    data-testid="move-to-bottom"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      place('Bottom')
+                    }}
+                  >
+                    Move to bottom
+                  </Menu.Item>
+                </>
+              )}
               <Menu.Divider />
               {canReopenFrom(card.status) && (
                 <Menu.Item

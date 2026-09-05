@@ -3,7 +3,7 @@ import { TbChevronDown, TbChevronRight } from 'react-icons/tb'
 import type { BoardColumnDto } from '../../api/boards'
 import { BAND_THRESHOLD, emptyStateMessage, quadrantBands, quadrantLabel, type StateShape } from './boardShapeModel'
 import { stateColor } from './boardVisuals'
-import { CardRow } from './CardRow'
+import { SortableCardList } from './SortableCardList'
 
 interface CardListSectionProps {
   state: StateShape
@@ -37,18 +37,19 @@ export function CardListSection({
 }: CardListSectionProps) {
   const banded = state.cards.length > BAND_THRESHOLD
   const bands = banded ? quadrantBands(state.cards) : []
+  const reorderable = !state.isTerminal && !filtered
 
-  const rows = state.cards.map((card) => (
-    <CardRow
-      key={card.id}
-      card={card}
+  const list = (cards: typeof state.cards) => (
+    <SortableCardList
+      cards={cards}
       boardId={boardId}
       columns={columns}
       now={now}
       onOpen={onOpenCard}
       layout={layout}
+      enabled={reorderable}
     />
-  ))
+  )
 
   const body = state.cards.length === 0
     ? (
@@ -80,27 +81,13 @@ export function CardListSection({
                     <Box style={{ flex: 1, borderTop: '1px solid var(--mantine-color-dark-5)' }} />
                   </Group>
                 </UnstyledButton>
-                {open && (
-                  <Stack gap={0}>
-                    {band.cards.map((card) => (
-                      <CardRow
-                        key={card.id}
-                        card={card}
-                        boardId={boardId}
-                        columns={columns}
-                        now={now}
-                        onOpen={onOpenCard}
-                        layout={layout}
-                      />
-                    ))}
-                  </Stack>
-                )}
+                {open && list(band.cards)}
               </Box>
             )
           })}
         </Stack>
       )
-      : <Stack gap={0}>{rows}</Stack>
+      : list(state.cards)
 
   return (
     <Box data-testid={`board-column-${state.stateKey}`} mb={collapsible ? 4 : 0}>
