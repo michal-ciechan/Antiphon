@@ -20,7 +20,11 @@ import {
 import { notifications } from '@mantine/notifications'
 import { TbAlertCircle, TbPlayerPause, TbPlayerPlay, TbRefresh, TbRotateClockwise, TbServer2 } from 'react-icons/tb'
 import { Link } from 'react-router'
-import type { OrchestratorRunningSessionDto, OrchestratorSessionSource } from '../../api/orchestrator'
+import type {
+  OrchestratorRetryQueueItemDto,
+  OrchestratorRunningSessionDto,
+  OrchestratorSessionSource,
+} from '../../api/orchestrator'
 import {
   useOrchestratorState,
   usePauseOrchestrator,
@@ -77,6 +81,16 @@ function SummaryMetric({
 function sessionCardLabel(session: OrchestratorRunningSessionDto): string {
   if (session.cardIdentifier) return session.cardIdentifier
   return session.task?.title ?? session.definitionName
+}
+
+function retryRowKey(retry: OrchestratorRetryQueueItemDto): string {
+  if (retry.source === 'Delegation' && retry.task) return retry.task.taskId
+  return retry.cardId ?? retry.cardIdentifier ?? 'retry'
+}
+
+function retryPrimaryLabel(retry: OrchestratorRetryQueueItemDto): string {
+  if (retry.cardIdentifier) return retry.cardIdentifier
+  return retry.task?.title ?? '—'
 }
 
 export function OrchestratorPanel() {
@@ -296,16 +310,46 @@ export function OrchestratorPanel() {
                   </Table.Td>
                 </Table.Tr>
               ) : data.retryQueue.map((retry) => (
-                <Table.Tr key={retry.cardId}>
+                <Table.Tr key={retryRowKey(retry)}>
                   <Table.Td>
-                    <Text size="sm" fw={600}>{retry.cardIdentifier}</Text>
-                    <Text size="xs" c="dimmed">{retry.cardTitle}</Text>
+                    <Group gap={6} wrap="nowrap">
+                      <Badge
+                        size="xs"
+                        variant="outline"
+                        color={SOURCE_CHIP[retry.source].color}
+                      >
+                        {SOURCE_CHIP[retry.source].label}
+                      </Badge>
+                      <Text size="sm" fw={600}>{retryPrimaryLabel(retry)}</Text>
+                      {retry.task ? (
+                        <Anchor
+                          component={Link}
+                          to={`/orchestrator?tab=delegations&task=${retry.task.taskId}`}
+                          size="xs"
+                          c="dimmed"
+                          ff="monospace"
+                        >
+                          {retry.task.shortId}
+                        </Anchor>
+                      ) : null}
+                    </Group>
+                    {retry.cardIdentifier ? (
+                      <Text size="xs" c="dimmed">{retry.cardTitle}</Text>
+                    ) : null}
                   </Table.Td>
-                  <Table.Td>{retry.boardName}</Table.Td>
+                  <Table.Td>{retry.boardName ?? '—'}</Table.Td>
                   <Table.Td>{retry.attemptCount} / {retry.maxAttempts}</Table.Td>
-                  <Table.Td>{formatDate(retry.nextRetryAt)}</Table.Td>
                   <Table.Td>
-                    <Text size="sm" lineClamp={2}>{retry.lastError ?? '-'}</Text>
+                    {retry.source === 'Delegation'
+                      ? 'Queued for task dispatcher'
+                      : formatDate(retry.nextRetryAt)}
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm" lineClamp={2}>
+                      {retry.source === 'Delegation'
+                        ? (retry.lastError ?? '—')
+                        : (retry.lastError ?? '-')}
+                    </Text>
                   </Table.Td>
                 </Table.Tr>
               ))}

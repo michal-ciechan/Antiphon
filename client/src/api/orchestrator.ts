@@ -3,6 +3,7 @@ import type { AgentTaskKind, AgentTaskRole, AgentTaskStatus } from './agentTasks
 import { apiGet, apiPost } from './client'
 
 export type OrchestratorSessionSource = 'Card' | 'Delegation'
+export type OrchestratorRetrySource = 'Card' | 'Delegation'
 
 export interface OrchestratorRunningTaskDto {
   taskId: string
@@ -59,12 +60,20 @@ export interface OrchestratorRunningSessionDto {
   lastSequence: number
 }
 
+export interface OrchestratorRetryTaskDto {
+  taskId: string
+  shortId: string
+  title: string
+}
+
 export interface OrchestratorRetryQueueItemDto {
-  cardId: string
-  cardIdentifier: string
-  cardTitle: string
-  boardId: string
-  boardName: string
+  source: OrchestratorRetrySource
+  cardId: string | null
+  cardIdentifier: string | null
+  cardTitle: string | null
+  boardId: string | null
+  boardName: string | null
+  task: OrchestratorRetryTaskDto | null
   attemptCount: number
   maxAttempts: number
   nextRetryAt: string | null
