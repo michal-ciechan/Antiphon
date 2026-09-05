@@ -635,10 +635,11 @@ public static class RunnerExitReasons
 }
 
 /// <summary>
-/// Exit reason strings the herdr lane synthesises (CARD-0186 S2). The server maps these onto
-/// <c>AgentExitReason</c> by name — each constant here is the enum member's name. All four land
-/// as Failed (never Stopped): Stopped is operator intent and is reconciliation's only auto-kill
-/// arm. Replaces the four previously-unparsed literals that became <c>Unknown</c> on the wire.
+/// Exit reason strings the herdr lane synthesises (CARD-0186 S2, CARD-0383). The server maps
+/// these onto <c>AgentExitReason</c> by name — each constant here is the enum member's name.
+/// Pane-closed / presumed-dead / child-gone / pane-left-open / launch-detect-timeout land as
+/// Failed (never Stopped): Stopped is operator intent and is reconciliation's only auto-kill
+/// arm. <see cref="Detached"/> is the attached-stop exception (clean stop, exit code 0).
 /// </summary>
 public static class HerdrExitReasons
 {
@@ -672,7 +673,8 @@ public static class HerdrExitReasons
 
     /// <summary>
     /// CARD-0383: launch failed because herdr never detected the expected kind, and the pane
-    /// was an idle shell so it was retired to last-pane instead of closed.
+    /// was an idle shell so it was retired to last-pane instead of closed. Maps to
+    /// <c>AgentExitReason.HerdrLaunchDetectTimeout</c> — not <see cref="PaneLeftOpen"/>.
     /// </summary>
     public const string LaunchDetectTimeout = "HerdrLaunchDetectTimeout";
 }

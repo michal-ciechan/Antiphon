@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
@@ -259,6 +260,29 @@ public class SessionRunnerHttpClientHerdrWireTests
             client.InspectHerdrPaneAsync("w-missing:p1", CancellationToken.None));
         ex.StatusCode.ShouldBe(404);
         ex.Code.ShouldBe(HerdrProblemTypes.PaneNotFound);
+    }
+
+    [Test]
+    public async Task HerdrLaunchDetectTimeout_exit_reason_maps_to_the_enum_member()
+    {
+        var sessionId = Guid.NewGuid();
+        var handler = new CapturingHandler(_ => Task.FromResult(Json(new RunnerSessionDto(
+            sessionId,
+            Pid: null,
+            StartedAt: DateTime.UtcNow,
+            Status: "Exited",
+            ExitCode: null,
+            ExitReason: HerdrExitReasons.LaunchDetectTimeout,
+            LastSequence: 0))));
+        var client = new SessionRunnerHttpClient(
+            new HttpClient(handler) { BaseAddress = new Uri("http://runner.test/") },
+            new StubFactory(),
+            Options.Create(new SessionRunnerSettings { BaseUrl = "http://runner.test" }));
+
+        var dto = await client.GetAsync(sessionId, CancellationToken.None);
+        dto.ExitReason.ShouldBe(AgentExitReason.HerdrLaunchDetectTimeout);
+        dto.ExitReason.ShouldNotBe(AgentExitReason.HerdrPaneLeftOpen);
+        dto.ExitReason.ShouldNotBe(AgentExitReason.Unknown);
     }
 
     [Test]

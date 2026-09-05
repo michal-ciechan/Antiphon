@@ -794,7 +794,10 @@ internal sealed class HerdrPaneChild : ISessionChild
 
         if (_keepPaneOnKill)
         {
-            RaiseExited(HerdrExitReasons.PaneLeftOpen);
+            _logger.LogWarning(
+                "Herdr pane {PaneId} kept after launch detect timeout for session {SessionId} (idle shell); next start relaunches in place. Do not close the pane.",
+                _paneId, _sessionId);
+            RaiseExited(HerdrExitReasons.LaunchDetectTimeout);
             return true;
         }
 
