@@ -70,24 +70,51 @@ the code - it is a habit to fix in the next brief.
 
 ---
 
-## 1. The cycle
+## 1. The cycle (CARD-0146)
+
+A pipeline stage IS an `AgentTaskRole` — `Investigate`, `Plan`, `TestDesign`, `Code`, `Review`
+(`AgentTaskRoles.IsStage`). Every stage-role report closes with a fixed
+`--- next stage ---` block (`next:` / `handoff:` / `artifact:`, D2 in the plan) instead of prose;
+settlement parses it onto `AgentTask.NextStage` / `NextHandoff` and the completion header carries
+`next=<token>`. The orchestrator reads that bit and dispatches the named stage — it does not
+re-derive "what happens now" from the report body:
 
 ```
 pick a card
-  └─ is there a SOLID plan?  ── no ──▶ fable Plan agent ──▶ land the plan on master
-  │                                                              │
-  └─ yes ◀───────────────────────────────────────────────────────┘
-       ▼
-   opus Code agent, in a worktree, working the plan's slices
-       ▼
-   TRUST THE REPORT (§0) — ask the same delegate back if there's real concern
-       ▼
-   delegate.ps1 -Land <id>  ──▶  deploy  ──▶  close the card
+  ▼
+Investigate  ── skipped when the root cause is already diagnosed
+  │ next: plan | investigate (unconfirmed) | decide (several live hypotheses) | none
+  ▼
+Plan  ── never skipped
+  │ next: test-design (hard/medium default) | code (easy — the ## Verification design
+  │        section is required IN the plan doc when this stage folds) | decide | investigate
+  ▼
+TestDesign  ── separate dispatch for hard/medium; folded into the Plan dispatch for easy (D4)
+  │ next: code | plan (design as written can't be verified) | decide
+  ▼
+Code  (Verify folded in by default) ── runs every V-n/R-n and each PC-n red-then-green,
+  │    reports every item in a table
+  │ next: land | review (escalation — see below) | code (slices remain) | decide
+  ▼
+Review  ── the escalation, not the default: dispatched only for a `complexity:hard` card, a
+  │        safety-critical label, or when Code itself settled `next: review`
+  │ next: land | code (defects named) | decide
+  ▼
+delegate.ps1 -Land <id>  ──▶  deploy  ──▶  close the card
 ```
+
+`next: land` is the cue for `-Land` — see §5. `next: decide` means the artifact already exists
+under stated defaults; take the `## Decisions` section straight to `AskUserQuestion`, the task is
+**done**, not blocked. A stage report with no block still settles — `next=unmarked` — and the fix
+is to send it back to the *same* delegate (§0's ladder), never to read the diff instead.
+`Debug`/`Test`/`Coverage`/`Docs`/`Commit`/`Deploy`/`Merge`/`Custom` are **helpers**, dispatched
+*inside* a stage (a `Debug` for a red test during Code, a `Docs` slice); they carry no stage
+bundle and the block is optional for them (§2).
 
 Landing (fetch, rebase, verify, fast-forward, push, worktree removal, branch deletion) is the
 `-Land` operation's job, not a manual step — see §5. The fleet's stage glance — one line per card,
-in-flight / queued / ready / blocked per role — is `/orchestrator?tab=pipeline`.
+in-flight / queued / ready per stage, generalised across all five stage roles (CARD-0146 S4) — is
+`/orchestrator?tab=pipeline`.
 
 A Worktree task branches from its merge target, or from master HEAD when none is set — never from
 a sibling task's branch (CARD-0215). Land a Plan with `delegate.ps1 -Land <id>` before dispatching
@@ -132,16 +159,62 @@ costs an hour and a merge.
 
 The role sets the model. Do not override without a reason stated in the goal.
 
+**Stage vs helper.** `Investigate`, `Plan`, `TestDesign`, `Code`, `Review` are pipeline **stages**
+(`AgentTaskRoles.IsStage`, §1) — each carries its own `server/Bundles/stage-*.md` standing-rules
+bundle and is expected to close with the `--- next stage ---` block. Every other role is a
+**helper**, dispatched *inside* a stage to answer one narrow question (a red test during Code, a
+conflict left by a worktree task, a docs slice); it carries no stage bundle and the handoff block
+is optional for it (typically `next: none` when present at all).
+
 | Role | For | Tier |
 |---|---|---|
-| `Plan` | decompose, design, choose an approach | fable |
-| `Code` | write or change code | opus (override `-Level High`) |
-| `Review` | judge whether logic is correct | fable |
+| `Investigate` | confirm a card's root cause before any fix is designed — evidence only, no fix design (stage) | opus (escalate fable) |
+| `Plan` | decompose, design, choose an approach (stage) | fable |
+| `TestDesign` | write the `## Verification design` section for a landed plan — separate dispatch for `complexity:hard`/`medium`, folded into Plan for `easy` (stage, same tier as Plan) | fable |
+| `Code` | write or change code; Verify folds in by default — runs and reports every verification-design item (stage) | opus (override `-Level High`) |
+| `Review` | judge whether logic is correct — the escalation over folded Verify, not the default (stage) | fable |
 | `Debug` | find out why something is broken | opus |
+| `Coverage` | check what a change missed | opus |
 | `Merge` | resolving a conflict left behind by a worktree task (auto-spawned after TryMergeBackAsync fails, rarely dispatched by hand) | opus |
 | `Docs` | prose, markdown, comments | sonnet |
 | `Commit` | git plumbing, branches, PRs | sonnet |
 | `Test` / `Deploy` | RUN a thing and report what happened | haiku |
+
+Why Verify folds into Code by default, and Review is the escalation rather than a standing stage:
+§0's trust-the-report rule (2026-08-30) already has Code report a verification table; a standing
+separate Review on every card would double the Frontier-tier dispatches on the cards the
+alternation rule deliberately keeps cheap. The knob is the card's `complexity:` label — see the
+shape table below.
+
+### Default stage shape by complexity (CARD-0352's `complexity:` label)
+
+| Label | Investigate | Plan | TestDesign | Code (Verify folded) | Review | Dispatches |
+|---|---|---|---|---|---|---|
+| `complexity:easy` | skipped unless the cause is unknown | yes, **folds TestDesign** (section required) | folded | yes | no | 2 |
+| `complexity:medium` | only if the root cause is unconfirmed | yes | **separate** | yes | no | 3–4 |
+| `complexity:hard` | yes unless already diagnosed | yes | **separate** | yes | **separate** | 4–5 |
+
+Overrides, in order: a `safety-critical` label or a Code report saying `next: review` forces a
+separate Review; the operator can force any stage separate in the brief; `-Land -Verify <filter>`
+is available at every land regardless of this shape. Not code-enforced — this is a skill-doc rule
+plus the stage bundles' `next:` vocabulary (CARD-0096's batch control is where acting on `next=`
+automatically would live, and it is not built).
+
+**Two different "Verify"s, never renamed.** `AgentTask.Stage : OrchestrationStage?` (CARD-0272:
+Rebase/Verify/Cleanup/Review/FollowUp/Deploy) is the **landing-step** outcome `-Land` records into
+`StageOutcomes` — its `Verify` is "did the build/test step of a land pass." The pipeline's Verify,
+above, is a different question — "did the delegated work do what it claimed" — answered either by
+Code's folded verification-table run or by a separate `Review` dispatch. Same English word, two
+axes (`AgentTask.Stage` vs `AgentTask.NextStage`); neither is renamed to disambiguate, so read the
+column, not the word.
+
+**WIP defaults (documented rule, CARD-0146 D7 — dates are the operator instructions that fixed
+these, 2026-09-01/02).** `RecommendedInFlight = 1` for every stage role. Plan-side WIP (Investigate
++ Plan + TestDesign together) is 1; Execute (Code) WIP is 1; Plan holds once the Code stage's
+`ready` list reaches 2 rows ("planning should only stop if more than 1 card waiting to execute");
+alternate one complex/UI card with one medium/simple card, and prefer GitHub-linked cards. All of
+this is advisory — CARD-0147's create-time concurrency gate is the hard stop, this is the
+judgement call underneath it.
 
 **A `Test` agent runs and reports. It does not repair.** The boundary, stated so it is not a matter
 of taste:
@@ -264,6 +337,20 @@ file is **canonical**; this section deliberately does not restate its contents, 
 restated in three places drifts in three places, and it drifted here first. Improve a rule by
 editing that file in a PR: every future dispatch gets the better version, with nothing to
 reconcile. A sub-orchestrator additionally launches with `server/Bundles/orchestrator.md`.
+
+**A stage-role Worker also launches with its own `server/Bundles/stage-<role>.md`** (CARD-0146 S3,
+via `InstructionBundles.ForDelegate`), composed alongside `delegate-basics`. That bundle already
+carries the stage's **standing** shape: for `stage-plan`, that a design living only in chat is not
+a plan, the plan-doc path convention, and the full `next:` vocabulary; for `stage-code`, that every
+`PC-n` runs red-then-green and is reported in a table, and that landing/deploy are not this
+delegate's job; for `stage-test-design`, the exact `## Verification design` sub-structure
+(`V-n`/`R-n`/`PC-n`/Out of scope/Cost); for `stage-investigate`, that a fix idea is one line under
+"Not done, noted", never a design; for `stage-review`, read-only. **None of that belongs in the
+brief** — repeating it only costs the delegate's attention. What the brief must still supply is
+what no bundle can (below), plus, stage-specific: the **previous stage's `handoff:` line, verbatim**
+(that is the sentence the next brief is built from — D2), its `artifact:` path, and — only when the
+card is `complexity:easy` and this is a Plan dispatch — the sentence "the test-design stage is
+folded into this dispatch; the `## Verification design` section is required."
 
 So a brief is now **the goal plus the state of today**, and the state is the part no bundle can
 carry:
@@ -415,6 +502,11 @@ curl -s localhost:17202/api/sessions/<sessionId>/transcript
 ---
 
 ## 5. Order the landings and read the outcome lines
+
+**`next: land` in the completion header is the cue to run `-Land`** (CARD-0146 D2/§1) — read it
+off `next=land` rather than deciding from the report body that a stage is done. `next: code` or
+`next: review` naming remaining work is the cue to dispatch that stage instead; `next: decide`
+routes to `AskUserQuestion`, not to a land.
 
 **Landing order comes from the completion header.** A note whose header carries
 `overlapping-running=<ids>` says those tasks were still running when this one settled and touched

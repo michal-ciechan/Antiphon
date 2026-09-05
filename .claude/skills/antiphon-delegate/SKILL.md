@@ -44,11 +44,19 @@ you can re-send it as a sub-orchestrator knowing more than you did.
 
 Pick by what the work IS. The role sets the model tier, and that is the cost decision.
 
+**Stage vs helper (CARD-0146).** `Investigate`, `Plan`, `TestDesign`, `Code`, `Review` are pipeline
+**stages** — each launches with its own `server/Bundles/stage-<role>.md` standing-rules bundle
+(composed automatically, nothing to type) and is expected to close its report with a
+`--- next stage ---` block (below). Every other role is a **helper**: dispatched *inside* a stage
+to answer one narrow question, carries no stage bundle, and the block is optional for it.
+
 | Role | Use for | Tier |
 |---|---|---|
-| `Plan` | decompose, design, choose an approach | fable |
-| `Code` | write or change code | fable |
-| `Review` | judge whether logic is correct | fable |
+| `Investigate` | confirm a card's root cause — evidence only, no fix design (stage) | opus, escalate fable |
+| `Plan` | decompose, design, choose an approach (stage) | fable |
+| `TestDesign` | write the `## Verification design` section for a landed plan — separate dispatch by default for `complexity:hard`/`medium`, folded into Plan for `easy` (stage) | fable |
+| `Code` | write or change code; Verify folds in by default — run and report every verification-design item (stage) | fable |
+| `Review` | judge whether logic is correct — the escalation over folded Verify (a `complexity:hard`/safety-critical card, or Code itself said `next: review`), not the default (stage) | fable |
 | `Debug` | find out why something is broken | opus |
 | `Coverage` | check what a change missed | opus |
 | `Merge` | resolve a conflict left by a worktree task (auto-spawned after TryMergeBackAsync fails; rarely by hand) | opus |
@@ -59,6 +67,49 @@ Pick by what the work IS. The role sets the model tier, and that is the cost dec
 
 `Test` and `Deploy` are cheap because they RUN things and report what happened. Interpreting a
 failure is a separate `Debug` task — don't ask haiku to work out why the build broke.
+
+## Stage recipes
+
+One `delegate.ps1` line per stage — kind-free (no `-Kind`/`-Level` unless you have a reason to
+state in `-Goal`; the server routes the kind from pins/chains/RolePolicy). Every stage dispatch's
+brief must additionally carry: the **previous stage's `handoff:` line, verbatim** (the sentence the
+next brief is built from), its `artifact:` path, and — for a Plan dispatch on a `complexity:easy`
+card — the sentence "the test-design stage is folded into this dispatch; the `## Verification
+design` section is required." `-ExpectAbout` for Code is the verification floor from the plan's
+`## Verification design` → `### Cost` block (`suites forced: …; verification floor ≈ N min`) plus
+authoring time — not a guess (`feedback_estimate_as_verification_floor_plus_authoring`).
+
+```powershell
+# Investigate — root cause only, no fix design
+pwsh -NoProfile -File scripts/delegate.ps1 -Role Investigate -Card CARD-nnnn -Title "investigate <card>" -Worktree -Goal "<what to measure/reproduce>"
+
+# Plan — always dispatched; carries the prior Investigate's handoff verbatim if one ran
+pwsh -NoProfile -File scripts/delegate.ps1 -Role Plan -Card CARD-nnnn -Title "plan <card>" -Worktree -Goal "<what to design>; handoff from investigate: '<verbatim>'; artifact: <path>"
+
+# TestDesign — separate dispatch (hard/medium); read the landed plan doc first
+pwsh -NoProfile -File scripts/delegate.ps1 -Role TestDesign -Card CARD-nnnn -Title "verification design <card>" -Worktree -Goal "write ## Verification design for <plan artifact path>"
+
+# Code — Verify folds in; -ExpectAbout is the Cost block's floor + authoring
+pwsh -NoProfile -File scripts/delegate.ps1 -Role Code -Card CARD-nnnn -Title "build <card>" -Worktree -ExpectAbout <floor+authoring> -Goal "execute <plan artifact path> and its verification section; handoff from test-design/plan: '<verbatim>'"
+
+# Review — the escalation only (hard/safety-critical/Code said next: review), read-only on the build worktree
+pwsh -NoProfile -File scripts/delegate.ps1 -Role Review -Card CARD-nnnn -Title "review <card>" -ReadOnly -Dir <build worktree> -Goal "review the diff against <plan artifact path>; handoff from code: '<verbatim>'"
+```
+
+**The handoff block (D2).** A stage-role report must close with, immediately above the
+`[antiphon-report:<id> …]` token:
+
+```
+--- next stage ---
+next: <investigate|plan|test-design|code|review|land|decide|none>
+handoff: <one physical line, at most 400 chars>
+artifact: docs/<repo-relative path>.md   (optional)
+[antiphon-report:<id> done]
+```
+
+This is delivered automatically in the stage's `ReportingContract` — do not retype it in `-Goal`.
+A missing block still settles, as `next=unmarked` on the completion header; that is the cue to send
+the same delegate back (§0 of the loop doc), never to read the diff instead of it.
 
 A clean fast-forward plus deploy is `Deploy` (and `Test` for the suites). `-Role Merge` is the
 conflict specialist the server already spawns; sending it a clean merge pays opus for haiku work.

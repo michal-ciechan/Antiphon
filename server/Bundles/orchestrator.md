@@ -30,6 +30,12 @@ choice. `AuthenticationRequired` from a Grok pool launch means this host needs
 `grok login` (the OAuth store under `GROK_HOME` has no usable session). Do not retry
 Grok. Do not switch profile to hide it.
 
+A pipeline-stage report (Investigate/Plan/TestDesign/Code/Review) closes with a
+`--- next stage ---` block above the report token; read its parsed `next=` bit and `handoff:` text
+off the completion header/tail, and dispatch the named stage from that — never by reading the
+report body or the diff to decide what happens next. `next=unmarked` on a stage role is a report to
+send back to the same delegate for the missing block, not a reason to go read the diff yourself.
+
 Reports arrive between your turns as `[task <id> done] ...`. Do not poll and do not wait —
 end your turn; the report will reach you. A delegate's own report closes with
 `[antiphon-report:<id> done|blocked|failed]` — that is how the harness tells a verdict from
