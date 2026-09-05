@@ -275,17 +275,28 @@ public sealed class OrchestratorService
             .ThenBy(r => r.Card.Identifier)
             .ToListAsync(ct);
 
-        var tokenTotals = await ApplyScope(_db.RunAttempts
+        var retryTaskRows = await ApplyScope(_db.AgentTasks
                 .AsNoTracking())
-            .Where(a => a.TokenUsage != null)
-            .GroupBy(_ => 1)
-            .Select(g => new
+            .Where(t => t.Status == AgentTaskStatus.Queued && t.Attempt > 1)
+            .Where(AgentTaskRoles.NotSpecialist)
+            .OrderBy(t => t.CreatedAt)
+            .ThenBy(t => t.Id)
+            .Select(t => new
             {
-                TokensIn = g.Sum(a => (long?)a.TokenUsage!.TokensIn) ?? 0,
-                TokensOut = g.Sum(a => (long?)a.TokenUsage!.TokensOut) ?? 0,
-                CostUsd = g.Sum(a => (decimal?)a.TokenUsage!.CostUsd) ?? 0
+                t.Id,
+                t.Title,
+                t.Attempt,
+                t.MaxAttempts,
+                t.FailureReason,
+                t.CardId,
+                CardIdentifier = t.Card != null ? t.Card.Identifier : null,
+                CardTitle = t.Card != null ? t.Card.Title : null,
+                BoardId = t.Card != null ? (Guid?)t.Card.BoardId : null,
+                BoardName = t.Card != null ? t.Card.Board.Name : null,
             })
-            .FirstOrDefaultAsync(ct);
+            .ToListAsync(ct);
+
+        var usage = await GetCombinedUsageAsync(ct);
 
         var candidates = new List<RunningFamilyRow>();
         foreach (var session in activeSessions)
@@ -377,22 +388,40 @@ public sealed class OrchestratorService
 
         var retryItems = retryQueue
             .Select(retry => new OrchestratorRetryQueueItemDto(
+                OrchestratorRetrySource.Card,
                 retry.CardId,
                 retry.Card.Identifier,
                 retry.Card.Title,
                 retry.Card.BoardId,
                 retry.Card.Board.Name,
+                Task: null,
                 retry.AttemptCount,
                 retry.MaxAttempts,
                 retry.NextRetryAt,
                 retry.LastAttemptAt,
                 retry.LastError))
+            .Concat(retryTaskRows.Select(task => new OrchestratorRetryQueueItemDto(
+                OrchestratorRetrySource.Delegation,
+                task.CardId,
+                task.CardIdentifier,
+                task.CardTitle,
+                task.BoardId,
+                task.BoardName,
+                new OrchestratorRetryTaskDto(
+                    task.Id,
+                    DelegationReportFormatter.Short(task.Id),
+                    task.Title),
+                task.Attempt,
+                task.MaxAttempts,
+                NextRetryAt: null,
+                LastAttemptAt: null,
+                task.FailureReason)))
             .ToList();
 
         var totals = new OrchestratorStateTotalsDto(
-            tokenTotals?.TokensIn ?? 0,
-            tokenTotals?.TokensOut ?? 0,
-            tokenTotals?.CostUsd ?? 0,
+            usage.TokensIn,
+            usage.TokensOut,
+            usage.CostUsd,
             running.Sum(s => s.RuntimeSeconds));
         var limits = new OrchestratorStateLimitsDto(
             _settings.PollIntervalSeconds,
@@ -550,6 +579,14 @@ public sealed class OrchestratorService
         Guid? TaskId,
         Guid? ParentTaskId);
 
+    private sealed record UsageSum(long TokensIn, long TokensOut, decimal CostUsd)
+    {
+        public static UsageSum Zero { get; } = new(0, 0, 0);
+
+        public UsageSum Add(UsageSum other) =>
+            new(TokensIn + other.TokensIn, TokensOut + other.TokensOut, CostUsd + other.CostUsd);
+    }
+
     private IQueryable<RetrySchedule> ApplyScope(IQueryable<RetrySchedule> query)
     {
         return string.IsNullOrWhiteSpace(_settings.InternalTrackerRepositoryPathPrefix)
@@ -566,6 +603,49 @@ public sealed class OrchestratorService
             : query.Where(a => a.Card.Board.TrackerKind != TrackerKind.Internal
                 || (a.Card.Board.Project.LocalRepositoryPath != null
                     && a.Card.Board.Project.LocalRepositoryPath.StartsWith(_settings.InternalTrackerRepositoryPathPrefix)));
+    }
+
+    private IQueryable<AgentTask> ApplyScope(IQueryable<AgentTask> query)
+    {
+        return string.IsNullOrWhiteSpace(_settings.InternalTrackerRepositoryPathPrefix)
+            ? query
+            : query.Where(t => t.CardId == null
+                || t.Card!.Board.TrackerKind != TrackerKind.Internal
+                || (t.Card.Board.Project.LocalRepositoryPath != null
+                    && t.Card.Board.Project.LocalRepositoryPath.StartsWith(_settings.InternalTrackerRepositoryPathPrefix)));
+    }
+
+    /// <summary>
+    /// Historical spend inside the current tracker scope: card-spawn <c>RunAttempt.TokenUsage</c>
+    /// plus every <c>AgentTask</c> row. Task rows are summed directly — not via
+    /// <c>AgentTaskCostWalk</c>, which would double-count a parent/child family.
+    /// </summary>
+    private async Task<UsageSum> GetCombinedUsageAsync(CancellationToken ct)
+    {
+        var run = await ApplyScope(_db.RunAttempts.AsNoTracking())
+            .Where(a => a.TokenUsage != null)
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                TokensIn = g.Sum(a => (long?)a.TokenUsage!.TokensIn) ?? 0,
+                TokensOut = g.Sum(a => (long?)a.TokenUsage!.TokensOut) ?? 0,
+                CostUsd = g.Sum(a => (decimal?)a.TokenUsage!.CostUsd) ?? 0
+            })
+            .FirstOrDefaultAsync(ct);
+
+        var tasks = await ApplyScope(_db.AgentTasks.AsNoTracking())
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                TokensIn = g.Sum(t => (long?)t.TokensIn) ?? 0,
+                TokensOut = g.Sum(t => (long?)t.TokensOut) ?? 0,
+                CostUsd = g.Sum(t => (decimal?)t.CostUsd) ?? 0
+            })
+            .FirstOrDefaultAsync(ct);
+
+        var runSum = run is null ? UsageSum.Zero : new UsageSum(run.TokensIn, run.TokensOut, run.CostUsd);
+        var taskSum = tasks is null ? UsageSum.Zero : new UsageSum(tasks.TokensIn, tasks.TokensOut, tasks.CostUsd);
+        return runSum.Add(taskSum);
     }
 
     internal async Task<Guid?> TryClaimCardAsync(

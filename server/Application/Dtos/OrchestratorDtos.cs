@@ -23,6 +23,16 @@ public enum OrchestratorSessionSource
     Delegation = 1,
 }
 
+/// <summary>
+/// How a Retry Queue row was produced. Card = due unexhausted <c>RetrySchedule</c>;
+/// Delegation = a non-specialist <c>AgentTask</c> that is <c>Queued</c> after a prior attempt.
+/// </summary>
+public enum OrchestratorRetrySource
+{
+    Card = 0,
+    Delegation = 1,
+}
+
 public sealed record OrchestratorStateDto(
     bool Paused,
     bool Enabled,
@@ -87,12 +97,19 @@ public sealed record OrchestratorRunningSessionDto(
     bool Live,
     long LastSequence);
 
+public sealed record OrchestratorRetryTaskDto(
+    Guid TaskId,
+    string ShortId,
+    string Title);
+
 public sealed record OrchestratorRetryQueueItemDto(
-    Guid CardId,
-    string CardIdentifier,
-    string CardTitle,
-    Guid BoardId,
-    string BoardName,
+    OrchestratorRetrySource Source,
+    Guid? CardId,
+    string? CardIdentifier,
+    string? CardTitle,
+    Guid? BoardId,
+    string? BoardName,
+    OrchestratorRetryTaskDto? Task,
     int AttemptCount,
     int MaxAttempts,
     DateTime? NextRetryAt,
