@@ -366,3 +366,41 @@ Delete `bin-card0090*` after. Shared-Postgres tests seed by id.
   fallback; a role cell outranks it as a whole. Walker contract unchanged. See CARD-0332.
 - The CARD-0022 plan's "CARD-0090: unavailable = `ModelAvailability.IsHeld`; do not invent a second pause list" is honoured by construction — `WalkAsync` has no other availability input.
 - Enum values, `available` list membership and 409 sentence shapes cite CARD-0022/0309; do not restate them differently here.
+
+---
+
+## Verification design
+
+S5 only (S1–S4 already shipped). Added at Code because this plan predates the CARD-0146 section contract.
+
+### Proves it works now
+- V-1: Fable-5 wall on a Working Hard task requeues on the next candidate, kills the session through `StopDelegateAsync`, drops the ephemeral agent, writes `Rerouted` with the worktree/checkout handoff, and records `rerouted to {alias} as task attempt {n}` · integration · `ComplexityWallRerouteTests.Fable_5_wall_on_a_Working_Hard_task_requeues_on_the_next_candidate` · Queued on opus, `Stopper.Killed` contains the session, agent row gone, hold written, incident clause present
+- V-2: Session-limit stub switches immediately when an alternative exists and cancels the scheduled same-session resume · integration · `Session_limit_with_an_alternative_switches_immediately` · Queued on next candidate, recovery `ResolvedReason = Rerouted`, no `ApiErrorDeferred`
+- V-3: Session-limit stub with no alternative keeps CARD-0022's single resume · integration · `Session_limit_with_no_alternative_keeps_the_CARD_0022_resume` · stays Working, `NextAttemptAt` set, session not killed
+- V-4: Chain exhausted at the wall Blocks, does not Fail · integration · `Chain_exhausted_at_the_wall_blocks_instead_of_failing` · `Status = Blocked`, `FailureReason` starts with `routing exhausted:`, parent note enqueued
+- V-5: Non-chain task on Fable-5 is byte-identical to CARD-0022 · integration · `Non_chain_task_fails_on_Fable_5_as_today` plus `ApiErrorRecoveryServiceTests` · Failed with `WallModelPaused`, no `Rerouted`
+- V-6: Required-pinned chain task is untouched · integration · `Required_pinned_task_is_untouched_on_a_Fable_5_wall` · Failed on fable, no `Rerouted`
+- V-7: Second wall on the rerouted attempt takes the next candidate · integration · `Second_wall_on_the_rerouted_attempt_takes_the_next_candidate` · Grok after opus wall
+- V-8: N+1th wall is Blocked by the loop guard · integration · `Nth_plus_one_wall_is_Blocked_by_the_loop_guard` · Blocked while opus is still available
+
+### Guards the regression
+- R-1: a Required pin is silently rerouted on a wall · caught by V-6 because `Rerouted` count must stay 0 and kind/level stay the pin pair
+- R-2: a session-limit with nowhere else to go Blocks instead of scheduling CARD-0022's resume · caught by V-3 because status stays Working and `NextAttemptAt` is set
+- R-3: a wall cascade loops past the chain length · caught by V-8 because 3 prior `Rerouted` events Block even though opus is free
+- R-4: the wall path kills the session outside `StopDelegateAsync` / `RequeueAsync` · caught by V-1 because `RecordingSessionStopper.Killed` is the only kill seam the test sees
+- R-5: a non-chain Working task is pulled into the chain walker · caught by V-5 because `Complexity` stays null and the task Fails with `WallModelPaused`
+
+### Positive controls  (Build runs each: break, see red, revert, see green — and reports all three)
+- PC-1: break the session-limit-no-alternative fallthrough by deleting `&& !sessionLimitHasScheduledResume` in `RerouteOnWallAsync`; expect `Session_limit_with_no_alternative_keeps_the_CARD_0022_resume` red
+- PC-2: break the Required-pin guard by making `PinForbidsReroute` return `false`; expect `Required_pinned_task_is_untouched_on_a_Fable_5_wall` red
+- PC-3: break the loop guard by deleting the `reroutedCount >= walk.Outcomes.Count` arm; expect `Nth_plus_one_wall_is_Blocked_by_the_loop_guard` red
+- PC-4: break the kill-through-`StopDelegateAsync` contract by commenting out `await StopDelegateAsync(task, ct);` in `RequeueAsync`; expect `Fable_5_wall_on_a_Working_Hard_task_requeues_on_the_next_candidate` red (`Stopper.Killed` empty)
+
+### Out of scope
+- FakeClaude `ANTIPHON_FAKE_API_ERROR=rate_limit_model` through a live pty: the fixture text is the same parser input; the pty lane is CARD-0022's and stays green there (`FakeClaudeContractTests`). S5 is the settle-path re-walk.
+- CARD-0322 pin candidate lists.
+- Client / `delegate.ps1` (S4).
+
+### Cost
+- suites forced: `ComplexityWallRerouteTests`, `ApiErrorRecovery*`, `ComplexityDispatcher*`, `ComplexityCreate*`, `ComplexityRouting*`, `AgentTaskReplyIntegrationTests` API-error subset if a filter exists, else the class is too large — prefer the named S5 class plus `ApiErrorRecoveryServiceTests`
+- verification floor ≈ 8 min (isolated-schema clones + reply settle path)

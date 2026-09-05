@@ -1408,6 +1408,61 @@ public sealed class AgentTaskService
         return await SummaryOfAsync(task, ct);
     }
 
+    /// <summary>What <see cref="RerouteOnWallAsync"/> did with a usage-wall on a chain task.</summary>
+    public enum WallRerouteKind
+    {
+        /// <summary>Leave CARD-0022 Fail/defer in place (Required pin, session-limit with no alternative, non-chain).</summary>
+        NotApplicable = 0,
+        /// <summary>Requeued onto the next surviving candidate; session stopped, ephemeral agent dropped.</summary>
+        Rerouted = 1,
+        /// <summary>No surviving candidate (or loop guard); Blocked for a human, not Failed.</summary>
+        Blocked = 2,
+    }
+
+    public readonly record struct WallRerouteDecision(
+        WallRerouteKind Kind,
+        string? NewAlias = null,
+        int Attempt = 0);
+
+    /// <summary>
+    /// CARD-0090 S5: a Working/Dispatched chain task just hit a usage wall whose hold is already
+    /// written. Re-walk and either requeue onto the next candidate (killing the session through
+    /// <see cref="StopDelegateAsync"/>) or Block for a human. A Required pin and a session-limit
+    /// with nowhere else to go stay on CARD-0022's path.
+    /// </summary>
+    public async Task<WallRerouteDecision> RerouteOnWallAsync(
+        AgentTask task,
+        string walledAlias,
+        string errorText,
+        bool sessionLimitHasScheduledResume,
+        CancellationToken ct)
+    {
+        if (task.Complexity is null || _complexityRouting is null)
+            return new WallRerouteDecision(WallRerouteKind.NotApplicable);
+
+        var walk = await WalkTaskChainAsync(task, ct);
+        if (walk is null || PinForbidsReroute(walk))
+            return new WallRerouteDecision(WallRerouteKind.NotApplicable);
+
+        var reroutedCount = await _db.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Rerouted, ct);
+        // Each candidate at most once per wall cascade. Zero-length lists skip this so a
+        // session-limit with an empty chain still keeps CARD-0022's same-session resume.
+        if (walk.Outcomes.Count > 0 && reroutedCount >= walk.Outcomes.Count)
+            return await BlockOnWallAsync(task, walk, ct);
+
+        if (walk.Chosen is { } chosen
+            && (chosen.Kind != task.AgentKind || chosen.Level != task.ModelLevel))
+        {
+            return await RequeueOnWallAsync(task, walk, chosen, walledAlias, errorText, ct);
+        }
+
+        if (walk.Chosen is null && !sessionLimitHasScheduledResume)
+            return await BlockOnWallAsync(task, walk, ct);
+
+        return new WallRerouteDecision(WallRerouteKind.NotApplicable);
+    }
+
     /// <summary>
     /// Move a task up the ladder and run it again. The tier bump is applied IN PLACE (one chip per
     /// task, <see cref="AgentTask.EscalatedFrom"/> set, the ladder readable in the events) rather
@@ -1523,6 +1578,121 @@ public sealed class AgentTaskService
         }
 
         return task.ModelLevel == AgentModelLevel.Frontier ? null : task.ModelLevel - 1;
+    }
+
+    private async Task<WallRerouteDecision> RequeueOnWallAsync(
+        AgentTask task,
+        ComplexityRoutingService.Walk walk,
+        RoutingCandidates.Candidate chosen,
+        string walledAlias,
+        string errorText,
+        CancellationToken ct)
+    {
+        var sessionId = task.AgentSessionId;
+        var nextAttempt = task.Attempt + 1;
+        var index = ChosenIndex(walk);
+        var checkout = task.WorktreePath ?? task.WorkingDirectory;
+        var snippet = Clamp(errorText, 160);
+        var detail =
+            $"{walledAlias} hit a usage wall ({snippet}); rerouted to {chosen.Alias} "
+            + $"({walk.CellLabel} chain {index}/{walk.Outcomes.Count}). "
+            + $"The prior attempt left NO report — check {checkout} for uncommitted work before redoing anything.";
+
+        if (sessionId is Guid sid)
+        {
+            // AgentId is left null: RequeueAsync drops the ephemeral agent and AgentIncidents
+            // cascade-delete with it. SessionId is enough to find the row.
+            var already = await _db.AgentIncidents.AnyAsync(
+                i => i.SessionId == sid && i.Kind == AgentIncidentKind.ApiErrorTurnDied, ct);
+            if (!already)
+            {
+                _db.AgentIncidents.Add(new AgentIncident
+                {
+                    Id = Guid.NewGuid(),
+                    SessionId = sid,
+                    Kind = AgentIncidentKind.ApiErrorTurnDied,
+                    Severity = AlertSeverity.Warning,
+                    Message =
+                        $"{task.AgentKind} {walledAlias}: session {sid} hit a usage wall; "
+                        + $"rerouted to {chosen.Alias} as task attempt {nextAttempt}. {snippet}",
+                    FailureReason = ApiErrorRecoveryReasons.WallModelPaused,
+                    CreatedAt = UtcNow(),
+                });
+            }
+        }
+
+        task.AgentKind = chosen.Kind;
+        task.ModelLevel = chosen.Level;
+        task.FailureReason = detail;
+        await RequeueAsync(task, AgentTaskEventType.Rerouted, chosen.Level, detail, ct);
+        _logger.LogInformation(
+            "Task {ShortId} rerouted on wall: {From} → {To} as attempt {Attempt}",
+            DelegationReportFormatter.Short(task.Id), walledAlias, chosen.Alias, task.Attempt);
+        return new WallRerouteDecision(WallRerouteKind.Rerouted, chosen.Alias, task.Attempt);
+    }
+
+    private async Task<WallRerouteDecision> BlockOnWallAsync(
+        AgentTask task, ComplexityRoutingService.Walk walk, CancellationToken ct)
+    {
+        await StopDelegateAsync(task, ct);
+        if (task.Ephemeral)
+        {
+            await RemoveEphemeralAgentAsync(task, task.AgentId, ct);
+            task.AgentId = null;
+        }
+
+        var now = UtcNow();
+        var reason = walk.ExhaustedSentence() + " A human must choose; do not pick a kind yourself.";
+        task.Status = AgentTaskStatus.Blocked;
+        task.FailureReason = reason;
+        task.AgentSessionId = null;
+        task.ConcurrencyToken = Guid.NewGuid();
+        AddEvent(task.Id, AgentTaskEventType.Blocked, null, reason, now);
+        await EnqueueBlockedParentNoteAsync(task, reason, ct);
+        await _db.SaveChangesAsync(ct);
+        await _eventBus.PublishToAllAsync(
+            "AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
+        _logger.LogInformation(
+            "Task {ShortId} blocked: routing exhausted at wall",
+            DelegationReportFormatter.Short(task.Id));
+        return new WallRerouteDecision(WallRerouteKind.Blocked);
+    }
+
+    private async Task<ComplexityRoutingService.Walk?> WalkTaskChainAsync(AgentTask task, CancellationToken ct)
+    {
+        if (_complexityRouting is null || task.Complexity is not { } complexity)
+            return null;
+
+        var pin = RoutingPinService.Decision.None;
+        if (_routingPins is not null)
+        {
+            pin = await _routingPins.ResolveAsync(
+                task.CardId,
+                task.Role,
+                new RoutingPinService.Ask(null, null, task.AgentId, IgnoreRoutingPin: false),
+                ct);
+        }
+
+        Agent? owner = null;
+        if (task.AgentId is Guid agentId)
+            owner = await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == agentId, ct);
+
+        return await _complexityRouting.WalkAsync(
+            complexity, task.Kind, task.Role, pin, task.CardId, owner, ignoreSubscriptionQuota: false, ct);
+    }
+
+    private static bool PinForbidsReroute(ComplexityRoutingService.Walk walk) =>
+        !walk.Walked && walk.Source.StartsWith("pin:", StringComparison.Ordinal);
+
+    private static int ChosenIndex(ComplexityRoutingService.Walk walk)
+    {
+        for (var i = 0; i < walk.Outcomes.Count; i++)
+        {
+            if (walk.Outcomes[i].Outcome == "chosen")
+                return i + 1;
+        }
+
+        return walk.Outcomes.Count;
     }
 
     /// <summary>

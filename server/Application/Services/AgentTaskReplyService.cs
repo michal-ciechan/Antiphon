@@ -1013,6 +1013,27 @@ public sealed class AgentTaskReplyService
                 ct, raiseIncident: false)
             : null;
 
+        // CARD-0090 S5: a chain-chosen task re-walks on a Wall (both subclasses). The hold is
+        // already written. Kill goes through StopDelegateAsync via RequeueAsync, never a raw
+        // session kill. Required pins and a session-limit with no alternative fall through.
+        if (task.Complexity is not null
+            && classification == ApiErrorClassification.Wall
+            && services.GetService<AgentTaskService>() is { } tasks)
+        {
+            var fallbackAlias = ModelLevelAliases.For(task.AgentKind, task.ModelLevel);
+            var wall = UsageLimitWallParser.Parse(now, stub.ErrorText, fallbackAlias);
+            var walledAlias = wall?.ModelAlias ?? fallbackAlias;
+            var sessionLimitResume = recovery is { ResolvedAt: null, NextAttemptAt: not null };
+            var decision = await tasks.RerouteOnWallAsync(
+                task, walledAlias, errorText, sessionLimitResume, ct);
+            if (decision.Kind is AgentTaskService.WallRerouteKind.Rerouted
+                or AgentTaskService.WallRerouteKind.Blocked)
+            {
+                await ResolveRecoveryAfterChainRerouteAsync(db, recovery, ct);
+                return;
+            }
+        }
+
         if (recovery is { ResolvedAt: null })
         {
             await DeferApiErrorTurnAsync(services, db, task, sessionId, stub, classification, recovery, errorText, now, ct);
@@ -1078,6 +1099,26 @@ public sealed class AgentTaskReplyService
                     DelegationReportFormatter.Short(task.Id), sessionId, classification,
                     stub.ErrorClass, stub.ErrorStatus);
             });
+    }
+
+    /// <summary>
+    /// A chain reroute (or Blocked-at-wall) killed this session. Cancel a pending SessionLimit
+    /// resume so CARD-0022 does not type into a corpse.
+    /// </summary>
+    private async Task ResolveRecoveryAfterChainRerouteAsync(
+        AppDbContext db, ApiErrorRecovery? recovery, CancellationToken ct)
+    {
+        if (recovery is not { ResolvedAt: null })
+            return;
+
+        var live = await db.ApiErrorRecoveries.FirstOrDefaultAsync(r => r.Id == recovery.Id, ct);
+        if (live is not { ResolvedAt: null })
+            return;
+
+        live.ResolvedAt = UtcNow();
+        live.ResolvedReason = ApiErrorRecoveryReasons.Rerouted;
+        live.NextAttemptAt = null;
+        await db.SaveChangesAsync(ct);
     }
 
     /// <summary>

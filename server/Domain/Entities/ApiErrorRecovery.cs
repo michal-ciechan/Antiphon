@@ -54,4 +54,10 @@ public static class ApiErrorRecoveryReasons
     /// model with <c>DisabledUntil = null</c>. No WallPrompt. The open task Fails via CARD-0071.
     /// </summary>
     public const string WallModelPaused = "WallModelPaused";
+
+    /// <summary>
+    /// CARD-0090 S5: a complexity-chain wall reroute killed this session and requeued (or
+    /// blocked) the task, so a scheduled same-session resume must not fire.
+    /// </summary>
+    public const string Rerouted = "Rerouted";
 }
