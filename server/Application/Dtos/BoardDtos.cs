@@ -240,6 +240,44 @@ public sealed record UpdateCardContentRequest(
     string? Alias = null);
 
 /// <summary>
+/// Relative placement of one card inside its board column (CARD-0098). Absolute positions never
+/// cross the wire: <see cref="Before"/> / <see cref="After"/> name a neighbour, or
+/// <see cref="Placement"/> is the top or bottom of the card's current rank cell.
+/// </summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record PlaceCardRequest(
+    Guid ConcurrencyToken,
+    string? Before = null,
+    string? After = null,
+    CardPlacement? Placement = null,
+    CardImportance? Importance = null,
+    CardUrgency? Urgency = null,
+    string? Reason = null,
+    string? EditedBy = null);
+
+/// <summary>
+/// Bulk order for a board (CARD-0098). Listed cards come first in each rank cell, in list order;
+/// unlisted cards keep their existing relative order. <see cref="Reason"/> is required.
+/// </summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record ReorderBoardCardsRequest(
+    IReadOnlyList<ReorderBoardCardEntry> Cards,
+    string Reason,
+    string? EditedBy = null,
+    bool OverrideHumanRatings = false);
+
+public sealed record ReorderBoardCardEntry(
+    string Id,
+    CardImportance? Importance = null,
+    CardUrgency? Urgency = null);
+
+public sealed record ReorderBoardCardsResult(
+    IReadOnlyList<CardDto> Cards,
+    IReadOnlyList<SkippedHumanRatedDto> SkippedHumanRated);
+
+public sealed record SkippedHumanRatedDto(Guid Id, string Identifier, CardImportance Importance);
+
+/// <summary>
 /// Archive is what "delete" means for a card: the row stays, so references to its identifier never
 /// dangle and the identifier allocator never hands the number out again.
 /// </summary>

@@ -47,6 +47,8 @@
 #   card.ps1 archive   CARD-0051 -Reason r | -ReasonFile p [-By name] [-Token g]
 #   card.ps1 unarchive CARD-0051 -Reason r | -ReasonFile p [-By name] [-Token g]
 #   card.ps1 diagnose  CARD-0051 [-NoWait] [-Json]
+#   card.ps1 reorder   CARD-0051 (-Before CARD-nnnn | -After CARD-nnnn | -Top | -Bottom)
+#                      [-Reason r | -ReasonFile p] [-By name] [-Token g]
 #   card.ps1 -Limits
 #
 # A move into an ACTIVE column does NOT start an agent unless you pass -Spawn (CARD-0051 slice 3).
@@ -56,7 +58,7 @@
 [CmdletBinding(DefaultParameterSetName = 'Verb')]
 param(
     [Parameter(ParameterSetName = 'Verb', Position = 0, Mandatory = $true)]
-    [ValidateSet('get', 'history', 'new', 'edit', 'move', 'close', 'reopen', 'archive', 'unarchive', 'diagnose')]
+    [ValidateSet('get', 'history', 'new', 'edit', 'move', 'close', 'reopen', 'archive', 'unarchive', 'diagnose', 'reorder')]
     [string]$Verb,
 
     # The card, in any form it gets written down: CARD-0051, card-51, '#51', 51, or its guid.
@@ -135,6 +137,19 @@ param(
     # diagnose: return after the 202 instead of polling GET /api/diagnoses.
     [Parameter(ParameterSetName = 'Verb')]
     [switch]$NoWait,
+
+    # reorder: place this card before/after a neighbour, or at the top/bottom of its rank cell.
+    [Parameter(ParameterSetName = 'Verb')]
+    [string]$Before,
+
+    [Parameter(ParameterSetName = 'Verb')]
+    [string]$After,
+
+    [Parameter(ParameterSetName = 'Verb')]
+    [switch]$Top,
+
+    [Parameter(ParameterSetName = 'Verb')]
+    [switch]$Bottom,
 
     [Parameter(ParameterSetName = 'Limits', Mandatory = $true)]
     [switch]$Limits
@@ -340,8 +355,10 @@ function Write-CardLine {
     if ($TheCard.labels -and $TheCard.labels.Count -gt 0) { $labels = ' [' + ($TheCard.labels -join ', ') + ']' }
     $prov = 'auto'
     if ($TheCard.importanceProvenance -eq 'Human') { $prov = 'human-rated' }
-    Write-Output ("{0}  {1}  {2}/{3}  rank {4} ({5})  {6}{7}" -f `
-            $TheCard.identifier, $TheCard.status, $TheCard.importance, $TheCard.urgency, $TheCard.rank, $prov, $TheCard.title, $labels)
+    $rankBit = "rank {0}" -f $TheCard.rank
+    if ($null -ne $TheCard.position) { $rankBit = "rank {0} pos {1}" -f $TheCard.rank, $TheCard.position }
+    Write-Output ("{0}  {1}  {2}/{3}  {4} ({5})  {6}{7}" -f `
+            $TheCard.identifier, $TheCard.status, $TheCard.importance, $TheCard.urgency, $rankBit, $prov, $TheCard.title, $labels)
 }
 
 function Write-TrackerPushLine {
@@ -400,6 +417,7 @@ switch ($Verb) {
             Write-Output ("alias       {0}" -f $theCard.alias)
         }
         Write-Output ("rank        {0}" -f $theCard.rank)
+        if ($null -ne $theCard.position) { Write-Output ("pos         {0}" -f $theCard.position) }
         if ($theCard.dueAt) { Write-Output ("due         {0}" -f $theCard.dueAt) }
         Write-Output ("token       {0}" -f $theCard.concurrencyToken)
         Write-Output ("revisions   {0}" -f $theCard.revisionCount)
@@ -628,6 +646,45 @@ switch ($Verb) {
         else {
             Write-Output 'back on the board'
         }
+        return
+    }
+
+    'reorder' {
+        $theCard = Get-CardOrFail
+        $hasBefore = -not [string]::IsNullOrWhiteSpace($Before)
+        $hasAfter = -not [string]::IsNullOrWhiteSpace($After)
+        if ($Top -and $Bottom) {
+            Write-Error 'Pass only one of -Top or -Bottom.'
+            exit 1
+        }
+        if (($Top -or $Bottom) -and ($hasBefore -or $hasAfter)) {
+            Write-Error '-Top / -Bottom cannot be combined with -Before / -After.'
+            exit 1
+        }
+        if (-not $Top -and -not $Bottom -and -not $hasBefore -and -not $hasAfter) {
+            Write-Error 'reorder needs -Before, -After, -Top or -Bottom.'
+            exit 1
+        }
+
+        $reasonText = Read-TextArgument -Name 'Reason' -Inline $Reason -Path $ReasonFile
+        if (-not [string]::IsNullOrWhiteSpace($reasonText)) {
+            Assert-WithinLimit -Field 'Reason' -Value $reasonText -Limit (Get-CardLimits).maxReasonLength
+        }
+        Assert-WithinLimit -Field 'By' -Value $By -Limit (Get-CardLimits).maxActorLength
+
+        $body = @{
+            concurrencyToken = Resolve-Token $theCard
+        }
+        if ($hasBefore) { $body['before'] = $Before.Trim() }
+        if ($hasAfter) { $body['after'] = $After.Trim() }
+        if ($Top) { $body['placement'] = 'Top' }
+        if ($Bottom) { $body['placement'] = 'Bottom' }
+        if (-not [string]::IsNullOrWhiteSpace($reasonText)) { $body['reason'] = $reasonText }
+        if (-not [string]::IsNullOrWhiteSpace($By)) { $body['editedBy'] = $By }
+
+        $updated = Invoke-Antiphon -Method PATCH -Path ("/api/cards/{0}/position" -f $theCard.id) -Body $body
+        Write-CardLine $updated
+        if ($null -ne $updated.position) { Write-Output ("pos         {0}" -f $updated.position) }
         return
     }
 

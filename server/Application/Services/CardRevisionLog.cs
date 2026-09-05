@@ -95,6 +95,29 @@ internal static class CardRevisionLog
         });
     }
 
+    /// <summary>
+    /// Snapshots the position (and axes, when they change) a reorder is about to supersede.
+    /// Call BEFORE mutating the card.
+    /// </summary>
+    public static CardRevision AppendReorder(
+        Card card,
+        string reason,
+        string? editedBy,
+        DateTime utcNow,
+        bool axesChanged)
+    {
+        return Append(card, new CardRevision
+        {
+            Kind = CardRevisionKind.Reorder,
+            Position = card.Position,
+            Importance = axesChanged ? card.Importance : null,
+            Urgency = axesChanged ? card.Urgency : null,
+            Reason = Trimmed(reason),
+            EditedBy = Trimmed(editedBy),
+            CreatedAt = utcNow
+        });
+    }
+
     /// <summary>Records an archive or unarchive, so neither the act nor its reason is lost.</summary>
     public static CardRevision AppendArchiveChange(
         Card card, CardRevisionKind kind, string reason, string? actedBy, DateTime utcNow)

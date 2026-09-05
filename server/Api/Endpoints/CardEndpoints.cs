@@ -108,6 +108,20 @@ public static class CardEndpoints
             return Results.Ok(await service.UpdateContentAsync(cardId, request, cancellationToken));
         });
 
+        // Relative placement inside the column (CARD-0098). Separate from PATCH /{id} (move) and
+        // PATCH /{id}/content (text/axes): a drag is neither a column change nor a correction.
+        cards.MapPatch("/{id}/position", async (
+            string id,
+            PlaceCardRequest request,
+            HttpContext http,
+            CardService service,
+            AgentTaskService tasks,
+            CancellationToken cancellationToken) =>
+        {
+            var cardId = await ResolveAsync(http, id, service, tasks, cancellationToken);
+            return Results.Ok(await service.PlaceAsync(cardId, request, cancellationToken));
+        });
+
         cards.MapGet("/{id}/revisions", async (
             string id,
             HttpContext http,
