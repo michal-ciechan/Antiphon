@@ -22,6 +22,7 @@ public class ProcessSpawnLimitTests
             typeof(FirstWriteRaceTests),
             typeof(HerdrAdoptionSweepTests),
             typeof(HerdrAttachTests),
+            typeof(HerdrGrokNativeSessionLiveTests),
             typeof(HerdrPaneChildKillTests),
             typeof(PtyBackendSeamTests),
             typeof(PtyHostAdoptionTests),

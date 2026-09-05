@@ -12,6 +12,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="TUnit" Version="1.44.0" />
     <PackageReference Include="Shouldly" Version="4.*" />
   </ItemGroup>
@@ -34,6 +35,7 @@
          (InternalsVisibleTo) — the pty cannot carry a multibyte body, so it cannot test that. -->
     <ProjectReference Include="..\..\src\Antiphon.FakeClaude\Antiphon.FakeClaude.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.FakeGrok\Antiphon.FakeGrok.csproj" />
+    <ProjectReference Include="..\..\src\Antiphon.FakeLlmApi\Antiphon.FakeLlmApi.csproj" />
   </ItemGroup>
 
   <Target Name="CopyFakeClaude" AfterTargets="Build">

@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Antiphon.SessionRunner\Antiphon.SessionRunner.csproj" />
+    <ProjectReference Include="..\..\src\Antiphon.FakeLlmApi\Antiphon.FakeLlmApi.csproj" />
   </ItemGroup>
 
   <ItemGroup>
