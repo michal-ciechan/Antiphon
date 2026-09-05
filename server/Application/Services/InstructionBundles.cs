@@ -90,6 +90,9 @@ public static class InstructionBundles
     /// <summary>The diagnose seat's contract (CARD-0352): titles a task or labels a card.</summary>
     public const string Diagnose = "diagnose";
 
+    /// <summary>The output-distiller seat's contract (CARD-0330): distils a finished report.</summary>
+    public const string OutputDistiller = "output-distiller";
+
     /// <summary>Investigate-stage standing rules (CARD-0146). Worker + Investigate only.</summary>
     public const string StageInvestigate = "stage-investigate";
 

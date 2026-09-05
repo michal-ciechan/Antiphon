@@ -510,4 +510,13 @@ public enum AgentIncidentKind
     /// not re-send the same drift.
     /// </summary>
     PolicyDriftNotified = 51,
+
+    /// <summary>
+    /// The standing output-distiller seat could not produce a distillation — it could not be
+    /// provisioned or queued, it did not answer within the wait budget, or the settled Distill
+    /// row was failed/empty (CARD-0330). Warning; not raised for backlog (load, not a dead
+    /// specialist). Deduped per specialist so a burst is one incident, not one per request.
+    /// Next free after <see cref="PolicyDriftNotified"/>.
+    /// </summary>
+    OutputDistillerUnavailable = 52,
 }

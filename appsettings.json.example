@@ -134,7 +134,9 @@
     "MaxCostUsdPerRoot": 200.00,
     "CheckInterpreterWorkingDirectory": "C:\\logs\\antiphon\\check-interpreter",
     "DiagnoseWorkingDirectory": "C:\\logs\\antiphon\\diagnose",
-    "DiagnoseLabelMode": "Shadow"
+    "DiagnoseLabelMode": "Shadow",
+    "OutputDistillerWorkingDirectory": "C:\\logs\\antiphon\\output-distiller",
+    "OutputDistillerMode": "Shadow"
   },
   "ChannelBridge": {
     "Enabled": false,

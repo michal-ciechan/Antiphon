@@ -49,6 +49,7 @@ public class ProductionRunnerGuard
     public const string BaseUrlEnvVar = "SessionRunner__BaseUrl";
     public const string CheckInterpreterEnvVar = "Delegation__CheckInterpreterEnabled";
     public const string DiagnoseEnvVar = "Delegation__DiagnoseEnabled";
+    public const string OutputDistillerEnvVar = "Delegation__OutputDistillerEnabled";
     public const string HangfireServerEnabledEnvVar = "Hangfire__ServerEnabled";
 
     /// <summary>What this process inherited, kept so the log can name it.</summary>
@@ -61,12 +62,13 @@ public class ProductionRunnerGuard
         Environment.SetEnvironmentVariable(BaseUrlEnvVar, DeadRunnerBaseUrl);
         Environment.SetEnvironmentVariable(CheckInterpreterEnvVar, "false");
         Environment.SetEnvironmentVariable(DiagnoseEnvVar, "false");
+        Environment.SetEnvironmentVariable(OutputDistillerEnvVar, "false");
         Environment.SetEnvironmentVariable(HangfireServerEnabledEnvVar, "false");
         Console.WriteLine(
-            $"[CARD-0204] {BaseUrlEnvVar}={DeadRunnerBaseUrl}, {CheckInterpreterEnvVar}=false and "
-            + $"{DiagnoseEnvVar}=false for every Program boot in this assembly (inherited "
-            + $"{BaseUrlEnvVar}='{InheritedBaseUrl ?? "<unset>"}') - test hosts never launch on the "
-            + "production session-runner.");
+            $"[CARD-0204] {BaseUrlEnvVar}={DeadRunnerBaseUrl}, {CheckInterpreterEnvVar}=false, "
+            + $"{DiagnoseEnvVar}=false and {OutputDistillerEnvVar}=false for every Program boot in "
+            + $"this assembly (inherited {BaseUrlEnvVar}='{InheritedBaseUrl ?? "<unset>"}') - test "
+            + "hosts never launch on the production session-runner.");
         Console.WriteLine(
             $"[CARD-0298] {HangfireServerEnabledEnvVar}=false for every Program boot in this assembly "
             + "- test hosts never start a Hangfire worker (no WMI census, no production-runner list).");

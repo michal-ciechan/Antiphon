@@ -331,6 +331,9 @@ try
     // DiagnoseQueue; the sweep enqueues card requests onto it.
     builder.Services.AddScoped<DiagnoseProvisioner>();
     builder.Services.AddSingleton<DiagnoseQueue>();
+    // The standing specialist that distils a finished delegate report (CARD-0330). Same
+    // substrate as the check interpreter. S3 wires the queue and hosted service.
+    builder.Services.AddScoped<OutputDistillerProvisioner>();
     builder.Services.AddScoped<DiagnoseService>();
     builder.Services.AddScoped<CardDiagnosisSweep>();
     // The "what is stuck" projection (CARD-0035). Read-only — every verb it names is an endpoint

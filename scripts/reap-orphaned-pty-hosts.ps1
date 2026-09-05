@@ -17,6 +17,8 @@
 #                                      by CheckInterpreterProvisioner at host startup)
 #         test-raw-diagnose          : exe is cmd.exe AND cwd is -DiagnoseDir
 #                                      (same test-raw definition, launched by DiagnoseProvisioner)
+#         test-raw-output-distiller  : exe is cmd.exe AND cwd is -OutputDistillerDir
+#                                      (same test-raw definition, launched by OutputDistillerProvisioner)
 #         kind-test-temp-dir         : cwd is under %TEMP%\antiphon-kind-test*
 #                                      (AgentTaskAgentKindTests, dispatched by a factory host
 #                                      before the shared-schema isolation of 2026-08-20)
@@ -51,6 +53,8 @@ param(
     [string]$CheckInterpreterDir = 'C:\logs\antiphon\check-interpreter',
 
     [string]$DiagnoseDir = 'C:\logs\antiphon\diagnose',
+
+    [string]$OutputDistillerDir = 'C:\logs\antiphon\output-distiller',
 
     [string]$PgContainer = 'antiphon-postgres',
     [string]$PgUser = 'antiphon',
@@ -173,9 +177,10 @@ $verdicts = foreach ($m in $manifests) {
 
     $isCheckInterp = ($m.ExeLeaf -ieq 'cmd.exe') -and ($m.Cwd -ieq $CheckInterpreterDir)
     $isDiagnose = ($m.ExeLeaf -ieq 'cmd.exe') -and ($m.Cwd -ieq $DiagnoseDir)
+    $isOutputDistiller = ($m.ExeLeaf -ieq 'cmd.exe') -and ($m.Cwd -ieq $OutputDistillerDir)
     $isKindTest = $m.Cwd -match '\\antiphon-kind-test[^\\]*$'
-    if ($isCheckInterp -or $isDiagnose) {
-        $rule = if ($isDiagnose) { 'test-raw-diagnose' } else { 'test-raw-check-interpreter' }
+    if ($isCheckInterp -or $isDiagnose -or $isOutputDistiller) {
+        $rule = if ($isOutputDistiller) { 'test-raw-output-distiller' } elseif ($isDiagnose) { 'test-raw-diagnose' } else { 'test-raw-check-interpreter' }
         if ($null -ne $child -and $child.Name -ne 'cmd.exe') { $reasons.Add("R3 child is $($child.Name), expected cmd.exe") }
         $ansi = Get-Item $m.AnsiLog -ErrorAction SilentlyContinue
         if ($null -eq $ansi) { $reasons.Add('R6 ansi log missing') }

@@ -365,7 +365,8 @@ $conventionDirs = @(
     'C:\Antiphon\worktrees',
     'C:\logs\antiphon\session-runner',
     'C:\logs\antiphon\check-interpreter',
-    'C:\logs\antiphon\diagnose'
+    'C:\logs\antiphon\diagnose',
+    'C:\logs\antiphon\output-distiller'
 )
 foreach ($dir in $conventionDirs) {
     if (Test-Path -LiteralPath $dir) {

@@ -96,4 +96,24 @@ public class ProductionRunnerIsolationTests
         (await db.Agents.AnyAsync(a => a.Slug == slug)).ShouldBeFalse(
             $"the diagnose seat '{slug}' must not be provisioned in a test host");
     }
+
+    [Test]
+    public async Task The_output_distiller_is_off_and_its_directory_is_not_the_production_one()
+    {
+        using var client = _factory.CreateClient();
+        (await client.GetAsync("/api/version")).StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var delegation = _factory.Services.GetRequiredService<IOptions<DelegationSettings>>().Value;
+        delegation.OutputDistillerEnabled.ShouldBeFalse(
+            "starting the output distiller is the same launch leak as the check interpreter (CARD-0330)");
+        OutputDistillerProvisioner.ResolveWorkingDirectory(delegation)
+            .ShouldNotBe(@"C:\logs\antiphon\output-distiller",
+                "a test host that re-enables the distiller must still not share the production directory");
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var slug = OutputDistillerProvisioner.Slug(delegation);
+        (await db.Agents.AnyAsync(a => a.Slug == slug)).ShouldBeFalse(
+            $"the output distiller '{slug}' must not be provisioned in a test host");
+    }
 }

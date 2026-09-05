@@ -574,6 +574,8 @@ public class AntiphonAppFixture
                     ["SessionRunner:BaseUrl"] = _sessionRunnerBaseUrl,
                     ["Delegation:DiagnoseEnabled"] = "false",
                     ["Delegation:DiagnoseWorkingDirectory"] = Path.Combine(_workspacePath, "diagnose"),
+                    ["Delegation:OutputDistillerEnabled"] = "false",
+                    ["Delegation:OutputDistillerWorkingDirectory"] = Path.Combine(_workspacePath, "output-distiller"),
                 };
 
                 if (_diagnosticsDirectory is not null)

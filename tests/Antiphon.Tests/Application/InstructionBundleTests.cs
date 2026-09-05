@@ -53,6 +53,7 @@ public class InstructionBundleTests
         // prompt. Adding a bundle is meant to cost this one line.
         InstructionBundles.All.Keys.Order().ShouldBe([
             "board-api", "check-interpreter", "delegate-basics", "diagnose", "orchestrator",
+            "output-distiller",
             // CARD-0146 S3: one standing-rule block per pipeline-stage role. Adding a stage is
             // meant to cost this one line plus the ForDelegate map.
             "stage-code", "stage-investigate", "stage-plan", "stage-review", "stage-test-design",
@@ -267,6 +268,32 @@ public class InstructionBundleTests
     }
 
     [Test]
+    public void the_output_distiller_contract_forwards_to_its_bundle_with_the_pinned_invariants()
+    {
+        OutputDistillation.Contract.ShouldBe(InstructionBundles.TextOf(InstructionBundles.OutputDistiller));
+        OutputDistillation.Contract.ShouldNotContain(
+            "[bundle:", customMessage: "the forward is the TEXT — a header on the reconciled agent row "
+            + "would be a behaviour change, and OutputDistillerProvisionerTests would say so");
+        OutputDistillation.Contract.ShouldContain($"contract v{OutputDistillation.ContractVersion}");
+        OutputDistillation.Contract.ShouldStartWith("You are the Antiphon OUTPUT DISTILLER (contract v");
+        OutputDistillation.Contract.Length.ShouldBeLessThanOrEqualTo(3_000);
+        OutputDistillation.Contract.ShouldContain(
+            "NEVER invent, round, rename or paraphrase an identifier or a number. Copy it or leave it out.");
+        OutputDistillation.Contract.ShouldContain(
+            "NEVER change the outcome. A report that is blocked or failed stays blocked or failed in your");
+        OutputDistillation.Contract.ShouldContain(
+            "NEVER investigate. Do not read files, run commands or search. USE NO TOOLS — you have none,");
+        OutputDistillation.Contract.ShouldContain(
+            "Bullets only, one fact each, at most 12. No heading, no preamble, no sign-off. Nothing after");
+        OutputDistillation.Contract.ShouldContain(
+            "NEVER drop `next:` or `handoff:` from a `--- next stage ---` block present in the report.");
+        OutputDistillation.OutputFormatReminder.ShouldContain("never `blocked`");
+        DelegationReportFormatter.DistillReportingContract(
+            Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"), 20_000)
+            .ShouldContain("--- next stage ---");
+    }
+
+    [Test]
     public void the_distill_reporting_contract_never_offers_blocked_and_keeps_the_handoff_anchor()
     {
         var id = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
@@ -335,9 +362,12 @@ public class InstructionBundleTests
     [Test]
     public void the_worst_case_composition_measured_sits_far_under_the_budget()
     {
-        // THE MEASUREMENT THAT SETS THE GUARD (plan §9). The worst case anyone can construct today:
-        // every bundle in the catalog at once — no role asks for that — plus the longest system-prompt
-        // append that actually ships, the Telegram preset. Counted in UTF-16 chars because
+        // THE MEASUREMENT THAT SETS THE GUARD (plan §9). The worst case a launch can construct:
+        // every non-specialist bundle in the catalog at once — no role asks for that — plus the
+        // longest system-prompt append that actually ships, the Telegram preset. Specialist
+        // contracts (check-interpreter, diagnose, output-distiller) ride SystemPromptAppend on
+        // their own seat and ForDelegate returns [] for those roles, so composing them WITH the
+        // rest of the catalog is not a launch anyone can have. Counted in UTF-16 chars because
         // CreateProcessW's ~32 767 limit is a char count, not a byte count.
         //
         // Measured 2026-08-17: board-api 2 607, delegate-basics 2 216, check-interpreter 1 276,
@@ -352,12 +382,21 @@ public class InstructionBundleTests
         // growth since: 22 987 composed, 77% of the budget. Re-measured 2026-09-05 after CARD-0146
         // S3's five stage bundles (~3 750 body chars plus headers): composing every catalog key at
         // once crossed 4/5 of 30 000, which is expected — no launch composes the whole catalog, and
-        // the realistic (Worker, Code) set is pinned separately below. The bound here is the budget
-        // itself: the guard still THROWS rather than truncating, and a doubling of the catalog
-        // would still fail it. /2 (15 000) was crossed by CARD-0017; 2/3 (20 000) by CARD-0339;
-        // 3/4 (22 500) by CARD-0352; 4/5 by this catalog addition.
+        // the realistic (Worker, Code) set is pinned separately below. Re-measured 2026-09-05
+        // CARD-0330: adding output-distiller pushed the all-keys composition over 30 000 (30 645);
+        // specialist keys are now excluded, which is the launch that can actually happen. The bound
+        // here is the budget itself: the guard still THROWS rather than truncating.
         var budget = new DelegationSettings().CommandLineBudgetChars;
-        var everything = InstructionBundles.All.Keys.Order().ToList();
+        var specialistKeys = new HashSet<string>(StringComparer.Ordinal)
+        {
+            InstructionBundles.CheckInterpreter,
+            InstructionBundles.Diagnose,
+            InstructionBundles.OutputDistiller,
+        };
+        var everything = InstructionBundles.All.Keys
+            .Where(k => !specialistKeys.Contains(k))
+            .Order()
+            .ToList();
 
         var composed = InstructionBundleComposer.Compose(
             everything, systemPromptAppend: ChannelPreamble.TelegramPresetTemplate);

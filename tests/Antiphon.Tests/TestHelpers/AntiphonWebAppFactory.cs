@@ -107,6 +107,8 @@ public class AntiphonWebAppFactory : WebApplicationFactory<Program>
                 ["Delegation:CheckInterpreterWorkingDirectory"] = Path.Combine(_workspacePath, "check-interpreter"),
                 ["Delegation:DiagnoseEnabled"] = "false",
                 ["Delegation:DiagnoseWorkingDirectory"] = Path.Combine(_workspacePath, "diagnose"),
+                ["Delegation:OutputDistillerEnabled"] = "false",
+                ["Delegation:OutputDistillerWorkingDirectory"] = Path.Combine(_workspacePath, "output-distiller"),
                 ["Hangfire:ServerEnabled"] = "false",
             });
         });

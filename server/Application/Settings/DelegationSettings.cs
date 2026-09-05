@@ -717,6 +717,64 @@ public sealed class DelegationSettings
     /// </summary>
     public int DiagnoseMaxInputChars { get; set; } = 12_000;
 
+    // ── The output distiller: a standing specialist agent (CARD-0330) ──────────────────────────
+    //
+    // Distils a finished delegate report into the signal the caller needs. Every failure mode
+    // degrades to today's behaviour (the raw note), so none of these knobs can lose a report.
+    // OutputDistillerEnabled is the switch to reach for if the seat misbehaves. Mode ships as
+    // Shadow: distil, record, never replace the note until an operator flips it to Apply.
+
+    /// <summary>
+    /// Off and no seat, no queue, no ledger row. Completion notes stay byte-identical to today.
+    /// </summary>
+    public bool OutputDistillerEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Shadow records the distillation and leaves the queued note alone. Apply replaces a still-
+    /// pending note's body after the gates pass. Ships Shadow so a week of ledger can be read
+    /// before anything the orchestrator sees changes.
+    /// </summary>
+    public OutputDistillerMode OutputDistillerMode { get; set; } = OutputDistillerMode.Shadow;
+
+    /// <summary>
+    /// Slug AND name of the standing specialist. The provisioner finds it by this exact slug, so
+    /// changing it provisions a SECOND agent rather than renaming the first — delete the old row.
+    /// </summary>
+    public string OutputDistillerAgentSlug { get; set; } = "antiphon-output-distiller";
+
+    /// <summary>
+    /// The specialist's own scratch working directory. Null derives it: the first
+    /// <see cref="AllowedRoots"/> entry plus <c>\.antiphon\output-distiller</c>, or — when no roots
+    /// are configured — a directory under the system temp path. A distinct cwd is the CARD-0006
+    /// mitigation by construction, same as the check interpreter.
+    /// </summary>
+    public string? OutputDistillerWorkingDirectory { get; set; }
+
+    /// <summary>
+    /// How long a distillation may hold a queued completion note before the raw body delivers.
+    /// Shorter than the interpreter's 60 s: the raw note is already queued, so a slow distillation
+    /// costs nothing but the improvement.
+    /// </summary>
+    public int OutputDistillerWaitSeconds { get; set; } = 45;
+
+    /// <summary>
+    /// At or above this many unfinished Distill rows on the seat, a new request degrades without
+    /// creating one. One specialist, serial drainer.
+    /// </summary>
+    public int OutputDistillerMaxBacklog { get; set; } = 3;
+
+    /// <summary>Reports shorter than this are never distilled — nothing to gain, only latency to pay.</summary>
+    public int DistillMinChars { get; set; } = 1_200;
+
+    /// <summary>Reports longer than this are not distilled; the delegate was already told to spill.</summary>
+    public int DistillMaxRawChars { get; set; } = 20_000;
+
+    /// <summary>A distillation longer than this is rejected as under-compressed.</summary>
+    public int DistilledMaxChars { get; set; } = 1_500;
+
+    /// <summary>A distillation longer than this fraction of the raw is rejected as under-compressed.</summary>
+    public double DistilledMaxRatio { get; set; } = 0.6;
+
     /// <summary>A sub-orchestrator decomposes, which is expensive thinking — never below this.</summary>
     public AgentModelLevel MinOrchestratorLevel { get; set; } = AgentModelLevel.High;
 
@@ -1054,4 +1112,14 @@ public enum DiagnoseLabelMode
 {
     Apply = 0,
     Shadow = 1,
+}
+
+/// <summary>
+/// CARD-0330: whether a successful distillation replaces the queued completion note.
+/// Shadow is 0 so an unbound setting still ships as record-only.
+/// </summary>
+public enum OutputDistillerMode
+{
+    Shadow = 0,
+    Apply = 1,
 }

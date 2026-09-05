@@ -94,6 +94,7 @@ C:\Antiphon\worktrees
 C:\logs\antiphon\session-runner
 C:\logs\antiphon\check-interpreter
 C:\logs\antiphon\diagnose
+C:\logs\antiphon\output-distiller
 ```
 
 `src/Antiphon.SessionRunner/appsettings.json` sets
