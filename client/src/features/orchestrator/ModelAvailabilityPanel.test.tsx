@@ -9,7 +9,7 @@ vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
 
 const empty: ModelAvailabilityDto = {
   holds: [],
-  available: ['fable', 'opus', 'sonnet', 'haiku', 'grok-4.6', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'],
+  available: ['fable', 'opus', 'sonnet', 'haiku', 'grok-4.6', 'gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'],
 }
 
 describe('ModelAvailabilityPanel', () => {

@@ -37,15 +37,17 @@ public static class CodexLaunchArgs
 
     /// <summary>
     /// Reasoning effort, set EXPLICITLY on every launch (plan §4 S3). Codex's per-model defaults are
-    /// wrong for a delegate at both ends: <c>gpt-5.6-sol</c>'s own default is <c>low</c>, so a
-    /// Frontier delegate left alone would reason at the shallowest setting the frontier model has,
-    /// while the operator's <c>~/.codex/config.toml</c> here says <c>xhigh</c> and would be inherited
-    /// by a Low-tier delegate. Neither default tracks the tier the caller asked for, so the tier sets
-    /// it — and the launch stops depending on a config file nothing in this repo owns.
+    /// wrong for a delegate at both ends: <c>gpt-6-astra</c>'s own default is <c>low</c> (same as
+    /// Sol before it), so a Frontier delegate left alone would reason at the shallowest setting the
+    /// frontier model has, while the operator's <c>~/.codex/config.toml</c> here says <c>xhigh</c>
+    /// and would be inherited by a Low-tier delegate. Neither default tracks the tier the caller
+    /// asked for, so the tier sets it — and the launch stops depending on a config file nothing in
+    /// this repo owns.
     ///
     /// <para>Every value is in the catalog's <c>supported_reasoning_levels</c> for the slug
-    /// <see cref="ModelLevelAliases.ForCodex"/> pairs it with (read 2026-08-20: sol and terra support
-    /// low/medium/high/xhigh/max/ultra, luna all but ultra).</para>
+    /// <see cref="ModelLevelAliases.ForCodex"/> pairs it with (read 2026-09-05 on 0.153.4: astra, sol
+    /// and terra support low/medium/high/xhigh/max/ultra, luna all but ultra). Frontier stays at
+    /// <c>xhigh</c>; do not wire <c>ultra</c> without an explicit ask.</para>
     /// </summary>
     public static string ReasoningEffort(AgentModelLevel level) => level switch
     {

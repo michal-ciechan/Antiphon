@@ -44,7 +44,7 @@ const savedRow: ComplexityChainDto = {
     {
       agentKind: 'Codex',
       modelLevel: 'Frontier',
-      alias: 'gpt-5.6-sol',
+      alias: 'gpt-6-astra',
       availableNow: true,
       unavailableReason: null,
     },

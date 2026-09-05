@@ -61,7 +61,7 @@ public sealed class ComplexityRoutingComposeTests
         var list = RoutingCandidates.Compose(Decision(pin, "CARD-0301"), chain, "Hard", null, null, Resolve);
 
         list.Candidates.ShouldHaveSingleItem();
-        list.Candidates[0].Alias.ShouldBe("gpt-5.6-sol");
+        list.Candidates[0].Alias.ShouldBe("gpt-6-astra");
         list.Candidates[0].Origin.ShouldBe(RoutingCandidates.OriginPin);
         list.Walked.ShouldBeFalse();
         list.Source.ShouldBe("pin:CARD-0301 Plan");
@@ -83,7 +83,7 @@ public sealed class ComplexityRoutingComposeTests
         list.Candidates.Select(c => (c.Alias, c.Origin)).ShouldBe([
             ("grok-4.6", RoutingCandidates.OriginPin),
             ("fable", RoutingCandidates.OriginChain),
-            ("gpt-5.6-sol", RoutingCandidates.OriginChain),
+            ("gpt-6-astra", RoutingCandidates.OriginChain),
         ]);
         list.Walked.ShouldBeTrue();
         list.Source.ShouldStartWith("pin+chain:");
@@ -138,7 +138,7 @@ public sealed class ComplexityRoutingComposeTests
             Resolve);
 
         list.Candidates.Select(c => (c.Alias, c.Origin)).ShouldBe([
-            ("gpt-5.6-sol", RoutingCandidates.OriginPin),
+            ("gpt-6-astra", RoutingCandidates.OriginPin),
             ("opus", RoutingCandidates.OriginRolePolicy),
         ]);
         list.Walked.ShouldBeTrue();
@@ -204,7 +204,7 @@ public sealed class ComplexityRoutingComposeTests
         var list = RoutingCandidates.Compose(Decision(pin), chain, "Hard", null, null, Resolve);
 
         list.Candidates.Select(c => (c.Alias, c.Origin)).ShouldBe([
-            ("gpt-5.6-sol", RoutingCandidates.OriginPin),
+            ("gpt-6-astra", RoutingCandidates.OriginPin),
             ("grok-4.6", RoutingCandidates.OriginPin),
             ("fable", RoutingCandidates.OriginChain),
             ("opus", RoutingCandidates.OriginChain),
@@ -227,7 +227,7 @@ public sealed class ComplexityRoutingComposeTests
             Decision(pin), chain: null, chainLabel: null, null, null, Resolve);
 
         list.Candidates.Select(c => (c.Alias, c.Origin)).ShouldBe([
-            ("gpt-5.6-sol", RoutingCandidates.OriginPin),
+            ("gpt-6-astra", RoutingCandidates.OriginPin),
             ("grok-4.6", RoutingCandidates.OriginPin),
             ("opus", RoutingCandidates.OriginRolePolicy),
         ]);

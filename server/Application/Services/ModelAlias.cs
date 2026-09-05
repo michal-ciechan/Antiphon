@@ -17,6 +17,7 @@ public static class ModelAlias
     public const string Sonnet = "sonnet";
     public const string Haiku = "haiku";
     public const string Grok46 = "grok-4.6";
+    public const string Gpt6Astra = "gpt-6-astra";
     public const string Gpt56Sol = "gpt-5.6-sol";
     public const string Gpt56Terra = "gpt-5.6-terra";
     public const string Gpt56Luna = "gpt-5.6-luna";
@@ -32,6 +33,7 @@ public static class ModelAlias
         (AgentKind.ClaudeCode, Sonnet),
         (AgentKind.ClaudeCode, Haiku),
         (AgentKind.Grok, Grok46),
+        (AgentKind.Codex, Gpt6Astra),
         (AgentKind.Codex, Gpt56Sol),
         (AgentKind.Codex, Gpt56Terra),
         (AgentKind.Codex, Gpt56Luna),
@@ -86,6 +88,7 @@ public static class ModelAlias
         if (IsSonnet(folded)) return Sonnet;
         if (IsHaiku(folded)) return Haiku;
         if (IsGrok46(folded)) return Grok46;
+        if (IsAstra(folded)) return Gpt6Astra;
         if (IsSol(folded)) return Gpt56Sol;
         if (IsTerra(folded)) return Gpt56Terra;
         if (IsLuna(folded)) return Gpt56Luna;
@@ -152,6 +155,11 @@ public static class ModelAlias
 
     private static bool IsGrok46(string folded) =>
         folded is "grok 4 6" or "grok 46" or "grok";
+
+    // Folded "astra" maps to the canonical slug for holds / TUI text. Launch never uses this
+    // path: ModelLevelAliases.ForCodex returns "gpt-6-astra". The backend 400s bare -m astra.
+    private static bool IsAstra(string folded) =>
+        folded is "gpt 6 astra" or "gpt6 astra" or "astra";
 
     private static bool IsSol(string folded) =>
         folded is "gpt 5 6 sol" or "gpt 56 sol" or "sol";

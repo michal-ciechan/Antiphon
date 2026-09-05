@@ -52,7 +52,7 @@ public sealed class RoutingPinCandidateTests
         dto.Candidates!.Select(c => (c.AgentKind, c.ModelLevel, c.Alias)).ShouldBe([
             (AgentKind.ClaudeCode, AgentModelLevel.Frontier, "fable"),
             (AgentKind.ClaudeCode, AgentModelLevel.High, "opus"),
-            (AgentKind.Codex, AgentModelLevel.Frontier, "gpt-5.6-sol"),
+            (AgentKind.Codex, AgentModelLevel.Frontier, "gpt-6-astra"),
         ]);
 
         var stored = await db.RoutingPins.AsNoTracking().SingleAsync(p => p.ClearedAt == null);

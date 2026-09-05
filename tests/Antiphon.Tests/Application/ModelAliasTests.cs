@@ -24,6 +24,9 @@ public class ModelAliasTests
     [Arguments("Haiku 4.5", "haiku")]
     [Arguments("claude-haiku-4-5", "haiku")]
     [Arguments("grok-4.6", "grok-4.6")]
+    [Arguments("gpt-6-astra", "gpt-6-astra")]
+    [Arguments("GPT-6-Astra", "gpt-6-astra")]
+    [Arguments("astra", "gpt-6-astra")]
     [Arguments("gpt-5.6-sol", "gpt-5.6-sol")]
     [Arguments("gpt-5.6-terra", "gpt-5.6-terra")]
     [Arguments("gpt-5.6-luna", "gpt-5.6-luna")]
@@ -50,6 +53,7 @@ public class ModelAliasTests
     [Arguments("Fable", "fable")]
     [Arguments("HAIKU", "haiku")]
     [Arguments("grok-4.6", "grok-4.6")]
+    [Arguments("gpt-6-astra", "gpt-6-astra")]
     [Arguments("*", "*")]
     public void CanonicalHoldAlias_accepts_known_aliases_and_star(string raw, string expected)
     {
@@ -59,6 +63,7 @@ public class ModelAliasTests
     [Test]
     [Arguments("claude-fable-5")]
     [Arguments("Fable 5")]
+    [Arguments("astra")]
     [Arguments("bogus")]
     [Arguments("")]
     [Arguments(null)]

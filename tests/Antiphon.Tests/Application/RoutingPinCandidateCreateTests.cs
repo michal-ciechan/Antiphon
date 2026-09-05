@@ -155,7 +155,7 @@ public sealed class RoutingPinCandidateCreateTests
                 Reason: "prefer sol then grok"),
             null,
             CancellationToken.None);
-        await SeedHoldAsync(db, AgentKind.Codex, "gpt-5.6-sol", null);
+        await SeedHoldAsync(db, AgentKind.Codex, "gpt-6-astra", null);
         await SeedHoldAsync(db, AgentKind.Grok, "grok-4.6", null);
 
         var created = await Service(db, workspace).CreateAsync(
@@ -190,7 +190,7 @@ public sealed class RoutingPinCandidateCreateTests
                 Reason: "prefer sol/grok, never fable"),
             null,
             CancellationToken.None);
-        await SeedHoldAsync(db, AgentKind.Codex, "gpt-5.6-sol", null);
+        await SeedHoldAsync(db, AgentKind.Codex, "gpt-6-astra", null);
         await SeedHoldAsync(db, AgentKind.Grok, "grok-4.6", null);
 
         var created = await Service(db, workspace).CreateAsync(

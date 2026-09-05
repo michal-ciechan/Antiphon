@@ -31,11 +31,12 @@ const GROK_ALIASES: Record<AgentModelLevel, string> = {
 }
 
 /**
- * Codex's ladder — byte for byte `ModelLevelAliases.ForCodex` (CARD-0099 S3 / CARD-0301). Medium
- * and Low share `gpt-5.6-luna`; there is no unversioned Codex alias.
+ * Codex's ladder — byte for byte `ModelLevelAliases.ForCodex` (CARD-0099 S3 / CARD-0301 /
+ * CARD-0396). Frontier is `gpt-6-astra` (codex-cli 0.153.4+); Medium and Low share `gpt-5.6-luna`;
+ * there is no unversioned Codex alias (bare `astra` 400s).
  */
 const CODEX_ALIASES: Record<AgentModelLevel, string> = {
-  Frontier: 'gpt-5.6-sol',
+  Frontier: 'gpt-6-astra',
   High: 'gpt-5.6-terra',
   Medium: 'gpt-5.6-luna',
   Low: 'gpt-5.6-luna',
@@ -60,7 +61,7 @@ export function tierAlias(level: AgentModelLevel, kind: AgentKind = 'ClaudeCode'
 /**
  * What the tier badge's tooltip says. Claude's aliases are bare family words, so they need the
  * vendor in front to mean anything ("Claude fable"); Grok's already carry it, and "Grok grok-4.6"
- * is a stutter. Codex keeps the vendor word (`Frontier tier — Codex gpt-5.6-sol`) because the
+ * is a stutter. Codex keeps the vendor word (`Frontier tier — Codex gpt-6-astra`) because the
  * slug alone does not name the program. Claude's text is unchanged, byte for byte.
  */
 export function tierTooltip(level: AgentModelLevel, kind: AgentKind = 'ClaudeCode'): string {

@@ -258,6 +258,7 @@ public class ModelAvailabilityTests
             available.ShouldContain("sonnet");
             available.ShouldContain("haiku");
             available.ShouldContain("grok-4.6");
+            available.ShouldContain("gpt-6-astra");
             available.ShouldContain("gpt-5.6-sol");
         }
         finally

@@ -83,7 +83,7 @@ public class CodexDelegateDispatchTests
     }
 
     [Test]
-    [Arguments(AgentModelLevel.Frontier, "gpt-5.6-sol", "xhigh")]
+    [Arguments(AgentModelLevel.Frontier, "gpt-6-astra", "xhigh")]
     [Arguments(AgentModelLevel.High, "gpt-5.6-terra", "high")]
     [Arguments(AgentModelLevel.Medium, "gpt-5.6-luna", "medium")]
     [Arguments(AgentModelLevel.Low, "gpt-5.6-luna", "low")]
@@ -92,7 +92,7 @@ public class CodexDelegateDispatchTests
     {
         // The slug half: there are no unversioned aliases in Codex's catalog — a bare `-m luna` is
         // rejected locally AND with an HTTP 400, so a "family alias" here never starts a session.
-        // The effort half: gpt-5.6-sol's own default is `low`, and the operator's ~/.codex/config.toml
+        // The effort half: gpt-6-astra's own default is `low`, and the operator's ~/.codex/config.toml
         // says xhigh globally, so leaving it unset makes the tier mean whatever a file nothing in
         // this repo owns happens to say.
         var (dispatcher, _) = CreateHarness();
@@ -100,7 +100,8 @@ public class CodexDelegateDispatchTests
 
         var slug = args[args.IndexOf("--model") + 1];
         slug.ShouldBe(expectedSlug);
-        slug.ShouldStartWith("gpt-5.6-");
+        slug.ShouldStartWith("gpt-");
+        slug.ShouldNotBe("astra");
         ConfigValue(args, "model_reasoning_effort").ShouldBe(expectedEffort);
         ConfigValue(args, "disable_paste_burst").ShouldBe("true");
     }
@@ -203,9 +204,9 @@ public class CodexDelegateDispatchTests
         await CreateService(db).EscalateAsync(task.Id, to: null, CancellationToken.None);
 
         var detail = await LatestEscalationDetailAsync(task.Id);
-        // The Debug role's policy escalates straight to Frontier, so this is luna -> sol: still a
+        // The Debug role's policy escalates straight to Frontier, so this is luna -> astra: still a
         // real model change, which is the whole point of the assertion.
-        detail.ShouldStartWith("Escalated gpt-5.6-luna -> gpt-5.6-sol.");
+        detail.ShouldStartWith("Escalated gpt-5.6-luna -> gpt-6-astra.");
         detail.ShouldNotContain("FRESH CONTEXT");
         detail.ShouldNotContain("opus", customMessage: "a Codex task never runs a Claude model");
         detail.ShouldNotContain("grok");

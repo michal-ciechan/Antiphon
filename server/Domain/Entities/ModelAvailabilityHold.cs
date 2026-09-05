@@ -15,7 +15,7 @@ public class ModelAvailabilityHold
 
     /// <summary>
     /// Canonical family alias (<c>fable</c>, <c>opus</c>, <c>sonnet</c>, <c>haiku</c>,
-    /// <c>grok-4.6</c>, <c>gpt-5.6-sol</c>, …) or <c>*</c> for a kind-wide hold (CARD-0309).
+    /// <c>grok-4.6</c>, <c>gpt-6-astra</c>, …) or <c>*</c> for a kind-wide hold (CARD-0309).
     /// Never a stub <c>&lt;synthetic&gt;</c> model id.
     /// </summary>
     public string ModelAlias { get; set; } = string.Empty;

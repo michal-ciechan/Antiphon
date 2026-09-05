@@ -54,7 +54,7 @@ Curated suggestions guarantee a useful picker even when a CLI has no discovery c
 | Runner | Initial suggestions | Notes |
 |---|---|---|
 | Claude Code | `fable`, `opus`, `sonnet`, `haiku` | Family aliases are preferred over version-pinned identifiers. |
-| Codex | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` | Suggestions remain unverified until the installed client or configured endpoint confirms them. |
+| Codex | `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` | Suggestions remain unverified until the installed client or configured endpoint confirms them. `gpt-6-astra` requires codex-cli 0.153.4+. |
 | OpenCode | `llmgateway/grok-4-5` | Required fallback suggestion when discovery yields no usable model; operator-added provider/model IDs remain valid. |
 
 Curated catalogues are application defaults, not proof that the current account can use a model. The UI labels them as suggestions until verified.

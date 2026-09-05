@@ -24,6 +24,7 @@ const ALIASES_BY_KIND: Record<string, { value: string; label: string }[]> = {
   ],
   Codex: [
     { value: '*', label: '* (kind-wide)' },
+    { value: 'gpt-6-astra', label: 'gpt-6-astra' },
     { value: 'gpt-5.6-sol', label: 'gpt-5.6-sol' },
     { value: 'gpt-5.6-terra', label: 'gpt-5.6-terra' },
     { value: 'gpt-5.6-luna', label: 'gpt-5.6-luna' },

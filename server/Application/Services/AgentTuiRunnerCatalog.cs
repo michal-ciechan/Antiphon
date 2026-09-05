@@ -41,7 +41,7 @@ public sealed class AgentTuiRunnerCatalog
             kind,
             "Codex",
             "OpenAI Codex terminal client.",
-            ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
+            ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
             CodexCapabilities(profileArguments),
             "Use a direct Codex executable or a wrapper that owns authentication."),
         AgentKind.OpenCode => Runner(

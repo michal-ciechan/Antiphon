@@ -820,7 +820,7 @@ public class AgentTuiProfileServiceTests
         catalog.Get(AgentKind.ClaudeCode).CuratedModels.Select(model => model.Identifier)
             .ShouldBe(["fable", "opus", "sonnet", "haiku"]);
         catalog.Get(AgentKind.Codex).CuratedModels.Select(model => model.Identifier)
-            .ShouldBe(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
+            .ShouldBe(["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
 
         var grok = catalog.Get(AgentKind.Grok, ["--always-approve", "--no-alt-screen"]);
         grok.CuratedModels.Select(model => model.Identifier).ShouldBe(["grok-4.6", "grok-4.5"]);

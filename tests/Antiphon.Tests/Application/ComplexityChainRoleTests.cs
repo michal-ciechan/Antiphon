@@ -60,7 +60,7 @@ public class ComplexityChainRoleTests
         walk.Source.ShouldBe("chain:Plan/Hard");
         walk.ChainRole.ShouldBe(AgentTaskRole.Plan);
         walk.CellLabel.ShouldBe("Plan/Hard");
-        walk.Chosen!.Alias.ShouldBe("gpt-5.6-sol");
+        walk.Chosen!.Alias.ShouldBe("gpt-6-astra");
         walk.Outcomes.ShouldHaveSingleItem();
     }
 

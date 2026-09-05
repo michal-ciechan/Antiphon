@@ -56,15 +56,15 @@ public class ModelLevelAliasDisplayTests
     }
 
     [Test]
-    [Arguments(AgentModelLevel.Frontier, "gpt-5.6-sol")]
+    [Arguments(AgentModelLevel.Frontier, "gpt-6-astra")]
     [Arguments(AgentModelLevel.High, "gpt-5.6-terra")]
     [Arguments(AgentModelLevel.Medium, "gpt-5.6-luna")]
     [Arguments(AgentModelLevel.Low, "gpt-5.6-luna")]
     public void the_codex_ladder_answers_for_the_codex_kind(AgentModelLevel level, string expected)
     {
-        // CARD-0099 S3. Sol > Terra > Luna is the CAPABILITY order (catalog priority 1/2/3), not the
-        // Sol/Luna/Terra order the card names them in — getting that backwards would put the
-        // frontier tier on the cheap model with nothing to show for it.
+        // CARD-0099 S3 / CARD-0396. Astra > Sol > Terra > Luna is the CAPABILITY order (catalog
+        // priority 1/6/7/8). Dispatch is conservative: Frontier is Astra, High stays Terra (Sol is
+        // still a supported slug), Medium/Low share Luna.
         ModelLevelAliases.For(AgentKind.Codex, level).ShouldBe(expected);
         ModelLevelAliases.For(AgentKind.Codex, level).ShouldBe(ModelLevelAliases.ForCodex(level));
     }
@@ -72,13 +72,14 @@ public class ModelLevelAliasDisplayTests
     [Test]
     public void the_codex_ladder_pins_full_versioned_slugs_and_never_a_bare_tier_name()
     {
-        // Measured 2026-08-20 against codex-cli 0.147.0: `-m luna` fails twice over, once locally
-        // ("Model metadata for `luna` not found") and once as an HTTP 400. Codex has no unversioned
-        // aliases, so a "family alias" of the kind Claude and Grok use would never start a session.
+        // Measured 2026-08-20 against codex-cli 0.147.0 (`-m luna`) and 2026-09-05 against 0.153.4
+        // (`-m astra`): both 400. Codex has no unversioned aliases, so a "family alias" of the kind
+        // Claude and Grok use would never start a session. Frontier is `gpt-6-astra`, not `gpt-5.6-*`.
         foreach (var level in Enum.GetValues<AgentModelLevel>())
         {
             var slug = ModelLevelAliases.For(AgentKind.Codex, level);
-            slug.ShouldStartWith("gpt-5.6-");
+            slug.ShouldStartWith("gpt-");
+            slug.ShouldNotBe("astra");
             slug.ShouldNotBe("sol");
             slug.ShouldNotBe("terra");
             slug.ShouldNotBe("luna");
@@ -109,7 +110,7 @@ public class ModelLevelAliasDisplayTests
         var note = DelegationReportFormatter.BuildCompletionNote(
             NewTask(AgentKind.Codex, AgentModelLevel.Frontier), Settings, "Landed the change.");
 
-        note.Body.ShouldContain("gpt-5.6-sol");
+        note.Body.ShouldContain("gpt-6-astra");
         note.Body.ShouldNotContain("fable");
     }
 

@@ -34,7 +34,7 @@ const grok: ComplexityCandidateDto = {
 const codex: ComplexityCandidateDto = {
   agentKind: 'Codex',
   modelLevel: 'Frontier',
-  alias: 'gpt-5.6-sol',
+  alias: 'gpt-6-astra',
   availableNow: true,
   unavailableReason: null,
 }
@@ -184,7 +184,7 @@ const defaultPins: RoutingPinDto[] = [
     strength: 'Preferred',
     agentKind: 'Codex',
     modelLevel: 'Frontier',
-    modelAlias: 'gpt-5.6-sol',
+    modelAlias: 'gpt-6-astra',
     reason: 'this card only',
   }),
 ]
@@ -308,7 +308,7 @@ describe('RoutingSettingsTab', () => {
 
     const planHard = screen.getByTestId('routing-matrix-cell-Plan-Hard')
     expect(within(planHard).getByText('Own rule')).toBeInTheDocument()
-    expect(within(planHard).getByText(/Codex\/Frontier \(gpt-5.6-sol\)/)).toBeInTheDocument()
+    expect(within(planHard).getByText(/Codex\/Frontier \(gpt-6-astra\)/)).toBeInTheDocument()
 
     const anyHard = screen.getByTestId('routing-matrix-cell-any-Hard')
     expect(within(anyHard).getByText('Any role rule')).toBeInTheDocument()

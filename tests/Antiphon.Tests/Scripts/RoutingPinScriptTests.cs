@@ -88,7 +88,7 @@ public sealed class RoutingPinScriptTests
         run.Output.ShouldContain("ClaudeCode/Frontier (fable)");
         run.Output.ShouldContain("+2:");
         run.Output.ShouldContain("ClaudeCode/High (opus)");
-        run.Output.ShouldContain("Codex/Frontier (gpt-5.6-sol)");
+        run.Output.ShouldContain("Codex/Frontier (gpt-6-astra)");
     }
 
     [Test]
@@ -340,7 +340,7 @@ public sealed class RoutingPinScriptTests
              "candidates":[
                {"agentKind":"ClaudeCode","modelLevel":"Frontier","alias":"fable","availableNow":true,"unavailableReason":null},
                {"agentKind":"ClaudeCode","modelLevel":"High","alias":"opus","availableNow":true,"unavailableReason":null},
-               {"agentKind":"Codex","modelLevel":"Frontier","alias":"gpt-5.6-sol","availableNow":true,"unavailableReason":null}
+               {"agentKind":"Codex","modelLevel":"Frontier","alias":"gpt-6-astra","availableNow":true,"unavailableReason":null}
              ]}]}
             """;
 
