@@ -370,6 +370,7 @@ public class AgentTaskCheckSweepTests
             m => m.AgentSessionId == seed.CallerSessionId);
         stored.Origin.ShouldBe(QueuedMessageOrigin.Check, "a check is not a Delegation report");
         stored.ConversationKey.ShouldBe(AgentTaskCheckService.ConversationKey(seed.Task.Id));
+        stored.SourceTaskId.ShouldBe(seed.Task.Id, "CARD-0397: new Check rows stamp SourceTaskId");
     }
 
     [Test]

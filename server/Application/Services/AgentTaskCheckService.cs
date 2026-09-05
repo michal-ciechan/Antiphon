@@ -171,7 +171,8 @@ public sealed class AgentTaskCheckService
             {
                 await _queue.EnqueueAsync(
                     parentSession, body, MessageSendMode.WhenIdle, ct,
-                    QueuedMessageOrigin.Check, ConversationKey(task.Id));
+                    QueuedMessageOrigin.Check, ConversationKey(task.Id),
+                    sourceTaskId: task.Id);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

@@ -83,6 +83,61 @@ public class ChannelMachineTurnTextTests
     }
 
     [Test]
+    public async Task A_check_row_matches_by_conversation_key_when_the_stored_body_was_amended()
+    {
+        // SUPERSEDED prepend after send: HeaderProbe of the stored body is no longer in the
+        // typed UserPrompt. SourceTaskId is null on older Check rows; ConversationKey carries the id.
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var prompt = "[Telegram \"Family\" — Mike 00:18] Check";
+        await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
+        await h.InsertTurnAsync(prompt, "Ack.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        var taskId = Guid.NewGuid();
+        var shortId = DelegationReportFormatter.Short(taskId);
+        var typed = $"[check {shortId} #1] still looping?";
+        var amended =
+            "SUPERSEDED — captured 2026-09-05T10:00:00Z, but this task SETTLED after capture.\n\n" + typed;
+        var injectionId = await SeedMachineInjectionAsync(
+            h, amended, QueuedMessageOrigin.Check,
+            sourceTaskId: null,
+            conversationKey: AgentTaskCheckService.ConversationKey(taskId));
+        await h.InsertTurnAsync(typed, "review looping on claude-fable-5, canceling");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.Count.ShouldBe(2, "Check ConversationKey must match when the body was amended");
+        h.Messaging.SentReplies[1].Text.ShouldBe("review looping on claude-fable-5, canceling");
+        (await RowAsync(injectionId)).ChannelReplySettledAt.ShouldNotBeNull();
+    }
+
+    [Test]
+    public async Task A_grok_flattened_task_done_turn_delivers_plain_text()
+    {
+        // CARD-0397: CARD-0338 status text still lands when Grok joins the header onto the body.
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var prompt = "[Telegram \"Family\" — Mike 23:31] CARD-0003";
+        await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
+        await h.InsertTurnAsync(prompt, "On it.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        var taskId = Guid.NewGuid();
+        var note = $"[task {DelegationReportFormatter.Short(taskId)} done] git=landed\n\nWrote developer notes.";
+        var injectionId = await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation, taskId);
+        await h.InsertTurnAsync(
+            FlattenNewlines(note),
+            "CARD-0003 implemented, 665 tests pass; review dispatched.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.Count.ShouldBe(2, "flattened [task done] plain text must follow-up");
+        var followUp = h.Messaging.SentReplies[1];
+        followUp.Text.ShouldBe("CARD-0003 implemented, 665 tests pass; review dispatched.");
+        followUp.Attachments.ShouldBeEmpty();
+        (await RowAsync(injectionId)).ChannelReplySettledAt.ShouldNotBeNull();
+    }
+
+    [Test]
     public async Task Follow_up_send_stamps_LastReplyAt_without_touching_inbound_columns()
     {
         await using var h = await CreateHarnessAsync();
@@ -454,6 +509,9 @@ public class ChannelMachineTurnTextTests
         (await TaskRowAsync(taskId)).DeliverableDeliveredAt.ShouldNotBeNull();
     }
 
+    private static string FlattenNewlines(string text) =>
+        text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace("\n", "", StringComparison.Ordinal);
+
     private static string WriteFile(BridgeQueueHarness h, string name, byte[] bytes)
     {
         var path = Path.Combine(h.TempRoot, name);
@@ -462,7 +520,8 @@ public class ChannelMachineTurnTextTests
     }
 
     private static async Task<Guid> SeedMachineInjectionAsync(
-        BridgeQueueHarness h, string body, QueuedMessageOrigin origin, Guid? sourceTaskId = null)
+        BridgeQueueHarness h, string body, QueuedMessageOrigin origin, Guid? sourceTaskId = null,
+        string? conversationKey = null)
     {
         await using var db = CreateContext();
         var seq = ((await db.SessionQueuedMessages
@@ -479,6 +538,7 @@ public class ChannelMachineTurnTextTests
             Sequence = seq,
             Origin = origin,
             SourceTaskId = sourceTaskId,
+            ConversationKey = conversationKey,
             CreatedAt = sent,
             SentAt = sent,
             DeliveryAttempts = 1,

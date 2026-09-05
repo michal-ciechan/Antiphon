@@ -97,6 +97,107 @@ public class ChannelFollowUpAttachmentTests
     }
 
     [Test]
+    public async Task A_grok_flattened_task_done_turn_with_attach_is_delivered()
+    {
+        // CARD-0397 pin: Body is header\n\nreport; live Grok/PtyHost UserPrompt drops those
+        // newlines with no separator. Today's 120-char PromptsMatch includes the \n\n and misses.
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var prompt = "[Telegram \"Family\" — Mike 10:00] send me the PDF";
+        var pdfBytes = "%PDF-1.4 card-0397 flatten"u8.ToArray();
+        var pdf = WriteFile(h, "invoice.pdf", pdfBytes);
+
+        var channelRowId = await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
+        await h.InsertTurnAsync(prompt, "On it — a delegate is producing the PDF.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.Count.ShouldBe(1, "the ack turn is the main-path reply");
+
+        var taskId = Guid.NewGuid();
+        var note = $"[task {DelegationReportFormatter.Short(taskId)} done] git=landed\n\nWrote developer notes.";
+        var flattened = FlattenNewlines(note);
+        flattened.ShouldContain("git=landedWrote");
+        var injectionId = await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation, taskId);
+        await h.InsertTurnAsync(flattened, $"Here it is.\n[[attach: {pdf}]]");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.Count.ShouldBe(2, "the flattened [task done] turn must follow-up");
+        var followUp = h.Messaging.SentReplies[1];
+        followUp.Channel.ShouldBe("telegram");
+        followUp.ConversationId.ShouldBe(chatId);
+        followUp.ReplyHandle.ShouldBe(chatId);
+        followUp.Text.ShouldBe("Here it is.");
+        var attachment = followUp.Attachments.ShouldHaveSingleItem();
+        attachment.Name.ShouldBe("invoice.pdf");
+        attachment.Mime.ShouldBe("application/pdf");
+        attachment.Content.ShouldBe(pdfBytes);
+        (await RowAsync(injectionId)).ChannelReplySettledAt.ShouldNotBeNull();
+        (await RowAsync(channelRowId)).ChannelReplySettledAt.ShouldNotBeNull(
+            "the follow-up must not touch the already-settled Channel-origin row");
+    }
+
+    [Test]
+    public async Task Gate2_channel_body_done_does_not_silent_drop_an_injection_turn()
+    {
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var prompt = "[Telegram \"Family\" — Mike 10:00] send me the PDF";
+        var pdf = WriteFile(h, "invoice.pdf", "%PDF-1.4 gate2"u8.ToArray());
+
+        await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
+        await h.InsertTurnAsync(prompt, "On it.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        h.Messaging.SentReplies.Count.ShouldBe(1);
+
+        // Already-settled historical Channel body — Gate 2 loads every Channel body, not only
+        // open correlations. Left unclaimed, the main path would also match "done" as a probe.
+        var doneId = await h.SeedChannelCorrelationAsync("done", $"telegram:{chatId}");
+        await using (var db = CreateContext())
+        {
+            var done = await db.SessionQueuedMessages.SingleAsync(m => m.Id == doneId);
+            done.ChannelReplySettledAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        var taskId = Guid.NewGuid();
+        var note = $"[task {DelegationReportFormatter.Short(taskId)} done] git=landed\n\nWrote developer notes.";
+        await SeedMachineInjectionAsync(h, note, QueuedMessageOrigin.Delegation, taskId);
+        await h.InsertTurnAsync(FlattenNewlines(note), $"Here.\n[[attach: {pdf}]]");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.Count.ShouldBe(2,
+            "a Channel body of \"done\" must not skip an injection-shaped turn");
+        h.Messaging.SentReplies[1].Attachments.ShouldHaveSingleItem().Name.ShouldBe("invoice.pdf");
+    }
+
+    [Test]
+    public async Task An_injection_shaped_miss_with_markers_is_error_unmatched_injection()
+    {
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var prompt = "[Telegram \"Family\" — Mike 10:15] still waiting";
+        var pdf = WriteFile(h, "lost.pdf", "%PDF-1.4 unmatched"u8.ToArray());
+
+        await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
+        await h.InsertTurnAsync(
+            "[task deadbeef done] git=landed\n\nWrote developer notes.",
+            $"Here.\n[[attach: {pdf}]]");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.ShouldBeEmpty("no machine row means no follow-up");
+        await using var db = CreateContext();
+        var incident = (await db.AgentIncidents
+                .Where(i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.ChannelAttachmentsDropped)
+                .ToListAsync())
+            .ShouldHaveSingleItem();
+        incident.Severity.ShouldBe(AlertSeverity.Error);
+        incident.FailureReason.ShouldNotBeNull();
+        incident.FailureReason.ShouldStartWith("UnmatchedInjection:");
+        incident.Message.ShouldNotContain("was not started by an Antiphon note");
+        incident.Message.ShouldContain("looks like an Antiphon note");
+    }
+
+    [Test]
     public async Task Re_running_the_same_turn_end_and_a_restart_do_not_double_send()
     {
         await using var h = await CreateHarnessAsync();
@@ -515,6 +616,9 @@ public class ChannelFollowUpAttachmentTests
         (await TaskRowAsync(taskId)).DeliverableDeliveredAt.ShouldBeNull();
     }
 
+    private static string FlattenNewlines(string text) =>
+        text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace("\n", "", StringComparison.Ordinal);
+
     private static string WriteFile(BridgeQueueHarness h, string name, byte[] bytes)
     {
         var path = Path.Combine(h.TempRoot, name);
@@ -523,7 +627,8 @@ public class ChannelFollowUpAttachmentTests
     }
 
     private static async Task<Guid> SeedMachineInjectionAsync(
-        BridgeQueueHarness h, string body, QueuedMessageOrigin origin, Guid? sourceTaskId = null)
+        BridgeQueueHarness h, string body, QueuedMessageOrigin origin, Guid? sourceTaskId = null,
+        string? conversationKey = null)
     {
         await using var db = CreateContext();
         var seq = ((await db.SessionQueuedMessages
@@ -540,6 +645,7 @@ public class ChannelFollowUpAttachmentTests
             Sequence = seq,
             Origin = origin,
             SourceTaskId = sourceTaskId,
+            ConversationKey = conversationKey,
             CreatedAt = sent,
             SentAt = sent,
             DeliveryAttempts = 1,

@@ -1155,7 +1155,10 @@ public sealed class ChannelReplyDispatcher
             .Where(m => m.AgentSessionId == sessionId && m.Origin == QueuedMessageOrigin.Channel)
             .Select(m => m.Body)
             .ToListAsync(ct);
-        if (channelBodies.Any(b => PromptsMatch(Normalize(b), normalizedTurn)))
+        // Injection-shaped prompts skip this return: a short Channel body ("done") is a
+        // substring of `[task … done]` and would otherwise silent-drop a follow-up (CARD-0397).
+        if (!ChannelContracts.IsAntiphonInjectionPrompt(promptText)
+            && channelBodies.Any(b => PromptsMatch(Normalize(b), normalizedTurn)))
             return;
 
         var candidates = await db.SessionQueuedMessages
@@ -1168,14 +1171,29 @@ public sealed class ChannelReplyDispatcher
                 && m.ChannelReplySettledAt == null)
             .OrderBy(m => m.Sequence)
             .ToListAsync(ct);
-        var matches = candidates.Where(m => PromptsMatch(Normalize(m.Body), normalizedTurn)).ToList();
+        var ids = ChannelContracts.CollectInjectionShortIds(promptText);
+        var matches = candidates.Where(m =>
+            MatchesByTaskId(m, ids) || MatchesHeaderLine(m, normalizedTurn)).ToList();
         if (matches.Count == 0)
         {
+            var injection = ChannelContracts.IsAntiphonInjectionPrompt(promptText);
             if (explicitPaths.Count == 0)
+            {
+                if (injection)
+                {
+                    _logger.LogWarning(
+                        "Machine-turn follow-up on session {SessionId} prompt seq {PromptSeq} is "
+                        + "injection-shaped, no row",
+                        sessionId, userPrompt.Sequence);
+                }
+
                 return;
+            }
+
             await ReportAttachmentsDroppedAsync(
                 sessionId, userPrompt.Sequence, conversationKey,
-                AlertSeverity.Warning, "UnmatchedHuman", ct);
+                injection ? AlertSeverity.Error : AlertSeverity.Warning,
+                injection ? "UnmatchedInjection" : "UnmatchedHuman", ct);
             return;
         }
 
@@ -1266,6 +1284,33 @@ public sealed class ChannelReplyDispatcher
         await channels.StampLastReplyAsync(provider, conversationId, text, ct);
     }
 
+    private static bool MatchesByTaskId(
+        SessionQueuedMessage row, ChannelContracts.InjectionShortIds ids)
+    {
+        if (row.Origin == QueuedMessageOrigin.Delegation && row.SourceTaskId is Guid taskId)
+            return ids.TaskIds.Contains(DelegationReportFormatter.Short(taskId));
+
+        if (row.Origin == QueuedMessageOrigin.Check)
+        {
+            Guid? id = row.SourceTaskId;
+            if (id is null
+                && AgentTaskCheckService.TryParseCheckConversationKey(row.ConversationKey, out var parsed))
+            {
+                id = parsed;
+            }
+
+            return id is Guid checkId && ids.CheckIds.Contains(DelegationReportFormatter.Short(checkId));
+        }
+
+        return false;
+    }
+
+    private static bool MatchesHeaderLine(SessionQueuedMessage row, string normalizedTurn)
+    {
+        var header = ChannelContracts.HeaderProbe(row.Body);
+        return header.Length > 0 && PromptsMatch(header, normalizedTurn);
+    }
+
     private bool AdmitsMachineTurnText(IReadOnlyList<SessionQueuedMessage> matches)
     {
         var origins = _settings.MachineTurnTextOrigins;
@@ -1343,12 +1388,15 @@ public sealed class ChannelReplyDispatcher
             "Unroutable" =>
                 $"a machine-triggered turn produced attach markers but the follow-up conversation key "
                 + $"({conversationKey}) names no routable target",
+            "UnmatchedInjection" =>
+                $"a completed turn produced attach markers but the owning prompt (seq {promptSeq}) looks "
+                + "like an Antiphon injection and matched no queued row — the follow-up was not sent",
             _ =>
                 $"a completed turn produced attach markers but the owning prompt (seq {promptSeq}) was "
                 + "not an Antiphon injection and matched no channel correlation — publishing would be a stray reply",
         };
 
-        if (severity == AlertSeverity.Critical)
+        if (severity >= AlertSeverity.Error)
         {
             _logger.LogError(
                 "CHANNEL ATTACHMENTS DROPPED: session {SessionId} turn prompt seq {PromptSeq} — {Why}.",
@@ -1399,9 +1447,15 @@ public sealed class ChannelReplyDispatcher
             if (supervisor is null)
                 return;
 
-            var incidentMessage = branch == "Unroutable"
-                ? $"This agent tried to send a file to {conversationKey} and there is no routable conversation to deliver it to. {why}."
-                : $"This agent produced attach markers on a turn that was not started by an Antiphon note and matched no channel message. The file was not sent to {conversationKey}. {why}.";
+            var incidentMessage = branch switch
+            {
+                "Unroutable" =>
+                    $"This agent tried to send a file to {conversationKey} and there is no routable conversation to deliver it to. {why}.",
+                "UnmatchedInjection" =>
+                    $"This agent produced attach markers on a turn that looks like an Antiphon note but matched no queued injection. The file was not sent to {conversationKey}. {why}.",
+                _ =>
+                    $"This agent produced attach markers on a turn that was not started by an Antiphon note and matched no channel message. The file was not sent to {conversationKey}. {why}.",
+            };
 
             await supervisor.RecordIncidentAsync(
                 owner,

@@ -53,4 +53,86 @@ public static partial class ChannelContracts
         text = Regex.Replace(text, @"\n{3,}", "\n\n").Trim();
         return (text, paths);
     }
+
+    /// <summary>
+    /// Tokens that mark an Antiphon-composed injection. Contains, not StartsWith: a SUPERSEDED
+    /// check note opens with the banner, and Grok joins that onto the <c>[check</c> header.
+    /// Channel envelopes (<c>[Telegram</c> / <c>[Slack</c> / <c>[Discord</c>) do not collide.
+    /// </summary>
+    private static readonly string[] InjectionPromptTokens =
+    [
+        "[task ",
+        "[check ",
+        "[antiphon-",
+        "[scheduled:",
+        "[System note from Antiphon:",
+        "[session ",
+    ];
+
+    /// <summary>
+    /// True when <paramref name="promptText"/> looks like an Antiphon injection (completion /
+    /// check / brief / scheduled / system / session-tagged note), not a channel envelope or
+    /// operator-typed turn.
+    /// </summary>
+    public static bool IsAntiphonInjectionPrompt(string? promptText)
+    {
+        if (string.IsNullOrEmpty(promptText))
+            return false;
+        foreach (var token in InjectionPromptTokens)
+        {
+            if (promptText.Contains(token, StringComparison.Ordinal))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>8-hex ids parsed from <c>[task …]</c> / <c>[check …]</c> headers in a prompt.</summary>
+    public readonly record struct InjectionShortIds(
+        IReadOnlySet<string> TaskIds,
+        IReadOnlySet<string> CheckIds);
+
+    [GeneratedRegex(@"\[task ([0-9a-fA-F]{8})\b")]
+    private static partial Regex TaskInjectionShortIdRegex();
+
+    [GeneratedRegex(@"\[check ([0-9a-fA-F]{8})\b")]
+    private static partial Regex CheckInjectionShortIdRegex();
+
+    /// <summary>
+    /// Collects 8-hex ids from <c>[task &lt;8-hex&gt;</c> and <c>[check &lt;8-hex&gt;</c> in the
+    /// owning prompt. Does not treat <c>[antiphon-task:]</c> as a task-id match.
+    /// </summary>
+    public static InjectionShortIds CollectInjectionShortIds(string? promptText)
+    {
+        var taskIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var checkIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrEmpty(promptText))
+            return new InjectionShortIds(taskIds, checkIds);
+
+        foreach (Match match in TaskInjectionShortIdRegex().Matches(promptText))
+            taskIds.Add(match.Groups[1].Value.ToLowerInvariant());
+        foreach (Match match in CheckInjectionShortIdRegex().Matches(promptText))
+            checkIds.Add(match.Groups[1].Value.ToLowerInvariant());
+        return new InjectionShortIds(taskIds, checkIds);
+    }
+
+    /// <summary>
+    /// First non-empty line of the queued body after CRLF → <c>\n</c> + trim. The stable header;
+    /// never the report body, deliverable block, or excerpt banner.
+    /// </summary>
+    public static string HeaderProbe(string? body)
+    {
+        if (string.IsNullOrEmpty(body))
+            return "";
+        var normalized = body.ReplaceLineEndings("\n").Trim();
+        if (normalized.Length == 0)
+            return "";
+        foreach (var line in normalized.Split('\n'))
+        {
+            if (line.Length > 0)
+                return line;
+        }
+
+        return "";
+    }
 }

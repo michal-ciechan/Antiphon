@@ -395,15 +395,19 @@ public enum AgentIncidentKind
     /// neither published on the main channel-reply path nor deliverable as a machine-turn
     /// follow-up. Warning when the owning prompt is not an Antiphon injection (an operator typed
     /// a marker into a bound terminal, or an unmatched stray) — detection only; publishing
-    /// would be the stray-reply bug matching exists to prevent. Critical when the turn WAS
-    /// machine-triggered (Delegation / Check / System) but no conversation could be resolved
-    /// to send to. Non-channel-bound sessions never raise this — a delegate's own marker is
-    /// input for its caller, not a send.
+    /// would be the stray-reply bug matching exists to prevent. Error when the owning prompt
+    /// looks like an Antiphon injection (task / check / scheduled / system / session note) but
+    /// matched no queued row — broken delivery, not a human-typed stray. Critical when the
+    /// conversation key is unsplittable (no routable chat). Non-channel-bound sessions never
+    /// raise this — a delegate's own marker is input for its caller, not a send.
     ///
     /// Live miss 2026-08-30 (CARD-0250): Slack asked for a PDF, the delegate wrote it, the
     /// orchestrator's <c>[task done]</c> turn re-emitted a correct <c>[[attach:]]</c>, and
     /// Slack never received the file — the ack turn had already settled the only correlation,
-    /// so <c>OnTurnEndAsync</c> returned with no log line at all.
+    /// so <c>OnTurnEndAsync</c> returned with no log line at all. Live miss 2026-09-05
+    /// (CARD-0397): the same follow-up matched no row because the 120-char body probe included
+    /// a newline Grok had joined out of <c>UserPrompt</c>; that miss is now Error
+    /// <c>UnmatchedInjection</c> rather than Warning <c>UnmatchedHuman</c>.
     /// </summary>
     ChannelAttachmentsDropped = 41,
 
