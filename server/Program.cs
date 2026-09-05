@@ -548,6 +548,7 @@ try
     // CARD-0106: API key store CRUD. The protector itself is registered by
     // AgentTuiDataProtectionSetup.Configure, alongside the key ring both stores share.
     builder.Services.AddScoped<ApiKeyService>();
+    builder.Services.AddScoped<DelegationCapabilityService>();
     // CARD-0106 S2: launch-time placeholder resolution. Scoped, because it reads the key store.
     builder.Services.AddScoped<ApiKeyEnvResolver>();
     // CARD-0166 S2: tracker token_key -> ApiKeys resolution (project then global), env-var fallback.
@@ -772,6 +773,7 @@ try
     app.MapSettingsEndpoints();
     app.MapProjectEndpoints();
     app.MapApiKeyEndpoints();
+    app.MapDelegationCapabilityEndpoints();
     app.MapBoardEndpoints();
     app.MapTrackerSyncEndpoints();
     app.MapCardFileSyncEndpoints();

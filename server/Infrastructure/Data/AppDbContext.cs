@@ -71,6 +71,8 @@ public class AppDbContext : DbContext
     public DbSet<DiagnosisRecord> Diagnoses => Set<DiagnosisRecord>();
     public DbSet<OutputDistillationRecord> OutputDistillations => Set<OutputDistillationRecord>();
     public DbSet<WorktreeHealthFinding> WorktreeHealthFindings => Set<WorktreeHealthFinding>();
+    public DbSet<DelegationCapability> DelegationCapabilities => Set<DelegationCapability>();
+    public DbSet<DelegationCapabilityEvent> DelegationCapabilityEvents => Set<DelegationCapabilityEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -1858,6 +1860,50 @@ public class AppDbContext : DbContext
                 .HasForeignKey(f => f.TaskId)
                 .IsRequired(false)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<DelegationCapability>(entity =>
+        {
+            entity.ToTable("DelegationCapabilities");
+            entity.HasKey(c => c.Id);
+            entity.Property(c => c.Name).IsRequired().HasMaxLength(DelegationCapability.NameMaxLength);
+            entity.Property(c => c.TokenHash).IsRequired().HasMaxLength(DelegationCapability.TokenHashLength);
+            entity.Property(c => c.RootsJson).IsRequired().HasColumnType("jsonb");
+            entity.Property(c => c.CreatedAt).IsRequired();
+
+            entity.HasIndex(c => c.Name)
+                .IsUnique()
+                .HasFilter("\"RevokedAt\" IS NULL")
+                .HasDatabaseName("IX_DelegationCapabilities_Name_Active");
+            entity.HasIndex(c => c.TokenHash)
+                .IsUnique()
+                .HasDatabaseName("IX_DelegationCapabilities_TokenHash");
+
+            entity.HasOne(c => c.Board)
+                .WithMany()
+                .HasForeignKey(c => c.BoardId)
+                .IsRequired(false)
+                .OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(c => c.Project)
+                .WithMany()
+                .HasForeignKey(c => c.ProjectId)
+                .IsRequired(false)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<DelegationCapabilityEvent>(entity =>
+        {
+            entity.ToTable("DelegationCapabilityEvents");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Type).IsRequired();
+            entity.Property(e => e.Detail).IsRequired().HasMaxLength(DelegationCapabilityEvent.DetailMaxLength);
+            entity.Property(e => e.At).IsRequired();
+            entity.HasIndex(e => new { e.CapabilityId, e.At })
+                .HasDatabaseName("IX_DelegationCapabilityEvents_CapabilityId_At");
+            entity.HasOne(e => e.Capability)
+                .WithMany(c => c.Events)
+                .HasForeignKey(e => e.CapabilityId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
     }
