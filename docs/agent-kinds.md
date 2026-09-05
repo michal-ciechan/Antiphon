@@ -407,6 +407,24 @@ See [agent-credentials.md](agent-credentials.md).
   delegates they are running on `fable`.
 - **Numeric enum values on the wire.** The API accepts enum *names* only.
 
+## Standing specialist seats (CARD-0079 / CARD-0352 / CARD-0330)
+
+Three AlwaysOn haiku `ClaudeCode` rows are furniture, not workers. They share the
+`StandingSpecialistProvisioner` (deny-all hook, `IgnoreSubscriptionQuota` on start, scratch
+directory, reconciled `SystemPromptAppend` from a bundle). They are not pool delegates and
+they do not take attachments.
+
+| Slug | Job | Kill switch | Mode |
+|---|---|---|---|
+| `antiphon-check-interpreter` | Turn a running task's check probe into a 3-5 line reading | `Delegation:CheckInterpreterEnabled` | n/a |
+| `antiphon-diagnose` | Title and labels for cards | `Delegation:DiagnoseEnabled` | `DiagnoseLabelMode` ships **Shadow** |
+| `antiphon-output-distiller` | Distil a finished delegate report after it is written | `Delegation:OutputDistillerEnabled` | `OutputDistillerMode` ships **Shadow** (record, never replace the note). Flip to **Apply** after a week of ledger. |
+
+Scratch directories: `C:\logs\antiphon\check-interpreter`, `diagnose`, `output-distiller`. A
+`[task … done]` note in Apply mode may be the distilled bullets plus a pointer to the task;
+the raw `Result` is never rewritten. `OutputDistillerEnabled=false` returns today's
+byte-for-byte completion note.
+
 ## See also
 
 - [agent-credentials.md](agent-credentials.md) — where keys live and how a launch environment is

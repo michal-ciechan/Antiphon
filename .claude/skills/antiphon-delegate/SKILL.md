@@ -319,6 +319,11 @@ automatically — see "What the delegate is told" below; don't type them into `-
   It lands between the delegate's turns (never mid-tool-call), its report will open by noting the
   refinement arrived, and the task's timeline records what you said. A still-queued task gets the
   message folded into its brief instead; a Blocked one needs `-Reply`, not this.
+- **Trust the full report.** A `[task … done]` note may be a distillation (CARD-0330) with a
+  one-line pointer at the task. The evidence is still the settled task's own `Result` —
+  `pwsh -NoProfile -File scripts/delegate.ps1 -Status <taskId>` or the drawer Report section —
+  never the distilled bullets alone. Flag a bad summary with
+  `delegate.ps1 -Flag <id> -Verdict Lost|Noisy|Good [-Note]`.
 - **Need a task's full text later?** `pwsh -NoProfile -File scripts/delegate.ps1 -Status <taskId>`
 - **A stage run self-reports a finding line.** Review/Test/Merge/Deploy/`-OnAgent` get a stage by default; pass `-Stage` for a Debug/Docs/Custom dispatch that is actually a verify, cleanup, etc. The brief asks for `[antiphon-finding:<id> found\|clean]` on the line before the report token. If you judged differently from the delegate:
   ```powershell

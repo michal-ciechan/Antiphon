@@ -318,3 +318,18 @@ prompt-review loop (orchestration-loop.md §10) dispatches a Review delegate; it
 bundle edit only when the evidence bar is met; a human merges; the seat picks the new version
 up at the next stop/start. No automatic write to a bundle, `SystemPromptAppend`, or a live
 session, and the loop must not edit INVARIANTS or the gates.
+
+---
+
+## 2026-09-05 — CARD-0330 S6 live stack still on pre-S3 binaries
+
+**What we learned:** S1-S5 are on `origin/master` (`39affac5` and parents) but the running
+server on 17202 has not loaded them. `GET /api/distillations/stats` is 404, no
+`antiphon-output-distiller` agent row, and `server/bin/Debug/net9.0/Antiphon.Server.dll`
+(mtime 2026-09-05 05:08) does not contain `OutputDistillationHostedService` or
+`DistillationEndpoints`. Shadow/Apply/timeout/recreate are covered by
+`OutputDistillationTests` (11) and `OutputDistillerProvisionerTests` (10). The live canary
+(Shadow distill of a ≥1 500-char `ReplyTo=Session` report, timings vs the 45 s budget, Flag,
+kill-mid-flight, delete-and-recreate) needs `restart-apphost.ps1` from the main checkout.
+`OutputDistillerMode` stays **Shadow**; Apply is the operator flip after a week of ledger,
+not a first-boot switch.

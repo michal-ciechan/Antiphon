@@ -15,7 +15,13 @@ archaeology - and verification is not archaeology's quieter cousin. It is trust,
 1. **Trust the report.** The default, every time. A settled task's own report - what it changed,
    what it ran, what passed - is the evidence. Merge on it, close on it, move on. Re-reading a diff
    or re-running a named test "just to be sure" is not diligence here; it is spending the
-   orchestrator's context on a question the delegate already answered.
+   orchestrator's context on a question the delegate already answered. The evidence is the
+   task's full `Result` (`delegate.ps1 -Status <id>`, or the task drawer Report section). A
+   `[task … done]` note may be a distillation of that report (CARD-0330,
+   `antiphon-output-distiller`) once `OutputDistillerMode=Apply`; until then the note is still
+   the raw text and the distilled bullets live on the task as `DistilledResult`. Either way the
+   distilled bullets are a pointer, not a substitute. If the summary is not enough, poll the
+   full report — that stamps `FullReadAt` on an Applied ledger row.
 2. **Ask the same delegate.** Real reason for concern - the report is vague, contradicts itself, or
    skips something the brief asked for - is answered by going back to the agent that did the work,
    not by reading its diff cold. Reply into the same task asking for the missing detail. It has the
@@ -687,10 +693,18 @@ is worth its cost, not just when the card asks for a report.
 ## 10. Distiller prompt review (CARD-0330)
 
 A second standing haiku seat, `antiphon-output-distiller`, distils finished delegate reports
-after they are written. The seat's prompt is `server/Bundles/output-distiller.md`. A human
+after they are written. It is furniture on the agents page beside `antiphon-check-interpreter`
+and `antiphon-diagnose`. The seat's prompt is `server/Bundles/output-distiller.md`. A human
 merges every change to that file; nothing else may write it, the row's `SystemPromptAppend`,
 or the live session. The gates in `OutputDistillationGate` are code and are out of scope for
 this loop.
+
+**Shadow → Apply.** `Delegation:OutputDistillerMode` ships as **Shadow**: every eligible
+report is distilled, a ledger row is written, `DistilledResult` is stored on the task, and the
+queued `[task … done]` note is left untouched. Flip to **Apply** only after a week of ledger
+(`scripts/distiller.ps1 -Stats`). In Apply the held note's body is replaced with header +
+distilled bullets + a pointer to the full report; `NoteHeader` and `ContentDigest` stay the
+raw report's. `OutputDistillerEnabled=false` returns today's note with no other change.
 
 **Weekly trigger.** One CARD-0057 `Prompt` schedule, Daily, Monday `09:00` `Europe/London`,
 target `Antiphon-Orchestrator`, `WhenTargetDown=Queue`. Live id
