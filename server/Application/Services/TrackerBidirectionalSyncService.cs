@@ -561,7 +561,9 @@ public sealed class TrackerBidirectionalSyncService
                                  && c.ExternalIssueRef is null
                                  && c.CreatedAt >= watermark.Value))
         {
-            var labels = BoardService.ParseLabels(card.LabelsJson).ToList();
+            var labels = BoardService.ParseLabels(card.LabelsJson)
+                .Where(l => !CardDiagnosisLabels.IsDiagnosisLabel(l))
+                .ToList();
             labels.Add(TrackerSyncMarkers.StatusLabel(card.Status));
             if (TrackerSyncMarkers.PriorityLabel(card.Importance) is { } p)
                 labels.Add(p);

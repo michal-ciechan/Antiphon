@@ -1,3 +1,5 @@
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -5,12 +7,13 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Npgsql;
 
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// Job 1 of the diagnose seat (CARD-0352 S3): replace a long Goal-fallback title in place.
-/// Job 2 (<see cref="RunCardAsync"/>) is a dispatch stub until S4.
+/// Diagnose-seat worker (CARD-0352). Job 1 replaces a long Goal-fallback title in place.
+/// Job 2 labels an open card with <c>complexity:*</c> / <c>ui:*</c>.
 /// </summary>
 public sealed class DiagnoseService
 {
@@ -180,11 +183,267 @@ public sealed class DiagnoseService
             run.CostUsd, run.WaitMs, false, ct);
     }
 
-    /// <summary>S4 fills this in. S3 keeps the dispatch switch compiling and the drainer crash-free.</summary>
-    public Task RunCardAsync(Guid cardId, bool forced, CancellationToken ct)
+    /// <summary>
+    /// Label a card. Never throws into the drainer for a rejected or degraded answer — those write
+    /// a ledger row and leave the labels. <paramref name="forced"/> is the on-demand path: skip
+    /// backoff-style already-labelled short-circuit and replace diagnosis labels.
+    /// </summary>
+    public async Task RunCardAsync(Guid cardId, bool forced, CancellationToken ct)
     {
-        _logger.LogDebug("Card diagnosis for {CardId} (forced={Forced}) lands in S4; skipping", cardId, forced);
-        return Task.CompletedTask;
+        var started = _timeProvider.GetUtcNow();
+
+        if (!_settings.DiagnoseEnabled)
+            return;
+
+        var card = await _db.Cards.AsNoTracking().FirstOrDefaultAsync(c => c.Id == cardId, ct);
+        if (card is null)
+            return;
+
+        var existingLabels = BoardService.ParseLabels(card.LabelsJson);
+        if (!forced && CardDiagnosisLabels.HasBothFamilies(existingLabels))
+        {
+            await WriteLedgerAsync(
+                DiagnosisKind.Labels, null, cardId, null,
+                DiagnosisOutcome.SkippedAlreadyLabelled, null, null,
+                "card already has complexity: and ui: labels",
+                0m, WaitMs(started), forced, ct);
+            return;
+        }
+
+        var specialist = await _provisioner.EnsureAsync(ct);
+        if (specialist is null)
+            return;
+
+        var alias = ResolveSeatAlias(specialist);
+        if (_availability is not null
+            && await _availability.IsHeldAsync(AgentKind.ClaudeCode, alias, ct))
+        {
+            await WriteLedgerAsync(
+                DiagnosisKind.Labels, null, cardId, null,
+                DiagnosisOutcome.DegradedHeld, null, null,
+                $"alias '{alias}' is held", 0m, WaitMs(started), forced, ct);
+            return;
+        }
+
+        if (await DailySpendUsdAsync(ct) >= _settings.DiagnoseDailyBudgetUsd)
+        {
+            await WriteLedgerAsync(
+                DiagnosisKind.Labels, null, cardId, null,
+                DiagnosisOutcome.DegradedBudget, null, null,
+                $"daily budget ${_settings.DiagnoseDailyBudgetUsd:0.00} spent",
+                0m, WaitMs(started), forced, ct);
+            return;
+        }
+
+        var spec = DiagnoseProvisioner.Spec(_settings);
+        var wait = TimeSpan.FromSeconds(Math.Max(1, _settings.DiagnoseWaitSeconds));
+        var run = await _runner.RunAsync(
+            spec,
+            Diagnosis.BuildLabelsTaskTitle(card),
+            Diagnosis.BuildLabelsGoal(card, _settings.DiagnoseMaxInputChars),
+            wait,
+            _settings.DiagnoseMaxBacklog,
+            _provisioner.EnsureAsync,
+            ct,
+            createdDetail: $"Label diagnosis of {card.Identifier}.");
+
+        var outcome = run.Outcome switch
+        {
+            SpecialistRunOutcome.Busy => DiagnosisOutcome.DegradedBusy,
+            SpecialistRunOutcome.Timeout => DiagnosisOutcome.DegradedTimeout,
+            SpecialistRunOutcome.Failed => DiagnosisOutcome.DegradedFailed,
+            SpecialistRunOutcome.Empty => DiagnosisOutcome.DegradedEmpty,
+            SpecialistRunOutcome.ProvisionFailed or SpecialistRunOutcome.QueueFailed
+                or SpecialistRunOutcome.Disabled => DiagnosisOutcome.DegradedUnavailable,
+            SpecialistRunOutcome.Succeeded => DiagnosisOutcome.Applied,
+            _ => DiagnosisOutcome.DegradedUnavailable,
+        };
+
+        if (outcome != DiagnosisOutcome.Applied)
+        {
+            await WriteLedgerAsync(
+                DiagnosisKind.Labels, null, cardId, run.RunTaskId,
+                outcome, run.Result, null, outcome.ToString(),
+                run.CostUsd, run.WaitMs, forced, ct);
+            return;
+        }
+
+        var parsed = Diagnosis.TryParseLabels(run.Result);
+        if (parsed.Unclear)
+        {
+            await WriteLedgerAsync(
+                DiagnosisKind.Labels, null, cardId, run.RunTaskId,
+                DiagnosisOutcome.Unclear, run.Result, null, "unclear",
+                run.CostUsd, run.WaitMs, forced, ct);
+            return;
+        }
+
+        if (!parsed.Ok || parsed.Complexity is null || parsed.Ui is null)
+        {
+            await WriteLedgerAsync(
+                DiagnosisKind.Labels, null, cardId, run.RunTaskId,
+                DiagnosisOutcome.RejectedUnparseable, run.Result, null, parsed.Reason ?? "unparseable",
+                run.CostUsd, run.WaitMs, forced, ct);
+            return;
+        }
+
+        var appliedText = CardDiagnosisLabels.AppliedText(parsed.Complexity.Value, parsed.Ui.Value);
+        if (_settings.DiagnoseLabelMode == DiagnoseLabelMode.Shadow)
+        {
+            await WriteLedgerAsync(
+                DiagnosisKind.Labels, null, cardId, run.RunTaskId,
+                DiagnosisOutcome.Shadowed, run.Result, appliedText, "shadow",
+                run.CostUsd, run.WaitMs, forced, ct);
+            return;
+        }
+
+        var shortId = run.RunTaskId is Guid id
+            ? DelegationReportFormatter.Short(id)
+            : "none";
+        var reason =
+            $"antiphon-diagnose: {appliedText} (diagnose task {shortId}, ${run.CostUsd:0.0000})";
+
+        CardDiagnosisApplyResult apply;
+        try
+        {
+            apply = await ApplyLabelsAsync(
+                cardId, parsed.Complexity.Value, parsed.Ui.Value, reason, forced, ct);
+        }
+        catch (ConflictException)
+        {
+            _db.ChangeTracker.Clear();
+            await WriteLedgerAsync(
+                DiagnosisKind.Labels, null, cardId, run.RunTaskId,
+                DiagnosisOutcome.RejectedConflict, run.Result, null,
+                "card was modified by another operation",
+                run.CostUsd, run.WaitMs, forced, ct);
+            return;
+        }
+
+        if (apply.AlreadyLabelled)
+        {
+            await WriteLedgerAsync(
+                DiagnosisKind.Labels, null, cardId, run.RunTaskId,
+                DiagnosisOutcome.SkippedAlreadyLabelled, run.Result, apply.Applied,
+                "card already has complexity: and ui: labels",
+                run.CostUsd, run.WaitMs, forced, ct);
+            return;
+        }
+
+        await WriteLedgerAsync(
+            DiagnosisKind.Labels, null, cardId, run.RunTaskId,
+            DiagnosisOutcome.Applied, run.Result, apply.Applied, null,
+            run.CostUsd, run.WaitMs, forced, ct);
+    }
+
+    /// <summary>
+    /// Read-side of the Diagnoses ledger (CARD-0352 D7). Newest first. Joined with the card
+    /// identifier / task short id so a caller does not have to.
+    /// </summary>
+    public async Task<IReadOnlyList<DiagnosisDto>> ListAsync(
+        Guid? cardId,
+        Guid? taskId,
+        DateTime? since,
+        DiagnosisOutcome? outcome,
+        DiagnosisKind? kind,
+        int? limit,
+        CancellationToken ct)
+    {
+        var take = Math.Clamp(limit ?? 50, 1, 200);
+        var query = _db.Diagnoses.AsNoTracking().AsQueryable();
+        if (cardId is Guid cid)
+            query = query.Where(d => d.CardId == cid);
+        if (taskId is Guid tid)
+            query = query.Where(d => d.TaskId == tid);
+        if (since is DateTime sinceUtc)
+        {
+            var start = DateTime.SpecifyKind(sinceUtc.ToUniversalTime(), DateTimeKind.Utc);
+            query = query.Where(d => d.CreatedAt >= start);
+        }
+
+        if (outcome is DiagnosisOutcome o)
+            query = query.Where(d => d.Outcome == o);
+        if (kind is DiagnosisKind k)
+            query = query.Where(d => d.Kind == k);
+
+        var rows = await query
+            .OrderByDescending(d => d.CreatedAt)
+            .Take(take)
+            .ToListAsync(ct);
+
+        var cardIds = rows.Where(d => d.CardId is not null).Select(d => d.CardId!.Value).Distinct().ToList();
+        var taskIds = rows.Where(d => d.TaskId is not null).Select(d => d.TaskId!.Value).Distinct().ToList();
+        var cards = cardIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await _db.Cards.AsNoTracking()
+                .Where(c => cardIds.Contains(c.Id))
+                .ToDictionaryAsync(c => c.Id, c => c.Identifier, ct);
+        var tasks = taskIds.Count == 0
+            ? new Dictionary<Guid, Guid>()
+            : await _db.AgentTasks.AsNoTracking()
+                .Where(t => taskIds.Contains(t.Id))
+                .ToDictionaryAsync(t => t.Id, t => t.Id, ct);
+
+        return rows.Select(d => new DiagnosisDto(
+            d.Id,
+            d.Kind,
+            d.Outcome,
+            d.CardId,
+            d.CardId is Guid c && cards.TryGetValue(c, out var ident) ? ident : null,
+            d.TaskId,
+            d.TaskId is Guid t && tasks.ContainsKey(t) ? DelegationReportFormatter.Short(t) : null,
+            d.DiagnoseTaskId,
+            d.Answer,
+            d.Applied,
+            d.Reason,
+            d.BundleStamp,
+            d.CostUsd,
+            d.WaitMs,
+            d.Forced,
+            d.CreatedAt)).ToList();
+    }
+
+    /// <summary>Kind × outcome counts, wait percentiles, spend, and Applied label distribution.</summary>
+    public async Task<DiagnosisStatsDto> StatsAsync(DateTime? since, CancellationToken ct)
+    {
+        var query = _db.Diagnoses.AsNoTracking().AsQueryable();
+        DateTime? start = null;
+        if (since is DateTime sinceUtc)
+        {
+            start = DateTime.SpecifyKind(sinceUtc.ToUniversalTime(), DateTimeKind.Utc);
+            query = query.Where(d => d.CreatedAt >= start);
+        }
+
+        var rows = await query.ToListAsync(ct);
+        var counts = rows
+            .GroupBy(d => (d.Kind, d.Outcome))
+            .OrderBy(g => g.Key.Kind)
+            .ThenBy(g => g.Key.Outcome)
+            .Select(g => new DiagnosisOutcomeCountDto(g.Key.Kind, g.Key.Outcome, g.Count()))
+            .ToList();
+
+        var waits = rows.Select(d => d.WaitMs).OrderBy(w => w).ToArray();
+        var distribution = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows.Where(d =>
+                     d.Kind == DiagnosisKind.Labels
+                     && d.Outcome == DiagnosisOutcome.Applied
+                     && !string.IsNullOrWhiteSpace(d.Applied)))
+        {
+            var parsed = Diagnosis.TryParseLabels(row.Applied);
+            if (!parsed.Ok || parsed.Complexity is null || parsed.Ui is null)
+                continue;
+            AddCount(distribution, CardDiagnosisLabels.ComplexityLabel(parsed.Complexity.Value));
+            AddCount(distribution, CardDiagnosisLabels.UiLabel(parsed.Ui.Value));
+        }
+
+        return new DiagnosisStatsDto(
+            start,
+            rows.Count,
+            rows.Sum(d => d.CostUsd),
+            Percentile(waits, 0.50),
+            Percentile(waits, 0.90),
+            counts,
+            distribution);
     }
 
     internal static string BundleStamp()
@@ -229,6 +488,72 @@ public sealed class DiagnoseService
             new { taskId, rootId = tracked.RootTaskId },
             ct);
         return true;
+    }
+
+    private async Task<CardDiagnosisApplyResult> ApplyLabelsAsync(
+        Guid cardId,
+        TaskComplexity complexity,
+        bool ui,
+        string reason,
+        bool forced,
+        CancellationToken ct)
+    {
+        var tracked = await _db.Cards.FirstOrDefaultAsync(c => c.Id == cardId, ct)
+            ?? throw new NotFoundException(nameof(Card), cardId);
+
+        var existing = BoardService.ParseLabels(tracked.LabelsJson);
+        var merge = CardDiagnosisLabels.Merge(existing, complexity, ui, forced);
+        var labelsJson = BoardService.SerializeLabels(merge.Labels);
+        if (!merge.Wrote)
+        {
+            return new CardDiagnosisApplyResult(
+                false, merge.AlreadyLabelled, merge.Applied, tracked.LabelsJson);
+        }
+
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        CardRevisionLog.AppendContentEdit(tracked, reason, CardDiagnosisLabels.DiagnoseActor, now);
+        tracked.LabelsJson = labelsJson;
+        tracked.UpdatedAt = now;
+        tracked.ConcurrencyToken = Guid.NewGuid();
+
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            throw new ConflictException(
+                $"Card '{tracked.Identifier}' was modified by another operation.", ex);
+        }
+        catch (DbUpdateException ex) when (IsDuplicateRevisionNumber(ex))
+        {
+            throw new ConflictException(
+                $"Card '{tracked.Identifier}' was modified by another operation "
+                + $"({AgentService.DescribeDbFailure(ex)}).",
+                ex);
+        }
+
+        await _eventBus.PublishToAllAsync(
+            "CardChanged", new { boardId = tracked.BoardId, cardId = tracked.Id }, ct);
+        return new CardDiagnosisApplyResult(true, false, merge.Applied, labelsJson);
+    }
+
+    private static bool IsDuplicateRevisionNumber(DbUpdateException ex) =>
+        ex.InnerException is PostgresException
+        {
+            SqlState: PostgresErrorCodes.UniqueViolation,
+            ConstraintName: "IX_CardRevisions_CardId_RevisionNumber"
+        };
+
+    private static void AddCount(Dictionary<string, int> counts, string key) =>
+        counts[key] = counts.TryGetValue(key, out var n) ? n + 1 : 1;
+
+    private static int Percentile(int[] sortedAscending, double p)
+    {
+        if (sortedAscending.Length == 0)
+            return 0;
+        var index = (int)Math.Round((sortedAscending.Length - 1) * p, MidpointRounding.AwayFromZero);
+        return sortedAscending[Math.Clamp(index, 0, sortedAscending.Length - 1)];
     }
 
     private async Task<decimal> DailySpendUsdAsync(CancellationToken ct)

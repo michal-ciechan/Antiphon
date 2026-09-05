@@ -654,10 +654,11 @@ public sealed class DelegationSettings
     public bool DiagnoseSweepEnabled { get; set; } = true;
 
     /// <summary>
-    /// Apply writes the labels; Shadow runs the seat and writes the ledger only. Default Apply —
-    /// until CARD-0332 routes on the labels, a wrong one costs a human edit.
+    /// Apply writes the labels; Shadow runs the seat and writes the ledger only. Shipped default
+    /// is Shadow so the first live sweep cannot stamp 120 open cards before S5 eyeballs quality
+    /// and flips this to Apply. Forced is a per-request flag on POST /diagnose, not a mode.
     /// </summary>
-    public DiagnoseLabelMode DiagnoseLabelMode { get; set; } = DiagnoseLabelMode.Apply;
+    public DiagnoseLabelMode DiagnoseLabelMode { get; set; } = DiagnoseLabelMode.Shadow;
 
     /// <summary>
     /// Slug AND name of the standing specialist. The provisioner finds it by this exact slug, so

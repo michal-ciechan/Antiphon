@@ -223,7 +223,8 @@ public sealed class TrackerCardStatePushService
 
         if (issueRef.Origin == ExternalIssueOrigin.AntiphonExport)
         {
-            var freeForm = BoardService.ParseLabels(card.LabelsJson);
+            var freeForm = BoardService.ParseLabels(card.LabelsJson)
+                .Where(l => !CardDiagnosisLabels.IsDiagnosisLabel(l));
             var desired = freeForm
                 .Concat([desiredStatus])
                 .Concat(desiredPriority is null ? [] : new[] { desiredPriority })

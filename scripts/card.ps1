@@ -46,6 +46,7 @@
 #   card.ps1 reopen    CARD-0051 -Reason r | -ReasonFile p [-To column] [-By name] [-Token g]
 #   card.ps1 archive   CARD-0051 -Reason r | -ReasonFile p [-By name] [-Token g]
 #   card.ps1 unarchive CARD-0051 -Reason r | -ReasonFile p [-By name] [-Token g]
+#   card.ps1 diagnose  CARD-0051 [-NoWait] [-Json]
 #   card.ps1 -Limits
 #
 # A move into an ACTIVE column does NOT start an agent unless you pass -Spawn (CARD-0051 slice 3).
@@ -55,7 +56,7 @@
 [CmdletBinding(DefaultParameterSetName = 'Verb')]
 param(
     [Parameter(ParameterSetName = 'Verb', Position = 0, Mandatory = $true)]
-    [ValidateSet('get', 'history', 'new', 'edit', 'move', 'close', 'reopen', 'archive', 'unarchive')]
+    [ValidateSet('get', 'history', 'new', 'edit', 'move', 'close', 'reopen', 'archive', 'unarchive', 'diagnose')]
     [string]$Verb,
 
     # The card, in any form it gets written down: CARD-0051, card-51, '#51', 51, or its guid.
@@ -130,6 +131,10 @@ param(
 
     [Parameter(ParameterSetName = 'Verb')]
     [switch]$Json,
+
+    # diagnose: return after the 202 instead of polling GET /api/diagnoses.
+    [Parameter(ParameterSetName = 'Verb')]
+    [switch]$NoWait,
 
     [Parameter(ParameterSetName = 'Limits', Mandatory = $true)]
     [switch]$Limits
@@ -604,6 +609,48 @@ switch ($Verb) {
         else {
             Write-Output 'back on the board'
         }
+        return
+    }
+
+    'diagnose' {
+        $theCard = Get-CardOrFail
+        $queued = Invoke-Antiphon -Method POST -Path ("/api/cards/{0}/diagnose" -f $theCard.id) -Body @{}
+        if ($NoWait) {
+            if ($Json) { $queued | ConvertTo-Json -Depth 8; return }
+            Write-Output ("queued      {0}  POST /api/cards/{1}/diagnose -> 202" -f $theCard.identifier, $theCard.id)
+            return
+        }
+
+        $deadline = (Get-Date).ToUniversalTime().AddSeconds(120)
+        $row = $null
+        while ((Get-Date).ToUniversalTime() -lt $deadline) {
+            $path = "/api/diagnoses?cardId={0}&kind=Labels&limit=1" -f $theCard.id
+            $rows = @(Invoke-Antiphon -Method GET -Path $path)
+            if ($rows.Count -gt 0) {
+                $candidate = $rows[0]
+                $created = $null
+                if ($candidate.createdAt) {
+                    try { $created = [datetime]$candidate.createdAt } catch { $created = $null }
+                }
+                if ($null -eq $created -or $created -ge $theCard.updatedAt) {
+                    $row = $candidate
+                    break
+                }
+            }
+            Start-Sleep -Seconds 2
+        }
+
+        if ($null -eq $row) {
+            Write-Error ("Timed out waiting for a diagnosis of {0}. Pass -NoWait and poll GET /api/diagnoses?cardId={1}." -f `
+                    $theCard.identifier, $theCard.id)
+            exit 1
+        }
+
+        if ($Json) { $row | ConvertTo-Json -Depth 8; return }
+        Write-Output ("{0}  {1}  {2}" -f $theCard.identifier, $row.outcome, $row.applied)
+        if ($row.reason) { Write-Output ("reason      {0}" -f $row.reason) }
+        if ($row.answer) { Write-Output ("answer      {0}" -f $row.answer) }
+        Write-Output ("cost        {0}  wait {1}ms" -f $row.costUsd, $row.waitMs)
         return
     }
 }

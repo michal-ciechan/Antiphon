@@ -327,8 +327,12 @@ public sealed class ExternalTrackerSyncService
             var descriptionChanged = card.Description != description;
 
             // Strip managed status:*/priority:* so card labels never accumulate sync-owned prefixes.
+            // Diagnosis labels (complexity:/ui:) are Antiphon-local: union them back on so an
+            // import cannot erase a diagnose-seat write (CARD-0352 S4).
             var labelsJson = BoardService.SerializeLabels(
-                TrackerSyncMarkers.StripManagedLabels(issue.Labels));
+                UnionDiagnosisLabels(
+                    TrackerSyncMarkers.StripManagedLabels(issue.Labels),
+                    BoardService.ParseLabels(card.LabelsJson)));
             var labelsChanged = card.LabelsJson != labelsJson;
 
             var importedImportance = CardRanking.FromTrackedIssue(issue.Priority, externalRef.AuthorIsOperator);
@@ -436,6 +440,28 @@ public sealed class ExternalTrackerSyncService
         }
 
         return changed;
+    }
+
+    /// <summary>
+    /// Imported free-form labels plus the card's current diagnosis pair. Diagnosis labels on the
+    /// issue are dropped (they are Antiphon-local) so a GitHub tag cannot overwrite the seat.
+    /// </summary>
+    internal static IReadOnlyList<string> UnionDiagnosisLabels(
+        IEnumerable<string> imported,
+        IEnumerable<string> existingCardLabels)
+    {
+        var topics = imported
+            .Where(l => !CardDiagnosisLabels.IsDiagnosisLabel(l))
+            .Select(l => l.Trim())
+            .Where(l => l.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var diagnosis = existingCardLabels
+            .Where(CardDiagnosisLabels.IsDiagnosisLabel)
+            .Select(l => l.Trim())
+            .ToList();
+        topics.AddRange(diagnosis);
+        return topics;
     }
 
     private static void ApplyAuthor(

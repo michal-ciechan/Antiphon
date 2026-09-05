@@ -39,6 +39,8 @@ header when it is set. Inside a running agent session both are already in the en
 | Sync one board's cards onto disk (one-way) | POST | `/api/boards/{id}/card-files/sync` (`?dryRun=true`) |
 | A board's cards | GET | `/api/cards?boardId={guid}` |
 | One card | GET | `/api/cards/{id}` — `CARD-0296` resolves; prefer `card.ps1 get` |
+| Queue a card diagnosis (CARD-0352) | POST | `/api/cards/{id}/diagnose` — 202 `{ queued: true }`; `card.ps1 diagnose CARD-nnnn` (`-NoWait` skips the 120 s poll). 409 `diagnose_disabled` when the seat is off. Shipped `DiagnoseLabelMode` is **Shadow** (ledger only) until flipped to Apply. |
+| Diagnoses ledger / stats | GET | `/api/diagnoses?cardId=` (newest first), `/api/diagnoses/stats?since=` |
 | Home Tasks rail (cards + unbound delegations) | GET | `/api/home/tasks` |
 | What needs a human (fleet-global) | GET | `/api/attention` |
 | A session's screen | GET | `/api/sessions/{id}/buffer` |

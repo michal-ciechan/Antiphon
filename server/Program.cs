@@ -327,11 +327,12 @@ try
     // idempotent and self-healing, so it is safe to call at startup and again from any check.
     builder.Services.AddScoped<CheckInterpreterProvisioner>();
     // The standing specialist that titles untitled tasks and labels unlabelled cards (CARD-0352).
-    // Same substrate as the check interpreter. Job 1 (auto-title) drains DiagnoseQueue; job 2
-    // (auto-label) lands in S4 on the same queue.
+    // Same substrate as the check interpreter. Job 1 (auto-title) and job 2 (auto-label) drain
+    // DiagnoseQueue; the sweep enqueues card requests onto it.
     builder.Services.AddScoped<DiagnoseProvisioner>();
     builder.Services.AddSingleton<DiagnoseQueue>();
     builder.Services.AddScoped<DiagnoseService>();
+    builder.Services.AddScoped<CardDiagnosisSweep>();
     // The "what is stuck" projection (CARD-0035). Read-only — every verb it names is an endpoint
     // that already exists, and it is scoped because it is one query burst per request.
     builder.Services.AddScoped<AttentionService>();
@@ -594,6 +595,7 @@ try
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Orchestration.AgentTaskLandSweepHostedService>();
     builder.Services.AddHostedService<AgentTaskCheckHostedService>();
     builder.Services.AddHostedService<DiagnoseHostedService>();
+    builder.Services.AddHostedService<DiagnoseSweepHostedService>();
     builder.Services.AddHostedService<ScheduleSweepHostedService>();
     builder.Services.AddHostedService<ScheduleFireHostedService>();
     // One-shot: re-prices tasks costed before CARD-0023, so the per-root ceiling stops reading
@@ -766,6 +768,7 @@ try
     app.MapTrackerSyncEndpoints();
     app.MapCardFileSyncEndpoints();
     app.MapCardEndpoints();
+    app.MapDiagnosisEndpoints();
     app.MapAgentEndpoints();
     app.MapAgentTuiEndpoints();
     app.MapChannelEndpoints();

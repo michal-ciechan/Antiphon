@@ -129,7 +129,7 @@ below is a route group; the file named is the authority for its exact bodies.
 
 ### Work items — cards, boards, projects
 
-`CardEndpoints.cs`, `BoardEndpoints.cs`, `ProjectEndpoints.cs`, `HomeEndpoints.cs`
+`CardEndpoints.cs`, `DiagnosisEndpoints.cs`, `BoardEndpoints.cs`, `ProjectEndpoints.cs`, `HomeEndpoints.cs`
 
 ```
 GET    /api/home/tasks                       read-only home-rail projection of cards and unbound delegations (CARD-0002). Fleet-global; the client filters by project directory. Bound tasks nest as a card's Worker, never as their own item. No question field — that text is GET /api/attention.
@@ -145,6 +145,10 @@ GET    /api/cards/{id}/diff                  the card's branch diff  (?boardId=&
 POST   /api/cards/{id}/comments  (?boardId=&cwd=)
 GET    /api/cards/{id}/discussion  POST /api/cards/{id}/discussion  (?boardId=&cwd=)
 POST   /api/cards/{id}/pr                    open a pull request for the card  (?boardId=&cwd=)
+POST   /api/cards/{id}/diagnose              queue a forced card-label diagnosis (202 `{ queued: true }`; 409 `diagnose_disabled` when `Delegation:DiagnoseEnabled` is false)  (?boardId=&cwd=)
+
+GET    /api/diagnoses                        Diagnoses ledger, newest first (`?cardId=&taskId=&since=&outcome=&kind=&limit=`)
+GET    /api/diagnoses/stats                  kind × outcome counts, p50/p90 wait, total cost, Applied label distribution (`?since=`)
 
 GET    /api/boards  |  /api/boards/{id}  |  /api/boards/{id}/columns
 POST   /api/boards            DELETE /api/boards/{id}

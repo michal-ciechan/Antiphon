@@ -895,6 +895,104 @@ public class TrackerBidirectionalSyncTests
         }
     }
 
+    [Test]
+    public async Task Import_with_a_differing_label_set_keeps_the_card_diagnosis_labels()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
+        try
+        {
+            var graph = await SeedLinkedBoardAsync(db, tempRoot, clock);
+            graph.Card.LabelsJson = BoardService.SerializeLabels(
+                ["bug", "complexity:medium", "ui:no"]);
+            await db.SaveChangesAsync();
+
+            var fake = new FakeBidirectionalTracker(TrackerKind.GitHubIssues)
+            {
+                Candidates = [Issue("acme/app#1", "open", "Title", "Body", ["frontend"])]
+            };
+            var sut = NewSut(db, fake, clock);
+            await sut.RunAsync(graph.Board.Id, CancellationToken.None);
+
+            var labels = BoardService.ParseLabels(
+                (await db.Cards.AsNoTracking().SingleAsync(c => c.Id == graph.Card.Id)).LabelsJson);
+            labels.ShouldContain("frontend");
+            labels.ShouldContain("complexity:medium");
+            labels.ShouldContain("ui:no");
+            labels.ShouldNotContain("bug");
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Export_label_replace_never_sends_diagnosis_labels()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
+        try
+        {
+            var graph = await SeedLinkedBoardAsync(db, tempRoot, clock, origin: ExternalIssueOrigin.AntiphonExport);
+            graph.Card.LabelsJson = BoardService.SerializeLabels(
+                ["backend", "complexity:easy", "ui:yes"]);
+            graph.Card.ExternalIssueRef!.LastOutboundSyncedAt = clock.GetUtcNow().UtcDateTime;
+            graph.Card.ExternalIssueRef.Url = "https://github.test/acme/app/1";
+            await db.SaveChangesAsync();
+
+            var fake = new FakeBidirectionalTracker(TrackerKind.GitHubIssues)
+            {
+                Candidates = [Issue("acme/app#1", "open", "Title", "Body", ["frontend", "status:active"])]
+            };
+            var sut = NewSut(db, fake, clock);
+            await sut.RunAsync(graph.Board.Id, CancellationToken.None);
+
+            fake.ReplaceLabelCalls.ShouldBe(1);
+            var sent = fake.Candidates.Single().Labels;
+            sent.ShouldContain("backend");
+            sent.ShouldContain("status:backlog");
+            sent.ShouldNotContain(l => l.StartsWith("complexity:", StringComparison.OrdinalIgnoreCase));
+            sent.ShouldNotContain(l => l.StartsWith("ui:", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Export_create_never_sends_diagnosis_labels()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
+        try
+        {
+            var activatedAt = clock.GetUtcNow().UtcDateTime;
+            var graph = await SeedBoardAsync(db, tempRoot, clock, syncOutCreate: true, trackerActivatedAt: activatedAt);
+            var fresh = NewCard(graph, activatedAt.AddMinutes(5));
+            fresh.LabelsJson = BoardService.SerializeLabels(["backend", "complexity:hard", "ui:no"]);
+            db.Cards.Add(fresh);
+            await db.SaveChangesAsync();
+
+            var fake = new FakeBidirectionalTracker(TrackerKind.GitHubIssues) { Candidates = [] };
+            var sut = NewSut(db, fake, clock);
+            await sut.RunAsync(graph.Board.Id, CancellationToken.None);
+
+            var sent = fake.CreateIssueCalls.ShouldHaveSingleItem().Labels;
+            sent.ShouldContain("backend");
+            sent.ShouldNotContain(l => l.StartsWith("complexity:", StringComparison.OrdinalIgnoreCase));
+            sent.ShouldNotContain(l => l.StartsWith("ui:", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     private static TrackerBidirectionalSyncService NewSut(

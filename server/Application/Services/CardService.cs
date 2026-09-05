@@ -526,6 +526,45 @@ public sealed class CardService : IScheduledCardActions
     }
 
     /// <summary>
+    /// Write a diagnose-seat label pair onto a card (CARD-0352 D4). There is no caller token —
+    /// the writer handles its own conflict. Non-forced keeps a family a human already set;
+    /// forced replaces diagnosis-prefixed labels only. Topic tags are never touched.
+    /// </summary>
+    public async Task<CardDiagnosisApplyResult> ApplyDiagnosisAsync(
+        Guid cardId,
+        TaskComplexity complexity,
+        bool ui,
+        string reason,
+        bool forced,
+        CancellationToken ct)
+    {
+        var card = await _db.Cards.FirstOrDefaultAsync(c => c.Id == cardId, ct)
+            ?? throw new NotFoundException(nameof(Card), cardId);
+
+        var existing = BoardService.ParseLabels(card.LabelsJson);
+        var merge = CardDiagnosisLabels.Merge(existing, complexity, ui, forced);
+        var labelsJson = BoardService.SerializeLabels(merge.Labels);
+        if (!merge.Wrote)
+        {
+            return new CardDiagnosisApplyResult(
+                false, merge.AlreadyLabelled, merge.Applied, card.LabelsJson);
+        }
+
+        var now = UtcNow();
+        CardRevisionLog.AppendContentEdit(
+            card,
+            reason,
+            CardDiagnosisLabels.DiagnoseActor,
+            now);
+        card.LabelsJson = labelsJson;
+        card.UpdatedAt = now;
+        card.ConcurrencyToken = Guid.NewGuid();
+        await SaveCardWriteAsync(card, ct);
+        await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
+        return new CardDiagnosisApplyResult(true, false, merge.Applied, labelsJson);
+    }
+
+    /// <summary>
     /// Archives a card. This is what "delete" means here — the row stays, so every reference to its
     /// identifier (commit messages, docs, other cards' terminal reasons) keeps resolving, and the
     /// identifier allocator keeps seeing the number as taken.

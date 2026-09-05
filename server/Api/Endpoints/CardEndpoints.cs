@@ -1,7 +1,9 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Api.Endpoints;
 
@@ -234,6 +236,29 @@ public static class CardEndpoints
         {
             var cardId = await ResolveAsync(http, id, cardService, tasks, cancellationToken);
             return Results.Ok(await service.OpenPullRequestAsync(cardId, cancellationToken));
+        });
+
+        // On-demand re-judge (CARD-0352 S4). 202 queues a forced card request; 409 when the
+        // seat is switched off. Resolve 404s unknown cards the same way as every other verb.
+        cards.MapPost("/{id}/diagnose", async (
+            string id,
+            HttpContext http,
+            CardService service,
+            AgentTaskService tasks,
+            DiagnoseQueue queue,
+            IOptions<DelegationSettings> settings,
+            CancellationToken cancellationToken) =>
+        {
+            if (!settings.Value.DiagnoseEnabled)
+            {
+                throw new ConflictException(
+                    "Card diagnosis is disabled (Delegation:DiagnoseEnabled).",
+                    "diagnose_disabled");
+            }
+
+            var cardId = await ResolveAsync(http, id, service, tasks, cancellationToken);
+            queue.TryEnqueue(DiagnoseRequest.ForCard(cardId, force: true));
+            return Results.Accepted($"/api/cards/{cardId}", new DiagnoseQueuedDto(true));
         });
     }
 
