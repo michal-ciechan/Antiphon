@@ -67,6 +67,8 @@ public sealed class ApiErrorRecoveryService
     /// Insert the recovery row for this TurnEnd stub if it is not already there. Idempotent on
     /// <c>(sessionId, stubSequence)</c>. Used by the sweep and by the task defer arm so the first
     /// <c>OnTurnEndAsync</c> does not wait for the next tick to have a marker.
+    /// A Wall already adopted with empty stub text is repaired when a later caller supplies
+    /// the real AssistantText (CARD-0401).
     /// </summary>
     public async Task<ApiErrorRecovery> EnsureAdoptedAsync(
         Guid sessionId,
@@ -84,7 +86,11 @@ public sealed class ApiErrorRecoveryService
         var existing = await db.ApiErrorRecoveries
             .FirstOrDefaultAsync(r => r.AgentSessionId == sessionId && r.StubSequence == stubSequence, ct);
         if (existing is not null)
+        {
+            await TryRepairEmptyWallAsync(
+                db, scope.ServiceProvider, existing, sessionId, errorText, ct);
             return existing;
+        }
 
         var now = UtcNow();
         var row = await BuildNewRowAsync(
@@ -107,8 +113,11 @@ public sealed class ApiErrorRecoveryService
         {
             // Unique (AgentSessionId, StubSequence) — a concurrent sweep/turn-end already wrote it.
             db.ChangeTracker.Clear();
-            return await db.ApiErrorRecoveries.SingleAsync(
+            var raced = await db.ApiErrorRecoveries.SingleAsync(
                 r => r.AgentSessionId == sessionId && r.StubSequence == stubSequence, ct);
+            await TryRepairEmptyWallAsync(
+                db, scope.ServiceProvider, raced, sessionId, errorText, ct);
+            return raced;
         }
 
         _logger.LogInformation(
@@ -131,7 +140,7 @@ public sealed class ApiErrorRecoveryService
         await using (var scope = _scopeFactory.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            stubs = await db.TranscriptEntries.AsNoTracking()
+            var turnEnds = await db.TranscriptEntries.AsNoTracking()
                 .Where(t => t.IsApiError == true
                     && t.Kind == TranscriptKinds.TurnEnd
                     && t.CreatedAt >= cutoff)
@@ -140,6 +149,22 @@ public sealed class ApiErrorRecoveryService
                 .Select(t => new StubRow(
                     t.AgentSessionId, t.Sequence, t.Uuid, t.ApiErrorClass, t.ApiErrorStatus, t.Text))
                 .ToListAsync(ct);
+
+            // CARD-0401: Claude puts the error string on the sibling AssistantText (same uuid);
+            // TurnEnd.Text is null. Codex has no split — fall back to TurnEnd.Text.
+            var siblings = await ApiErrorStubText.LoadSiblingsAsync(
+                db,
+                turnEnds.Select(t => (t.AgentSessionId, t.Uuid)).ToList(),
+                ct);
+            stubs = turnEnds
+                .Select(t => t with
+                {
+                    Text = t.Uuid is { } uuid
+                           && siblings.TryGetValue((t.AgentSessionId, uuid), out var assistant)
+                        ? ApiErrorStubText.Prefer(assistant, t.Text)
+                        : ApiErrorStubText.Prefer(null, t.Text),
+                })
+                .ToList();
         }
 
         foreach (var stub in stubs)
@@ -316,7 +341,7 @@ public sealed class ApiErrorRecoveryService
         if (classification == ApiErrorClassification.Wall)
         {
             var availability = services.GetRequiredService<ModelAvailability>();
-            return await ApplyWallAsync(db, availability, row, sessionId, errorText, now, ct);
+            return await ApplyWallAsync(db, availability, row, sessionId, errorText, now, ct, isNew: true);
         }
 
         var interval = ApiErrorRetrySchedule.Interval(1, classification);
@@ -338,7 +363,8 @@ public sealed class ApiErrorRecoveryService
         Guid sessionId,
         string? errorText,
         DateTime now,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool isNew = true)
     {
         var fallback = await ResolveFallbackAliasAsync(db, sessionId, ct);
         var wall = UsageLimitWallParser.Parse(now, errorText, fallback);
@@ -347,7 +373,9 @@ public sealed class ApiErrorRecoveryService
             r => r.AgentSessionId == sessionId
                 && r.Classification == ApiErrorClassification.Wall
                 && r.ResolvedReason != ApiErrorRecoveryReasons.Superseded, ct);
-        var parked = ApiErrorRetrySchedule.WallIsParked(wallDeaths + 1, _settings.WallDeathCap);
+        // A new row is not in the count yet; a repair of an existing row already is.
+        var parked = ApiErrorRetrySchedule.WallIsParked(
+            isNew ? wallDeaths + 1 : wallDeaths, _settings.WallDeathCap);
 
         if (wall is null)
         {
@@ -386,12 +414,45 @@ public sealed class ApiErrorRecoveryService
 
         if (wall.Kind == UsageLimitWallKind.SessionLimit)
         {
+            row.ResolvedAt = null;
+            row.ResolvedReason = null;
             row.NextAttemptAt = disabledUntil;
             return row;
         }
 
         Resolve(row, now, ApiErrorRecoveryReasons.WallModelPaused);
         return row;
+    }
+
+    /// <summary>
+    /// CARD-0401: a sweep that adopted with empty TurnEnd.Text writes a 6-hour ModelCap hold.
+    /// A later caller that has the real AssistantText re-runs the wall so the hold picks up
+    /// the provider-stated reset instead of staying stuck.
+    /// </summary>
+    private async Task TryRepairEmptyWallAsync(
+        AppDbContext db,
+        IServiceProvider services,
+        ApiErrorRecovery existing,
+        Guid sessionId,
+        string? errorText,
+        CancellationToken ct)
+    {
+        if (existing.Classification != ApiErrorClassification.Wall)
+            return;
+        if (string.IsNullOrWhiteSpace(errorText))
+            return;
+
+        var hold = await db.ModelAvailabilityHolds
+            .FirstOrDefaultAsync(h => h.SourceSessionId == sessionId && h.ClearedAt == null, ct);
+        if (hold is not null && !string.IsNullOrWhiteSpace(hold.RawText))
+            return;
+
+        var availability = services.GetRequiredService<ModelAvailability>();
+        await ApplyWallAsync(db, availability, existing, sessionId, errorText, UtcNow(), ct, isNew: false);
+        await db.SaveChangesAsync(ct);
+        _logger.LogInformation(
+            "Repaired API-error wall session {SessionId} seq {Sequence} from empty stub text ({Length} chars)",
+            sessionId, existing.StubSequence, errorText.Trim().Length);
     }
 
     private static async Task<string?> ResolveFallbackAliasAsync(

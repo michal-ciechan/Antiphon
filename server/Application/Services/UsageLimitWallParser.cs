@@ -14,6 +14,13 @@ public static partial class UsageLimitWallParser
     public const string SessionLimitFixtureText =
         "You've hit your session limit · resets 6:10pm (Europe/London)";
 
+    /// <summary>
+    /// Measured 2026-09-05 on Claude (fable/haiku/opus/sonnet): 61 chars, middle-dot separator.
+    /// The production transcript puts this on the sibling AssistantText; TurnEnd.Text is null.
+    /// </summary>
+    public const string SessionLimitProductionText =
+        "You've hit your session limit · resets 5:20pm (Europe/London)";
+
     public const string FableModelCapIncidentText =
         "You've reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model.";
 

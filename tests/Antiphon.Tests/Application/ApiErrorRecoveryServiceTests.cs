@@ -159,6 +159,126 @@ public class ApiErrorRecoveryServiceTests
     }
 
     [Test]
+    public async Task Claude_production_shape_session_limit_uses_AssistantText_not_the_6h_fallback()
+    {
+        // CARD-0401: measured 2026-09-05 — error string on AssistantText, TurnEnd.Text null,
+        // shared uuid, both IsApiError, rate_limit/429. Sweep used to parse "" and write 6h.
+        var now = new DateTimeOffset(2026, 9, 5, 15, 16, 0, TimeSpan.Zero);
+        var time = new FakeTimeProvider(now);
+        await using var h = await BridgeQueueHarness.CreateAsync(
+            new BridgeQueueHarness.HarnessOptions { AlwaysOn = true, TimeProvider = time });
+        await using (var stamp = CreateContext())
+        {
+            await stamp.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.EffectiveModelId, "fable"));
+        }
+
+        var text = UsageLimitWallParser.SessionLimitProductionText;
+        text.Length.ShouldBe(61);
+        await SeedProductionClaudeStubAsync(h.SessionId, text);
+
+        await SweepAsync(h, time: time);
+
+        await using var db = CreateContext();
+        var row = (await db.ApiErrorRecoveries.Where(r => r.AgentSessionId == h.SessionId).ToListAsync())
+            .ShouldHaveSingleItem();
+        row.Classification.ShouldBe(ApiErrorClassification.Wall);
+        row.ResolvedAt.ShouldBeNull();
+        row.ResolvedReason.ShouldBeNull();
+        var resetPlusPadding = new DateTime(2026, 9, 5, 16, 22, 0, DateTimeKind.Utc);
+        row.NextAttemptAt.ShouldBe(resetPlusPadding);
+
+        var hold = (await db.ModelAvailabilityHolds
+                .Where(x => x.SourceSessionId == h.SessionId && x.ClearedAt == null)
+                .ToListAsync())
+            .ShouldHaveSingleItem();
+        hold.RawText.ShouldBe(text);
+        hold.Reason.ShouldBe("session-limit resets 17:20 Europe/London");
+        hold.DisabledUntil.ShouldBe(resetPlusPadding);
+        hold.DisabledUntil.ShouldNotBe(now.UtcDateTime.AddHours(6));
+        hold.ModelAlias.ShouldBe("fable");
+        await db.ModelAvailabilityHolds.Where(x => x.Id == hold.Id).ExecuteDeleteAsync();
+    }
+
+    [Test]
+    public async Task Codex_TurnEnd_text_without_AssistantText_still_parses_session_limit()
+    {
+        var now = new DateTimeOffset(2026, 9, 5, 15, 16, 0, TimeSpan.Zero);
+        var time = new FakeTimeProvider(now);
+        await using var h = await BridgeQueueHarness.CreateAsync(
+            new BridgeQueueHarness.HarnessOptions { AlwaysOn = true, TimeProvider = time });
+        await using (var stamp = CreateContext())
+        {
+            await stamp.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.EffectiveModelId, "fable"));
+        }
+
+        await SeedStubAsync(h.SessionId, "rate_limit", 429, UsageLimitWallParser.SessionLimitProductionText);
+        await SweepAsync(h, time: time);
+
+        await using var db = CreateContext();
+        var hold = (await db.ModelAvailabilityHolds
+                .Where(x => x.SourceSessionId == h.SessionId && x.ClearedAt == null)
+                .ToListAsync())
+            .ShouldHaveSingleItem();
+        hold.RawText.ShouldBe(UsageLimitWallParser.SessionLimitProductionText);
+        hold.Reason.ShouldBe("session-limit resets 17:20 Europe/London");
+        hold.DisabledUntil.ShouldBe(new DateTime(2026, 9, 5, 16, 22, 0, DateTimeKind.Utc));
+        await db.ModelAvailabilityHolds.Where(x => x.Id == hold.Id).ExecuteDeleteAsync();
+    }
+
+    [Test]
+    public async Task Empty_wall_adopt_is_repaired_when_a_later_call_supplies_the_real_text()
+    {
+        var now = new DateTimeOffset(2026, 9, 5, 15, 16, 0, TimeSpan.Zero);
+        var time = new FakeTimeProvider(now);
+        await using var h = await BridgeQueueHarness.CreateAsync(
+            new BridgeQueueHarness.HarnessOptions { AlwaysOn = true, TimeProvider = time });
+        await using (var stamp = CreateContext())
+        {
+            await stamp.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.EffectiveModelId, "fable"));
+        }
+
+        var text = UsageLimitWallParser.SessionLimitProductionText;
+        var (seq, uuid) = await SeedProductionClaudeStubAsync(h.SessionId, text);
+        var svc = Recovery(h, time: time);
+
+        await svc.EnsureAdoptedAsync(
+            h.SessionId, seq, uuid, "rate_limit", 429, errorText: null, CancellationToken.None);
+
+        await using (var first = CreateContext())
+        {
+            var paused = await first.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == h.SessionId);
+            paused.ResolvedReason.ShouldBe(ApiErrorRecoveryReasons.WallModelPaused);
+            var sixHour = (await first.ModelAvailabilityHolds
+                    .Where(x => x.SourceSessionId == h.SessionId && x.ClearedAt == null)
+                    .ToListAsync())
+                .ShouldHaveSingleItem();
+            sixHour.DisabledUntil.ShouldBe(now.UtcDateTime.AddHours(6));
+            sixHour.RawText.ShouldBeNullOrWhiteSpace();
+            sixHour.Reason.ShouldContain("per-model cap");
+        }
+
+        await svc.EnsureAdoptedAsync(
+            h.SessionId, seq, uuid, "rate_limit", 429, text, CancellationToken.None);
+
+        await using var db = CreateContext();
+        var row = await db.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == h.SessionId);
+        row.ResolvedAt.ShouldBeNull();
+        row.ResolvedReason.ShouldBeNull();
+        var resetPlusPadding = new DateTime(2026, 9, 5, 16, 22, 0, DateTimeKind.Utc);
+        row.NextAttemptAt.ShouldBe(resetPlusPadding);
+
+        var hold = await db.ModelAvailabilityHolds.SingleAsync(
+            x => x.SourceSessionId == h.SessionId && x.ClearedAt == null);
+        hold.RawText.ShouldBe(text);
+        hold.Reason.ShouldBe("session-limit resets 17:20 Europe/London");
+        hold.DisabledUntil.ShouldBe(resetPlusPadding);
+        await db.ModelAvailabilityHolds.Where(x => x.Id == hold.Id).ExecuteDeleteAsync();
+    }
+
+    [Test]
     public async Task Fable_5_stub_writes_a_fallback_hold_and_does_not_enqueue()
     {
         var now = TruncateUtcNow();
@@ -473,21 +593,26 @@ public class ApiErrorRecoveryServiceTests
     };
 
     private static async Task SweepAsync(
-        BridgeQueueHarness h, ApiErrorRecoverySettings? settings = null, TimeProvider? time = null)
-    {
-        var service = new ApiErrorRecoveryService(
+        BridgeQueueHarness h, ApiErrorRecoverySettings? settings = null, TimeProvider? time = null) =>
+        await Recovery(h, settings, time).SweepAsync(CancellationToken.None);
+
+    private static ApiErrorRecoveryService Recovery(
+        BridgeQueueHarness h, ApiErrorRecoverySettings? settings = null, TimeProvider? time = null) =>
+        new(
             h.Provider.GetRequiredService<IServiceScopeFactory>(),
             h.Queue,
             h.Runtime,
             Options.Create(new SupervisionSettings { ApiErrorRecovery = settings ?? FastSettings() }),
             time ?? TimeProvider.System,
             NullLogger<ApiErrorRecoveryService>.Instance);
-        await service.SweepAsync(CancellationToken.None);
-    }
 
     private static async Task<long> SeedTransientStubAsync(Guid sessionId) =>
         await SeedStubAsync(sessionId, "server_error", 529, "API Error: 529 Overloaded.");
 
+    /// <summary>
+    /// Codex / pre-CARD-0401 shape: error string on the TurnEnd row itself. Claude production
+    /// is <see cref="SeedProductionClaudeStubAsync"/>.
+    /// </summary>
     private static async Task<long> SeedStubAsync(
         Guid sessionId, string apiErrorClass, int? status, string text)
     {
@@ -510,6 +635,51 @@ public class ApiErrorRecoveryServiceTests
         });
         await db.SaveChangesAsync();
         return seq;
+    }
+
+    /// <summary>
+    /// CARD-0401 production Claude shape: error text on AssistantText, TurnEnd.Text null,
+    /// both rows share a uuid and IsApiError=true.
+    /// </summary>
+    private static async Task<(long TurnEndSeq, string Uuid)> SeedProductionClaudeStubAsync(
+        Guid sessionId, string text)
+    {
+        await using var db = CreateContext();
+        var seq = ((await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == sessionId)
+            .MaxAsync(t => (long?)t.Sequence)) ?? 0) + 1;
+        var uuid = Guid.NewGuid().ToString("D");
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(),
+            AgentSessionId = sessionId,
+            Sequence = seq,
+            Kind = TranscriptKinds.AssistantText,
+            Uuid = uuid,
+            Role = "assistant",
+            Text = text,
+            IsApiError = true,
+            ApiErrorClass = "rate_limit",
+            ApiErrorStatus = 429,
+            CreatedAt = DateTime.UtcNow,
+        });
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(),
+            AgentSessionId = sessionId,
+            Sequence = seq + 1,
+            Kind = TranscriptKinds.TurnEnd,
+            Uuid = uuid,
+            Role = "assistant",
+            Text = null,
+            StopReason = "stop_sequence",
+            IsApiError = true,
+            ApiErrorClass = "rate_limit",
+            ApiErrorStatus = 429,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+        return (seq + 1, uuid);
     }
 
     private static async Task<List<SessionQueuedMessage>> SupervisionMessagesAsync(Guid sessionId)

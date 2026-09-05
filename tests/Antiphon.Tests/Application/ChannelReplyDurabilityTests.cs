@@ -3,6 +3,7 @@ using Antiphon.Messaging.Client;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner;
@@ -13,6 +14,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -422,6 +424,88 @@ public class ChannelReplyDurabilityTests
         (await db.AgentIncidents.AnyAsync(
                 i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.ChannelReplyLost))
             .ShouldBeFalse("withholding is not loss — the TTL sweep owns the give-up, and it has not expired");
+    }
+
+    [Test]
+    public async Task Claude_production_session_limit_stub_withholds_and_adopts_the_AssistantText_reset()
+    {
+        // CARD-0401: TurnEnd.Text is null; the 61-char reset sentence is on the sibling AssistantText.
+        var now = new DateTimeOffset(2026, 9, 5, 15, 16, 0, TimeSpan.Zero);
+        var time = new FakeTimeProvider(now);
+        await using var h = await BridgeQueueHarness.CreateAsync(
+            new BridgeQueueHarness.HarnessOptions
+            {
+                AlwaysOn = true,
+                TimeProvider = time,
+                Bridge = new ChannelBridgeSettings { Enabled = true, DebounceWindowMs = 0 },
+            });
+        await using (var stamp = CreateContext())
+        {
+            await stamp.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.EffectiveModelId, "fable"));
+        }
+
+        var chatId = await h.BindChannelAsync();
+        var prompt = "[Telegram \"Family\" — Mike 15:16] are you free";
+        var messageId = await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, prompt);
+
+        var text = UsageLimitWallParser.SessionLimitProductionText;
+        var uuid = Guid.NewGuid().ToString("D");
+        await using (var db = CreateContext())
+        {
+            var seq = ((await db.TranscriptEntries
+                .Where(t => t.AgentSessionId == h.SessionId)
+                .MaxAsync(t => (long?)t.Sequence)) ?? 0) + 1;
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = h.SessionId,
+                Sequence = seq,
+                Kind = TranscriptKinds.AssistantText,
+                Uuid = uuid,
+                Role = "assistant",
+                Text = text,
+                IsApiError = true,
+                ApiErrorClass = "rate_limit",
+                ApiErrorStatus = 429,
+                CreatedAt = DateTime.UtcNow,
+            });
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = h.SessionId,
+                Sequence = seq + 1,
+                Kind = TranscriptKinds.TurnEnd,
+                Uuid = uuid,
+                Role = "assistant",
+                Text = null,
+                StopReason = "stop_sequence",
+                IsApiError = true,
+                ApiErrorClass = "rate_limit",
+                ApiErrorStatus = 429,
+                CreatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.ShouldBeEmpty("a session-limit wall stays owed for the scheduled resume");
+        (await RowAsync(messageId)).ChannelReplySettledAt.ShouldBeNull();
+
+        await using var verify = CreateContext();
+        var hold = (await verify.ModelAvailabilityHolds
+                .Where(x => x.SourceSessionId == h.SessionId && x.ClearedAt == null)
+                .ToListAsync())
+            .ShouldHaveSingleItem();
+        hold.RawText.ShouldBe(text);
+        hold.Reason.ShouldBe("session-limit resets 17:20 Europe/London");
+        hold.DisabledUntil.ShouldBe(new DateTime(2026, 9, 5, 16, 22, 0, DateTimeKind.Utc));
+        var recovery = await verify.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == h.SessionId);
+        recovery.ResolvedAt.ShouldBeNull();
+        recovery.NextAttemptAt.ShouldBe(hold.DisabledUntil);
+        await verify.ModelAvailabilityHolds.Where(x => x.Id == hold.Id).ExecuteDeleteAsync();
     }
 
     // The spec's decision is to withhold the TURN, not to strip the stub line: a multi-call turn can

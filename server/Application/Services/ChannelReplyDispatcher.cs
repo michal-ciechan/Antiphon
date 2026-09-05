@@ -465,7 +465,9 @@ public sealed class ChannelReplyDispatcher
         IReadOnlyList<SessionQueuedMessage> open,
         CancellationToken ct)
     {
-        var stub = await FindApiErrorStubAsync(db, sessionId, promptSeq, ct);
+        var found = await FindApiErrorStubAsync(db, sessionId, promptSeq, ct);
+        var stub = found?.Stub;
+        var stubText = found?.Text;
         ApiErrorRecovery? recovery = null;
         if (stub is not null)
         {
@@ -475,7 +477,7 @@ public sealed class ChannelReplyDispatcher
             {
                 recovery = await recoveryService.EnsureAdoptedAsync(
                     sessionId, stub.Sequence, stub.Uuid, stub.ApiErrorClass, stub.ApiErrorStatus,
-                    stub.Text, ct, raiseIncident: true);
+                    stubText, ct, raiseIncident: true);
             }
         }
 
@@ -502,7 +504,7 @@ public sealed class ChannelReplyDispatcher
         string notice;
         if (isTransport)
         {
-            notice = ProviderCapacityNotice.FormatTransport(kind, alias, retryCount: 0, stub?.Text);
+            notice = ProviderCapacityNotice.FormatTransport(kind, alias, retryCount: 0, stubText);
             lossReason = LossReason.ProviderTransport;
         }
         else if (IsCapacityTerminal(recovery?.ResolvedReason))
@@ -513,7 +515,7 @@ public sealed class ChannelReplyDispatcher
                 stub?.ApiErrorStatus ?? recovery?.ApiErrorStatus,
                 ReasonPhraseOf(stub?.ApiErrorClass ?? recovery?.ApiErrorClass),
                 fallbackDeclared: false,
-                detail: stub?.Text ?? recovery?.ApiErrorClass);
+                detail: stubText ?? recovery?.ApiErrorClass);
             lossReason = LossReason.ProviderCapacity;
         }
         else
@@ -523,7 +525,7 @@ public sealed class ChannelReplyDispatcher
                 alias,
                 stub?.ApiErrorStatus ?? recovery?.ApiErrorStatus,
                 ReasonPhraseOf(stub?.ApiErrorClass ?? recovery?.ApiErrorClass),
-                stub?.Text ?? recovery?.ApiErrorClass);
+                stubText ?? recovery?.ApiErrorClass);
             lossReason = LossReason.ProviderError;
         }
 
@@ -601,7 +603,7 @@ public sealed class ChannelReplyDispatcher
         return apiErrorClass.Replace('_', ' ');
     }
 
-    private static async Task<TranscriptEntry?> FindApiErrorStubAsync(
+    private static async Task<(TranscriptEntry Stub, string? Text)?> FindApiErrorStubAsync(
         AppDbContext db, Guid sessionId, long promptSeq, CancellationToken ct)
     {
         var nextPromptSeq = await TranscriptTurnWindow.FindNextTurnOpeningPromptSeqAsync(
@@ -613,7 +615,12 @@ public sealed class ChannelReplyDispatcher
                 && t.Sequence > promptSeq);
         if (nextPromptSeq is long cap)
             query = query.Where(t => t.Sequence < cap);
-        return await query.OrderByDescending(t => t.Sequence).FirstOrDefaultAsync(ct);
+        var stub = await query.OrderByDescending(t => t.Sequence).FirstOrDefaultAsync(ct);
+        if (stub is null)
+            return null;
+        // CARD-0401: same-uuid AssistantText first; TurnEnd.Text only for Codex.
+        var text = await ApiErrorStubText.ResolveAsync(db, stub.AgentSessionId, stub.Uuid, stub.Text, ct);
+        return (stub, text);
     }
 
     /// <summary>The durable consume marker — see <see cref="SessionQueuedMessage.ChannelReplySettledAt"/>.</summary>
