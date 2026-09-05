@@ -585,6 +585,60 @@ public class SessionMessageQueueServiceTests
         }
     }
 
+    [Test]
+    public async Task a_held_row_is_skipped_until_the_hold_lapses()
+    {
+        var h = await CreateHarnessAsync();
+        try
+        {
+            await MarkWorkingAsync(h);
+            await h.Queue.EnqueueAsync(
+                h.SessionId, "held body", MessageSendMode.WhenIdle, CancellationToken.None,
+                holdUntil: DateTime.UtcNow.AddHours(1),
+                deliverIfIdle: false);
+
+            await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+            h.Adapter.SentInput.ShouldBeEmpty("a HoldUntil in the future is not in the flush head run");
+
+            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+            {
+                var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+                row.HoldUntil = DateTime.UtcNow.AddMinutes(-1);
+                await db.SaveChangesAsync();
+            }
+
+            await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+            h.Adapter.SentInput.ShouldContain("held body");
+        }
+        finally
+        {
+            await h.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task SendNow_delivers_a_held_row()
+    {
+        var h = await CreateHarnessAsync();
+        try
+        {
+            await MarkWorkingAsync(h);
+            var dto = await h.Queue.EnqueueAsync(
+                h.SessionId, "send me now", MessageSendMode.WhenIdle, CancellationToken.None,
+                holdUntil: DateTime.UtcNow.AddHours(1),
+                deliverIfIdle: false);
+            var id = dto.Messages.ShouldHaveSingleItem().Id;
+
+            await h.Queue.SendNowAsync(h.SessionId, id, CancellationToken.None);
+
+            h.Adapter.SentInput.ShouldContain("send me now");
+        }
+        finally
+        {
+            await h.DisposeAsync();
+        }
+    }
+
     private static async Task SeedTerminalCapacityRecoveryAsync(Guid sessionId)
     {
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());

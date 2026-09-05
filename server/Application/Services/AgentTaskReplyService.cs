@@ -1584,10 +1584,25 @@ public sealed class AgentTaskReplyService
             // ConversationKey batches a contiguous run of same-root completions into ONE delivery,
             // so five delegates landing together produce one note, not five turns. The queue's
             // size-aware batching stops before the combined body crosses the inline ceiling.
+            Guid? queuedId = null;
+            DateTime? holdUntil = null;
+            var distill = OutputDistillationService.ShouldRequest(task, _settings);
+            if (distill && _settings.OutputDistillerMode == OutputDistillerMode.Apply)
+                holdUntil = _timeProvider.GetUtcNow().UtcDateTime
+                    + TimeSpan.FromSeconds(Math.Max(1, _settings.OutputDistillerWaitSeconds));
+
             await queue.EnqueueAsync(
                 parentSession, note.Body, MessageSendMode.WhenIdle, ct,
                 QueuedMessageOrigin.Delegation, $"task:{task.RootTaskId:N}",
-                task.Id, DelegationNoteDigest.Compute(report), note.Header);
+                task.Id, DelegationNoteDigest.Compute(report), note.Header,
+                onCreated: id => queuedId = id,
+                holdUntil: holdUntil);
+
+            if (distill)
+            {
+                var distillQueue = scope.ServiceProvider.GetService<OutputDistillationQueue>();
+                distillQueue?.TryEnqueue(new DistillRequest(task.Id, queuedId));
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

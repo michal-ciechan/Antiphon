@@ -334,6 +334,8 @@ try
     // The standing specialist that distils a finished delegate report (CARD-0330). Same
     // substrate as the check interpreter. S3 wires the queue and hosted service.
     builder.Services.AddScoped<OutputDistillerProvisioner>();
+    builder.Services.AddSingleton<OutputDistillationQueue>();
+    builder.Services.AddScoped<OutputDistillationService>();
     builder.Services.AddScoped<DiagnoseService>();
     builder.Services.AddScoped<CardDiagnosisSweep>();
     // The "what is stuck" projection (CARD-0035). Read-only — every verb it names is an endpoint
@@ -599,6 +601,7 @@ try
     builder.Services.AddHostedService<AgentTaskCheckHostedService>();
     builder.Services.AddHostedService<DiagnoseHostedService>();
     builder.Services.AddHostedService<DiagnoseSweepHostedService>();
+    builder.Services.AddHostedService<OutputDistillationHostedService>();
     builder.Services.AddHostedService<ScheduleSweepHostedService>();
     builder.Services.AddHostedService<ScheduleFireHostedService>();
     // One-shot: re-prices tasks costed before CARD-0023, so the per-root ceiling stops reading

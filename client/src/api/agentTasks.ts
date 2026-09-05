@@ -253,6 +253,8 @@ export interface AgentTaskDetailDto {
   nextStage?: PipelineHandoffKind | null
   /** CARD-0146: parsed `handoff:` line, clipped at 400 characters. */
   nextHandoff?: string | null
+  /** CARD-0330: the distiller's text, when one ran. */
+  distilledResult?: string | null
 }
 
 /** CARD-0146. The `next:` token a stage-role report declared. */

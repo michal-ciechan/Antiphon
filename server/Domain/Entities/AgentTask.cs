@@ -185,6 +185,12 @@ public class AgentTask
     /// </summary>
     public string? Result { get; set; }
 
+    /// <summary>
+    /// CARD-0330: what the output distiller produced for this report, when one ran. The raw
+    /// <see cref="Result"/> is never modified.
+    /// </summary>
+    public string? DistilledResult { get; set; }
+
     /// <summary>Set when the delegate spilled a long report to a file — the report references it.</summary>
     public string? ResultFilePath { get; set; }
 

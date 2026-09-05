@@ -510,6 +510,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<DateTime?>("DispatchedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("DistilledResult")
+                        .HasColumnType("text");
+
                     b.Property<bool>("Ephemeral")
                         .HasColumnType("boolean");
 
@@ -2186,6 +2189,82 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("Diagnoses", (string)null);
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.OutputDistillationRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BundleStamp")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<decimal>("CostUsd")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("DistilledChars")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("DistillTaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Feedback")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("FeedbackAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FeedbackBy")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("FeedbackNote")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("FullReadAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("MissingAnchors")
+                        .HasColumnType("text");
+
+                    b.Property<int>("Mode")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Outcome")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("QueuedMessageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("RawChars")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("TaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("WaitMs")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt")
+                        .HasDatabaseName("IX_OutputDistillations_CreatedAt");
+
+                    b.HasIndex("DistillTaskId");
+
+                    b.HasIndex("TaskId")
+                        .HasDatabaseName("IX_OutputDistillations_TaskId");
+
+                    b.HasIndex("Outcome", "CreatedAt")
+                        .HasDatabaseName("IX_OutputDistillations_Outcome_CreatedAt");
+
+                    b.ToTable("OutputDistillations", (string)null);
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.ExternalIssueRef", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3007,6 +3086,9 @@ namespace Antiphon.Server.Migrations
                         .HasColumnType("integer");
 
                     b.Property<DateTime?>("DeliveryVerdictAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("HoldUntil")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<long?>("LastDeliveryBaselineSequence")
@@ -4207,6 +4289,20 @@ namespace Antiphon.Server.Migrations
                         .WithMany()
                         .HasForeignKey("TaskId")
                         .OnDelete(DeleteBehavior.Cascade);
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.OutputDistillationRecord", b =>
+                {
+                    b.HasOne("Antiphon.Server.Domain.Entities.AgentTask", null)
+                        .WithMany()
+                        .HasForeignKey("DistillTaskId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Antiphon.Server.Domain.Entities.AgentTask", null)
+                        .WithMany()
+                        .HasForeignKey("TaskId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.ExternalIssueRef", b =>

@@ -1114,12 +1114,4 @@ public enum DiagnoseLabelMode
     Shadow = 1,
 }
 
-/// <summary>
-/// CARD-0330: whether a successful distillation replaces the queued completion note.
-/// Shadow is 0 so an unbound setting still ships as record-only.
-/// </summary>
-public enum OutputDistillerMode
-{
-    Shadow = 0,
-    Apply = 1,
-}
+

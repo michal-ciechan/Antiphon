@@ -69,6 +69,7 @@ public class AppDbContext : DbContext
     public DbSet<Schedule> Schedules => Set<Schedule>();
     public DbSet<ScheduleFire> ScheduleFires => Set<ScheduleFire>();
     public DbSet<DiagnosisRecord> Diagnoses => Set<DiagnosisRecord>();
+    public DbSet<OutputDistillationRecord> OutputDistillations => Set<OutputDistillationRecord>();
     public DbSet<WorktreeHealthFinding> WorktreeHealthFindings => Set<WorktreeHealthFinding>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -1204,6 +1205,7 @@ public class AppDbContext : DbContext
             entity.Property(m => m.Sequence).IsRequired();
             entity.Property(m => m.ContentDigest).HasColumnType("text");
             entity.Property(m => m.NoteHeader).HasColumnType("text");
+            entity.Property(m => m.HoldUntil).IsRequired(false);
             entity.Property(m => m.CreatedAt).IsRequired();
             entity.Property(m => m.DeliveryAttempts).IsRequired().HasDefaultValue(0);
 
@@ -1471,6 +1473,7 @@ public class AppDbContext : DbContext
             // repeat-dispatch guard keys on this rather than parsing FailureReason.
             entity.Property(t => t.FailureCode).IsRequired(false);
             entity.Property(t => t.LastPolledResultHash).HasColumnType("text");
+            entity.Property(t => t.DistilledResult).HasColumnType("text");
             entity.Property(t => t.ResultFilePath).HasMaxLength(1000);
             entity.Property(t => t.DeliverablePath).HasMaxLength(1000);
             entity.Property(t => t.DeliverableRef).HasMaxLength(300);
@@ -1784,6 +1787,39 @@ public class AppDbContext : DbContext
             entity.HasOne<AgentTask>()
                 .WithMany()
                 .HasForeignKey(d => d.DiagnoseTaskId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<OutputDistillationRecord>(entity =>
+        {
+            entity.ToTable("OutputDistillations");
+            entity.HasKey(d => d.Id);
+            entity.Property(d => d.TaskId).IsRequired();
+            entity.Property(d => d.BundleStamp).HasMaxLength(80);
+            entity.Property(d => d.Mode).IsRequired();
+            entity.Property(d => d.RawChars).IsRequired();
+            entity.Property(d => d.DistilledChars).IsRequired();
+            entity.Property(d => d.WaitMs).IsRequired();
+            entity.Property(d => d.CostUsd).HasPrecision(18, 6);
+            entity.Property(d => d.Outcome).IsRequired();
+            entity.Property(d => d.MissingAnchors).HasColumnType("text");
+            entity.Property(d => d.CreatedAt).IsRequired();
+            entity.Property(d => d.Feedback).IsRequired();
+            entity.Property(d => d.FeedbackNote).HasColumnType("text");
+            entity.Property(d => d.FeedbackBy).HasMaxLength(80);
+
+            entity.HasIndex(d => d.TaskId).HasDatabaseName("IX_OutputDistillations_TaskId");
+            entity.HasIndex(d => d.CreatedAt).HasDatabaseName("IX_OutputDistillations_CreatedAt");
+            entity.HasIndex(d => new { d.Outcome, d.CreatedAt })
+                .HasDatabaseName("IX_OutputDistillations_Outcome_CreatedAt");
+
+            entity.HasOne<AgentTask>()
+                .WithMany()
+                .HasForeignKey(d => d.TaskId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<AgentTask>()
+                .WithMany()
+                .HasForeignKey(d => d.DistillTaskId)
                 .OnDelete(DeleteBehavior.SetNull);
         });
 

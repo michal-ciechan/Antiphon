@@ -280,7 +280,9 @@ public sealed record AgentTaskDetailDto(
     /// </summary>
     PipelineHandoffKind? NextStage = null,
     /// <summary>CARD-0146: the parsed <c>handoff:</c> line, clipped at 400 characters.</summary>
-    string? NextHandoff = null);
+    string? NextHandoff = null,
+    /// <summary>CARD-0330: the distiller's text, when one ran. Null when the task was never distilled.</summary>
+    string? DistilledResult = null);
 
 /// <summary>Why a task is Blocked — CARD-0033. RoutingExhausted is CARD-0090, added after the original three.</summary>
 public enum BlockedKind

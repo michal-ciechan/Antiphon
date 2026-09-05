@@ -170,7 +170,8 @@ public sealed class SessionMessageQueueService
         // false enqueues the row and leaves delivery to the machinery that already exists: the
         // turn-end flush, or FlushStrandedQueuesAsync within StrandedAgeSeconds on an always-on
         // session. Ignored by Mode.Now, which has no row at all.
-        bool deliverIfIdle = true)
+        bool deliverIfIdle = true,
+        DateTime? holdUntil = null)
     {
         var trimmed = (body ?? string.Empty).Trim();
         if (trimmed.Length == 0)
@@ -340,6 +341,7 @@ public sealed class SessionMessageQueueService
                 SourceScheduleId = sourceScheduleId,
                 ContentDigest = contentDigest,
                 NoteHeader = noteHeader,
+                HoldUntil = holdUntil,
             };
             db.SessionQueuedMessages.Add(row);
             await db.SaveChangesAsync(ct);
@@ -1187,6 +1189,13 @@ public sealed class SessionMessageQueueService
             .Where(m => m.AgentSessionId == sessionId && m.Status == QueuedMessageStatus.Pending)
             .OrderBy(m => m.Sequence)
             .ToListAsync(ct);
+        if (pending.Count == 0)
+            return FlushResult.Nothing;
+
+        // CARD-0330: a completion note the distiller is still improving is not in the flush's
+        // head run. SendNow ignores holds; a HoldUntil in the past is not a hold.
+        var nowUtc = UtcNow();
+        pending = pending.Where(m => m.HoldUntil is null || m.HoldUntil <= nowUtc).ToList();
         if (pending.Count == 0)
             return FlushResult.Nothing;
 

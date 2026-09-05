@@ -45,6 +45,12 @@ public class SessionQueuedMessage
     /// <summary>The exact non-report prefix of a completion note.</summary>
     public string? NoteHeader { get; set; }
 
+    /// <summary>
+    /// CARD-0330: a completion note the output distiller is still improving. The flush skips a
+    /// Pending row whose hold is in the future; SendNow ignores it; a hold in the past is not a hold.
+    /// </summary>
+    public DateTime? HoldUntil { get; set; }
+
     public DateTime CreatedAt { get; set; }
     public DateTime? SentAt { get; set; }
     public DateTime? CanceledAt { get; set; }

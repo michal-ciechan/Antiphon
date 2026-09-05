@@ -1215,6 +1215,23 @@ public sealed class AgentTaskService
             await _db.AgentTasks.Where(t => t.Id == id).ExecuteUpdateAsync(setters => setters
                 .SetProperty(t => t.LastPolledResultHash, DelegationNoteDigest.Compute(report))
                 .SetProperty(t => t.LastPolledResultAt, now), ct);
+
+            // CARD-0330 D7: a parent poll after an Applied note was sent is the implicit
+            // "the summary was not enough" signal.
+            var noteSent = await _db.SessionQueuedMessages.AsNoTracking()
+                .Where(m => m.SourceTaskId == id
+                    && m.Origin == QueuedMessageOrigin.Delegation
+                    && m.SentAt != null
+                    && m.SentAt < now)
+                .AnyAsync(ct);
+            if (noteSent)
+            {
+                await _db.OutputDistillations
+                    .Where(d => d.TaskId == id
+                        && d.Outcome == DistillationOutcome.Applied
+                        && d.FullReadAt == null)
+                    .ExecuteUpdateAsync(s => s.SetProperty(d => d.FullReadAt, now), ct);
+            }
         }
 
         // Subtree cost needs the whole run, not just this row.
@@ -1234,7 +1251,8 @@ public sealed class AgentTaskService
             ToSummary(task, family, await LoadCardIdentifiersAsync([task], ct)), task.Goal, task.Result,
             task.ResultFilePath, task.DeliverablePath, task.DeliverableRef,
             task.FailureReason, task.MergeTargetRef, events, task.FailureCode, blocked,
-            task.StandingAuthority, task.AutoContinueOnWait, task.NextStage, task.NextHandoff);
+            task.StandingAuthority, task.AutoContinueOnWait, task.NextStage, task.NextHandoff,
+            task.DistilledResult);
     }
 
     /// <summary>Record the first operator read; repeat opens deliberately preserve that timestamp.</summary>
