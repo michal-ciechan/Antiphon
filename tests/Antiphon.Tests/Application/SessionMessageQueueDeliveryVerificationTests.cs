@@ -767,6 +767,41 @@ public class SessionMessageQueueDeliveryVerificationTests
             .ShouldBeFalse();
     }
 
+    // CARD-0355: Grok's in-TUI queue leaves the composer (so CARD-0342's unobservable
+    // sustained-departure path would Screen-confirm) but writes no UserPrompt until drain.
+    // An observable session — the previous turn is the confirm baseline — must return the
+    // row to Pending with NoTranscriptRecord, not final Sent.
+    [Test]
+    [Category("Card0355")]
+    public async Task Grok_observable_queued_body_without_UserPrompt_reverts_to_Pending()
+    {
+        await using var h = await ObservableHarnessAsync(alwaysOn: false);
+        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        const string body = "CARD0355-GK-Q marker that leaves the composer with no UserPrompt";
+        h.Adapter.OnSubmitted = _ => Task.CompletedTask;
+
+        await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBe([body, "\r", "\r", "\r"],
+            "observable confirm re-presses Enter; it must not re-type the body");
+        h.Adapter.SubmittedBodies.ShouldBe([body],
+            "the first Enter accepted the body (queued-shape: composer emptied)");
+        h.Adapter.Killed.ShouldBeFalse();
+
+        await using var db = CreateContext();
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        message.Status.ShouldBe(QueuedMessageStatus.Pending);
+        message.SentAt.ShouldBeNull();
+        message.DeliveryVerdict.ShouldBe(DeliveryVerdict.NoTranscriptRecord);
+        (await db.TranscriptEntries.CountAsync(t =>
+            t.AgentSessionId == h.SessionId && t.Kind == TranscriptKinds.UserPrompt && t.Text == body))
+            .ShouldBe(0, "sanity: no UserPrompt row was manufactured for the queued body");
+        var incident = await db.AgentIncidents.SingleOrDefaultAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryVerificationFailed);
+        incident.ShouldNotBeNull();
+        incident.Message.ShouldContain("never became a transcript record");
+    }
+
     // CARD-0201: the mirror of the test above, and the distinction it turns on. The same
     // pre-first-turn session (zero transcript rows, so CARD-0164's unobservable-baseline loop),
     // but the submitted prompt DOES land as a TIMESTAMPED UserPrompt row — the shape a bound

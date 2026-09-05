@@ -2,8 +2,8 @@
 
 **Date:** 2026-09-03  
 **Card:** CARD-0355 — *Grok prompt queue is TUI-memory-only — CARD-0135 checks have no JSONL kind to see*  
-**Status:** plan only; no production code changed  
-**Verified against:** `c9f4b2c8`
+**Status:** S0 measured 2026-09-05; S1 expected path. No production code changed.  
+**Verified against:** `c9f4b2c8` (plan); headed canary on live `GROK_HOME` 2026-09-05
 
 ## Decision
 
@@ -81,6 +81,37 @@ dotnet run --project tests/Antiphon.Agents.Pty.Tests --property:OutputPath=bin-c
 Delete only the generated, repository-local `bin-card0355` directories after the run. The test's
 measurement log is the review evidence; report whether the default screen and the toggled queue
 pane exposed a usable marker, rather than inferring either result from the vendor guide.
+
+## S0 measured (2026-09-05)
+
+Headed canary `Queued_follow_up_during_a_tool_turn_is_silent_on_jsonl_until_drain` **passed**
+(1m 34s, `ANTIPHON_HEADED_TESTS=1`, production launch shape, real `GROK_HOME`).
+`[ui].follow_up_behavior` was **absent** → vendor default `queue`. Marker `GK-Q-313342d72494`.
+
+JSONL order (predecessor was a 70s `Start-Sleep` that Grok backgrounded; `stop_reason=end_turn`,
+not `cancelled`):
+
+```
+user_message_chunk | … | tool_call | task_backgrounded | … | turn_completed/end_turn | user_message_chunk
+```
+
+Zero marker-bearing `user_message_chunk` rows until that `turn_completed`; exactly one after.
+No queue kind. Drain is a normal `user_message_chunk`.
+
+Default screen **after one Enter, no extra key:** the queued body is already visible as
+`#1 GK-Q-313342d72494` plus `Queued · Enter to send now`, footer `Enter:send now` /
+`Ctrl+;:queue`. Composer empty. A second Enter would be send-now; the canary did not send one.
+
+`Ctrl+'` as BEL (`0x07`) is **Ctrl+G**, not the queue pane: it opened
+`No running tasks. Press h to show all.` (tasks overlay). The queue row stayed on that
+snapshot too. The documented queue chord remains `Ctrl+;` (Windows alt `Ctrl+'` is not BEL).
+Production must not send either chord.
+
+S1 unexpected table: none of the four rows apply. The queue signal is passively visible, but it
+is **not** the only evidence that prevents a watchdog failure — observable confirm already
+returns `NoTranscriptRecord` and reverts the row to `Pending`, and
+`a_working_session_with_a_pending_brief_is_neither_failed_nor_killed` still defers. No
+follow-up card. No FakeGrok change. No `QueuedUserPrompt`. No Codex work.
 
 ## S1 — disposition after the probe
 

@@ -30,6 +30,68 @@ internal static class GkSession
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".grok");
 
     /// <summary>
+    /// Vendor default for <c>[ui].follow_up_behavior</c> when the key is absent.
+    /// </summary>
+    public const string VendorDefaultFollowUpBehavior = "queue";
+
+    /// <summary>
+    /// CARD-0355 canary only: the plan named Windows <c>Ctrl+'</c> as BEL. Measured 2026-09-05
+    /// against grok 4.6, <c>0x07</c> is <c>Ctrl+G</c> (tasks overlay), not the queue pane.
+    /// The queue row was already on the default screen; production must never send this.
+    /// </summary>
+    public const string QueuePaneToggle = "\x07";
+
+    /// <summary>
+    /// Reads only the non-secret <c>[ui].follow_up_behavior</c> from <paramref name="grokHome"/>'s
+    /// <c>config.toml</c>. Absent file or key is the vendor default (<see cref="VendorDefaultFollowUpBehavior"/>).
+    /// Never logs the rest of the file.
+    /// </summary>
+    public static string ReadFollowUpBehavior(string grokHome)
+    {
+        var path = Path.Combine(grokHome, "config.toml");
+        if (!File.Exists(path)) return VendorDefaultFollowUpBehavior;
+        return ParseFollowUpBehavior(File.ReadLines(path));
+    }
+
+    /// <summary>
+    /// TOML-line parser for the one <c>[ui]</c> key this canary is allowed to look at.
+    /// </summary>
+    internal static string ParseFollowUpBehavior(IEnumerable<string> lines)
+    {
+        var inUi = false;
+        foreach (var raw in lines)
+        {
+            var line = raw.Trim();
+            if (line.Length == 0 || line[0] == '#') continue;
+            if (line[0] == '[' && line[^1] == ']')
+            {
+                inUi = line.Equals("[ui]", StringComparison.OrdinalIgnoreCase);
+                continue;
+            }
+            if (!inUi) continue;
+            var comment = line.IndexOf('#');
+            if (comment >= 0) line = line[..comment].Trim();
+            var eq = line.IndexOf('=');
+            if (eq < 0) continue;
+            var key = line[..eq].Trim();
+            if (!key.Equals("follow_up_behavior", StringComparison.OrdinalIgnoreCase)) continue;
+            var value = line[(eq + 1)..].Trim().Trim('"', '\'');
+            return value.Length == 0 ? VendorDefaultFollowUpBehavior : value;
+        }
+
+        return VendorDefaultFollowUpBehavior;
+    }
+
+    public static void SkipUnlessFollowUpQueues(string grokHome)
+    {
+        var behavior = ReadFollowUpBehavior(grokHome);
+        if (string.Equals(behavior, VendorDefaultFollowUpBehavior, StringComparison.OrdinalIgnoreCase))
+            return;
+        throw new SkipTestException(
+            $"[ui].follow_up_behavior={behavior} (measured); this canary observes the vendor-default queue, not steer. Not editing the operator config.");
+    }
+
+    /// <summary>
     /// The production launch shape: AgentRegistry's ArgsTemplate is
     /// <c>--always-approve --no-alt-screen</c> and AgentSessionService appends
     /// <c>--session-id &lt;id&gt;</c>. Canaries must measure the TUI Antiphon actually runs.
