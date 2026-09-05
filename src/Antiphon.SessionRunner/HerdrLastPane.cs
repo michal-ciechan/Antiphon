@@ -58,6 +58,35 @@ public sealed record HerdrLastPane
         LaunchEnvNames = sidecar.LaunchEnvNames,
     };
 
+    /// <summary>
+    /// CARD-0383: a detect-timeout launch has no sidecar yet. Retire the pane from the request
+    /// so the next attempt relaunches in place instead of allocating into a stranger's tab.
+    /// </summary>
+    public static HerdrLastPane FromLaunchRequest(
+        RunnerLaunchRequest request,
+        HerdrLaunchOptions opts,
+        string workspaceId,
+        string tabId,
+        string paneId,
+        int? shellPid,
+        string exitReason) => new()
+    {
+        SessionId = request.SessionId,
+        WorkspaceKey = opts.WorkspaceKey,
+        WorkspaceId = workspaceId,
+        TabId = tabId,
+        PaneId = paneId,
+        LastChildPid = null,
+        Cwd = request.Cwd,
+        AgentKind = opts.AgentKind,
+        Origin = HerdrPaneOrigins.Launched,
+        ExitReason = exitReason,
+        ExitedAtUtc = DateTime.UtcNow,
+        LaunchEnvNames = request.Env is { Count: > 0 }
+            ? request.Env.Keys.Order(StringComparer.Ordinal).ToList()
+            : null,
+    };
+
     /// <summary>Temp + rename, so a concurrent restore never observes a torn file.</summary>
     public void SaveAtomic(string path)
     {

@@ -346,10 +346,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                     session, agentId, launchSpec, remoteControlName,
                     resume ? AgentSessionResumeMode.Resume : null, notes, initialPrompt, ct);
             }
-            catch (ClaudeSessionNotFoundException)
+            catch (ResumeTargetMissingException)
             {
                 _logger.LogInformation(
-                    "Claude conversation for session {SessionId} was not found; starting fresh with the same id",
+                    "Resume target for session {SessionId} was not found; starting fresh with the same id",
                     sessionId);
                 // Effective fresh: same session row, brand-new conversation — it must BOOTSTRAP,
                 // not get the restart note, so the fallback keeps the full notes and the process
@@ -407,6 +407,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         IAgentProtocolAdapter? adapter = null;
         try
         {
+            resumeMode = ApplyEffectiveResumeMode(session, launchSpec, resumeMode);
             adapter = _adapterFactory.Create(session.AgentKind);
             var spec = await BuildRuntimeLaunchSpecAsync(launchSpec, session, session.Cwd, resumeMode, ct);
             EnsureHerdrLaunchAllowed(session, spec);
@@ -477,13 +478,18 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         {
             // Read the adapter's output BEFORE tearing it down — that is where the "No conversation
             // found with session ID:" evidence lives.
-            var sessionNotFound = resumeMode == AgentSessionResumeMode.Resume
-                && IsClaudeSessionNotFound(adapter, ex);
+            var resumeTargetMissing = resumeMode == AgentSessionResumeMode.Resume
+                && (IsClaudeSessionNotFound(adapter, ex)
+                    || ex is ConflictException { Code: HerdrProblemTypes.GrokNativeSessionMissing });
             if (adapter is not null)
                 await KillAndDisposeAsync(adapter);
 
-            if (sessionNotFound)
-                throw new ClaudeSessionNotFoundException();
+            if (resumeTargetMissing)
+            {
+                throw ex is ConflictException { Code: HerdrProblemTypes.GrokNativeSessionMissing }
+                    ? new ResumeTargetMissingException(ex.Message)
+                    : new ResumeTargetMissingException();
+            }
 
             throw;
         }
@@ -799,10 +805,13 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         }
     }
 
-    // Internal control-flow marker: a Claude --resume launch failed because the conversation is gone.
-    private sealed class ClaudeSessionNotFoundException : Exception
+    // Internal control-flow marker: a --resume launch failed because the conversation is gone
+    // (Claude needle, or runner 409 herdr_grok_native_session_missing).
+    private sealed class ResumeTargetMissingException : Exception
     {
-        public ClaudeSessionNotFoundException() : base(ClaudeSessionNotFoundFailureReason) { }
+        public ResumeTargetMissingException() : base(ClaudeSessionNotFoundFailureReason) { }
+
+        public ResumeTargetMissingException(string detail) : base(detail) { }
     }
 
     /// <summary>
@@ -1240,6 +1249,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         if (string.IsNullOrWhiteSpace(cwd) || !Directory.Exists(cwd))
             throw new ConflictException($"Agent session '{sessionId}' has no usable worktree path to resume.");
 
+        var effectiveResumeMode = ApplyEffectiveResumeMode(session, launchSpec, resumeMode);
+
         var now = UtcNow();
         session.Status = SessionStatus.Starting;
         session.StartedAt = now;
@@ -1257,7 +1268,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         try
         {
             adapter = _adapterFactory.Create(session.AgentKind);
-            var spec = await BuildRuntimeLaunchSpecAsync(launchSpec, session, cwd, resumeMode, ct);
+            var spec = await BuildRuntimeLaunchSpecAsync(launchSpec, session, cwd, effectiveResumeMode, ct);
             EnsureHerdrLaunchAllowed(session, spec);
             await adapter.StartAsync(spec, ct);
             await WaitForReadyOrThrowAsync(adapter, session.Id, ct);
@@ -1604,6 +1615,46 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         filtered.Add(resumeMode == AgentSessionResumeMode.Resume ? "--resume" : "--session-id");
         filtered.Add(sessionId.ToString("D"));
         return filtered.AsReadOnly();
+    }
+
+    /// <summary>
+    /// CARD-0383: a Grok <c>--resume</c> is typed only when <c>GROK_HOME/sessions/*/{id}/</c>
+    /// exists. A row id is not a conversation — absent, the same row launches
+    /// <c>--session-id</c> (create). Other kinds and modes are returned unchanged.
+    /// </summary>
+    internal static AgentSessionResumeMode? EffectiveResumeMode(
+        AgentSession session,
+        AgentLaunchSpec spec,
+        AgentSessionResumeMode? requested)
+    {
+        if (session.AgentKind != AgentKind.Grok || requested != AgentSessionResumeMode.Resume)
+            return requested;
+
+        var grokHome = GrokCredentialStore.ResolveGrokHome(spec.Env);
+        return GrokNativeSessionStore.Exists(grokHome, session.Id)
+            ? AgentSessionResumeMode.Resume
+            : null;
+    }
+
+    private AgentSessionResumeMode? ApplyEffectiveResumeMode(
+        AgentSession session,
+        AgentLaunchSpec spec,
+        AgentSessionResumeMode? requested)
+    {
+        var effective = EffectiveResumeMode(session, spec, requested);
+        if (requested == AgentSessionResumeMode.Resume
+            && effective is null
+            && session.AgentKind == AgentKind.Grok)
+        {
+            var grokHome = GrokCredentialStore.ResolveGrokHome(spec.Env);
+            _logger.LogWarning(
+                "Grok session {SessionId}: no native session directory for {Id} under {SessionsRoot}; launching with --session-id (create) instead of --resume",
+                session.Id,
+                session.Id,
+                Path.Combine(grokHome, "sessions"));
+        }
+
+        return effective;
     }
 
     private static bool ClaudeSessionArgConsumesValue(string arg) =>

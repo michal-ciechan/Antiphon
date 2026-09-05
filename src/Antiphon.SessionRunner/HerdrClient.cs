@@ -629,6 +629,7 @@ public sealed class HerdrLaunchException : Exception
 {
     public const string CodePaneOccupied = "pane_occupied";
     public const string CodePaneShell = "pane_shell";
+    public const string CodeDetectTimeout = "detect_timeout";
 
     public HerdrLaunchException(string message, string? code = null) : base(message)
     {

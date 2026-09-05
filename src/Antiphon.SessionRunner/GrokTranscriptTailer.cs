@@ -1,4 +1,5 @@
 using System.Text;
+using Antiphon.Agents.Pty;
 using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.SessionRunner;
@@ -139,43 +140,12 @@ internal sealed class GrokTranscriptTailer : ITranscriptTailer
     }
 
     /// <summary>
-    /// CARD-0213: locate <c>{GROK_HOME}/sessions/*/{id:D}/</c> by GUID match. The GUID is globally
-    /// unique, so a hit is positive evidence regardless of how grok encoded the cwd. Does not
-    /// derive the path from cwd — live operator panes do not share this machine's encoding.
+    /// CARD-0213 / CARD-0383: locate <c>{GROK_HOME}/sessions/*/{id:D}/</c> by GUID match.
+    /// Forwards to <see cref="GrokNativeSessionStore.TryLocateSessionDirectory"/> so the server
+    /// and the runner share one on-disk existence check.
     /// </summary>
-    /// <returns>
-    /// The session directory (parent of <c>updates.jsonl</c>), or <see langword="null"/> when
-    /// nothing under <paramref name="grokHome"/> contains <c>{nativeId:D}/</c>.
-    /// </returns>
-    public static string? TryLocateSessionDirectory(string grokHome, Guid nativeId)
-    {
-        if (string.IsNullOrWhiteSpace(grokHome) || nativeId == Guid.Empty)
-            return null;
-
-        var sessionsRoot = Path.Combine(grokHome, "sessions");
-        if (!Directory.Exists(sessionsRoot))
-            return null;
-
-        var id = nativeId.ToString("D");
-        string[] cwdDirs;
-        try
-        {
-            cwdDirs = Directory.GetDirectories(sessionsRoot);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return null;
-        }
-
-        foreach (var cwdDir in cwdDirs)
-        {
-            var candidate = Path.Combine(cwdDir, id);
-            if (Directory.Exists(candidate))
-                return candidate;
-        }
-
-        return null;
-    }
+    public static string? TryLocateSessionDirectory(string grokHome, Guid nativeId) =>
+        GrokNativeSessionStore.TryLocateSessionDirectory(grokHome, nativeId);
 
     /// <summary>URL-encoded cwd folder that is the parent of a located session directory.</summary>
     public static string? EncodedCwdOf(string sessionDirectory)

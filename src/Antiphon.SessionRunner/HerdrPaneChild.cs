@@ -23,6 +23,8 @@ internal sealed class HerdrPaneChild : ISessionChild
     private string? _paneId;
     private HerdrPaneSidecar? _sidecar;
     private bool _exited;
+    // CARD-0383: detect timeout on an idle shell retires the pane to last-pane instead of close.
+    private bool _keepPaneOnKill;
 
     // CARD-0164: herdr's pane.revision measurably stays flat across real turns (0/3), so the
     // runner owns a content-delta counter — bump whenever stripped visible pane.read text differs
@@ -276,6 +278,9 @@ internal sealed class HerdrPaneChild : ISessionChild
         // CARD-0341: a gkp Grok launch that cannot route is refused here, before herdr is
         // contacted, so nothing is allocated, renamed, or typed for it.
         HerdrGkpLaunchGuard.Require(request.SessionId, request.Args, request.Env, _logger);
+        // CARD-0383: a Grok --resume of a uuid with no native directory is the same shape —
+        // refused here so a 2 s grok exit does not become a 60 s detect timeout plus pane.close.
+        HerdrGrokResumeGuard.Require(request.SessionId, request, expectedKind, _logger);
 
         await _client.ConnectAndValidateAsync(ct);
 
@@ -595,10 +600,12 @@ internal sealed class HerdrPaneChild : ISessionChild
 
             await WaitForExpectedAgentAsync(paneId, expectedKind, ct);
         }
-        catch
+        catch (Exception ex)
         {
             // The script is kept for diagnosis (CARD-0187), but never with the env values in it.
             TryRedactLaunchScript(scriptPath, request, workingDirectory, clearNames);
+            if (ex is HerdrLaunchException { Code: HerdrLaunchException.CodeDetectTimeout })
+                await TryKeepIdleShellPaneOnDetectTimeoutAsync(request, opts, workspaceId, tabId, paneId);
             throw;
         }
 
@@ -785,6 +792,12 @@ internal sealed class HerdrPaneChild : ISessionChild
         if (string.Equals(_sidecar?.Origin, HerdrPaneOrigins.Attached, StringComparison.OrdinalIgnoreCase))
             return await DetachAsync(ct);
 
+        if (_keepPaneOnKill)
+        {
+            RaiseExited(HerdrExitReasons.PaneLeftOpen);
+            return true;
+        }
+
         try
         {
             var proc = await _client.PaneProcessInfoAsync(_paneId, ct);
@@ -963,13 +976,49 @@ internal sealed class HerdrPaneChild : ISessionChild
             if (elapsed.TotalMilliseconds >= timeoutMs)
             {
                 throw new HerdrLaunchException(
-                    $"herdr did not detect agent kind '{expectedKind}' within {timeoutMs}ms (last observed: none)");
+                    $"herdr did not detect agent kind '{expectedKind}' within {timeoutMs}ms (last observed: none)",
+                    HerdrLaunchException.CodeDetectTimeout);
             }
 
             var remaining = TimeSpan.FromMilliseconds(timeoutMs) - elapsed;
             var delay = remaining < poll ? remaining : poll;
             if (delay > TimeSpan.Zero)
                 await Task.Delay(delay, ct);
+        }
+    }
+
+    /// <summary>
+    /// CARD-0383 D-6: when detect timed out and the pane holds only its own PowerShell, write a
+    /// last-pane record from the request and skip <c>pane.close</c> on the subsequent kill.
+    /// </summary>
+    private async Task TryKeepIdleShellPaneOnDetectTimeoutAsync(
+        RunnerLaunchRequest request,
+        HerdrLaunchOptions opts,
+        string workspaceId,
+        string tabId,
+        string paneId)
+    {
+        try
+        {
+            var proc = await _client.PaneProcessInfoAsync(paneId, CancellationToken.None);
+            var nonShell = (proc.ForegroundProcesses ?? [])
+                .Where(p => proc.ShellPid is not int shell || p.Pid != shell)
+                .ToList();
+            if (nonShell.Count != 0)
+                return;
+
+            HerdrLastPane.FromLaunchRequest(
+                    request, opts, workspaceId, tabId, paneId, proc.ShellPid,
+                    HerdrExitReasons.LaunchDetectTimeout)
+                .SaveAtomic(HerdrLastPane.PathFor(_settings.SessionLogPath, request.SessionId));
+            _keepPaneOnKill = true;
+        }
+        catch (Exception ex) when (ex is HerdrApiException or HerdrBackendUnavailableException)
+        {
+            _logger.LogWarning(
+                ex,
+                "Could not inspect pane {PaneId} after detect timeout for session {SessionId}",
+                paneId, request.SessionId);
         }
     }
 

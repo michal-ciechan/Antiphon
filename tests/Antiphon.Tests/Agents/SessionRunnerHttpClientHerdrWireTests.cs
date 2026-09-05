@@ -203,6 +203,49 @@ public class SessionRunnerHttpClientHerdrWireTests
     }
 
     [Test]
+    public async Task Launch_409_grok_native_session_missing_maps_to_conflict_with_the_code()
+    {
+        const string detail = "refusing to type `--resume` for session: no grok session directory";
+        var handler = new CapturingHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/capabilities")
+            {
+                return Task.FromResult(Json(new RunnerCapabilitiesDto(
+                    "InboxConhost",
+                    "inbox",
+                    "test",
+                    false,
+                    TranscriptFormats: [TranscriptFormats.Claude, TranscriptFormats.Grok, TranscriptFormats.Codex],
+                    SessionBackends: [SessionBackends.PtyHost, SessionBackends.Herdr])));
+            }
+
+            return Task.FromResult(Problem(409, HerdrProblemTypes.GrokNativeSessionMissing, detail));
+        });
+        var client = new SessionRunnerHttpClient(
+            new HttpClient(handler) { BaseAddress = new Uri("http://runner.test/") },
+            new StubFactory(),
+            Options.Create(new SessionRunnerSettings { BaseUrl = "http://runner.test" }));
+
+        var ex = await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ConflictException>(() =>
+            client.StartAsync(
+                Guid.NewGuid(),
+                new AgentLaunchSpec(
+                    "grok",
+                    AgentKind.Grok,
+                    "grok.exe",
+                    ["--resume", Guid.NewGuid().ToString("D")],
+                    new Dictionary<string, string>(),
+                    Path.GetTempPath(),
+                    120,
+                    30,
+                    Backend: SessionBackend.Herdr,
+                    Herdr: new HerdrLaunchOptions("none", "Antiphon", null, "g", AgentKind: HerdrAgentKinds.Grok)),
+                CancellationToken.None));
+        ex.Code.ShouldBe(HerdrProblemTypes.GrokNativeSessionMissing);
+        ex.Message.ShouldBe(detail);
+    }
+
+    [Test]
     public async Task Problem_details_404_maps_to_runner_problem()
     {
         var handler = new CapturingHandler(_ => Task.FromResult(Problem(
