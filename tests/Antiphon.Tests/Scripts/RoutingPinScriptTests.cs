@@ -40,6 +40,58 @@ public sealed class RoutingPinScriptTests
     }
 
     [Test]
+    public async Task Set_Candidates_puts_the_list_in_order()
+    {
+        using var server = new StubApi();
+        var run = await RunPinAsync(
+            server, "set", "-Role", "Plan",
+            "-Provenance", "Human", "-Strength", "Required",
+            "-Candidates", "ClaudeCode/Frontier,ClaudeCode/High,Codex/Frontier",
+            "-Reason", "plan on fable, opus, then sol");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        server.LastMethod.ShouldBe("PUT");
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.TryGetProperty("agentKind", out _).ShouldBeFalse();
+        body.RootElement.TryGetProperty("modelLevel", out _).ShouldBeFalse();
+        var candidates = body.RootElement.GetProperty("candidates").EnumerateArray().ToList();
+        candidates.Count.ShouldBe(3);
+        candidates[0].GetProperty("agentKind").GetString().ShouldBe("ClaudeCode");
+        candidates[0].GetProperty("modelLevel").GetString().ShouldBe("Frontier");
+        candidates[1].GetProperty("agentKind").GetString().ShouldBe("ClaudeCode");
+        candidates[1].GetProperty("modelLevel").GetString().ShouldBe("High");
+        candidates[2].GetProperty("agentKind").GetString().ShouldBe("Codex");
+        candidates[2].GetProperty("modelLevel").GetString().ShouldBe("Frontier");
+    }
+
+    [Test]
+    public async Task Set_Kind_together_with_Candidates_is_refused_locally()
+    {
+        using var server = new StubApi();
+        var run = await RunPinAsync(
+            server, "set", "-Role", "Plan",
+            "-Kind", "Grok",
+            "-Candidates", "ClaudeCode/Frontier,ClaudeCode/High");
+
+        run.ExitCode.ShouldNotBe(0);
+        run.Output.ShouldContain("shorthand");
+        server.RequestCount.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Get_prints_the_head_plus_count()
+    {
+        using var server = new StubApi();
+        var run = await RunPinAsync(server, "get");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        run.Output.ShouldContain("ClaudeCode/Frontier (fable)");
+        run.Output.ShouldContain("+2:");
+        run.Output.ShouldContain("ClaudeCode/High (opus)");
+        run.Output.ShouldContain("Codex/Frontier (gpt-5.6-sol)");
+    }
+
+    [Test]
     public async Task Set_without_a_card_writes_a_stage_wide_pin()
     {
         using var server = new StubApi();
@@ -256,18 +308,26 @@ public sealed class RoutingPinScriptTests
              "role":"Plan","provenance":"Human","strength":"Required","agentKind":"Grok",
              "modelLevel":"High","modelAlias":"grok-4.6","agentId":null,"forbiddenAliases":[],
              "notBefore":null,"notAfter":null,"reason":"test","sourceTaskId":null,
-             "createdAt":"2026-09-01T00:00:00Z","updatedAt":"2026-09-01T00:00:00Z"}
+             "createdAt":"2026-09-01T00:00:00Z","updatedAt":"2026-09-01T00:00:00Z",
+             "candidates":[{"agentKind":"Grok","modelLevel":"High","alias":"grok-4.6","availableNow":true,"unavailableReason":null}],
+             "candidateCount":1}
             """;
 
         private const string ListJson =
             """
             {"pins":[{"id":"22222222-2222-2222-2222-222222222222",
              "cardId":"33333333-3333-3333-3333-333333333333","cardIdentifier":"CARD-0304",
-             "role":"Plan","provenance":"Human","strength":"Required","agentKind":"Codex",
-             "modelLevel":"Frontier","modelAlias":"gpt-5.6-sol","agentId":null,
+             "role":"Plan","provenance":"Human","strength":"Required","agentKind":"ClaudeCode",
+             "modelLevel":"Frontier","modelAlias":"fable","agentId":null,
              "forbiddenAliases":[],"notBefore":null,"notAfter":null,"reason":"test",
              "sourceTaskId":null,"createdAt":"2026-09-01T00:00:00Z",
-             "updatedAt":"2026-09-01T00:00:00Z"}]}
+             "updatedAt":"2026-09-01T00:00:00Z",
+             "candidateCount":3,
+             "candidates":[
+               {"agentKind":"ClaudeCode","modelLevel":"Frontier","alias":"fable","availableNow":true,"unavailableReason":null},
+               {"agentKind":"ClaudeCode","modelLevel":"High","alias":"opus","availableNow":true,"unavailableReason":null},
+               {"agentKind":"Codex","modelLevel":"Frontier","alias":"gpt-5.6-sol","availableNow":true,"unavailableReason":null}
+             ]}]}
             """;
 
         private const string CreatedJson =

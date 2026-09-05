@@ -23,7 +23,15 @@ public sealed record PutRoutingPinRequest(
     IReadOnlyList<string>? ForbiddenAliases = null,
     DateTimeOffset? NotBefore = null,
     DateTimeOffset? NotAfter = null,
-    string? Reason = null);
+    string? Reason = null,
+    /// <summary>
+    /// Ordered candidates (CARD-0322). Mutually exclusive with the 1-candidate
+    /// <see cref="AgentKind"/>/<see cref="ModelLevel"/> shorthand.
+    /// </summary>
+    IReadOnlyList<RoutingCandidateRequest>? Candidates = null);
+
+/// <summary>One (possibly partial) pair on PUT <c>candidates</c>.</summary>
+public sealed record RoutingCandidateRequest(AgentKind? AgentKind = null, AgentModelLevel? ModelLevel = null);
 
 /// <summary>One active pin, as GET/PUT return it. Property names camelCase on the wire.</summary>
 public sealed record RoutingPinDto(
@@ -44,7 +52,20 @@ public sealed record RoutingPinDto(
     string Reason,
     Guid? SourceTaskId,
     DateTime CreatedAt,
-    DateTime UpdatedAt);
+    DateTime UpdatedAt,
+    IReadOnlyList<RoutingPinCandidateDto>? Candidates = null,
+    int CandidateCount = 0);
+
+/// <summary>
+/// One pin candidate as GET returns it, with live availability so <c>routing-pin.ps1 get</c>
+/// can say why a list is exhausted without a dispatch.
+/// </summary>
+public sealed record RoutingPinCandidateDto(
+    AgentKind? AgentKind,
+    AgentModelLevel? ModelLevel,
+    string? Alias,
+    bool AvailableNow,
+    string? UnavailableReason);
 
 /// <summary>GET /api/routing-pins. Stage-wide rows carry a null <c>cardId</c>.</summary>
 public sealed record RoutingPinListDto(IReadOnlyList<RoutingPinDto> Pins);
@@ -63,4 +84,5 @@ public sealed record RoutingPinRefDto(
     AgentKind? AgentKind,
     AgentModelLevel? ModelLevel,
     DateTime? NotBefore,
-    string Reason);
+    string Reason,
+    int CandidateCount = 0);

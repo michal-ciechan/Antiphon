@@ -93,6 +93,14 @@ public class AgentTask
     /// </summary>
     public TaskComplexity? Complexity { get; set; }
 
+    /// <summary>
+    /// The pin whose list chose this task's kind/level (CARD-0322). Null on a not-walked create
+    /// (0 or 1 candidate after explicit narrowing). No FK: governance is re-resolved by grain,
+    /// and an explicit <c>POST …/reroute</c> nulls this the same way it clears
+    /// <see cref="Complexity"/>.
+    /// </summary>
+    public Guid? RoutingPinId { get; set; }
+
     /// <summary>Set when the task was escalated up a tier — the chip shows the ladder.</summary>
     public AgentModelLevel? EscalatedFrom { get; set; }
 

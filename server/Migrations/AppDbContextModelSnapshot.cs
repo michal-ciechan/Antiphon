@@ -654,6 +654,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<Guid>("RootTaskId")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("RoutingPinId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Scope")
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
@@ -2760,11 +2763,12 @@ namespace Antiphon.Server.Migrations
                     b.Property<Guid?>("AgentId")
                         .HasColumnType("uuid");
 
-                    b.Property<int?>("AgentKind")
-                        .HasColumnType("integer");
-
                     b.Property<Guid?>("CardId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("CandidatesJson")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
 
                     b.Property<DateTime?>("ClearedAt")
                         .HasColumnType("timestamp with time zone");
@@ -2775,9 +2779,6 @@ namespace Antiphon.Server.Migrations
                     b.Property<string>("ForbiddenAliases")
                         .HasMaxLength(400)
                         .HasColumnType("character varying(400)");
-
-                    b.Property<int?>("ModelLevel")
-                        .HasColumnType("integer");
 
                     b.Property<DateTime?>("NotAfter")
                         .HasColumnType("timestamp with time zone");
