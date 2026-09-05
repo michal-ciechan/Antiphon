@@ -238,6 +238,7 @@ public class AgentTaskPipelineStatusTests
 
     [Test]
     [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Distill)]
     [Arguments(AgentTaskRole.Diagnose)]
     public async Task a_specialist_role_working_task_does_not_count_against_the_cap(AgentTaskRole role)
     {

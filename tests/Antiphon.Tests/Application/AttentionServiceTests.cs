@@ -177,6 +177,7 @@ public class AttentionServiceTests
 
     [Test]
     [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Distill)]
     [Arguments(AgentTaskRole.Diagnose)]
     public async Task a_specialist_role_blocked_task_is_not_a_blocked_question(AgentTaskRole role)
     {

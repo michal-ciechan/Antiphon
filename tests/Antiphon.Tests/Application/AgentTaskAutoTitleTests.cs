@@ -63,6 +63,7 @@ public class AgentTaskAutoTitleTests
 
     [Test]
     [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Distill)]
     [Arguments(AgentTaskRole.Diagnose)]
     public async Task a_specialist_row_is_never_queued(AgentTaskRole role)
     {

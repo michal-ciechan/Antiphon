@@ -161,6 +161,7 @@ public class HomeTaskServiceIntegrationTests
 
     [Test]
     [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Distill)]
     [Arguments(AgentTaskRole.Diagnose)]
     public async Task specialist_role_rows_are_never_an_item_and_never_a_worker(AgentTaskRole role)
     {

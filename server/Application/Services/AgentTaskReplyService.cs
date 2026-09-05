@@ -2274,6 +2274,8 @@ public sealed class AgentTaskReplyService
         // mark the interpreter's own row Blocked. Do not parse LOOKS STUCK as English.
         if (task.Role == AgentTaskRole.Check)
             return ClassifyCheckReport(body, verdict);
+        if (task.Role == AgentTaskRole.Distill)
+            return ClassifyDistillReport(body, verdict);
         if (task.Role == AgentTaskRole.Diagnose)
             return ClassifyDiagnoseReport(body, verdict);
 
@@ -2346,6 +2348,29 @@ public sealed class AgentTaskReplyService
         ClassifyCheckReport(string body, string verdict)
     {
         if (verdict == "failed")
+        {
+            var reason = FirstLine(body);
+            return (AgentTaskStatus.Failed, AgentTaskReportEvidence.Marked, body,
+                string.IsNullOrWhiteSpace(reason) ? "Delegate reported failed." : reason);
+        }
+
+        if (verdict == "done")
+            return (AgentTaskStatus.Succeeded, AgentTaskReportEvidence.Marked, body, null);
+
+        return (AgentTaskStatus.Succeeded, AgentTaskReportEvidence.Exempt, body, null);
+    }
+
+    /// <summary>
+    /// CARD-0330: Distill-role status is "did the seat finish a distillation", never "what the
+    /// source report said." Mirrors <see cref="ClassifyCheckReport"/>: <c>done</c> Succeeded/Marked,
+    /// <c>failed</c> or empty Failed, anything else Succeeded/Exempt. A trailing <c>?</c> never
+    /// Blocks — a Distill row asking the operator a question would stall the note that already
+    /// queued.
+    /// </summary>
+    private static (AgentTaskStatus Status, AgentTaskReportEvidence Evidence, string Body, string? FailureReason)
+        ClassifyDistillReport(string body, string verdict)
+    {
+        if (verdict == "failed" || string.IsNullOrWhiteSpace(body))
         {
             var reason = FirstLine(body);
             return (AgentTaskStatus.Failed, AgentTaskReportEvidence.Marked, body,

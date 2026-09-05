@@ -332,6 +332,7 @@ public class AgentTaskReplyIntegrationTests
 
     [Test]
     [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Distill)]
     [Arguments(AgentTaskRole.Diagnose)]
     public async Task a_specialist_role_task_is_never_nudged(AgentTaskRole role)
     {
@@ -355,6 +356,7 @@ public class AgentTaskReplyIntegrationTests
 
     [Test]
     [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Distill)]
     [Arguments(AgentTaskRole.Diagnose)]
     public async Task a_specialist_role_looks_stuck_blocked_token_settles_succeeded_exempt(AgentTaskRole role)
     {
@@ -409,6 +411,7 @@ public class AgentTaskReplyIntegrationTests
 
     [Test]
     [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Distill)]
     [Arguments(AgentTaskRole.Diagnose)]
     public async Task a_specialist_role_trailing_question_settles_succeeded_exempt(AgentTaskRole role)
     {
@@ -434,6 +437,7 @@ public class AgentTaskReplyIntegrationTests
 
     [Test]
     [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Distill)]
     [Arguments(AgentTaskRole.Diagnose)]
     public async Task a_specialist_role_failed_token_still_fails_the_task(AgentTaskRole role)
     {

@@ -935,6 +935,7 @@ public class AgentTaskDeliveryWatchdogTests
 
     [Test]
     [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Distill)]
     [Arguments(AgentTaskRole.Diagnose)]
     public async Task a_specialist_role_is_never_blocked_as_unmarked_waiting(AgentTaskRole role)
     {

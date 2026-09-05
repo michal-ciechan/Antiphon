@@ -66,6 +66,7 @@ public class DelegateBundleLaunchTests
 
     [Test]
     [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Distill)]
     [Arguments(AgentTaskRole.Diagnose)]
     public void a_specialist_task_launches_with_no_system_prompt_at_all(AgentTaskRole role)
     {
@@ -184,6 +185,7 @@ public class DelegateBundleLaunchTests
 
     [Test]
     [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Distill)]
     [Arguments(AgentTaskRole.Diagnose)]
     public void a_specialist_task_still_launches_with_nothing_even_when_its_agent_carries_attachments(AgentTaskRole role)
     {

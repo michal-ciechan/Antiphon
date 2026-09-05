@@ -123,6 +123,7 @@ public class RoutingPinServiceTests
 
     [Test]
     [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Distill)]
     [Arguments(AgentTaskRole.Diagnose)]
     public async Task A_specialist_role_has_no_stage_to_pin(AgentTaskRole role)
     {

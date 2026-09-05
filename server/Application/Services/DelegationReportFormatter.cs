@@ -190,6 +190,7 @@ public static class DelegationReportFormatter
         sb.Append(task.Role switch
         {
             AgentTaskRole.Check => CheckReportingContract(task.Id, inlineMax),
+            AgentTaskRole.Distill => DistillReportingContract(task.Id, inlineMax),
             AgentTaskRole.Diagnose => DiagnoseReportingContract(task.Id, inlineMax),
             _ => ReportingContract(task.Id, task.Kind, inlineMax, task.Role, task.Stage),
         });
@@ -405,6 +406,35 @@ public static class DelegationReportFormatter
             could not produce a reading. Never emit a `blocked` report token. LOOKS STUCK / "needs
             a human" is the reading, filed on the checked task. This Check task does not ask the
             operator a question. Nothing after the closing line.
+
+            {TaskMarker(taskId)}
+            """;
+    }
+
+    /// <summary>
+    /// CARD-0330: a Distill-role closer. Bullets only; <c>done</c> after the last bullet;
+    /// <c>failed</c> if nothing usable; never <c>blocked</c>.
+    /// </summary>
+    public static string DistillReportingContract(Guid taskId, int inlineMaxChars)
+    {
+        return $"""
+            --- how to report back ---
+            Your final message is the entire distillation the caller receives. Nothing else from this
+            session is forwarded.
+
+            Keep the signal in at most 12 bullets, one fact each. No heading, no preamble, no
+            sign-off. Copy every identifier and number. A blocked or failed report stays blocked
+            or failed in your first bullet. If the report has a `--- next stage ---` block, copy
+            `next:` and `handoff:` verbatim.
+
+            If your report would run past {inlineMaxChars:N0} characters, write the full detail to
+            .antiphon/task-{Short(taskId)}.md and make your final message a summary that points
+            at that path.
+
+            End your final message with one line, on its own: `{ReportToken(taskId, "done")}` when
+            you produced a distillation. End with `{ReportToken(taskId, "failed")}` only if you
+            could not produce one. Never emit a `blocked` report token. This Distill task does not
+            ask the operator a question. Nothing after the closing line.
 
             {TaskMarker(taskId)}
             """;
@@ -672,7 +702,8 @@ public static class DelegationReportFormatter
         // failure it exists to prevent. The complete contract is in the spilled brief the delegate
         // is told to read first, so repeating it here buys nothing and risks the whole message.
         // The closing marker stays, because correlation must survive even if the head is lost.
-        // CARD-0302 / CARD-0352: specialists still must not see a `blocked` token on the pointer path.
+        // CARD-0302 / CARD-0330 / CARD-0352: specialists still must not see a `blocked` token on
+        // the pointer path.
         if (task.Role == AgentTaskRole.Check)
         {
             sb.AppendLine($"""
@@ -681,6 +712,15 @@ public static class DelegationReportFormatter
                 Close with `{ReportToken(task.Id, "done")}` after a verdict word. That token
                 finishes this interpretation, not the checked task. Use `{ReportToken(task.Id, "failed")}`
                 only if there is no reading. Never emit a `blocked` report token.
+                """).AppendLine();
+        }
+        else if (task.Role == AgentTaskRole.Distill)
+        {
+            sb.AppendLine($"""
+                --- how to report back ---
+                The Distill reporting contract is in the brief above — read it there.
+                Close with `{ReportToken(task.Id, "done")}` after the bullets. Use
+                `{ReportToken(task.Id, "failed")}` only if nothing usable came back. Never emit a `blocked` report token.
                 """).AppendLine();
         }
         else if (task.Role == AgentTaskRole.Diagnose)

@@ -267,6 +267,18 @@ public class InstructionBundleTests
     }
 
     [Test]
+    public void the_distill_reporting_contract_never_offers_blocked_and_keeps_the_handoff_anchor()
+    {
+        var id = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        var reporting = DelegationReportFormatter.DistillReportingContract(id, 20_000);
+        reporting.ShouldContain("Never emit a `blocked` report token");
+        reporting.ShouldContain(DelegationReportFormatter.ReportToken(id, "done"));
+        reporting.ShouldContain(DelegationReportFormatter.ReportToken(id, "failed"));
+        reporting.ShouldContain("`next:` and `handoff:`");
+        reporting.ShouldContain("--- next stage ---");
+    }
+
+    [Test]
     public void the_orchestrator_contract_forwards_to_its_bundle_with_its_text_intact()
     {
         DelegationReportFormatter.OrchestratorContract
@@ -444,6 +456,7 @@ public class InstructionBundleTests
 
     [Test]
     [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Distill)]
     [Arguments(AgentTaskRole.Diagnose)]
     public void a_specialist_task_carries_nothing(AgentTaskRole role)
     {

@@ -242,6 +242,7 @@ public class AgentTaskCardBindingTests
 
     [Test]
     [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Distill)]
     [Arguments(AgentTaskRole.Diagnose)]
     public async Task a_specialist_task_never_binds_even_when_its_title_names_a_card(AgentTaskRole role)
     {
@@ -266,6 +267,7 @@ public class AgentTaskCardBindingTests
 
     [Test]
     [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Distill)]
     [Arguments(AgentTaskRole.Diagnose)]
     public async Task specialist_rows_are_hidden_from_the_list_unless_asked(AgentTaskRole role)
     {
