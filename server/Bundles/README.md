@@ -61,6 +61,17 @@ badge every agent carrying it until each next launches — that is the mechanism
 A rule that earns standing status gets PR'd into a file here. Recorded anywhere else — a findings
 doc, a skill, one orchestrator's habit — it reaches nobody.
 
+### The output-distiller bundle (CARD-0330)
+
+`output-distiller.md` is the standing contract of the `antiphon-output-distiller` seat. Edits
+arrive as Review cards from the weekly prompt-review loop
+(`docs/orchestration-loop.md` §10), never as a live write to `SystemPromptAppend` or to the
+running session. A review may change any sentence except the INVARIANTS block (pinned by
+`InstructionBundleTests`); the file must stay at most 3 000 characters and open with
+`You are the Antiphon OUTPUT DISTILLER (contract v`. The gates in `OutputDistillationGate` are
+code, not this file — the loop must not change them. After a merge, stop and start the seat so
+the new version composes; rollback is `git revert` plus the same restart.
+
 ## Reply styles
 
 The `style-*` files (`style-normal`, `style-terse`, `style-caveman`, `style-brief`,

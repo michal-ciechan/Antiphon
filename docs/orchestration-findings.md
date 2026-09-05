@@ -289,3 +289,32 @@ manual status/log read) before the automatic delivery had a chance to land — t
 of `SessionQueuedMessages` (one row, one `DeliveryAttempts` count) makes this a one-query check, and
 it should be the FIRST thing checked, not the last, whenever "duplicate" is really "seen twice by
 one reader through two different paths."
+
+---
+
+## 2026-09-03/05 — Distiller is a signal extractor, not a filler stripper (CARD-0330)
+
+**What we learned:** two premises on CARD-0330 were wrong against live evidence, and the
+self-improve loop had to be a human-merged bundle PR rather than an automatic rewrite of the
+seat's `SystemPromptAppend`.
+
+**The evidence** (Plan pass 2026-09-03, 90 most recent Succeeded reports): median 2 006 chars,
+p90 3 925, max 7 132. 26 of 90 exceed the conhost inline ceiling (3 000) and would arrive
+head+tail excerpted; none exceed the modern 14 400 ceiling. Grok Frontier median 1 727 chars;
+ClaudeCode Frontier 3 476. The two longest reports were dense (landing verdict, re-run table,
+numbered defects with Where/Failure/Why/Fix) — the loss the caller suffers is the excerpt
+banner eating defects, not filler words. The check-interpreter contract (v3: never say the
+checked task is complete, five verdict words, 3-5 lines, classifier refuses `blocked`) is the
+opposite of what a finished-report distiller must do, so a second seat is the design, not a
+second job on `antiphon-check-interpreter`.
+
+**What changed:** CARD-0330 S1-S5. Seat `antiphon-output-distiller` (haiku, AlwaysOn, deny-all
+hook) with `server/Bundles/output-distiller.md` as the versioned contract. Deterministic
+`OutputDistillationGate` rejects a distillation that drops a load-bearing identifier or the
+`next:`/`handoff:` lines of a present `--- next stage ---` block (CARD-0146). Ships in
+`OutputDistillerMode=Shadow`. Quality signals are the gate, explicit Lost/Noisy/Good flags, and
+`FullReadAt` when the parent polls the full report after an Applied note was sent. The weekly
+prompt-review loop (orchestration-loop.md §10) dispatches a Review delegate; it may propose a
+bundle edit only when the evidence bar is met; a human merges; the seat picks the new version
+up at the next stop/start. No automatic write to a bundle, `SystemPromptAppend`, or a live
+session, and the loop must not edit INVARIANTS or the gates.

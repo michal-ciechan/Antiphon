@@ -682,6 +682,78 @@ and the card CLI (CARD-0051, `scripts/card.ps1`) have shipped. In rough order of
 finding and server seconds per stage. Use it before deciding whether a stage-shaped dispatch (§3)
 is worth its cost, not just when the card asks for a report.
 
+---
+
+## 10. Distiller prompt review (CARD-0330)
+
+A second standing haiku seat, `antiphon-output-distiller`, distils finished delegate reports
+after they are written. The seat's prompt is `server/Bundles/output-distiller.md`. A human
+merges every change to that file; nothing else may write it, the row's `SystemPromptAppend`,
+or the live session. The gates in `OutputDistillationGate` are code and are out of scope for
+this loop.
+
+**Weekly trigger.** One CARD-0057 `Prompt` schedule, Daily, Monday `09:00` `Europe/London`,
+target `Antiphon-Orchestrator`, `WhenTargetDown=Queue`. Live id
+`d687a6bf-e286-4592-92a7-799386235a68` (created 2026-09-05). Recreate with:
+
+```powershell
+pwsh -NoProfile -File scripts/schedule.ps1 new `
+  -Name "Output distiller prompt review" `
+  -Agent Antiphon-Orchestrator `
+  -Repeat Daily -AtLocal 09:00 -DaysOfWeek 1 `
+  -TimeZone "Europe/London" -WhenTargetDown Queue `
+  -PromptFile <path-to-the-PromptText-below>
+```
+
+**PromptText** (the schedule body; keep it identical when recreating):
+
+```
+Weekly output-distiller prompt review (CARD-0330). Do not read the distillation ledger yourself. Dispatch one Review-role delegate:
+
+pwsh -NoProfile -File scripts/delegate.ps1 -Role Review -Worktree -Level High -ExpectAbout 30 -Title "distiller prompt review" -Card CARD-0330 -Goal "<paste the brief template from docs/orchestration-loop.md section 10>"
+
+Then wait for that delegate's report. Do not edit server/Bundles/output-distiller.md yourself.
+```
+
+**Delegate brief template** (the `-Goal` the orchestrator pastes; fill the ISO timestamps for
+the last 7 days):
+
+```
+Review the output-distiller prompt for the window since <since-ISO>.
+
+Read GET /api/distillations/stats?since=<since-ISO> and GET /api/distillations?since=<since-ISO>
+(and the Flagged / RejectedOverCompressed / RejectedUnderCompressed rows). Compare each flagged
+or rejected sample's raw report with DistilledResult. Judge which prompt sentence caused each
+loss or each verbosity.
+
+Evidence bar (must ALL hold before you edit anything): at least 20 distillations in the window,
+AND at least one of: 3 or more LostInformation/Noisy flags, OR 10 percent or more of rows
+rejected by the gates, OR FullReadAt on 25 percent or more of Applied rows.
+
+If the bar is met: edit server/Bundles/output-distiller.md only. Bump the contract vN line in
+that file and OutputDistillation.ContractVersion together. INVARIANTS sentences stay verbatim.
+The file must stay at most 3000 characters and keep opening with "You are the Antiphon OUTPUT
+DISTILLER (contract v". Do not change OutputDistillationGate or any other gate. Run
+InstructionBundleTests and OutputDistillationGateTests. Commit and push a branch. Open a card
+in Review with card.ps1 new carrying: the window numbers, the flagged samples you acted on,
+the diff, the stamps before/after, and one line of reason per changed sentence.
+
+If the bar is not met: report the numbers and the sentence "no change warranted". Do not open
+a card, do not edit the bundle, do not write SystemPromptAppend, and do not type into the
+distiller session.
+```
+
+**Merge, then restart.** A human reads the Review card and merges or rejects. After a merge,
+stop and start the seat (`POST /api/agents/{id}/stop` then `/start`) so the new version
+composes. The `BundlesOutOfDate` badge on the agents page is the signal that the running
+session is still on the old text. Rollback is `git revert` of that merge and the same
+stop/start. The ledger's `BundleStamp` column is how "did v2 do better than v1" is answered.
+
+**What this loop must not do:** write a bundle, `SystemPromptAppend`, or a live session
+automatically; edit the INVARIANTS block; grow the bundle past 3 000 characters; change the
+gates. The loop tunes what the seat is asked to keep; the gates decide what it is allowed to
+drop.
+
 
 <!-- CARD-0254 preserved source begins -->
 
