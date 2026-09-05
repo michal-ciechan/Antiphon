@@ -91,7 +91,7 @@ describe('TaskDrawer', () => {
     )
 
     const user = userEvent.setup()
-    renderWithProviders(<TaskDrawer taskId={TASK_ID} opened onClose={() => {}} />)
+    renderWithProviders(<TaskDrawer taskId={TASK_ID} onClose={() => {}} />)
 
     expect(await screen.findByTestId('task-distilled')).toHaveTextContent('CARD-0330')
     await user.click(screen.getByTestId('distill-lost'))
