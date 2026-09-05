@@ -1,5 +1,3 @@
-using System.Text.RegularExpressions;
-
 namespace Antiphon.Agents.Pty;
 
 /// <summary>
@@ -17,6 +15,26 @@ public enum ClaudeBlockingPromptKind
 
     /// <summary>Any other numbered-choice modal waiting on a keypress.</summary>
     Choice = 3,
+}
+
+/// <summary>
+/// How the trust dialog is laid out. Numbered menus take the digit; the 2.1.258 unnumbered
+/// confirm component is a highlighted list whose default is No, so Enter must not be sent blind.
+/// </summary>
+public enum ClaudeTrustDialogLayout
+{
+    None = 0,
+    NumberedMenu = 1,
+    HighlightedList = 2,
+    Unknown = 3,
+}
+
+/// <summary>Which trust-dialog option currently carries the <c>&gt;</c>/<c>❯</c> marker.</summary>
+public enum ClaudeTrustDialogHighlight
+{
+    Unknown = 0,
+    Yes = 1,
+    No = 2,
 }
 
 /// <summary>
@@ -38,14 +56,23 @@ public enum ClaudeStartupBlockOutcome
     /// other numbered choice). Reported, never keyed into.
     /// </summary>
     NotAnswerable = 3,
+
+    /// <summary>
+    /// A trust dialog was recognised but its layout is not one we know how to answer. Nothing was typed.
+    /// </summary>
+    TrustUnanswerable = 4,
 }
 
 /// <summary>The outcome plus the modal it was about, for logging and incidents.</summary>
 public readonly record struct ClaudeStartupBlockResolution(
     ClaudeStartupBlockOutcome Outcome,
-    ClaudeBlockingPrompt? Prompt)
+    ClaudeBlockingPrompt? Prompt,
+    string? Detail = null)
 {
-    /// <summary>True when a keystroke was actually sent — i.e. the launch changed the TUI's state.</summary>
+    /// <summary>
+    /// True when a keystroke was actually sent — i.e. the launch changed the TUI's state.
+    /// <see cref="ClaudeStartupBlockOutcome.TrustUnanswerable"/> is not answered.
+    /// </summary>
     public bool Answered => Outcome is ClaudeStartupBlockOutcome.TrustCleared
         or ClaudeStartupBlockOutcome.TrustNotCleared;
 }
@@ -56,14 +83,39 @@ public readonly record struct ClaudeStartupBlockResolution(
 /// <param name="Kind">What is being asked.</param>
 /// <param name="Title">The most descriptive line found on screen — for logs and incidents.</param>
 /// <param name="AffirmativeKey">
-/// The keystroke that accepts. Numbered menus want the DIGIT, not Enter: Enter accepts whatever is
-/// currently highlighted, and after a stray arrow key that may not be option 1. Sending the digit is
-/// unambiguous, and Claude's menus act on it immediately.
+/// The keystroke that accepts for layouts that take a single key: the digit for a numbered menu,
+/// Enter for a highlighted list <em>after</em> the highlight is on Yes. Callers must not send this
+/// blindly for <see cref="ClaudeTrustDialogLayout.HighlightedList"/> — use
+/// <see cref="ClaudeBlockingPromptDetector.TryAnswerAsync(PtyAgentRunner, ClaudeBlockingPrompt, TimeSpan?, CancellationToken)"/>.
 /// </param>
+/// <param name="Layout">Trust-dialog shape; <see cref="ClaudeTrustDialogLayout.None"/> for other modals.</param>
 public sealed record ClaudeBlockingPrompt(
     ClaudeBlockingPromptKind Kind,
     string Title,
-    string AffirmativeKey);
+    string AffirmativeKey,
+    ClaudeTrustDialogLayout Layout = ClaudeTrustDialogLayout.None);
+
+/// <summary>Keystrokes the 2.1.258 Select component binds, in the order the answerer tries them.</summary>
+public static class ClaudeTrustDialogKeys
+{
+    public const string Enter = "\r";
+    public const string LegacyDigit = "1";
+
+    /// <summary>Order matters: printable first, escape sequence second, control byte last.</summary>
+    public static readonly string[] HighlightNextCandidates = ["j", "\x1b[B", "\x0e"];
+
+    public static readonly TimeSpan HighlightSettle = TimeSpan.FromMilliseconds(1500);
+
+    public static string Name(string key) => key switch
+    {
+        "j" => "j",
+        "\x1b[B" => "Down",
+        "\x0e" => "Ctrl+N",
+        Enter => "Enter",
+        LegacyDigit => "1",
+        _ => "key",
+    };
+}
 
 /// <summary>
 /// Detects when the Claude TUI is BLOCKED on a modal question rather than working.
@@ -94,19 +146,24 @@ public static partial class ClaudeBlockingPromptDetector
         var compact = Compact(screen);
 
         // A numbered menu awaiting a keypress is the shared shape of every blocking modal. Requiring
-        // it keeps ordinary prose containing the word "trust" from reading as a dialog.
+        // it keeps ordinary prose containing the word "trust" from reading as a dialog. The 2.1.258
+        // unnumbered confirm still paints "Enter to confirm · Esc to cancel".
         var hasChoices = compact.Contains("1yes") || compact.Contains("2no")
             || compact.Contains("entertoconfirm") || compact.Contains("esctocancel");
         if (!hasChoices)
             return null;
 
-        if (compact.Contains("doyoutrustthisfolder")
-            || compact.Contains("isthisaprojectyoucreated")
-            || compact.Contains("yesitrustthisfolder")
-            || (compact.Contains("accessingworkspace") && compact.Contains("quicksafetycheck")))
+        if (HasTrustText(compact))
         {
+            var layout = ClassifyTrustLayout(screen, compact);
+            var key = layout switch
+            {
+                ClaudeTrustDialogLayout.HighlightedList => ClaudeTrustDialogKeys.Enter,
+                ClaudeTrustDialogLayout.NumberedMenu => ClaudeTrustDialogKeys.LegacyDigit,
+                _ => "",
+            };
             return new ClaudeBlockingPrompt(
-                ClaudeBlockingPromptKind.TrustFolder, FindTitle(screen, "trust"), "1");
+                ClaudeBlockingPromptKind.TrustFolder, FindTitle(screen, "trust"), key, layout);
         }
 
         if (compact.Contains("doyouwanttoproceed")
@@ -123,6 +180,36 @@ public static partial class ClaudeBlockingPromptDetector
 
     /// <summary>True when the screen shows a modal the TUI is waiting on.</summary>
     public static bool IsBlocked(string screen) => Detect(screen) is not null;
+
+    /// <summary>
+    /// Which option carries the highlight marker. Reads the RENDERED screen line by line: the first
+    /// line whose first non-blank character is <c>&gt;</c> or <c>❯</c> names the highlighted option.
+    /// </summary>
+    public static ClaudeTrustDialogHighlight ReadHighlight(string screen)
+    {
+        if (string.IsNullOrEmpty(screen))
+            return ClaudeTrustDialogHighlight.Unknown;
+
+        foreach (var raw in screen.ReplaceLineEndings("\n").Split('\n'))
+        {
+            var i = 0;
+            while (i < raw.Length && char.IsWhiteSpace(raw[i]))
+                i++;
+            if (i >= raw.Length)
+                continue;
+            if (raw[i] is not ('>' or '❯'))
+                continue;
+
+            var compact = Compact(raw);
+            if (compact.Contains("yesitrustthisfolder"))
+                return ClaudeTrustDialogHighlight.Yes;
+            if (compact.Contains("noexit") || compact.Contains("nocontinuewithout"))
+                return ClaudeTrustDialogHighlight.No;
+            return ClaudeTrustDialogHighlight.Unknown;
+        }
+
+        return ClaudeTrustDialogHighlight.Unknown;
+    }
 
     /// <summary>
     /// Poll until a blocking prompt appears, or the timeout elapses. Default timeout is short on
@@ -147,9 +234,10 @@ public static partial class ClaudeBlockingPromptDetector
     /// <summary>
     /// Answer a blocking prompt and confirm the screen actually cleared.
     ///
-    /// Sends the affirmative DIGIT rather than Enter (see <see cref="ClaudeBlockingPrompt"/>), then
-    /// verifies. Returns false if the modal is still up, so a caller can escalate instead of
-    /// carrying on into a session that is silently swallowing input.
+    /// For a numbered trust menu this sends the digit. For the 2.1.258 highlighted list it moves
+    /// the highlight onto Yes and only then sends Enter — never Enter while No is highlighted.
+    /// Returns false if the modal is still up, so a caller can escalate instead of carrying on
+    /// into a session that is silently swallowing input.
     /// </summary>
     public static Task<bool> TryAnswerAsync(
         PtyAgentRunner runner,
@@ -177,9 +265,41 @@ public static partial class ClaudeBlockingPromptDetector
         TimeSpan? settleTimeout = null,
         CancellationToken ct = default)
     {
+        var (cleared, _) = await TryAnswerDetailedAsync(snapshotScreen, write, prompt, settleTimeout, ct);
+        return cleared;
+    }
+
+    /// <inheritdoc cref="TryAnswerDetailedAsync(Func{CancellationToken, Task{string}}, Func{string, CancellationToken, Task}, ClaudeBlockingPrompt, TimeSpan?, CancellationToken)"/>
+    public static Task<(bool Cleared, string Detail)> TryAnswerDetailedAsync(
+        PtyAgentRunner runner,
+        ClaudeBlockingPrompt prompt,
+        TimeSpan? settleTimeout = null,
+        CancellationToken ct = default)
+        => TryAnswerDetailedAsync(
+            _ => Task.FromResult(runner.SnapshotScreen()),
+            (input, token) => runner.WriteAsync(input, token),
+            prompt,
+            settleTimeout,
+            ct);
+
+    /// <summary>
+    /// Same as <see cref="TryAnswerAsync(Func{CancellationToken, Task{string}}, Func{string, CancellationToken, Task}, ClaudeBlockingPrompt, TimeSpan?, CancellationToken)"/>
+    /// but returns the rung / withhold reason so a canary or adapter can log what was typed.
+    /// </summary>
+    public static async Task<(bool Cleared, string Detail)> TryAnswerDetailedAsync(
+        Func<CancellationToken, Task<string>> snapshotScreen,
+        Func<string, CancellationToken, Task> write,
+        ClaudeBlockingPrompt prompt,
+        TimeSpan? settleTimeout = null,
+        CancellationToken ct = default)
+    {
+        if (prompt.Kind == ClaudeBlockingPromptKind.TrustFolder)
+            return await AnswerTrustAsync(snapshotScreen, write, prompt, settleTimeout, ct);
+
         await write(prompt.AffirmativeKey, ct);
-        return await PollScreenAsync(
+        var cleared = await PollScreenAsync(
             snapshotScreen, screen => !IsBlocked(screen), settleTimeout ?? TimeSpan.FromSeconds(10), ct);
+        return (cleared, cleared ? "dialog cleared" : "still on screen");
     }
 
     /// <summary>
@@ -216,10 +336,115 @@ public static partial class ClaudeBlockingPromptDetector
         if (prompt.Kind != ClaudeBlockingPromptKind.TrustFolder)
             return new ClaudeStartupBlockResolution(ClaudeStartupBlockOutcome.NotAnswerable, prompt);
 
-        var cleared = await TryAnswerAsync(snapshotScreen, write, prompt, settleTimeout, ct);
+        if (prompt.Layout is ClaudeTrustDialogLayout.Unknown or ClaudeTrustDialogLayout.None)
+        {
+            return new ClaudeStartupBlockResolution(
+                ClaudeStartupBlockOutcome.TrustUnanswerable,
+                prompt,
+                "unrecognised trust-dialog layout; nothing typed");
+        }
+
+        var (cleared, detail) = await TryAnswerDetailedAsync(snapshotScreen, write, prompt, settleTimeout, ct);
         return new ClaudeStartupBlockResolution(
             cleared ? ClaudeStartupBlockOutcome.TrustCleared : ClaudeStartupBlockOutcome.TrustNotCleared,
-            prompt);
+            prompt,
+            detail);
+    }
+
+    private static async Task<(bool Cleared, string Detail)> AnswerTrustAsync(
+        Func<CancellationToken, Task<string>> snapshotScreen,
+        Func<string, CancellationToken, Task> write,
+        ClaudeBlockingPrompt prompt,
+        TimeSpan? settleTimeout,
+        CancellationToken ct)
+    {
+        var settle = settleTimeout ?? TimeSpan.FromSeconds(10);
+
+        switch (prompt.Layout)
+        {
+            case ClaudeTrustDialogLayout.NumberedMenu:
+                await write(ClaudeTrustDialogKeys.LegacyDigit, ct);
+                var numberedCleared = await PollScreenAsync(
+                    snapshotScreen, screen => !IsBlocked(screen), settle, ct);
+                return (numberedCleared, numberedCleared
+                    ? "sent 1; dialog cleared"
+                    : $"sent 1; still on screen after {settle.TotalSeconds:0.#}s: {prompt.Title}");
+
+            case ClaudeTrustDialogLayout.HighlightedList:
+                return await AnswerHighlightedListAsync(snapshotScreen, write, prompt, settle, ct);
+
+            default:
+                return (false, "unrecognised trust-dialog layout; nothing typed");
+        }
+    }
+
+    private static async Task<(bool Cleared, string Detail)> AnswerHighlightedListAsync(
+        Func<CancellationToken, Task<string>> snapshotScreen,
+        Func<string, CancellationToken, Task> write,
+        ClaudeBlockingPrompt prompt,
+        TimeSpan settle,
+        CancellationToken ct)
+    {
+        var screen = await snapshotScreen(ct);
+        string? rung = null;
+
+        if (ReadHighlight(screen) != ClaudeTrustDialogHighlight.Yes)
+        {
+            foreach (var key in ClaudeTrustDialogKeys.HighlightNextCandidates)
+            {
+                await write(key, ct);
+                rung = ClaudeTrustDialogKeys.Name(key);
+                if (await PollScreenAsync(
+                        snapshotScreen,
+                        s => ReadHighlight(s) == ClaudeTrustDialogHighlight.Yes,
+                        ClaudeTrustDialogKeys.HighlightSettle,
+                        ct))
+                {
+                    break;
+                }
+            }
+
+            screen = await snapshotScreen(ct);
+            if (ReadHighlight(screen) != ClaudeTrustDialogHighlight.Yes)
+            {
+                return (false,
+                    "highlight never reached 'Yes, I trust this folder' after j/Down/Ctrl+N; "
+                    + "Enter withheld; screen title: " + prompt.Title);
+            }
+        }
+
+        await write(ClaudeTrustDialogKeys.Enter, ct);
+        var cleared = await PollScreenAsync(
+            snapshotScreen, s => !IsBlocked(s), settle, ct);
+        var rungText = rung is null ? "highlight already on Yes" : "sent " + rung;
+        if (cleared)
+            return (true, rungText + ", highlight on Yes, sent Enter; dialog cleared");
+
+        var still = Detect(await snapshotScreen(ct));
+        var title = still?.Title ?? prompt.Title;
+        return (false, rungText + $", highlight on Yes, sent Enter; still on screen after {settle.TotalSeconds:0.#}s: {title}");
+    }
+
+    private static bool HasTrustText(string compact) =>
+        compact.Contains("doyoutrustthisfolder")
+        || compact.Contains("isthisaprojectyoucreated")
+        || compact.Contains("yesitrustthisfolder")
+        || (compact.Contains("accessingworkspace") && compact.Contains("quicksafetycheck"));
+
+    private static ClaudeTrustDialogLayout ClassifyTrustLayout(string screen, string compact)
+    {
+        if (compact.Contains("1yesitrustthisfolder")
+            || (compact.Contains("1yes") && HasTrustText(compact)))
+            return ClaudeTrustDialogLayout.NumberedMenu;
+
+        var hasYesLabel = compact.Contains("yesitrustthisfolder");
+        var hasNoLabel = compact.Contains("noexit") || compact.Contains("nocontinuewithout");
+        if (hasYesLabel && hasNoLabel
+            && (ReadHighlight(screen) != ClaudeTrustDialogHighlight.Unknown
+                || compact.Contains("entertoconfirm")))
+            return ClaudeTrustDialogLayout.HighlightedList;
+
+        return ClaudeTrustDialogLayout.Unknown;
     }
 
     private static async Task<bool> PollScreenAsync(
@@ -257,7 +482,7 @@ public static partial class ClaudeBlockingPromptDetector
         var lines = screen.ReplaceLineEndings("\n").Split('\n');
         foreach (var raw in lines)
         {
-            var line = raw.Trim(' ', '│', '─', '╭', '╮', '╰', '╯', '❯');
+            var line = raw.Trim(' ', '│', '─', '╭', '╮', '╰', '╯', '❯', '>');
             if (line.Length < 8)
                 continue;
             if (line.Contains(hint, StringComparison.OrdinalIgnoreCase) || line.Contains('?'))
