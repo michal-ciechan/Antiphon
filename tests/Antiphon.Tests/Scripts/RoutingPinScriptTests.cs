@@ -193,7 +193,7 @@ public sealed class RoutingPinScriptTests
     [Test]
     public void Delegate_and_routing_pin_scripts_are_ascii_only()
     {
-        foreach (var name in new[] { "delegate.ps1", "routing-pin.ps1" })
+        foreach (var name in new[] { "delegate.ps1", "routing-pin.ps1", "capability.ps1" })
         {
             var path = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", name);
             File.Exists(path).ShouldBeTrue(path);

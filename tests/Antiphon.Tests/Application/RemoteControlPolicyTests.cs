@@ -38,6 +38,16 @@ public class RemoteControlPolicyTests
     }
 
     [Test]
+    public void Require_Codex_true_throws_remote_control_refused()
+    {
+        var ex = Should.Throw<ConflictException>(() =>
+            RemoteControlPolicy.Require(AgentKind.Codex, wanted: true, "agent 'X'"));
+        ex.Code.ShouldBe("remote_control_refused");
+        ex.Message.ShouldContain("Codex");
+        ex.Message.ShouldContain("remoteControlEnabled: false");
+    }
+
+    [Test]
     public void Permits_unknown_kind_is_false_not_an_exception()
     {
         RemoteControlPolicy.Permits((AgentKind)99).ShouldBeFalse();
