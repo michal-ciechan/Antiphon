@@ -1016,7 +1016,7 @@ public sealed class AgentTaskReplyService
         // CARD-0090 S5: a chain-chosen task re-walks on a Wall (both subclasses). The hold is
         // already written. Kill goes through StopDelegateAsync via RequeueAsync, never a raw
         // session kill. Required pins and a session-limit with no alternative fall through.
-        if (task.Complexity is not null
+        if (ComplexityRoutingService.IsListGoverned(task)
             && classification == ApiErrorClassification.Wall
             && services.GetService<AgentTaskService>() is { } tasks)
         {

@@ -1429,8 +1429,7 @@ public sealed class AgentTaskService
         }
 
         if (task.Status == AgentTaskStatus.Blocked
-            && (task.Complexity is null
-                || task.FailureReason is null
+            && (task.FailureReason is null
                 || !task.FailureReason.StartsWith(ComplexityRoutingService.RoutingExhaustedPrefix, StringComparison.Ordinal)))
         {
             throw new ConflictException(
@@ -1460,6 +1459,7 @@ public sealed class AgentTaskService
         task.AgentKind = agentKind;
         task.ModelLevel = modelLevel;
         task.Complexity = null;
+        task.RoutingPinId = null;
         var detail = $"rerouted to {alias} (explicit; chain governance ended)";
 
         if (task.Status == AgentTaskStatus.Queued)
@@ -1507,7 +1507,7 @@ public sealed class AgentTaskService
         bool sessionLimitHasScheduledResume,
         CancellationToken ct)
     {
-        if (task.Complexity is null || _complexityRouting is null)
+        if (!ComplexityRoutingService.IsListGoverned(task) || _complexityRouting is null)
             return new WallRerouteDecision(WallRerouteKind.NotApplicable);
 
         var walk = await WalkTaskChainAsync(task, ct);
@@ -1665,7 +1665,7 @@ public sealed class AgentTaskService
         var snippet = Clamp(errorText, 160);
         var detail =
             $"{walledAlias} hit a usage wall ({snippet}); rerouted to {chosen.Alias} "
-            + $"({walk.CellLabel} chain {index}/{walk.Outcomes.Count}). "
+            + $"({ComplexityRoutingService.ListEventLabel(walk)} {index}/{walk.Outcomes.Count}). "
             + $"The prior attempt left NO report — check {checkout} for uncommitted work before redoing anything.";
 
         if (sessionId is Guid sid)
@@ -1716,10 +1716,20 @@ public sealed class AgentTaskService
         }
 
         var now = UtcNow();
+        RoutingPinService.Decision? pin = null;
+        if (_routingPins is not null)
+        {
+            pin = await _routingPins.ResolveAsync(
+                task.CardId,
+                task.Role,
+                new RoutingPinService.Ask(null, null, task.AgentId, IgnoreRoutingPin: false),
+                ct);
+        }
+
         var reason = cascadeExhausted
             ? ComplexityRoutingService.CascadeExhaustedSentence(
-                walk.CellLabel, reroutedCount, walk.Outcomes.Count)
-            : walk.ExhaustedSentence() + " A human must choose; do not pick a kind yourself.";
+                ComplexityRoutingService.ListEventLabel(walk), reroutedCount, walk.Outcomes.Count)
+            : walk.ExhaustedSentence(pin) + " A human must choose; do not pick a kind yourself.";
         task.Status = AgentTaskStatus.Blocked;
         task.FailureReason = reason;
         task.AgentSessionId = null;
@@ -1737,7 +1747,7 @@ public sealed class AgentTaskService
 
     private async Task<ComplexityRoutingService.Walk?> WalkTaskChainAsync(AgentTask task, CancellationToken ct)
     {
-        if (_complexityRouting is null || task.Complexity is not { } complexity)
+        if (_complexityRouting is null || !ComplexityRoutingService.IsListGoverned(task))
             return null;
 
         var pin = RoutingPinService.Decision.None;
@@ -1754,8 +1764,24 @@ public sealed class AgentTaskService
         if (task.AgentId is Guid agentId)
             owner = await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == agentId, ct);
 
-        return await _complexityRouting.WalkAsync(
-            complexity, task.Kind, task.Role, pin, task.CardId, owner, ignoreSubscriptionQuota: false, ct);
+        if (task.Complexity is { } complexity)
+        {
+            return await _complexityRouting.WalkAsync(
+                complexity, task.Kind, task.Role, pin, task.CardId, owner, ignoreSubscriptionQuota: false, ct);
+        }
+
+        if (!pin.Applied)
+            return null;
+
+        var composed = RoutingCandidates.Compose(
+            pin,
+            chain: null,
+            chainLabel: null,
+            requestKind: null,
+            requestLevel: null,
+            (k, l) => _complexityRouting.ResolveAgainstRolePolicy(task.Kind, task.Role, k, l));
+        return await _complexityRouting.WalkComposedListAsync(
+            composed, task.Kind, task.Role, pin, owner, ignoreSubscriptionQuota: false, ct);
     }
 
     private static bool PinForbidsReroute(ComplexityRoutingService.Walk walk) =>

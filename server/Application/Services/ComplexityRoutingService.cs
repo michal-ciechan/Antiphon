@@ -28,6 +28,26 @@ public sealed class ComplexityRoutingService
     public static bool CascadeTriedEveryCandidate(int reroutedCount, int candidateCount) =>
         candidateCount > 0 && reroutedCount >= candidateCount;
 
+    public static bool IsListGoverned(AgentTask task) =>
+        task.Complexity is not null || task.RoutingPinId is not null;
+
+    /// <summary>
+    /// Human-facing list name for Rerouted/Blocked events:
+    /// <c>CARD-0301 Plan pin</c>, <c>Plan stage pin</c>, <c>Plan/Hard chain</c>.
+    /// </summary>
+    public static string ListEventLabel(Walk walk)
+    {
+        const string pinStage = "pin:stage ";
+        const string pinPrefix = "pin:";
+        if (walk.Source.StartsWith(pinStage, StringComparison.Ordinal))
+            return $"{walk.Source[pinStage.Length..]} stage pin";
+        if (walk.Source.StartsWith(pinPrefix, StringComparison.Ordinal))
+            return $"{walk.Source[pinPrefix.Length..]} pin";
+        if (walk.Source.StartsWith("pin+chain:", StringComparison.Ordinal))
+            return walk.Source;
+        return $"{walk.CellLabel} chain";
+    }
+
     public static string CascadeExhaustedSentence(string cellLabel, int reroutedCount, int candidateCount) =>
         RoutingExhaustedPrefix
         + $"{cellLabel} chain already rerouted {reroutedCount}/{candidateCount} times; "
