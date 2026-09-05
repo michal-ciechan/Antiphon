@@ -293,6 +293,29 @@ public class CardCliE2ETests
     }
 
     [Test]
+    public async Task The_cli_reorders_a_card_to_the_top_and_get_prints_pos()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var projectId = await CreateProjectAsync($"Card CLI Reorder Project {suffix}");
+        var boardName = $"Card CLI Reorder Board {suffix}";
+        await CreateBoardAsync(projectId, boardName);
+        RunCard("new", "-Board", boardName, "-Title", "First filed").ExitCode.ShouldBe(0);
+        RunCard("new", "-Board", boardName, "-Title", "Second filed").ExitCode.ShouldBe(0);
+
+        var reordered = RunCard("reorder", "CARD-0002", "-Top", "-Reason", "Pull to the front.", "-By", "cli-e2e");
+        reordered.ExitCode.ShouldBe(0, reordered.All);
+        reordered.Stdout.ShouldContain("pos 1");
+
+        var read = RunCard("get", "CARD-0002");
+        read.ExitCode.ShouldBe(0, read.All);
+        read.Stdout.ShouldContain("pos         1");
+
+        var json = RunCard("get", "CARD-0002", "-Json");
+        json.ExitCode.ShouldBe(0, json.All);
+        JsonDocument.Parse(json.Stdout).RootElement.GetProperty("position").GetInt32().ShouldBe(1);
+    }
+
+    [Test]
     public async Task An_unknown_card_and_an_unknown_column_both_fail_with_the_servers_own_words()
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];

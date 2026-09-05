@@ -92,6 +92,15 @@ reject unknown JSON members, so a stale `priority` write is **400**, not a silen
 (the tri-state for the date; null `dueAt` means unchanged). `GET /api/cards/limits` includes
 `importanceValues` and `urgencyValues` from `Enum.GetNames`.
 
+**Position (CARD-0098).** `CardDto.position` is a nullable dense `1..n` inside the card's
+(column, rank cell). Null means never placed and sorts after every placed card in that cell.
+`PATCH /api/cards/{id}/position` is relative placement: exactly one of `before` / `after` (a card
+ref on the same board) or `placement: "Top" | "Bottom"` of the current cell, or both `before` and
+`after` when they are adjacent. Optional `importance` / `urgency` overrides are for undo and
+scripts. Neighbours' concurrency tokens are not rotated. **409 `card_order_stale`** when named
+neighbours are no longer adjacent; **422 `card_position_unreachable`** when the moved card's
+`dueAt` escalates it out of the target cell. A column or axis change clears `position`.
+
 **Importance provenance (CARD-0327).** `CardDto.importanceProvenance` (`Auto | Human`) says who
 last set `importance`. Setting `importance` on the content PATCH always flips it to `Human`; a
 title-only edit (no `importance` in the body) leaves it unchanged. The optional
@@ -138,6 +147,7 @@ GET    /api/cards/{id}                       one card  (?boardId=&cwd=)
 GET    /api/cards/{id}/thread                card + its plans, tasks and commits (read-only projection)  (?boardId=&cwd=)
 PATCH  /api/cards/{id}                       move (column + concurrencyToken + reason, optional spawn)  (?boardId=&cwd=)
 PATCH  /api/cards/{id}/content               title/description edit — revision-logged  (?boardId=&cwd=)
+PATCH  /api/cards/{id}/position              relative placement (before/after/top/bottom); 409 card_order_stale, 422 card_position_unreachable  (?boardId=&cwd=)
 GET    /api/cards/{id}/revisions             every content write, with actor and reason  (?boardId=&cwd=)
 POST   /api/cards/{id}/spawn                 start an agent on this card (409 `remote_control_refused` when `remoteControlName` is set on a kind whose catalog row is not Supported)  (?boardId=&cwd=)
 POST   /api/cards/{id}/archive | /unarchive | /reopen  (?boardId=&cwd=)

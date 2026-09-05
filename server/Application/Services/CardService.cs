@@ -1,3 +1,4 @@
+using System.Data;
 using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -523,6 +524,146 @@ public sealed class CardService : IScheduledCardActions
 
         await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
         return await GetByIdAsync(card.Id, ct);
+    }
+
+    public const string CardOrderStaleCode = "card_order_stale";
+    public const string CardPositionUnreachableCode = "card_position_unreachable";
+
+    /// <summary>
+    /// Places a card relative to a neighbour or at the top/bottom of its current rank cell
+    /// (CARD-0098). Dense-renumbers that cell; does not rotate neighbours' concurrency tokens.
+    /// </summary>
+    public async Task<CardDto> PlaceAsync(Guid id, PlaceCardRequest request, CancellationToken ct)
+    {
+        ValidatePlaceRequest(request);
+
+        var card = await LoadCardForUpdateAsync(id, ct);
+        if (request.ConcurrencyToken == Guid.Empty)
+            throw new ValidationException(nameof(request.ConcurrencyToken), "Card concurrency token is required.");
+        if (request.ConcurrencyToken != card.ConcurrencyToken)
+            throw new ConflictException($"Card '{card.Identifier}' was modified by another operation.");
+        if (card.ArchivedAt is not null)
+            throw new ConflictException($"Card '{card.Identifier}' is archived; unarchive it before reordering it.");
+
+        var now = UtcNow();
+        await using var transaction = await _db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
+
+        var columnCards = await _db.Cards
+            .Where(c => c.BoardColumnId == card.BoardColumnId && c.ArchivedAt == null)
+            .ToListAsync(ct);
+
+        var ordered = columnCards
+            .OrderBy(c => CardRanking.OrderKey(c, now))
+            .Where(c => c.Id != card.Id)
+            .ToList();
+
+        var beforeCard = await ResolvePlacementNeighbourAsync(
+            request.Before, nameof(request.Before), card, columnCards, ct);
+        var afterCard = await ResolvePlacementNeighbourAsync(
+            request.After, nameof(request.After), card, columnCards, ct);
+
+        if (beforeCard is not null && !ordered.Exists(c => c.Id == beforeCard.Id))
+            throw new ConflictException(
+                "The named neighbour is no longer next to this card in the column; refetch and retry.",
+                CardOrderStaleCode);
+        if (afterCard is not null && !ordered.Exists(c => c.Id == afterCard.Id))
+            throw new ConflictException(
+                "The named neighbour is no longer next to this card in the column; refetch and retry.",
+                CardOrderStaleCode);
+
+        if (beforeCard is not null && afterCard is not null)
+        {
+            var afterIndex = ordered.FindIndex(c => c.Id == afterCard.Id);
+            var beforeIndex = ordered.FindIndex(c => c.Id == beforeCard.Id);
+            if (afterIndex < 0 || beforeIndex != afterIndex + 1)
+            {
+                throw new ConflictException(
+                    "The named neighbours are no longer adjacent; refetch and retry.",
+                    CardOrderStaleCode);
+            }
+        }
+
+        var ownRank = CardRanking.Rank(card, now);
+        var afterMatches = afterCard is not null && CardRanking.Rank(afterCard, now) == ownRank;
+        var beforeMatches = beforeCard is not null && CardRanking.Rank(beforeCard, now) == ownRank;
+        var keepAxes = request.Placement is not null || afterMatches || beforeMatches;
+        if (request.Importance is not null || request.Urgency is not null)
+            keepAxes = false;
+
+        // Matching neighbour wins so an own-cell edge drag keeps the cell; otherwise the card
+        // below (the `before` neighbour) so a drop on a boundary from elsewhere never inflates
+        // importance. A sole `after` that does not match is not adopted.
+        Card cellSource = keepAxes
+            ? card
+            : beforeCard ?? card;
+
+        var targetImportance = request.Importance ?? cellSource.Importance;
+        var targetUrgency = request.Urgency
+            ?? (ReferenceEquals(cellSource, card)
+                ? card.Urgency
+                : CardRanking.EffectiveUrgency(cellSource, now));
+        var targetEffective = CardRanking.EffectiveUrgency(targetUrgency, card.DueAt, now);
+        var targetCellEffective = CardRanking.EffectiveUrgency(targetUrgency, cellSource.DueAt, now);
+        if (request.Urgency is { } overriddenUrgency)
+            targetCellEffective = CardRanking.EffectiveUrgency(overriddenUrgency, null, now);
+        else if (!keepAxes)
+            targetCellEffective = CardRanking.EffectiveUrgency(cellSource, now);
+
+        if (targetEffective > targetCellEffective)
+        {
+            throw new ValidationException(
+                nameof(request.Before),
+                UnreachablePlacementMessage(card, beforeCard ?? afterCard, now),
+                CardPositionUnreachableCode);
+        }
+
+        var axesChanged = card.Importance != targetImportance || card.Urgency != targetUrgency;
+        var fact = PlacementFact(request.Placement, beforeCard, afterCard);
+        var reason = string.IsNullOrWhiteSpace(request.Reason)
+            ? fact
+            : $"{request.Reason.Trim()} ({fact})";
+
+        CardRevisionLog.AppendReorder(card, reason, request.EditedBy, now, axesChanged);
+        if (axesChanged)
+            ApplyPlacementAxes(card, targetImportance, targetUrgency, now);
+
+        var destinationRank = CardRanking.Rank(card, now);
+        var cell = ordered.Where(c => CardRanking.Rank(c, now) == destinationRank).ToList();
+        var insertAt = request.Placement switch
+        {
+            CardPlacement.Top => 0,
+            CardPlacement.Bottom => cell.Count,
+            _ => IndexInCell(cell, beforeCard, afterCard)
+        };
+        cell.Insert(insertAt, card);
+        RenumberCell(cell, now);
+
+        card.UpdatedAt = now;
+        card.ConcurrencyToken = Guid.NewGuid();
+
+        await SaveCardWriteAsync(card, ct);
+        await transaction.CommitAsync(ct);
+
+        await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
+        return await GetByIdAsync(card.Id, ct);
+    }
+
+    /// <summary>
+    /// Dense 1..n inside one rank cell. Does not rotate concurrency tokens — a 44-row renumber
+    /// must not 409 an operator mid-edit on an unrelated card.
+    /// </summary>
+    internal static void RenumberCell(IReadOnlyList<Card> cellInOrder, DateTime now)
+    {
+        for (var index = 0; index < cellInOrder.Count; index++)
+        {
+            var item = cellInOrder[index];
+            var position = index + 1;
+            if (item.Position == position)
+                continue;
+
+            item.Position = position;
+            item.UpdatedAt = now;
+        }
     }
 
     /// <summary>
@@ -1361,6 +1502,152 @@ public sealed class CardService : IScheduledCardActions
         RequireWithinLimit(errors, nameof(request.Reason), request.Reason?.Trim(), MaxReasonLength);
         if (errors.Count > 0)
             throw new ValidationException(errors);
+    }
+
+    private static void ValidatePlaceRequest(PlaceCardRequest request)
+    {
+        var errors = new Dictionary<string, string[]>();
+        var hasBefore = !string.IsNullOrWhiteSpace(request.Before);
+        var hasAfter = !string.IsNullOrWhiteSpace(request.After);
+        var hasPlacement = request.Placement is not null;
+        if (hasPlacement)
+        {
+            if (hasBefore || hasAfter)
+            {
+                errors[nameof(request.Placement)] =
+                    ["Placement cannot be combined with Before or After."];
+            }
+        }
+        else if (!hasBefore && !hasAfter)
+        {
+            errors[nameof(request.Placement)] =
+                ["Exactly one of Before, After, or Placement is required (Before and After may be sent together)."];
+        }
+
+        RequireWithinLimit(errors, nameof(request.Reason), request.Reason?.Trim(), MaxReasonLength);
+        RequireWithinLimit(errors, nameof(request.EditedBy), request.EditedBy?.Trim(), MaxActorLength);
+        if (errors.Count > 0)
+            throw new ValidationException(errors);
+    }
+
+    private async Task<Card?> ResolvePlacementNeighbourAsync(
+        string? raw,
+        string field,
+        Card moved,
+        List<Card> columnCards,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        Guid neighbourId;
+        try
+        {
+            neighbourId = await ResolveCardIdAsync(
+                raw,
+                new CardScopeContext(moved.BoardId, null, null, null),
+                ct);
+        }
+        catch (NotFoundException ex)
+        {
+            throw new ValidationException(field, ex.Message);
+        }
+
+        if (neighbourId == moved.Id)
+        {
+            throw new ValidationException(
+                field,
+                $"Card '{moved.Identifier}' cannot be placed relative to itself.");
+        }
+
+        var inColumn = columnCards.Find(c => c.Id == neighbourId);
+        var neighbour = inColumn
+            ?? await _db.Cards.AsNoTracking().FirstOrDefaultAsync(c => c.Id == neighbourId, ct);
+        if (neighbour is null)
+            throw new ValidationException(field, $"No card matches '{raw.Trim()}'.");
+        if (neighbour.BoardId != moved.BoardId)
+        {
+            throw new ValidationException(
+                field,
+                $"'{raw.Trim()}' is not on the same board as {moved.Identifier}.");
+        }
+
+        if (neighbour.ArchivedAt is not null)
+        {
+            throw new ValidationException(
+                field,
+                $"Card '{neighbour.Identifier}' is archived and cannot be a placement neighbour.");
+        }
+
+        return inColumn ?? neighbour;
+    }
+
+    private static void ApplyPlacementAxes(
+        Card card, CardImportance importance, CardUrgency urgency, DateTime now)
+    {
+        if (card.Importance != importance)
+        {
+            card.Importance = importance;
+            card.ImportanceProvenance = CardImportanceProvenance.Human;
+        }
+
+        if (card.Urgency == urgency)
+            return;
+
+        if (urgency > CardUrgency.Normal && card.Urgency == CardUrgency.Normal)
+            card.UrgentSince = now;
+        else if (urgency == CardUrgency.Normal)
+            card.UrgentSince = null;
+        card.Urgency = urgency;
+    }
+
+    private static string PlacementFact(
+        CardPlacement? placement, Card? beforeCard, Card? afterCard) =>
+        placement switch
+        {
+            CardPlacement.Top => "top of cell",
+            CardPlacement.Bottom => "bottom of cell",
+            _ when beforeCard is not null => $"placed before {beforeCard.Identifier}",
+            _ when afterCard is not null => $"placed after {afterCard.Identifier}",
+            _ => "reordered"
+        };
+
+    private static string UnreachablePlacementMessage(Card moved, Card? neighbour, DateTime now)
+    {
+        var due = moved.DueAt!.Value;
+        var days = (int)Math.Ceiling((due - now).TotalDays);
+        var duePhrase = days <= 0
+            ? "is already due"
+            : days == 1
+                ? "is due in 1 day"
+                : $"is due in {days} days";
+        if (neighbour is not null)
+        {
+            return $"{moved.Identifier} {duePhrase} and cannot sort below {neighbour.Identifier}; "
+                + "clear or move its due date first.";
+        }
+
+        return $"{moved.Identifier} {duePhrase} and cannot sort into that cell; "
+            + "clear or move its due date first.";
+    }
+
+    private static int IndexInCell(List<Card> cell, Card? beforeCard, Card? afterCard)
+    {
+        if (beforeCard is not null)
+        {
+            var beforeIndex = cell.FindIndex(c => c.Id == beforeCard.Id);
+            if (beforeIndex >= 0)
+                return beforeIndex;
+        }
+
+        if (afterCard is not null)
+        {
+            var afterIndex = cell.FindIndex(c => c.Id == afterCard.Id);
+            if (afterIndex >= 0)
+                return afterIndex + 1;
+        }
+
+        return cell.Count;
     }
 
     private static void ValidateSpawnRequest(SpawnCardRequest request)
