@@ -1,3 +1,4 @@
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Services;
@@ -115,11 +116,31 @@ public static class RoutingCandidates
     {
         if (!pin.Applied)
             return [];
-        if (pin.AgentKind is null && pin.ModelLevel is null)
-            return [];
 
-        var complete = resolve(pin.AgentKind, pin.ModelLevel) with { Origin = OriginPin };
-        return Compatible(complete, requestKind, requestLevel) ? [complete] : [];
+        IReadOnlyList<RoutingCandidate> raw = pin.PinCandidates;
+        if (raw.Count == 0)
+        {
+            if (pin.AgentKind is null && pin.ModelLevel is null)
+                return [];
+            raw = [new RoutingCandidate(pin.AgentKind, pin.ModelLevel)];
+        }
+
+        var result = new List<Candidate>(raw.Count);
+        foreach (var slot in raw)
+        {
+            if (requestKind is { } askedKind && slot.AgentKind is { } slotKind && slotKind != askedKind)
+                continue;
+            if (requestLevel is { } askedLevel && slot.ModelLevel is { } slotLevel && slotLevel != askedLevel)
+                continue;
+
+            var complete = resolve(slot.AgentKind ?? requestKind, slot.ModelLevel ?? requestLevel)
+                with { Origin = OriginPin };
+            if (!Compatible(complete, requestKind, requestLevel))
+                continue;
+            AddUnique(result, complete);
+        }
+
+        return result;
     }
 
     private static bool Compatible(Candidate candidate, AgentKind? requestKind, AgentModelLevel? requestLevel)

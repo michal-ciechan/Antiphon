@@ -119,8 +119,28 @@ public sealed class ComplexityRoutingService
             Role,
             ChainRole);
 
-        public string ExhaustedSentence()
+        public string ExhaustedSentence(RoutingPinService.Decision? pin = null)
         {
+            var bits = Outcomes.Select(o =>
+            {
+                var why = string.IsNullOrWhiteSpace(o.Reason) ? "skipped" : o.Reason;
+                return $"{o.Candidate.Alias} {why}";
+            }).ToList();
+
+            if (pin is { Applied: true, Pin: { } row }
+                && (Source.StartsWith("pin:", StringComparison.Ordinal)
+                    || Source.StartsWith("pin+chain:", StringComparison.Ordinal)))
+            {
+                var grain = row.CardId is null
+                    ? $"stage {row.Role}"
+                    : $"{pin.CardIdentifier ?? row.CardId.ToString()} {row.Role}";
+                var prov = row.Provenance == RoutingPinProvenance.Human ? "human" : "auto";
+                var strength = row.Strength.ToString().ToLowerInvariant();
+                var tail = bits.Count == 0 ? "no available candidate" : string.Join("; ", bits);
+                return RoutingExhaustedPrefix
+                    + $"{grain} pin ({prov}, {strength}) — {tail}";
+            }
+
             if (Outcomes.Count == 0)
             {
                 return RoutingExhaustedPrefix
@@ -128,11 +148,6 @@ public sealed class ComplexityRoutingService
                     + $"Set one with complexity-chain.ps1 set -Role {Role} -Complexity {Complexity}, or set -Complexity {Complexity} for every role.";
             }
 
-            var bits = Outcomes.Select(o =>
-            {
-                var why = string.IsNullOrWhiteSpace(o.Reason) ? "skipped" : o.Reason;
-                return $"{o.Candidate.Alias} {why}";
-            });
             return RoutingExhaustedPrefix
                 + $"{CellLabel} chain — {string.Join("; ", bits)}";
         }
@@ -202,6 +217,32 @@ public sealed class ComplexityRoutingService
             Role = role,
             ChainRole = loaded.ChainRole,
         };
+    }
+
+    /// <summary>
+    /// Walk an already-composed list (CARD-0322 pin-only creates). Same four filters as
+    /// <see cref="WalkAsync"/>; no chain is loaded.
+    /// </summary>
+    public async Task<Walk> WalkComposedListAsync(
+        RoutingCandidates.RoutingCandidateList composed,
+        AgentTaskKind taskKind,
+        AgentTaskRole role,
+        RoutingPinService.Decision pin,
+        Agent? subscriptionOwner,
+        bool ignoreSubscriptionQuota,
+        CancellationToken ct)
+    {
+        var ctx = new WalkContext(
+            taskKind,
+            role,
+            pin.StagePin,
+            StageForbidExempt: pin.Applied
+                && pin.Pin is { CardId: not null, Provenance: RoutingPinProvenance.Human },
+            subscriptionOwner,
+            ignoreSubscriptionQuota,
+            composed.Source);
+        var walked = await WalkCandidatesAsync(composed.Candidates, ctx, ct);
+        return walked with { Walked = composed.Walked, Role = role };
     }
 
     /// <summary>

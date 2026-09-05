@@ -161,6 +161,121 @@ public sealed class ComplexityRoutingComposeTests
     }
 
     [Test]
+    public void A_required_pin_list_is_the_whole_set_and_bypasses_the_chain()
+    {
+        var pin = Pin(RoutingPinStrength.Required, AgentKind.ClaudeCode, AgentModelLevel.Frontier, cardId: Guid.NewGuid());
+        pin.SetCandidates(
+        [
+            new RoutingCandidate(AgentKind.ClaudeCode, AgentModelLevel.Frontier),
+            new RoutingCandidate(AgentKind.ClaudeCode, AgentModelLevel.High),
+            new RoutingCandidate(AgentKind.Grok, AgentModelLevel.Frontier),
+        ]);
+        var chain = new[]
+        {
+            Pair(AgentKind.Codex, AgentModelLevel.Frontier, RoutingCandidates.OriginChain),
+        };
+
+        var list = RoutingCandidates.Compose(Decision(pin, "CARD-0301"), chain, "Hard", null, null, Resolve);
+
+        list.Candidates.Select(c => (c.Alias, c.Origin)).ShouldBe([
+            ("fable", RoutingCandidates.OriginPin),
+            ("opus", RoutingCandidates.OriginPin),
+            ("grok-4.6", RoutingCandidates.OriginPin),
+        ]);
+        list.Walked.ShouldBeTrue();
+        list.Source.ShouldBe("pin:CARD-0301 Plan");
+    }
+
+    [Test]
+    public void A_preferred_pin_list_then_the_chain_without_role_policy()
+    {
+        var pin = Pin(RoutingPinStrength.Preferred, AgentKind.Codex, AgentModelLevel.Frontier);
+        pin.SetCandidates(
+        [
+            new RoutingCandidate(AgentKind.Codex, AgentModelLevel.Frontier),
+            new RoutingCandidate(AgentKind.Grok, AgentModelLevel.Frontier),
+        ]);
+        var chain = new[]
+        {
+            Pair(AgentKind.ClaudeCode, AgentModelLevel.Frontier, RoutingCandidates.OriginChain),
+            Pair(AgentKind.ClaudeCode, AgentModelLevel.High, RoutingCandidates.OriginChain),
+        };
+
+        var list = RoutingCandidates.Compose(Decision(pin), chain, "Hard", null, null, Resolve);
+
+        list.Candidates.Select(c => (c.Alias, c.Origin)).ShouldBe([
+            ("gpt-5.6-sol", RoutingCandidates.OriginPin),
+            ("grok-4.6", RoutingCandidates.OriginPin),
+            ("fable", RoutingCandidates.OriginChain),
+            ("opus", RoutingCandidates.OriginChain),
+        ]);
+        list.Walked.ShouldBeTrue();
+        list.Source.ShouldStartWith("pin+chain:");
+    }
+
+    [Test]
+    public void A_preferred_pin_list_without_a_chain_appends_role_policy_once()
+    {
+        var pin = Pin(RoutingPinStrength.Preferred, AgentKind.Codex, AgentModelLevel.Frontier);
+        pin.SetCandidates(
+        [
+            new RoutingCandidate(AgentKind.Codex, AgentModelLevel.Frontier),
+            new RoutingCandidate(AgentKind.Grok, AgentModelLevel.Frontier),
+        ]);
+
+        var list = RoutingCandidates.Compose(
+            Decision(pin), chain: null, chainLabel: null, null, null, Resolve);
+
+        list.Candidates.Select(c => (c.Alias, c.Origin)).ShouldBe([
+            ("gpt-5.6-sol", RoutingCandidates.OriginPin),
+            ("grok-4.6", RoutingCandidates.OriginPin),
+            ("opus", RoutingCandidates.OriginRolePolicy),
+        ]);
+        list.Walked.ShouldBeTrue();
+    }
+
+    [Test]
+    public void Explicit_kind_narrows_the_pin_list_and_does_not_rewrite_pairs()
+    {
+        var pin = Pin(RoutingPinStrength.Required, AgentKind.ClaudeCode, AgentModelLevel.Frontier);
+        pin.SetCandidates(
+        [
+            new RoutingCandidate(AgentKind.ClaudeCode, AgentModelLevel.Frontier),
+            new RoutingCandidate(AgentKind.ClaudeCode, AgentModelLevel.High),
+            new RoutingCandidate(AgentKind.Grok, AgentModelLevel.Frontier),
+        ]);
+
+        var list = RoutingCandidates.Compose(
+            Decision(pin), chain: null, chainLabel: null, AgentKind.ClaudeCode, null, Resolve);
+
+        list.Candidates.Select(c => c.Alias).ShouldBe(["fable", "opus"]);
+        list.Walked.ShouldBeTrue();
+    }
+
+    [Test]
+    public void Explicit_kind_and_level_against_a_list_is_one_candidate_and_not_walked()
+    {
+        var pin = Pin(RoutingPinStrength.Required, AgentKind.ClaudeCode, AgentModelLevel.Frontier);
+        pin.SetCandidates(
+        [
+            new RoutingCandidate(AgentKind.ClaudeCode, AgentModelLevel.Frontier),
+            new RoutingCandidate(AgentKind.ClaudeCode, AgentModelLevel.High),
+        ]);
+
+        var list = RoutingCandidates.Compose(
+            Decision(pin),
+            chain: null,
+            chainLabel: null,
+            AgentKind.ClaudeCode,
+            AgentModelLevel.High,
+            Resolve);
+
+        list.Candidates.ShouldHaveSingleItem();
+        list.Candidates[0].Alias.ShouldBe("opus");
+        list.Walked.ShouldBeFalse();
+    }
+
+    [Test]
     public void Passing_an_empty_chain_does_not_append_role_policy()
     {
         var pin = Pin(RoutingPinStrength.Preferred, AgentKind.Codex, AgentModelLevel.Frontier);
@@ -201,5 +316,5 @@ public sealed class ComplexityRoutingComposeTests
         };
 
     private static RoutingPinService.Decision Decision(RoutingPin pin, string? identifier = null) =>
-        new(pin, pin, identifier, pin.AgentKind, pin.ModelLevel, null, null, null, false);
+        new(pin, pin, identifier, pin.AgentKind, pin.ModelLevel, null, null, null, false, pin.Candidates);
 }

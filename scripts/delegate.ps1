@@ -581,7 +581,9 @@ switch ($PSCmdlet.ParameterSetName) {
         # caller can still correct a mis-binding - the alternative is discovering it on the board.
         $cardNote = ''
         if ($created.cardIdentifier) { $cardNote = " - bound to $($created.cardIdentifier)" }
-        if ($created.status -eq 'Blocked' -and $created.complexity) {
+        $routingExhausted = $created.status -eq 'Blocked' -and $created.warning -and (
+            "$($created.warning)" -match 'routing exhausted')
+        if ($routingExhausted) {
             Write-Output ("BLOCKED - {0}" -f $created.warning)
             Write-Output ('A human decides: clear a hold (model-availability.ps1 clear), wait for a reset, or delegate.ps1 -Reroute <id> -Kind .. -Level ..  Do NOT pick a kind yourself.')
         }
@@ -607,16 +609,23 @@ switch ($PSCmdlet.ParameterSetName) {
                         $skipBits += ("{0} ({1})" -f $s.alias, $why)
                     }
                     $skipText = if ($skipBits.Count -gt 0) { '; skipped ' + ($skipBits -join ', ') } else { '' }
-                    $cellRole = $created.routing.chainRole
-                    if (-not $cellRole) { $cellRole = $created.routing.role }
-                    if (-not $cellRole) { $cellRole = $body.role }
-                    $cellLabel = '{0}/{1}' -f $cellRole, $created.complexity
-                    $via = ''
-                    if (-not $created.routing.chainRole -and $created.routing.chainSource -ne 'config') {
-                        $via = '; via any-role {0} chain' -f $created.complexity
+                    $source = "$($created.routing.source)"
+                    if ($source -like 'pin:*' -or $source -like 'pin+chain:*') {
+                        Write-Output ("routed {0} -> {1} (candidate {2}/{3}){4}" -f `
+                                $source, $chosen.alias, $idx, $all.Count, $skipText)
                     }
-                    Write-Output ("routed {0} -> {1} (candidate {2}/{3}{4}){5}" -f `
-                            $cellLabel, $chosen.alias, $idx, $all.Count, $via, $skipText)
+                    else {
+                        $cellRole = $created.routing.chainRole
+                        if (-not $cellRole) { $cellRole = $created.routing.role }
+                        if (-not $cellRole) { $cellRole = $body.role }
+                        $cellLabel = '{0}/{1}' -f $cellRole, $created.complexity
+                        $via = ''
+                        if (-not $created.routing.chainRole -and $created.routing.chainSource -ne 'config') {
+                            $via = '; via any-role {0} chain' -f $created.complexity
+                        }
+                        Write-Output ("routed {0} -> {1} (candidate {2}/{3}{4}){5}" -f `
+                                $cellLabel, $chosen.alias, $idx, $all.Count, $via, $skipText)
+                    }
                 }
             }
             # A warning at creation is the caller's one chance to reconsider before the collision.
@@ -644,7 +653,13 @@ switch ($PSCmdlet.ParameterSetName) {
                 $pinned = Invoke-Antiphon -Method PUT -Path '/api/routing-pins' -Body $pinBody
                 $pinLine = "pinned {0} {1} to {2}/{3} (human, required)" -f `
                     $created.cardIdentifier, $pinned.role, $pinned.agentKind, $pinned.modelLevel
-                if ($Complexity) {
+                if ($created.routing -and $created.routing.walked -and (
+                        "$($created.routing.source)" -like 'pin:*' -or
+                        "$($created.routing.source)" -like 'pin+chain:*')) {
+                    $n = @($created.routing.candidates).Count
+                    $pinLine = $pinLine + (" — this REPLACES the {0}-candidate pin; clear it to restore the list" -f $n)
+                }
+                elseif ($Complexity) {
                     $cell = '{0}/{1}' -f $body.role, $Complexity
                     $pinLine = $pinLine + (" (this removes {0} {1} from {2}-chain fallback; clear the pin to restore it)" -f `
                             $created.cardIdentifier, $body.role, $cell)
