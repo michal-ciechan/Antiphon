@@ -171,3 +171,7 @@
 ### Gotcha #88
 
 - **A resume is a launch: args, bundles and stamps are rebuilt; the conversation is not** (CARD-0334). `PolicyRefreshService`'s relaunch and every other resume path (`AgentControlService.StartAsync(Fresh: false)`) recompose `--append-system-prompt` from the current bundle/attachment/file state and rewrite `AgentSession.ComposedBundleStamp` / `InstructionFileStamp` from scratch — a stale stamp on a resumed session is a bug, not evidence the resume was partial. What survives is only what `--resume` itself carries: the provider-side conversation history. A drift check or a "did the new instructions land" question is answered from the stamps and the launch note, never from assuming a resume is a no-op restart.
+
+### Gotcha #89
+
+- **A Grok `--resume` is typed only when `GROK_HOME/sessions/*/{id}/` exists; a row id is not a conversation** (CARD-0383). Absent ⇒ same row launches `--session-id <id>` (create), which makes the row id the native id from then on. The runner refuses a dead resume with 409 `herdr_grok_native_session_missing` before touching herdr; a detect timeout on an idle shell retires the pane to last-pane instead of closing it. Pinned by `GrokNativeSessionResumeTests`, `HerdrGrokResumeGuardTests`, `HerdrLaunchShapeTests`, `GrokNativeSessionCanaryTests`, `HerdrGrokNativeSessionLiveTests`.

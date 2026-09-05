@@ -148,7 +148,10 @@ launch does. Herdr forgets the agent name when that occupant exits.
 `POST /api/agents/{id}/attach-herdr` with `{ "paneId": "w2:p3" }` binds a **standing** Herdr agent
 (`CardId == null`) to a pane Antiphon did not launch. The session row id **is** the pane's native
 session id (Grok `--session-id` / herdr `agent_session`, argv first). Inspect is read-only; the
-DB row is written `Starting` before the runner binds anything.
+DB row is written `Starting` before the runner binds anything. Native id equality now also holds
+for every Grok launch that reached grok — a row whose native directory is missing is created
+under `--session-id <row id>`, not resumed (CARD-0383). Attach remains the inspect/bind path;
+create is the launch path.
 
 What attach does **not** do:
 
@@ -217,7 +220,8 @@ rename fails) → `pane.process_info` for the child pid → write the sidecar �
 | Empty PowerShell pane that was ours (`Origin = launched`) | **relaunch in place** — type the launch script into that pane; no `tab.create` / `pane.split` / `tab.rename`. The script re-applies this launch's env and removes the names the previous launch set that this one does not carry (the sidecar / last-pane record keeps `LaunchEnvNames` — names only, never values) |
 | Live process whose argv names **our** session id (`--session-id` / `--resume` / `-s`/`-r`) and `pane.Agent` matches | **adopt in place** — bind the pid, type nothing |
 | Occupied by a different id, no id, a different kind, or more than one foreground process | **refuse** (`pane_occupied`) — never steal, never fall back to the allocator. The last-pane record is kept so a later backoff can retry once the pane is free. Codex never carries a session id in argv, so an occupied Codex pane is always refused. |
-A wrong detected kind, a non-PowerShell shell, or a detection timeout fails the launch
+| Detect timeout, pane is our launched/created pane, foreground is shell only | **keep the pane** — write a last-pane record (`ExitReason = HerdrLaunchDetectTimeout`) and skip `pane.close` so the next attempt relaunches in place (CARD-0383). A wrong-kind detection or any foreign foreground still tears the pane down. |
+A wrong detected kind or a non-PowerShell shell fails the launch
 (existing catch kills then disposes); the script is left in place for diagnosis **with every
 env value rewritten as `<redacted>`** and the `$env:` tokens unresolved (CARD-0341) — a secret
 never outlives a failed launch on disk. A rename
@@ -235,6 +239,14 @@ the local proxy. A missing `GROK_CLI_CHAT_PROXY_BASE_URL` is a Warning, not a re
 keys on the wrapper file name, so pool `grok.exe` launches (#28) never trip it. Fix a refusal by
 seeding the names on the agent's `launchEnv` or the project's `DefaultLaunchEnv` — never by
 launching bare `grok.exe`.
+
+**Grok native-session gate (CARD-0383).** A Grok launch whose argv carries `--resume <uuid>` /
+`-r <uuid>` / `--resume=<uuid>` is refused **before herdr is contacted** unless
+`GROK_HOME/sessions/*/{id}/` exists (any cwd encoding — the same bar attach uses). The runner
+answers 409 `herdr_grok_native_session_missing`. A title-shaped `--resume` and every
+`--session-id` pass through. The server is the primary decision: the same row launches
+`--session-id <id>` (create) when the directory is missing; this gate is defensive of
+server/runner `GROK_HOME` skew.
 
 **Never call `tab.close`.** Herdr auto-removes empty tabs, and closing one ourselves was measured
 to be the wrong move (probe P3). `KillAsync` also refuses to close a pane that has *unexpected*
@@ -351,7 +363,9 @@ screen-heuristic class as our own probes: disagreement is corroboration for a hu
 | Session `Failed` with "Herdr launch refused…" | same Kind gate, hit at launch | the agent kind changed under the session; fix the pairing |
 | Launch fails: detected `{actual}` where `{expected}` was expected | profile exe and agent Kind disagree | fix the pairing; the pane is torn down, script left for diagnosis |
 | Launch fails: pane shell is not PowerShell | herdr default_shell is not `powershell`/`pwsh` | set herdr `default_shell`, or use PtyHost |
-| Launch fails: detection timeout | `pane.get.agent` never became the expected kind | check the pane / script left on disk; raise `LaunchDetectTimeoutMs` only after measuring |
+| Launch fails: detection timeout on an idle shell | `pane.get.agent` never became the expected kind; pane holds only PowerShell | pane is **kept** (last-pane `HerdrLaunchDetectTimeout`); next start relaunches in place. Script left redacted on disk. |
+| Launch fails: detection timeout with a foreign/wrong-kind foreground | same timeout, but the pane is not an idle shell | pane is closed as before; script left redacted |
+| `409 herdr_grok_native_session_missing` | Grok `--resume <uuid>` with no `sessions/*/{id}/` under `GROK_HOME` | refused before herdr; last-pane kept. Next start creates with `--session-id` |
 | Launch throws instead of falling back | herdr missing/stopped/wrong protocol | start herdr, or set `Enabled: false` and relaunch on `PtyHost` |
 | Sessions `Exited(HerdrRestartPresumedDead)` in a batch | herdr restarted | expected; the next launch relaunches into the restored pane if it still exists, else allocates |
 | Launch throws `pane_occupied` | last-pane is held by a foreign / unidentifiable process | free the pane (or attach, CARD-0213); the always-on backoff will retry the same pane, never a new tab |

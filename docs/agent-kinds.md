@@ -90,6 +90,8 @@ A session's command line is built in layers, and no single file holds the whole 
    only for kinds whose `SessionResume` contract is `Supported`. Any pre-existing
    `--session-id` / `-s` / `--resume` / `-r` / `--continue` / `-c` in the profile args is stripped
    first, then exactly one of `--session-id <guid>` / `--resume <guid>` / `--continue` is added.
+   For Grok, `--resume` vs `--session-id` is decided from the on-disk session directory
+   (`AgentSessionService.EffectiveResumeMode`), never from the row.
 5. **Claude remote-control overlay** — `ClaudeRemoteControlLaunchArgs.ApplyOff` appends
    `--settings <file>` with `remoteControlAtStartup: false` for `AgentKind.ClaudeCode` only,
    at `AgentSessionService.BuildRuntimeLaunchSpecAsync` (the one funnel that actually starts
@@ -202,7 +204,8 @@ outside `TranscriptTailer`.
 ## 5. Grok (xAI Grok Build TUI)
 
 **Launch.** `grok.exe --always-approve --no-alt-screen [--model grok-4.6] [--rules <text>]
-(--session-id <guid> | --resume <guid>)`.
+(--session-id <guid> | --resume <guid>)` — decided from the on-disk session directory
+(`GROK_HOME/sessions/*/{id}/`), never from the row (CARD-0383).
 
 `--rules`, not `--append-system-prompt` — Grok's `systemPromptAppend` capability is
 `Supported` *through `--rules`*, and the launch sites branch on the kind for exactly this reason.
