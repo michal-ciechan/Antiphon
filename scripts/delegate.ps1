@@ -42,10 +42,18 @@ param(
     # Codex is opt-in and WORKERS ONLY too (CARD-0099): same zero mileage, and while its composer
     # keeps typed line breaks intact, a body over ~one write costs an extra Enter - so its briefs and
     # refinements also travel by file. An orchestrator stays ClaudeCode for both.
+    # While Claude aliases are held, pass -Kind Codex on a Worker/stage rather than editing
+    # Delegation:AllowedRoots. A 409 model_disabled / subscription_quota_low is a refusal, not a
+    # prompt to widen AllowedRoots, and not a silent remap onto Codex.
     [Parameter(ParameterSetName = 'Create')]
     [Parameter(ParameterSetName = 'Reroute', Mandatory = $true)]
     [ValidateSet('ClaudeCode', 'Grok', 'Codex')]
     [string]$Kind,
+
+    # Named Delegation Capability (CARD-0398). The NAME, never the secret. Loads the DPAPI store
+    # and sends X-Antiphon-Task-Token. Never assigns ANTIPHON_TASK_TOKEN. Also accepted as
+    # $env:ANTIPHON_CAPABILITY. Refused if a task token is already set.
+    [string]$Capability,
 
     # Which CARD this work is against (CARD-0040). Accepts CARD-0040, card-40, #40, 40, or the
     # card's guid. Omitted, the server derives it: your own task's card, else the first CARD-nnnn
@@ -266,7 +274,42 @@ if ([string]::IsNullOrWhiteSpace($api)) { $api = 'http://localhost:17202' }
 $api = $api.TrimEnd('/')
 
 $headers = @{}
-if (-not [string]::IsNullOrWhiteSpace($env:ANTIPHON_TASK_TOKEN)) {
+$capabilityName = $Capability
+if ([string]::IsNullOrWhiteSpace($capabilityName)) {
+    $capabilityName = $env:ANTIPHON_CAPABILITY
+}
+$hasTaskToken = -not [string]::IsNullOrWhiteSpace($env:ANTIPHON_TASK_TOKEN)
+$hasCapability = -not [string]::IsNullOrWhiteSpace($capabilityName)
+if ($hasTaskToken -and $hasCapability) {
+    Write-Error 'Pass -Capability / ANTIPHON_CAPABILITY or ANTIPHON_TASK_TOKEN, not both.'
+    exit 1
+}
+if ($hasCapability) {
+    $capabilityStore = $env:ANTIPHON_CAPABILITY_STORE
+    if ([string]::IsNullOrWhiteSpace($capabilityStore)) {
+        $capabilityStore = Join-Path $env:LOCALAPPDATA 'Antiphon\capabilities'
+    }
+    $capabilityPath = Join-Path $capabilityStore ($capabilityName + '.dpapi')
+    if (-not (Test-Path -LiteralPath $capabilityPath)) {
+        Write-Error ("capability '{0}' is not installed under {1}; ask the operator to run capability.ps1 issue" -f $capabilityName, $capabilityStore)
+        exit 1
+    }
+    try {
+        Add-Type -AssemblyName System.Security | Out-Null
+        $protectedBytes = [System.IO.File]::ReadAllBytes($capabilityPath)
+        $plainBytes = [System.Security.Cryptography.ProtectedData]::Unprotect(
+            $protectedBytes,
+            $null,
+            [System.Security.Cryptography.DataProtectionScope]::CurrentUser)
+        $capabilityToken = [System.Text.Encoding]::UTF8.GetString($plainBytes)
+    }
+    catch {
+        Write-Error ("capability '{0}' could not be read from {1}" -f $capabilityName, $capabilityStore)
+        exit 1
+    }
+    $headers['X-Antiphon-Task-Token'] = $capabilityToken
+}
+elseif ($hasTaskToken) {
     $headers['X-Antiphon-Task-Token'] = $env:ANTIPHON_TASK_TOKEN
 }
 
