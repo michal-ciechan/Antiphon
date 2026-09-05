@@ -300,6 +300,118 @@ public class GrokDelegateEndToEndTests
         }
     }
 
+    /// <summary>
+    /// CARD-0329: the unmarked two-turn nudge contract on the same real path as the
+    /// CARD-0243 capstone. Fakegrok answers the brief without a closing line; the
+    /// WhenIdle nudge is delivered; fakegrok answers immediately; settlement must
+    /// accept a reply whose <c>TurnEnd.CreatedAt</c> landed after enqueue but before
+    /// the nudge row's <c>SentAt</c> (the confirmation/tailer race).
+    /// </summary>
+    [Test]
+    public async Task an_unmarked_grok_reply_inside_one_tailer_poll_of_the_nudge_settles_unmarked_after_nudge()
+    {
+        if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
+        if (!File.Exists(FakeGrokExe))
+            throw new SkipTestException($"fakegrok.exe not staged at {FakeGrokExe} — build the solution first");
+
+        using var workspace = new TempWorkspace();
+        var grokHome = Path.Combine(Path.GetTempPath(), $"antiphon-e2e-nudge-home-{Guid.NewGuid():N}");
+        await using var harness = BuildHarness(
+            workspace.Path, grokHome, grokExe: FakeGrokExe, fakeReportLine: false,
+            configure: d => d.FinalMessageGraceSeconds = 0);
+
+        Guid sessionId = Guid.Empty;
+        try
+        {
+            using var relay = new DelegateTaskApiRelay(workspace.Path, harness.Delegation);
+            var run = await DelegateScriptRunner.RunAsync(
+                relay.BaseUrl,
+                "-Role", "Code", "-Kind", "Grok", "-Title", "CARD-0329 unmarked nudge", "-Goal", MultilineGoal);
+
+            run.ExitCode.ShouldBe(0, $"{run.Output}\n{relay.LastFailure}");
+
+            await using var created = CreateContext();
+            var queued = await created.AgentTasks.AsNoTracking()
+                .SingleAsync(t => t.Title == "CARD-0329 unmarked nudge" && t.WorkingDirectory == workspace.Path);
+
+            using (var scope = harness.Provider.CreateScope())
+                await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
+
+            await using (var afterTick = CreateContext())
+            {
+                var dispatched = await afterTick.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == queued.Id);
+                dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched, dispatched.FailureReason ?? "no failure reason");
+                sessionId = dispatched.AgentSessionId.ShouldNotBeNull();
+            }
+
+            using var pump = new CancellationTokenSource();
+            var pumping = PumpTranscriptAsync(harness.Provider, sessionId, pump.Token);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromMinutes(2), CancellationToken.None);
+
+            var spillName = $"task-{DelegationReportFormatter.Short(queued.Id)}-brief.md";
+            var spill = Path.Combine(workspace.Path, ".antiphon", spillName);
+            File.Exists(spill).ShouldBeTrue($"a Grok brief must travel by file — expected {spill}");
+
+            await using (var delivered = CreateContext())
+            {
+                var brief = await delivered.SessionQueuedMessages.AsNoTracking()
+                    .SingleAsync(m => m.AgentSessionId == sessionId && m.Body.Contains(spillName));
+                brief.Origin.ShouldBe(QueuedMessageOrigin.Delegation);
+                brief.Status.ShouldBe(QueuedMessageStatus.Sent, await ScreenAsync(harness, sessionId));
+            }
+
+            await WaitUntilAsync(
+                async () =>
+                {
+                    await using var db = CreateContext();
+                    var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == queued.Id);
+                    return stored.Status != AgentTaskStatus.Dispatched;
+                },
+                TimeSpan.FromSeconds(60),
+                async () => await DescribeUnmarkedNudgeTimeoutAsync(queued.Id, sessionId, harness));
+
+            pump.Cancel();
+            await pumping;
+
+            await using var verify = CreateContext();
+            var settled = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == queued.Id);
+            settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+            settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.UnmarkedAfterNudge);
+            settled.Result.ShouldNotBeNull();
+            settled.Result.ShouldContain("FAKE response to:");
+            settled.Result.ShouldContain("Your turn ended without", customMessage:
+                "the report is the second (nudge) turn, whose echo is truncated to 60 chars");
+            settled.Result.ShouldNotContain("role=Code", customMessage:
+                "the first unmarked brief turn must not be the settled report");
+
+            settled.ReportNudgedSequence.ShouldNotBeNull();
+            settled.ReportNudgeMessageId.ShouldNotBeNull();
+            var nudge = await verify.SessionQueuedMessages.AsNoTracking()
+                .SingleAsync(m => m.Id == settled.ReportNudgeMessageId);
+            nudge.Origin.ShouldBe(QueuedMessageOrigin.Delegation);
+            nudge.Body.ShouldContain("Your turn ended without the closing report line");
+            nudge.SentAt.ShouldNotBeNull();
+
+            var replyEnd = await verify.TranscriptEntries.AsNoTracking()
+                .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.TurnEnd)
+                .OrderByDescending(t => t.Sequence)
+                .FirstAsync();
+            replyEnd.Sequence.ShouldBeGreaterThan(settled.ReportNudgedSequence.Value);
+            (nudge.CreatedAt < replyEnd.CreatedAt).ShouldBeTrue(
+                $"nudge.CreatedAt={nudge.CreatedAt:o} boundary.CreatedAt={replyEnd.CreatedAt:o} "
+                + $"nudge.SentAt={nudge.SentAt:o} seq={replyEnd.Sequence} "
+                + $"nudgedSeq={settled.ReportNudgedSequence} task={DelegationReportFormatter.Short(settled.Id)}");
+            (replyEnd.CreatedAt <= nudge.SentAt).ShouldBeTrue(
+                $"nudge.CreatedAt={nudge.CreatedAt:o} boundary.CreatedAt={replyEnd.CreatedAt:o} "
+                + $"nudge.SentAt={nudge.SentAt:o} seq={replyEnd.Sequence} "
+                + $"nudgedSeq={settled.ReportNudgedSequence} task={DelegationReportFormatter.Short(settled.Id)}");
+        }
+        finally
+        {
+            await CleanupAsync(harness, sessionId, workspace.Path, grokHome);
+        }
+    }
+
     // ---- CARD-0353 S4 / CARD-0312 P1: the boot turn the provider never answers -------------------
 
     /// <summary>
@@ -688,7 +800,8 @@ public class GrokDelegateEndToEndTests
         string grokHome,
         string grokExe,
         string? claudeExe = null,
-        Action<DelegationSettings>? configure = null)
+        Action<DelegationSettings>? configure = null,
+        bool fakeReportLine = true)
     {
         var sessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-e2e-runner-{Guid.NewGuid():N}");
         var runner = new RecordingRunnerClient(new DirectSessionRunnerClient(sessionLogPath, ptyBackend: ModernBackend));
@@ -750,11 +863,7 @@ public class GrokDelegateEndToEndTests
                 ArgsTemplate = ["--always-approve", "--no-alt-screen"],
                 // Where fakegrok writes its session files, and — the same value, read off the launch
                 // env — where the runner's GrokTranscriptTailer looks for updates.jsonl.
-                Env = new Dictionary<string, string>
-                {
-                    ["GROK_HOME"] = grokHome,
-                    ["ANTIPHON_FAKE_REPORT_LINE"] = "1",
-                },
+                Env = GrokLaunchEnv(grokHome, fakeReportLine),
             };
         });
         services.AddSingleton<AgentRegistry>();
@@ -853,6 +962,33 @@ public class GrokDelegateEndToEndTests
         {
             return $"(no screen: {ex.Message})";
         }
+    }
+
+    private static Dictionary<string, string> GrokLaunchEnv(string grokHome, bool fakeReportLine)
+    {
+        var env = new Dictionary<string, string> { ["GROK_HOME"] = grokHome };
+        if (fakeReportLine)
+            env["ANTIPHON_FAKE_REPORT_LINE"] = "1";
+        return env;
+    }
+
+    private static async Task<string> DescribeUnmarkedNudgeTimeoutAsync(
+        Guid taskId, Guid sessionId, Harness harness)
+    {
+        await using var db = CreateContext();
+        var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        var latestEnd = await db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.TurnEnd)
+            .OrderByDescending(t => t.Sequence)
+            .FirstOrDefaultAsync();
+        SessionQueuedMessage? nudge = null;
+        if (task.ReportNudgeMessageId is Guid nid)
+            nudge = await db.SessionQueuedMessages.AsNoTracking().FirstOrDefaultAsync(m => m.Id == nid);
+        return
+            $"task {DelegationReportFormatter.Short(task.Id)} id={task.Id} status={task.Status} "
+            + $"nudgedSeq={task.ReportNudgedSequence} boundarySeq={latestEnd?.Sequence} "
+            + $"nudge.CreatedAt={nudge?.CreatedAt:o} boundary.CreatedAt={latestEnd?.CreatedAt:o} "
+            + $"nudge.SentAt={nudge?.SentAt:o}. Screen:\n{await ScreenAsync(harness, sessionId)}";
     }
 
     /// <summary>Where fakegrok — and the tailer — agree a session's files live.</summary>

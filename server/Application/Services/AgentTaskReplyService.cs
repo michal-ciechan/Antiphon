@@ -1723,7 +1723,7 @@ public sealed class AgentTaskReplyService
     /// <param name="Boundary">
     /// The TurnEnd this outcome was extracted from (CARD-0248). Sequence is the settle-anyway
     /// identity; CreatedAt is the store time (never the record's backdated Timestamp) so the
-    /// delivery gate can require the boundary to post-date the nudge's SentAt. Null on the
+    /// delivery gate can require the boundary to post-date the nudge's enqueue. Null on the
     /// static Nothing / Deferred values, which never reach ClassifyReportAsync.
     /// </param>
     /// <param name="PreReplyBoundary">
@@ -2272,12 +2272,12 @@ public sealed class AgentTaskReplyService
     }
 
     /// <summary>
-    /// CARD-0159 S2 / CARD-0248: a closing verdict line settles immediately; an unmarked live
-    /// session is nudged once; a second unmarked end after the delivered nudge (or a dead
-    /// session, or a Check role) settles with the evidence class recorded. Returns null when
-    /// the task was nudged and must NOT settle — including when the same boundary re-enters,
-    /// the nudge has not been typed, or a text-less post-nudge boundary is still inside the
-    /// response window.
+    /// CARD-0159 S2 / CARD-0248 / CARD-0329: a closing verdict line settles immediately; an
+    /// unmarked live session is nudged once; a second unmarked end after the delivered nudge
+    /// (or a dead session, or a Check role) settles with the evidence class recorded. Returns
+    /// null when the task was nudged and must NOT settle — including when the same boundary
+    /// re-enters, the nudge has not been typed, a later boundary predates enqueue, or a
+    /// text-less post-nudge boundary is still inside the response window.
     /// </summary>
     private async Task<(AgentTaskStatus Status, AgentTaskReportEvidence Evidence, string Body, string? FailureReason)?>
         ClassifyReportAsync(
@@ -2335,12 +2335,11 @@ public sealed class AgentTaskReplyService
                     return null;
                 }
 
-                var sentAt = await LoadNudgeSentAtAsync(db, task, ct);
-                if (sentAt is not DateTime deliveredAt)
-                    return null; // the ask has not happened yet
+                if (await LoadNudgeFactsAsync(db, task, ct) is not { SentAt: DateTime deliveredAt } nudge)
+                    return null; // the ask has not been delivered
                 if (boundary.Sequence <= task.ReportNudgedSequence
-                    || boundary.CreatedAt <= deliveredAt)
-                    return null; // same boundary, or one that predates the ask
+                    || boundary.CreatedAt <= nudge.CreatedAt)
+                    return null; // same boundary, or one that predates enqueue
                 if (turn.FinalMessageMissing
                     && now < deliveredAt + TimeSpan.FromSeconds(_settings.ReportNudgeResponseSeconds))
                     return null; // text-less boundary: give the answer time to land
@@ -2420,18 +2419,26 @@ public sealed class AgentTaskReplyService
     }
 
     /// <summary>
-    /// SentAt of the queued nudge row, or null when the id was never recorded / the row is gone /
-    /// it has not been typed yet (CARD-0248).
+    /// Enqueue time and delivery-confirmation time of the recorded nudge row (CARD-0248 /
+    /// CARD-0329). <see cref="NudgeFacts.CreatedAt"/> is the stable enqueue-order marker used
+    /// by the postdate gate; <see cref="NudgeFacts.SentAt"/> is proof the ask was typed and
+    /// the text-less response-window clock. Null when the id was never recorded or the row
+    /// is gone — do not infer a nudge from body text or session ordering.
     /// </summary>
-    private static async Task<DateTime?> LoadNudgeSentAtAsync(
+    private readonly record struct NudgeFacts(DateTime CreatedAt, DateTime? SentAt);
+
+    private static async Task<NudgeFacts?> LoadNudgeFactsAsync(
         AppDbContext db, AgentTask task, CancellationToken ct)
     {
         if (task.ReportNudgeMessageId is not Guid messageId)
             return null;
-        return await db.SessionQueuedMessages.AsNoTracking()
+        var row = await db.SessionQueuedMessages.AsNoTracking()
             .Where(m => m.Id == messageId)
-            .Select(m => m.SentAt)
+            .Select(m => new { m.CreatedAt, m.SentAt })
             .FirstOrDefaultAsync(ct);
+        if (row is null)
+            return null;
+        return new NudgeFacts(row.CreatedAt, row.SentAt);
     }
 
     private static string FirstLine(string text)

@@ -683,6 +683,109 @@ public class AgentTaskDeliveryWatchdogTests
         settled.Result.ShouldNotBe("I'll start by reading the spec.");
     }
 
+    /// <summary>
+    /// CARD-0329: a with-text TurnEnd persisted after the nudge was enqueued but before
+    /// delivery confirmation stamped <c>SentAt</c> used to be refused forever
+    /// (<c>boundary.CreatedAt &lt;= SentAt</c>). Enqueue order is the postdate gate;
+    /// <c>SentAt</c> remains only the delivery proof and the text-less response clock.
+    /// </summary>
+    [Test]
+    public async Task a_fast_confirmed_reply_between_nudge_enqueue_and_delivery_settles_unmarked_after_nudge()
+    {
+        var (harness, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 5);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedSplitTurnTailAsync(sessionId, task.Id, storedMinutesAgo: 3);
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+
+        DateTime nudgeCreatedAt;
+        Guid nudgeMessageId;
+        long nudgedSequence;
+        await using (var mid = CreateContext())
+        {
+            var nudged = await mid.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            nudged.ReportNudgedSequence.ShouldNotBeNull();
+            nudged.ReportNudgeMessageId.ShouldNotBeNull();
+            nudgedSequence = nudged.ReportNudgedSequence.Value;
+            nudgeMessageId = nudged.ReportNudgeMessageId.Value;
+            var queued = await mid.SessionQueuedMessages.SingleAsync(m => m.Id == nudgeMessageId);
+            queued.Origin.ShouldBe(QueuedMessageOrigin.Delegation);
+            queued.SentAt.ShouldBeNull();
+            nudgeCreatedAt = queued.CreatedAt;
+        }
+
+        const string reply = "Here is the report without a closing line.";
+        var boundaryAt = nudgeCreatedAt.AddMilliseconds(10);
+        var sentAt = boundaryAt.AddMilliseconds(20);
+        await MarkNudgeDeliveredAsync(sessionId, sentAt);
+        await SeedPostNudgeTurnAsync(sessionId, reply, boundaryAt, closingVerdict: false);
+
+        await CreateReplyService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.ReportNudgeMessageId.ShouldBe(nudgeMessageId);
+        stored.ReportNudgedSequence.ShouldBe(nudgedSequence);
+        var nudge = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == nudgeMessageId);
+        var boundary = await verify.TranscriptEntries
+            .Where(e => e.AgentSessionId == sessionId && e.Kind == TranscriptKinds.TurnEnd)
+            .OrderByDescending(e => e.Sequence)
+            .FirstAsync();
+        (nudge.CreatedAt < boundary.CreatedAt).ShouldBeTrue(
+            $"nudge.CreatedAt={nudge.CreatedAt:o} boundary.CreatedAt={boundary.CreatedAt:o}");
+        (boundary.CreatedAt <= nudge.SentAt).ShouldBeTrue(
+            $"boundary.CreatedAt={boundary.CreatedAt:o} nudge.SentAt={nudge.SentAt:o}");
+        boundary.Sequence.ShouldBeGreaterThan(nudgedSequence);
+        stored.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        stored.ReportEvidence.ShouldBe(AgentTaskReportEvidence.UnmarkedAfterNudge);
+        stored.Result.ShouldBe(reply);
+    }
+
+    /// <summary>
+    /// CARD-0329: relaxing the postdate comparison from <c>SentAt</c> to enqueue
+    /// <c>CreatedAt</c> must not let a later-sequence boundary that was stored at or
+    /// before the nudge row itself settle as the answer.
+    /// </summary>
+    [Test]
+    public async Task a_later_sequence_that_predates_nudge_enqueue_does_not_settle()
+    {
+        var (harness, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 5);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedSplitTurnTailAsync(sessionId, task.Id, storedMinutesAgo: 3);
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+
+        DateTime nudgeCreatedAt;
+        await using (var mid = CreateContext())
+        {
+            var nudged = await mid.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            nudged.ReportNudgeMessageId.ShouldNotBeNull();
+            var queued = await mid.SessionQueuedMessages.SingleAsync(m => m.Id == nudged.ReportNudgeMessageId);
+            nudgeCreatedAt = queued.CreatedAt;
+        }
+
+        await MarkNudgeDeliveredAsync(sessionId, DateTime.UtcNow);
+        await SeedPostNudgeTurnAsync(
+            sessionId,
+            "Stale later-sequence text that predates enqueue.",
+            nudgeCreatedAt,
+            closingVerdict: false);
+
+        await CreateReplyService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(
+            AgentTaskStatus.Dispatched,
+            "a later sequence whose CreatedAt is at or before the nudge enqueue must not settle");
+        stored.Result.ShouldBeNull();
+        (await verify.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Completed))
+            .ShouldBeFalse();
+    }
+
     [Test]
     public async Task a_marked_reply_after_a_delivered_nudge_settles_marked()
     {
@@ -718,7 +821,7 @@ public class AgentTaskDeliveryWatchdogTests
         await harness.SettleDeferredReportsAsync(CancellationToken.None);
 
         // Past FinalMessageGrace (120s) so the sweep will hand off, but still inside
-        // ReportNudgeResponseSeconds (240s). CreatedAt must also post-date SentAt.
+        // ReportNudgeResponseSeconds (240s). Boundary CreatedAt must post-date enqueue.
         var sentAt = DateTime.UtcNow.AddMinutes(-3);
         await MarkNudgeDeliveredAsync(sessionId, sentAt);
         await SeedPostNudgeTurnAsync(
@@ -2580,6 +2683,11 @@ public class AgentTaskDeliveryWatchdogTests
         var msg = await db.SessionQueuedMessages.SingleAsync(m => m.Id == task.ReportNudgeMessageId);
         msg.SentAt = sentAt;
         msg.Status = QueuedMessageStatus.Sent;
+        // CARD-0329: the postdate gate reads enqueue CreatedAt. Tests that backdate SentAt
+        // must not leave CreatedAt in the future of that stamp, or a later reply at
+        // sentAt+N looks like it predates the ask.
+        if (msg.CreatedAt > sentAt)
+            msg.CreatedAt = sentAt;
         await db.SaveChangesAsync();
     }
 

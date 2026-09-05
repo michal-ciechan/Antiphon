@@ -3939,6 +3939,10 @@ public class AgentTaskReplyIntegrationTests
         var msg = await db.SessionQueuedMessages.SingleAsync(m => m.Id == task.ReportNudgeMessageId);
         msg.SentAt = sentAt;
         msg.Status = QueuedMessageStatus.Sent;
+        // CARD-0329: the postdate gate reads enqueue CreatedAt. A backdated SentAt
+        // must not leave CreatedAt after that stamp.
+        if (msg.CreatedAt > sentAt)
+            msg.CreatedAt = sentAt;
         await db.SaveChangesAsync();
     }
 
