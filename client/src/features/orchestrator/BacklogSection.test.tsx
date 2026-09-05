@@ -172,6 +172,29 @@ describe('BacklogSection', () => {
     expect(screen.queryByText('Gym Stat')).not.toBeInTheDocument()
   })
 
+  it('shows reorder handles on a single-board box and hides them when two boards are present', async () => {
+    serve({
+      cards: [
+        card({ id: 'card-1', identifier: 'CARD-0001', boardId: 'board-1', title: 'Only board' }),
+      ],
+    })
+    const { unmount } = renderWithProviders(<BacklogSection />)
+    expect(await screen.findByLabelText('Reorder CARD-0001')).toBeInTheDocument()
+    unmount()
+
+    serve({
+      cards: [
+        card({ id: 'card-1', identifier: 'CARD-0001', boardId: 'board-1', title: 'First card' }),
+        card({ id: 'card-2', identifier: 'CARD-0002', boardId: 'board-2', title: 'Second card' }),
+      ],
+      boards: [board('board-1', 'Antiphon'), board('board-2', 'Gym Stat')],
+    })
+    renderWithProviders(<BacklogSection />)
+    expect((await screen.findAllByText(/reorder on the board/)).length).toBeGreaterThan(0)
+    expect(screen.queryByLabelText('Reorder CARD-0001')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Reorder CARD-0002')).not.toBeInTheDocument()
+  })
+
   it('states fleet truncation instead of counting 500 as the backlog', async () => {
     serve({ cards: [card()], truncated: true })
     renderWithProviders(<BacklogSection />)

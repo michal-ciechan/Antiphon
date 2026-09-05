@@ -16,6 +16,7 @@ import { useMediaQuery } from '@mantine/hooks'
 import { useMemo, useState } from 'react'
 import { TbAlertCircle, TbRefresh } from 'react-icons/tb'
 import { useBoards, useCards } from '../../api/boards'
+import { SortableCardList } from '../board/SortableCardList'
 import { BACKLOG_BOX_CAP, boardsPresent, groupBacklog, type BacklogBox as BacklogBoxModel } from './backlogModel'
 import { BacklogRow } from './BacklogRow'
 
@@ -92,6 +93,7 @@ export function BacklogSection() {
             boardNameById={boardNameById}
             now={now}
             stacked={isMobile}
+            reorderable={!showBoard}
           />
         ))}
       </SimpleGrid>
@@ -105,12 +107,14 @@ function BacklogBox({
   boardNameById,
   now,
   stacked,
+  reorderable,
 }: {
   box: BacklogBoxModel
   showBoard: boolean
   boardNameById: Map<string, string>
   now: Date
   stacked: boolean
+  reorderable: boolean
 }) {
   const [expanded, setExpanded] = useState(false)
   const overCap = box.cards.length > BACKLOG_BOX_CAP
@@ -124,9 +128,30 @@ function BacklogBox({
           <Badge size="xs" variant="default">{box.cards.length}</Badge>
         </Group>
       </Group>
-      <Text size="xs" c="dimmed" mb={6}>{box.hint}</Text>
+      <Text size="xs" c="dimmed" mb={6}>
+        {box.hint}
+        {showBoard ? ' · reorder on the board' : ''}
+      </Text>
       {box.cards.length === 0 ? (
         <Text size="sm" c="dimmed" px="xs" py="sm">Nothing here.</Text>
+      ) : reorderable ? (
+        <SortableCardList
+          cards={visible}
+          boardId={visible[0].boardId}
+          columns={[]}
+          now={now}
+          enabled
+          renderItem={(card, canReorder) => (
+            <BacklogRow
+              card={card}
+              boardName={boardNameById.get(card.boardId)}
+              showBoard={false}
+              now={now}
+              layout={stacked ? 'stacked' : 'row'}
+              reorderable={canReorder}
+            />
+          )}
+        />
       ) : (
         <Stack gap={0} style={expanded ? { maxHeight: 560, overflowY: 'auto' } : undefined}>
           {visible.map((card) => (
