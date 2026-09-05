@@ -136,6 +136,22 @@ noticed.
 Lowest `rank` first — the formula already prefers a card that **changes how everything else gets done** over one more feature.
 Prefer a card whose plan already exists — but check properly, see below.
 
+### Reprioritising the backlog
+
+An agent that can call the API — `delegate.ps1 -Role Custom` (or Plan), or a `ScheduleKind.Prompt`
+schedule — writes order through the same endpoints a human drag uses. Nothing runs on the
+orchestrator tick. Tracker writes stay explicit.
+
+1. Read `GET /api/cards?status=Backlog&boardId=<b>` and, for cards it intends to move,
+   `GET /api/cards/{id}/thread` for the plan/task context.
+2. Leave `importanceProvenance: Human` ratings alone unless the reason says why
+   (`overrideHumanRatings` stays false; the response lists what was skipped).
+3. Prefer one `card.ps1 order` with an ordered file and one reason over N `reorder` calls; put
+   the argument for the order in the reason.
+4. Never move a card between columns; reprioritising is not dispatching. A card in an active
+   column is the tick's business.
+5. Report the before/after top-ten in the delegate report so the operator can undo from history.
+
 ### "Is there a solid plan?"
 
 Two places, and the second is the one people forget:

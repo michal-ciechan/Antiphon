@@ -70,6 +70,15 @@ public static class BoardEndpoints
             return Results.Created($"/api/cards/{card.Id}", card);
         });
 
+        boards.MapPost("/{id:guid}/card-order", async (
+            Guid id,
+            ReorderBoardCardsRequest request,
+            CardService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.ReorderBoardCardsAsync(id, request, cancellationToken));
+        });
+
         boards.MapGet("/{id:guid}/workflow", async (
             Guid id,
             WorkflowDefinitionLoader loader,

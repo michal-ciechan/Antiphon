@@ -316,6 +316,23 @@ public class CardCliE2ETests
     }
 
     [Test]
+    public async Task The_cli_orders_cards_from_a_file()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var projectId = await CreateProjectAsync($"Card CLI Order Project {suffix}");
+        var boardName = $"Card CLI Order Board {suffix}";
+        await CreateBoardAsync(projectId, boardName);
+        RunCard("new", "-Board", boardName, "-Title", "First").ExitCode.ShouldBe(0);
+        RunCard("new", "-Board", boardName, "-Title", "Second").ExitCode.ShouldBe(0);
+
+        var orderFile = NewTempFile("CARD-0002\nCARD-0001\n");
+        var ordered = RunCard("order", "-Board", boardName, "-OrderFile", orderFile, "-Reason", "Second first.");
+        ordered.ExitCode.ShouldBe(0, ordered.All);
+        ordered.Stdout.ShouldContain("CARD-0002");
+        ordered.Stdout.ShouldContain("pos 1");
+    }
+
+    [Test]
     public async Task An_unknown_card_and_an_unknown_column_both_fail_with_the_servers_own_words()
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];

@@ -49,6 +49,8 @@
 #   card.ps1 diagnose  CARD-0051 [-NoWait] [-Json]
 #   card.ps1 reorder   CARD-0051 (-Before CARD-nnnn | -After CARD-nnnn | -Top | -Bottom)
 #                      [-Reason r | -ReasonFile p] [-By name] [-Token g]
+#   card.ps1 order     -Board <b> -OrderFile <p> -Reason r | -ReasonFile p
+#                      [-By name] [-OverrideHumanRatings]
 #   card.ps1 -Limits
 #
 # A move into an ACTIVE column does NOT start an agent unless you pass -Spawn (CARD-0051 slice 3).
@@ -58,7 +60,7 @@
 [CmdletBinding(DefaultParameterSetName = 'Verb')]
 param(
     [Parameter(ParameterSetName = 'Verb', Position = 0, Mandatory = $true)]
-    [ValidateSet('get', 'history', 'new', 'edit', 'move', 'close', 'reopen', 'archive', 'unarchive', 'diagnose', 'reorder')]
+    [ValidateSet('get', 'history', 'new', 'edit', 'move', 'close', 'reopen', 'archive', 'unarchive', 'diagnose', 'reorder', 'order')]
     [string]$Verb,
 
     # The card, in any form it gets written down: CARD-0051, card-51, '#51', 51, or its guid.
@@ -150,6 +152,12 @@ param(
 
     [Parameter(ParameterSetName = 'Verb')]
     [switch]$Bottom,
+
+    [Parameter(ParameterSetName = 'Verb')]
+    [string]$OrderFile,
+
+    [Parameter(ParameterSetName = 'Verb')]
+    [switch]$OverrideHumanRatings,
 
     [Parameter(ParameterSetName = 'Limits', Mandatory = $true)]
     [switch]$Limits
@@ -685,6 +693,52 @@ switch ($Verb) {
         $updated = Invoke-Antiphon -Method PATCH -Path ("/api/cards/{0}/position" -f $theCard.id) -Body $body
         Write-CardLine $updated
         if ($null -ne $updated.position) { Write-Output ("pos         {0}" -f $updated.position) }
+        return
+    }
+
+    'order' {
+        if ([string]::IsNullOrWhiteSpace($script:resolvedBoardId)) {
+            Write-Error 'order needs -Board <name|guid>.'
+            exit 1
+        }
+        if ([string]::IsNullOrWhiteSpace($OrderFile)) {
+            Write-Error 'order needs -OrderFile <path> (one card ref per line, optionally "CARD-nnnn High" or "CARD-nnnn High Soon").'
+            exit 1
+        }
+        if (-not (Test-Path -LiteralPath $OrderFile)) {
+            Write-Error "Order file not found: $OrderFile"
+            exit 1
+        }
+        $reasonText = Get-RequiredReason
+        Assert-WithinLimit -Field 'By' -Value $By -Limit (Get-CardLimits).maxActorLength
+
+        $entries = @()
+        foreach ($line in @(Get-Content -LiteralPath $OrderFile)) {
+            $trim = $line.Trim()
+            if ([string]::IsNullOrWhiteSpace($trim)) { continue }
+            $parts = @($trim -split '\s+', 3)
+            $entry = @{ id = $parts[0] }
+            if ($parts.Count -ge 2) { $entry['importance'] = $parts[1] }
+            if ($parts.Count -ge 3) { $entry['urgency'] = $parts[2] }
+            $entries += $entry
+        }
+        if ($entries.Count -eq 0) {
+            Write-Error 'Order file has no card refs.'
+            exit 1
+        }
+
+        $body = @{
+            cards  = @($entries)
+            reason = $reasonText
+        }
+        if (-not [string]::IsNullOrWhiteSpace($By)) { $body['editedBy'] = $By }
+        if ($OverrideHumanRatings) { $body['overrideHumanRatings'] = $true }
+
+        $result = Invoke-Antiphon -Method POST -Path ("/api/boards/{0}/card-order" -f $script:resolvedBoardId) -Body $body
+        foreach ($c in @($result.cards)) { Write-CardLine $c }
+        foreach ($s in @($result.skippedHumanRated)) {
+            Write-Output ("skipped     {0}  human-rated {1}" -f $s.identifier, $s.importance)
+        }
         return
     }
 
