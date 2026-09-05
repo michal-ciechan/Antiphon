@@ -559,6 +559,25 @@ public sealed class AgentTaskCheckService
     }
 
     /// <summary>
+    /// CARD-0350 S3 display identity, formatted only from probe facts:
+    /// bound alias, else bound identifier plus clipped title, else clipped title, else
+    /// <see cref="DefaultHeaderTitle"/>.
+    /// </summary>
+    internal static string FormatHeaderIdentity(DelegateCheckProbe.CheckFacts facts)
+    {
+        var clippedTitle = ClipHeaderTitle(facts.Task.Title);
+        var identifier = facts.Card?.Identifier?.Trim();
+        if (string.IsNullOrEmpty(identifier))
+            return clippedTitle;
+
+        var alias = facts.Card!.Alias?.Trim();
+        if (!string.IsNullOrEmpty(alias))
+            return $"{identifier}: {alias}";
+
+        return $"{identifier}: {clippedTitle}";
+    }
+
+    /// <summary>
     /// The note as the caller sees it. The first line has to be unmistakable at a glance: a check
     /// is an OBSERVATION about work still in flight, and a caller that read it as a completion
     /// would move on from a task that has not finished.
@@ -567,8 +586,10 @@ public sealed class AgentTaskCheckService
     /// <c>[task </c>, its status vocabulary is the session's (running/idle/working) and never the
     /// completion vocabulary (done/failed), and it carries NO task marker of any task — see
     /// <see cref="ScrubTaskMarkers"/>, which matters because the transcript tail legitimately
-    /// contains the delegate's own brief, marker and all. Identity is a clipped one-line title,
-    /// never the raw <see cref="AgentTask.Title"/>.</para>
+    /// contains the delegate's own brief, marker and all. Identity is formatted from gathered
+    /// facts (<see cref="FormatHeaderIdentity"/>): a bound card alias, else the card identifier
+    /// plus a clipped title, else the clipped title, never a live card query and never the raw
+    /// <see cref="AgentTask.Title"/>.</para>
     /// </summary>
     /// <param name="interpretation">
     /// The specialist's reading, which REPLACES the digest in the note when there is one (the digest
@@ -600,7 +621,7 @@ public sealed class AgentTaskCheckService
         if (degradedReason is { Length: > 0 } down
             && down.StartsWith("interpreter unavailable", StringComparison.Ordinal))
             bits.Add(InterpreterDownMarker);
-        bits.Add(ClipHeaderTitle(task.Title));
+        bits.Add(FormatHeaderIdentity(facts));
         bits.Add($"elapsed {FormatAge(facts.Task.Age)}/{facts.Task.ExpectedDurationMinutes}m");
         if (facts.Task.RepliedAt > facts.Task.DispatchedAt)
             bits.Add($"after reply; dispatched {FormatAge(facts.At - facts.Task.DispatchedAt!.Value)} ago");

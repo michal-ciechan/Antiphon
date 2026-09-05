@@ -159,7 +159,7 @@ public class AgentTaskCheckInterpreterTests
         using var h = new Harness();
         var task = HeaderTask();
         task.Title = "  \n  ";
-        var note = h.Checks.BuildNote(task, HeaderFacts(withSession: false, sinceLastEntry: null), digest: "CAPTURED — digest body");
+        var note = h.Checks.BuildNote(task, HeaderFactsFor(task), digest: "CAPTURED — digest body");
 
         var header = note.Split('\n')[0];
         header.ShouldBe(
@@ -188,7 +188,7 @@ public class AgentTaskCheckInterpreterTests
         var task = HeaderTask();
         task.Title = string.Join(" ", Enumerable.Repeat("titleword", 30));
         task.Title.Length.ShouldBe(299);
-        var note = h.Checks.BuildNote(task, HeaderFacts(withSession: false, sinceLastEntry: null), digest: "CAPTURED — digest body");
+        var note = h.Checks.BuildNote(task, HeaderFactsFor(task), digest: "CAPTURED — digest body");
 
         var header = note.Split('\n')[0];
         var identity = "titleword titleword titleword titleword titleword titleword...";
@@ -272,6 +272,175 @@ public class AgentTaskCheckInterpreterTests
             .ShouldBe(new string('a', 61) + "...");
         AgentTaskCheckService.ClipHeaderTitle("hello\nworld this is a short one")
             .ShouldBe("hello world this is a short one");
+    }
+
+    // ---- CARD-0350 S3: bound card identity on the header ----------------------------------------
+
+    [Test]
+    public void header_identity_prefers_bound_alias_then_card_plus_title()
+    {
+        AgentTaskCheckService.FormatHeaderIdentity(
+                HeaderFacts(withSession: false, sinceLastEntry: null,
+                    card: new DelegateCheckProbe.CheckCardFacts("CARD-0350", "Status Stuck")))
+            .ShouldBe("CARD-0350: Status Stuck");
+
+        AgentTaskCheckService.FormatHeaderIdentity(
+                HeaderFacts(withSession: false, sinceLastEntry: null,
+                    card: new DelegateCheckProbe.CheckCardFacts("CARD-0350", null)))
+            .ShouldBe("CARD-0350: channel tests");
+
+        AgentTaskCheckService.FormatHeaderIdentity(
+                HeaderFacts(withSession: false, sinceLastEntry: null,
+                    card: new DelegateCheckProbe.CheckCardFacts("CARD-0350", "  \n  ")))
+            .ShouldBe("CARD-0350: channel tests");
+
+        AgentTaskCheckService.FormatHeaderIdentity(
+                HeaderFacts(withSession: false, sinceLastEntry: null, title: "  \n  ",
+                    card: new DelegateCheckProbe.CheckCardFacts("CARD-0350", null)))
+            .ShouldBe("CARD-0350: Delegated task");
+
+        AgentTaskCheckService.FormatHeaderIdentity(
+                HeaderFacts(withSession: false, sinceLastEntry: null))
+            .ShouldBe("channel tests");
+
+        AgentTaskCheckService.FormatHeaderIdentity(
+                HeaderFacts(withSession: false, sinceLastEntry: null, title: "  \n  "))
+            .ShouldBe("Delegated task");
+    }
+
+    [Test]
+    public void a_bound_alias_replaces_the_task_title_on_the_header()
+    {
+        using var h = new Harness();
+        var task = HeaderTask();
+        var facts = HeaderFacts(
+            withSession: false, sinceLastEntry: null,
+            card: new DelegateCheckProbe.CheckCardFacts("CARD-0350", "Status Stuck"));
+        var note = h.Checks.BuildNote(task, facts, digest: "CAPTURED — digest body");
+
+        note.Split('\n')[0].ShouldBe(
+            $"[check {DelegationReportFormatter.Short(task.Id)} #3] CARD-0350: Status Stuck | elapsed 11m/10m | no session");
+    }
+
+    [Test]
+    public void a_bound_card_without_alias_prefixes_the_clipped_title()
+    {
+        using var h = new Harness();
+        var task = HeaderTask();
+        task.Title = string.Join(" ", Enumerable.Repeat("titleword", 30));
+        var facts = HeaderFactsFor(
+            task, new DelegateCheckProbe.CheckCardFacts("CARD-0350", null));
+        var note = h.Checks.BuildNote(task, facts, digest: "CAPTURED — digest body");
+
+        var identity = "CARD-0350: titleword titleword titleword titleword titleword titleword...";
+        AgentTaskCheckService.ClipHeaderTitle(task.Title).Length
+            .ShouldBeLessThanOrEqualTo(AgentTaskCheckService.HeaderTitleMaxChars);
+        note.Split('\n')[0].ShouldBe(
+            $"[check {DelegationReportFormatter.Short(task.Id)} #3] {identity} | elapsed 11m/10m | no session");
+        note.Split('\n')[0].ShouldStartWith(AgentTaskCheckService.HeaderPrefix);
+    }
+
+    [Test]
+    public void a_cleared_alias_falls_back_to_the_card_identifier_and_clipped_title()
+    {
+        using var h = new Harness();
+        var task = HeaderTask();
+        var facts = HeaderFacts(
+            withSession: false, sinceLastEntry: null,
+            card: new DelegateCheckProbe.CheckCardFacts("CARD-0350", ""));
+        var note = h.Checks.BuildNote(task, facts, digest: "CAPTURED — digest body");
+
+        note.Split('\n')[0].ShouldBe(
+            $"[check {DelegationReportFormatter.Short(task.Id)} #3] CARD-0350: channel tests | elapsed 11m/10m | no session");
+    }
+
+    [Test]
+    public void build_note_formats_identity_from_facts_not_the_task_row()
+    {
+        using var h = new Harness();
+        var task = HeaderTask();
+        task.Title = "the entity title";
+        task.CardId = Guid.NewGuid();
+        var facts = HeaderFacts(
+            withSession: false, sinceLastEntry: null, title: "the facts title",
+            card: new DelegateCheckProbe.CheckCardFacts("CARD-0350", "Status Stuck"));
+        var note = h.Checks.BuildNote(task, facts, digest: "CAPTURED — digest body");
+
+        var header = note.Split('\n')[0];
+        header.ShouldBe(
+            $"[check {DelegationReportFormatter.Short(task.Id)} #3] CARD-0350: Status Stuck | elapsed 11m/10m | no session");
+        header.ShouldNotContain("the entity title");
+        header.ShouldNotContain("the facts title");
+    }
+
+    [Test]
+    public void a_missing_bound_card_falls_back_to_the_clipped_title_without_querying()
+    {
+        using var h = new Harness();
+        var task = HeaderTask();
+        task.CardId = Guid.NewGuid();
+        var note = h.Checks.BuildNote(task, HeaderFactsFor(task), digest: "CAPTURED — digest body");
+
+        var header = note.Split('\n')[0];
+        header.ShouldBe(
+            $"[check {DelegationReportFormatter.Short(task.Id)} #3] channel tests | elapsed 11m/10m | no session");
+        header.ShouldNotContain("CARD-");
+    }
+
+    [Test]
+    public void a_degraded_note_still_uses_the_bound_card_alias()
+    {
+        using var h = new Harness();
+        var task = HeaderTask();
+        var facts = HeaderFacts(
+            withSession: true, sinceLastEntry: null,
+            card: new DelegateCheckProbe.CheckCardFacts("CARD-0350", "Status Stuck"));
+        var note = h.Checks.BuildNote(
+            task, facts, digest: "CAPTURED — digest body",
+            degradedReason: "interpreter unavailable: could not be provisioned");
+
+        var header = note.Split('\n')[0];
+        header.ShouldBe(
+            $"[check {DelegationReportFormatter.Short(task.Id)} #3] INTERPRETER DOWN | CARD-0350: Status Stuck | elapsed 11m/10m | running/working | activity never");
+        header.ShouldStartWith(AgentTaskCheckService.HeaderPrefix);
+        note.ShouldContain("(unverified digest — interpreter unavailable: could not be provisioned)");
+    }
+
+    [Test]
+    public async Task a_live_gather_puts_the_bound_alias_on_the_check_header()
+    {
+        using var h = new Harness(s => s.CheckInterpreterEnabled = false);
+        var card = await h.SeedCardAsync("CARD-0350", "Status Stuck");
+        var seed = await h.SeedDelegateAsync(cardId: card.Id);
+        var facts = await h.Probe.GatherAsync(seed.Task, CancellationToken.None);
+        facts.Card.ShouldNotBeNull();
+        facts.Card!.Identifier.ShouldBe("CARD-0350");
+        facts.Card.Alias.ShouldBe("Status Stuck");
+
+        var note = h.Checks.BuildNote(seed.Task, facts, digest: "CAPTURED — digest body");
+        var header = note.Split('\n')[0];
+        header.ShouldStartWith($"[check {DelegationReportFormatter.Short(seed.Task.Id)} #1]");
+        header.ShouldContain("CARD-0350: Status Stuck");
+        header.ShouldNotContain("check interpreter test delegate");
+    }
+
+    [Test]
+    public async Task a_delivered_check_on_a_bound_card_keeps_the_envelope_and_names_the_alias()
+    {
+        using var h = new Harness(s => s.CheckInterpreterEnabled = false);
+        var card = await h.SeedCardAsync("CARD-0350", "Status Stuck");
+        var seed = await h.SeedDelegateAsync(cardId: card.Id);
+        await h.SeedDelegateTranscriptAsync(seed.DelegateSessionId, seed.Task.Id);
+        await h.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
+
+        (await h.Checks.RunCheckAsync(seed.Task.Id, CancellationToken.None))
+            .ShouldBe(AgentTaskCheckService.CheckOutcome.Delivered);
+
+        var note = (await h.NotesToCallerAsync(seed.CallerSessionId)).ShouldHaveSingleItem();
+        var header = note.Split('\n')[0];
+        header.ShouldStartWith($"[check {DelegationReportFormatter.Short(seed.Task.Id)} #1]");
+        header.ShouldContain("CARD-0350: Status Stuck");
+        header.ShouldNotContain("check interpreter test delegate");
     }
 
     /// <summary>
@@ -754,8 +923,9 @@ public class AgentTaskCheckInterpreterTests
         NextCheckAt = DateTime.UtcNow.AddMinutes(10),
     };
 
-    private static DelegateCheckProbe.CheckFacts HeaderFactsFor(AgentTask task) =>
-        HeaderFacts(withSession: false, sinceLastEntry: null, id: task.Id, title: task.Title);
+    private static DelegateCheckProbe.CheckFacts HeaderFactsFor(
+        AgentTask task, DelegateCheckProbe.CheckCardFacts? card = null) =>
+        HeaderFacts(withSession: false, sinceLastEntry: null, id: task.Id, title: task.Title, card: card);
 
     private static DelegateCheckProbe.CheckFacts HeaderFacts(
         bool withSession,
@@ -765,7 +935,8 @@ public class AgentTaskCheckInterpreterTests
         DateTime? repliedAt = null,
         TimeSpan? taskAge = null,
         Guid? id = null,
-        string? title = null)
+        string? title = null,
+        DelegateCheckProbe.CheckCardFacts? card = null)
     {
         var now = at ?? DateTime.UtcNow;
         var taskId = id ?? HeaderTask().Id;
@@ -798,7 +969,7 @@ public class AgentTaskCheckInterpreterTests
                 SinceLastEntry: sinceLastEntry)
             : null;
         return new DelegateCheckProbe.CheckFacts(
-            now, task, session, [], Git: null, [], []);
+            now, task, session, [], Git: null, [], [], Card: card);
     }
 
     private sealed record Seeded(AgentTask Task, Guid DelegateSessionId, Guid CallerSessionId);
@@ -871,6 +1042,7 @@ public class AgentTaskCheckInterpreterTests
             _provider = services.BuildServiceProvider();
             Dispatcher = _provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
             Checks = _provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskCheckService>();
+            Probe = _provider.CreateScope().ServiceProvider.GetRequiredService<DelegateCheckProbe>();
             Tasks = _provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskService>();
             Queue = _provider.GetRequiredService<AgentTaskCheckQueue>();
         }
@@ -881,6 +1053,7 @@ public class AgentTaskCheckInterpreterTests
         public string SpecialistSlug { get; }
         public AgentTaskDispatcher Dispatcher { get; }
         public AgentTaskCheckService Checks { get; }
+        public DelegateCheckProbe Probe { get; }
         public AgentTaskService Tasks { get; }
         public AgentTaskCheckQueue Queue { get; }
         public Guid SeedCallerSessionId { get; private set; }
@@ -1033,7 +1206,7 @@ public class AgentTaskCheckInterpreterTests
                 .ToListAsync();
         }
 
-        public async Task<Seeded> SeedDelegateAsync(int expectedMinutes = 10)
+        public async Task<Seeded> SeedDelegateAsync(int expectedMinutes = 10, Guid? cardId = null)
         {
             var callerSessionId = Guid.NewGuid();
             var delegateSessionId = Guid.NewGuid();
@@ -1060,6 +1233,7 @@ public class AgentTaskCheckInterpreterTests
                 AgentSessionId = delegateSessionId,
                 Status = AgentTaskStatus.Dispatched,
                 ExpectedDurationMinutes = expectedMinutes,
+                CardId = cardId,
                 CreatedAt = dispatched,
                 DispatchedAt = dispatched,
                 NextCheckAt = DateTime.UtcNow.AddMinutes(-1),
@@ -1068,6 +1242,56 @@ public class AgentTaskCheckInterpreterTests
 
             var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == id);
             return new Seeded(task, delegateSessionId, callerSessionId);
+        }
+
+        public async Task<Card> SeedCardAsync(string identifier, string? alias)
+        {
+            var now = DateTime.UtcNow;
+            var project = new Project
+            {
+                Id = Guid.NewGuid(),
+                Name = $"check-card-{Guid.NewGuid():N}",
+                GitRepositoryUrl = "https://example.test/check.git",
+                CreatedAt = now,
+                UpdatedAt = now,
+            };
+            var board = new Board
+            {
+                Id = Guid.NewGuid(),
+                ProjectId = project.Id,
+                Name = $"Check {identifier} {Guid.NewGuid():N}",
+                MaxConcurrentSessions = 1,
+                CreatedAt = now,
+                UpdatedAt = now,
+            };
+            var column = new BoardColumn
+            {
+                Id = Guid.NewGuid(),
+                BoardId = board.Id,
+                StateKey = "backlog",
+                Name = "Backlog",
+                ColumnOrder = 0,
+                CardStatus = CardStatus.Backlog,
+                CreatedAt = now,
+                UpdatedAt = now,
+            };
+            var card = new Card
+            {
+                Id = Guid.NewGuid(),
+                BoardId = board.Id,
+                BoardColumnId = column.Id,
+                Identifier = identifier,
+                Title = $"{identifier} title",
+                Alias = alias,
+                Description = "Check card.",
+                Status = CardStatus.Backlog,
+                CreatedAt = now,
+                UpdatedAt = now,
+            };
+            await using var db = CreateContext();
+            db.AddRange(project, board, column, card);
+            await db.SaveChangesAsync();
+            return card;
         }
 
         public async Task SeedDelegateTranscriptAsync(Guid sessionId, Guid taskId)

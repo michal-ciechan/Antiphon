@@ -223,8 +223,19 @@ public sealed class DelegateCheckProbe
 
     public sealed record CheckIncident(AgentIncidentKind Kind, AlertSeverity Severity, string Message, DateTime CreatedAt);
 
+    /// <summary>
+    /// The bound card's display identity (CARD-0350 S3). Null when the task is unbound, or when
+    /// <see cref="AgentTask.CardId"/> points at a row that is gone — BuildNote must not query
+    /// again; a missing card is this null, and the header falls back to the clipped title.
+    /// </summary>
+    public sealed record CheckCardFacts(string Identifier, string? Alias);
+
     /// <param name="Session">Null when the task never got a session, or its row is gone.</param>
     /// <param name="Git">Null when the task's directory is not a git repository at all.</param>
+    /// <param name="Card">
+    /// Null when the task has no card, or the bound row could not be read. Identifier and alias
+    /// are probe facts, not a live lookup for the header formatter.
+    /// </param>
     public sealed record CheckFacts(
         DateTime At,
         CheckTaskFacts Task,
@@ -234,7 +245,8 @@ public sealed class DelegateCheckProbe
         IReadOnlyList<CheckQueuedMessage> PendingMessages,
         IReadOnlyList<CheckIncident> Incidents,
         DateTime? PreviousCheckAt = null,
-        CheckDeadlineFacts? Deadline = null);
+        CheckDeadlineFacts? Deadline = null,
+        CheckCardFacts? Card = null);
 
     // ---- gathering -----------------------------------------------------------------------------
 
@@ -278,9 +290,29 @@ public sealed class DelegateCheckProbe
             : [];
         var git = await GatherGitAsync(task, ct);
         var deadline = await GatherDeadlineAsync(task, now, ct);
+        var card = await GatherCardAsync(task, ct);
 
         return new CheckFacts(
-            now, taskFacts, session, tail, git, pending, incidents, previousCheckAt, deadline);
+            now, taskFacts, session, tail, git, pending, incidents, previousCheckAt, deadline, card);
+    }
+
+    /// <summary>
+    /// CARD-0350 S3. Identifier and alias are gathered here so <c>BuildNote</c> can stay a pure
+    /// formatter. A bound id whose row is gone is null facts, never an invented identifier.
+    /// </summary>
+    private async Task<CheckCardFacts?> GatherCardAsync(AgentTask task, CancellationToken ct)
+    {
+        if (task.CardId is not Guid cardId)
+            return null;
+
+        var row = await _db.Cards.AsNoTracking()
+            .Where(c => c.Id == cardId)
+            .Select(c => new { c.Identifier, c.Alias })
+            .FirstOrDefaultAsync(ct);
+        if (row is null || string.IsNullOrWhiteSpace(row.Identifier))
+            return null;
+
+        return new CheckCardFacts(row.Identifier, row.Alias);
     }
 
     private async Task<CheckSessionFacts?> GatherSessionAsync(AgentTask task, DateTime now, CancellationToken ct)

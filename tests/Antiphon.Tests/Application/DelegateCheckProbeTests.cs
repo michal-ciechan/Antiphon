@@ -156,6 +156,75 @@ public class DelegateCheckProbeTests
         DelegateCheckProbe.RenderDigest(facts).ShouldContain("SETTLED");
     }
 
+    // ---- CARD-0350 S3: bound card identity as probe facts --------------------------------------
+
+    [Test]
+    public async Task an_unbound_task_gathers_no_card_facts()
+    {
+        var seed = await SeedAsync();
+        seed.Task.CardId.ShouldBeNull();
+
+        var facts = await Probe().GatherAsync(seed.Task, CancellationToken.None);
+
+        facts.Card.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task a_bound_card_alias_is_gathered_as_probe_facts()
+    {
+        var card = await SeedCardAsync("CARD-0350", "Status Stuck");
+        var seed = await SeedAsync(cardId: card.Id);
+
+        var facts = await Probe().GatherAsync(seed.Task, CancellationToken.None);
+
+        facts.Card.ShouldNotBeNull();
+        facts.Card!.Identifier.ShouldBe("CARD-0350");
+        facts.Card.Alias.ShouldBe("Status Stuck");
+    }
+
+    [Test]
+    public async Task a_bound_card_without_alias_gathers_the_identifier_and_a_null_alias()
+    {
+        var card = await SeedCardAsync("CARD-0350", alias: null);
+        var seed = await SeedAsync(cardId: card.Id);
+
+        var facts = await Probe().GatherAsync(seed.Task, CancellationToken.None);
+
+        facts.Card.ShouldNotBeNull();
+        facts.Card!.Identifier.ShouldBe("CARD-0350");
+        facts.Card.Alias.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task a_cleared_alias_is_gathered_as_null()
+    {
+        var card = await SeedCardAsync("CARD-0350", "Status Stuck");
+        var seed = await SeedAsync(cardId: card.Id);
+        await using (var db = CreateContext())
+        {
+            var row = await db.Cards.SingleAsync(c => c.Id == card.Id);
+            row.Alias = null;
+            await db.SaveChangesAsync();
+        }
+
+        var facts = await Probe().GatherAsync(seed.Task, CancellationToken.None);
+
+        facts.Card.ShouldNotBeNull();
+        facts.Card!.Identifier.ShouldBe("CARD-0350");
+        facts.Card.Alias.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task a_bound_card_id_whose_row_is_gone_gathers_no_card_facts()
+    {
+        var seed = await SeedAsync();
+        seed.Task.CardId = Guid.NewGuid();
+
+        var facts = await Probe().GatherAsync(seed.Task, CancellationToken.None);
+
+        facts.Card.ShouldBeNull();
+    }
+
     // ---- transcript tail ----------------------------------------------------------------------
 
     [Test]
@@ -818,7 +887,8 @@ public class DelegateCheckProbeTests
         string? worktreeBranch = null,
         string? mergeTarget = null,
         string? result = null,
-        WorkspaceMode? workspace = null)
+        WorkspaceMode? workspace = null,
+        Guid? cardId = null)
     {
         var sessionId = Guid.NewGuid();
         var id = Guid.NewGuid();
@@ -860,6 +930,7 @@ public class DelegateCheckProbeTests
             ExpectedDurationMinutes = expectedMinutes,
             CheckCount = checkCount,
             Result = result,
+            CardId = cardId,
             CreatedAt = dispatched,
             DispatchedAt = dispatched,
             CompletedAt = AgentTaskStatus.Succeeded == status ? DateTime.UtcNow : null,
@@ -1008,6 +1079,56 @@ public class DelegateCheckProbeTests
     }
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
+
+    private static async Task<Card> SeedCardAsync(string identifier, string? alias)
+    {
+        var now = DateTime.UtcNow;
+        var project = new Project
+        {
+            Id = Guid.NewGuid(),
+            Name = $"probe-card-{Guid.NewGuid():N}",
+            GitRepositoryUrl = "https://example.test/probe.git",
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        var board = new Board
+        {
+            Id = Guid.NewGuid(),
+            ProjectId = project.Id,
+            Name = $"Probe {identifier} {Guid.NewGuid():N}",
+            MaxConcurrentSessions = 1,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        var column = new BoardColumn
+        {
+            Id = Guid.NewGuid(),
+            BoardId = board.Id,
+            StateKey = "backlog",
+            Name = "Backlog",
+            ColumnOrder = 0,
+            CardStatus = CardStatus.Backlog,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        var card = new Card
+        {
+            Id = Guid.NewGuid(),
+            BoardId = board.Id,
+            BoardColumnId = column.Id,
+            Identifier = identifier,
+            Title = $"{identifier} title",
+            Alias = alias,
+            Description = "Probe card.",
+            Status = CardStatus.Backlog,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        await using var db = CreateContext();
+        db.AddRange(project, board, column, card);
+        await db.SaveChangesAsync();
+        return card;
+    }
 
     /// <summary>A context that refuses to persist anything — the read-only guarantee, mechanised.</summary>
     private sealed class RefuseToSaveInterceptor : ISaveChangesInterceptor
