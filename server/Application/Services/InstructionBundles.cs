@@ -90,6 +90,21 @@ public static class InstructionBundles
     /// <summary>The diagnose seat's contract (CARD-0352): titles a task or labels a card.</summary>
     public const string Diagnose = "diagnose";
 
+    /// <summary>Investigate-stage standing rules (CARD-0146). Worker + Investigate only.</summary>
+    public const string StageInvestigate = "stage-investigate";
+
+    /// <summary>Plan-stage standing rules (CARD-0146). Worker + Plan only.</summary>
+    public const string StagePlan = "stage-plan";
+
+    /// <summary>TestDesign-stage standing rules (CARD-0146). Worker + TestDesign only.</summary>
+    public const string StageTestDesign = "stage-test-design";
+
+    /// <summary>Code-stage standing rules (CARD-0146). Worker + Code only.</summary>
+    public const string StageCode = "stage-code";
+
+    /// <summary>Review-stage standing rules (CARD-0146). Worker + Review only.</summary>
+    public const string StageReview = "stage-review";
+
     /// <summary>
     /// The reply-style blocks (CARD-0060), one per <see cref="AgentReplyStyle"/> value. Resolved
     /// through <see cref="AgentReplyStyles"/> rather than named directly — the map from enum to key
@@ -178,15 +193,37 @@ public static class InstructionBundles
 
         // A sub-orchestrator is a delegate too — it gets the delegate rules AND its own contract. The
         // orchestrator block comes first because it is what the agent IS; the basics are how the
-        // harness behaves around it.
+        // harness behaves around it. A sub-orchestrator is not a pipeline stage, even when its role
+        // happens to be Plan: it does not carry a stage-* bundle.
+        //
+        // A Worker whose role is a pipeline stage (CARD-0146) carries that stage's standing rules
+        // ahead of the harness basics. Helpers (Docs, Debug, …) stay on basics alone. Stage bundles
+        // never name a kind — routing stays on pins, chains and RolePolicy.
         IReadOnlyList<string> roleKeys = kind == AgentTaskKind.Orchestrator
             ? [Orchestrator, DelegateBasics]
-            : [DelegateBasics];
+            : AgentTaskRoles.IsStage(role)
+                ? [StageKeyFor(role), DelegateBasics]
+                : [DelegateBasics];
 
         return attachedBundleKeys is null or { Count: 0 }
             ? roleKeys
             : [.. roleKeys, .. attachedBundleKeys];
     }
+
+    /// <summary>
+    /// Filename key for a pipeline-stage role. Only called when <see cref="AgentTaskRoles.IsStage"/>
+    /// is true; a miss is a new stage role that forgot its bundle.
+    /// </summary>
+    public static string StageKeyFor(AgentTaskRole role) => role switch
+    {
+        AgentTaskRole.Investigate => StageInvestigate,
+        AgentTaskRole.Plan => StagePlan,
+        AgentTaskRole.TestDesign => StageTestDesign,
+        AgentTaskRole.Code => StageCode,
+        AgentTaskRole.Review => StageReview,
+        _ => throw new ArgumentOutOfRangeException(
+            nameof(role), role, "Not a pipeline stage — no stage-* bundle."),
+    };
 
     private static FrozenDictionary<string, InstructionBundle> Load()
     {

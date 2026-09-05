@@ -33,8 +33,10 @@ public class DelegateBundleLaunchTests
 
         var append = AppendedSystemPrompt(dispatcher, task);
 
+        var stage = InstructionBundles.Get(InstructionBundles.StageCode);
         var basics = InstructionBundles.Get(InstructionBundles.DelegateBasics);
-        append.ShouldStartWith($"[bundle:delegate-basics v{basics.Version}]");
+        append.ShouldStartWith($"[bundle:stage-code v{stage.Version}]");
+        append.ShouldContain($"[bundle:delegate-basics v{basics.Version}]");
         append.ShouldContain("RUN EVERY COMMAND IN THE FOREGROUND");
         append.ShouldContain("FORWARD slash");
         append.ShouldNotContain("[bundle:orchestrator", customMessage:
@@ -128,10 +130,11 @@ public class DelegateBundleLaunchTests
 
         var append = AppendedSystemPrompt(dispatcher, task, [InstructionBundles.BoardApi]);
 
-        append.ShouldStartWith("[bundle:delegate-basics v");
+        append.ShouldStartWith("[bundle:stage-code v");
+        append.ShouldContain("[bundle:delegate-basics v");
         append.ShouldContain($"[bundle:board-api v{InstructionBundles.Get(InstructionBundles.BoardApi).Version}]");
         append.ShouldContain(InstructionBundles.TextOf(InstructionBundles.BoardApi));
-        append.IndexOf("[bundle:delegate-basics", StringComparison.Ordinal)
+        append.IndexOf("[bundle:stage-code", StringComparison.Ordinal)
             .ShouldBeLessThan(append.IndexOf("[bundle:board-api", StringComparison.Ordinal));
     }
 
@@ -143,8 +146,9 @@ public class DelegateBundleLaunchTests
 
         var append = AppendedSystemPrompt(dispatcher, task, [InstructionBundles.DelegateBasics]);
 
+        append.ShouldStartWith("[bundle:stage-code v");
         var first = append.IndexOf("[bundle:delegate-basics", StringComparison.Ordinal);
-        first.ShouldBe(0);
+        first.ShouldBeGreaterThan(0);
         append.IndexOf("[bundle:delegate-basics", first + 1, StringComparison.Ordinal)
             .ShouldBe(-1, "the composer dedupes by key, so attaching a role default is harmless");
     }
@@ -192,7 +196,57 @@ public class DelegateBundleLaunchTests
         ArgsOf(dispatcher, task, [InstructionBundles.BoardApi]).ShouldNotContain("--append-system-prompt");
     }
 
+    // ---- CARD-0146 S3: stage bundles reach Grok --rules and Codex -c -----------------------------
+
+    [Test]
+    public void a_grok_investigate_launch_carries_the_stage_bundle_on_rules()
+    {
+        var (dispatcher, _) = CreateHarness();
+        var task = TaskFor(AgentTaskKind.Worker, AgentTaskRole.Investigate);
+
+        var args = ArgsOf(dispatcher, task, kind: AgentKind.Grok);
+
+        args.ShouldContain("--rules");
+        args.ShouldNotContain("--append-system-prompt", customMessage:
+            "Grok's system-prompt channel is --rules; the bundle would be dropped in silence");
+        args.ShouldNotContain("-c");
+        var rules = args[args.IndexOf("--rules") + 1];
+        var bundle = InstructionBundles.Get(InstructionBundles.StageInvestigate);
+        rules.ShouldContain($"[bundle:stage-investigate v{bundle.Version}]");
+        rules.ShouldContain(bundle.Text);
+        rules.ShouldContain("[bundle:delegate-basics v");
+    }
+
+    [Test]
+    public void a_codex_investigate_launch_carries_the_stage_bundle_on_developer_instructions()
+    {
+        var (dispatcher, _) = CreateHarness();
+        var task = TaskFor(AgentTaskKind.Worker, AgentTaskRole.Investigate);
+
+        var args = ArgsOf(dispatcher, task, kind: AgentKind.Codex);
+
+        args.ShouldNotContain("--append-system-prompt");
+        args.ShouldNotContain("--rules", customMessage: "--rules is Grok's flag");
+        var value = ConfigValue(args, "developer_instructions").ShouldNotBeNull();
+        var bundle = InstructionBundles.Get(InstructionBundles.StageInvestigate);
+        value.ShouldContain($"[bundle:stage-investigate v{bundle.Version}]");
+        value.ShouldContain(bundle.Text);
+        value.ShouldContain("[bundle:delegate-basics v");
+    }
+
     // ---- harness -------------------------------------------------------------------------------
+
+    private static string? ConfigValue(IReadOnlyList<string> args, string key)
+    {
+        for (var i = 0; i < args.Count - 1; i++)
+        {
+            if (args[i] != "-c") continue;
+            if (args[i + 1].StartsWith(key + "=", StringComparison.Ordinal))
+                return args[i + 1][(key.Length + 1)..];
+        }
+
+        return null;
+    }
 
     private static string AppendedSystemPrompt(
         AgentTaskDispatcher dispatcher, AgentTask task, IReadOnlyList<string>? attached = null)
@@ -204,15 +258,17 @@ public class DelegateBundleLaunchTests
     }
 
     private static List<string> ArgsOf(
-        AgentTaskDispatcher dispatcher, AgentTask task, IReadOnlyList<string>? attached = null)
-        => [.. SpecOf(dispatcher, task, attached).Args];
+        AgentTaskDispatcher dispatcher, AgentTask task, IReadOnlyList<string>? attached = null,
+        AgentKind kind = AgentKind.ClaudeCode)
+        => [.. SpecOf(dispatcher, task, attached, kind).Args];
 
     private static IReadOnlyDictionary<string, string> EnvOf(
         AgentTaskDispatcher dispatcher, AgentTask task, IReadOnlyList<string>? attached = null)
         => SpecOf(dispatcher, task, attached).Env;
 
     private static AgentLaunchSpec SpecOf(
-        AgentTaskDispatcher dispatcher, AgentTask task, IReadOnlyList<string>? attached = null)
+        AgentTaskDispatcher dispatcher, AgentTask task, IReadOnlyList<string>? attached = null,
+        AgentKind kind = AgentKind.ClaudeCode)
     {
         var agent = new Agent
         {
@@ -220,13 +276,19 @@ public class DelegateBundleLaunchTests
             Name = $"task-{DelegationReportFormatter.Short(task.Id)}",
             Slug = $"task-{DelegationReportFormatter.Short(task.Id)}",
             WorkingDirectory = task.WorkingDirectory,
+            Kind = kind,
             IsPoolDelegate = true,
         };
         var session = new AgentSession
         {
             Id = Guid.NewGuid(),
-            DefinitionName = "claude",
-            AgentKind = AgentKind.ClaudeCode,
+            DefinitionName = kind switch
+            {
+                AgentKind.Grok => "grok",
+                AgentKind.Codex => "codex",
+                _ => "claude",
+            },
+            AgentKind = kind,
             Status = SessionStatus.Starting,
             Cwd = task.WorkingDirectory,
             Cols = 120,
@@ -267,7 +329,20 @@ public class DelegateBundleLaunchTests
         services.AddOptions<AgentRegistrySettings>().Configure(s =>
         {
             s.DefaultDefinition = "claude";
+            s.GrokCredentialProbeEnabled = false;
             s.Definitions["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "claude" };
+            s.Definitions["grok"] = new AgentDefinition
+            {
+                Kind = "Grok",
+                Exe = "grok",
+                ArgsTemplate = ["--always-approve", "--no-alt-screen"],
+            };
+            s.Definitions["codex"] = new AgentDefinition
+            {
+                Kind = "Codex",
+                Exe = "codex",
+                ArgsTemplate = ["--no-alt-screen", "--dangerously-bypass-approvals-and-sandbox"],
+            };
         });
         services.AddSingleton<AgentRegistry>();
         services.AddSingleton<AgentSessionLaunchQueue>();

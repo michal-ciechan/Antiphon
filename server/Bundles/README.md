@@ -33,9 +33,11 @@ accidentally-embedded file fails a test instead of reaching an agent.
 ## Which agent carries which bundle
 
 Delegates get theirs from the role map in `InstructionBundles.ForDelegate` (Orchestrator tasks:
-`orchestrator` + `delegate-basics`; other work: `delegate-basics`; `Check` tasks: none, the
-specialist's contract is its own — and an attachment does not reopen that, because the carve-out is
-about what the specialist can obey).
+`orchestrator` + `delegate-basics`; a Worker whose role is a pipeline stage — Investigate, Plan,
+TestDesign, Code, Review — gets that stage's `stage-*` bundle then `delegate-basics`; other worker
+roles: `delegate-basics`; specialist tasks: none, the specialist's contract is its own — and an
+attachment does not reopen that, because the carve-out is about what the specialist can obey).
+Stage bundles never name a kind: routing stays on pins, chains and RolePolicy.
 
 Anything else is an **attachment**: an `AgentBundleAttachment` row naming this agent and this key,
 edited in the agent settings modal. That is how `board-api` reaches an agent — it is in the catalog

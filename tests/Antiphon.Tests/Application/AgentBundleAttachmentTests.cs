@@ -39,7 +39,10 @@ public class AgentBundleAttachmentTests
     {
         var attachable = InstructionBundles.Attachable.Select(b => b.Key).ToList();
 
-        attachable.ShouldBe(["board-api", "check-interpreter", "delegate-basics", "diagnose", "orchestrator"]);
+        attachable.ShouldBe([
+            "board-api", "check-interpreter", "delegate-basics", "diagnose", "orchestrator",
+            "stage-code", "stage-investigate", "stage-plan", "stage-review", "stage-test-design",
+        ]);
         attachable.ShouldContain(
             InstructionBundles.BoardApi,
             "the whole point of the slice: board-api is on no role, so an attachment is the only way "
@@ -106,8 +109,8 @@ public class AgentBundleAttachmentTests
 
         var composed = InstructionBundleComposer.Compose(keys);
 
-        composed.Bundles.Select(b => b.Key).ShouldBe(["delegate-basics", "board-api"]);
-        composed.Text.IndexOf("[bundle:delegate-basics", StringComparison.Ordinal).ShouldBe(0);
+        composed.Bundles.Select(b => b.Key).ShouldBe(["stage-code", "delegate-basics", "board-api"]);
+        composed.Text.IndexOf("[bundle:stage-code", StringComparison.Ordinal).ShouldBe(0);
         composed.Text.IndexOf(
                 "[bundle:delegate-basics",
                 composed.Text.IndexOf("[bundle:delegate-basics", StringComparison.Ordinal) + 1,

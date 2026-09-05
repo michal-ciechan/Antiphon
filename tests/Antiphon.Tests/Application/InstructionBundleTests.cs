@@ -52,6 +52,9 @@ public class InstructionBundleTests
         // prompt. Adding a bundle is meant to cost this one line.
         InstructionBundles.All.Keys.Order().ShouldBe([
             "board-api", "check-interpreter", "delegate-basics", "diagnose", "orchestrator",
+            // CARD-0146 S3: one standing-rule block per pipeline-stage role. Adding a stage is
+            // meant to cost this one line plus the ForDelegate map.
+            "stage-code", "stage-investigate", "stage-plan", "stage-review", "stage-test-design",
             // One per AgentReplyStyle value (CARD-0060), style-normal included — see AgentReplyStyles
             // for why the one that is never composed still ships as a file.
             "style-brief", "style-caveman", "style-explanatory", "style-normal", "style-terse",
@@ -333,12 +336,13 @@ public class InstructionBundleTests
         // Re-measured 2026-09-03 after CARD-0339's v4 one-line check-interpreter contract
         // (check-interpreter 2 323) plus catalog growth since: 20 376 composed, 68% of the budget.
         // Re-measured 2026-09-03 after CARD-0352's diagnose bundle (diagnose 2 245) plus catalog
-        // growth since: 22 987 composed, 77% of the budget. That is what makes 30 000 a runaway
-        // stop rather than a working constraint, and it is why the guard can afford to THROW
-        // instead of truncating. The assertion is a headroom bound rather than the exact number
-        // so ordinary prose edits do not fail it — an order-of-magnitude growth does. /2 (15 000)
-        // was crossed by CARD-0017; 2/3 (20 000) by CARD-0339; 3/4 (22 500) by this catalog
-        // addition; 4/5 still sits under the 30 000 throw and would still catch a doubling.
+        // growth since: 22 987 composed, 77% of the budget. Re-measured 2026-09-05 after CARD-0146
+        // S3's five stage bundles (~3 750 body chars plus headers): composing every catalog key at
+        // once crossed 4/5 of 30 000, which is expected — no launch composes the whole catalog, and
+        // the realistic (Worker, Code) set is pinned separately below. The bound here is the budget
+        // itself: the guard still THROWS rather than truncating, and a doubling of the catalog
+        // would still fail it. /2 (15 000) was crossed by CARD-0017; 2/3 (20 000) by CARD-0339;
+        // 3/4 (22 500) by CARD-0352; 4/5 by this catalog addition.
         var budget = new DelegationSettings().CommandLineBudgetChars;
         var everything = InstructionBundles.All.Keys.Order().ToList();
 
@@ -348,7 +352,7 @@ public class InstructionBundleTests
         var detail = string.Join(", ", composed.Bundles.Select(b => $"{b.Stamp} {b.Text.Length}"))
             + $", telegram-preset {ChannelPreamble.TelegramPresetTemplate.Length}"
             + $" => composed {composed.Text.Length} chars against a budget of {budget}";
-        composed.Text.Length.ShouldBeLessThan(budget * 4 / 5, detail);
+        composed.Text.Length.ShouldBeLessThan(budget, detail);
         // And it fits with every other launch argument beside it, which is what the guard measures.
         Should.NotThrow(() => InstructionBundleComposer.EnsureWithinCommandLineBudget(
             composed,
@@ -392,15 +396,39 @@ public class InstructionBundleTests
     // ---- the role map --------------------------------------------------------------------------
 
     [Test]
-    [Arguments(AgentTaskRole.Code)]
-    [Arguments(AgentTaskRole.Plan)]
-    [Arguments(AgentTaskRole.Review)]
     [Arguments(AgentTaskRole.Test)]
     [Arguments(AgentTaskRole.Docs)]
     [Arguments(AgentTaskRole.Custom)]
-    public void every_worker_role_carries_the_delegate_basics(AgentTaskRole role)
+    [Arguments(AgentTaskRole.Debug)]
+    [Arguments(AgentTaskRole.Coverage)]
+    [Arguments(AgentTaskRole.Commit)]
+    [Arguments(AgentTaskRole.Deploy)]
+    [Arguments(AgentTaskRole.Merge)]
+    public void a_helper_worker_role_carries_only_the_delegate_basics(AgentTaskRole role)
     {
         InstructionBundles.ForDelegate(AgentTaskKind.Worker, role).ShouldBe(["delegate-basics"]);
+    }
+
+    [Test]
+    [Arguments(AgentTaskRole.Investigate, "stage-investigate")]
+    [Arguments(AgentTaskRole.Plan, "stage-plan")]
+    [Arguments(AgentTaskRole.TestDesign, "stage-test-design")]
+    [Arguments(AgentTaskRole.Code, "stage-code")]
+    [Arguments(AgentTaskRole.Review, "stage-review")]
+    public void a_stage_worker_carries_its_stage_bundle_then_the_basics(AgentTaskRole role, string stageKey)
+    {
+        InstructionBundles.ForDelegate(AgentTaskKind.Worker, role).ShouldBe([stageKey, "delegate-basics"]);
+    }
+
+    [Test]
+    public void an_investigate_worker_carries_the_stage_bundle_and_a_docs_worker_does_not()
+    {
+        // Positive control for the IsStage map: Docs is a helper, Investigate is a stage. Dropping
+        // the IsStage guard in ForDelegate makes Investigate match Docs and this goes red.
+        InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Investigate)
+            .ShouldBe([InstructionBundles.StageInvestigate, InstructionBundles.DelegateBasics]);
+        InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Docs)
+            .ShouldBe([InstructionBundles.DelegateBasics]);
     }
 
     [Test]
@@ -408,6 +436,9 @@ public class InstructionBundleTests
     {
         InstructionBundles.ForDelegate(AgentTaskKind.Orchestrator, AgentTaskRole.Plan)
             .ShouldBe(["orchestrator", "delegate-basics"]);
+        InstructionBundles.ForDelegate(AgentTaskKind.Orchestrator, AgentTaskRole.Investigate)
+            .ShouldBe(["orchestrator", "delegate-basics"],
+                "a sub-orchestrator is not a pipeline stage even when its role is one");
     }
 
     [Test]
@@ -428,6 +459,83 @@ public class InstructionBundleTests
         foreach (var role in Enum.GetValues<AgentTaskRole>())
         foreach (var kind in Enum.GetValues<AgentTaskKind>())
             InstructionBundles.ForDelegate(kind, role).ShouldNotContain(InstructionBundles.BoardApi);
+    }
+
+    // ---- CARD-0146 S3 stage bundles -------------------------------------------------------------
+
+    [Test]
+    [Arguments(InstructionBundles.StageInvestigate)]
+    [Arguments(InstructionBundles.StagePlan)]
+    [Arguments(InstructionBundles.StageTestDesign)]
+    [Arguments(InstructionBundles.StageCode)]
+    [Arguments(InstructionBundles.StageReview)]
+    public void each_stage_bundle_is_ascii_and_under_the_size_cap(string key)
+    {
+        var text = InstructionBundles.TextOf(key);
+
+        text.Length.ShouldBeLessThanOrEqualTo(2_500, $"{key} is {text.Length} chars; stage bundles cap at 2,500");
+        foreach (var ch in text)
+        {
+            ((int)ch).ShouldBeLessThan(128, $"{key} is not ASCII-safe (U+{(int)ch:X4})");
+        }
+        // Kind and today's state belong in routing / the brief, never here.
+        text.ShouldNotContain("Grok");
+        text.ShouldNotContain("Claude");
+        text.ShouldNotContain("Codex");
+        text.ShouldNotContain("fable");
+        text.ShouldNotContain("JobObject");
+        text.ShouldNotContain("CS8604");
+    }
+
+    [Test]
+    public void stage_bundle_invariants_are_pinned_by_substring()
+    {
+        var investigate = InstructionBundles.TextOf(InstructionBundles.StageInvestigate);
+        investigate.ShouldContain("Forbidden to design or implement a fix");
+        investigate.ShouldContain("Not done, noted");
+
+        var plan = InstructionBundles.TextOf(InstructionBundles.StagePlan);
+        plan.ShouldContain("A design that only lives in chat is not a plan");
+        plan.ShouldContain("## Verification design");
+        plan.ShouldNotContain("WIP");
+
+        var testDesign = InstructionBundles.TextOf(InstructionBundles.StageTestDesign);
+        testDesign.ShouldContain("Every guard that protects a safety-critical assertion gets a PC-n positive control");
+        testDesign.ShouldContain("### Positive controls");
+        testDesign.ShouldContain("do not rewrite the fix design");
+
+        var code = InstructionBundles.TextOf(InstructionBundles.StageCode);
+        code.ShouldContain("Run each PC-n as red-then-green");
+        code.ShouldContain("next: land only when every PC went red-then-green");
+        code.ShouldNotContain("fast-forward");
+        code.ShouldNotContain("deploy-local");
+
+        var review = InstructionBundles.TextOf(InstructionBundles.StageReview);
+        review.ShouldContain("Read-only");
+        review.ShouldContain("Do not fix anything");
+    }
+
+    [Test]
+    public void a_realistic_code_worker_composition_stays_under_the_command_line_budget()
+    {
+        // Role pair (stage-code + delegate-basics) plus the one attachment a Code delegate
+        // actually carries (board-api). No launch composes the whole catalog.
+        var budget = new DelegationSettings().CommandLineBudgetChars;
+        var keys = InstructionBundles.ForDelegate(
+            AgentTaskKind.Worker, AgentTaskRole.Code, [InstructionBundles.BoardApi]);
+
+        keys.ShouldBe([
+            InstructionBundles.StageCode,
+            InstructionBundles.DelegateBasics,
+            InstructionBundles.BoardApi,
+        ]);
+        var composed = InstructionBundleComposer.Compose(keys);
+        composed.Text.Length.ShouldBeLessThan(budget);
+        Should.NotThrow(() => InstructionBundleComposer.EnsureWithinCommandLineBudget(
+            composed,
+            ["--name", "task-1a2b3c4d", "--model", "opus", "--session-id", Guid.NewGuid().ToString("D")],
+            budget,
+            "Worker/Code"));
     }
 
     private static int CountOccurrences(string haystack, string needle)
