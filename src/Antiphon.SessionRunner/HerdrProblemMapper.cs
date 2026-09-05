@@ -40,6 +40,8 @@ internal static class HerdrProblemMapper
         HerdrProblemTypes.PaneChanged => "Herdr pane changed",
         HerdrProblemTypes.PaneOccupied => "Herdr pane occupied",
         HerdrProblemTypes.GkpEnvMissing => "Herdr gkp launch cannot route",
+        HerdrProblemTypes.GrokNativeSessionMissing => "Herdr grok native session missing",
+        HerdrLaunchException.CodeDetectTimeout => "Herdr launch detect timeout",
         "pane_shell" => "Herdr pane shell",
         _ => "Herdr launch refused",
     };

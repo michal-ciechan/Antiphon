@@ -669,6 +669,12 @@ public static class HerdrExitReasons
     /// operator's process was left running. Maps to <c>AgentExitReason.HerdrDetached</c>.
     /// </summary>
     public const string Detached = "HerdrDetached";
+
+    /// <summary>
+    /// CARD-0383: launch failed because herdr never detected the expected kind, and the pane
+    /// was an idle shell so it was retired to last-pane instead of closed.
+    /// </summary>
+    public const string LaunchDetectTimeout = "HerdrLaunchDetectTimeout";
 }
 
 /// <summary>
@@ -751,6 +757,13 @@ public static class HerdrProblemTypes
     /// typed rather than falling through to grok.com (CARD-0341).
     /// </summary>
     public const string GkpEnvMissing = "herdr_gkp_env_missing";
+
+    /// <summary>
+    /// 409 on POST /sessions: a Grok launch whose argv carries <c>--resume &lt;uuid&gt;</c> but
+    /// no <c>GROK_HOME/sessions/*/{id}/</c> directory exists. grok 1.0.13 then exits 1 after a
+    /// remote 404 and herdr never detects it (CARD-0383).
+    /// </summary>
+    public const string GrokNativeSessionMissing = "herdr_grok_native_session_missing";
 }
 
 /// <summary>

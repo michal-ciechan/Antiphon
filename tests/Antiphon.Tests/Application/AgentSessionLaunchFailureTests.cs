@@ -257,6 +257,111 @@ public class AgentSessionLaunchFailureTests
     }
 
     /// <summary>
+    /// CARD-0383: a Grok row whose native directory is missing launches <c>--session-id</c>, not
+    /// a dead <c>--resume</c>. The same session id is kept.
+    /// </summary>
+    [Test]
+    public async Task Grok_resume_of_a_row_with_no_native_session_launches_with_session_id()
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        await SetSessionKindAsync(fixture.SessionId, AgentKind.Grok);
+
+        var grokHome = Path.Combine(Path.GetTempPath(), $"antiphon-grok-home-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(grokHome);
+        try
+        {
+            await fixture.LaunchInteractiveAsync(
+                resume: true,
+                spec: GrokSpec(fixture.Workspace, grokHome));
+
+            adapter.Started.ShouldBeTrue();
+            adapter.StartedArgs.ShouldContain("--session-id");
+            adapter.StartedArgs.ShouldContain(fixture.SessionId.ToString("D"));
+            adapter.StartedArgs.ShouldNotContain("--resume");
+        }
+        finally
+        {
+            try { Directory.Delete(grokHome, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    /// <summary>
+    /// CARD-0383: runner 409 <c>herdr_grok_native_session_missing</c> on a Resume launch is the
+    /// same fallback as Claude's "No conversation found" — kill the first process, relaunch the
+    /// same row with <c>--session-id</c>. The native directory is seeded so layer 1 keeps Resume
+    /// and the runner code is what fires (GROK_HOME skew).
+    /// </summary>
+    [Test]
+    public async Task Grok_runner_native_session_missing_falls_back_to_create()
+    {
+        var resumeAdapter = new FakeAgentProtocolAdapter
+        {
+            ThrowOnStart = new ConflictException(
+                "refusing to type `--resume` : no grok session directory",
+                HerdrProblemTypes.GrokNativeSessionMissing),
+        };
+        var freshAdapter = new FakeAgentProtocolAdapter();
+        await using var fixture = await LaunchFixture.CreateAsync(resumeAdapter, freshAdapter);
+        freshAdapter.RegisterOnStart = fixture.Runtime;
+        await SetSessionKindAsync(fixture.SessionId, AgentKind.Grok);
+
+        var grokHome = Path.Combine(Path.GetTempPath(), $"antiphon-grok-home-{Guid.NewGuid():N}");
+        var encoded = Uri.EscapeDataString(Path.GetFullPath(fixture.Workspace));
+        Directory.CreateDirectory(Path.Combine(grokHome, "sessions", encoded, fixture.SessionId.ToString("D")));
+        try
+        {
+            await fixture.LaunchInteractiveAsync(
+                resume: true,
+                spec: GrokSpec(fixture.Workspace, grokHome));
+
+            resumeAdapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
+            freshAdapter.Started.ShouldBeTrue();
+            freshAdapter.StartedArgs.ShouldContain("--session-id");
+            freshAdapter.StartedArgs.ShouldNotContain("--resume");
+            freshAdapter.Killed.ShouldBeFalse();
+
+            await using var db = LaunchFixture.CreateContext();
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+            session.Status.ShouldBe(SessionStatus.Running);
+        }
+        finally
+        {
+            try { Directory.Delete(grokHome, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    /// <summary>
+    /// CARD-0383: a Grok row whose native directory exists (any cwd encoding) keeps <c>--resume</c>.
+    /// </summary>
+    [Test]
+    public async Task Grok_resume_of_a_row_with_a_native_session_keeps_resume()
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        await SetSessionKindAsync(fixture.SessionId, AgentKind.Grok);
+
+        var grokHome = Path.Combine(Path.GetTempPath(), $"antiphon-grok-home-{Guid.NewGuid():N}");
+        var encoded = Uri.EscapeDataString(@"D:\src\OTHER-machine\repo");
+        Directory.CreateDirectory(Path.Combine(grokHome, "sessions", encoded, fixture.SessionId.ToString("D")));
+        try
+        {
+            await fixture.LaunchInteractiveAsync(
+                resume: true,
+                spec: GrokSpec(fixture.Workspace, grokHome));
+
+            adapter.Started.ShouldBeTrue();
+            adapter.StartedArgs.ShouldContain("--resume");
+            adapter.StartedArgs.ShouldContain(fixture.SessionId.ToString("D"));
+            adapter.StartedArgs.ShouldNotContain("--session-id");
+        }
+        finally
+        {
+            try { Directory.Delete(grokHome, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    /// <summary>
     /// Killing an already-killed process is a no-op, not an error — the runner answers false for a
     /// session it no longer knows. Driven through the real double-teardown path: a --resume launch
     /// is killed as not-found, and the fallback relaunch of the SAME process fails too.
@@ -1024,6 +1129,19 @@ public class AgentSessionLaunchFailureTests
     /// alone; these tests launch into a session of their own so the adapter can register itself in
     /// the runtime without colliding with the harness's.
     /// </summary>
+    private static async Task SetSessionKindAsync(Guid sessionId, AgentKind kind)
+    {
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
+        session.AgentKind = kind;
+        await db.SaveChangesAsync();
+    }
+
+    private static AgentLaunchSpec GrokSpec(string cwd, string grokHome) =>
+        new("fake", AgentKind.Grok, "fake", [],
+            new Dictionary<string, string> { ["GROK_HOME"] = grokHome },
+            cwd, 120, 30);
+
     private sealed class LaunchFixture : IAsyncDisposable
     {
         private readonly List<Guid> _projectIds = [];

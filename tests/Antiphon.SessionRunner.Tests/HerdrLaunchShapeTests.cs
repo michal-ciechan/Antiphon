@@ -235,7 +235,7 @@ public class HerdrLaunchShapeTests
     }
 
     [Test]
-    public async Task Timeout_fails_keeps_script_and_tears_down()
+    public async Task Timeout_on_an_idle_shell_keeps_the_pane_and_writes_a_last_pane_record()
     {
         await using var fake = new FakeHerdrServer();
         fake.LaunchScriptAgentKind = null; // never detect
@@ -244,13 +244,71 @@ public class HerdrLaunchShapeTests
         var settings = BuildSettings();
         var sessionId = Guid.NewGuid();
         var scriptPath = HerdrLaunchScript.PathFor(settings.SessionLogPath, sessionId);
+        var env = new Dictionary<string, string>
+        {
+            ["X_LLM_PROJECT"] = "PredictionMarkets",
+            ["STALE_ONLY"] = "1",
+        };
 
         await using var runtime = BuildRuntime(settings, fake, launchDetectTimeoutMs: 400);
         var ex = await Should.ThrowAsync<HerdrLaunchException>(() =>
-            StartAsync(runtime, sessionId, settings.SessionLogPath));
+            StartAsync(runtime, sessionId, settings.SessionLogPath, env: env));
         ex.Message.ShouldContain("did not detect");
+        ex.Code.ShouldBe(HerdrLaunchException.CodeDetectTimeout);
         File.Exists(scriptPath).ShouldBeTrue();
-        AssertTornDown(fake, scriptPath);
+        var kept = File.ReadAllText(scriptPath);
+        kept.ShouldContain($"Set-Item -LiteralPath 'Env:X_LLM_PROJECT' -Value '{HerdrLaunchScript.RedactedValue}'");
+        fake.Requests.Any(r => r.GetProperty("method").GetString() == "pane.close")
+            .ShouldBeFalse("an idle-shell detect timeout keeps the pane");
+        var last = HerdrLastPane.TryLoad(settings.SessionLogPath, sessionId);
+        last.ShouldNotBeNull();
+        last!.ExitReason.ShouldBe(HerdrExitReasons.LaunchDetectTimeout);
+        last.LaunchEnvNames.ShouldBe(["STALE_ONLY", "X_LLM_PROJECT"]);
+        last.Origin.ShouldBe(HerdrPaneOrigins.Launched);
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
+    [Test]
+    public async Task Relaunch_after_a_kept_pane_targets_it_and_clears_its_env_names()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.LaunchScriptAgentKind = null;
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        var sessionId = Guid.NewGuid();
+        const string workspaceKey = "card0383-keep";
+
+        await using var runtime = BuildRuntime(settings, fake, launchDetectTimeoutMs: 400);
+        await Should.ThrowAsync<HerdrLaunchException>(() =>
+            StartAsync(runtime, sessionId, settings.SessionLogPath, workspaceKey: workspaceKey, env: new Dictionary<string, string>
+            {
+                ["X_LLM_PROJECT"] = "Old",
+                ["STALE_ONLY_FIRST"] = "1",
+            }));
+        fake.Requests.Any(r => r.GetProperty("method").GetString() == "pane.close").ShouldBeFalse();
+        var last = HerdrLastPane.TryLoad(settings.SessionLogPath, sessionId).ShouldNotBeNull();
+        var paneId = last.PaneId;
+
+        fake.LaunchScriptAgentKind = HerdrAgentKinds.Claude;
+        fake.SetPaneProcessInfo(paneId, shellPid: 1);
+        var afterFirst = fake.Requests.Count;
+
+        var dto = await StartAsync(runtime, sessionId, settings.SessionLogPath, workspaceKey: workspaceKey, env: new Dictionary<string, string>
+        {
+            ["X_LLM_PROJECT"] = "New",
+        });
+        dto.Status.ShouldBe("Running");
+        fake.Requests.Skip(afterFirst).Any(r => r.GetProperty("method").GetString() is "tab.create" or "pane.split")
+            .ShouldBeFalse();
+        HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId))!
+            .PaneId.ShouldBe(paneId);
+
+        var script = fake.LastLaunchScriptContent.ShouldNotBeNull();
+        script.ShouldContain("Remove-Item -LiteralPath 'Env:STALE_ONLY_FIRST' -ErrorAction SilentlyContinue");
+        script.ShouldContain("Set-Item -LiteralPath 'Env:X_LLM_PROJECT' -Value 'New'");
+
+        await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
         DeleteLogRoot(settings.SessionLogPath);
     }
 
@@ -375,6 +433,85 @@ public class HerdrLaunchShapeTests
         DeleteLogRoot(settings.SessionLogPath);
     }
 
+    [Test]
+    public async Task Grok_resume_of_an_unknown_native_id_is_refused_before_contacting_herdr()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.LaunchScriptAgentKind = HerdrAgentKinds.Grok;
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        var sessionId = Guid.NewGuid();
+        var resumeId = Guid.NewGuid();
+        var scriptPath = HerdrLaunchScript.PathFor(settings.SessionLogPath, sessionId);
+        SeedLastPane(settings.SessionLogPath, sessionId);
+
+        var home = Path.Combine(settings.SessionLogPath, "empty-grok");
+        Directory.CreateDirectory(home);
+        using var pin = new GrokHomePin(home);
+        await using var runtime = BuildRuntime(settings, fake);
+
+        var ex = await Should.ThrowAsync<HerdrLaunchException>(() =>
+            runtime.StartAsync(GrokIdentityRequest(sessionId, settings.SessionLogPath, home, ["--resume", resumeId.ToString("D")]), CancellationToken.None));
+        ex.Code.ShouldBe(HerdrProblemTypes.GrokNativeSessionMissing);
+        fake.Requests.ShouldBeEmpty("a refused grok resume never contacts herdr");
+        File.Exists(scriptPath).ShouldBeFalse("nothing is written for a refused launch");
+        File.Exists(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId)).ShouldBeFalse();
+        HerdrLastPane.TryLoad(settings.SessionLogPath, sessionId).ShouldNotBeNull("the last-pane record survives");
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
+    [Test]
+    public async Task Grok_resume_of_a_known_native_id_types_resume_unchanged()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.LaunchScriptAgentKind = HerdrAgentKinds.Claude; // wrong-kind arm so the script is kept
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        var sessionId = Guid.NewGuid();
+        var home = Path.Combine(settings.SessionLogPath, "grok-home");
+        var encoded = Uri.EscapeDataString(@"D:\src\OTHER-machine\repo");
+        Directory.CreateDirectory(Path.Combine(home, "sessions", encoded, sessionId.ToString("D")));
+        using var pin = new GrokHomePin(home);
+        await using var runtime = BuildRuntime(settings, fake);
+
+        var ex = await Should.ThrowAsync<HerdrLaunchException>(() =>
+            runtime.StartAsync(
+                GrokIdentityRequest(sessionId, settings.SessionLogPath, home, ["--resume", sessionId.ToString("D")]),
+                CancellationToken.None));
+        ex.Message.ShouldContain("claude");
+        ex.Message.ShouldContain("grok");
+        var script = fake.LastLaunchScriptContent.ShouldNotBeNull();
+        script.ShouldContain($"'--resume', '{sessionId:D}'");
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
+    [Test]
+    public async Task Grok_create_is_never_gated()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.LaunchScriptAgentKind = HerdrAgentKinds.Grok;
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        var sessionId = Guid.NewGuid();
+        var home = Path.Combine(settings.SessionLogPath, "empty-grok");
+        Directory.CreateDirectory(home);
+        using var pin = new GrokHomePin(home);
+        await using var runtime = BuildRuntime(settings, fake);
+
+        var dto = await runtime.StartAsync(
+            GrokIdentityRequest(sessionId, settings.SessionLogPath, home, ["--session-id", sessionId.ToString("D")]),
+            CancellationToken.None);
+        dto.Status.ShouldBe("Running");
+        fake.Requests.ShouldNotBeEmpty();
+        fake.LastLaunchScriptContent.ShouldNotBeNull().ShouldContain($"'--session-id', '{sessionId:D}'");
+
+        await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
     private static RunnerLaunchRequest GkpRequest(Guid sessionId, string cwd, IReadOnlyDictionary<string, string> env) =>
         new(
             sessionId,
@@ -391,6 +528,47 @@ public class HerdrLaunchShapeTests
                 WorkspaceCwd: cwd,
                 PaneTitle: "PM-MavRef-DL-Grok",
                 AgentKind: HerdrAgentKinds.Grok));
+
+    private static RunnerLaunchRequest GrokIdentityRequest(
+        Guid sessionId, string cwd, string grokHome, IReadOnlyList<string> identity) =>
+        new(
+            sessionId,
+            @"C:\tools\grok.exe",
+            new[] { "--always-approve", "--no-alt-screen" }.Concat(identity).ToArray(),
+            new Dictionary<string, string> { ["GROK_HOME"] = grokHome },
+            cwd,
+            Cols: 120,
+            Rows: 30,
+            Backend: SessionBackends.Herdr,
+            TranscriptFormat: TranscriptFormats.Grok,
+            Herdr: new HerdrLaunchOptions(
+                WorkspaceKey: $"grok-{sessionId:N}"[..32],
+                WorkspaceLabel: "card0383-grok",
+                WorkspaceCwd: cwd,
+                PaneTitle: "card0383-grok",
+                AgentKind: HerdrAgentKinds.Grok));
+
+    private static void SeedLastPane(string sessionLogPath, Guid sessionId)
+    {
+        new HerdrLastPane
+        {
+            SessionId = sessionId,
+            WorkspaceKey = $"grok-{sessionId:N}"[..32],
+            WorkspaceId = "w-keep",
+            TabId = "t-keep",
+            PaneId = "w-keep:p1",
+            Origin = HerdrPaneOrigins.Launched,
+            ExitReason = HerdrExitReasons.PaneLeftOpen,
+            ExitedAtUtc = DateTime.UtcNow,
+        }.SaveAtomic(HerdrLastPane.PathFor(sessionLogPath, sessionId));
+    }
+
+    private sealed class GrokHomePin : IDisposable
+    {
+        private readonly IDisposable _scope;
+        public GrokHomePin(string home) => _scope = GrokTranscriptTailer.OverrideGrokHome(home);
+        public void Dispose() => _scope.Dispose();
+    }
 
     [Test]
     public void Null_AgentKind_is_supported_as_claude()
