@@ -340,7 +340,34 @@ public class ComplexityWallRerouteTests
         await StampSessionModelAsync(schema, sessionId, "fable");
         await SeedApiErrorStubTurnAsync(
             schema, sessionId, task.Id, UsageLimitWallParser.FableModelCapIncidentText);
-        await SeedInFlightTurnAfterStubAsync(schema, sessionId);
+        await SeedInFlightTurnAfterStubAsync(schema, sessionId, TranscriptKinds.UserPrompt);
+        await ClearHoldsAsync(schema);
+
+        await harness.Reply.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext(schema);
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Working);
+        stored.AgentSessionId.ShouldBe(sessionId);
+        stored.AgentId.ShouldBe(agentId);
+        stored.ModelLevel.ShouldBe(AgentModelLevel.Frontier);
+        (await verify.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Rerouted)).ShouldBe(0);
+        harness.Stopper.Killed.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task A_later_QueuedUserPrompt_does_not_reroute_or_kill_an_in_flight_turn()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        using var harness = new WallRerouteHarness(schema.ConnectionString, workspace.Path);
+        await SeedHardChainAsync(schema);
+        var (task, sessionId, agentId) = await SeedWorkingChainTaskAsync(schema, workspace.Path);
+        await StampSessionModelAsync(schema, sessionId, "fable");
+        await SeedApiErrorStubTurnAsync(
+            schema, sessionId, task.Id, UsageLimitWallParser.FableModelCapIncidentText);
+        await SeedInFlightTurnAfterStubAsync(schema, sessionId, TranscriptKinds.QueuedUserPrompt);
         await ClearHoldsAsync(schema);
 
         await harness.Reply.OnTurnEndAsync(sessionId, CancellationToken.None);
@@ -576,14 +603,15 @@ public class ComplexityWallRerouteTests
         await db.SaveChangesAsync();
     }
 
-    private static async Task SeedInFlightTurnAfterStubAsync(IsolatedTestSchema schema, Guid sessionId)
+    private static async Task SeedInFlightTurnAfterStubAsync(
+        IsolatedTestSchema schema, Guid sessionId, string promptKind)
     {
         await using var db = CreateContext(schema);
         var seq = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId)
             .MaxAsync(t => (long?)t.Sequence) ?? 0;
         db.TranscriptEntries.Add(NewEntry(
-            sessionId, ++seq, TranscriptKinds.UserPrompt, "continue the work"));
+            sessionId, ++seq, promptKind, "continue the work"));
         db.TranscriptEntries.Add(NewEntry(
             sessionId, ++seq, TranscriptKinds.AssistantText, "I'll keep going on the same session."));
         await db.SaveChangesAsync();

@@ -383,6 +383,7 @@ S5 only (S1–S4 already shipped). Added at Code because this plan predates the 
 - V-7: Second wall on the rerouted attempt takes the next candidate · integration · `Second_wall_on_the_rerouted_attempt_takes_the_next_candidate` · Grok after opus wall
 - V-8: N+1th wall is Blocked by the loop guard · integration · `Nth_plus_one_wall_is_Blocked_by_the_loop_guard` · Blocked while opus is still available; sentence is cascade-exhausted not a false empty-chain
 - V-9: a later UserPrompt after the stub does not reroute or kill (D1) · integration · `A_later_UserPrompt_does_not_reroute_or_kill_an_in_flight_turn` · stays Working, 0 Rerouted, `Killed` empty
+- V-9b: a later QueuedUserPrompt after the stub does not reroute or kill (D3) · integration · `A_later_QueuedUserPrompt_does_not_reroute_or_kill_an_in_flight_turn` · same outcome as V-9; CARD-0135 kinds
 - V-10: loop-guard Block is not auto-resumed on the next dispatcher tick (D2) · integration · `Loop_guard_Block_is_not_resumed_by_a_dispatcher_tick` · stays Blocked, `ResumedRoutingBlocked = 0`, still 3 Rerouted events
 
 ### Guards the regression
@@ -392,6 +393,7 @@ S5 only (S1–S4 already shipped). Added at Code because this plan predates the 
 - R-4: the wall path kills the session outside `StopDelegateAsync` / `RequeueAsync` · caught by V-1 because `RecordingSessionStopper.Killed` is the only kill seam the test sees
 - R-5: a non-chain Working task is pulled into the chain walker · caught by V-5 because `Complexity` stays null and the task Fails with `WallModelPaused`
 - R-6: a stale stub re-enters S5 and kills a session that has already resumed (D1) · caught by V-9 because status stays Working and `Killed` is empty
+- R-6b: a drained composer-queue prompt (`QueuedUserPrompt`) is not treated as a later prompt (D3) · caught by V-9b because status stays Working and `Killed` is empty
 - R-7: a loop-guard Block is auto-resumed next tick into an unbounded dispatch/wall/kill cycle (D2) · caught by V-10 because `ResumedRoutingBlocked = 0` and status stays Blocked
 
 ### Positive controls  (Build runs each: break, see red, revert, see green — and reports all three)
@@ -401,6 +403,7 @@ S5 only (S1–S4 already shipped). Added at Code because this plan predates the 
 - PC-4: break the kill-through-`StopDelegateAsync` contract by commenting out `await StopDelegateAsync(task, ct);` in `RequeueAsync`; expect `Fable_5_wall_on_a_Working_Hard_task_requeues_on_the_next_candidate` red (`Stopper.Killed` empty)
 - PC-5: break the later-UserPrompt guard by deleting the `if (laterPrompt) return;` in `HandleApiErrorTurnAsync`; expect `A_later_UserPrompt_does_not_reroute_or_kill_an_in_flight_turn` red
 - PC-6: break the resume skip by deleting the `CascadeTriedEveryCandidate` continue in `ResumeRoutingBlockedAsync`; expect `Loop_guard_Block_is_not_resumed_by_a_dispatcher_tick` red
+- PC-7: narrow the later-prompt kind match back to `UserPrompt` only; expect `A_later_QueuedUserPrompt_does_not_reroute_or_kill_an_in_flight_turn` red
 
 ### Out of scope
 - FakeClaude `ANTIPHON_FAKE_API_ERROR=rate_limit_model` through a live pty: the fixture text is the same parser input; the pty lane is CARD-0022's and stays green there (`FakeClaudeContractTests`). S5 is the settle-path re-walk.

@@ -1023,9 +1023,12 @@ public sealed class AgentTaskReplyService
             // CARD-0022 FireOneAsync already treats a later UserPrompt as Superseded. AssistantText
             // re-triggers OnTurnEndAsync while the newest TurnEnd is still this stub; without this
             // guard, RerouteOnWallAsync would StopDelegateAsync a session that has already resumed.
+            // CARD-0135: a body accepted while the TUI was busy is QueuedUserPrompt with no user
+            // record — same kinds TranscriptPromptSpan matches. Inline (not a helper) so EF translates.
             var laterPrompt = await db.TranscriptEntries.AsNoTracking().AnyAsync(
                 t => t.AgentSessionId == sessionId
-                    && t.Kind == TranscriptKinds.UserPrompt
+                    && (t.Kind == TranscriptKinds.UserPrompt
+                        || t.Kind == TranscriptKinds.QueuedUserPrompt)
                     && t.Sequence > stub.Sequence, ct);
             if (laterPrompt)
                 return;
