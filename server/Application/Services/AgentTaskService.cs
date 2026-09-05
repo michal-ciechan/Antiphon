@@ -96,7 +96,15 @@ public sealed class AgentTaskService
     /// Who is calling. Resolved from the bearer token by <see cref="AuthenticateAsync"/> — a manual
     /// (UI) caller has no task and no parent session.
     /// </summary>
-    public sealed record Caller(AgentTask? Task, Guid? SessionId, string WorkingDirectory)
+    public sealed record Caller(
+        AgentTask? Task,
+        Guid? SessionId,
+        string WorkingDirectory,
+        Guid? CapabilityId = null,
+        string? CapabilityName = null,
+        Guid? ProjectId = null,
+        Guid? BoardId = null,
+        IReadOnlyList<string>? ExtraAllowedRoots = null)
     {
         /// <summary>Only an orchestrator (or the UI) may create tasks. A worker gets 403.</summary>
         public bool MayDelegate => Task is null || Task.Kind == AgentTaskKind.Orchestrator;
@@ -126,9 +134,39 @@ public sealed class AgentTaskService
         // session id makes ReplyTo=Session routing work, so reports return to the calling session
         // instead of landing silently on the board.
         var session = await _db.AgentSessions.AsNoTracking()
-            .FirstOrDefaultAsync(s => s.DelegationTokenHash == hash, ct)
-            ?? throw new ForbiddenException("Delegation token is not recognised.");
-        return new Caller(null, session.Id, OrchestratorWorkspaceFactGatherer.FollowMarkerOrSelf(session.Cwd));
+            .FirstOrDefaultAsync(s => s.DelegationTokenHash == hash, ct);
+        if (session is not null)
+        {
+            return new Caller(null, session.Id, OrchestratorWorkspaceFactGatherer.FollowMarkerOrSelf(session.Cwd));
+        }
+
+        // CARD-0398: a named Delegation Capability principal. Same header, hashed at rest.
+        // RevokedAt is read from the row on every call — there is no hash cache that could
+        // survive revoke. LastUsedAt is stamped only after this arm succeeds.
+        var capability = await _db.DelegationCapabilities
+            .FirstOrDefaultAsync(c => c.TokenHash == hash, ct);
+        if (capability is null)
+            throw new ForbiddenException("Delegation token is not recognised.");
+        if (capability.RevokedAt is not null)
+            throw new ForbiddenException("capability revoked");
+
+        var roots = DelegationCapabilityRoots.Parse(capability.RootsJson);
+        if (roots.Count == 0)
+            throw new ForbiddenException("Delegation token is not recognised.");
+
+        capability.LastUsedAt = UtcNow();
+        await _db.SaveChangesAsync(ct);
+
+        var extra = roots.Count > 1 ? roots.Skip(1).ToList() : (IReadOnlyList<string>)[];
+        return new Caller(
+            null,
+            null,
+            OrchestratorWorkspaceFactGatherer.FollowMarkerOrSelf(roots[0]),
+            capability.Id,
+            capability.Name,
+            capability.ProjectId,
+            capability.BoardId,
+            extra);
     }
 
     /// <summary>
@@ -317,12 +355,37 @@ public sealed class AgentTaskService
         DelegationWorkspaceResolver.Resolution resolved;
         try
         {
+            // CARD-0398 D2: a capability caller's roots replace AllowedRoots; they are never
+            // concatenated with it. First root is Caller.WorkingDirectory (parent-inherit);
+            // remaining roots are ExtraAllowedRoots.
+            IReadOnlyList<string> allowedRoots = caller.CapabilityId is not null
+                ? caller.ExtraAllowedRoots ?? []
+                : _settings.AllowedRoots;
             resolved = await _workspace.ResolveAsync(
-                request.WorkingDirectory, caller.WorkingDirectory, _settings.AllowedRoots, ct);
+                request.WorkingDirectory, caller.WorkingDirectory, allowedRoots, ct);
         }
         catch (DelegationWorkspaceResolver.RejectedException ex)
         {
             var message = AugmentWorktreeRejection(request, ex.Message);
+            if (caller.CapabilityId is not null
+                && message.Contains("outside the allowed roots", StringComparison.OrdinalIgnoreCase))
+            {
+                string full;
+                try
+                {
+                    full = string.IsNullOrWhiteSpace(request.WorkingDirectory)
+                        ? ""
+                        : Path.GetFullPath(request.WorkingDirectory);
+                }
+                catch (Exception pathEx) when (pathEx is ArgumentException or NotSupportedException or PathTooLongException)
+                {
+                    full = request.WorkingDirectory ?? "";
+                }
+
+                message =
+                    $"Directory '{full}' is outside the roots of capability '{caller.CapabilityName}'.";
+            }
+
             if (parent is not null)
                 await RecordRejectionAsync(parent, message, ct);
             throw new ValidationException(nameof(request.WorkingDirectory), message);
@@ -357,6 +420,20 @@ public sealed class AgentTaskService
                 resolved.RepoPath,
                 resolved.WorkingDirectory),
             ct);
+
+        if (caller.BoardId is Guid capabilityBoard && binding.CardId is Guid boundCardId)
+        {
+            var cardBoardId = await _db.Cards.AsNoTracking()
+                .Where(c => c.Id == boundCardId)
+                .Select(c => (Guid?)c.BoardId)
+                .FirstOrDefaultAsync(ct);
+            if (cardBoardId is not Guid actualBoard || actualBoard != capabilityBoard)
+            {
+                throw new ValidationException(
+                    nameof(request.Card),
+                    $"Card is on another board than capability '{caller.CapabilityName}' permits.");
+            }
+        }
 
         // CARD-0090: an explicit pair is a single candidate the caller chose, and the shipped
         // rule is that an explicit choice is never silently rerouted. One or the other.
@@ -1135,6 +1212,9 @@ public sealed class AgentTaskService
     /// </summary>
     private async Task<Guid?> DeriveCallerProjectAsync(Caller caller, CancellationToken ct)
     {
+        if (caller.ProjectId is Guid capabilityProject)
+            return capabilityProject;
+
         if (caller.Task is not null || caller.SessionId is not Guid sessionId)
             return null;
 
