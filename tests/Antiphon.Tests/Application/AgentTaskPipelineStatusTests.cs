@@ -278,10 +278,125 @@ public class AgentTaskPipelineStatusTests
         var ready = dto.Stages.Single(s => s.Role == AgentTaskRole.Code).Ready.ShouldHaveSingleItem();
         ready.Card.Identifier.ShouldBe("CARD-9304");
         ready.SourcePlanTaskId.ShouldBe(plan.Id);
+        ready.SourceRole.ShouldBe(AgentTaskRole.Plan);
+        ready.Handoff.ShouldBeNull();
         ready.ReadySince.ShouldBe(completedAt, TimeSpan.FromMilliseconds(1));
         ready.DeliverablePath.ShouldBe("docs/superpowers/plans/2026-09-01-card-9304.md");
         dto.Stages.Where(s => s.Role != AgentTaskRole.Code).ShouldAllBe(s => s.Ready.Count == 0);
         ready.RoutingPin.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task an_investigate_settled_next_plan_is_ready_on_plan()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var card = await SeedCardAsync(db, CardStatus.InProgress, "CARD-0146");
+        var completedAt = DateTime.UtcNow.AddMinutes(-8);
+        var investigate = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Investigate,
+            AgentTaskStatus.Succeeded, title: "investigate CARD-0146", cardId: card.Id,
+            completedAt: completedAt, createdAt: completedAt.AddMinutes(-20),
+            deliverablePath: "docs/investigations/2026-09-05-card-0146.md",
+            nextStage: PipelineHandoffKind.Plan,
+            nextHandoff: "root cause confirmed - fix belongs in the probe");
+
+        var dto = await CreateService(db).GetAsync(CancellationToken.None);
+        var ready = dto.Stages.Single(s => s.Role == AgentTaskRole.Plan).Ready.ShouldHaveSingleItem();
+        ready.SourcePlanTaskId.ShouldBe(investigate.Id);
+        ready.SourceRole.ShouldBe(AgentTaskRole.Investigate);
+        ready.Handoff.ShouldBe("root cause confirmed - fix belongs in the probe");
+        ready.DeliverablePath.ShouldBe("docs/investigations/2026-09-05-card-0146.md");
+        dto.Stages.Single(s => s.Role == AgentTaskRole.Code).Ready.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task a_plan_settled_next_test_design_is_ready_on_test_design_not_code()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var card = await SeedCardAsync(db, CardStatus.Review, "CARD-0146");
+        var completedAt = DateTime.UtcNow.AddMinutes(-8);
+        var plan = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Plan, AgentTaskStatus.Succeeded,
+            title: "plan CARD-0146", cardId: card.Id, completedAt: completedAt,
+            createdAt: completedAt.AddMinutes(-20),
+            deliverablePath: "docs/superpowers/plans/2026-09-03-card-0146-stage-pipeline-handoff-plan.md",
+            nextStage: PipelineHandoffKind.TestDesign,
+            nextHandoff: "hard card - verification section is a separate dispatch");
+
+        var dto = await CreateService(db).GetAsync(CancellationToken.None);
+        var ready = dto.Stages.Single(s => s.Role == AgentTaskRole.TestDesign).Ready.ShouldHaveSingleItem();
+        ready.SourcePlanTaskId.ShouldBe(plan.Id);
+        ready.SourceRole.ShouldBe(AgentTaskRole.Plan);
+        ready.Handoff.ShouldBe("hard card - verification section is a separate dispatch");
+        dto.Stages.Single(s => s.Role == AgentTaskRole.Code).Ready.ShouldBeEmpty(
+            "NextStage=TestDesign suppresses the legacy Plan→Code artifact bridge");
+    }
+
+    [Test]
+    public async Task a_plan_settled_next_code_is_ready_on_code()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var card = await SeedCardAsync(db, CardStatus.Review, "CARD-0146");
+        var completedAt = DateTime.UtcNow.AddMinutes(-8);
+        var plan = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Plan, AgentTaskStatus.Succeeded,
+            title: "plan CARD-0146 easy fold", cardId: card.Id, completedAt: completedAt,
+            createdAt: completedAt.AddMinutes(-20),
+            deliverablePath: "docs/superpowers/plans/2026-09-03-card-0146.md",
+            nextStage: PipelineHandoffKind.Code,
+            nextHandoff: "verification section is in the plan; build it");
+
+        var dto = await CreateService(db).GetAsync(CancellationToken.None);
+        var ready = dto.Stages.Single(s => s.Role == AgentTaskRole.Code).Ready.ShouldHaveSingleItem();
+        ready.SourcePlanTaskId.ShouldBe(plan.Id);
+        ready.SourceRole.ShouldBe(AgentTaskRole.Plan);
+        ready.Handoff.ShouldBe("verification section is in the plan; build it");
+        dto.Stages.Single(s => s.Role == AgentTaskRole.TestDesign).Ready.ShouldBeEmpty();
+    }
+
+    [Test]
+    [Arguments(PipelineHandoffKind.Land)]
+    [Arguments(PipelineHandoffKind.Decide)]
+    [Arguments(PipelineHandoffKind.None)]
+    public async Task next_land_decide_none_yield_no_ready_even_with_a_plan_doc(PipelineHandoffKind next)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var card = await SeedCardAsync(db, CardStatus.Review, "CARD-0146");
+        var completedAt = DateTime.UtcNow.AddMinutes(-8);
+        await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Plan, AgentTaskStatus.Succeeded,
+            title: "plan CARD-0146", cardId: card.Id, completedAt: completedAt,
+            createdAt: completedAt.AddMinutes(-20),
+            deliverablePath: "docs/superpowers/plans/2026-09-03-card-0146.md",
+            nextStage: next, nextHandoff: "not a stage dispatch");
+
+        var dto = await CreateService(db).GetAsync(CancellationToken.None);
+        dto.Stages.SelectMany(s => s.Ready).ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task a_newer_open_task_in_the_target_role_consumes_readiness()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var card = await SeedCardAsync(db, CardStatus.InProgress, "CARD-0146");
+        var completedAt = DateTime.UtcNow.AddMinutes(-8);
+        await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Investigate, AgentTaskStatus.Succeeded,
+            title: "investigate CARD-0146", cardId: card.Id, completedAt: completedAt,
+            createdAt: completedAt.AddMinutes(-20),
+            deliverablePath: "docs/investigations/2026-09-05-card-0146.md",
+            nextStage: PipelineHandoffKind.Plan, nextHandoff: "root cause confirmed");
+        await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Plan, AgentTaskStatus.Queued,
+            title: "plan already queued", cardId: card.Id, createdAt: completedAt.AddMinutes(1));
+
+        var dto = await CreateService(db).GetAsync(CancellationToken.None);
+        dto.Stages.Single(s => s.Role == AgentTaskRole.Plan).Ready.ShouldBeEmpty();
+        dto.Stages.SelectMany(s => s.Ready).ShouldBeEmpty();
     }
 
     [Test]
@@ -549,6 +664,28 @@ public class AgentTaskPipelineStatusTests
     }
 
     [Test]
+    public async Task a_queued_test_design_reports_sibling_land_while_its_card_plan_is_landing()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var card = await SeedCardAsync(db, CardStatus.InProgress, "CARD-0146");
+        var sibling = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Plan, AgentTaskStatus.Succeeded,
+            title: "plan sibling landing", cardId: card.Id, workspace: WorkspaceMode.Worktree,
+            repoPath: workspace.Path, worktreeBranch: "card-0146-plan",
+            landRequestedAt: DateTime.UtcNow.AddMinutes(-2), completedAt: DateTime.UtcNow.AddMinutes(-5));
+        var waiting = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.TestDesign, AgentTaskStatus.Queued,
+            title: "test-design behind land", cardId: card.Id, workspace: WorkspaceMode.Worktree,
+            repoPath: workspace.Path);
+
+        var testDesign = (await CreateService(db).GetAsync(CancellationToken.None))
+            .Stages.Single(s => s.Role == AgentTaskRole.TestDesign);
+        var row = testDesign.Queued.Single(t => t.TaskId == waiting.Id);
+        row.QueueReason.ShouldBe(AgentTaskPipelineStatusService.QueueReasonSiblingLandInFlight);
+        row.HeldBy.Select(h => h.TaskId).ShouldBe([sibling.Id]);
+    }
+
+    [Test]
     public async Task a_shared_task_never_reports_a_sibling_land()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -620,7 +757,9 @@ public class AgentTaskPipelineStatusTests
         AgentKind agentKind = AgentKind.ClaudeCode,
         AgentModelLevel modelLevel = AgentModelLevel.High,
         string? worktreeBranch = null,
-        DateTime? landRequestedAt = null)
+        DateTime? landRequestedAt = null,
+        PipelineHandoffKind? nextStage = null,
+        string? nextHandoff = null)
     {
         var id = Guid.NewGuid();
         var now = DateTime.UtcNow;
@@ -646,6 +785,8 @@ public class AgentTaskPipelineStatusTests
             DispatchedAt = Truncate(dispatchedAt),
             CompletedAt = Truncate(completedAt),
             DeliverablePath = deliverablePath,
+            NextStage = nextStage,
+            NextHandoff = nextHandoff,
             CreatedAt = Truncate(createdAt ?? now)!.Value,
         };
         db.AgentTasks.Add(task);

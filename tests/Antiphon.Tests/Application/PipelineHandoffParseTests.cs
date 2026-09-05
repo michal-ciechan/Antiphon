@@ -160,6 +160,28 @@ public class PipelineHandoffParseTests
         PipelineHandoff.TryParse("   ").Found.ShouldBeFalse();
     }
 
+    [Test]
+    [Arguments(PipelineHandoffKind.Investigate, AgentTaskRole.Investigate)]
+    [Arguments(PipelineHandoffKind.Plan, AgentTaskRole.Plan)]
+    [Arguments(PipelineHandoffKind.TestDesign, AgentTaskRole.TestDesign)]
+    [Arguments(PipelineHandoffKind.Code, AgentTaskRole.Code)]
+    [Arguments(PipelineHandoffKind.Review, AgentTaskRole.Review)]
+    public void try_to_stage_role_maps_the_five_pipeline_stages(
+        PipelineHandoffKind kind, AgentTaskRole expected)
+    {
+        PipelineHandoff.TryToStageRole(kind, out var role).ShouldBeTrue();
+        role.ShouldBe(expected);
+    }
+
+    [Test]
+    [Arguments(PipelineHandoffKind.Land)]
+    [Arguments(PipelineHandoffKind.Decide)]
+    [Arguments(PipelineHandoffKind.None)]
+    public void try_to_stage_role_rejects_kinds_that_produce_no_ready_row(PipelineHandoffKind kind)
+    {
+        PipelineHandoff.TryToStageRole(kind, out _).ShouldBeFalse();
+    }
+
     private static string Block(string next, string handoff, string? artifact = null)
     {
         var artifactLine = artifact is null ? "" : $"\nartifact: {artifact}";

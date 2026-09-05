@@ -20,7 +20,7 @@ import {
 /**
  * Fleet-wide stage glance: one compact line per card, grouped by role. The same component on
  * desktop and phone — a single column, 560 px max, centred. Tap a task row for the drawer; a
- * ready row goes to the plan reader.
+ * ready row on any stage goes to the plan reader when it has a deliverable path.
  */
 export function PipelineStagesPanel() {
   const pipeline = usePipeline()

@@ -4,7 +4,7 @@ namespace Antiphon.Server.Application.Dtos;
 
 /// <summary>
 /// Fleet-wide pipeline projection (CARD-0304). Advisory in-flight recommendations plus the
-/// current in-flight / queued / blocked / ready-for-Code snapshot. Never a dispatch gate.
+/// current in-flight / queued / blocked / ready-for-next-stage snapshot. Never a dispatch gate.
 /// </summary>
 public sealed record AgentTaskPipelineDto(
     DateTime AsOf,
@@ -81,7 +81,17 @@ public sealed record AgentTaskPipelineReadyDto(
     string DeliverablePath,
     string? DeliverableRef,
     /// <summary>
-    /// CARD-0305: the pin a Code dispatch for this card would resolve through — the card's own
-    /// Code pin when it has one, else the stage-wide Code pin. Null when neither exists.
+    /// CARD-0146 S4: the settled stage-role task that declared this ready row.
+    /// </summary>
+    AgentTaskRole SourceRole,
+    /// <summary>
+    /// CARD-0146 S4: the source task's <c>handoff:</c> line. Null on the legacy Plan→Code
+    /// artifact bridge (a report that never got the handoff block parsed).
+    /// </summary>
+    string? Handoff = null,
+    /// <summary>
+    /// CARD-0305: the pin a dispatch of this ready row's stage would resolve through — the
+    /// card's own pin for that role when it has one, else the stage-wide pin. Null when
+    /// neither exists.
     /// </summary>
     RoutingPinRefDto? RoutingPin = null);

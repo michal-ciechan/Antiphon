@@ -76,6 +76,41 @@ public class AgentTaskDispatchBaseGuardTests
 
     [Test]
     [Timeout(30_000)]
+    public async Task a_test_design_worktree_is_held_while_its_card_plan_land_is_in_flight(
+        CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("card0146-td-hold");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var card = await SeedCardAsync(db, "CARD-0146");
+        var sibling = await SeedKeptSiblingAsync(db, repo, card.Id, commitMessage: "docs(plan): CARD-0146");
+        sibling.LandRequestedAt = DateTime.UtcNow.AddMinutes(-1);
+        var parentSessionId = Guid.NewGuid();
+        await SeedParentSessionAsync(db, parentSessionId);
+        var task = await SeedQueuedWorktreeTaskAsync(
+            db, repo.Path, card.Id, parentSessionId, role: AgentTaskRole.TestDesign);
+        await db.SaveChangesAsync(ct);
+
+        await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot);
+        await using var scope = provider.CreateAsyncScope();
+        var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+
+        await dispatcher.TickAsync(ct);
+
+        var held = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
+        held.Status.ShouldBe(AgentTaskStatus.Queued);
+        held.WorktreePath.ShouldBeNull();
+        var heldEvents = await db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Held)
+            .ToListAsync(ct);
+        heldEvents.ShouldHaveSingleItem();
+        heldEvents[0].Detail.ShouldContain(sibling.WorktreeBranch!);
+        heldEvents[0].Detail.ShouldContain("is landing");
+    }
+
+    [Test]
+    [Timeout(30_000)]
     public async Task a_kept_sibling_with_no_land_dispatches_with_a_warning_and_whenidle_note(
         CancellationToken ct)
     {
@@ -218,16 +253,17 @@ public class AgentTaskDispatchBaseGuardTests
     }
 
     private static async Task<AgentTask> SeedQueuedWorktreeTaskAsync(
-        AppDbContext db, string repoPath, Guid cardId, Guid? parentSessionId)
+        AppDbContext db, string repoPath, Guid cardId, Guid? parentSessionId,
+        AgentTaskRole role = AgentTaskRole.Code)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
         {
             Id = id,
             RootTaskId = id,
-            Title = "CARD-0215 execute",
-            Goal = "Build the plan.",
-            Role = AgentTaskRole.Code,
+            Title = role == AgentTaskRole.TestDesign ? "CARD-0146 test design" : "CARD-0215 execute",
+            Goal = role == AgentTaskRole.TestDesign ? "Write the verification section." : "Build the plan.",
+            Role = role,
             AgentKind = AgentKind.ClaudeCode,
             ModelLevel = AgentModelLevel.Medium,
             Workspace = WorkspaceMode.Worktree,

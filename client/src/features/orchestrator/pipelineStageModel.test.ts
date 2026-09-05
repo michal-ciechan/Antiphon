@@ -137,6 +137,8 @@ function ready(overrides: Partial<AgentTaskPipelineReadyDto> = {}): AgentTaskPip
     deliverablePath: 'docs/superpowers/plans/2026-09-02-card-0031-project-status-view-plan.md',
     deliverableRef: null,
     routingPin: null,
+    sourceRole: 'Plan',
+    handoff: null,
     ...overrides,
   }
 }
@@ -171,6 +173,8 @@ describe('STAGE_LABEL', () => {
     expect(STAGE_LABEL.Plan).toBe('Plan')
     expect(STAGE_LABEL.Deploy).toBe('Deploy')
     expect(STAGE_LABEL.Review).toBe('Review')
+    expect(STAGE_LABEL.Investigate).toBe('Investigate')
+    expect(STAGE_LABEL.TestDesign).toBe('Test design')
   })
 })
 
@@ -190,6 +194,13 @@ describe('visibleStages', () => {
     expect(visibleStages(fleet({ Docs: stage({ role: 'Docs', queued: [queued()] }) })).shown).toHaveLength(1)
     expect(visibleStages(fleet({})).shown).toHaveLength(0)
     expect(visibleStages(fleet({})).idleCount).toBe(11)
+  })
+
+  it('shows a Plan-only ready row — ready is not Code-only', () => {
+    const { shown } = visibleStages(
+      fleet({ Plan: stage({ role: 'Plan', ready: [ready({ sourceRole: 'Investigate' })] }) }),
+    )
+    expect(shown.map((item) => item.role)).toEqual(['Plan'])
   })
 })
 
@@ -364,6 +375,12 @@ describe('rowTarget', () => {
         file: 'docs/superpowers/plans/2026-09-02-card-0031-project-status-view-plan.md',
         task: 'plan-31',
       }).toString()}`,
+    })
+  })
+
+  it('opens the source task drawer when a ready row has no deliverable path', () => {
+    expect(rowTarget({ kind: 'ready', row: ready({ deliverablePath: '' }) })).toEqual({
+      drawer: 'plan-31',
     })
   })
 

@@ -46,6 +46,8 @@
           "readySince": "2026-01-31T11:00:00Z",
           "deliverablePath": "docs/superpowers/plans/2026-09-02-card-0031-project-status-view-plan.md",
           "deliverableRef": null,
+          "sourceRole": "Plan",
+          "handoff": null,
           "routingPin": null
         }
       ],
@@ -174,6 +176,28 @@
     },
     {
       "role": "Merge",
+      "recommendedInFlight": 1,
+      "inFlightCount": 0,
+      "atOrAboveRecommendation": false,
+      "inFlight": [],
+      "queued": [],
+      "blocked": [],
+      "ready": [],
+      "routingPin": null
+    },
+    {
+      "role": "Investigate",
+      "recommendedInFlight": 1,
+      "inFlightCount": 0,
+      "atOrAboveRecommendation": false,
+      "inFlight": [],
+      "queued": [],
+      "blocked": [],
+      "ready": [],
+      "routingPin": null
+    },
+    {
+      "role": "TestDesign",
       "recommendedInFlight": 1,
       "inFlightCount": 0,
       "atOrAboveRecommendation": false,

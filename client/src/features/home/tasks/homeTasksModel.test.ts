@@ -27,6 +27,7 @@ import {
   pipelineRowFor,
   questionFor,
   queueReasonFor,
+  readyLine,
   readinessFor,
   runningSince,
   workerAgent,
@@ -569,6 +570,9 @@ describe('readinessFor', () => {
       deliverableRef: ready.deliverableRef,
       sourcePlanShortId: ready.sourcePlanShortId,
       sourcePlanTaskId: ready.sourcePlanTaskId,
+      targetRole: 'Code',
+      sourceRole: undefined,
+      handoff: undefined,
     })
   })
 
@@ -580,6 +584,17 @@ describe('readinessFor', () => {
     expect(
       readinessFor(item({ source: 'Card', group: 'NeedsHuman', state: 'NeedsDecision' }), pipe),
     ).toBeNull()
+  })
+
+  it('names the stage the ready row sits on', () => {
+    const ready = readyRow({ sourceRole: 'Investigate', handoff: 'root cause confirmed' })
+    const pipe = pipeline({ stages: [stage({ role: 'Plan', ready: [ready] })] })
+    const view = readinessFor(item({ source: 'Card', group: 'Next', state: 'Backlog' }), pipe)
+    expect(view?.targetRole).toBe('Plan')
+    expect(view?.sourceRole).toBe('Investigate')
+    expect(readyLine(view!, Date.parse('2026-02-03T09:00:00Z'))).toBe(
+      'Investigate landed 2d ago — ready for Plan',
+    )
   })
 })
 

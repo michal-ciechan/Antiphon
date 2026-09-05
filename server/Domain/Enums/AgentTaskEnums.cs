@@ -338,7 +338,7 @@ public static class AgentTaskRoles
     /// <summary>
     /// Pipeline stages (CARD-0146). Helpers (Debug, Test, Coverage, Docs, Commit, Deploy, Merge,
     /// Custom) and specialists are not stages. Keys the handoff block, stage bundles, and ready
-    /// projection once those slices land.
+    /// projection.
     /// </summary>
     public static bool IsStage(AgentTaskRole role) =>
         role is AgentTaskRole.Investigate
@@ -346,6 +346,16 @@ public static class AgentTaskRoles
             or AgentTaskRole.TestDesign
             or AgentTaskRole.Code
             or AgentTaskRole.Review;
+
+    /// <summary>
+    /// EF-translatable "is a pipeline stage" predicate. <see cref="IsStage"/> does not translate.
+    /// </summary>
+    public static readonly Expression<Func<AgentTask, bool>> Stage =
+        t => t.Role == AgentTaskRole.Investigate
+            || t.Role == AgentTaskRole.Plan
+            || t.Role == AgentTaskRole.TestDesign
+            || t.Role == AgentTaskRole.Code
+            || t.Role == AgentTaskRole.Review;
 
     /// <summary>
     /// EF-translatable "not a specialist" predicate. A method call does not translate; this

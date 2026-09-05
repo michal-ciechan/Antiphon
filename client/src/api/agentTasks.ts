@@ -361,6 +361,10 @@ export interface AgentTaskPipelineReadyDto {
   deliverablePath: string
   deliverableRef: string | null
   routingPin?: RoutingPinRefDto | null
+  /** CARD-0146 S4. The settled stage-role task that declared this ready. Absent on a pre-S4 server. */
+  sourceRole?: AgentTaskRole
+  /** CARD-0146 S4. The source task's handoff line. Null on the legacy Plan→Code bridge. */
+  handoff?: string | null
 }
 
 export interface AgentTaskPipelineStageDto {

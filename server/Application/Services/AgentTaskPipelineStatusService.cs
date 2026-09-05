@@ -68,46 +68,21 @@ public sealed class AgentTaskPipelineStatusService
                 t.Id, t.Title, t.Role, t.Status, t.CardId, t.AgentName, t.AgentKind, t.ModelLevel,
                 t.CreatedAt, t.DispatchedAt, t.CompletedAt, t.AgentSessionId, t.WorkingDirectory,
                 t.RepoPath, t.Scope, t.Workspace, t.WorktreeBranch, t.DeliverablePath,
-                t.DeliverableRef, t.Complexity, t.FailureReason))
+                t.DeliverableRef, t.Complexity, t.FailureReason, t.NextStage, t.NextHandoff))
             .ToListAsync(ct);
 
-        var boundPlans = await _db.AgentTasks.AsNoTracking()
-            .Where(t => t.Role == AgentTaskRole.Plan && t.CardId != null)
+        var boundStages = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.CardId != null)
+            .Where(AgentTaskRoles.Stage)
             .Select(t => new TaskRow(
                 t.Id, t.Title, t.Role, t.Status, t.CardId, t.AgentName, t.AgentKind, t.ModelLevel,
                 t.CreatedAt, t.DispatchedAt, t.CompletedAt, t.AgentSessionId, t.WorkingDirectory,
                 t.RepoPath, t.Scope, t.Workspace, t.WorktreeBranch, t.DeliverablePath,
-                t.DeliverableRef, t.Complexity, t.FailureReason))
+                t.DeliverableRef, t.Complexity, t.FailureReason, t.NextStage, t.NextHandoff))
             .ToListAsync(ct);
 
-        var latestPlans = boundPlans
-            .GroupBy(t => t.CardId!.Value)
-            .Select(g => g.OrderByDescending(t => t.CreatedAt).ThenByDescending(t => t.Id).First())
-            .ToList();
-
-        var candidatePlans = latestPlans
-            .Where(p => p.Status == AgentTaskStatus.Succeeded
-                && p.CompletedAt is not null
-                && IsVerifiedPlanDeliverable(p.DeliverablePath))
-            .ToList();
-
-        var candidateCardIds = candidatePlans.Select(p => p.CardId!.Value).ToList();
-        var codeByCard = candidateCardIds.Count == 0
-            ? new Dictionary<Guid, List<TaskRow>>()
-            : (await _db.AgentTasks.AsNoTracking()
-                    .Where(t => t.Role == AgentTaskRole.Code && t.CardId != null
-                        && candidateCardIds.Contains(t.CardId.Value))
-                    .Select(t => new TaskRow(
-                        t.Id, t.Title, t.Role, t.Status, t.CardId, t.AgentName, t.AgentKind,
-                        t.ModelLevel, t.CreatedAt, t.DispatchedAt, t.CompletedAt, t.AgentSessionId,
-                        t.WorkingDirectory, t.RepoPath, t.Scope, t.Workspace, t.WorktreeBranch,
-                        t.DeliverablePath, t.DeliverableRef, t.Complexity, t.FailureReason))
-                    .ToListAsync(ct))
-                .GroupBy(t => t.CardId!.Value)
-                .ToDictionary(g => g.Key, g => g.ToList());
-
         var cardIds = open.Select(t => t.CardId)
-            .Concat(candidatePlans.Select(p => p.CardId))
+            .Concat(boundStages.Select(t => t.CardId))
             .Where(id => id is not null)
             .Select(id => id!.Value)
             .Distinct()
@@ -134,7 +109,7 @@ public sealed class AgentTaskPipelineStatusService
             .Where(p => p.CardId != null)
             .ToDictionary(p => (p.CardId!.Value, p.Role));
 
-        var ready = BuildReady(candidatePlans, codeByCard, cards, stagePins, cardPins);
+        var ready = BuildReady(boundStages, cards, stagePins, cardPins);
 
         var inFlightRows = open
             .Where(t => t.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
@@ -171,7 +146,7 @@ public sealed class AgentTaskPipelineStatusService
                 .OrderBy(t => t.CreatedAt).ThenBy(t => t.Id)
                 .Select(t => ToBlocked(t, cards))
                 .ToList();
-            var roleReady = role == AgentTaskRole.Code ? ready : [];
+            var roleReady = ready.TryGetValue(role, out var rows) ? rows : [];
 
             stages.Add(new AgentTaskPipelineStageDto(
                 role,
@@ -210,55 +185,99 @@ public sealed class AgentTaskPipelineStatusService
         return name.Length > 0 && !normalized.Contains("..", StringComparison.Ordinal);
     }
 
-    internal static bool CodeConsumesReadiness(TaskRow code, DateTime planCompletedAt)
+    internal static bool CodeConsumesReadiness(TaskRow code, DateTime planCompletedAt) =>
+        RoleConsumesReadiness(code, planCompletedAt);
+
+    internal static bool RoleConsumesReadiness(TaskRow task, DateTime sourceCompletedAt)
     {
-        if (code.Status is AgentTaskStatus.Queued or AgentTaskStatus.Dispatched
+        if (task.Status is AgentTaskStatus.Queued or AgentTaskStatus.Dispatched
             or AgentTaskStatus.Working or AgentTaskStatus.Blocked)
         {
             return true;
         }
 
-        return code.CreatedAt > planCompletedAt && code.DispatchedAt is not null;
+        return task.CreatedAt > sourceCompletedAt && task.DispatchedAt is not null;
     }
 
-    private IReadOnlyList<AgentTaskPipelineReadyDto> BuildReady(
-        List<TaskRow> candidatePlans,
-        Dictionary<Guid, List<TaskRow>> codeByCard,
+    /// <summary>
+    /// CARD-0146 S4 / D7: a settled Succeeded stage-role task whose <c>NextStage</c> is a
+    /// pipeline stage X, whose card has no open or newer task in role X, and whose card is not
+    /// terminal / NeedsDecision / archived, is a ready row under X. A Plan with
+    /// <c>NextStage == null</c> and a verified plan-doc deliverable still yields the legacy
+    /// Code row. <c>land</c> / <c>decide</c> / <c>none</c> produce none.
+    /// </summary>
+    private Dictionary<AgentTaskRole, List<AgentTaskPipelineReadyDto>> BuildReady(
+        List<TaskRow> boundStages,
         Dictionary<Guid, CardRow> cards,
         Dictionary<AgentTaskRole, RoutingPin> stagePins,
         Dictionary<(Guid CardId, AgentTaskRole Role), RoutingPin> cardPins)
     {
-        var ready = new List<AgentTaskPipelineReadyDto>();
-        foreach (var plan in candidatePlans)
+        var ready = new List<(AgentTaskRole Target, AgentTaskPipelineReadyDto Row)>();
+        foreach (var group in boundStages
+            .Where(t => t.CardId is not null)
+            .GroupBy(t => t.CardId!.Value))
         {
-            if (!cards.TryGetValue(plan.CardId!.Value, out var card))
+            if (!cards.TryGetValue(group.Key, out var card))
                 continue;
             if (card.ArchivedAt is not null)
                 continue;
             if (card.Status is CardStatus.Done or CardStatus.Canceled or CardStatus.NeedsDecision)
                 continue;
 
-            if (codeByCard.TryGetValue(card.Id, out var codes)
-                && codes.Any(c => CodeConsumesReadiness(c, plan.CompletedAt!.Value)))
+            var tasks = group.ToList();
+            var sources = new List<(TaskRow Source, AgentTaskRole Target)>();
+            foreach (var task in tasks)
             {
-                continue;
+                if (task.Status != AgentTaskStatus.Succeeded || task.CompletedAt is null)
+                    continue;
+
+                if (task.NextStage is { } kind
+                    && PipelineHandoff.TryToStageRole(kind, out var target))
+                {
+                    sources.Add((task, target));
+                }
+                else if (task.NextStage is null
+                    && task.Role == AgentTaskRole.Plan
+                    && IsVerifiedPlanDeliverable(task.DeliverablePath))
+                {
+                    sources.Add((task, AgentTaskRole.Code));
+                }
             }
 
-            var codePin = EffectivePin(card.Id, AgentTaskRole.Code, stagePins, cardPins);
-            ready.Add(new AgentTaskPipelineReadyDto(
-                new AgentTaskPipelineCardRefDto(card.Id, card.Identifier, card.Title),
-                plan.Id,
-                DelegationReportFormatter.Short(plan.Id),
-                plan.CompletedAt!.Value,
-                plan.DeliverablePath!,
-                plan.DeliverableRef,
-                codePin is null ? null : RoutingPinService.ToRef(codePin, card.Identifier)));
+            foreach (var byTarget in sources.GroupBy(s => s.Target))
+            {
+                var picked = byTarget
+                    .OrderByDescending(s => s.Source.CompletedAt)
+                    .ThenByDescending(s => s.Source.Id)
+                    .First();
+                if (tasks.Any(t => t.Role == byTarget.Key
+                    && RoleConsumesReadiness(t, picked.Source.CompletedAt!.Value)))
+                {
+                    continue;
+                }
+
+                var pin = EffectivePin(card.Id, byTarget.Key, stagePins, cardPins);
+                ready.Add((byTarget.Key, new AgentTaskPipelineReadyDto(
+                    new AgentTaskPipelineCardRefDto(card.Id, card.Identifier, card.Title),
+                    picked.Source.Id,
+                    DelegationReportFormatter.Short(picked.Source.Id),
+                    picked.Source.CompletedAt!.Value,
+                    picked.Source.DeliverablePath ?? "",
+                    picked.Source.DeliverableRef,
+                    picked.Source.Role,
+                    picked.Source.NextHandoff,
+                    pin is null ? null : RoutingPinService.ToRef(pin, card.Identifier))));
+            }
         }
 
         return ready
-            .OrderBy(r => r.ReadySince)
-            .ThenBy(r => r.Card.Identifier, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+            .GroupBy(r => r.Target)
+            .ToDictionary(
+                g => g.Key,
+                g => g.Select(x => x.Row)
+                    .OrderBy(r => r.ReadySince)
+                    .ThenBy(r => r.Card.Identifier, StringComparer.OrdinalIgnoreCase)
+                    .ToList());
     }
 
     /// <summary>
@@ -310,8 +329,9 @@ public sealed class AgentTaskPipelineStatusService
             }
         }
 
-        // CARD-0301: lease → sibling land → pin → cap. The dispatcher holds a card-bound Worktree
-        // task while a same-card sibling's LandRequestedAt is set (CARD-0331); name that hold here
+        // CARD-0301 / CARD-0146 S4: lease → sibling land → pin → cap. The dispatcher holds a
+        // card-bound Worktree task (any IsStage pair, and helpers for the same git reason)
+        // while a same-card sibling's LandRequestedAt is set (CARD-0331); name that hold here
         // without the Git probes the dispatcher adds.
         if (queueReason == QueueReasonAwaitingDispatch
             && task.CardId is Guid cardId
@@ -497,7 +517,9 @@ public sealed class AgentTaskPipelineStatusService
         string? DeliverablePath,
         string? DeliverableRef,
         TaskComplexity? Complexity = null,
-        string? FailureReason = null);
+        string? FailureReason = null,
+        PipelineHandoffKind? NextStage = null,
+        string? NextHandoff = null);
 
     private sealed record SiblingLandRow(Guid Id, string Title, Guid CardId, DateTime LandRequestedAt);
 

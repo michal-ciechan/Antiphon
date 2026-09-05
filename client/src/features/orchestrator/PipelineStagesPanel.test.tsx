@@ -105,6 +105,8 @@ function ready(overrides: Partial<AgentTaskPipelineReadyDto> = {}): AgentTaskPip
     deliverablePath: 'docs/superpowers/plans/example.md',
     deliverableRef: 'abc',
     routingPin: null,
+    sourceRole: 'Plan',
+    handoff: null,
     ...overrides,
   }
 }
@@ -307,5 +309,30 @@ describe('PipelineStagesPanel', () => {
     expect(await screen.findByTestId('pipeline-empty')).toHaveTextContent('Nothing in the pipeline.')
     expect(screen.getByTestId('pipeline-strip')).toHaveTextContent('0 of 6 slots')
     expect(screen.queryByTestId('pipeline-idle')).not.toBeInTheDocument()
+  })
+
+  it('renders a ready row on Plan, not only Execute', async () => {
+    const dto = emptyDto()
+    dto.stages = dto.stages.map((item) =>
+      item.role === 'Plan'
+        ? {
+            ...item,
+            ready: [
+              ready({
+                sourceRole: 'Investigate',
+                handoff: 'root cause confirmed',
+                deliverablePath: 'docs/investigations/example.md',
+              }),
+            ],
+          }
+        : item,
+    )
+    servePipeline(dto)
+    renderWithProviders(<PipelineStagesPanel />)
+    expect(await screen.findByTestId('pipeline-stage-Plan')).toHaveTextContent('1 ready')
+    const readyRow = screen.getByTestId('pipeline-row-ready:card-31')
+    expect(readyRow).toHaveTextContent('ready 3h')
+    expect(readyRow).toHaveAttribute('aria-label', 'Open #31 — ready')
+    expect(screen.queryByTestId('pipeline-stage-Code')).not.toBeInTheDocument()
   })
 })

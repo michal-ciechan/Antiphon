@@ -227,6 +227,9 @@ export function rightCell(
 
 export function rowTarget(source: RowTargetSource): PipelineRowView['target'] {
   if (source.kind === 'ready') {
+    if (!source.row.deliverablePath) {
+      return { drawer: source.row.sourcePlanTaskId }
+    }
     const params = new URLSearchParams({
       file: source.row.deliverablePath,
       ...(source.row.deliverableRef ? { ref: source.row.deliverableRef } : {}),

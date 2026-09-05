@@ -66,6 +66,36 @@ public static class PipelineHandoff
     };
 
     /// <summary>
+    /// Maps a <c>next:</c> kind onto the pipeline stage it is ready for.
+    /// <see cref="PipelineHandoffKind.Land"/>, <see cref="PipelineHandoffKind.Decide"/> and
+    /// <see cref="PipelineHandoffKind.None"/> produce no ready row.
+    /// </summary>
+    public static bool TryToStageRole(PipelineHandoffKind kind, out AgentTaskRole role)
+    {
+        switch (kind)
+        {
+            case PipelineHandoffKind.Investigate:
+                role = AgentTaskRole.Investigate;
+                return true;
+            case PipelineHandoffKind.Plan:
+                role = AgentTaskRole.Plan;
+                return true;
+            case PipelineHandoffKind.TestDesign:
+                role = AgentTaskRole.TestDesign;
+                return true;
+            case PipelineHandoffKind.Code:
+                role = AgentTaskRole.Code;
+                return true;
+            case PipelineHandoffKind.Review:
+                role = AgentTaskRole.Review;
+                return true;
+            default:
+                role = default;
+                return false;
+        }
+    }
+
+    /// <summary>
     /// The <c>next=</c> header value, or null when the bit must not appear (a non-stage role
     /// with no block). Stage role, no block → <c>unmarked</c>; unparseable token →
     /// <c>unrecognised:</c> plus the first 24 characters of the raw token.

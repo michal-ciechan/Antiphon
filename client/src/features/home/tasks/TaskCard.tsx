@@ -45,6 +45,7 @@ import {
   isAnswerable,
   isSpawnable,
   queueReasonFor,
+  readyLine,
   readinessFor,
   runningSince,
   workerAgent,
@@ -271,21 +272,23 @@ export function TaskCard({
         {ready && (
           <Group mt={4} gap={6} wrap="nowrap">
             <Text size="xs" c="dimmed" data-testid={`task-ready-${item.id}`}>
-              plan landed {formatRelativeAgo(ready.since, now)} — ready for Code
+              {readyLine(ready, now)}
             </Text>
-            <Anchor
-              component={Link}
-              to={`/plans?${new URLSearchParams({
-                file: ready.deliverablePath,
-                ...(ready.deliverableRef ? { ref: ready.deliverableRef } : {}),
-                task: ready.sourcePlanTaskId,
-              }).toString()}`}
-              size="xs"
-              onClick={(event) => event.stopPropagation()}
-              data-testid={`task-ready-read-${item.id}`}
-            >
-              Read
-            </Anchor>
+            {ready.deliverablePath ? (
+              <Anchor
+                component={Link}
+                to={`/plans?${new URLSearchParams({
+                  file: ready.deliverablePath,
+                  ...(ready.deliverableRef ? { ref: ready.deliverableRef } : {}),
+                  task: ready.sourcePlanTaskId,
+                }).toString()}`}
+                size="xs"
+                onClick={(event) => event.stopPropagation()}
+                data-testid={`task-ready-read-${item.id}`}
+              >
+                Read
+              </Anchor>
+            ) : null}
           </Group>
         )}
 

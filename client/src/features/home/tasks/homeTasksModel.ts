@@ -311,11 +311,15 @@ export interface ReadinessView {
   deliverableRef: string | null
   sourcePlanShortId: string
   sourcePlanTaskId: string
+  /** The stage the ready row sits on — the next dispatch. */
+  targetRole: AgentTaskPipelineStageDto['role']
+  sourceRole?: AgentTaskPipelineReadyDto['sourceRole']
+  handoff?: string | null
 }
 
 /**
- * Up-next card the pipeline lists as ready for Code. Done and NeedsDecision cards are never
- * asked — a close verdict or a parked decision is not a "ready" line.
+ * Up-next card the pipeline lists as ready for a next stage. Done and NeedsDecision cards are
+ * never asked — a close verdict or a parked decision is not a "ready" line.
  */
 export function readinessFor(
   item: HomeTaskItemDto,
@@ -333,9 +337,20 @@ export function readinessFor(
       deliverableRef: ready.deliverableRef,
       sourcePlanShortId: ready.sourcePlanShortId,
       sourcePlanTaskId: ready.sourcePlanTaskId,
+      targetRole: stage.role,
+      sourceRole: ready.sourceRole,
+      handoff: ready.handoff,
     }
   }
   return null
+}
+
+export function readyLine(ready: ReadinessView, now: number): string {
+  const landed = !ready.sourceRole || ready.sourceRole === 'Plan'
+    ? 'plan landed'
+    : `${ready.sourceRole} landed`
+  const forWord = ready.targetRole === 'TestDesign' ? 'Test design' : ready.targetRole
+  return `${landed} ${formatRelativeAgo(ready.since, now)} — ready for ${forWord}`
 }
 
 export function formatRelativeAgo(iso: string, now = Date.now()): string {

@@ -494,9 +494,12 @@ public sealed class AgentTaskDispatcher
                 continue;
             }
 
-            // CARD-0215: a card-bound Worktree task branches from merge-target-or-HEAD, never a
-            // sibling. Hold while that sibling's land is in flight; otherwise dispatch with a
-            // warning so a superseded plan cannot block Execute.
+            // CARD-0215 / CARD-0146 S4: a card-bound Worktree task branches from
+            // merge-target-or-HEAD, never a sibling. Hold while that sibling's land is in
+            // flight. The pipeline-stage case is any IsStage Worktree (TestDesign behind a
+            // landing Plan, Code behind Plan, …); helpers use the same git-ancestry hold
+            // because a Docs worktree from master would still miss the sibling's commits.
+            // Otherwise dispatch with a warning so a superseded plan cannot block Execute.
             IReadOnlyList<UnlandedSibling>? siblingWarnings = null;
             if (task.Workspace == WorkspaceMode.Worktree
                 && task.CardId is not null
@@ -2625,9 +2628,10 @@ public sealed class AgentTaskDispatcher
     }
 
     /// <summary>
-    /// CARD-0215: same-card kept Worktree branches whose tip is not an ancestor of this task's
-    /// dispatch base. Succeeded and Blocked both count — a conflicted land leaves the branch
-    /// kept, which is the one most likely to be forgotten.
+    /// CARD-0215 / CARD-0146 S4: same-card kept Worktree branches whose tip is not an ancestor
+    /// of this task's dispatch base. Succeeded and Blocked both count — a conflicted land
+    /// leaves the branch kept, which is the one most likely to be forgotten. Not Code-only:
+    /// any card-bound Worktree is held, which includes every IsStage pair.
     /// </summary>
     private async Task<SiblingBaseGuard> EvaluateCardSiblingBaseAsync(AgentTask task, CancellationToken ct)
     {
