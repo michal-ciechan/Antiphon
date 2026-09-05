@@ -3,6 +3,10 @@ Working the Antiphon board. Use `scripts/card.ps1` — its header comment is the
 "Working cards from a shell" has the human-facing synopsis. Do not hand-compose the HTTP yourself
 unless the script genuinely can't do it. These are the shapes that bite either way:
 
+- An **external** ChatGPT/Codex caller dispatches with `delegate.ps1 -Capability <name>` (the name,
+  never a secret). While Claude is held, pass `-Kind Codex` on Worker/stage work. Do not edit
+  `Delegation:AllowedRoots`. Operator issue is `capability.ps1`.
+
 - A CARD IS ADDRESSED THE WAY IT'S NAMED. `CARD-0051`, `card-51`, `#51`, `51`, or its guid — every
   card route (`GET /api/cards/{id}`, both PATCHes, `/revisions`, `/archive`, `/unarchive`, `/reopen`, `/spawn`)
   resolves whichever form you give it. There is no look-up-the-id-first step.

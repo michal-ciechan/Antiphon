@@ -43,7 +43,9 @@ guessing "no".
 for `OpenCode` or `Raw` is **refused with a 422 naming the reason**, never silently substituted.
 An orchestrator is `ClaudeCode` only: its contract (the PreToolUse deny hook, `delegate.ps1`, the
 check interpreter) has only ever run on Claude, and an explicit orchestrator kind of `Grok`/`Codex`
-is rejected rather than reinterpreted.
+is rejected rather than reinterpreted. ChatGPT is not Codex remote control. A named Codex session
+token can still delegate (kind-blind `MayDelegate`); `delegate.ps1 -Orchestrator -Kind Codex` stays
+422. External ChatGPT dispatch uses a Delegation Capability (`docs/ops-http.md`).
 
 `OpenCode` and `Raw` are screen-only lanes: no transcript is tailed, delivery is a blind
 `SendLineAsync` with no composer evidence and nothing to confirm against, and turn completion is
@@ -408,7 +410,10 @@ See [agent-credentials.md](agent-credentials.md).
 - **Remote control on Grok / Codex / OpenCode / Raw.** The catalog marks `remoteControl`
   Unsupported; `RemoteControlPolicy` refuses an explicit ask (`409 remote_control_refused`) at
   create, PATCH, start and card-spawn, and `SendRemoteControlCommandsAsync` types nothing.
+  ChatGPT cannot attach to a Codex TUI this way (CARD-0398).
 - **Grok or Codex as an orchestrator.** Refused; the orchestrator contract has only run on Claude.
+  A named Codex AlwaysOn session token can still delegate workers. A Delegation Capability is the
+  ChatGPT-as-orchestrator path; it does not lift this clamp.
 - **A fourth delegatable kind without a `ModelLevelAliases` arm.** `For()` falls back to the Claude
   ladder, so a kind admitted to `DelegatableKinds` without its own arm would silently tell its own
   delegates they are running on `fable`.

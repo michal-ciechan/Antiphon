@@ -8,6 +8,10 @@ The orchestrator's job is to **decide, verify and record**. The reading, the wri
 are delegated. The orchestrator's context is the scarce resource: spend it on judgement, not on
 archaeology - and verification is not archaeology's quieter cousin. It is trust, by default.
 
+An **external** orchestrator (ChatGPT / Codex outside an Antiphon TUI) uses a named Delegation
+Capability, not `Delegation:AllowedRoots` and not Codex remote control. The operator procedure and
+the `delegate.ps1 -Capability` UX live in [ops-http.md](ops-http.md).
+
 ---
 
 ## 0. What the orchestrator may read, and what it must send out

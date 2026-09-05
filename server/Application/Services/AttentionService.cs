@@ -209,6 +209,7 @@ public sealed class AttentionService
         items.AddRange(await BuildAgentOutlivedTaskItemsAsync(now, ct));
         items.AddRange(await BuildModelAvailabilityHoldItemsAsync(now, ct));
         items.AddRange(await BuildScheduleMisfireItemsAsync(now, ct));
+        items.AddRange(await BuildDelegationCapabilityItemsAsync(since, ct));
         items.AddRange(BuildRecentFailureItems(failed, costs, checkDigests));
 
         // Asked unconditionally, because RunnerConsulted is a claim about whether anybody asked and a
@@ -2046,6 +2047,53 @@ public sealed class AttentionService
     {
         var idx = reason.LastIndexOf(' ');
         return idx < 0 ? null : reason[(idx + 1)..];
+    }
+
+    private async Task<List<AttentionItemDto>> BuildDelegationCapabilityItemsAsync(
+        DateTime since, CancellationToken ct)
+    {
+        var events = await _db.DelegationCapabilityEvents.AsNoTracking()
+            .Where(e => e.At >= since)
+            .OrderByDescending(e => e.At)
+            .ToListAsync(ct);
+        if (events.Count == 0)
+            return [];
+
+        var capabilityIds = events.Select(e => e.CapabilityId).Distinct().ToList();
+        var names = await _db.DelegationCapabilities.AsNoTracking()
+            .Where(c => capabilityIds.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, c => c.Name, ct);
+
+        var items = new List<AttentionItemDto>(events.Count);
+        foreach (var ev in events)
+        {
+            var name = names.GetValueOrDefault(ev.CapabilityId) ?? ev.CapabilityId.ToString("D");
+            var verb = ev.Type switch
+            {
+                DelegationCapabilityEventType.Issued => "issued",
+                DelegationCapabilityEventType.Rotated => "rotated",
+                DelegationCapabilityEventType.Revoked => "revoked",
+                _ => ev.Type.ToString().ToLowerInvariant(),
+            };
+            var severity = ev.Type == DelegationCapabilityEventType.Revoked
+                ? AlertSeverity.Warning
+                : AlertSeverity.Info;
+            items.Add(new AttentionItemDto(
+                AttentionKind.DelegationCapability,
+                severity,
+                TaskId: null,
+                SessionId: null,
+                AgentId: null,
+                MessageId: null,
+                Title: name,
+                Headline: $"Capability '{name}' {verb}",
+                Evidence: Excerpt(ev.Detail),
+                SinceUtc: ev.At,
+                SubtreeCostUsd: null,
+                Actions: []));
+        }
+
+        return items;
     }
 
     private async Task<List<AttentionItemDto>> BuildAgentOutlivedTaskItemsAsync(

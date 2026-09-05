@@ -24,6 +24,16 @@ Simple mode serves the server on `17281`; an E2E run owns its own **random** run
 `http://localhost:17202` — and send `$env:ANTIPHON_TASK_TOKEN` as the `X-Antiphon-Task-Token`
 header when it is set. Inside a running agent session both are already in the environment.
 
+### ChatGPT / Codex as an external orchestrator (CARD-0398)
+
+Run `delegate.ps1 -Capability <name> …` from the approved checkout (add `-Kind Codex` while Claude is held). Do not read capability files, do not dump env looking for tokens, do not edit `Delegation:AllowedRoots`. Reports land on the bound card; poll `delegate.ps1 -Status <id>` or the card thread.
+
+The operator issues the capability with `scripts/capability.ps1 issue -Name <n> -Roots <checkout>`. That script writes a DPAPI blob and prints the name and store path — never the token. `-Orchestrator -Kind Codex` stays 422. Codex remote control stays `409 remote_control_refused`. A Claude usage hold still `409 model_disabled` unless the caller passed `-Kind Codex`; quota-exhausted is `409 subscription_quota_low`. The complementary fallback is a named Codex AlwaysOn plus `POST /api/sessions/{id}/messages` — still do not widen `AllowedRoots`.
+
+### Claude held
+
+While Claude aliases are on a usage hold, a capability caller that wants to keep dispatching must pass `-Kind Codex` (Worker or stage role, not Orchestrator). Default kind is still ClaudeCode and still 409s. The complementary path is the named Codex AlwaysOn session token (kind-blind `MayDelegate`). Neither path edits `Delegation:AllowedRoots`.
+
 ## The jobs you have
 
 | Need | Method | Path |
@@ -45,6 +55,7 @@ header when it is set. Inside a running agent session both are already in the en
 | Distillation feedback (CARD-0330) | POST | `/api/agent-tasks/{id}/distillation/feedback` `{ verdict: Good\|Lost\|Noisy, note? }` — 409 if the task has no distillation. `delegate.ps1 -Flag <id> -Verdict Lost\|Noisy\|Good [-Note]` |
 | Home Tasks rail (cards + unbound delegations) | GET | `/api/home/tasks` |
 | What needs a human (fleet-global) | GET | `/api/attention` |
+| Issue / list / rotate / revoke a Delegation Capability (CARD-0398) | POST / GET / POST rotate / POST revoke | `/api/delegation-capabilities`, `/api/delegation-capabilities/{id}`, `…/rotate`, `…/revoke` — `scripts/capability.ps1`. GET never returns the token. |
 | A session's screen | GET | `/api/sessions/{id}/buffer` |
 | A session's transcript | GET | `/api/sessions/{id}/transcript?since={sequence}` |
 | Type work into a session | POST | `/api/sessions/{id}/messages` |
