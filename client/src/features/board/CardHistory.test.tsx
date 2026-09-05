@@ -153,6 +153,25 @@ describe('CardHistory', () => {
       .toHaveTextContent('the old body, which can run to twenty thousand characters')
   })
 
+  it('renders a reorder with the placement reason and superseded axes', async () => {
+    renderHistory([
+      revision({
+        id: 'r7', revisionNumber: 7, kind: 'Reorder',
+        reason: 'placed before CARD-0094',
+        importance: 'Normal',
+        urgency: 'Normal',
+        position: 3,
+        editedBy: 'operator',
+      }),
+    ])
+
+    const row = await screen.findByTestId('revision-7')
+    expect(row).toHaveTextContent('Reordered')
+    expect(row).toHaveTextContent('placed before CARD-0094')
+    expect(row).toHaveTextContent('Normal')
+    expect(screen.getByTestId('superseded-reorder-7')).toBeInTheDocument()
+  })
+
   it('renders a reopen with the transition and the superseded close', async () => {
     renderHistory([
       revision({

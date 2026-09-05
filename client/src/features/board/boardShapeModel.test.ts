@@ -12,6 +12,7 @@ import {
   describeSignal,
   hasLiveSession,
   legalMoveTargets,
+  orderCards,
   quadrantBands,
   spineNeighbours,
 } from './boardShapeModel'
@@ -273,5 +274,21 @@ describe('spine neighbours', () => {
     expect(spineNeighbours(shape.states, 'backlog').previous).toBeNull()
     expect(spineNeighbours(shape.states, 'done').next).toBeNull()
     expect(spineNeighbours(shape.states, 'nope').current).toBeNull()
+  })
+})
+
+describe('orderCards — position inside a rank cell', () => {
+  const base = board.columns[0].cards[0]
+
+  it('sorts a later-created card first when it has position 1', () => {
+    const older = { ...base, id: 'older', rank: 10, position: null, createdAt: '2026-01-01T00:00:00Z', dueAt: null }
+    const placed = { ...base, id: 'placed', rank: 10, position: 1, createdAt: '2026-08-01T00:00:00Z', dueAt: null }
+    expect(orderCards([older, placed]).map((card) => card.id)).toEqual(['placed', 'older'])
+  })
+
+  it('ignores position across different ranks', () => {
+    const highUnplaced = { ...base, id: 'high', rank: 7, position: null, createdAt: '2026-08-01T00:00:00Z', dueAt: null }
+    const lowPlaced = { ...base, id: 'low', rank: 13, position: 1, createdAt: '2026-01-01T00:00:00Z', dueAt: null }
+    expect(orderCards([lowPlaced, highUnplaced]).map((card) => card.id)).toEqual(['high', 'low'])
   })
 })

@@ -74,6 +74,8 @@ export interface CardDto {
   effectiveUrgency: CardUrgency
   quadrant: CardQuadrant
   rank: number
+  /** Dense 1..n inside the (column, rank cell). Null/omitted = unplaced. */
+  position?: number | null
   labels: string[]
   status: CardStatus
   concurrencyToken: string
@@ -130,7 +132,7 @@ export interface ExternalIssueDto {
  * What a history entry records. Lockstep with `server/Domain/Enums/CardRevisionKind.cs`; the API
  * serializes enums as strings.
  */
-export type CardRevisionKind = 'ContentEdit' | 'Move' | 'Archive' | 'Unarchive' | 'Reopen'
+export type CardRevisionKind = 'ContentEdit' | 'Move' | 'Archive' | 'Unarchive' | 'Reopen' | 'Reorder'
 
 /**
  * One entry of a card's immutable history. `revisionNumber` is a single monotonic sequence across
@@ -154,6 +156,8 @@ export interface CardRevisionDto {
   importance: CardImportance | null
   urgency: CardUrgency | null
   dueAt: string | null
+  /** SUPERSEDED position on a Reorder (or a content edit that cleared it). */
+  position?: number | null
   labels: string[] | null
   fromColumnId: string | null
   toColumnId: string | null
@@ -611,6 +615,71 @@ export function useCreateCard(boardId: string) {
       queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
     },
   })
+}
+
+export interface PlaceCardRequest {
+  concurrencyToken: string
+  before?: string | null
+  after?: string | null
+  placement?: 'Top' | 'Bottom' | null
+  importance?: CardImportance | null
+  urgency?: CardUrgency | null
+  reason?: string | null
+  editedBy?: string | null
+}
+
+export interface PlaceCardVariables {
+  cardId: string
+  request: PlaceCardRequest
+  /** Post-move visible-list ids, for optimistic position writes. */
+  orderedIds?: string[]
+}
+
+/**
+ * Relative placement. Optimistic write updates `position` on the visible list so
+ * `orderCards` shows the drop before the refetch; revert on error.
+ */
+export function usePlaceCard(boardId: string) {
+  const queryClient = useQueryClient()
+  const detailKeys = [boardKeys.detail(boardId), boardKeys.detailSummary(boardId)] as const
+  return useMutation({
+    mutationFn: ({ cardId, request }: PlaceCardVariables) =>
+      apiPatch<CardDto>(`/cards/${cardId}/position`, request),
+    onMutate: async ({ orderedIds }) => {
+      await Promise.all(detailKeys.map((queryKey) => queryClient.cancelQueries({ queryKey, exact: true })))
+      const previous = detailKeys.map((queryKey) =>
+        [queryKey, queryClient.getQueryData<BoardDetailDto>(queryKey)] as const)
+      if (orderedIds && orderedIds.length > 0) {
+        detailKeys.forEach((queryKey) => {
+          queryClient.setQueryData<BoardDetailDto>(queryKey, (board) =>
+            board ? placeCardsOptimistically(board, orderedIds) : board)
+        })
+      }
+      return { previous }
+    },
+    onError: (_error, _variables, context) => {
+      context?.previous.forEach(([key, board]) => queryClient.setQueryData(key, board))
+      queryClient.invalidateQueries({ queryKey: boardKeys.detail(boardId) })
+      queryClient.invalidateQueries({ queryKey: boardKeys.all })
+      queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
+      queryClient.invalidateQueries({ queryKey: boardKeys.cards })
+    },
+    onSuccess: (_result, { cardId }) => {
+      invalidateAfterCardWrite(queryClient, boardId, cardId)
+    },
+  })
+}
+
+export function placeCardsOptimistically(board: BoardDetailDto, orderedIds: string[]): BoardDetailDto {
+  const positionById = new Map(orderedIds.map((id, index) => [id, index + 1]))
+  return {
+    ...board,
+    columns: board.columns.map((column) => ({
+      ...column,
+      cards: column.cards.map((card) =>
+        positionById.has(card.id) ? { ...card, position: positionById.get(card.id)! } : card),
+    })),
+  }
 }
 
 export function useMoveCard(boardId: string) {

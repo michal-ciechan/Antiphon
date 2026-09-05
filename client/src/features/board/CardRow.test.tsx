@@ -1,3 +1,5 @@
+import { DndContext } from '@dnd-kit/core'
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { HttpResponse, http } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
 import { Notifications } from '@mantine/notifications'
@@ -69,18 +71,22 @@ function card(overrides: Partial<CardDto> = {}): CardDto {
   }
 }
 
-function renderRow(overrides: Partial<CardDto> = {}, onOpen = vi.fn()) {
+function renderRow(overrides: Partial<CardDto> = {}, onOpen = vi.fn(), reorderable = false) {
+  const row = card(overrides)
   renderWithProviders(
-    <>
-      <Notifications />
-      <CardRow
-        card={card(overrides)}
-        boardId="board-1"
-        columns={columns}
-        now={NOW}
-        onOpen={onOpen}
-      />
-    </>,
+    <DndContext>
+      <SortableContext items={[row.id]} strategy={verticalListSortingStrategy}>
+        <Notifications />
+        <CardRow
+          card={row}
+          boardId="board-1"
+          columns={columns}
+          now={NOW}
+          onOpen={onOpen}
+          reorderable={reorderable}
+        />
+      </SortableContext>
+    </DndContext>,
   )
   return { onOpen }
 }
@@ -169,12 +175,34 @@ describe('CardRow', () => {
     expect(onOpen).toHaveBeenCalledWith('card-1')
   })
 
+  it('shows a reorder handle when reorderable and hides it on archived rows', () => {
+    renderRow({}, vi.fn(), true)
+    expect(screen.getByLabelText('Reorder CARD-0041')).toBeInTheDocument()
+  })
+
+  it('hides the reorder handle when the row is not reorderable', () => {
+    renderRow()
+    expect(screen.queryByLabelText('Reorder CARD-0041')).not.toBeInTheDocument()
+  })
+
+  it('hides the reorder handle on an archived card even when reorderable', () => {
+    renderRow(ARCHIVED, vi.fn(), true)
+    expect(screen.queryByLabelText('Reorder CARD-0041')).not.toBeInTheDocument()
+  })
+
   it('does not open the card when the kebab is used', async () => {
     const { onOpen } = renderRow()
     await userEvent.click(screen.getByLabelText('Actions for CARD-0041'))
     expect(onOpen).not.toHaveBeenCalled()
     expect(await screen.findByTestId('move-to-in-progress'))
       .toBeInTheDocument()
+  })
+
+  it('offers Move to top and Move to bottom on a live non-terminal card', async () => {
+    renderRow()
+    await userEvent.click(screen.getByLabelText('Actions for CARD-0041'))
+    expect(await screen.findByTestId('move-to-top')).toHaveTextContent('Move to top')
+    expect(screen.getByTestId('move-to-bottom')).toHaveTextContent('Move to bottom')
   })
 })
 
