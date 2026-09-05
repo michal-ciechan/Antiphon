@@ -16,6 +16,7 @@ import {
 } from '@dnd-kit/sortable'
 import { Button, Group, Stack, Text } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
+import { Fragment, type ReactNode } from 'react'
 import type { BoardColumnDto, CardDto } from '../../api/boards'
 import { usePlaceCard } from '../../api/boards'
 import { getApiErrorMessage } from '../../api/client'
@@ -43,9 +44,10 @@ interface SortableCardListProps {
   boardId: string
   columns: BoardColumnDto[]
   now: Date
-  onOpen: (cardId: string) => void
+  onOpen?: (cardId: string) => void
   layout?: 'row' | 'stacked'
   enabled: boolean
+  renderItem?: (card: CardDto, reorderable: boolean) => ReactNode
 }
 
 export function SortableCardList({
@@ -56,6 +58,7 @@ export function SortableCardList({
   onOpen,
   layout = 'row',
   enabled,
+  renderItem,
 }: SortableCardListProps) {
   const placeCard = usePlaceCard(boardId)
   const sensors = useSensors(
@@ -135,18 +138,21 @@ export function SortableCardList({
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
       <SortableContext items={ids} strategy={verticalListSortingStrategy} disabled={!enabled}>
         <Stack gap={0}>
-          {cards.map((card) => (
-            <CardRow
-              key={card.id}
-              card={card}
-              boardId={boardId}
-              columns={columns}
-              now={now}
-              onOpen={onOpen}
-              layout={layout}
-              reorderable={enabled}
-            />
-          ))}
+          {cards.map((card) =>
+            renderItem
+              ? <Fragment key={card.id}>{renderItem(card, enabled)}</Fragment>
+              : (
+                <CardRow
+                  key={card.id}
+                  card={card}
+                  boardId={boardId}
+                  columns={columns}
+                  now={now}
+                  onOpen={onOpen ?? (() => undefined)}
+                  layout={layout}
+                  reorderable={enabled}
+                />
+              ))}
         </Stack>
       </SortableContext>
     </DndContext>

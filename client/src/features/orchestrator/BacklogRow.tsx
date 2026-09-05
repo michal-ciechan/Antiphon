@@ -1,4 +1,7 @@
-import { Badge, Box, Group, Text, Tooltip } from '@mantine/core'
+import { useSortable } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import { ActionIcon, Badge, Box, Group, Text, Tooltip } from '@mantine/core'
+import { TbGripVertical } from 'react-icons/tb'
 import { useNavigate } from 'react-router'
 import type { CardDto } from '../../api/boards'
 import { displayIdentifier, externalIssueTag } from '../../shared/cardIdentifier'
@@ -12,6 +15,7 @@ interface BacklogRowProps {
   now: Date
   /** `stacked` drops the title onto its own line — the phone layout. */
   layout?: 'row' | 'stacked'
+  reorderable?: boolean
 }
 
 /**
@@ -24,14 +28,34 @@ export function BacklogRow({
   showBoard,
   now,
   layout = 'row',
+  reorderable = false,
 }: BacklogRowProps) {
   const navigate = useNavigate()
   const stacked = layout === 'stacked'
   const age = ageInDays(card.createdAt, now)
   const open = () => navigate(`/boards/${card.boardId}?card=${card.id}`)
+  const sortable = useSortable({ id: card.id, disabled: !reorderable })
+  const sortableStyle = {
+    transform: CSS.Transform.toString(sortable.transform),
+    transition: sortable.transition,
+  }
 
   const identifier = (
     <Group gap={4} wrap="nowrap" style={{ flex: 'none' }}>
+      {reorderable && (
+        <ActionIcon
+          ref={sortable.setActivatorNodeRef}
+          {...sortable.listeners}
+          {...sortable.attributes}
+          variant="subtle"
+          size="sm"
+          color="gray"
+          aria-label={`Reorder ${card.identifier}`}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <TbGripVertical size={16} />
+        </ActionIcon>
+      )}
       <Tooltip label={card.identifier} withArrow openDelay={400}>
         <Text
           size="sm"
@@ -69,6 +93,7 @@ export function BacklogRow({
 
   return (
     <Box
+      ref={sortable.setNodeRef}
       role="article"
       aria-label={`${card.identifier} ${card.title}`}
       data-testid={`backlog-row-${card.identifier}`}
@@ -83,7 +108,7 @@ export function BacklogRow({
       }}
       px="xs"
       py={stacked ? 8 : 5}
-      style={{ cursor: 'pointer', borderRadius: 6 }}
+      style={{ ...sortableStyle, cursor: 'pointer', borderRadius: 6 }}
     >
       <Group gap="xs" wrap="nowrap" align="baseline">
         {identifier}
