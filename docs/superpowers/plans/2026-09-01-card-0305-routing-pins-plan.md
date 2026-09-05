@@ -291,6 +291,9 @@ Run: `dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-card03
 
 ## Execution notes
 
+Lists: CARD-0322 (`docs/superpowers/plans/2026-09-02-card-0322-routing-pin-candidates-plan.md`).
+A pin may now carry an ordered candidate list; this plan's one-candidate behaviour is unchanged.
+
 After deploy, replace `feedback_prefer_grok_dispatch.md` with:
 
 ```

@@ -263,6 +263,14 @@ no pin exists. A Human pin survives a RolePolicy edit and an Auto rewrite (409 `
 Required. A pin naming a held alias is still 409 `model_disabled` (CARD-0309) — pins consume
 `Require`, they do not write a hold, and `ignoreRoutingPin` is not `ignoreModelDisabled`.
 
+A stage pin with `candidates` is how the operator's role-shaped fallback is recorded
+(CARD-0322): `routing-pin.ps1 set -Role Plan -Candidates ClaudeCode/Frontier,ClaudeCode/High,Codex/Frontier`.
+The list is walked with CARD-0090's chain mechanics (holds, quota, stage forbid). A **Required**
+list is the whole candidate set; a **Preferred** list is tried first, then the request/role policy
+(or, with `-Complexity`, the chain — never both). Card list vs stage list never concatenate: the
+card pin wins as a whole row. On `routing exhausted` relay to the operator — never pick a kind
+yourself.
+
 Precedence between a stage-wide pin and a role's complexity cell: a **Required** pin *bypasses* the
 matrix cell for that role entirely — the cell is never consulted while the pin stands. A
 **Preferred** pin *prepends* to the matrix candidates and falls through to the cell if the pinned

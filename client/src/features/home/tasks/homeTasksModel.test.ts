@@ -573,7 +573,21 @@ describe('readinessFor', () => {
       targetRole: 'Code',
       sourceRole: undefined,
       handoff: undefined,
+      pinChip: null,
     })
+  })
+
+  it('chips pin: fable +2 when the ready row carries a multi-candidate pin', () => {
+    const ready = readyRow({
+      routingPin: pin({
+        agentKind: 'ClaudeCode',
+        modelLevel: 'Frontier',
+        candidateCount: 3,
+      }),
+    })
+    const pipe = pipeline({ stages: [stage({ ready: [ready] })] })
+    const view = readinessFor(item({ source: 'Card', group: 'Next', state: 'Backlog' }), pipe)
+    expect(view?.pinChip).toBe('pin: fable +2')
   })
 
   it('never asks a Done or NeedsDecision card', () => {

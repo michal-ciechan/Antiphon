@@ -254,7 +254,7 @@ describe('PipelineStagesPanel', () => {
     expect(screen.getByTestId('pipeline-strip')).toHaveTextContent('as of')
     expect(screen.getByTestId('pipeline-stage-Plan')).toHaveTextContent('Plan')
     expect(screen.getByTestId('pipeline-stage-Code')).toHaveTextContent('Execute')
-    expect(screen.getByTestId('pipeline-stage-Code')).toHaveTextContent('pin grok-4.6')
+    expect(screen.getByTestId('pipeline-stage-Code')).toHaveTextContent('pin: grok-4.6')
     expect(screen.getByTestId('pipeline-stage-Deploy')).toHaveTextContent('Deploy')
     expect(screen.queryByTestId('pipeline-stage-Review')).not.toBeInTheDocument()
     expect(screen.getByTestId('pipeline-idle')).toHaveTextContent('8 idle stages')

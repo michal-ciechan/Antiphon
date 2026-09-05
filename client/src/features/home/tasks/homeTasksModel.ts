@@ -14,6 +14,7 @@ import type { CardStatus } from '../../../api/boards'
 import type { HomeTaskGroup, HomeTaskHumanReason, HomeTaskItemDto, HomeTaskSource } from '../../../api/homeTasks'
 import { STATE_COLORS } from '../../board/boardVisuals'
 import { formatDuration, STATUS_COLOR } from '../../delegations/taskVisuals'
+import { routingPinChip } from '../../orchestrator/pipelineStageModel'
 import { normalizeDir } from '../projectGrouping'
 
 export const SOURCE_LABEL: Record<HomeTaskSource, string> = {
@@ -315,6 +316,8 @@ export interface ReadinessView {
   targetRole: AgentTaskPipelineStageDto['role']
   sourceRole?: AgentTaskPipelineReadyDto['sourceRole']
   handoff?: string | null
+  /** CARD-0322. `pin: fable` / `pin: fable +2` when the ready row carries a pin. */
+  pinChip?: string | null
 }
 
 /**
@@ -340,6 +343,7 @@ export function readinessFor(
       targetRole: stage.role,
       sourceRole: ready.sourceRole,
       handoff: ready.handoff,
+      pinChip: routingPinChip(ready.routingPin),
     }
   }
   return null
