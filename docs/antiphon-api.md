@@ -49,7 +49,7 @@ localhost dev tool only. If Antiphon ever becomes multi-user, gate this behind a
 
 - `code` is present when the exception carried a **stable machine-readable code**. `conflict` and
   `validation_failed` are the generic ones; the specific ones worth branching on are
-  `herdr_refused`, `remote_control_refused`, `subscription_quota_low`, `provider_sign_in_required`, `concurrency_limit`, `card_identifier_ambiguous`, `channel_disabled`, `profile_not_found`,
+  `herdr_refused`, `herdr_grok_native_session_missing`, `remote_control_refused`, `subscription_quota_low`, `provider_sign_in_required`, `concurrency_limit`, `card_identifier_ambiguous`, `channel_disabled`, `profile_not_found`,
   `profile_resolution_unavailable`, `profile_revision_conflict`.
 - `errors` is present on validation failures (422), keyed by field.
 - Additional keys may be spliced in from an exception's `Extensions`.
