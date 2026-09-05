@@ -34,5 +34,13 @@ public enum AgentExitReason
     /// CARD-0213: Stop on an attached pane dropped the sidecar and left the operator's process
     /// running. Clean stop (exit code 0); the session stays resumable.
     /// </summary>
-    HerdrDetached = 9
+    HerdrDetached = 9,
+
+    /// <summary>
+    /// CARD-0383: herdr never detected the expected kind and the pane was an idle shell, so
+    /// KillAsync kept it as last-pane for in-place relaunch. Failed (the launch did not start);
+    /// not a foreign-process <see cref="HerdrPaneLeftOpen"/> — do not tidy the pane by hand.
+    /// Maps from <c>HerdrExitReasons.LaunchDetectTimeout</c> by name.
+    /// </summary>
+    HerdrLaunchDetectTimeout = 10
 }

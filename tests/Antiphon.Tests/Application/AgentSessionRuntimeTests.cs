@@ -368,6 +368,33 @@ public class AgentSessionRuntimeTests
         }
     }
 
+    [Test]
+    public async Task HerdrLaunchDetectTimeout_exit_is_Failed_and_does_not_record_HerdrPaneLeftOpen()
+    {
+        var (sessionId, agentId, logPath, runtime) = await SeedRunningSessionAsync();
+        try
+        {
+            await runtime.ObserveExitAsync(
+                sessionId, null, AgentExitReason.HerdrLaunchDetectTimeout, CancellationToken.None);
+
+            await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            var session = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            session.Status.ShouldBe(SessionStatus.Failed);
+            session.FailureReason.ShouldNotBeNull();
+            session.FailureReason.ShouldContain("HerdrLaunchDetectTimeout");
+            (await verify.AgentIncidents.CountAsync(
+                i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.HerdrPaneLeftOpen))
+                .ShouldBe(0, "idle-shell keep-pane is not a foreign-process warning; closing the pane recreates CARD-0383");
+            (await verify.AgentIncidents.CountAsync(i => i.SessionId == sessionId))
+                .ShouldBe(0, "detect-timeout keep-pane is a Failed launch, not an incident badge");
+        }
+        finally
+        {
+            await CleanupSessionAsync(sessionId, agentId);
+            DeleteDirectoryBestEffort(logPath);
+        }
+    }
+
     private static async Task<(Guid SessionId, Guid AgentId, string LogPath, AgentSessionRuntime Runtime)> SeedRunningSessionAsync(
         SessionTerminationSource terminationSource = SessionTerminationSource.Unknown,
         SessionStatus status = SessionStatus.Running)

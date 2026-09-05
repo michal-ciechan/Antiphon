@@ -160,8 +160,9 @@ public sealed class AgentSessionRuntime
             // A CPU-spin watchdog kill reclaims an IDLE session whose process was busy-looping a
             // core after its turn completed — the non-zero exit code is just the kill's. It must
             // land as Stopped, not Failed, so the next message resumes the session by id.
-            // CARD-0186: herdr pane-closed / presumed-dead / child-gone / pane-left-open are
-            // never a clean stop — Stopped is operator intent and reconciliation's auto-kill key.
+            // CARD-0186: herdr pane-closed / presumed-dead / child-gone / pane-left-open, and
+            // CARD-0383 detect-timeout keep-pane, are never a clean stop — Stopped is operator
+            // intent and reconciliation's auto-kill key.
             var cleanStop = exitCode == 0 || exitReason == AgentExitReason.CpuSpinKilled;
             if (session.Status is SessionStatus.Starting or SessionStatus.Running or SessionStatus.Stopping)
             {
@@ -233,6 +234,16 @@ public sealed class AgentSessionRuntime
 
                     changed = true;
                 }
+            }
+            else if (exitReason == AgentExitReason.HerdrLaunchDetectTimeout)
+            {
+                // CARD-0383: idle-shell detect-timeout keep-pane. Visibility is the Failed
+                // row + FailureReason naming this enum; a HerdrPaneLeftOpen incident would tell
+                // the operator to close the pane and recreate the original bug. No new incident
+                // kind — AlwaysOn retries Failed, and closing the pane is the wrong action.
+                _logger.LogWarning(
+                    "Session {SessionId} herdr launch detect timeout; pane kept as last-pane for in-place relaunch (not a foreign process).",
+                    sessionId);
             }
 
             if (changed)

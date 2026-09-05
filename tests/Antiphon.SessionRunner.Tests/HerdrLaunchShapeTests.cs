@@ -251,6 +251,8 @@ public class HerdrLaunchShapeTests
         };
 
         await using var runtime = BuildRuntime(settings, fake, launchDetectTimeoutMs: 400);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var events = runtime.Subscribe(cts.Token);
         var ex = await Should.ThrowAsync<HerdrLaunchException>(() =>
             StartAsync(runtime, sessionId, settings.SessionLogPath, env: env));
         ex.Message.ShouldContain("did not detect");
@@ -265,6 +267,24 @@ public class HerdrLaunchShapeTests
         last!.ExitReason.ShouldBe(HerdrExitReasons.LaunchDetectTimeout);
         last.LaunchEnvNames.ShouldBe(["STALE_ONLY", "X_LLM_PROJECT"]);
         last.Origin.ShouldBe(HerdrPaneOrigins.Launched);
+
+        string? liveExitJson = null;
+        while (liveExitJson is null && await events.WaitToReadAsync(cts.Token))
+        {
+            while (events.TryRead(out var evt))
+            {
+                if (evt.EventName == SessionRunnerEventNames.SessionExited
+                    && evt.Json.Contains(sessionId.ToString("D"), StringComparison.OrdinalIgnoreCase))
+                {
+                    liveExitJson = evt.Json;
+                    break;
+                }
+            }
+        }
+
+        liveExitJson.ShouldNotBeNull("KillAsync on the keep-pane path must publish SessionExited");
+        liveExitJson.ShouldContain(HerdrExitReasons.LaunchDetectTimeout);
+        liveExitJson.ShouldNotContain(HerdrExitReasons.PaneLeftOpen);
         DeleteLogRoot(settings.SessionLogPath);
     }
 
