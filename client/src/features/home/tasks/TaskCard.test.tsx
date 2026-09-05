@@ -606,6 +606,27 @@ describe('TaskCard', () => {
     expect(onOpen).not.toHaveBeenCalled()
   })
 
+  it('renders pin: fable +2 on a ready row with a multi-candidate pin', () => {
+    const card = item({ group: 'Next', state: 'Backlog', worker: null, stage: 'Plan' })
+    const pipe = pipeline({
+      stages: [
+        stage({
+          ready: [
+            readyRow({
+              routingPin: pin({
+                agentKind: 'ClaudeCode',
+                modelLevel: 'Frontier',
+                candidateCount: 3,
+              }),
+            }),
+          ],
+        }),
+      ],
+    })
+    renderWithProviders(<TaskCard item={card} pipeline={pipe} now={NOW} onOpen={() => {}} />)
+    expect(screen.getByTestId(`task-ready-pin-${card.id}`)).toHaveTextContent('pin: fable +2')
+  })
+
   it('prints terminalReason first line on a Done card only', () => {
     const { rerender } = renderWithProviders(
       <TaskCard

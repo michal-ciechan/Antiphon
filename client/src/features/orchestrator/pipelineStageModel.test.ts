@@ -432,9 +432,10 @@ describe('stage header helpers', () => {
     })
   })
 
-  it('renders pin grok-4.6 from the pin alias, and kind only when level is null', () => {
-    expect(stagePinLabel(stage({ routingPin: pin() }))).toBe('pin grok-4.6')
-    expect(stagePinLabel(stage({ routingPin: pin({ modelLevel: null, agentKind: 'Grok' }) }))).toBe('pin Grok')
+  it('renders pin: grok-4.6 from the pin alias, and kind only when level is null', () => {
+    expect(stagePinLabel(stage({ routingPin: pin() }))).toBe('pin: grok-4.6')
+    expect(stagePinLabel(stage({ routingPin: pin({ modelLevel: null, agentKind: 'Grok' }) }))).toBe('pin: Grok')
+    expect(stagePinLabel(stage({ routingPin: pin({ candidateCount: 3 }) }))).toBe('pin: grok-4.6 +2')
     expect(stagePinLabel(stage({ routingPin: null }))).toBeNull()
   })
 })

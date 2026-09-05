@@ -8,6 +8,7 @@ import type {
   AgentTaskPipelineReadyDto,
   AgentTaskPipelineStageDto,
   AgentTaskRole,
+  RoutingPinRefDto,
 } from '../../api/agentTasks'
 import type { AgentKind } from '../../api/boards'
 import { displayIdentifier } from '../../shared/cardIdentifier'
@@ -131,16 +132,26 @@ export function stageCountLine(stage: AgentTaskPipelineStageDto): string {
 }
 
 /**
- * Right-aligned pin on the stage header. The full server alias (not compactAlias) — the phone
- * shortening is only the in-flight right cell.
+ * Read-only chip for a routing pin: `pin: fable` or `pin: fable +2` when the list has
+ * more than one candidate (CARD-0322).
  */
-export function stagePinLabel(stage: AgentTaskPipelineStageDto): string | null {
-  const pin = stage.routingPin
+export function routingPinChip(pin: RoutingPinRefDto | null | undefined): string | null {
   if (!pin) return null
   const alias = pin.modelLevel
     ? tierAlias(pin.modelLevel, pin.agentKind ?? 'ClaudeCode')
     : pin.agentKind
-  return alias ? `pin ${alias}` : null
+  if (!alias) return null
+  const extra =
+    pin.candidateCount != null && pin.candidateCount > 1 ? ` +${pin.candidateCount - 1}` : ''
+  return `pin: ${alias}${extra}`
+}
+
+/**
+ * Right-aligned pin on the stage header. The full server alias (not compactAlias) — the phone
+ * shortening is only the in-flight right cell.
+ */
+export function stagePinLabel(stage: AgentTaskPipelineStageDto): string | null {
+  return routingPinChip(stage.routingPin)
 }
 
 /** Drops only the `gpt-5.6-` prefix so a Codex cell stays inside ~14 characters. */

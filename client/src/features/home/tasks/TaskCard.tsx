@@ -274,6 +274,11 @@ export function TaskCard({
             <Text size="xs" c="dimmed" data-testid={`task-ready-${item.id}`}>
               {readyLine(ready, now)}
             </Text>
+            {ready.pinChip ? (
+              <Text size="xs" c="dimmed" data-testid={`task-ready-pin-${item.id}`}>
+                {ready.pinChip}
+              </Text>
+            ) : null}
             {ready.deliverablePath ? (
               <Anchor
                 component={Link}

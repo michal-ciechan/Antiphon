@@ -369,11 +369,12 @@ without it is 422 `auto_continue_needs_authority`).
 > when the any-role row for that complexity is Human (write it as Human, or clear the any-role
 > row).
 >
-> Routing pins (CARD-0305) can also refuse create with **409 `routing_pin_conflict`** (explicit
-> kind/level/agent disagrees with a Required pin), **409 `routing_pin_forbidden`** (resolved alias
-> is on the stage pin's forbid list), or **409 `routing_pin_human`** (Auto PUT onto an active Human
-> row). `ignoreRoutingPin: true` is one-shot and does not clear the pin; it is not
-> `ignoreModelDisabled`.
+> Routing pins (CARD-0305, CARD-0322) can also refuse create with **409 `routing_pin_conflict`**
+> (explicit kind/level/agent disagrees with a Required pin — the message lists every candidate),
+> **409 `routing_pin_forbidden`** (resolved alias is on the stage pin's forbid list), or **409
+> `routing_pin_human`** (Auto PUT onto an active Human row). `ignoreRoutingPin: true` is one-shot
+> and does not clear the pin; it is not `ignoreModelDisabled`. A walked multi-candidate pin that
+> exhausts is **Blocked** (or 409 `routing_exhausted` with `refuseIfExhausted`).
 
 ```
 GET    /api/routing-pins?card=CARD-0304&role=Plan     active pins (card query includes stage-wide)
@@ -385,6 +386,14 @@ A pin is the standing instruction the **next** create reads; it does not rewrite
 Stage-wide: omit `card`. Check role is 422. Script: `scripts/routing-pin.ps1 get|set|clear`.
 `delegate.ps1 -Pin` writes Human Required from the resolved kind/level; `-Pin` without a card is
 refused (that would be a stage-wide pin).
+
+CARD-0322: `PUT` accepts `candidates: [{agentKind, modelLevel}, …]` (1..8, mutually exclusive
+with the `agentKind`/`modelLevel` shorthand). `GET` returns `candidates[]` with
+`availableNow`/`unavailableReason` plus `candidateCount`; `agentKind`/`modelLevel`/`modelAlias`
+remain the **head**. A 409 `routing_pin_conflict` lists every candidate; the `routingPin`
+extension carries `candidateCount`. A Required pin with two or more candidates is walked
+(CARD-0090's walker); exhausted → Blocked `routing exhausted` (or 409 `routing_exhausted` with
+`refuseIfExhausted`). A one-candidate Required pin is still 409 `model_disabled` with the pin coda.
 
 ```
 GET    /api/complexity-chains                          any-role ×3 first (Hard/Medium/Easy), then every

@@ -299,6 +299,8 @@ export interface RoutingPinRefDto {
   modelLevel: AgentModelLevel | null
   notBefore: string | null
   reason: string
+  /** CARD-0322. Head is agentKind/modelLevel; count is the pin's list length. */
+  candidateCount?: number
 }
 
 export interface AgentTaskPipelineCardRefDto {

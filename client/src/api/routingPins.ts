@@ -25,6 +25,16 @@ export interface RoutingPinDto {
   sourceTaskId: string | null
   createdAt: string
   updatedAt: string
+  candidates?: RoutingPinCandidateDto[]
+  candidateCount?: number
+}
+
+export interface RoutingPinCandidateDto {
+  agentKind: AgentKind | null
+  modelLevel: AgentModelLevel | null
+  alias: string | null
+  availableNow: boolean
+  unavailableReason: string | null
 }
 
 export interface RoutingPinListDto {

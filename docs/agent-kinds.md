@@ -481,6 +481,10 @@ byte-for-byte completion note.
 
 - **Antiphon's `remoteControlEnabled` / `/remote-control` preamble do not control whether claude.ai lists a session** (CARD-0306): the CLI auto-connects unless `remoteControlAtStartup` is false. Antiphon forces that false on its own launches via `--settings <file>` at `BuildRuntimeLaunchSpecAsync`; a pool delegate with `remoteControlName: null` must not appear on claude.ai. `/remote-control` remains the opt-in for seats that set a name. Do not write `~/.claude/settings.json` and do not set `disableRemoteControl` (that refuses the opt-in). CARD-0292's menu Esc stays the backstop if a CLI upgrade ignores `--settings`.
 
+### Gotcha #77
+
+- **A routing pin can list more than one (kind, level).** CARD-0322 stores the list on the pin (`CandidatesJson`); the walker is CARD-0090's. A one-candidate Required pin is still 409 `model_disabled` on hold. Two or more candidates walk in order; exhausted is Blocked for a human. Write lists with `routing-pin.ps1 set -Candidates Kind/Level,...`. Do not append a guessed default.
+
 ### CARD-0144 — Remote Control cleanup follow-up
 
 CARD-0144 remains the separate owner for Remote Control cleanup. CARD-0254 files no duplicate:
