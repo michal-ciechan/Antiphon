@@ -243,6 +243,13 @@ public enum AttentionKind
     /// gate. Plan reserved 17; that number shipped as InboundUnconsumed.
     /// </summary>
     OrchestratorWorkspace = 29,
+
+    /// <summary>
+    /// A Delegation Capability was issued, rotated, or revoked (CARD-0398). Info on issue/rotate,
+    /// Warning on revoke. Recency 24 h. Detection only — revoke is the withdrawal.
+    /// Appended after shipped 29; do not renumber.
+    /// </summary>
+    DelegationCapability = 30,
 }
 
 /// <summary>

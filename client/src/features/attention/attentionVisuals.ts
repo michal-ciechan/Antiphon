@@ -219,6 +219,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     icon: TbFlag,
     hint: 'A GitHub import from someone who is not an operator has no human rating yet. Rate it to clear this.',
   },
+  DelegationCapability: {
+    label: 'Capability',
+    color: 'gray',
+    icon: TbFlag,
+    hint: 'A named delegation capability was issued, rotated, or revoked. Revoke is the withdrawal; the token is never shown here.',
+  },
 }
 
 export type AttentionGroupKey = 'now' | 'broken' | 'suspect' | 'failures'

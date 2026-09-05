@@ -139,6 +139,11 @@ export type AttentionKind =
    * Backlog (CARD-0327). Warning. Rate it, move it, or archive it to clear.
    */
   | 'ImportedIssueNeedsReview'
+  /**
+   * A Delegation Capability was issued, rotated, or revoked (CARD-0398). Info on
+   * issue/rotate, Warning on revoke. Recency 24 h.
+   */
+  | 'DelegationCapability'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =

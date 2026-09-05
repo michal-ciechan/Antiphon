@@ -479,9 +479,18 @@ GET    /metrics/agent-tui                                    (root, not under /a
 GET    /api/api-keys   GET /api/api-keys/global
 PUT    /api/api-keys/{name}          DELETE /api/api-keys/{id}
 GET    /api/projects/{projectId}/api-keys    PUT /api/projects/{projectId}/api-keys/{name}
+
+POST   /api/delegation-capabilities                  issue (201, body includes token + storePath hint)
+GET    /api/delegation-capabilities                  list (no token)
+GET    /api/delegation-capabilities/{id}             detail (no token)
+POST   /api/delegation-capabilities/{id}/rotate      200, new token
+POST   /api/delegation-capabilities/{id}/revoke      200, no token
 ```
 
-Secret and key **values are write-only** — nothing reads one back out over HTTP.
+Secret and key **values are write-only** — nothing reads one back out over HTTP. Capability GET
+list/detail never include the raw token; issue/rotate return it once for `scripts/capability.ps1`.
+`IssueDelegationCapabilityRequest` / `DelegationCapabilityDto` live in
+`server/Application/Dtos/DelegationCapabilityDtos.cs`.
 
 ### Channels
 
