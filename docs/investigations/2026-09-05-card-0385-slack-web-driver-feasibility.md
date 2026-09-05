@@ -1,13 +1,16 @@
 # CARD-0385 — Slack Web Driver feasibility
 
-**Date:** 2026-09-05 (task `dbf28fc6`)
+**Date:** 2026-09-05 (task `dbf28fc6`; CDP-sniff follow-up `0c93073f`)
 **Card:** CARD-0385 (`6da0d468-327f-4ed7-95a0-509cb1a24d58`)
-**Status:** investigation complete. No app code was changed. No live Slack session
-credential was extracted or persisted.
-**Verified against:** worktree `feat/card-task-dbf28fc6`, `docs/external-site-operations.md`,
+**Status:** investigation complete, including the CDP-sniff follow-up in §6. No app
+code was changed. No live Slack session credential was extracted or persisted.
+**Verified against:** worktree `feat/card-task-dbf28fc6` (original) and
+`feat/card-task-0c93073f` (follow-up), `docs/external-site-operations.md`,
 `docs/telegram.md`, `docs/slack-bot-ops.md`, `src/Antiphon.Messaging.Slack`, Slack's current
-User Terms / API Terms / Developer Policy / Salesforce AUP, and the public unofficial-client
-corpus cited below. Nothing here was confirmed by talking to a live Slack session.
+User Terms / API Terms / Developer Policy / Salesforce AUP, the Chrome DevTools Protocol
+Network domain (stable 1-3 and tot, retrieved 2026-09-05), Slack's live connection-help
+page, and the public unofficial-client corpus cited below. Nothing here was confirmed by
+talking to a live Slack session.
 
 ---
 
@@ -21,6 +24,13 @@ external-site lane, but it is the wrong shape for a standing channel gateway. Us
 adapter that already shipped (`Antiphon.Messaging.Slack`, Socket Mode, `xoxb` + `xapp`). If
 replies must appear as the human user and the workspace will install an app, the supported path
 is an official **user token** (`xoxp-`), not a scraped web session.
+
+The CDP-sniff follow-up (§6) does not change that. Passively watching the already-logged-in
+tab's WebSocket is a real, documented CDP capability and Slack's web client still speaks
+plaintext JSON over `wss-primary.slack.com` — but it is still reverse-engineering an
+unpublished first-party protocol, still the wrong process for a gateway, and still ends at
+DOM-automation replies (occasional use) or the token you already saw in the handshake
+(standing use).
 
 ---
 
@@ -336,9 +346,254 @@ server never sees it (`docs/messaging/build-your-own-gateway.md`).
 |---|---|---|---|---|
 | Token-pair | `rtm.connect` WebSocket (mautrix pattern) or poll `conversations.history` | `chat.postMessage` as the user | `xoxc` + `d` (+ `d-s`) in a new Bitwarden item; expect rotation; never log | Matches the existing Slack adapter's HTTP/WS stack. This is the only unofficial shape that can meet the channel contract. |
 | CDP Web Driver | DOM mutation / Activity-page scrape on a **dedicated** Edge profile | Trusted keystrokes into the composer | Session stays in the browser profile | Does not match the gateway. Wrong process, wrong machine assumptions, no reliable inbox. |
+| CDP-sniff hybrid (§6) | `Network.webSocketFrameReceived` on the Flannel socket of a dedicated headed tab | Trusted keystrokes into the composer (or, in practice, the token from the handshake + `chat.postMessage`) | "Don't persist the handshake URL" is a discipline; the events contain `xoxc` and `d` | Better detector than DOM scrape; same egress and deployment problems as the Web Driver. Becomes token-pair the moment replies or catch-up have to work. |
 
 A hybrid "CDP only to refresh the pair, HTTP for the actual channel" is still the token-pair
 client. The obtain step being automated does not change the ToS object.
+
+---
+
+## 6. Follow-up: passive CDP WebSocket sniffing (task `0c93073f`)
+
+New question from the operator, after the original investigation landed: instead of
+extracting the `xoxc`/`xoxd` pair to make our own authenticated API calls, can CDP be used
+**purely passively** — watching the already-logged-in browser tab's own network traffic — to
+notice when a new Slack message arrives, without ever extracting or reusing the session
+credential ourselves?
+
+Short answer: **detection is technically real; it is not a ToS-clean gateway, and the hybrid
+does not stay token-free once you want reliable replies.** Do not build this either.
+
+### 6.1 Does CDP inspect WebSocket traffic on a live page?
+
+**Yes. This is a first-class, documented Network-domain feature, not an exotic hook.** It is
+the same protocol Chrome DevTools itself uses for the Network panel's WebSocket **Messages**
+tab.
+
+Stable CDP 1-3 (and tot, retrieved 2026-09-05) define, after `Network.enable`:
+
+| Event | What it fires |
+|---|---|
+| `Network.webSocketCreated` | Socket opened. Parameters include `url`. |
+| `Network.webSocketWillSendHandshakeRequest` | About to send the HTTP upgrade. Includes request headers. |
+| `Network.webSocketHandshakeResponseReceived` | Upgrade response available. |
+| `Network.webSocketFrameReceived` | A WebSocket **message** arrived. |
+| `Network.webSocketFrameSent` | A WebSocket **message** was sent. |
+| `Network.webSocketFrameError` | A WebSocket message error. |
+| `Network.webSocketClosed` | Socket closed. |
+
+Citations:
+
+- [CDP Network domain, stable 1-3](https://chromedevtools.github.io/devtools-protocol/1-3/Network/) — events listed above, plus the `Network.WebSocketFrame` type.
+- [CDP Network domain, tot](https://chromedevtools.github.io/devtools-protocol/tot/Network/#event-webSocketFrameReceived) — same events; tot also has WebTransport and DirectSocket variants that Slack messaging does not currently use.
+- Chrome DevTools docs, [Analyze the messages of a WebSocket connection](https://developer.chrome.com/docs/devtools/network/reference) — the UI that those events power.
+
+`Network.WebSocketFrame` (stable 1-3 wording):
+
+> WebSocket message data. This represents an entire WebSocket message, not just a fragmented
+> frame as the name suggests.
+
+Fields: `opcode` (number), `mask` (boolean), `payloadData` (string). Opcode `1` is text and
+`payloadData` is UTF-8. Any other opcode is binary and `payloadData` is base64. Chrome
+delivers the **decompressed application message** — if the socket negotiated
+`permessage-deflate`, that is already undone before the event.
+
+CDP also has `Network.eventSourceMessageReceived` for SSE. If Slack had moved off WebSockets
+to EventSource, that would still be a documented inspect path. It has not (see §6.2).
+
+Operational caveats that are CDP, not Slack:
+
+- Events only flow **after** `Network.enable` on that target. Attach to a tab whose Flannel
+  socket is already up and you see nothing until the client reconnects (or you reload).
+- The socket may live on a worker / shared-worker target rather than the page target.
+  DevTools handles this; a CDP client must `Target.setAutoAttach` (or equivalent) and
+  `Network.enable` on the worker session too, or it will watch the wrong target.
+- `webSocketCreated.url` and the handshake request headers are part of the event stream. For
+  Slack that URL is `wss://wss-primary.slack.com/?token=<xoxc>&gateway_server=<team_id>`
+  (slackcli, still current as of 2026-08). The handshake carries the `d=xoxd-…` cookie. A
+  "purely passive" subscriber **sees the credential in the events it asked for**, even if it
+  never calls `Network.getCookies` or `Runtime.evaluate`. Not persisting it is a coding
+  discipline, not a protocol property.
+
+### 6.2 What does Slack's web client actually use for realtime in 2026?
+
+**Still a WebSocket, to Flannel / Gatewayserver, not SSE and not long-poll as the primary
+path.** It is also **not** the public RTM API the original investigation discussed for
+unofficial `xoxc` clients, though the frame *shape* is the same family.
+
+Evidence current as of this follow-up (2026-09-05), none of it from a live session:
+
+- Slack's own help article [Manage Slack connection issues](https://slack.com/help/articles/360001603387-Manage-Slack-connection-issues) (live): "Slack uses WebSockets over port 443." The connection test at `https://my.slack.com/help/test` still scores **WebSocket (Flannel [Primary])** and **WebSocket (Flannel [Backup])**. Proxies that decrypt TLS must exempt `wss-primary.slack.com`, `wss-backup.slack.com`, and `wss-mobile.slack.com`.
+- Slack Engineering, [Traffic 101](https://slack.engineering/traffic-101-packets-mostly-flow/) (2023, still the current public architecture write-up): first-party clients send and receive messages over WebSockets ingested by `envoy-wss`, DNS `wss-primary.slack.com` / `wss-backup.slack.com`. Routing is to **Gatewayserver** (first-party) or **Applink** (Socket Mode for apps — that is what `SlackChannelAdapter` already uses). **Flannel** is the edge cache first-party clients sit on.
+- slackcli (`github.com/cgrossde/slackcli`, docs dated 2026-08-31) still dials that same first-party gateway after `client.userBoot`:
+  `wss://wss-primary.slack.com/?token=<xoxc>&gateway_server=<team_id>`, then reads JSON
+  events in a loop and pings with `{"type":"ping","id":N}` every 30 s.
+
+HTTP is still used for boot, history, search, and `client.counts`. That is fallback and
+hydration, not the live inbox. Socket Mode (`wss-primary.slack.com/link`, `xapp-`) is the
+*app* path and is unavailable without an app — same as §3.
+
+So: a CDP sniffer on the logged-in web tab is watching Flannel JSON, not RTM-as-an-app and
+not Events API envelopes.
+
+### 6.3 What do the frames look like — enough to detect "a new message arrived"?
+
+**Mostly yes for a coarse detector, on plaintext JSON, with unpublished-protocol fragility.**
+The frames are not application-encrypted. TLS is terminated by Chrome; CDP sees the
+decrypted UTF-8 payload.
+
+Unofficial clients of this same socket (slackcli `Event`, mautrix RTM path, the documented
+legacy RTM message object) all parse the same envelope family:
+
+```json
+{ "type": "hello" }
+
+{ "type": "message",
+  "channel": "C024BE91L",
+  "user": "U023BECGF",
+  "text": "Hello",
+  "ts": "1358878749.000002",
+  "thread_ts": "1358878749.000001" }
+
+{ "type": "message",
+  "subtype": "message_changed",
+  "hidden": true,
+  "channel": "C024BE91L",
+  "message": { "type": "message", "text": "…", "ts": "…" } }
+
+{ "type": "desktop_notification", "…": "…" }
+{ "type": "user_typing", "channel": "C…", "user": "U…" }
+{ "type": "pong", "reply_to": 1 }
+```
+
+slackcli's live stream allowlist (2026-08) is `message`, `reaction_added` /
+`reaction_removed`, membership/channel events, `team_join`, and `desktop_notification`.
+Everything else (presence, typing, pings, the long tail of Flannel's 100+ event types) is
+dropped. That is a workable "something happened in a channel/DM I am in" detector:
+
+- `type == "message"` and no hidden subtype → new visible message.
+- `channel` starting `D` / `G` vs `C` distinguishes DM / MPDM / channel.
+- `thread_ts` marks thread replies.
+- `desktop_notification` is the closest "this would have pinged me" signal.
+
+Why this is still fragile as a product, not as a weekend script:
+
+- **Unpublished and versioned by Slack's web client, not by a public schema.** API Terms:
+  undocumented behaviour may change at any time. A field rename, a move of message fanout
+  onto a subscription the idle tab has not joined, or a switch from text opcode 1 to binary
+  protobuf, and the parser goes dark. Flannel's own 2017/2018 posts already described moving
+  presence (and planning more) onto pub/sub so idle clients do not receive every team event.
+- **Volume and subtypes.** File shares, unfurls, edits, deletes, channel_join, bot messages,
+  and your own echoes all arrive as `type: message` with different `subtype`s. A detector
+  that does not filter will either miss file-only DMs or flood the gateway.
+- **No history, no catch-up.** CDP does not replay frames from before `Network.enable`. A
+  reconnect gap is a missed inbox. The web client heals itself via HTTP (`conversations.history`
+  / `client.counts`); a sniffer that refuses to call those APIs cannot.
+- **Addressing vs. body.** `channel` + `ts` is a stable handle. The body may be incomplete
+  (blocks-only messages with empty `text`, files with no text). Completeness for an agent
+  often wants a follow-up HTTP fetch — which is the token-pair client again.
+- **Not opaque, not encrypted, not a solved protocol.** Plain JSON today is the thing that
+  makes sniffing *tempting*. It is also why Slack can change it without a deprecation notice.
+
+Reliable enough to light a "you have a new DM" lamp. Not reliable enough to be
+`ReceiveAsync` for a standing `IChannelAdapter`.
+
+### 6.4 ToS / policy for *this* approach, honestly
+
+Passive observation of your own already-authenticated browser session is **meaningfully
+different** from extracting `xoxc`/`xoxd` and calling `slack.com/api` from a .NET process.
+It is **not** meaningfully *safe*, and "passive" is doing a lot of work in the question.
+
+What actually gets better versus §5.1:
+
+| | Token-pair API client (§2) | CDP-sniff of the live tab |
+|---|---|---|
+| Independent `slack.com/api` calls as an Application | Yes | No, if the sniffer never issues its own requests |
+| Replays `d` cookie from another User-Agent / IP | Yes — cookie-hijack detector blast radius | No — cookie stays in the real browser |
+| Circumvents app-install as the *mechanism of API access* | Yes | No API access of our own |
+| Unpublished token types used by *us* | Yes (`xoxc`/`xoxd`) | We see them in the handshake; using them is a choice |
+| Cookie-theft / session-kill risk from our traffic pattern | Material | Lower (we are not a second client) |
+
+What does not get better, or gets only slightly better:
+
+1. **The handshake *is* the credential.** `Network.webSocketCreated.url` contains `token=xoxc-…`.
+   Handshake request headers contain `Cookie: d=xoxd-…`. A subscriber that logs events, dumps
+   them for debugging, or even holds the last `webSocketCreated` URL in memory has extracted
+   the pair. The original investigation's "this investigation did not extract" bar is easy to
+   trip without calling `getCookies`. Any hybrid that later "just" posts via `chat.postMessage`
+   is the §2 client with a different obtain step.
+
+2. **Parsing Flannel is reverse-engineering an unpublished protocol.** Developer Policy
+   (10 Dec 2024) forbids Applications from "Using unpublished APIs" and from "Attempting to
+   reverse engineer or otherwise derive source code, trade secrets, or know-how in the Slack
+   API." Whether a CDP sniffer is an "Application that uses the Slack APIs" is the grey bit:
+   we are not calling the APIs, we are decoding the first-party client's private socket.
+   Functionally we are still a third-party consumer of Slack's unpublished realtime protocol.
+   "The user could open DevTools and look" is true and is not the same as a 24/7 process
+   shipping every frame into Kafka.
+
+3. **Automated ingest of Customer Data is the product.** User Terms: the employer Customer
+   owns the data. May–October 2025 API ToS updates were aimed at "unsanctioned data
+   scraping." Sniffing every `type: message` off the wire and handing it to an Antiphon
+   agent is scraping by another transport. Routing into an agent is *use*, not LLM
+   *training* (the explicit Developer Policy ban), but it is the same sensitivity class.
+   Salesforce AUP 6.A.XXIV still does not say "no RPA on your own tab"; it also does not
+   bless standing capture of workplace chat.
+
+4. **Employer overlay is unchanged.** An unsanctioned always-on reader of private channels
+   and DMs on a Customer workspace is a policy problem whether the bytes came from
+   `conversations.history` or from the tab's own socket.
+
+Honest ranking, lowest to highest legal/policy heat for *this operator*:
+
+1. Shipped bot adapter / official `xoxp` (supported).
+2. Occasional, operator-attended CDP clicks on the official UI (existing lane; §5.2).
+3. CDP-sniff detection only, no persist of handshake URL/headers, no independent API calls,
+   no 24/7 inbox — still unpublished-protocol reverse engineering, but no second client.
+4. CDP-sniff + DOM reply hybrid as a standing gateway (this section's proposal used as a
+   product) — 24/7 headed capture plus UI automation.
+5. Token-pair unofficial API client (clear Developer Policy / API Terms "no").
+
+(3) is better than (5). It is not a thing this repo should ship. The "passive = I didn't
+touch the cookie" framing collapses the moment the process is unattended, stores frames, or
+needs to reply.
+
+### 6.5 Hybrid: sniff for detect, DOM-automate for reply, never extract the token?
+
+**Coherent as occasional attended ops. Not coherent as `IChannelAdapter`. In practice it
+grows a token.**
+
+Detection via sniff can work (with the gaps in §6.3). Reply without the token is exactly
+§4's CDP Web Driver: trusted keystrokes into the composer on a dedicated headed profile.
+The new information from the socket (`channel` + `ts`) is a *better address* than scraping
+the Activity DOM — you could navigate to
+`https://<workspace>.slack.com/archives/<channel>/p<ts-without-dot>` or a `slack://`
+deeplink and type. That is a real improvement over "watch the Activity feed and hope."
+
+It still does not become a gateway:
+
+- `SendAsync` has to steal the focused tab, navigate away from whatever the human (or the
+  last reply) was looking at, wait for the SPA, find the composer, type, send, and restore.
+  Selectors still rot. Threads, huddles, canvases, and "channel not in the sidebar" still
+  fail. Two outbound messages in flight contend for one UI.
+- The shared CDP lane (`C:\Users\lndco\edge-cdp`, port 9222) still cannot host this 24/7
+  next to every other real-site tool. A dedicated profile is new infra.
+- The gateway process is still a headless .NET service. Pinning a desktop Edge instance is
+  still a different deployment.
+- Catch-up, edits, deletes, files, and "what did I miss while CDP was detached" still want
+  HTTP, which wants the pair.
+
+The pressure toward the token is mechanical, not moral. After `Network.enable` you already
+have `xoxc` in the socket URL. `chat.postMessage` as the user is one `HttpClient` call,
+does not fight the SPA, and returns a stable `ts`. Every unofficial client that started as
+"just watch the browser" ended there (slackcli: CDP to *extract*, then Web API + its own
+WebSocket; this hybrid would be CDP to *sniff*, then DOM until DOM hurts). Shipping the
+hybrid as a first-party channel is how Antiphon acquires a token-pair client in all but
+name, with a worse inbox.
+
+So: the hybrid is a reasonable description of **operator-attended** "tell me when this DM
+lands, then I'll (or an agent will) type a reply in the real tab." It is not a design for
+the messaging gateway, and it does not stay token-free if anyone asks it to be reliable.
 
 ---
 
@@ -348,17 +603,22 @@ client. The obtain step being automated does not change the ToS object.
 - No live `d` / `xoxc` read from the operator's browser, cookie DB, or Slack desktop app.
 - No `auth.test` against a real workspace.
 - No browser automation of slack.com for this card.
+- No CDP attach to a live Slack tab, and no capture of real WebSocket frames. Frame shape
+  in §6 is from Slack's public RTM docs plus current unofficial clients of the same
+  first-party gateway, not from this operator's session.
 
 ---
 
 ## Decision this card is for
 
-The investigation's recommendation is **do not build**. If that is accepted, the card can close
-(or move to a "won't: use existing Slack bot / consider official `xoxp` if user-identity is
-required"). If it is rejected, the only unofficial implementation that can work is token-pair,
-and that needs an explicit accept of: Developer Policy violation, unpublished APIs, cookie
-rotation, Slack's hijack-invalidation pipeline, and employer-policy risk on any workspace the
-operator does not own.
+The investigation's recommendation is **do not build** — including the CDP-sniff hybrid.
+If that is accepted, the card can close (or move to a "won't: use existing Slack bot /
+consider official `xoxp` if user-identity is required"). If it is rejected, the only
+unofficial implementation that can work as a standing channel is still token-pair, and
+that needs an explicit accept of: Developer Policy violation, unpublished APIs, cookie
+rotation, Slack's hijack-invalidation pipeline, and employer-policy risk on any workspace
+the operator does not own. CDP-sniff does not offer a third implementation path that meets
+`IChannelAdapter` without becoming token-pair or remaining a headed ops tool.
 
 Questions that change the recommendation only at the edges:
 
@@ -367,6 +627,9 @@ Questions that change the recommendation only at the edges:
 2. Can a Slack app be installed at all? If yes, `xoxp` user-token beats both unofficial
    approaches.
 3. Must outbound messages appear as the human user, or is the existing bot identity acceptable?
+4. Is the actual want a 24/7 gateway, or an occasional "nudge me when this DM lands"? The
+   latter can already be a headed CDP recipe in the existing lane; it is not CARD-0385 as
+   written.
 
 ---
 
@@ -390,6 +653,15 @@ Questions that change the recommendation only at the edges:
 - [Manage session duration](https://slack.com/help/articles/115005223763-Manage-session-duration).
 - Slack Engineering, [cookie hijacking invalidation](https://slack.engineering/proactive-measures-against-password-breaches-and-cookie-hijacking) (Jun 2024).
 - Slack staff on `xoxc`: [SO 62759949](https://stackoverflow.com/questions/62759949/accessing-slack-api-with-chrome-authentication-token-xoxc).
+- [Manage Slack connection issues](https://slack.com/help/articles/360001603387-Manage-Slack-connection-issues) — WebSockets over 443; Flannel primary/backup test; `wss-primary` / `wss-backup` / `wss-mobile`.
+- Slack Engineering, [Traffic 101](https://slack.engineering/traffic-101-packets-mostly-flow/) (2023) — `envoy-wss`, Gatewayserver vs Applink, Flannel.
+- Slack Engineering, [Flannel](https://slack.engineering/flannel-an-application-level-edge-cache-to-make-slack-scale/).
+
+**Chrome DevTools Protocol (follow-up §6)**
+
+- [Network domain, stable 1-3](https://chromedevtools.github.io/devtools-protocol/1-3/Network/) — `webSocketFrameReceived` / `webSocketFrameSent` / `WebSocketFrame`.
+- [Network domain, tot](https://chromedevtools.github.io/devtools-protocol/tot/Network/#event-webSocketFrameReceived).
+- Chrome for Developers, [Network features reference — WebSocket messages](https://developer.chrome.com/docs/devtools/network/reference).
 
 **Unofficial clients / write-ups (mechanism)**
 
@@ -400,6 +672,7 @@ Questions that change the recommendation only at the edges:
   [cookie login source](https://github.com/mautrix/slack/blob/v0.2511.0/pkg/connector/login-cookie.go).
 - [slackdump manual login](https://github.com/rusq/slackdump/blob/master/doc/login-manual.md).
 - [slackcli](https://pkg.go.dev/github.com/cgrossde/slackcli) (CDP extraction + Web API).
+- [slackcli internal/slack](https://pkg.go.dev/github.com/cgrossde/slackcli/internal/slack) (2026-08-31) — first-party gateway URL shape, JSON event envelope, `AllowedEventTypes`.
 - wee-slack [PR #857](https://github.com/wee-slack/wee-slack/pull/857) (`xoxc` + `d`, later `d-s`).
 
 **This repo**
