@@ -28,15 +28,18 @@ public sealed class RoutingPinService
     private readonly AppDbContext _db;
     private readonly TimeProvider _time;
     private readonly ILogger<RoutingPinService> _logger;
+    private readonly ComplexityRoutingService? _complexityRouting;
 
     public RoutingPinService(
         AppDbContext db,
         TimeProvider time,
-        ILogger<RoutingPinService> logger)
+        ILogger<RoutingPinService> logger,
+        ComplexityRoutingService? complexityRouting = null)
     {
         _db = db;
         _time = time;
         _logger = logger;
+        _complexityRouting = complexityRouting;
     }
 
     /// <summary>What a create is asking for, before the role policy fills anything in.</summary>
@@ -60,13 +63,19 @@ public sealed class RoutingPinService
         Guid? AgentId,
         string? Warning,
         string? EventNote,
-        bool Ignored)
+        bool Ignored,
+        IReadOnlyList<RoutingCandidate>? Candidates = null)
     {
         public static readonly Decision None =
             new(null, null, null, null, null, null, null, null, false);
 
         /// <summary>True when a pin was found and actually applied (not ignored).</summary>
         public bool Applied => Pin is not null && !Ignored;
+
+        /// <summary>
+        /// The chosen grain's list, before explicit-request narrowing. Empty when none.
+        /// </summary>
+        public IReadOnlyList<RoutingCandidate> PinCandidates => Candidates ?? [];
     }
 
     // ---------------------------------------------------------------- reads
@@ -151,12 +160,12 @@ public sealed class RoutingPinService
         if (!string.IsNullOrWhiteSpace(request.Card))
             cardId = await ResolveCardAsync(request.Card, ct);
 
-        if (request.AgentKind is { } kind && !AgentTaskService.DelegatableKinds.Contains(kind))
+        var written = ResolveWrittenCandidates(request);
+        if (request.AgentId is not null && written.Count > 1)
         {
             throw new ValidationException(
-                nameof(request.AgentKind),
-                $"{kind} is not a delegate kind. A pin may name "
-                + $"{string.Join(" or ", AgentTaskService.DelegatableKinds)}.");
+                nameof(request.Candidates),
+                "A standing agent is one program — pin the agent, or list candidates, not both.");
         }
 
         var now = UtcNow();
@@ -240,8 +249,7 @@ public sealed class RoutingPinService
 
         existing.Provenance = request.Provenance;
         existing.Strength = request.Strength;
-        existing.AgentKind = request.AgentKind;
-        existing.ModelLevel = request.ModelLevel;
+        existing.SetCandidates(written);
         existing.AgentId = request.AgentId;
         existing.ForbiddenAliases = forbidden.Count == 0 ? null : string.Join(",", forbidden);
         existing.NotBefore = notBefore;
@@ -307,11 +315,19 @@ public sealed class RoutingPinService
                 Ignored: true);
         }
 
+        var pinCandidates = pin.Candidates;
+        var compatible = pinCandidates.Where(c => CompatibleWithAsk(c, ask)).ToList();
         var conflicts = new List<string>();
-        if (pin.AgentKind is { } pinKind && ask.AgentKind is { } askedKind && askedKind != pinKind)
-            conflicts.Add($"kind {askedKind} against pinned {pinKind}");
-        if (pin.ModelLevel is { } pinLevel && ask.ModelLevel is { } askedLevel && askedLevel != pinLevel)
-            conflicts.Add($"level {askedLevel} against pinned {pinLevel}");
+        if (pinCandidates.Count > 0
+            && (ask.AgentKind is not null || ask.ModelLevel is not null)
+            && compatible.Count == 0)
+        {
+            if (ask.AgentKind is { } askedKind)
+                conflicts.Add($"kind {askedKind}");
+            if (ask.ModelLevel is { } askedLevel)
+                conflicts.Add($"level {askedLevel}");
+        }
+
         if (pin.AgentId is { } pinAgent && ask.AgentId is { } askedAgent && askedAgent != pinAgent)
             conflicts.Add($"agent {askedAgent} against pinned agent {pinAgent}");
 
@@ -319,7 +335,22 @@ public sealed class RoutingPinService
         if (conflicts.Count > 0)
         {
             var detail = string.Join("; ", conflicts);
-            if (pin.Strength == RoutingPinStrength.Required)
+            if (pin.Strength == RoutingPinStrength.Required
+                && pinCandidates.Count > 0
+                && compatible.Count == 0
+                && (ask.AgentKind is not null || ask.ModelLevel is not null))
+            {
+                throw new RoutingPinConflictException(
+                    ToRef(pin, identifier),
+                    $"{Describe(pin, identifier)} is REQUIRED and lists {FormatCandidateList(pin)}; "
+                    + $"this request asks for {detail} (\"{pin.Reason}\"). Match the pin, replace it "
+                    + "(PUT /api/routing-pins), or pass ignoreRoutingPin to override it for this one task.");
+            }
+
+            if (pin.Strength == RoutingPinStrength.Required
+                && ask.AgentId is not null
+                && pin.AgentId is not null
+                && ask.AgentId != pin.AgentId)
             {
                 throw new RoutingPinConflictException(
                     ToRef(pin, identifier),
@@ -344,7 +375,8 @@ public sealed class RoutingPinService
             resolvedAgent,
             warning,
             EventNote(pin, identifier),
-            Ignored: false);
+            Ignored: false,
+            pinCandidates);
     }
 
     /// <summary>
@@ -396,44 +428,41 @@ public sealed class RoutingPinService
         pin.AgentKind,
         pin.ModelLevel,
         pin.NotBefore,
-        pin.Reason);
-
-    public static RoutingPinDto ToDto(RoutingPin pin, string? identifier) => new(
-        pin.Id,
-        pin.CardId,
-        identifier,
-        pin.Role,
-        pin.Provenance,
-        pin.Strength,
-        pin.AgentKind,
-        pin.ModelLevel,
-        pin.AgentKind is { } kind && pin.ModelLevel is { } level
-            ? ModelLevelAliases.For(kind, level)
-            : null,
-        pin.AgentId,
-        SplitForbidden(pin.ForbiddenAliases),
-        pin.NotBefore,
-        pin.NotAfter,
         pin.Reason,
-        pin.SourceTaskId,
-        pin.CreatedAt,
-        pin.UpdatedAt);
+        pin.Candidates.Count);
+
+    public static RoutingPinDto ToDto(
+        RoutingPin pin,
+        string? identifier,
+        IReadOnlyList<RoutingPinCandidateDto>? candidates = null)
+    {
+        var list = candidates ?? pin.Candidates.Select(c => ToCandidateDto(c, true, null)).ToList();
+        return new RoutingPinDto(
+            pin.Id,
+            pin.CardId,
+            identifier,
+            pin.Role,
+            pin.Provenance,
+            pin.Strength,
+            pin.AgentKind,
+            pin.ModelLevel,
+            AliasOf(pin.Head),
+            pin.AgentId,
+            SplitForbidden(pin.ForbiddenAliases),
+            pin.NotBefore,
+            pin.NotAfter,
+            pin.Reason,
+            pin.SourceTaskId,
+            pin.CreatedAt,
+            pin.UpdatedAt,
+            list,
+            list.Count);
+    }
 
     /// <summary>The sentence a task's Created event carries when a pin decided its routing.</summary>
     internal static string EventNote(RoutingPin pin, string? identifier)
     {
         var parts = new List<string> { Describe(pin, identifier) };
-        if (pin.AgentKind is { } kind)
-        {
-            parts.Add(pin.ModelLevel is { } level
-                ? $"{kind}/{level} ({ModelLevelAliases.For(kind, level)})"
-                : kind.ToString());
-        }
-        else if (pin.ModelLevel is { } levelOnly)
-        {
-            parts.Add(levelOnly.ToString());
-        }
-
         if (pin.NotBefore is { } notBefore)
             parts.Add($"notBefore={notBefore:yyyy-MM-ddTHH:mm:ssZ}");
         return "pin=" + string.Join(" ", parts);
@@ -442,8 +471,16 @@ public sealed class RoutingPinService
     internal static string Describe(RoutingPin pin, string? identifier)
     {
         var grain = pin.CardId is null ? "stage-wide" : identifier ?? pin.CardId.ToString()!;
-        return $"the {Provenance(pin.Provenance)} {pin.Strength.ToString().ToLowerInvariant()} "
+        var text = $"the {Provenance(pin.Provenance)} {pin.Strength.ToString().ToLowerInvariant()} "
             + $"{grain} {pin.Role} routing pin";
+        if (pin.Head is { } head)
+        {
+            text += " " + FormatHead(head);
+            if (pin.Candidates.Count > 1)
+                text += $" +{pin.Candidates.Count - 1}";
+        }
+
+        return text;
     }
 
     private static string Provenance(RoutingPinProvenance provenance) =>
@@ -562,11 +599,17 @@ public sealed class RoutingPinService
                 .Where(c => cardIds.Contains(c.Id))
                 .ToDictionaryAsync(c => c.Id, c => c.Identifier, ct);
 
-        return pins
-            .Select(p => ToDto(
-                p,
-                p.CardId is Guid id && identifiers.TryGetValue(id, out var identifier) ? identifier : null))
-            .ToList();
+        var result = new List<RoutingPinDto>(pins.Count);
+        foreach (var p in pins)
+        {
+            var identifier = p.CardId is Guid id && identifiers.TryGetValue(id, out var card)
+                ? card
+                : null;
+            var candidates = await EvaluateCandidatesAsync(p, ct);
+            result.Add(ToDto(p, identifier, candidates));
+        }
+
+        return result;
     }
 
     private async Task<string?> IdentifierAsync(Guid? cardId, CancellationToken ct) =>
@@ -579,6 +622,161 @@ public sealed class RoutingPinService
     {
         var trimmed = value.Trim();
         return trimmed.Length <= ReasonCap ? trimmed : trimmed[..ReasonCap];
+    }
+
+    internal static IReadOnlyList<RoutingCandidate> ResolveWrittenCandidates(PutRoutingPinRequest request)
+    {
+        var hasList = request.Candidates is { Count: > 0 };
+        var hasEmptyList = request.Candidates is { Count: 0 };
+        var hasShorthand = request.AgentKind is not null || request.ModelLevel is not null;
+
+        if (hasEmptyList)
+        {
+            throw new ValidationException(
+                nameof(request.Candidates),
+                "A pin lists 1 to 8 candidates. Omit candidates to write a forbid-only or agent-only pin.");
+        }
+
+        if (hasList && hasShorthand)
+        {
+            throw new ValidationException(
+                nameof(request.Candidates),
+                "Send either the agentKind/modelLevel shorthand or candidates, not both.");
+        }
+
+        if (hasList)
+            return ValidateCandidateList(request.Candidates!);
+
+        if (hasShorthand)
+        {
+            if (request.AgentKind is { } kind && !AgentTaskService.DelegatableKinds.Contains(kind))
+            {
+                throw new ValidationException(
+                    nameof(request.AgentKind),
+                    $"{kind} is not a delegate kind. A pin may name "
+                    + $"{string.Join(" or ", AgentTaskService.DelegatableKinds)}.");
+            }
+
+            return [new RoutingCandidate(request.AgentKind, request.ModelLevel)];
+        }
+
+        return [];
+    }
+
+    internal static IReadOnlyList<RoutingCandidate> ValidateCandidateList(
+        IReadOnlyList<RoutingCandidateRequest> raw)
+    {
+        if (raw.Count > ComplexityRoutingService.MaxCandidates)
+        {
+            throw new ValidationException(
+                nameof(PutRoutingPinRequest.Candidates),
+                $"A pin may list at most {ComplexityRoutingService.MaxCandidates} candidates (got {raw.Count}).");
+        }
+
+        var pairs = new List<RoutingCandidate>(raw.Count);
+        var seen = new HashSet<RoutingCandidate>();
+        foreach (var item in raw)
+        {
+            if (item.AgentKind is null && item.ModelLevel is null)
+            {
+                throw new ValidationException(
+                    nameof(PutRoutingPinRequest.Candidates),
+                    "A candidate must name a kind or a level.");
+            }
+
+            if (item.AgentKind is { } kind)
+            {
+                if (!Enum.IsDefined(kind))
+                {
+                    throw new ValidationException(
+                        nameof(PutRoutingPinRequest.Candidates),
+                        $"'{kind}' is not an agent kind.");
+                }
+
+                if (!AgentTaskService.DelegatableKinds.Contains(kind))
+                {
+                    throw new ValidationException(
+                        nameof(PutRoutingPinRequest.Candidates),
+                        $"{kind} is not a delegate kind. A pin may name "
+                        + $"{string.Join(" or ", AgentTaskService.DelegatableKinds)}.");
+                }
+            }
+
+            if (item.ModelLevel is { } level && !Enum.IsDefined(level))
+            {
+                throw new ValidationException(
+                    nameof(PutRoutingPinRequest.Candidates),
+                    $"'{level}' is not a model level.");
+            }
+
+            var pair = new RoutingCandidate(item.AgentKind, item.ModelLevel);
+            if (!seen.Add(pair))
+            {
+                throw new ValidationException(
+                    nameof(PutRoutingPinRequest.Candidates),
+                    $"Duplicate candidate {pair.Describe()}. A pin lists each pair once.");
+            }
+
+            pairs.Add(pair);
+        }
+
+        return pairs;
+    }
+
+    internal static bool CompatibleWithAsk(RoutingCandidate candidate, Ask ask)
+    {
+        if (ask.AgentKind is { } kind && candidate.AgentKind is { } ck && ck != kind)
+            return false;
+        if (ask.ModelLevel is { } level && candidate.ModelLevel is { } cl && cl != level)
+            return false;
+        return true;
+    }
+
+    internal static string FormatCandidateList(RoutingPin pin) =>
+        string.Join(", ", pin.Candidates.Select(FormatHead));
+
+    internal static string FormatHead(RoutingCandidate candidate)
+    {
+        if (candidate.AgentKind is { } kind && candidate.ModelLevel is { } level)
+            return $"{kind}/{level} ({ModelLevelAliases.For(kind, level)})";
+        if (candidate.AgentKind is { } kindOnly)
+            return kindOnly.ToString();
+        if (candidate.ModelLevel is { } levelOnly)
+            return levelOnly.ToString();
+        return "*";
+    }
+
+    internal static string? AliasOf(RoutingCandidate? candidate) =>
+        candidate?.AgentKind is { } kind && candidate.ModelLevel is { } level
+            ? ModelLevelAliases.For(kind, level)
+            : null;
+
+    private static RoutingPinCandidateDto ToCandidateDto(
+        RoutingCandidate candidate, bool availableNow, string? unavailableReason) =>
+        new(candidate.AgentKind, candidate.ModelLevel, AliasOf(candidate), availableNow, unavailableReason);
+
+    private async Task<IReadOnlyList<RoutingPinCandidateDto>> EvaluateCandidatesAsync(
+        RoutingPin pin, CancellationToken ct)
+    {
+        if (pin.Candidates.Count == 0)
+            return [];
+
+        var list = new List<RoutingPinCandidateDto>(pin.Candidates.Count);
+        foreach (var candidate in pin.Candidates)
+        {
+            var available = true;
+            string? reason = null;
+            if (_complexityRouting is not null
+                && candidate.AgentKind is { } kind
+                && candidate.ModelLevel is { } level)
+            {
+                (available, reason) = await _complexityRouting.EvaluateAvailabilityNowAsync(kind, level, ct);
+            }
+
+            list.Add(ToCandidateDto(candidate, available, reason));
+        }
+
+        return list;
     }
 
     private DateTime UtcNow() => _time.GetUtcNow().UtcDateTime;

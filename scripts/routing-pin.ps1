@@ -7,7 +7,9 @@
 # Verbs:
 #   routing-pin.ps1 get   [-Card CARD-0304] [-Role Plan] [-Json]
 #   routing-pin.ps1 set   -Role Plan [-Card CARD-0304] -Provenance Human -Strength Required
-#                         [-Kind Codex] [-Level Frontier] [-Forbidden fable,opus]
+#                         [-Kind Codex] [-Level Frontier]
+#                         [-Candidates ClaudeCode/Frontier,ClaudeCode/High,Codex/Frontier]
+#                         [-Forbidden fable,opus]
 #                         [-NotBefore 2026-09-03T00:00:00Z] [-NotAfter ...] [-Agent <guid>] [-Reason r]
 #   routing-pin.ps1 clear -Role Plan [-Card CARD-0304]
 #
@@ -46,6 +48,10 @@ param(
 
     [ValidateSet('Frontier', 'High', 'Medium', 'Low')]
     [string]$Level,
+
+    # Comma-separated Kind/Level or bare Kind tokens, order preserved.
+    # e.g. ClaudeCode/Frontier,ClaudeCode/High,Grok
+    [string]$Candidates,
 
     # Comma-separated canonical aliases this stage may not use, e.g. fable or fable,opus.
     [string]$Forbidden,
@@ -132,15 +138,74 @@ function Get-PinQuery {
     return '/api/routing-pins?' + ($parts -join '&')
 }
 
+function Parse-PinCandidates {
+    param([string]$Raw)
+    if ([string]::IsNullOrWhiteSpace($Raw)) {
+        Write-Error 'set -Candidates needs Kind/Level or bare Kind tokens, comma-separated (e.g. ClaudeCode/Frontier,Grok).'
+        exit 1
+    }
+    $pairs = [System.Collections.Generic.List[hashtable]]::new()
+    foreach ($token in $Raw.Split(',')) {
+        $item = $token.Trim()
+        if ([string]::IsNullOrWhiteSpace($item)) { continue }
+        $bits = $item.Split('/', 2)
+        if ($bits.Count -eq 2) {
+            if ([string]::IsNullOrWhiteSpace($bits[0]) -or [string]::IsNullOrWhiteSpace($bits[1])) {
+                Write-Error ("'{0}' is not a Kind/Level pair or a bare Kind. Use ClaudeCode/Frontier or Grok." -f $item)
+                exit 1
+            }
+            if ($bits[0].Trim() -eq '*') {
+                Write-Error ("'{0}' is a level-only token; use -Level for a one-candidate pin, not -Candidates." -f $item)
+                exit 1
+            }
+            $pairs.Add(@{ agentKind = $bits[0].Trim(); modelLevel = $bits[1].Trim() })
+        }
+        else {
+            $pairs.Add(@{ agentKind = $item })
+        }
+    }
+    if ($pairs.Count -eq 0) {
+        Write-Error 'set -Candidates needs at least one Kind/Level or bare Kind token.'
+        exit 1
+    }
+    return @($pairs.ToArray())
+}
+
+function Format-CandidateToken {
+    param($Candidate)
+    $kind = $Candidate.agentKind
+    $level = $Candidate.modelLevel
+    $alias = $Candidate.alias
+    if ($kind -and $level -and $alias) { return ('{0}/{1} ({2})' -f $kind, $level, $alias) }
+    if ($kind -and $level) { return ('{0}/{1}' -f $kind, $level) }
+    if ($kind) { return "$kind" }
+    if ($level) { return "$level" }
+    return 'no kind/level constraint'
+}
+
 function Format-PinLine {
     param($Pin)
     $grain = if ($Pin.cardIdentifier) { $Pin.cardIdentifier } elseif ($Pin.cardId) { $Pin.cardId } else { 'stage-wide' }
+    $cands = @($Pin.candidates)
     $route = @()
-    if ($Pin.agentKind) { $route += $Pin.agentKind }
-    if ($Pin.modelLevel) { $route += $Pin.modelLevel }
-    if ($Pin.modelAlias) { $route += ("({0})" -f $Pin.modelAlias) }
+    if ($cands.Count -gt 0) {
+        $head = Format-CandidateToken -Candidate $cands[0]
+        $route += $head
+        if ($cands.Count -gt 1) {
+            $rest = @()
+            for ($i = 1; $i -lt $cands.Count; $i++) {
+                $rest += (Format-CandidateToken -Candidate $cands[$i])
+            }
+            $route += ('+{0}: {1}' -f ($cands.Count - 1), ($rest -join ', '))
+        }
+    }
+    else {
+        if ($Pin.agentKind) { $route += $Pin.agentKind }
+        if ($Pin.modelLevel) { $route += $Pin.modelLevel }
+        if ($Pin.modelAlias) { $route += ("({0})" -f $Pin.modelAlias) }
+        if ($route.Count -eq 0) { $route += 'no kind/level constraint' }
+    }
     if ($Pin.agentId) { $route += ("agent " + $Pin.agentId) }
-    if ($route.Count -eq 0) { $route += 'no kind/level constraint' }
     $extra = @()
     $forbidden = @($Pin.forbiddenAliases)
     if ($forbidden.Count -gt 0) { $extra += ("forbids " + ($forbidden -join '/')) }
@@ -169,6 +234,11 @@ switch ($Verb) {
             Write-Error 'set requires -Role. A pin is per STAGE; add -Card to narrow it to one card.'
             exit 1
         }
+        if (-not [string]::IsNullOrWhiteSpace($Candidates) -and (
+                -not [string]::IsNullOrWhiteSpace($Kind) -or -not [string]::IsNullOrWhiteSpace($Level))) {
+            Write-Error 'Send either the agentKind/modelLevel shorthand or candidates, not both.'
+            exit 1
+        }
         if (-not [string]::IsNullOrWhiteSpace($NotBefore)) { Assert-UtcOffset -Name 'NotBefore' -Value $NotBefore }
         if (-not [string]::IsNullOrWhiteSpace($NotAfter)) { Assert-UtcOffset -Name 'NotAfter' -Value $NotAfter }
 
@@ -178,8 +248,13 @@ switch ($Verb) {
             strength   = $Strength
         }
         if (-not [string]::IsNullOrWhiteSpace($Card)) { $body['card'] = $Card }
-        if (-not [string]::IsNullOrWhiteSpace($Kind)) { $body['agentKind'] = $Kind }
-        if (-not [string]::IsNullOrWhiteSpace($Level)) { $body['modelLevel'] = $Level }
+        if (-not [string]::IsNullOrWhiteSpace($Candidates)) {
+            $body['candidates'] = @(Parse-PinCandidates -Raw $Candidates)
+        }
+        else {
+            if (-not [string]::IsNullOrWhiteSpace($Kind)) { $body['agentKind'] = $Kind }
+            if (-not [string]::IsNullOrWhiteSpace($Level)) { $body['modelLevel'] = $Level }
+        }
         if (-not [string]::IsNullOrWhiteSpace($Agent)) { $body['agentId'] = $Agent }
         if (-not [string]::IsNullOrWhiteSpace($Forbidden)) {
             $body['forbiddenAliases'] = @($Forbidden.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })

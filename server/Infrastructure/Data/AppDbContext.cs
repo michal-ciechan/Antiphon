@@ -1518,6 +1518,9 @@ public class AppDbContext : DbContext
             entity.Property(t => t.BootWedgeRelaunchCount).IsRequired().HasDefaultValue(0);
             // CARD-0090. Null on every pre-existing row: kind/level was not chosen by a chain.
             entity.Property(t => t.Complexity).IsRequired(false);
+            // CARD-0322. Null on every pre-existing and not-walked row. No FK: the pin may be
+            // cleared or replaced; governance is re-resolved by (CardId, Role).
+            entity.Property(t => t.RoutingPinId).IsRequired(false);
             // CARD-0272. Null on every pre-existing row: S2 fills these at create.
             entity.Property(t => t.Stage).IsRequired(false);
             entity.Property(t => t.FollowUpOfTaskId).IsRequired(false);
@@ -1651,6 +1654,11 @@ public class AppDbContext : DbContext
             entity.Property(p => p.Role).IsRequired();
             entity.Property(p => p.Provenance).IsRequired();
             entity.Property(p => p.Strength).IsRequired();
+            entity.Property(p => p.CandidatesJson).HasMaxLength(1000);
+            entity.Ignore(p => p.Candidates);
+            entity.Ignore(p => p.Head);
+            entity.Ignore(p => p.AgentKind);
+            entity.Ignore(p => p.ModelLevel);
             entity.Property(p => p.ForbiddenAliases).HasMaxLength(400);
             entity.Property(p => p.Reason).IsRequired().HasMaxLength(400);
             entity.Property(p => p.CreatedAt).IsRequired();
