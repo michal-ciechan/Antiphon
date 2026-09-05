@@ -48,6 +48,15 @@ public sealed class CardService : IScheduledCardActions
     public const int MaxActorLength = 200;
 
     /// <summary>
+    /// CARD-0350: absolute character cap on a card alias after trim-and-collapse. Short enough
+    /// to sit in a check header; the five-word cap is the tighter everyday bound.
+    /// </summary>
+    public const int MaxAliasLength = 64;
+
+    /// <summary>CARD-0350: an alias is at most five words. Rejected, never truncated.</summary>
+    public const int MaxAliasWords = 5;
+
+    /// <summary>
     /// The author recorded on a revision nothing human asked for. Self-reported like every other
     /// actor here — the server has no principals — but distinguishable from a name a caller chose.
     /// </summary>
@@ -146,6 +155,7 @@ public sealed class CardService : IScheduledCardActions
             BoardColumnId = column.Id,
             Identifier = await NextIdentifierAsync(board.Id, ct),
             Title = request.Title.Trim(),
+            Alias = MustNormalizeAlias(request.Alias),
             Description = request.Description?.Trim() ?? string.Empty,
             Importance = request.Importance ?? CardImportance.Normal,
             ImportanceProvenance = request.Importance is null
@@ -504,6 +514,8 @@ public sealed class CardService : IScheduledCardActions
             card.DueAt = dueAt;
         if (request.Labels is not null)
             card.LabelsJson = BoardService.SerializeLabels(request.Labels);
+        if (request.Alias is not null)
+            card.Alias = MustNormalizeAlias(request.Alias);
         card.UpdatedAt = now;
         card.ConcurrencyToken = Guid.NewGuid();
 
@@ -1186,6 +1198,7 @@ public sealed class CardService : IScheduledCardActions
             errors[nameof(request.Title)] = ["Card title is required."];
         RequireWithinLimit(errors, nameof(request.Title), request.Title?.Trim(), MaxTitleLength);
         RequireWithinLimit(errors, nameof(request.Description), request.Description?.Trim(), MaxDescriptionLength);
+        RequireAlias(errors, nameof(request.Alias), request.Alias);
         if (errors.Count > 0)
             throw new ValidationException(errors);
     }
@@ -1207,6 +1220,54 @@ public sealed class CardService : IScheduledCardActions
         errors[field] = [$"{field} must be at most {limit:N0} characters; got {value.Length:N0}."];
     }
 
+    private static void RequireAlias(Dictionary<string, string[]> errors, string field, string? value)
+    {
+        if (!TryNormalizeAlias(value, out _, out var error) && error is not null)
+            errors[field] = [error];
+    }
+
+    /// <summary>
+    /// CARD-0350: trim, collapse internal whitespace, reject a newline / sixth word / over-cap
+    /// value. Blank input is "no alias" (null), never an empty string.
+    /// </summary>
+    internal static bool TryNormalizeAlias(string? value, out string? normalized, out string? error)
+    {
+        normalized = null;
+        error = null;
+        if (string.IsNullOrWhiteSpace(value))
+            return true;
+
+        if (value.Contains('\n') || value.Contains('\r'))
+        {
+            error = "Alias must be a single line.";
+            return false;
+        }
+
+        var words = value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (words.Length > MaxAliasWords)
+        {
+            error = $"Alias must be at most {MaxAliasWords} words; got {words.Length}.";
+            return false;
+        }
+
+        normalized = string.Join(' ', words);
+        if (normalized.Length > MaxAliasLength)
+        {
+            error = $"Alias must be at most {MaxAliasLength:N0} characters; got {normalized.Length:N0}.";
+            normalized = null;
+            return false;
+        }
+
+        return true;
+    }
+
+    private static string? MustNormalizeAlias(string? value)
+    {
+        if (!TryNormalizeAlias(value, out var normalized, out var error))
+            throw new ValidationException("Alias", error ?? "Alias is invalid.");
+        return normalized;
+    }
+
     private static void ValidateUpdateContentRequest(UpdateCardContentRequest request)
     {
         var errors = new Dictionary<string, string[]>();
@@ -1221,11 +1282,12 @@ public sealed class CardService : IScheduledCardActions
             || request.DueAt is not null
             || request.ClearDueAt
             || request.Labels is not null
-            || request.ImportanceProvenance is not null;
+            || request.ImportanceProvenance is not null
+            || request.Alias is not null;
         if (!hasContent)
         {
             errors[nameof(request.Title)] =
-                ["At least one of Title, Description, Importance, Urgency, DueAt, ClearDueAt, Labels or ImportanceProvenance must be provided."];
+                ["At least one of Title, Description, Alias, Importance, Urgency, DueAt, ClearDueAt, Labels or ImportanceProvenance must be provided."];
         }
 
         if (request.Title is not null && string.IsNullOrWhiteSpace(request.Title))
@@ -1236,6 +1298,7 @@ public sealed class CardService : IScheduledCardActions
         RequireWithinLimit(errors, nameof(request.Title), request.Title?.Trim(), MaxTitleLength);
         RequireWithinLimit(errors, nameof(request.Description), request.Description?.Trim(), MaxDescriptionLength);
         RequireWithinLimit(errors, nameof(request.EditedBy), request.EditedBy?.Trim(), MaxActorLength);
+        RequireAlias(errors, nameof(request.Alias), request.Alias);
 
         if (errors.Count > 0)
             throw new ValidationException(errors);

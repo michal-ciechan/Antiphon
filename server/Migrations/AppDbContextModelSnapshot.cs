@@ -1470,6 +1470,10 @@ namespace Antiphon.Server.Migrations
                     b.Property<int?>("AgentQueuePosition")
                         .HasColumnType("integer");
 
+                    b.Property<string>("Alias")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<DateTime?>("ArchivedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -1652,6 +1656,10 @@ namespace Antiphon.Server.Migrations
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
+
+                    b.Property<string>("Alias")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<Guid>("CardId")
                         .HasColumnType("uuid");

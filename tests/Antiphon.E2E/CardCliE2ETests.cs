@@ -139,6 +139,43 @@ public class CardCliE2ETests
     }
 
     [Test]
+    public async Task The_cli_creates_edits_and_clears_an_alias_and_rejects_a_sixth_word()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var projectId = await CreateProjectAsync($"Card CLI Alias Project {suffix}");
+        var boardName = $"Card CLI Alias Board {suffix}";
+        await CreateBoardAsync(projectId, boardName);
+
+        var created = RunCard("new", "-Board", boardName, "-Title", "Bounded check headers",
+            "-Alias", "  Check   header  ");
+        created.ExitCode.ShouldBe(0, created.All);
+
+        var read = RunCard("get", "1", "-Json");
+        read.ExitCode.ShouldBe(0, read.All);
+        var card = JsonDocument.Parse(read.Stdout).RootElement;
+        card.GetProperty("alias").GetString().ShouldBe("Check header");
+        card.GetProperty("title").GetString().ShouldBe("Bounded check headers");
+
+        var edited = RunCard("edit", "CARD-0001", "-Reason", "Shorter.", "-Alias", "Header");
+        edited.ExitCode.ShouldBe(0, edited.All);
+        var afterEdit = RunCard("get", "CARD-0001", "-Json");
+        JsonDocument.Parse(afterEdit.Stdout).RootElement.GetProperty("alias").GetString().ShouldBe("Header");
+
+        var cleared = RunCard("edit", "CARD-0001", "-Reason", "No longer needed.", "-Alias", "");
+        cleared.ExitCode.ShouldBe(0, cleared.All);
+        var afterClear = RunCard("get", "CARD-0001", "-Json");
+        afterClear.ExitCode.ShouldBe(0, afterClear.All);
+        JsonDocument.Parse(afterClear.Stdout).RootElement.GetProperty("alias").ValueKind
+            .ShouldBe(JsonValueKind.Null);
+
+        var refused = RunCard("new", "-Board", boardName, "-Title", "Too many words",
+            "-Alias", "one two three four five six");
+        refused.ExitCode.ShouldNotBe(0);
+        refused.All.ShouldContain("5 words");
+        refused.All.ShouldContain("6");
+    }
+
+    [Test]
     public async Task The_cli_prints_the_limits_and_refuses_an_over_long_reason_before_sending_it()
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
@@ -153,6 +190,7 @@ public class CardCliE2ETests
         limits.Stdout.ShouldContain("description 20000");
         limits.Stdout.ShouldContain("reason      4000");
         limits.Stdout.ShouldContain("actor       200");
+        limits.Stdout.ShouldContain("alias       64 (5 words)");
         limits.Stdout.ShouldContain("importance  Low, Normal, High, Critical");
         limits.Stdout.ShouldContain("urgency     Normal, Soon, Now");
 

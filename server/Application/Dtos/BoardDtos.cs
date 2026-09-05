@@ -85,6 +85,8 @@ public sealed record CardDto(
     string? ArchivedBy = null,
     DateTime? AutoDispatchHeldAt = null,
     ExternalIssueDto? ExternalIssue = null,
+    // CARD-0350: optional human-authored short label. Null/omitted means the card has none.
+    string? Alias = null,
     // Full card routes predate summary views. Omitting false preserves that wire contract byte for
     // byte; summary consumers deserialize an omitted value as false.
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool HasMore = false);
@@ -155,7 +157,8 @@ public sealed record CreateCardRequest(
     CardImportance? Importance = null,
     CardUrgency Urgency = CardUrgency.Normal,
     DateTime? DueAt = null,
-    IReadOnlyList<string>? Labels = null);
+    IReadOnlyList<string>? Labels = null,
+    string? Alias = null);
 
 /// <param name="Reason">
 /// Why this card is moving. Optional, and deliberately NOT named for the close case: "no longer
@@ -233,7 +236,8 @@ public sealed record UpdateCardContentRequest(
     bool ClearDueAt = false,
     IReadOnlyList<string>? Labels = null,
     string? EditedBy = null,
-    CardImportanceProvenance? ImportanceProvenance = null);
+    CardImportanceProvenance? ImportanceProvenance = null,
+    string? Alias = null);
 
 /// <summary>
 /// Archive is what "delete" means for a card: the row stays, so references to its identifier never
@@ -283,7 +287,8 @@ public sealed record CardRevisionDto(
     string? EditedBy,
     DateTime CreatedAt,
     string? TerminalReason = null,
-    DateTime? CompletedAt = null);
+    DateTime? CompletedAt = null,
+    string? Alias = null);
 
 /// <summary>
 /// What a card's text may weigh, in characters, straight from the <c>CardService</c> constants that
@@ -302,7 +307,9 @@ public sealed record CardLimitsDto(
     int MaxReasonLength,
     int MaxActorLength,
     IReadOnlyList<string> ImportanceValues,
-    IReadOnlyList<string> UrgencyValues);
+    IReadOnlyList<string> UrgencyValues,
+    int MaxAliasLength,
+    int MaxAliasWords);
 
 public sealed record SpawnCardRequest(
     string? DefinitionName = null,

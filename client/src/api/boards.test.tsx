@@ -67,7 +67,7 @@ describe('CARD_LIMITS', () => {
   it('carries the server constants, because nothing serves them', () => {
     // LOCKSTEP with CardService.MaxTitleLength / MaxDescriptionLength / MaxReasonLength. The
     // reason ceiling in particular was raised from 1,000 to 4,000 after the base spec was written.
-    expect(CARD_LIMITS).toEqual({ title: 300, description: 20_000, reason: 4_000 })
+    expect(CARD_LIMITS).toEqual({ title: 300, description: 20_000, reason: 4_000, alias: 64, aliasWords: 5 })
   })
 })
 

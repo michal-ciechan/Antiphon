@@ -62,6 +62,8 @@ export interface CardDto {
   currentWorkflowStageName: string | null
   identifier: string
   title: string
+  /** Optional human-authored short label (CARD-0350). Null/omitted means none. */
+  alias?: string | null
   description: string
   importance: CardImportance
   /** Auto until an explicit create/edit sets importance; older payloads omit it. */
@@ -147,6 +149,8 @@ export interface CardRevisionDto {
   kind: CardRevisionKind
   title: string | null
   description: string | null
+  /** SUPERSEDED alias on a ContentEdit row; null on other kinds. */
+  alias?: string | null
   importance: CardImportance | null
   urgency: CardUrgency | null
   dueAt: string | null
@@ -176,6 +180,8 @@ export const CARD_LIMITS = {
   title: 300,
   description: 20_000,
   reason: 4_000,
+  alias: 64,
+  aliasWords: 5,
 } as const
 
 export interface AgentSessionSummaryDto {
@@ -242,6 +248,8 @@ export interface CreateCardRequest {
   boardColumnId?: string | null
   title: string
   description?: string | null
+  /** Optional short label. Omitted/blank means none; invalid values are a 422. */
+  alias?: string | null
   /** Null/omitted → Normal with provenance Auto; an explicit value is Human. */
   importance?: CardImportance | null
   urgency?: CardUrgency
@@ -302,6 +310,8 @@ export interface UpdateCardContentRequest {
   reason: string
   title?: string | null
   description?: string | null
+  /** Null/omitted = unchanged; empty string clears. */
+  alias?: string | null
   importance?: CardImportance | null
   urgency?: CardUrgency | null
   dueAt?: string | null

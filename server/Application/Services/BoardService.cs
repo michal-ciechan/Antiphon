@@ -370,7 +370,8 @@ public sealed class BoardService
                     ext.Author,
                     ext.AuthorIsOperator,
                     NeedsHumanReview(card))
-                : null);
+                : null,
+            card.Alias);
     }
 
     /// <summary>
@@ -458,7 +459,8 @@ public sealed class BoardService
             revision.EditedBy,
             revision.CreatedAt,
             revision.TerminalReason,
-            revision.CompletedAt);
+            revision.CompletedAt,
+            revision.Alias);
     }
 
     internal async Task<Board> LoadBoardAsync(Guid id, CancellationToken ct)

@@ -59,6 +59,7 @@ internal static class CardRevisionLog
         {
             Kind = CardRevisionKind.ContentEdit,
             Title = card.Title,
+            Alias = card.Alias,
             Description = card.Description,
             Importance = card.Importance,
             Urgency = card.Urgency,
