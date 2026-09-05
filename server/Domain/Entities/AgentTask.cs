@@ -101,6 +101,20 @@ public class AgentTask
     /// </summary>
     public Guid? RoutingPinId { get; set; }
 
+    /// <summary>
+    /// The caller's explicit <c>-Kind</c> at create, before pin overlay (CARD-0322 D4/D8). Null
+    /// when the field was left open. Re-walks compose only candidates compatible with this ask
+    /// so an original <c>-Kind ClaudeCode</c> never expands back to Grok. Cleared by
+    /// <c>POST …/reroute</c> with <see cref="RoutingPinId"/>.
+    /// </summary>
+    public AgentKind? ExplicitAgentKind { get; set; }
+
+    /// <summary>
+    /// The caller's explicit <c>-Level</c> at create, before pin overlay. See
+    /// <see cref="ExplicitAgentKind"/>.
+    /// </summary>
+    public AgentModelLevel? ExplicitModelLevel { get; set; }
+
     /// <summary>Set when the task was escalated up a tier — the chip shows the ladder.</summary>
     public AgentModelLevel? EscalatedFrom { get; set; }
 

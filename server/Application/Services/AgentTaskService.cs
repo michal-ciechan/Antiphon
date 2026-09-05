@@ -406,6 +406,12 @@ public sealed class AgentTaskService
                 warning = warning is null ? pinWarning : warning + " " + pinWarning;
         }
 
+        // The caller's explicit fields, before the pin overlay. Re-walks (dispatch / resume /
+        // wall) pass these into Compose so an original -Kind/-Level never expands back to the
+        // full list (CARD-0322 D4/D8).
+        var explicitAskKind = request.AgentKind;
+        var explicitAskLevel = request.ModelLevel;
+
         RoutingCandidates.RoutingCandidateList? pinComposed = null;
         if (request.Complexity is null)
         {
@@ -413,8 +419,8 @@ public sealed class AgentTaskService
                 pinDecision,
                 chain: null,
                 chainLabel: null,
-                request.AgentKind,
-                request.ModelLevel,
+                explicitAskKind,
+                explicitAskLevel,
                 (k, l) => ResolveRoutingPair(request.Kind, request.Role, k, l));
         }
 
@@ -422,16 +428,30 @@ public sealed class AgentTaskService
         {
             var skipKindOverlay = request.Complexity is not null
                 || pinComposed is { Walked: true };
+            AgentKind? overlayKind = request.AgentKind;
+            AgentModelLevel? overlayLevel = request.ModelLevel;
+            if (!skipKindOverlay)
+            {
+                if (pinComposed is { Walked: false, Candidates.Count: 1 })
+                {
+                    // Single survivor after explicit narrowing: overlay that complete pair, not
+                    // the pin head (CARD-0322 D1).
+                    overlayKind = request.AgentKind ?? pinComposed.Candidates[0].Kind;
+                    overlayLevel = request.ModelLevel ?? pinComposed.Candidates[0].Level;
+                }
+                else
+                {
+                    overlayKind = pinDecision.AgentKind ?? request.AgentKind;
+                    overlayLevel = pinDecision.ModelLevel ?? request.ModelLevel;
+                }
+            }
+
             request = request with
             {
                 // A walked pin list (or a complexity walk) composes the pin itself; overlaying
                 // the head would make a multi-candidate pin look like an explicit request.
-                AgentKind = skipKindOverlay
-                    ? request.AgentKind
-                    : pinDecision.AgentKind ?? request.AgentKind,
-                ModelLevel = skipKindOverlay
-                    ? request.ModelLevel
-                    : pinDecision.ModelLevel ?? request.ModelLevel,
+                AgentKind = overlayKind,
+                ModelLevel = overlayLevel,
                 // Only when the caller named none: an explicit -Agent has already been
                 // reconciled against the pin above (or refused).
                 AgentId = liveFollowUp ? request.AgentId : request.AgentId ?? pinDecision.AgentId,
@@ -755,6 +775,8 @@ public sealed class AgentTaskService
             ModelLevel = level,
             Complexity = request.Complexity,
             RoutingPinId = routingPinId,
+            ExplicitAgentKind = explicitAskKind,
+            ExplicitModelLevel = explicitAskLevel,
             Workspace = workspace,
             DenyDirectEdits = request.DenyDirectEdits,
             WorkingDirectory = resolved.WorkingDirectory,
@@ -1460,6 +1482,8 @@ public sealed class AgentTaskService
         task.ModelLevel = modelLevel;
         task.Complexity = null;
         task.RoutingPinId = null;
+        task.ExplicitAgentKind = null;
+        task.ExplicitModelLevel = null;
         var detail = $"rerouted to {alias} (explicit; chain governance ended)";
 
         if (task.Status == AgentTaskStatus.Queued)
@@ -1777,8 +1801,8 @@ public sealed class AgentTaskService
             pin,
             chain: null,
             chainLabel: null,
-            requestKind: null,
-            requestLevel: null,
+            task.ExplicitAgentKind,
+            task.ExplicitModelLevel,
             (k, l) => _complexityRouting.ResolveAgainstRolePolicy(task.Kind, task.Role, k, l));
         return await _complexityRouting.WalkComposedListAsync(
             composed, task.Kind, task.Role, pin, owner, ignoreSubscriptionQuota: false, ct);

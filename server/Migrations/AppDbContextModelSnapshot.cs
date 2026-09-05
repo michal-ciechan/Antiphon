@@ -524,6 +524,12 @@ namespace Antiphon.Server.Migrations
                         .HasColumnType("integer")
                         .HasDefaultValue(10);
 
+                    b.Property<int?>("ExplicitAgentKind")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("ExplicitModelLevel")
+                        .HasColumnType("integer");
+
                     b.Property<int?>("FailureCode")
                         .HasColumnType("integer");
 

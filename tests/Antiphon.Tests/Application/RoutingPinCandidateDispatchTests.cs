@@ -196,6 +196,7 @@ public sealed class RoutingPinCandidateDispatchTests
                 AgentKind = AgentKind.ClaudeCode,
                 ModelLevel = AgentModelLevel.Frontier,
                 RoutingPinId = pin.Id,
+                ExplicitAgentKind = AgentKind.ClaudeCode,
                 Workspace = WorkspaceMode.Shared,
                 WorkingDirectory = workspace.Path,
                 Status = AgentTaskStatus.Blocked,
@@ -213,7 +214,60 @@ public sealed class RoutingPinCandidateDispatchTests
         var stored = await verify.AgentTasks.SingleAsync(t => t.Id == taskId);
         stored.RoutingPinId.ShouldBeNull();
         stored.Complexity.ShouldBeNull();
+        stored.ExplicitAgentKind.ShouldBeNull();
+        stored.ExplicitModelLevel.ShouldBeNull();
         stored.Status.ShouldBe(AgentTaskStatus.Queued);
+    }
+
+    [Test]
+    public async Task Explicit_kind_rewalk_stays_inside_the_original_ask()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var pin = await SeedStageListAsync(
+            schema,
+            [
+                new(AgentKind.ClaudeCode, AgentModelLevel.Frontier),
+                new(AgentKind.ClaudeCode, AgentModelLevel.High),
+                new(AgentKind.Grok, AgentModelLevel.Frontier),
+            ]);
+        await SeedHoldAsync(schema, "fable", null);
+        await SeedHoldAsync(schema, "opus", null);
+        var taskId = Guid.NewGuid();
+        await using (var db = CreateContext(schema))
+        {
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = taskId,
+                RootTaskId = taskId,
+                Title = "blocked pin ask",
+                Goal = "plan it",
+                Role = AgentTaskRole.Plan,
+                AgentKind = AgentKind.ClaudeCode,
+                ModelLevel = AgentModelLevel.Frontier,
+                RoutingPinId = pin.Id,
+                ExplicitAgentKind = AgentKind.ClaudeCode,
+                Workspace = WorkspaceMode.Shared,
+                WorkingDirectory = workspace.Path,
+                Status = AgentTaskStatus.Blocked,
+                FailureReason = ComplexityRoutingService.RoutingExhaustedPrefix
+                    + "stage Plan pin (human, required) — fable held; opus held",
+                CreatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var dispatcher = CreateDispatcher(schema);
+        var result = await dispatcher.TickAsync(CancellationToken.None);
+
+        result.ResumedRoutingBlocked.ShouldBe(0);
+        await using var verify = CreateContext(schema);
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == taskId);
+        stored.Status.ShouldBe(AgentTaskStatus.Blocked);
+        stored.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+        stored.ModelLevel.ShouldBe(AgentModelLevel.Frontier);
+        (await verify.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Rerouted)).ShouldBe(0);
     }
 
     [Test]
@@ -273,6 +327,67 @@ public sealed class RoutingPinCandidateDispatchTests
         var row = items.Items.Single(i => i.Kind == AttentionKind.RoutingExhausted);
         row.Title.ShouldBe("Plan stage pin exhausted");
         row.Headline.ShouldContain("3 tasks waiting");
+        row.TaskId.ShouldBe(ids[0]);
+    }
+
+    [Test]
+    public async Task Pin_plus_chain_blocked_tasks_group_under_pin_plus_chain_key()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var pin = new RoutingPin
+        {
+            Id = Guid.NewGuid(),
+            Role = AgentTaskRole.Plan,
+            Provenance = RoutingPinProvenance.Human,
+            Strength = RoutingPinStrength.Preferred,
+            CandidatesJson = RoutingCandidate.Serialize(
+            [
+                new(AgentKind.ClaudeCode, AgentModelLevel.Frontier),
+                new(AgentKind.ClaudeCode, AgentModelLevel.High),
+            ]),
+            Reason = "fable then opus",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        db.RoutingPins.Add(pin);
+        var ids = new List<Guid>();
+        for (var i = 0; i < 2; i++)
+        {
+            var id = Guid.NewGuid();
+            ids.Add(id);
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = id,
+                RootTaskId = id,
+                Title = $"pin-chain-{i}",
+                Goal = "plan it",
+                Role = AgentTaskRole.Plan,
+                AgentKind = AgentKind.ClaudeCode,
+                ModelLevel = AgentModelLevel.Frontier,
+                Complexity = TaskComplexity.Hard,
+                RoutingPinId = pin.Id,
+                Workspace = WorkspaceMode.Shared,
+                WorkingDirectory = Path.GetTempPath(),
+                Status = AgentTaskStatus.Blocked,
+                FailureReason = ComplexityRoutingService.RoutingExhaustedPrefix
+                    + "CARD-0301 Plan/Hard pin+chain — fable held; opus held",
+                CreatedAt = DateTime.UtcNow.AddMinutes(-10 + i),
+            });
+        }
+
+        await db.SaveChangesAsync();
+
+        var items = await new AttentionService(
+            db,
+            new RefusingSessionRunnerClient(),
+            Options.Create(new SupervisionSettings()),
+            Options.Create(new DelegationSettings()),
+            TimeProvider.System,
+            NullLogger<AttentionService>.Instance).GetAsync(CancellationToken.None);
+        var row = items.Items.Single(i => i.Kind == AttentionKind.RoutingExhausted);
+        row.Title.ShouldBe("Plan/Hard pin+chain exhausted");
+        row.Headline.ShouldContain("2 tasks waiting");
         row.TaskId.ShouldBe(ids[0]);
     }
 
@@ -345,7 +460,92 @@ public sealed class RoutingPinCandidateDispatchTests
         stored.FailureReason.ShouldContain("Plan stage pin");
     }
 
-    private static async Task<RoutingPin> SeedStageListAsync(IsolatedTestSchema schema)
+    [Test]
+    public async Task Wall_rewalk_stays_inside_the_original_explicit_kind()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var pin = await SeedStageListAsync(
+            schema,
+            [
+                new(AgentKind.ClaudeCode, AgentModelLevel.Frontier),
+                new(AgentKind.ClaudeCode, AgentModelLevel.High),
+                new(AgentKind.Grok, AgentModelLevel.Frontier),
+            ]);
+        var taskId = Guid.NewGuid();
+        await using (var db = CreateContext(schema))
+        {
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = taskId,
+                RootTaskId = taskId,
+                Title = "working pin ask",
+                Goal = "plan it",
+                Role = AgentTaskRole.Plan,
+                AgentKind = AgentKind.ClaudeCode,
+                ModelLevel = AgentModelLevel.Frontier,
+                RoutingPinId = pin.Id,
+                ExplicitAgentKind = AgentKind.ClaudeCode,
+                Workspace = WorkspaceMode.Shared,
+                WorkingDirectory = workspace.Path,
+                Status = AgentTaskStatus.Working,
+                CreatedAt = DateTime.UtcNow,
+                DispatchedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await using var db2 = CreateContext(schema);
+        var settings = Options.Create(new DelegationSettings { AllowedRoots = [workspace.Path] });
+        var availability = new ModelAvailability(db2, TimeProvider.System, NullLogger<ModelAvailability>.Instance);
+        var routing = new ComplexityRoutingService(db2, settings, TimeProvider.System, availability);
+        var pins = new RoutingPinService(db2, TimeProvider.System, NullLogger<RoutingPinService>.Instance);
+        var tasks = new AgentTaskService(
+            db2,
+            new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
+            settings,
+            new MockEventBus(),
+            new RecordingSessionStopper(),
+            TimeProvider.System,
+            NullLogger<AgentTaskService>.Instance,
+            modelAvailability: availability,
+            routingPins: pins,
+            complexityRouting: routing);
+        var task = await db2.AgentTasks.SingleAsync(t => t.Id == taskId);
+
+        db2.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
+        {
+            Id = Guid.NewGuid(),
+            Kind = AgentKind.ClaudeCode,
+            ModelAlias = "fable",
+            Source = ModelAvailabilitySource.AutoDetected,
+            HitAt = DateTime.UtcNow,
+            Reason = "wall",
+        });
+        db2.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
+        {
+            Id = Guid.NewGuid(),
+            Kind = AgentKind.ClaudeCode,
+            ModelAlias = "opus",
+            Source = ModelAvailabilitySource.Manual,
+            HitAt = DateTime.UtcNow,
+            Reason = "held",
+        });
+        await db2.SaveChangesAsync();
+
+        var decision = await tasks.RerouteOnWallAsync(
+            task, "fable", "fable hit a usage wall", sessionLimitHasScheduledResume: false, CancellationToken.None);
+
+        decision.Kind.ShouldBe(AgentTaskService.WallRerouteKind.Blocked);
+        var stored = await db2.AgentTasks.SingleAsync(t => t.Id == taskId);
+        stored.Status.ShouldBe(AgentTaskStatus.Blocked);
+        stored.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+        stored.ModelLevel.ShouldBe(AgentModelLevel.Frontier);
+    }
+
+    private static async Task<RoutingPin> SeedStageListAsync(
+        IsolatedTestSchema schema,
+        IReadOnlyList<RoutingCandidate>? candidates = null)
     {
         await using var db = CreateContext(schema);
         var pin = new RoutingPin
@@ -355,10 +555,11 @@ public sealed class RoutingPinCandidateDispatchTests
             Provenance = RoutingPinProvenance.Human,
             Strength = RoutingPinStrength.Required,
             CandidatesJson = RoutingCandidate.Serialize(
-            [
-                new(AgentKind.ClaudeCode, AgentModelLevel.Frontier),
-                new(AgentKind.ClaudeCode, AgentModelLevel.High),
-            ]),
+                candidates ??
+                [
+                    new(AgentKind.ClaudeCode, AgentModelLevel.Frontier),
+                    new(AgentKind.ClaudeCode, AgentModelLevel.High),
+                ]),
             Reason = "fable then opus",
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow,

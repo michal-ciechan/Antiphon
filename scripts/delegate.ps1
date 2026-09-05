@@ -657,7 +657,7 @@ switch ($PSCmdlet.ParameterSetName) {
                         "$($created.routing.source)" -like 'pin:*' -or
                         "$($created.routing.source)" -like 'pin+chain:*')) {
                     $n = @($created.routing.candidates).Count
-                    $pinLine = $pinLine + (" — this REPLACES the {0}-candidate pin; clear it to restore the list" -f $n)
+                    $pinLine = $pinLine + (" - this REPLACES the {0}-candidate pin; clear it to restore the list" -f $n)
                 }
                 elseif ($Complexity) {
                     $cell = '{0}/{1}' -f $body.role, $Complexity

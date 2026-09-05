@@ -191,6 +191,19 @@ public sealed class RoutingPinScriptTests
     }
 
     [Test]
+    public void Delegate_and_routing_pin_scripts_are_ascii_only()
+    {
+        foreach (var name in new[] { "delegate.ps1", "routing-pin.ps1" })
+        {
+            var path = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", name);
+            File.Exists(path).ShouldBeTrue(path);
+            var bytes = File.ReadAllBytes(path);
+            var firstNonAscii = Array.FindIndex(bytes, static b => b > 127);
+            firstNonAscii.ShouldBe(-1, $"{name} has a non-ASCII byte at offset {firstNonAscii}");
+        }
+    }
+
+    [Test]
     public async Task Delegate_Pin_with_nothing_that_could_bind_a_card_is_refused_locally()
     {
         using var server = new StubApi();
