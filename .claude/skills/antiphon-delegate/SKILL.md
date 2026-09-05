@@ -239,7 +239,9 @@ automatically — see "What the delegate is told" below; don't type them into `-
   rules it already has.
 - **Don't poll — this rule is for the CALLER, not the delegate.** As the caller, the report is
   delivered into your session as `[task <id> done] ...` when it lands; end your turn and it will
-  reach you. The delegate's side of this is the opposite and it is already in
+  reach you. The same applies to `-Land`: its outcome auto-delivers to the caller session via the
+  same `WhenIdle` mechanism, so wait for it rather than running a manual `GET /api/agent-tasks/{id}`
+  poll loop, which only duplicates the delivery (CARD-0386). The delegate's side of this is the opposite and it is already in
   `server/Bundles/delegate-basics.md`: it settles when its turn ends, so it finishes the work in the
   foreground and never waits to be re-invoked.
 

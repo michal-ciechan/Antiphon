@@ -456,6 +456,11 @@ inspecting the branch directly.
 A refusal is a judgement call, not a silent gate: dispatch a follow-up to repair it, defer the
 landing, or drop the branch.
 
+**`-Land`'s outcome auto-delivers to the caller session**, via the same `SessionMessageQueueService`
+`WhenIdle` mechanism used for a task's own `[task <id> done]` completion (see
+`AgentTaskLandService.DeliverAsync`). Wait for it; do not run a manual `GET /api/agent-tasks/{id}`
+poll loop after `-Land` — that only produces a duplicate delivery of the same outcome (CARD-0386).
+
 **Each land outcome is also three `StageOutcome` rows (CARD-0272)** — Rebase, Verify, Cleanup —
 because those are three different questions even though one land op answers all three. `Landed`
 "build OK…" writes Rebase Clean, Verify Clean (with the verify detail), Cleanup Clean.
