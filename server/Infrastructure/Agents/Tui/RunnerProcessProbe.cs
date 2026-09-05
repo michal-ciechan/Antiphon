@@ -555,7 +555,7 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         return null;
     }
 
-    private static SanitizedOutput Sanitize(
+    internal static SanitizedOutput Sanitize(
         string standardOutput,
         string standardError,
         IReadOnlyList<string> secretValues)
@@ -1092,7 +1092,7 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         string StandardError,
         bool IsValidUtf8);
     private sealed record CleanupOutcome(bool CleanlyStopped, bool CleanupConfirmed);
-    private sealed record SanitizedOutput(
+    internal sealed record SanitizedOutput(
         string StandardOutput,
         string StandardError,
         bool SensitiveOutputDetected);
