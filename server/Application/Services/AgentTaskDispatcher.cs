@@ -772,8 +772,8 @@ public sealed class AgentTaskDispatcher
             pin,
             chain: null,
             chainLabel: null,
-            requestKind: null,
-            requestLevel: null,
+            task.ExplicitAgentKind,
+            task.ExplicitModelLevel,
             (k, l) => _complexityRouting.ResolveAgainstRolePolicy(task.Kind, task.Role, k, l));
         return await _complexityRouting.WalkComposedListAsync(
             composed, task.Kind, task.Role, pin, owner, ignoreSubscriptionQuota: false, ct);

@@ -310,3 +310,44 @@ Delete `bin-card0322*` after. Shared-Postgres tests seed by id; the backfill tes
 - CARD-0301's card pin (`ClaudeCode/Frontier`, `NotBefore` 2026-09-03) is a one-candidate pin and is untouched by the migration except for the JSON shape.
 - Orchestrator habit is unchanged: `delegate.ps1 -Role Plan -Card CARD-x` with no `-Kind`; the pin does the rest. `-Kind` remains correct when the operator named the model, and it is never rerouted.
 - Enum values, 409 sentence shapes and the Blocked/attention text cite CARD-0090; do not restate them differently here.
+
+---
+
+## Verification design
+
+Review-fix pass (D1/D2/D3/N1/N2). Added at Code because the original plan predates the CARD-0146 section contract and the review named these guards after S4.
+
+### Proves it works now
+- V-1: `-Kind` only against a Required list whose single matching candidate is not the head runs that survivor, not the head's level · integration · `RoutingPinCandidateCreateTests.Explicit_kind_only_narrows_to_a_single_non_head_survivor_and_is_not_walked` · ClaudeCode/High (opus), `RoutingPinId` null, `Walked` false
+- V-2: `-Level` only against the same list runs the non-head survivor, not the head's kind · integration · `Explicit_level_only_narrows_to_a_single_non_head_survivor_and_is_not_walked` · ClaudeCode/High, not Grok/High
+- V-3: Compose agrees with V-1/V-2 without a DB · unit · `ComplexityRoutingComposeTests.Explicit_kind_only_narrows_to_a_single_non_head_survivor_and_is_not_walked` and `Explicit_level_only_narrows_to_a_single_non_head_survivor_and_is_not_walked`
+- V-4: an explicit-kind create that walked two ClaudeCode slots, both now held, does not resume onto a later Grok candidate the original ask excluded · integration · `RoutingPinCandidateDispatchTests.Explicit_kind_rewalk_stays_inside_the_original_ask` · stays Blocked, `AgentKind` still ClaudeCode, 0 `Rerouted`
+- V-4b: the same ask at a wall Blocks instead of rerouting onto Grok · integration · `Wall_rewalk_stays_inside_the_original_explicit_kind` · `WallRerouteKind.Blocked`
+- V-5: create `-Kind ClaudeCode` against `[fable, opus, grok]` persists `ExplicitAgentKind` · integration · `RoutingPinCandidateCreateTests.Explicit_kind_narrows_the_walk_to_matching_candidates`
+- V-6: `POST …/reroute` nulls `ExplicitAgentKind` / `ExplicitModelLevel` with `RoutingPinId` · integration · `RoutingPinCandidateDispatchTests.Reroute_nulls_RoutingPinId`
+- V-7: isolated-schema backfill: old `AgentKind`/`ModelLevel` ordinals become `Head` (ClaudeCode/Frontier = 1/0, Grok kind-only = 4/null, Grok/Frontier = 4/0) · integration · `RoutingPinCandidateTests.Backfill_round_trip_preserves_the_head_from_the_old_columns`
+- V-8: `delegate.ps1` stays ASCII after the `-Pin` consequence line · script · byte scan of `scripts/delegate.ps1` (N1 hyphen)
+- V-9: a pin+chain Blocked pair groups under `pin+chain:` not `chain:` · integration · `RoutingPinCandidateDispatchTests.Pin_plus_chain_blocked_tasks_group_under_pin_plus_chain_key` · title `Plan/Hard pin+chain exhausted`
+
+### Guards the regression
+- R-1: a Required list silently runs a kind/level pair the operator never listed (ClaudeCode/Frontier = fable) · caught by V-1 because level is High and `RoutingPinId` stays null
+- R-2: an explicit `-Kind` at create is forgotten at dispatch/resume/wall so the full list reroutes onto Grok · caught by V-4 because status stays Blocked
+- R-3: backfill CASE arms map the wrong ordinal (Grok≠4 or Frontier≠0) · caught by V-7
+- R-4: `delegate.ps1` grows a non-ASCII em-dash that Windows PowerShell 5.1 mojibakes · caught by V-8
+- R-5: pin+chain attention keys collide with `pin:` prefix matching · caught by V-9 because the title is `pin+chain exhausted`, not `chain:… pin exhausted`
+
+### Positive controls  (Build runs each: break, see red, revert, see green — and reports all three)
+- PC-1: in `AgentTaskService.CreateAsync`, overlay `pinDecision.AgentKind/ModelLevel` even when `pinComposed is { Walked: false, Candidates.Count: 1 }`, and in `RoutingPinService.ResolveAsync` resolve from `ask ?? pin.Head` even when `compatible.Count == 1`; expect `Explicit_kind_only_narrows_to_a_single_non_head_survivor_and_is_not_walked` red (ClaudeCode/Frontier leaks)
+- PC-2: in `AgentTaskDispatcher.WalkTaskChainAsync` and `AgentTaskService.WalkTaskChainAsync`, pass `requestKind: null, requestLevel: null` again; expect `Explicit_kind_rewalk_stays_inside_the_original_ask` red (resumes on Grok)
+- PC-3: in `AddRoutingPinCandidates` Up SQL, map `WHEN 4 THEN 'ClaudeCode'` (or drop the Grok arm); expect `Backfill_round_trip_preserves_the_head_from_the_old_columns` red
+- PC-4: restore the em-dash on `scripts/delegate.ps1:660`; expect a non-ASCII byte in that file
+- PC-5: in `AttentionService.GroupKey`, drop the `RoutingPinId && Complexity` pin+chain arm so those tasks fall through to `chain:`; expect `Pin_plus_chain_blocked_tasks_group_under_pin_plus_chain_key` red
+
+### Out of scope
+- CARD-0090 S5 wall PCs (already shipped).
+- Client vitest beyond the S4 chip (unchanged this pass).
+- Live `restart-apphost.ps1` — this branch has not landed; the migration still rides `AddRoutingPinCandidates`.
+
+### Cost
+- suites forced: `RoutingPin*`, `ComplexityRouting*`, `Complexity*` (CARD-0090), `AttentionServiceTests`, `AgentTaskDispatcher*` / `AgentTaskDispatch*`, `AgentTaskPipelineStatus*`, `ModelAvailability*`, `Antiphon.Tests.Scripts`, `pwsh -File scripts/test-client.ps1`
+- verification floor ≈ 20 min (isolated-schema clones + script spawn + vitest)

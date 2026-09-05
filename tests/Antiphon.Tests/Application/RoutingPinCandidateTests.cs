@@ -295,11 +295,13 @@ public sealed class RoutingPinCandidateTests
                         "Reason", "CreatedAt", "UpdatedAt")
                     VALUES
                         (@id1, 1, 1, 1, 1, 0, 'complete pair', NOW(), NOW()),
-                        (@id2, 2, 1, 1, 4, NULL, 'kind only', NOW(), NOW());
+                        (@id2, 2, 1, 1, 4, NULL, 'kind only', NOW(), NOW()),
+                        (@id3, 4, 1, 1, 4, 0, 'grok frontier', NOW(), NOW());
                     """,
                     conn);
                 insert.Parameters.AddWithValue("id1", Guid.NewGuid());
                 insert.Parameters.AddWithValue("id2", Guid.NewGuid());
+                insert.Parameters.AddWithValue("id3", Guid.NewGuid());
                 await insert.ExecuteNonQueryAsync();
             }
 
@@ -309,7 +311,7 @@ public sealed class RoutingPinCandidateTests
                 var pins = await db.RoutingPins.AsNoTracking()
                     .OrderBy(p => p.Role)
                     .ToListAsync();
-                pins.Count.ShouldBe(2);
+                pins.Count.ShouldBe(3);
 
                 var plan = pins.Single(p => p.Role == AgentTaskRole.Plan);
                 plan.Head.ShouldNotBeNull();
@@ -325,6 +327,18 @@ public sealed class RoutingPinCandidateTests
                 code.Head.ModelLevel.ShouldBeNull();
                 code.AgentKind.ShouldBe(AgentKind.Grok);
                 code.ModelLevel.ShouldBeNull();
+
+                // AgentKind.Grok = 4, AgentModelLevel.Frontier = 0 — the mapping the review
+                // verified by hand against AgentKind.cs / AgentModelLevel.cs ordinals.
+                var debug = pins.Single(p => p.Role == AgentTaskRole.Debug);
+                debug.Head.ShouldNotBeNull();
+                debug.Head!.AgentKind.ShouldBe(AgentKind.Grok);
+                debug.Head.ModelLevel.ShouldBe(AgentModelLevel.Frontier);
+                debug.AgentKind.ShouldBe(AgentKind.Grok);
+                debug.ModelLevel.ShouldBe(AgentModelLevel.Frontier);
+                debug.Candidates.ShouldHaveSingleItem();
+                debug.CandidatesJson.ShouldContain("Grok");
+                debug.CandidatesJson.ShouldContain("Frontier");
             }
         }
         finally

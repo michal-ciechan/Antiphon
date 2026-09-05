@@ -235,6 +235,59 @@ public sealed class RoutingPinCandidateCreateTests
         created.ModelLevel.ShouldBe(AgentModelLevel.High);
         created.Routing!.Candidates.Count.ShouldBe(2);
         created.Routing.Candidates.ShouldAllBe(c => c.AgentKind == AgentKind.ClaudeCode);
+        var stored = await db.AgentTasks.SingleAsync(t => t.Id == created.Id);
+        stored.ExplicitAgentKind.ShouldBe(AgentKind.ClaudeCode);
+        stored.ExplicitModelLevel.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task Explicit_kind_only_narrows_to_a_single_non_head_survivor_and_is_not_walked()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        await Pins(db).UpsertAsync(GrokThenClaudeHigh(), null, CancellationToken.None);
+
+        var created = await Service(db, workspace).CreateAsync(
+            new CreateAgentTaskRequest(
+                "plan it", Role: AgentTaskRole.Plan, AgentKind: AgentKind.ClaudeCode),
+            Manual(workspace.Path),
+            CancellationToken.None);
+
+        created.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+        created.ModelLevel.ShouldBe(AgentModelLevel.High);
+        created.Routing.ShouldBeNull();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == created.Id);
+        task.RoutingPinId.ShouldBeNull();
+        task.ExplicitAgentKind.ShouldBe(AgentKind.ClaudeCode);
+        task.ExplicitModelLevel.ShouldBeNull();
+        task.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+        task.ModelLevel.ShouldBe(AgentModelLevel.High);
+    }
+
+    [Test]
+    public async Task Explicit_level_only_narrows_to_a_single_non_head_survivor_and_is_not_walked()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        await Pins(db).UpsertAsync(GrokThenClaudeHigh(), null, CancellationToken.None);
+
+        var created = await Service(db, workspace).CreateAsync(
+            new CreateAgentTaskRequest(
+                "plan it", Role: AgentTaskRole.Plan, ModelLevel: AgentModelLevel.High),
+            Manual(workspace.Path),
+            CancellationToken.None);
+
+        created.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+        created.ModelLevel.ShouldBe(AgentModelLevel.High);
+        created.Routing.ShouldBeNull();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == created.Id);
+        task.RoutingPinId.ShouldBeNull();
+        task.ExplicitAgentKind.ShouldBeNull();
+        task.ExplicitModelLevel.ShouldBe(AgentModelLevel.High);
+        task.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+        task.ModelLevel.ShouldBe(AgentModelLevel.High);
     }
 
     [Test]
@@ -477,6 +530,18 @@ public sealed class RoutingPinCandidateCreateTests
                 new(AgentKind.ClaudeCode, AgentModelLevel.High),
             ],
             Reason: "fable then opus");
+
+    private static PutRoutingPinRequest GrokThenClaudeHigh() =>
+        new(
+            AgentTaskRole.Plan,
+            Provenance: RoutingPinProvenance.Human,
+            Strength: RoutingPinStrength.Required,
+            Candidates:
+            [
+                new(AgentKind.Grok, AgentModelLevel.Frontier),
+                new(AgentKind.ClaudeCode, AgentModelLevel.High),
+            ],
+            Reason: "grok then opus");
 
     private static async Task SeedHardChainAsync(AppDbContext db)
     {

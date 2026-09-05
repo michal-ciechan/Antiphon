@@ -366,24 +366,35 @@ public sealed class AttentionService
             .Where(p => p.ClearedAt == null && (p.NotAfter == null || p.NotAfter > now))
             .ToListAsync(ct);
 
+        string PinKey(AgentTask t)
+        {
+            RoutingPin? cardPin = t.CardId is Guid cid
+                ? pins.Find(p => p.CardId == cid && p.Role == t.Role)
+                : null;
+            var stagePin = pins.Find(p => p.CardId == null && p.Role == t.Role);
+            var pin = cardPin ?? stagePin;
+            if (pin is null)
+                return $"pin:gone {t.Role}";
+            if (pin.CardId is null)
+                return $"pin:stage {pin.Role}";
+            var ident = pin.CardId is Guid pid && cards.TryGetValue(pid, out var card)
+                ? card.Identifier
+                : pin.CardId.ToString();
+            return $"pin:{ident} {pin.Role}";
+        }
+
         string GroupKey(AgentTask t)
         {
-            if (t.RoutingPinId is not null && t.Complexity is null)
+            if (t.RoutingPinId is not null && t.Complexity is { } both)
             {
-                RoutingPin? cardPin = t.CardId is Guid cid
-                    ? pins.Find(p => p.CardId == cid && p.Role == t.Role)
-                    : null;
-                var stagePin = pins.Find(p => p.CardId == null && p.Role == t.Role);
-                var pin = cardPin ?? stagePin;
-                if (pin is null)
-                    return $"pin:gone {t.Role}";
-                if (pin.CardId is null)
-                    return $"pin:stage {pin.Role}";
-                var ident = pin.CardId is Guid pid && cards.TryGetValue(pid, out var card)
-                    ? card.Identifier
-                    : pin.CardId.ToString();
-                return $"pin:{ident} {pin.Role}";
+                var pinTail = PinKey(t);
+                if (pinTail.StartsWith("pin:", StringComparison.Ordinal))
+                    pinTail = pinTail["pin:".Length..];
+                return $"pin+chain:{pinTail}/{both}";
             }
+
+            if (t.RoutingPinId is not null)
+                return PinKey(t);
 
             if (t.Complexity is { } complexity)
             {
@@ -396,6 +407,16 @@ public sealed class AttentionService
 
         static string TitleFor(string key)
         {
+            const string pinChain = "pin+chain:";
+            if (key.StartsWith(pinChain, StringComparison.Ordinal))
+            {
+                var tail = key[pinChain.Length..];
+                const string stagePrefix = "stage ";
+                if (tail.StartsWith(stagePrefix, StringComparison.Ordinal))
+                    return $"{tail[stagePrefix.Length..]} pin+chain exhausted";
+                return $"{tail} pin+chain exhausted";
+            }
+
             const string pinStage = "pin:stage ";
             if (key.StartsWith(pinStage, StringComparison.Ordinal))
                 return $"{key[pinStage.Length..]} stage pin exhausted";

@@ -276,6 +276,46 @@ public sealed class ComplexityRoutingComposeTests
     }
 
     [Test]
+    public void Explicit_kind_only_narrows_to_a_single_non_head_survivor_and_is_not_walked()
+    {
+        var pin = Pin(RoutingPinStrength.Required, AgentKind.Grok, AgentModelLevel.Frontier);
+        pin.SetCandidates(
+        [
+            new RoutingCandidate(AgentKind.Grok, AgentModelLevel.Frontier),
+            new RoutingCandidate(AgentKind.ClaudeCode, AgentModelLevel.High),
+        ]);
+
+        var list = RoutingCandidates.Compose(
+            Decision(pin), chain: null, chainLabel: null, AgentKind.ClaudeCode, null, Resolve);
+
+        list.Candidates.ShouldHaveSingleItem();
+        list.Candidates[0].Kind.ShouldBe(AgentKind.ClaudeCode);
+        list.Candidates[0].Level.ShouldBe(AgentModelLevel.High);
+        list.Candidates[0].Alias.ShouldBe("opus");
+        list.Walked.ShouldBeFalse();
+    }
+
+    [Test]
+    public void Explicit_level_only_narrows_to_a_single_non_head_survivor_and_is_not_walked()
+    {
+        var pin = Pin(RoutingPinStrength.Required, AgentKind.Grok, AgentModelLevel.Frontier);
+        pin.SetCandidates(
+        [
+            new RoutingCandidate(AgentKind.Grok, AgentModelLevel.Frontier),
+            new RoutingCandidate(AgentKind.ClaudeCode, AgentModelLevel.High),
+        ]);
+
+        var list = RoutingCandidates.Compose(
+            Decision(pin), chain: null, chainLabel: null, null, AgentModelLevel.High, Resolve);
+
+        list.Candidates.ShouldHaveSingleItem();
+        list.Candidates[0].Kind.ShouldBe(AgentKind.ClaudeCode);
+        list.Candidates[0].Level.ShouldBe(AgentModelLevel.High);
+        list.Candidates[0].Alias.ShouldBe("opus");
+        list.Walked.ShouldBeFalse();
+    }
+
+    [Test]
     public void Passing_an_empty_chain_does_not_append_role_policy()
     {
         var pin = Pin(RoutingPinStrength.Preferred, AgentKind.Codex, AgentModelLevel.Frontier);

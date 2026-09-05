@@ -9,7 +9,8 @@ namespace Antiphon.Server.Migrations
 {
     /// <summary>
     /// CARD-0322: RoutingPins.CandidatesJson replaces AgentKind/ModelLevel; AgentTasks.RoutingPinId
-    /// marks a walked create. Hand-written (running daemons lock bin/); the [DbContext]/[Migration]
+    /// marks a walked create; ExplicitAgentKind/ExplicitModelLevel persist the create-time ask
+    /// for re-walk (D4/D8). Hand-written (running daemons lock bin/); the [DbContext]/[Migration]
     /// attributes normally generated into the Designer live here. Snapshot is updated to match.
     /// </summary>
     [DbContext(typeof(AppDbContext))]
@@ -30,6 +31,18 @@ namespace Antiphon.Server.Migrations
                 name: "RoutingPinId",
                 table: "AgentTasks",
                 type: "uuid",
+                nullable: true);
+
+            migrationBuilder.AddColumn<int>(
+                name: "ExplicitAgentKind",
+                table: "AgentTasks",
+                type: "integer",
+                nullable: true);
+
+            migrationBuilder.AddColumn<int>(
+                name: "ExplicitModelLevel",
+                table: "AgentTasks",
+                type: "integer",
                 nullable: true);
 
             // Ordinals from AgentKind.cs / AgentModelLevel.cs at code time (CARD-0322):
@@ -111,6 +124,14 @@ namespace Antiphon.Server.Migrations
 
             migrationBuilder.DropColumn(
                 name: "RoutingPinId",
+                table: "AgentTasks");
+
+            migrationBuilder.DropColumn(
+                name: "ExplicitAgentKind",
+                table: "AgentTasks");
+
+            migrationBuilder.DropColumn(
+                name: "ExplicitModelLevel",
                 table: "AgentTasks");
         }
     }

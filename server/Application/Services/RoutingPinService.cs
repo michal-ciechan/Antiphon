@@ -53,6 +53,8 @@ public sealed class RoutingPinService
     /// The pin's verdict for one create. <see cref="Pin"/> is the CHOSEN grain (card outranks
     /// stage as a whole row); <see cref="StagePin"/> is kept alongside it because a stage pin's
     /// <c>ForbiddenAliases</c> still bite an Auto card pin.
+    /// <see cref="AgentKind"/> / <see cref="ModelLevel"/> are the not-walked overlay: the single
+    /// surviving candidate when explicit narrowing left one, otherwise ask ?? pin.Head.
     /// </summary>
     public sealed record Decision(
         RoutingPin? Pin,
@@ -362,8 +364,22 @@ public sealed class RoutingPinService
             warning = $"Overrode preferred {Describe(pin, identifier)}: {detail}.";
         }
 
-        var resolvedKind = ask.AgentKind ?? pin.AgentKind;
-        var resolvedLevel = ask.ModelLevel ?? pin.ModelLevel;
+        // Not-walked overlay: a single survivor after explicit narrowing is THAT pair, not
+        // pin.Head. Otherwise -Kind ClaudeCode against [Grok/Frontier, ClaudeCode/High] would
+        // leak the head's level (Frontier) onto ClaudeCode and silently run fable.
+        AgentKind? resolvedKind;
+        AgentModelLevel? resolvedLevel;
+        if (compatible.Count == 1)
+        {
+            resolvedKind = ask.AgentKind ?? compatible[0].AgentKind;
+            resolvedLevel = ask.ModelLevel ?? compatible[0].ModelLevel;
+        }
+        else
+        {
+            resolvedKind = ask.AgentKind ?? pin.AgentKind;
+            resolvedLevel = ask.ModelLevel ?? pin.ModelLevel;
+        }
+
         var resolvedAgent = ask.AgentId ?? pin.AgentId;
 
         return new Decision(
