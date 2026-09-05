@@ -260,6 +260,17 @@ POST   /api/agent-tasks/{id}/continue        replay the standing authority given
                                              Returns `AgentTaskSummaryDto` like
                                              `/reply`.
 POST   /api/agent-tasks/{id}/refine          steer a running delegate without cancelling it
+POST   /api/agent-tasks/{id}/distillation/feedback
+                                             CARD-0330: flag a distillation.
+                                             Body `{ verdict: "Good"|"Lost"|"Noisy", note? }`.
+                                             409 if the task has no distillation row.
+                                             `delegate.ps1 -Flag <id> -Verdict Lost|Noisy|Good [-Note]`.
+GET    /api/distillations                    CARD-0330 ledger. Query: since, outcome,
+                                             feedback, limit (default 50, max 200).
+                                             Joins raw and distilled texts from the task.
+GET    /api/distillations/stats              CARD-0330 counts by outcome/feedback/stamp,
+                                             ratio quantiles, top missing-anchor classes,
+                                             FullReadAt rate. `scripts/distiller.ps1 -Stats`.
 POST   /api/agent-tasks/{id}/finding         CARD-0272: orchestrator override of a stage
                                              finding. Body `RecordStageFindingRequest`:
                                              `stage` (name, not ordinal — unknown is 422),

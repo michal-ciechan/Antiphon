@@ -34,6 +34,7 @@ import {
   useRetryAgentTask,
   useMarkAgentTaskRead,
   useRerouteAgentTask,
+  useDistillationFeedback,
   type AgentTaskDetailDto,
   type PipelineHandoffKind,
 } from '../../api/agentTasks'
@@ -94,6 +95,7 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
   const reroute = useRerouteAgentTask()
   const availability = useModelAvailability()
   const markRead = useMarkAgentTaskRead()
+  const feedback = useDistillationFeedback()
   const [selection, setSelection] = useState<string | null>(null)
   const [rerouteKind, setRerouteKind] = useState<string | null>('Grok')
   const [rerouteLevel, setRerouteLevel] = useState<string | null>('Frontier')
@@ -239,6 +241,52 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
         <Alert color="danger" icon={<TbAlertTriangle />} title="Failed">
           {detail.failureReason}
         </Alert>
+      )}
+
+      {detail.distilledResult && (
+        <Section title="Distilled">
+          <ScrollArea.Autosize mah={200} data-testid="task-distilled">
+            <RenderedMarkdown>{detail.distilledResult}</RenderedMarkdown>
+          </ScrollArea.Autosize>
+          <Group gap="xs" mt="xs">
+            <Button
+              size="compact-xs"
+              variant="light"
+              color="orange"
+              data-testid="distill-lost"
+              onClick={() =>
+                feedback.mutate(
+                  { id: summary.id, verdict: 'Lost' },
+                  {
+                    onSuccess: () =>
+                      notifications.show({ color: 'green', message: 'Flagged: lost something' }),
+                    onError: onError('Could not flag the distillation'),
+                  },
+                )
+              }
+            >
+              lost something
+            </Button>
+            <Button
+              size="compact-xs"
+              variant="light"
+              color="yellow"
+              data-testid="distill-noisy"
+              onClick={() =>
+                feedback.mutate(
+                  { id: summary.id, verdict: 'Noisy' },
+                  {
+                    onSuccess: () =>
+                      notifications.show({ color: 'green', message: 'Flagged: too long' }),
+                    onError: onError('Could not flag the distillation'),
+                  },
+                )
+              }
+            >
+              too long
+            </Button>
+          </Group>
+        </Section>
       )}
 
       {detail.result && summary.status !== 'Blocked' && (

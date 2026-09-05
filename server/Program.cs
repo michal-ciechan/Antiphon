@@ -775,6 +775,7 @@ try
     app.MapCardFileSyncEndpoints();
     app.MapCardEndpoints();
     app.MapDiagnosisEndpoints();
+    app.MapDistillationEndpoints();
     app.MapAgentEndpoints();
     app.MapAgentTuiEndpoints();
     app.MapChannelEndpoints();

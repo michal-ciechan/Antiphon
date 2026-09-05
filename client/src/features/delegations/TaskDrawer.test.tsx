@@ -72,6 +72,32 @@ function serve(body: AgentTaskDetailDto, extra: Parameters<typeof server.use> = 
 }
 
 describe('TaskDrawer', () => {
+  it('shows the distilled section and flags a lost distillation', async () => {
+    serve(
+      detail(
+        { status: 'Succeeded' },
+        {
+          result: 'The full report with every identifier.',
+          distilledResult: '- Landed CARD-0330.\n- next: review',
+        },
+      ),
+      [
+        http.post('/api/agent-tasks/:id/distillation/feedback', async ({ request }) => {
+          const body = (await request.json()) as { verdict: string }
+          expect(body.verdict).toBe('Lost')
+          return new HttpResponse(null, { status: 204 })
+        }),
+      ],
+    )
+
+    const user = userEvent.setup()
+    renderWithProviders(<TaskDrawer taskId={TASK_ID} opened onClose={() => {}} />)
+
+    expect(await screen.findByTestId('task-distilled')).toHaveTextContent('CARD-0330')
+    await user.click(screen.getByTestId('distill-lost'))
+    await waitFor(() => expect(screen.getByTestId('distill-lost')).toBeEnabled())
+  })
+
   it('shows next and handoff under the deliverable', async () => {
     serve(
       detail(

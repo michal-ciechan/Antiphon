@@ -228,6 +228,17 @@ param(
     [Parameter(ParameterSetName = 'Finding')]
     [switch]$Clean,
 
+    # CARD-0330. Flag a distillation: Lost (dropped a load-bearing fact), Noisy (too long), or Good.
+    [Parameter(ParameterSetName = 'Flag', Mandatory = $true)]
+    [string]$Flag,
+
+    [Parameter(ParameterSetName = 'Flag', Mandatory = $true)]
+    [ValidateSet('Lost', 'Noisy', 'Good')]
+    [string]$Verdict,
+
+    [Parameter(ParameterSetName = 'Flag')]
+    [string]$Note,
+
     # Explicit pick of kind/level for a Blocked-for-routing or Queued chain task (CARD-0090).
     # Ends chain governance for that task. Use with -Kind and -Level.
     [Parameter(ParameterSetName = 'Reroute', Mandatory = $true)]
@@ -401,6 +412,14 @@ switch ($PSCmdlet.ParameterSetName) {
         Invoke-Antiphon -Method POST -Path "/api/agent-tasks/$Finding/finding" -Body $body | Out-Null
         $word = if ($Clean) { 'clean' } else { 'found' }
         Write-Output ("recorded {0} {1} on task {2}" -f $Stage, $word, $Finding)
+        return
+    }
+
+    'Flag' {
+        $body = @{ verdict = $Verdict }
+        if (-not [string]::IsNullOrWhiteSpace($Note)) { $body['note'] = $Note }
+        Invoke-Antiphon -Method POST -Path "/api/agent-tasks/$Flag/distillation/feedback" -Body $body | Out-Null
+        Write-Output ("flagged distillation on task {0} as {1}" -f $Flag, $Verdict)
         return
     }
 

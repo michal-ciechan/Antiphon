@@ -622,6 +622,14 @@ export function useContinueAgentTask() {
   )
 }
 
+/** CARD-0330 S4: flag a distillation Lost / Noisy / Good. */
+export function useDistillationFeedback() {
+  return useTaskMutation(
+    ({ id, verdict, note }: { id: string; verdict: 'Lost' | 'Noisy' | 'Good'; note?: string }) =>
+      apiPost<void>(`/agent-tasks/${id}/distillation/feedback`, { verdict, note: note ?? null }),
+  )
+}
+
 /** CARD-0090: explicit kind/level that ends chain governance. */
 export function useRerouteAgentTask() {
   return useTaskMutation(

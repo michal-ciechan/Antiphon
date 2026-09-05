@@ -160,6 +160,20 @@ public static class AgentTaskEndpoints
             return Results.Ok(await replies.RefineAsync(taskId, request.Message, ct));
         });
 
+        // CARD-0330 S4. Explicit flag on a distillation. 409 if the task has no ledger row.
+        tasks.MapPost("/{id}/distillation/feedback", async (
+            string id,
+            DistillationFeedbackRequest request,
+            AgentTaskService service,
+            OutputDistillationService distiller,
+            CancellationToken ct) =>
+        {
+            var taskId = await service.ResolveTaskIdAsync(id, ct);
+            var verdict = ParseDistillationFeedback(request.Verdict);
+            await distiller.RecordFeedbackAsync(taskId, verdict, request.Note, by: "api", ct);
+            return Results.NoContent();
+        });
+
         // CARD-0272 S3. Orchestrator override of a stage finding. Declared before /{id}/land
         // only for grouping; {id}/finding cannot collide with {id}.
         tasks.MapPost("/{id}/finding", async (
@@ -186,6 +200,20 @@ public static class AgentTaskEndpoints
             return Results.Accepted($"/api/agent-tasks/{taskId}",
                 await lands.RequestAsync(taskId, request?.Verify, ct));
         });
+    }
+
+    private static DistillationFeedback ParseDistillationFeedback(string? verdict)
+    {
+        if (string.IsNullOrWhiteSpace(verdict))
+            throw new ValidationException(nameof(verdict), "Verdict is required (Good, Lost, or Noisy).");
+        return verdict.Trim().ToLowerInvariant() switch
+        {
+            "good" => DistillationFeedback.Good,
+            "lost" or "lostinformation" or "lost_information" => DistillationFeedback.LostInformation,
+            "noisy" => DistillationFeedback.Noisy,
+            _ => throw new ValidationException(
+                nameof(verdict), "Verdict must be Good, Lost, or Noisy."),
+        };
     }
 
     /// <summary>
