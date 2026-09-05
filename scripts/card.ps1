@@ -271,9 +271,28 @@ function Get-CheckoutRoot {
         }
     }
     catch {
-        # Outside a repo, or git missing: fall through to $PWD.
+        # Outside a repo, or git missing: fall through to the marker, then $PWD.
     }
+    $fromMarker = Get-AntiphonWorkspaceCheckout $PWD.Path
+    if ($fromMarker) { return $fromMarker }
     return $PWD.Path
+}
+
+# CARD-0251: a dedicated sibling workspace carries antiphon.workspace.json pointing at the checkout.
+function Get-AntiphonWorkspaceCheckout {
+    param([string]$Directory)
+    $marker = Join-Path $Directory 'antiphon.workspace.json'
+    if (-not (Test-Path -LiteralPath $marker)) { return $null }
+    try {
+        $json = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
+        if (-not $json.checkout) { return $null }
+        $resolved = [System.IO.Path]::GetFullPath((Join-Path $Directory ([string]$json.checkout)))
+        if (Test-Path -LiteralPath $resolved) { return $resolved }
+    }
+    catch {
+        return $null
+    }
+    return $null
 }
 
 function Get-CardScopeQuery {

@@ -11,6 +11,7 @@ import { useEnsureAgentWorkingDirectory } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
 import {
   readinessHeader,
+  useAcknowledgeOrchestratorWorkspace,
   type ProjectReadinessDto,
   type ReadinessCheckDto,
   type ReadinessFixDto,
@@ -29,6 +30,11 @@ function agentIdFromFixRoute(route: string | null | undefined): string | null {
 
 function canRunCreateDirectory(fix: ReadinessFixDto): boolean {
   return fix.action === 'create-directory' && !!agentIdFromFixRoute(fix.route)
+}
+
+function checkFixes(check: ReadinessCheckDto): ReadinessFixDto[] {
+  if (check.fixes && check.fixes.length > 0) return check.fixes
+  return check.fix ? [check.fix] : []
 }
 
 function statusColor(status: ReadinessStatus, requiredMissing: boolean): string {
@@ -62,15 +68,30 @@ export function ProjectReadinessPanel({
   onAction?: (action: string, check: ReadinessCheckDto) => void
 }) {
   const ensureDirectory = useEnsureAgentWorkingDirectory()
+  const acknowledgeWorkspace = useAcknowledgeOrchestratorWorkspace()
   const rows = orderedChecks(readiness.checks)
 
-  const runAction = (action: string, check: ReadinessCheckDto) => {
+  const runAction = (action: string, check: ReadinessCheckDto, fix: ReadinessFixDto) => {
     if (onAction) {
       onAction(action, check)
       return
     }
+    if (action === 'acknowledge-orchestrator-workspace') {
+      acknowledgeWorkspace.mutate(readiness.projectId, {
+        onSuccess: () => {
+          notifications.show({ color: 'green', message: 'Orchestrator workspace acknowledged.' })
+        },
+        onError: (error) => {
+          notifications.show({
+            color: 'red',
+            message: getApiErrorMessage(error, 'Could not acknowledge the orchestrator workspace.'),
+          })
+        },
+      })
+      return
+    }
     if (action !== 'create-directory') return
-    const agentId = agentIdFromFixRoute(check.fix?.route)
+    const agentId = agentIdFromFixRoute(fix.route)
     if (!agentId) return
     ensureDirectory.mutate(agentId, {
       onSuccess: () => {
@@ -85,10 +106,11 @@ export function ProjectReadinessPanel({
     })
   }
 
-  const canRunAction = (check: ReadinessCheckDto) => {
-    if (!check.fix?.action) return false
+  const canRunAction = (fix: ReadinessFixDto) => {
+    if (!fix.action) return false
     if (onAction) return true
-    return canRunCreateDirectory(check.fix)
+    if (fix.action === 'acknowledge-orchestrator-workspace') return true
+    return canRunCreateDirectory(fix)
   }
 
   return (
@@ -117,34 +139,39 @@ export function ProjectReadinessPanel({
                       {check.detail}
                     </Text>
                   )}
-                  {check.status !== 'Ok' && check.fix && (
+                  {check.status !== 'Ok' && checkFixes(check).length > 0 && (
                     <Group gap="xs" mt={4}>
-                      {canRunAction(check) ? (
-                        <Button
-                          size="compact-xs"
-                          variant="light"
-                          loading={
-                            !onAction
-                            && check.fix.action === 'create-directory'
-                            && ensureDirectory.isPending
-                          }
-                          onClick={() => runAction(check.fix!.action!, check)}
-                        >
-                          {check.fix.label}
-                        </Button>
-                      ) : check.fix.route ? (
-                        <Button
-                          component={Link}
-                          to={check.fix.route}
-                          size="compact-xs"
-                          variant="light"
-                        >
-                          {check.fix.label}
-                        </Button>
-                      ) : (
-                        <Text size="xs" c="dimmed">
-                          {check.fix.label}
-                        </Text>
+                      {checkFixes(check).map((fix) =>
+                        canRunAction(fix) ? (
+                          <Button
+                            key={`${fix.action ?? fix.label}`}
+                            size="compact-xs"
+                            variant="light"
+                            loading={
+                              !onAction
+                              && ((fix.action === 'create-directory' && ensureDirectory.isPending)
+                                || (fix.action === 'acknowledge-orchestrator-workspace'
+                                  && acknowledgeWorkspace.isPending))
+                            }
+                            onClick={() => runAction(fix.action!, check, fix)}
+                          >
+                            {fix.label}
+                          </Button>
+                        ) : fix.route ? (
+                          <Button
+                            key={`${fix.label}:${fix.route}`}
+                            component={Link}
+                            to={fix.route}
+                            size="compact-xs"
+                            variant="light"
+                          >
+                            {fix.label}
+                          </Button>
+                        ) : (
+                          <Text key={fix.label} size="xs" c="dimmed">
+                            {fix.label}
+                          </Text>
+                        ),
                       )}
                     </Group>
                   )}

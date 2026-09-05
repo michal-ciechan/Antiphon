@@ -129,11 +129,16 @@ function Write-Readiness($Readiness) {
         @($Readiness.checks | Where-Object { -not ($_.level -eq 'Required' -and $_.status -eq 'Missing') })
     Write-Output ('{0,-22} {1,-12} {2,-15} {3,-48} {4}' -f 'key', 'level', 'status', 'summary', 'fix')
     foreach ($check in $rows) {
-        $fix = ''
-        if ($check.fix) {
-            $fix = $check.fix.label
-            if ($check.fix.route) { $fix += " ($($check.fix.route))" }
+        $fixParts = @()
+        $fixList = @()
+        if ($check.fixes) { $fixList = @($check.fixes) }
+        elseif ($check.fix) { $fixList = @($check.fix) }
+        foreach ($item in $fixList) {
+            $label = $item.label
+            if ($item.route) { $label += " ($($item.route))" }
+            $fixParts += $label
         }
+        $fix = $fixParts -join '; '
         Write-Output ('{0,-22} {1,-12} {2,-15} {3,-48} {4}' -f $check.key, $check.level, $check.status, $check.summary, $fix)
     }
 }

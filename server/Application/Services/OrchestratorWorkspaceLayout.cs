@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -178,6 +179,27 @@ public static class OrchestratorWorkspaceLayout
         var full = Path.GetFullPath(directory).TrimEnd('/', '\\');
         return full.Replace('/', '\\').ToLowerInvariant();
     }
+
+    /// <summary>
+    /// Convention sibling: <c>C:\src\gym-stat-orchestrator</c> beside <c>C:\src\gym-stat</c>.
+    /// The marker records the real link; this is only the default the plan/readiness name.
+    /// </summary>
+    public static string ProposedSiblingPath(string checkout)
+    {
+        var full = Path.GetFullPath(checkout).TrimEnd('\\', '/');
+        var parent = Path.GetDirectoryName(full) ?? full;
+        var name = Path.GetFileName(full);
+        if (string.IsNullOrEmpty(name))
+            return Path.Combine(full, "orchestrator");
+        return Path.Combine(parent, name + "-orchestrator");
+    }
+
+    public static OrchestratorWorkspaceCli CliFromKind(AgentKind kind) => kind switch
+    {
+        AgentKind.Codex => OrchestratorWorkspaceCli.Codex,
+        AgentKind.Grok => OrchestratorWorkspaceCli.Grok,
+        _ => OrchestratorWorkspaceCli.Claude,
+    };
 
     internal static bool ContextFileNamesCheckoutAgents(
         OrchestratorWorkspaceCli cli, string content, string directory, string checkout)
@@ -489,6 +511,33 @@ public sealed class OrchestratorWorkspaceFactGatherer
             TryReadFile(Path.Combine(home, ".claude.json")),
             TryReadFile(Path.Combine(home, ".codex", "config.toml")),
             TryReadFile(Path.Combine(home, ".grok", "trusted_folders.toml")));
+    }
+
+    /// <summary>
+    /// CARD-0251 S4: when <paramref name="directory"/> is a dedicated sibling workspace,
+    /// return the marker's checkout; otherwise return the directory itself. Used by
+    /// <c>card.ps1</c> / <c>delegate.ps1</c> and <see cref="AgentTaskService.Caller"/>.
+    /// </summary>
+    public static string FollowMarkerOrSelf(string directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory))
+            return directory;
+        try
+        {
+            var full = Path.GetFullPath(directory);
+            var markerPath = Path.Combine(full, OrchestratorWorkspaceLayout.MarkerFileName);
+            if (!File.Exists(markerPath))
+                return full;
+            if (!OrchestratorWorkspaceLayout.TryParseMarker(File.ReadAllText(markerPath), out var marker))
+                return full;
+            var checkout = ResolveCheckout(full, marker.Checkout);
+            return checkout is not null && Directory.Exists(checkout) ? checkout : full;
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException
+                                   or PathTooLongException or IOException or UnauthorizedAccessException)
+        {
+            return directory;
+        }
     }
 
     private static string? ResolveCheckout(string directory, string checkout)

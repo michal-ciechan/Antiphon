@@ -30,6 +30,7 @@ public sealed class ProjectSetupService
     private readonly AgentService? _agentService;
     private readonly AgentControlService? _agentControlService;
     private readonly IDirectoryWriter? _directoryWriter;
+    private readonly OrchestratorWorkspaceFactGatherer _workspaceGatherer;
 
     public ProjectSetupService(
         AppDbContext db,
@@ -43,7 +44,8 @@ public sealed class ProjectSetupService
         IDirectoryWriter? directoryWriter = null,
         GitWorkspaceService? git = null,
         ProjectReadinessCache? readinessCache = null,
-        IServiceScopeFactory? scopeFactory = null)
+        IServiceScopeFactory? scopeFactory = null,
+        OrchestratorWorkspaceFactGatherer? workspaceGatherer = null)
     {
         _db = db;
         _resolver = resolver;
@@ -59,6 +61,7 @@ public sealed class ProjectSetupService
         _agentService = agentService;
         _agentControlService = agentControlService;
         _directoryWriter = directoryWriter;
+        _workspaceGatherer = workspaceGatherer ?? new OrchestratorWorkspaceFactGatherer();
     }
 
     public Task<ProjectReadinessDto> GetReadinessAsync(Guid projectId, CancellationToken ct) =>
@@ -164,6 +167,7 @@ public sealed class ProjectSetupService
             DelegationRootCheck(project),
             WorkflowTemplateCheck(anyTemplate, primary),
             OrchestratorCheck(standingAgents, boardIds, attachments),
+            await OrchestratorWorkspaceCheckAsync(project, standingAgents, boardIds, attachments, ct),
             ChannelCheck(channelBound),
             GitHubCheck(project),
         };
@@ -703,13 +707,7 @@ public sealed class ProjectSetupService
         IReadOnlyList<Guid> boardIds,
         IReadOnlyDictionary<Guid, IReadOnlyList<string>> attachments)
     {
-        var match = agents.FirstOrDefault(a =>
-            a.AlwaysOn
-            && a.BoardId is { } boardId
-            && boardIds.Contains(boardId)
-            && attachments.TryGetValue(a.Id, out var keys)
-            && keys.Contains(InstructionBundles.Orchestrator, StringComparer.Ordinal)
-            && keys.Contains(InstructionBundles.BoardApi, StringComparer.Ordinal));
+        var match = FindDeclaredOrchestrator(agents, boardIds, attachments);
 
         if (match is null)
         {
@@ -730,6 +728,131 @@ public sealed class ProjectSetupService
             null,
             null);
     }
+
+    /// <summary>
+    /// CARD-0251 S2: a static workspace layout check for the project's declared
+    /// standing orchestrator. Detection only — never blocks dispatch.
+    /// </summary>
+    internal async Task<ReadinessCheckDto> OrchestratorWorkspaceCheckAsync(
+        Project project,
+        IReadOnlyList<Agent> agents,
+        IReadOnlyList<Guid> boardIds,
+        IReadOnlyDictionary<Guid, IReadOnlyList<string>> attachments,
+        CancellationToken ct)
+    {
+        var match = FindDeclaredOrchestrator(agents, boardIds, attachments);
+        if (match is null)
+        {
+            return Check(
+                ReadinessKeys.OrchestratorWorkspace,
+                ReadinessLevel.Recommended,
+                ReadinessStatus.NotApplicable,
+                "No standing orchestrator is declared for this project.",
+                null,
+                null);
+        }
+
+        if (project.OrchestratorWorkspaceAcknowledgedAt is DateTime acknowledgedAt)
+        {
+            return Check(
+                ReadinessKeys.OrchestratorWorkspace,
+                ReadinessLevel.Recommended,
+                ReadinessStatus.Ok,
+                $"Orchestrator workspace acknowledged on {acknowledgedAt:yyyy-MM-dd}.",
+                null,
+                null);
+        }
+
+        var cwd = match.WorkingDirectory;
+        if (string.IsNullOrWhiteSpace(cwd) || !Directory.Exists(cwd))
+        {
+            return Check(
+                ReadinessKeys.OrchestratorWorkspace,
+                ReadinessLevel.Recommended,
+                ReadinessStatus.Warning,
+                $"Orchestrator '{match.Name}' has no working directory to classify.",
+                "Set the agent's working directory, then run scripts/orchestrator-workspace.ps1 plan.",
+                new ReadinessFixDto("Show migration plan", $"/agents?agent={match.Id:D}", "orchestrator-workspace-plan"),
+                new ReadinessFixDto("Keep as is", null, "acknowledge-orchestrator-workspace"));
+        }
+
+        var cli = OrchestratorWorkspaceLayout.CliFromKind(match.Kind);
+        var facts = await _workspaceGatherer.GatherAsync(cwd, cli, ct);
+        var home = _workspaceGatherer.ReadHomeFromProfile(cwd);
+        var state = OrchestratorWorkspaceLayout.Classify(facts, cli, home);
+        var sibling = facts.ResolvedCheckout is { } checkout && facts.CheckoutExists
+            ? OrchestratorWorkspaceLayout.ProposedSiblingPath(checkout)
+            : OrchestratorWorkspaceLayout.ProposedSiblingPath(cwd);
+
+        return state switch
+        {
+            OrchestratorWorkspaceState.Dedicated => Check(
+                ReadinessKeys.OrchestratorWorkspace,
+                ReadinessLevel.Recommended,
+                ReadinessStatus.Ok,
+                $"Orchestrator '{match.Name}' runs in a dedicated sibling workspace.",
+                null,
+                null),
+            OrchestratorWorkspaceState.DedicatedUnapproved => Check(
+                ReadinessKeys.OrchestratorWorkspace,
+                ReadinessLevel.Recommended,
+                ReadinessStatus.Warning,
+                $"Orchestrator '{match.Name}' is in a dedicated workspace whose CLI precondition is not approved.",
+                cli == OrchestratorWorkspaceCli.Claude
+                    ? "Claude will drop @../checkout/AGENTS.md until hasClaudeMdExternalIncludesApproved is true for the forward-slash project key. scripts/orchestrator-workspace.ps1 setup writes it."
+                    : "The CLI's project-trust flag is missing. scripts/orchestrator-workspace.ps1 setup writes it.",
+                new ReadinessFixDto("Show migration plan", $"/agents?agent={match.Id:D}", "orchestrator-workspace-plan"),
+                new ReadinessFixDto("Keep as is", null, "acknowledge-orchestrator-workspace")),
+            OrchestratorWorkspaceState.DedicatedNested => Check(
+                ReadinessKeys.OrchestratorWorkspace,
+                ReadinessLevel.Recommended,
+                ReadinessStatus.Warning,
+                $"Orchestrator '{match.Name}' uses a nested layout that leaks Claude instructions into every delegate.",
+                $"Move to a sibling folder (e.g. {sibling}) with scripts/orchestrator-workspace.ps1 plan.",
+                new ReadinessFixDto("Show migration plan", $"/agents?agent={match.Id:D}", "orchestrator-workspace-plan"),
+                new ReadinessFixDto("Keep as is", null, "acknowledge-orchestrator-workspace")),
+            OrchestratorWorkspaceState.CheckoutAsCwd => Check(
+                ReadinessKeys.OrchestratorWorkspace,
+                ReadinessLevel.Recommended,
+                ReadinessStatus.Warning,
+                $"Orchestrator '{match.Name}' runs in the checkout itself ({cwd.Replace('\\', '/')}); its CLAUDE.md, hooks and transcript root are shared with every delegate launched there.",
+                $"Proposed sibling: {sibling}. Preview with scripts/orchestrator-workspace.ps1 plan.",
+                new ReadinessFixDto("Show migration plan", $"/agents?agent={match.Id:D}", "orchestrator-workspace-plan"),
+                new ReadinessFixDto("Keep as is", null, "acknowledge-orchestrator-workspace")),
+            _ => Check(
+                ReadinessKeys.OrchestratorWorkspace,
+                ReadinessLevel.Recommended,
+                ReadinessStatus.Warning,
+                $"Orchestrator '{match.Name}' working directory is not a dedicated sibling workspace.",
+                $"Preview scripts/orchestrator-workspace.ps1 plan. Proposed sibling: {sibling}.",
+                new ReadinessFixDto("Show migration plan", $"/agents?agent={match.Id:D}", "orchestrator-workspace-plan"),
+                new ReadinessFixDto("Keep as is", null, "acknowledge-orchestrator-workspace")),
+        };
+    }
+
+    public async Task<ProjectReadinessDto> AcknowledgeOrchestratorWorkspaceAsync(
+        Guid projectId, CancellationToken ct)
+    {
+        var project = await _db.Projects.FirstOrDefaultAsync(p => p.Id == projectId, ct)
+            ?? throw new NotFoundException(nameof(Project), projectId);
+        project.OrchestratorWorkspaceAcknowledgedAt ??= DateTime.UtcNow;
+        project.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        _readinessCache.Remove(projectId);
+        return await GetReadinessAsync(projectId, ct);
+    }
+
+    internal static Agent? FindDeclaredOrchestrator(
+        IReadOnlyList<Agent> agents,
+        IReadOnlyList<Guid> boardIds,
+        IReadOnlyDictionary<Guid, IReadOnlyList<string>> attachments) =>
+        agents.FirstOrDefault(a =>
+            a.AlwaysOn
+            && a.BoardId is { } boardId
+            && boardIds.Contains(boardId)
+            && attachments.TryGetValue(a.Id, out var keys)
+            && keys.Contains(InstructionBundles.Orchestrator, StringComparer.Ordinal)
+            && keys.Contains(InstructionBundles.BoardApi, StringComparer.Ordinal));
 
     private static ReadinessCheckDto ChannelCheck(bool bound)
     {
@@ -795,8 +918,21 @@ public sealed class ProjectSetupService
         ReadinessStatus status,
         string summary,
         string? detail,
-        ReadinessFixDto? fix) =>
-        new(key, level, status, summary, detail, fix);
+        ReadinessFixDto? fix,
+        params ReadinessFixDto[] extraFixes)
+    {
+        IReadOnlyList<ReadinessFixDto>? fixes = null;
+        if (fix is not null || extraFixes.Length > 0)
+        {
+            var list = new List<ReadinessFixDto>(1 + extraFixes.Length);
+            if (fix is not null)
+                list.Add(fix);
+            list.AddRange(extraFixes);
+            fixes = list;
+        }
+
+        return new(key, level, status, summary, detail, fix, fixes);
+    }
 
     private static ProjectReadinessDto ErrorReadiness(Guid projectId, Exception exception) =>
         new(

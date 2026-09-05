@@ -2632,6 +2632,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<bool>("NotificationsEnabled")
                         .HasColumnType("boolean");
 
+                    b.Property<DateTime?>("OrchestratorWorkspaceAcknowledgedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 

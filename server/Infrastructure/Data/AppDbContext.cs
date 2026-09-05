@@ -355,6 +355,7 @@ public class AppDbContext : DbContext
                 .IsRequired()
                 .HasColumnType("jsonb")
                 .HasDefaultValue("{}");
+            entity.Property(p => p.OrchestratorWorkspaceAcknowledgedAt).IsRequired(false);
 
             entity.HasIndex(p => p.Name).IsUnique();
         });

@@ -235,6 +235,14 @@ public enum AttentionKind
     /// <see cref="LivenessProbeFailed"/> already occupies 27.
     /// </summary>
     ImportedIssueNeedsReview = 28,
+
+    /// <summary>
+    /// A declared orchestrator is running in the checkout itself (or a nested/unapproved
+    /// sibling) rather than a dedicated sibling workspace (CARD-0251). Warning, Process
+    /// group, after <see cref="OrchestratorInvestigation"/>. Detection only — never a
+    /// gate. Plan reserved 17; that number shipped as InboundUnconsumed.
+    /// </summary>
+    OrchestratorWorkspace = 29,
 }
 
 /// <summary>

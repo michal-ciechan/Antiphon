@@ -203,6 +203,7 @@ public sealed class AttentionService
         items.AddRange(await BuildRecentIncidentItemsAsync(since, attachedIncidents, ct));
         items.AddRange(BuildFailureUnacknowledgedItems(unacknowledged, costs, checkDigests));
         items.AddRange(await BuildOrchestratorInvestigationItemsAsync(since, ct));
+        items.AddRange(await BuildOrchestratorWorkspaceItemsAsync(since, ct));
         items.AddRange(await BuildQueuedInputStuckItemsAsync(since, ct));
         items.AddRange(await BuildBootReplyMissingItemsAsync(since, ct));
         items.AddRange(await BuildAgentOutlivedTaskItemsAsync(now, ct));
@@ -1556,6 +1557,50 @@ public sealed class AttentionService
                 r.CreatedAt,
                 null,
                 actions);
+        }).ToList();
+    }
+
+    // ---- CARD-0251: declared orchestrator launching from the checkout ----------------------------
+
+    private async Task<List<AttentionItemDto>> BuildOrchestratorWorkspaceItemsAsync(
+        DateTime since, CancellationToken ct)
+    {
+        var rows = await _db.AgentIncidents.AsNoTracking()
+            .Where(i => i.Kind == AgentIncidentKind.OrchestratorWorkspaceUnconfigured
+                && i.CreatedAt >= since
+                && i.AgentId != null)
+            .Select(i => new { i.AgentId, i.SessionId, i.Message, i.CreatedAt })
+            .ToListAsync(ct);
+        if (rows.Count == 0)
+            return [];
+
+        var agentIds = rows.Select(r => r.AgentId!.Value).Distinct().ToList();
+        var agentNames = await _db.Agents.AsNoTracking()
+            .Where(a => agentIds.Contains(a.Id))
+            .Select(a => new { a.Id, a.Name })
+            .ToDictionaryAsync(a => a.Id, a => a.Name, ct);
+
+        return rows.Select(r =>
+        {
+            var title = r.AgentId is Guid agentId && agentNames.TryGetValue(agentId, out var name)
+                ? name
+                : "Orchestrator workspace";
+            return new AttentionItemDto(
+                AttentionKind.OrchestratorWorkspace,
+                AlertSeverity.Warning,
+                null,
+                r.SessionId,
+                r.AgentId,
+                null,
+                title,
+                r.Message,
+                Excerpt(
+                    "The orchestrator is running in the checkout (or an unapproved/nested sibling) "
+                    + "instead of a dedicated workspace. Detection only — the launch was not blocked. "
+                    + "scripts/orchestrator-workspace.ps1 plan previews the move."),
+                r.CreatedAt,
+                null,
+                [AttentionAction.OpenAgent, AttentionAction.OpenDrawer]);
         }).ToList();
     }
 

@@ -141,6 +141,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     icon: TbSearch,
     hint: 'The orchestrator read source files itself instead of dispatching. Detection only.',
   },
+  OrchestratorWorkspace: {
+    label: 'Workspace',
+    color: 'warning',
+    icon: TbFlag,
+    hint: 'The orchestrator is running in the checkout. Detection only — the launch was not blocked.',
+  },
   InboundUnconsumed: {
     label: 'Inbound waiting',
     color: 'danger',

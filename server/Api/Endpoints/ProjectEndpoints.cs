@@ -37,6 +37,15 @@ public static class ProjectEndpoints
             return Results.Ok(readiness);
         });
 
+        projects.MapPost("/{id:guid}/acknowledge-orchestrator-workspace", async (
+            Guid id,
+            ProjectSetupService service,
+            CancellationToken cancellationToken) =>
+        {
+            var readiness = await service.AcknowledgeOrchestratorWorkspaceAsync(id, cancellationToken);
+            return Results.Ok(readiness);
+        });
+
         projects.MapGet("/readiness", async (
             string? ids,
             ProjectSetupService service,

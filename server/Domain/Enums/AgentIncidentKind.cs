@@ -519,4 +519,13 @@ public enum AgentIncidentKind
     /// Next free after <see cref="PolicyDriftNotified"/>.
     /// </summary>
     OutputDistillerUnavailable = 52,
+
+    /// <summary>
+    /// CARD-0251 S3: a declared orchestrator is launching from a working directory that is
+    /// not a dedicated sibling workspace. Warning, detection only — never blocks the launch.
+    /// Idempotent per (agent, sha8(cwd|state|cli)) until the project acknowledges or the
+    /// layout changes. Surfaces as <c>AttentionKind.OrchestratorWorkspace</c> in the Process
+    /// group. Plan reserved 40; that number shipped as AppHostWatchdogDisabled.
+    /// </summary>
+    OrchestratorWorkspaceUnconfigured = 53,
 }

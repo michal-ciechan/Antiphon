@@ -117,7 +117,8 @@ public sealed class AgentTaskService
         {
             // A worktree caller's directory IS its worktree — children it spawns without -Dir must
             // land where it actually works, or their edits bypass its branch entirely.
-            return new Caller(task, task.AgentSessionId, task.WorktreePath ?? task.WorkingDirectory);
+            var taskDir = task.WorktreePath ?? task.WorkingDirectory;
+            return new Caller(task, task.AgentSessionId, OrchestratorWorkspaceFactGatherer.FollowMarkerOrSelf(taskDir));
         }
 
         // Session-scoped token: a standing agent session (an always-on orchestrator) delegating on
@@ -127,7 +128,7 @@ public sealed class AgentTaskService
         var session = await _db.AgentSessions.AsNoTracking()
             .FirstOrDefaultAsync(s => s.DelegationTokenHash == hash, ct)
             ?? throw new ForbiddenException("Delegation token is not recognised.");
-        return new Caller(null, session.Id, session.Cwd);
+        return new Caller(null, session.Id, OrchestratorWorkspaceFactGatherer.FollowMarkerOrSelf(session.Cwd));
     }
 
     /// <summary>

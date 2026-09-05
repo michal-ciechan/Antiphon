@@ -28,7 +28,8 @@ public sealed record ReadinessCheckDto(
     ReadinessStatus Status,
     string Summary,
     string? Detail,
-    ReadinessFixDto? Fix);
+    ReadinessFixDto? Fix,
+    IReadOnlyList<ReadinessFixDto>? Fixes = null);
 
 public sealed record ReadinessFixDto(
     string Label,
@@ -46,6 +47,7 @@ public static class ReadinessKeys
     public const string DelegationRoot = "delegation-root";
     public const string WorkflowTemplate = "workflow-template";
     public const string Orchestrator = "orchestrator";
+    public const string OrchestratorWorkspace = "orchestrator-workspace";
     public const string Channel = "channel";
     public const string GitHub = "github";
 }

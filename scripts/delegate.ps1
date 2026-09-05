@@ -290,6 +290,30 @@ function Invoke-Antiphon {
     }
 }
 
+# CARD-0251: when cwd is a dedicated sibling workspace, follow antiphon.workspace.json to the checkout.
+function Get-AntiphonCheckoutRoot {
+    param([string]$Directory = $PWD.Path)
+    try {
+        $toplevel = & git -C $Directory rev-parse --show-toplevel 2>$null
+        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($toplevel)) {
+            return ([string]$toplevel).Trim()
+        }
+    }
+    catch { }
+    $marker = Join-Path $Directory 'antiphon.workspace.json'
+    if (Test-Path -LiteralPath $marker) {
+        try {
+            $json = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
+            if ($json.checkout) {
+                $resolved = [System.IO.Path]::GetFullPath((Join-Path $Directory ([string]$json.checkout)))
+                if (Test-Path -LiteralPath $resolved) { return $resolved }
+            }
+        }
+        catch { }
+    }
+    return $Directory
+}
+
 switch ($PSCmdlet.ParameterSetName) {
     'WorktreeHealth' {
         $report = Invoke-Antiphon -Method POST -Path '/api/agent-tasks/worktree-health' -Body @{}
@@ -310,7 +334,7 @@ switch ($PSCmdlet.ParameterSetName) {
     }
 
     'ListAreas' {
-        $dir = if ($AreasDir) { $AreasDir } else { (Get-Location).Path }
+        $dir = if ($AreasDir) { $AreasDir } else { Get-AntiphonCheckoutRoot }
         $map = Invoke-Antiphon -Method GET -Path "/api/agent-tasks/areas?directory=$([uri]::EscapeDataString($dir))"
         if (-not $map.areas -or $map.areas.Count -eq 0) {
             Write-Output "No areas declared for $($map.repoPath) - every -Scope token is read as a path or a label."
@@ -499,6 +523,7 @@ switch ($PSCmdlet.ParameterSetName) {
         # ships unset and therefore resolves to ClaudeCode.
         if ($Kind) { $body['agentKind'] = $Kind }
         if ($Card) { $body['card'] = $Card }
+        if (-not $Dir) { $Dir = Get-AntiphonCheckoutRoot }
         if ($Dir) { $body['workingDirectory'] = $Dir }
         if ($Scope) { $body['scope'] = $Scope }
         # Omitted (0 - an unbound [int] is 0, not $null) leaves the server's default expectation.

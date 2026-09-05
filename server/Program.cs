@@ -358,6 +358,8 @@ try
     builder.Services.AddSingleton<ILaunchOwnership>(sp => sp.GetRequiredService<AgentSessionLaunchQueue>());
     builder.Services.AddScoped<LlmProviderService>();
     builder.Services.AddScoped<ProjectService>();
+    builder.Services.AddSingleton<OrchestratorWorkspaceFactGatherer>();
+    builder.Services.AddScoped<OrchestratorWorkspaceWarningService>();
     builder.Services.AddScoped<ProjectSetupService>();
     builder.Services.AddScoped<BoardService>();
     builder.Services.AddScoped<CardService>();

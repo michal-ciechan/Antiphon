@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain.Enums;
 using Shouldly;
 using TUnit.Core;
 
@@ -139,6 +140,39 @@ public class OrchestratorWorkspaceLayoutTests
             [folders.'{parent}']
             trusted = true
             """, dir.Path).ShouldBeFalse("a parent folder is a different workspace");
+    }
+
+    [Test]
+    public void proposed_sibling_path_is_beside_the_checkout()
+    {
+        using var dir = new TempDir("sibpath");
+        var checkout = Path.Combine(dir.Path, "gym-stat");
+        Directory.CreateDirectory(checkout);
+        OrchestratorWorkspaceLayout.ProposedSiblingPath(checkout)
+            .ShouldBe(Path.Combine(dir.Path, "gym-stat-orchestrator"));
+    }
+
+    [Test]
+    public void cli_from_kind_maps_the_three_orchestrator_clis()
+    {
+        OrchestratorWorkspaceLayout.CliFromKind(AgentKind.ClaudeCode)
+            .ShouldBe(OrchestratorWorkspaceCli.Claude);
+        OrchestratorWorkspaceLayout.CliFromKind(AgentKind.Codex)
+            .ShouldBe(OrchestratorWorkspaceCli.Codex);
+        OrchestratorWorkspaceLayout.CliFromKind(AgentKind.Grok)
+            .ShouldBe(OrchestratorWorkspaceCli.Grok);
+        OrchestratorWorkspaceLayout.CliFromKind(AgentKind.Raw)
+            .ShouldBe(OrchestratorWorkspaceCli.Claude);
+    }
+
+    [Test]
+    public async Task follow_marker_returns_checkout_when_the_marker_resolves()
+    {
+        using var fx = await SiblingFixture.CreateAsync(OrchestratorWorkspaceCli.Claude);
+        OrchestratorWorkspaceFactGatherer.FollowMarkerOrSelf(fx.Orch)
+            .ShouldBe(Path.GetFullPath(fx.Repo));
+        OrchestratorWorkspaceFactGatherer.FollowMarkerOrSelf(fx.Repo)
+            .ShouldBe(Path.GetFullPath(fx.Repo));
     }
 
     // ---- Classify over fixture directories -----------------------------------------------------

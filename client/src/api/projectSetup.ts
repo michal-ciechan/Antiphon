@@ -20,6 +20,7 @@ export interface ReadinessCheckDto {
   summary: string
   detail?: string | null
   fix?: ReadinessFixDto | null
+  fixes?: ReadinessFixDto[] | null
 }
 
 export interface ProjectReadinessDto {
@@ -143,6 +144,18 @@ export function useSetupCatalog(enabled = true) {
     queryFn: () => apiGet<ProjectSetupCatalogDto>('/projects/setup-catalog'),
     staleTime: Infinity,
     enabled,
+  })
+}
+
+export function useAcknowledgeOrchestratorWorkspace() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (projectId: string) =>
+      apiPost<ProjectReadinessDto>(`/projects/${projectId}/acknowledge-orchestrator-workspace`, {}),
+    onSuccess: (readiness) => {
+      queryClient.setQueryData(projectSetupKeys.readiness(readiness.projectId), readiness)
+      queryClient.invalidateQueries({ queryKey: ['projects', 'readiness'] })
+    },
   })
 }
 

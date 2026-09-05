@@ -2028,6 +2028,26 @@ public class AttentionServiceTests
     }
 
     [Test]
+    public async Task an_orchestrator_workspace_incident_is_a_warning_process_row()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var agent = await scenario.AddAgentAsync(session);
+        await scenario.AddIncidentAsync(
+            agent, session, AgentIncidentKind.OrchestratorWorkspaceUnconfigured, AlertSeverity.Warning,
+            "Orchestrator 'Gym Stat Orchestrator' is launching from CheckoutAsCwd. fp=abcd1234",
+            minutesAgo: 2);
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.AgentId == agent
+            && i.Kind == AttentionKind.OrchestratorWorkspace);
+
+        item.Severity.ShouldBe(AlertSeverity.Warning);
+        item.Headline.ShouldContain("CheckoutAsCwd");
+        item.Actions.ShouldContain(AttentionAction.OpenAgent);
+        item.Actions.ShouldContain(AttentionAction.OpenDrawer);
+    }
+
+    [Test]
     public async Task once_disarmed_it_is_a_RecentFailure()
     {
         await using var scenario = new Scenario();

@@ -69,6 +69,11 @@ export type AttentionKind =
    */
   | 'OrchestratorInvestigation'
   /**
+   * A declared orchestrator is launching from the checkout (or an unapproved/nested sibling)
+   * rather than a dedicated workspace (CARD-0251). Detection only — never a gate.
+   */
+  | 'OrchestratorWorkspace'
+  /**
    * An inbound channel message the Antiphon consumer group never consumed (CARD-0245).
    * Critical. Detection only — the gateway already acknowledged the chat if it could.
    */

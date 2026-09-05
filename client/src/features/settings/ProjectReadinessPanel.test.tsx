@@ -32,6 +32,7 @@ const allKeys = [
   'delegation-root',
   'workflow-template',
   'orchestrator',
+  'orchestrator-workspace',
   'channel',
   'github',
 ] as const
@@ -168,5 +169,66 @@ describe('ProjectReadinessPanel', () => {
       '/settings?tab=projects',
     )
     expect(screen.queryByRole('button', { name: 'Create the directory' })).toBeNull()
+  })
+
+  it('renders both orchestrator-workspace fix actions and posts acknowledge', async () => {
+    const posted: string[] = []
+    server.use(
+      http.post('/api/projects/project-1/acknowledge-orchestrator-workspace', () => {
+        posted.push('ack')
+        return HttpResponse.json(
+          readiness({
+            checks: [
+              check({
+                key: 'orchestrator-workspace',
+                level: 'Recommended',
+                status: 'Ok',
+                summary: 'Orchestrator workspace acknowledged on 2026-09-05.',
+              }),
+            ],
+          }),
+        )
+      }),
+    )
+
+    renderWithProviders(
+      <ProjectReadinessPanel
+        readiness={readiness({
+          canDispatch: true,
+          checks: [
+            check({
+              key: 'orchestrator-workspace',
+              level: 'Recommended',
+              status: 'Warning',
+              summary: "Orchestrator 'Gym Stat Orchestrator' runs in the checkout itself",
+              detail: 'Proposed sibling: C:/src/gym-stat-orchestrator',
+              fix: {
+                label: 'Show migration plan',
+                route: '/agents?agent=a1',
+                action: 'orchestrator-workspace-plan',
+              },
+              fixes: [
+                {
+                  label: 'Show migration plan',
+                  route: '/agents?agent=a1',
+                  action: 'orchestrator-workspace-plan',
+                },
+                { label: 'Keep as is', action: 'acknowledge-orchestrator-workspace' },
+              ],
+            }),
+          ],
+        })}
+      />,
+    )
+
+    expect(screen.getByRole('link', { name: 'Show migration plan' })).toHaveAttribute(
+      'href',
+      '/agents?agent=a1',
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Keep as is' }))
+    await waitFor(() => expect(posted).toEqual(['ack']))
+    expect(notificationMock.show).toHaveBeenCalledWith(
+      expect.objectContaining({ color: 'green', message: 'Orchestrator workspace acknowledged.' }),
+    )
   })
 })

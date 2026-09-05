@@ -486,6 +486,109 @@ public class ProjectReadinessTests
     }
 
     [Test]
+    public async Task orchestrator_workspace_not_applicable_without_declared_orchestrator()
+    {
+        var project = await SeedProjectAsync();
+        var board = await SeedBoardAsync(project.Id);
+        await SeedAgentAsync(board.Id, alwaysOn: true);
+        var check = await CheckAsync(project.Id, ReadinessKeys.OrchestratorWorkspace);
+        check.Status.ShouldBe(ReadinessStatus.NotApplicable);
+        check.Level.ShouldBe(ReadinessLevel.Recommended);
+        check.Fix.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task orchestrator_workspace_warns_when_declared_orchestrator_runs_in_the_checkout()
+    {
+        var temp = NewTemp();
+        try
+        {
+            await GitInitAsync(temp);
+            await File.WriteAllTextAsync(Path.Combine(temp, "AGENTS.md"), "repo");
+            var project = await SeedProjectAsync(localPath: temp);
+            var board = await SeedBoardAsync(project.Id);
+            var agent = await SeedAgentAsync(board.Id, workingDirectory: temp, alwaysOn: true);
+            await AttachBundlesAsync(agent.Id, [InstructionBundles.Orchestrator, InstructionBundles.BoardApi]);
+
+            var check = await CheckAsync(project.Id, ReadinessKeys.OrchestratorWorkspace);
+            check.Status.ShouldBe(ReadinessStatus.Warning);
+            check.Level.ShouldBe(ReadinessLevel.Recommended);
+            check.Summary.ShouldContain(agent.Name);
+            check.Summary.ShouldContain("checkout itself");
+            check.Fix.ShouldNotBeNull();
+            check.Fix!.Action.ShouldBe("orchestrator-workspace-plan");
+            check.Fixes.ShouldNotBeNull();
+            check.Fixes!.Count.ShouldBe(2);
+            check.Fixes[1].Action.ShouldBe("acknowledge-orchestrator-workspace");
+            check.Detail.ShouldContain("orchestrator-workspace.ps1 plan");
+        }
+        finally
+        {
+            Cleanup(temp);
+        }
+    }
+
+    [Test]
+    public async Task orchestrator_workspace_ok_when_acknowledged()
+    {
+        var temp = NewTemp();
+        try
+        {
+            await GitInitAsync(temp);
+            await File.WriteAllTextAsync(Path.Combine(temp, "AGENTS.md"), "repo");
+            var project = await SeedProjectAsync(localPath: temp);
+            var board = await SeedBoardAsync(project.Id);
+            var agent = await SeedAgentAsync(board.Id, workingDirectory: temp, alwaysOn: true);
+            await AttachBundlesAsync(agent.Id, [InstructionBundles.Orchestrator, InstructionBundles.BoardApi]);
+
+            await using var db = CreateContext();
+            var dto = await CreateService(db).AcknowledgeOrchestratorWorkspaceAsync(
+                project.Id, CancellationToken.None);
+            var check = dto.Checks.Single(c => c.Key == ReadinessKeys.OrchestratorWorkspace);
+            check.Status.ShouldBe(ReadinessStatus.Ok);
+            check.Summary.ShouldContain("acknowledged on");
+            check.Fix.ShouldBeNull();
+        }
+        finally
+        {
+            Cleanup(temp);
+        }
+    }
+
+    [Test]
+    public async Task orchestrator_workspace_warns_dedicated_unapproved_when_cli_flag_is_absent()
+    {
+        var root = NewTemp();
+        try
+        {
+            var orch = Path.Combine(root, "orch");
+            var repo = Path.Combine(root, "repo");
+            Directory.CreateDirectory(orch);
+            await GitInitAsync(repo);
+            await File.WriteAllTextAsync(Path.Combine(repo, "AGENTS.md"), "# checkout\n");
+            await File.WriteAllTextAsync(
+                Path.Combine(orch, OrchestratorWorkspaceLayout.MarkerFileName),
+                """{"version":1,"checkout":"../repo","cli":"claude"}""");
+            await File.WriteAllTextAsync(
+                Path.Combine(orch, "CLAUDE.md"),
+                "You are the orchestrator.\n@../repo/AGENTS.md\n");
+
+            var project = await SeedProjectAsync(localPath: repo);
+            var board = await SeedBoardAsync(project.Id);
+            var agent = await SeedAgentAsync(board.Id, workingDirectory: orch, alwaysOn: true);
+            await AttachBundlesAsync(agent.Id, [InstructionBundles.Orchestrator, InstructionBundles.BoardApi]);
+
+            var check = await CheckAsync(project.Id, ReadinessKeys.OrchestratorWorkspace);
+            check.Status.ShouldBe(ReadinessStatus.Warning);
+            check.Summary.ShouldContain("precondition is not approved");
+        }
+        finally
+        {
+            Cleanup(root);
+        }
+    }
+
+    [Test]
     public async Task github_warning_when_github_url_without_integration()
     {
         var project = await SeedProjectAsync(
@@ -515,6 +618,7 @@ public class ProjectReadinessTests
             ReadinessKeys.DelegationRoot,
             ReadinessKeys.WorkflowTemplate,
             ReadinessKeys.Orchestrator,
+            ReadinessKeys.OrchestratorWorkspace,
             ReadinessKeys.Channel,
             ReadinessKeys.GitHub,
         ]);

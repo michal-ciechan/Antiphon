@@ -50,6 +50,7 @@ public sealed class AgentControlService
     private readonly ISessionRunnerClient? _sessionRunner;
     private readonly HerdrLaunchContextResolver? _herdrContext;
     private readonly PolicyRefreshService? _policyRefresh;
+    private readonly OrchestratorWorkspaceWarningService? _workspaceWarning;
 
     public AgentControlService(
         AppDbContext db,
@@ -72,7 +73,8 @@ public sealed class AgentControlService
         ISessionRunnerClient? sessionRunner = null,
         HerdrLaunchContextResolver? herdrContext = null,
         ModelAvailability? modelAvailability = null,
-        PolicyRefreshService? policyRefresh = null)
+        PolicyRefreshService? policyRefresh = null,
+        OrchestratorWorkspaceWarningService? workspaceWarning = null)
     {
         _db = db;
         _agentService = agentService;
@@ -93,6 +95,7 @@ public sealed class AgentControlService
         _herdrContext = herdrContext;
         _modelAvailability = modelAvailability;
         _policyRefresh = policyRefresh;
+        _workspaceWarning = workspaceWarning;
     }
 
     /// <summary>
@@ -226,6 +229,8 @@ public sealed class AgentControlService
         agent.UpdatedAt = UtcNow();
         await _db.SaveChangesAsync(ct);
         await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
+        if (_workspaceWarning is not null)
+            await _workspaceWarning.MaybeRaiseForStandingAgentAsync(agent, sessionId, ct);
 
         return await _agentService.GetByIdAsync(agent.Id, ct);
     }
@@ -650,6 +655,8 @@ public sealed class AgentControlService
             new { sessionId = session.Id, cardId = (Guid?)null },
             ct);
         await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
+        if (_workspaceWarning is not null)
+            await _workspaceWarning.MaybeRaiseForStandingAgentAsync(agent, session.Id, ct);
 
         return await _agentService.GetByIdAsync(agent.Id, ct);
     }

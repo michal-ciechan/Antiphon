@@ -79,6 +79,7 @@ public sealed class AgentTaskDispatcher
     // predating harnesses keep today's fail; a null runner also disables the deferral.
     private readonly bool _reconciliationEnabled;
     private readonly bool _launchResumeEnabled;
+    private readonly OrchestratorWorkspaceWarningService? _workspaceWarning;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -127,7 +128,8 @@ public sealed class AgentTaskDispatcher
         BootWedgeRelaunchState? bootWedgePending = null,
         RoutingPinService? routingPins = null,
         ComplexityRoutingService? complexityRouting = null,
-        IOptions<SessionReconciliationSettings>? reconciliation = null)
+        IOptions<SessionReconciliationSettings>? reconciliation = null,
+        OrchestratorWorkspaceWarningService? workspaceWarning = null)
     {
         _complexityRouting = complexityRouting;
         _routingPins = routingPins;
@@ -161,6 +163,15 @@ public sealed class AgentTaskDispatcher
         _quotaGate = quotaGate;
         _reconciliationEnabled = reconciliation?.Value.Enabled ?? true;
         _launchResumeEnabled = reconciliation?.Value.LaunchResumeEnabled ?? true;
+        _workspaceWarning = workspaceWarning;
+    }
+
+    private Task MaybeWarnOrchestratorWorkspaceAsync(
+        AgentTask task, Agent agent, Guid sessionId, CancellationToken ct)
+    {
+        if (_workspaceWarning is null || task.Kind != AgentTaskKind.Orchestrator)
+            return Task.CompletedTask;
+        return _workspaceWarning.MaybeRaiseForOrchestratorTaskAsync(agent, sessionId, ct);
     }
 
     /// <summary>
@@ -2928,6 +2939,7 @@ public sealed class AgentTaskDispatcher
                 ct);
         }
         _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, spec, remoteControlName: null, notes: null);
+        await MaybeWarnOrchestratorWorkspaceAsync(claimed, agent, session.Id, ct);
 
         // The brief goes through the message QUEUE, never straight to the pty: that is the only path
         // that normalises line endings, wraps in a bracketed paste, and submits with a separate CR.
@@ -3073,6 +3085,7 @@ public sealed class AgentTaskDispatcher
                 }
 
                 _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, spec, remoteControlName: null, notes: null);
+                await MaybeWarnOrchestratorWorkspaceAsync(task, agent, session.Id, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

@@ -54,6 +54,7 @@ import {
 import { getApiErrorMessage } from '../../api/client'
 import { useBoards } from '../../api/boards'
 import { useProjectReadinessList, type ProjectReadinessDto } from '../../api/projectSetup'
+import { ProjectReadinessPanel } from '../settings/ProjectReadinessPanel'
 import { AgentActivityBadge } from './AgentActivityBadge'
 import { HerdrStatusBadge } from './HerdrStatusBadge'
 import { SessionContextBadge } from './SessionContextBadge'
@@ -200,6 +201,11 @@ export function AgentsPage() {
                   </Anchor>
                 )}
                 {selected.data.details && <Text size="sm">{selected.data.details}</Text>}
+                {selectedReadiness && (
+                  <Box mt="sm" maw={640}>
+                    <ProjectReadinessPanel readiness={selectedReadiness} />
+                  </Box>
+                )}
               </Stack>
               <Group gap="sm" align="center">
                 {selected.data.liveSession || selected.data.status === 'Running' ? (
@@ -584,12 +590,15 @@ function AgentReadinessChip({
   }
   const directory = readiness.checks.find((c) => c.key === 'agent-directory')
   const runner = readiness.checks.find((c) => c.key === 'agent-runner')
+  const workspace = readiness.checks.find((c) => c.key === 'orchestrator-workspace')
   const label =
     directory?.status === 'Missing'
       ? 'directory missing'
       : runner?.status === 'Missing'
         ? 'runner profile disabled'
-        : null
+        : workspace?.status === 'Warning'
+          ? 'workspace warning'
+          : null
   if (!label) return null
   return (
     <Badge

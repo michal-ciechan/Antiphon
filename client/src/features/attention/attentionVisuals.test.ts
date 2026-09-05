@@ -36,6 +36,7 @@ const ALL_KINDS: AttentionKind[] = [
   'CardStalled',
   'FailureUnacknowledged',
   'OrchestratorInvestigation',
+  'OrchestratorWorkspace',
   'InboundUnconsumed',
   'CallerNoteUndelivered',
   'CardlessDetailsNoPrompt',
@@ -178,6 +179,7 @@ describe('attentionVisuals', () => {
     expect(homeBucketOf(item({ kind: 'ProgressStalled', severity: 'Warning' }))).toBe('review')
     expect(homeBucketOf(item({ kind: 'CardStalled', severity: 'Warning' }))).toBe('review')
     expect(homeBucketOf(item({ kind: 'OrchestratorInvestigation', severity: 'Warning' }))).toBe('review')
+    expect(homeBucketOf(item({ kind: 'OrchestratorWorkspace', severity: 'Warning' }))).toBe('review')
     expect(homeBucketOf(item({ kind: 'CallerNoteUndelivered', severity: 'Warning' }))).toBe('review')
     expect(homeBucketOf(item({ kind: 'CardlessDetailsNoPrompt', severity: 'Warning' }))).toBe('review')
     expect(homeBucketOf(item({ kind: 'QueuedInputStuck', severity: 'Warning' }))).toBe('review')

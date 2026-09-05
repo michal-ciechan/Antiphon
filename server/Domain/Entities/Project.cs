@@ -35,6 +35,13 @@ public class Project
     /// </summary>
     public string DefaultLaunchEnvJson { get; set; } = "{}";
 
+    /// <summary>
+    /// CARD-0251 S2: when set, the orchestrator-workspace readiness row reads Ok
+    /// ("acknowledged on &lt;date&gt;") and launch-time incidents of that kind are
+    /// suppressed. One decision per project, not per agent.
+    /// </summary>
+    public DateTime? OrchestratorWorkspaceAcknowledgedAt { get; set; }
+
     public ICollection<Board> Boards { get; set; } = new List<Board>();
 
     /// <summary>
