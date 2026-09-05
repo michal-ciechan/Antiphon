@@ -68,7 +68,7 @@ public sealed class AgentTaskPipelineStatusService
                 t.Id, t.Title, t.Role, t.Status, t.CardId, t.AgentName, t.AgentKind, t.ModelLevel,
                 t.CreatedAt, t.DispatchedAt, t.CompletedAt, t.AgentSessionId, t.WorkingDirectory,
                 t.RepoPath, t.Scope, t.Workspace, t.WorktreeBranch, t.DeliverablePath,
-                t.DeliverableRef, t.Complexity, t.FailureReason, t.NextStage, t.NextHandoff))
+                t.DeliverableRef, t.Complexity, t.FailureReason, t.NextStage, t.NextHandoff, t.RoutingPinId))
             .ToListAsync(ct);
 
         var boundStages = await _db.AgentTasks.AsNoTracking()
@@ -78,7 +78,7 @@ public sealed class AgentTaskPipelineStatusService
                 t.Id, t.Title, t.Role, t.Status, t.CardId, t.AgentName, t.AgentKind, t.ModelLevel,
                 t.CreatedAt, t.DispatchedAt, t.CompletedAt, t.AgentSessionId, t.WorkingDirectory,
                 t.RepoPath, t.Scope, t.Workspace, t.WorktreeBranch, t.DeliverablePath,
-                t.DeliverableRef, t.Complexity, t.FailureReason, t.NextStage, t.NextHandoff))
+                t.DeliverableRef, t.Complexity, t.FailureReason, t.NextStage, t.NextHandoff, t.RoutingPinId))
             .ToListAsync(ct);
 
         var cardIds = open.Select(t => t.CardId)
@@ -415,7 +415,7 @@ public sealed class AgentTaskPipelineStatusService
             task.CreatedAt,
             task.AgentKind,
             task.ModelLevel,
-            RoutingExhausted: task.Complexity is not null
+            RoutingExhausted: (task.Complexity is not null || task.RoutingPinId is not null)
                 && task.FailureReason is not null
                 && task.FailureReason.StartsWith(
                     ComplexityRoutingService.RoutingExhaustedPrefix, StringComparison.Ordinal));
@@ -519,7 +519,8 @@ public sealed class AgentTaskPipelineStatusService
         TaskComplexity? Complexity = null,
         string? FailureReason = null,
         PipelineHandoffKind? NextStage = null,
-        string? NextHandoff = null);
+        string? NextHandoff = null,
+        Guid? RoutingPinId = null);
 
     private sealed record SiblingLandRow(Guid Id, string Title, Guid CardId, DateTime LandRequestedAt);
 

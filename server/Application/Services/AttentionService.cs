@@ -183,7 +183,7 @@ public sealed class AttentionService
         var checkDigests = await LoadLatestCheckDigestsAsync(subjects, ct);
 
         var routingBlocked = blocked
-            .Where(t => t.Complexity is not null
+            .Where(t => ComplexityRoutingService.IsListGoverned(t)
                 && t.FailureReason is not null
                 && t.FailureReason.StartsWith(ComplexityRoutingService.RoutingExhaustedPrefix, StringComparison.Ordinal))
             .ToList();
@@ -351,36 +351,72 @@ public sealed class AttentionService
         if (blocked.Count == 0)
             return [];
 
-        // D7: group per governing cell — (role cell exists ? role : null, complexity), recomputed
-        // from the rows now, so three Plan/Hard and two Code/Hard are one Hard row until Plan
-        // owns a cell.
+        // CARD-0090 D7 / CARD-0322 D7: group per list source — chain cell, or the current pin
+        // grain (card, else stage). Recomputed from live rows so a cleared pin does not keep
+        // grouping under a gone list.
         var liveCells = await LoadLiveGoverningCellsAsync(blocked, ct);
-        var grouped = blocked
-            .GroupBy(t =>
-            {
-                var complexity = t.Complexity!.Value;
-                var role = liveCells.Contains((t.Role, complexity)) ? t.Role : (AgentTaskRole?)null;
-                return (Role: role, Complexity: complexity);
-            })
-            .OrderBy(g => g.Key.Complexity)
-            .ThenBy(g => g.Key.Role)
-            .ToList();
         var cardIds = blocked.Where(t => t.CardId is not null).Select(t => t.CardId!.Value).Distinct().ToList();
         var cards = cardIds.Count == 0
             ? new Dictionary<Guid, Card>()
             : await _db.Cards.AsNoTracking()
                 .Where(c => cardIds.Contains(c.Id))
                 .ToDictionaryAsync(c => c.Id, ct);
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        var pins = await _db.RoutingPins.AsNoTracking()
+            .Where(p => p.ClearedAt == null && (p.NotAfter == null || p.NotAfter > now))
+            .ToListAsync(ct);
+
+        string GroupKey(AgentTask t)
+        {
+            if (t.RoutingPinId is not null && t.Complexity is null)
+            {
+                RoutingPin? cardPin = t.CardId is Guid cid
+                    ? pins.Find(p => p.CardId == cid && p.Role == t.Role)
+                    : null;
+                var stagePin = pins.Find(p => p.CardId == null && p.Role == t.Role);
+                var pin = cardPin ?? stagePin;
+                if (pin is null)
+                    return $"pin:gone {t.Role}";
+                if (pin.CardId is null)
+                    return $"pin:stage {pin.Role}";
+                var ident = pin.CardId is Guid pid && cards.TryGetValue(pid, out var card)
+                    ? card.Identifier
+                    : pin.CardId.ToString();
+                return $"pin:{ident} {pin.Role}";
+            }
+
+            if (t.Complexity is { } complexity)
+            {
+                var role = liveCells.Contains((t.Role, complexity)) ? t.Role : (AgentTaskRole?)null;
+                return role is { } r ? $"chain:{r}/{complexity}" : $"chain:{complexity}";
+            }
+
+            return "pin:unknown";
+        }
+
+        static string TitleFor(string key)
+        {
+            const string pinStage = "pin:stage ";
+            if (key.StartsWith(pinStage, StringComparison.Ordinal))
+                return $"{key[pinStage.Length..]} stage pin exhausted";
+            if (key.StartsWith("pin:", StringComparison.Ordinal))
+                return $"{key["pin:".Length..]} pin exhausted";
+            if (key.StartsWith("chain:", StringComparison.Ordinal))
+                return $"{key["chain:".Length..]} chain exhausted";
+            return "routing exhausted";
+        }
+
+        var grouped = blocked
+            .GroupBy(GroupKey)
+            .OrderBy(g => g.Key)
+            .ToList();
 
         var items = new List<AttentionItemDto>(grouped.Count);
         foreach (var group in grouped)
         {
             var ordered = group.OrderBy(t => t.CreatedAt).ToList();
             var oldest = ordered[0];
-            var complexity = group.Key.Complexity;
-            var title = group.Key.Role is { } role
-                ? $"{role}/{complexity} chain exhausted"
-                : $"{complexity} chain exhausted";
+            var title = TitleFor(group.Key);
             Guid? cardId = ordered.Select(t => t.CardId).Distinct().Count() == 1 ? oldest.CardId : null;
             Guid? boardId = cardId is Guid id && cards.TryGetValue(id, out var card) ? card.BoardId : null;
             var headline = oldest.FailureReason
