@@ -682,7 +682,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             .Select(a => a.Id).FirstOrDefaultAsync(ct);
         SessionTermination.Record(session, SessionTerminationSource.SystemRequest);
         await _db.SaveChangesAsync(ct);
-        await KillRunnerSessionAsync(sessionId);
+        // A failed kill must remain eligible for the next recovery pass; do not strand a live
+        // child behind a terminal session row that RecoverActive no longer scans.
+        if (!await _runtime.KillAsync(sessionId,
+                TimeSpan.FromMilliseconds(Math.Max(100, _settings.KillGraceMs)), ct)) return;
         await FailInterruptedLaunchAsync(session, agentId,
             session.GrokRulesFailure ?? "grok_rules_initialization_failed", 0, null, ct);
         foreach (var attempt in await _db.RunAttempts.Where(a => a.AgentSessionId == sessionId && a.CompletedAt == null).ToListAsync(ct))

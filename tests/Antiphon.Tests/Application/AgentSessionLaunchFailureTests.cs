@@ -40,6 +40,34 @@ namespace Antiphon.Tests.Application;
 public class AgentSessionLaunchFailureTests
 {
     [Test]
+    public async Task Grok_failed_startup_stays_owned_and_recoverable_until_kill_is_confirmed()
+    {
+        var adapter = new FakeAgentProtocolAdapter { KillResult = false };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        adapter.RegisterOnStart = fixture.Runtime;
+        await fixture.LaunchInteractiveAsync();
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        session.AgentKind = AgentKind.Grok;
+        session.GrokRulesState = GrokRulesState.Failed;
+        session.GrokRulesFailure = "grok_rules_initialization_failed: timeout";
+        await db.SaveChangesAsync();
+        var service = fixture.Services.GetRequiredService<AgentSessionService>();
+        await service.FailRecoveredRulesStartupAsync(session.Id, CancellationToken.None);
+        await db.Entry(session).ReloadAsync();
+        session.Status.ShouldBe(SessionStatus.Running, "unconfirmed cleanup must stay visible to periodic recovery");
+        session.EndedAt.ShouldBeNull();
+        adapter.Exited.IsCompleted.ShouldBeFalse();
+        adapter.KillCount.ShouldBe(1);
+        adapter.KillResult = true;
+        await service.FailRecoveredRulesStartupAsync(session.Id, CancellationToken.None);
+        await db.Entry(session).ReloadAsync();
+        session.Status.ShouldBe(SessionStatus.Failed);
+        adapter.KillCount.ShouldBe(2);
+        session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task Grok_recovered_failed_barrier_reaps_only_uninitialized_startup(bool previouslyReady)

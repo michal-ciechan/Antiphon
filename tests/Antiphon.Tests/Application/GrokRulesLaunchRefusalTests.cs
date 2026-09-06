@@ -208,7 +208,7 @@ public sealed class GrokRulesLaunchRefusalTests
     private static AppDbContext CreateContext() =>
         new(TestDbFixture.CreateDbContextOptions());
 
-    private static AgentLaunchSpec SpecOf(
+    internal static AgentLaunchSpec SpecOf(
         AgentTaskDispatcher dispatcher,
         AgentTask task,
         AgentKind kind,
@@ -241,7 +241,7 @@ public sealed class GrokRulesLaunchRefusalTests
         return dispatcher.BuildLaunchSpec(task, agent, session, attached);
     }
 
-    private static AgentTask TaskFor(AgentTaskKind kind, AgentTaskRole role) => new()
+    internal static AgentTask TaskFor(AgentTaskKind kind, AgentTaskRole role) => new()
     {
         Id = Guid.NewGuid(),
         Kind = kind,
@@ -254,7 +254,7 @@ public sealed class GrokRulesLaunchRefusalTests
         CreatedAt = DateTime.UtcNow,
     };
 
-    private static (AgentTaskDispatcher Dispatcher, ServiceProvider Provider) CreateDelegateHarness()
+    internal static (AgentTaskDispatcher Dispatcher, ServiceProvider Provider) CreateDelegateHarness()
     {
         var services = new ServiceCollection();
         services.AddLogging();

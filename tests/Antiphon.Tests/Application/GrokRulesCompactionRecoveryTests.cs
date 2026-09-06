@@ -24,10 +24,16 @@ public sealed class GrokRulesCompactionRecoveryTests
     internal const string NativeBoundary = """{"timestamp":1787167460,"method":"_x.ai/session/update","params":{"sessionId":"1636e434-b4bc-4743-ae39-9381bd83a2cc","update":{"sessionUpdate":"auto_compact_completed","tokens_before":106112,"tokens_after":34833,"summary_preview":null},"_meta":{"eventId":"1636e434-b4bc-4743-ae39-9381bd83a2cc-1550","agentTimestampMs":1787167460583}}}""";
 
     [Test]
-    [Arguments("live")]
-    [Arguments("sync")]
-    [Arguments("startup")]
-    public async Task Captured_native_boundary_reaches_one_durable_refresh_without_idle_input(string lane)
+    [Arguments("live", "standing")]
+    [Arguments("live", "channel")]
+    [Arguments("live", "retired-pool")]
+    [Arguments("sync", "standing")]
+    [Arguments("sync", "channel")]
+    [Arguments("sync", "retired-pool")]
+    [Arguments("startup", "standing")]
+    [Arguments("startup", "channel")]
+    [Arguments("startup", "retired-pool")]
+    public async Task Captured_native_boundary_reaches_one_durable_refresh_without_idle_input(string lane, string population)
     {
         await using var h = await BridgeQueueHarness.CreateAsync(new() { ConfigureServices = services => {
             services.AddSingleton(Options.Create(new GrokRulesSettings()));
@@ -48,12 +54,22 @@ public sealed class GrokRulesCompactionRecoveryTests
         session.GrokRulesReceiptJson = JsonSerializer.Serialize(receipt);
         session.GrokRulesState = GrokRulesState.Pending;
         await db.SaveChangesAsync();
-        await rules.ReconcileAsync(h.SessionId, CancellationToken.None);
-        var launch = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
-        launch.RulesAcknowledgedAt = DateTime.UtcNow;
-        launch.Status = QueuedMessageStatus.Sent;
+        // Historical initialization is seed data: mutations of current recovery must reach
+        // the boundary assertion, not fail during fixture construction.
+        var launchId = Guid.NewGuid();
+        db.SessionQueuedMessages.Add(new() {
+            Id = launchId, AgentSessionId = h.SessionId, Sequence = 1,
+            Origin = QueuedMessageOrigin.System, CreatedAt = DateTime.UtcNow,
+            Body = GrokRulesRefreshService.Prompt(launchId, receipt),
+            RulesRefreshKey = $"launch:{receipt.Generation:N}",
+            RulesReceiptJson = session.GrokRulesReceiptJson, RulesChainId = launchId,
+            RulesAcknowledgedAt = DateTime.UtcNow, Status = QueuedMessageStatus.Sent });
         session.GrokRulesReadyAt = DateTime.UtcNow;
+        session.GrokRulesState = GrokRulesState.Ready;
         await db.SaveChangesAsync();
+        if (population == "channel") await h.BindChannelAsync();
+        if (population == "retired-pool")
+            await db.Agents.Where(a => a.Id == h.AgentId).ExecuteDeleteAsync();
         await h.MarkWorkingAsync();
 
         var path = Path.Combine(h.TempRoot, "captured-updates.jsonl");
