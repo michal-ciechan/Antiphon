@@ -29,13 +29,33 @@ namespace Antiphon.Tests.Application;
 public class PolicyRefreshServiceTests
 {
     [Test]
-    public async Task Grok_legacy_policy_drift_refuses_before_kill_queue_or_stamp_mutation()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Grok_legacy_policy_drift_refuses_before_kill_queue_or_stamp_mutation(bool removingAllRules)
     {
         await using var h = await CreateHarnessAsync("Grok");
         await SeedRelaunchReadyAsync(h);
         await using var db = CreateContext();
         await db.Agents.Where(a => a.Id == h.AgentId).ExecuteUpdateAsync(s => s.SetProperty(a => a.Kind, AgentKind.Grok));
         await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(s => s.SetProperty(a => a.AgentKind, AgentKind.Grok));
+        if (removingAllRules)
+        {
+            var agent = await db.Agents.SingleAsync(a => a.Id == h.AgentId);
+            await AgentBundleAttachments.SetAsync(db, agent, [], DateTime.UtcNow, CancellationToken.None);
+            agent.SystemPromptAppend = null;
+            agent.ReplyStyle = AgentReplyStyle.Normal;
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
+            var rulesBytes = System.Text.Encoding.UTF8.GetBytes("retained old standing rules\r\n");
+            var receipt = new GrokRulesReceipt($"C:\\remote\\instructions\\grok\\{h.SessionId:N}\\rules.md",
+                GrokRulesTransport.Hash(rulesBytes), rulesBytes.Length, 1, Guid.NewGuid());
+            session.GrokRulesReceiptJson = System.Text.Json.JsonSerializer.Serialize(receipt);
+            session.GrokRulesGeneration = receipt.Generation;
+            session.GrokRulesExpectedSha256 = receipt.Sha256;
+            session.GrokRulesExpectedByteCount = receipt.ByteCount;
+            session.GrokRulesState = GrokRulesState.Ready;
+            session.GrokRulesReadyAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
         var before = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == h.SessionId);
         var nativeHistory = Path.Combine(h.TempRoot, "retained-native-history.jsonl");
         await File.WriteAllTextAsync(nativeHistory, "original native history\r\n");
@@ -45,7 +65,8 @@ public class PolicyRefreshServiceTests
         catch (Exception ex) { failure = ex; }
         h.Adapter.Killed.ShouldBeFalse();
         h.Adapter.SubmittedBodies.ShouldBeEmpty();
-        failure.ShouldBeOfType<ConflictException>().Code.ShouldBe("grok_rules_legacy_resume_requires_fresh_start");
+        failure.ShouldBeOfType<ConflictException>().Code.ShouldBe(removingAllRules
+            ? "grok_rules_removal_requires_fresh_start" : "grok_rules_legacy_resume_requires_fresh_start");
         failure.Message.ShouldContain("History");
         failure.Message.ShouldContain("fresh");
         var after = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == h.SessionId);
