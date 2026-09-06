@@ -341,6 +341,11 @@ the model rides `-c` TOML config overrides, all of which live in
 
 Tier → reasoning effort: `Frontier`→`xhigh`, `High`→`high`, `Medium`→`medium`, `Low`→`low`.
 
+**Compaction ownership (CARD-0395).** Codex reconstructs its instruction/context state through
+provider-owned compaction paths. This is not a claim that every developer instruction is sent
+unchanged in every network request. Grok's new queued file rereads do not apply to Codex; no new
+authenticated Codex multi-compaction canary is claimed by this change.
+
 **Credentials.** `OPENAI_API_KEY` — plus, to point Codex at a different endpoint, **five `-c`
 launch arguments**, because Codex has no base-URL environment variable at all:
 
