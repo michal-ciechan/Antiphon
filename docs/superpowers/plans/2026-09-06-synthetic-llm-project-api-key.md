@@ -8,14 +8,14 @@
 
 **Tech Stack:** ASP.NET Core/.NET 9, Entity Framework Core, NUnit/Shouldly, PowerShell 7, Pester, Antiphon launch environments and Herdr.
 
-**Spec:** Antiphon `CARD-0001` and its approved task brief; existing proxy design at `D:\src\Mikeys.Tools\docs\superpowers\specs\2026-08-17-llm-key-proxy-design.md`.
+**Spec:** Antiphon `CARD-0001` and its approved task brief; existing proxy design in Mikeys.Tools at `docs/superpowers/specs/2026-08-17-llm-key-proxy-design.md`.
 
 ## Global constraints
 
-- This is a two-repository implementation: proxy/launcher changes belong in `D:\src\Mikeys.Tools`; Antiphon documentation changes belong in `D:\src\Antiphon`. Do not mix their commits.
-- `D:\src\Mikeys.Tools` commit `0f1005174d4a76a241f4b53ed38498a46e0b751c` is an inspection base, not an implementation base: `Mikey.LlmKeyProxy.Cli`, its dependency projects, and `scripts/llm-launchers/llm-key-proxy.ps1` are not tracked there, while the launcher baseline has substantial uncommitted work. A separately reviewed prerequisite must be committed and pushed first.
+- This is a two-repository implementation: proxy/launcher changes belong in the Mikeys.Tools feature worktree; Antiphon documentation changes belong in the Antiphon feature worktree. Do not mix their commits.
+- Mikeys.Tools commit `0f1005174d4a76a241f4b53ed38498a46e0b751c` is an inspection base, not an implementation base: `Mikey.LlmKeyProxy.Cli`, its dependency projects, and `scripts/llm-launchers/llm-key-proxy.ps1` are not tracked there, while the launcher baseline has substantial uncommitted work. A separately reviewed prerequisite must be committed and pushed first.
 - The code-stage brief must pin that prerequisite by a full 40-character `MIKEYS_TOOLS_PREREQUISITE_SHA`. Task 1 cannot begin from a branch name, moving remote head, dirty checkout, stash, patch file, or working-tree-only dependency.
-- Perform implementation in one clean isolated worktree per repository. The existing `D:\src\Mikeys.Tools` and `D:\src\Antiphon` checkouts contain unrelated work and are read-only evidence until their owners make them clean for rollout; never stage from either checkout into this feature.
+- Perform implementation in one clean isolated linked worktree per repository. The primary Mikeys.Tools and Antiphon checkouts contain unrelated work and are read-only evidence until their owners make them clean for rollout; never stage from either checkout into this feature.
 - During Tasks 1-5, do not kill or restart the live proxy on `localhost:10746` to compile or test; every .NET command uses a fresh `--artifacts-path` under `%TEMP%`. Task 6's targeted Aspire restart is the sole live-bin build: its script stops the owned resource before building and starts it afterward.
 - The synthetic value is a project selector, not a secret and not a valid upstream/LiteLLM key. Never log or return the real project key.
 - Never forward the synthetic credential, the dummy `llm-key-proxy`, inbound `Authorization`, inbound `x-api-key`, or any `X-Llm-*` header upstream. Forward only `Authorization: Bearer <resolved real project key>`.
@@ -23,7 +23,54 @@
 - Unknown, ambiguous, empty, or malformed synthetic project references fail closed without creating a hold or opening a browser. Unknown and ambiguous references use the same HTTP status/error/similar-project shape as a bad `X-Llm-Project`.
 - `OpenBrowserOnHold` remains `true` by default; the hold timeout, matcher thresholds, cwd matching, project schema, and port `10746` do not change.
 - The launcher rollout is after the proxy rollout. An old proxy cannot interpret the new credential and could reopen the picker for clients whose legacy header is absent.
-- Do not edit generated files under `D:\src\Antiphon\docs\cards`.
+- Do not edit generated files under `$AntiphonWorktree\docs\cards`.
+
+## Implementation worktree roots
+
+The code-stage brief must supply absolute non-primary linked-worktree paths in `MIKEYS_TOOLS_WORKTREE` and `ANTIPHON_WORKTREE`. At Task 0 Step 3, and again at the start of every new PowerShell session used for Tasks 1-5, resolve and assert the variables with this block before reading, editing, testing, staging, or committing:
+
+```powershell
+function Resolve-FeatureWorktreeRoot {
+    param(
+        [Parameter(Mandatory)] [string] $Name,
+        [Parameter(Mandatory)] [string] $Value
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value) -or -not [IO.Path]::IsPathFullyQualified($Value)) {
+        throw "$Name must be an absolute feature-worktree path."
+    }
+
+    $resolved = [IO.Path]::GetFullPath($Value)
+    if (-not (Test-Path -LiteralPath $resolved -PathType Container)) {
+        throw "$Name does not exist: $resolved"
+    }
+
+    $topLevel = git -C $resolved rev-parse --show-toplevel
+    if ($LASTEXITCODE -ne 0) { throw "$Name is not a Git worktree: $resolved" }
+    $topLevel = [IO.Path]::GetFullPath(($topLevel | Select-Object -First 1))
+    if (-not [string]::Equals($resolved, $topLevel, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "$Name must name the worktree root exactly; Git reported $topLevel."
+    }
+
+    $worktreeList = @(git -C $resolved worktree list --porcelain)
+    if ($LASTEXITCODE -ne 0) { throw "Could not inspect $Name worktree ownership." }
+    $primaryLine = $worktreeList | Where-Object { $_ -like 'worktree *' } | Select-Object -First 1
+    if (-not $primaryLine) { throw "Could not identify the primary worktree for $Name." }
+    $primaryRoot = [IO.Path]::GetFullPath($primaryLine.Substring('worktree '.Length))
+    if ([string]::Equals($resolved, $primaryRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "$Name must be a linked feature worktree, not the primary checkout."
+    }
+
+    return $resolved
+}
+
+$MikeysToolsWorktree = Resolve-FeatureWorktreeRoot `
+    -Name 'MIKEYS_TOOLS_WORKTREE' -Value $env:MIKEYS_TOOLS_WORKTREE
+$AntiphonWorktree = Resolve-FeatureWorktreeRoot `
+    -Name 'ANTIPHON_WORKTREE' -Value $env:ANTIPHON_WORKTREE
+```
+
+All paths and Git commands in Tasks 1-5 are rooted through these asserted variables. Only Task 6 rollout may target a primary canonical checkout.
 
 ## Chosen wire scheme
 
@@ -113,6 +160,7 @@ if ($MikeysToolsPrerequisiteSha -notmatch '^[0-9a-fA-F]{40}$') {
 }
 
 git fetch --all --prune
+if ($LASTEXITCODE -ne 0) { throw 'Could not refresh remote refs for the pinned prerequisite.' }
 git cat-file -e "$MikeysToolsPrerequisiteSha`^{commit}"
 if ($LASTEXITCODE -ne 0) { throw 'Pinned Mikeys.Tools prerequisite commit is unavailable.' }
 
@@ -141,15 +189,32 @@ foreach ($requiredFunction in 'Get-OptionalProxyProjectArgs', 'Set-LlmProxyClien
 
 - [ ] **Step 3: Create dedicated Mikeys.Tools and Antiphon worktrees, then run a clean preflight**
 
-Create the Mikeys.Tools feature worktree at the exact prerequisite SHA and the Antiphon docs worktree at the Antiphon base named by the code-stage brief. Before the first failing test, run this in each feature worktree:
+Create the Mikeys.Tools feature worktree at the exact prerequisite SHA and the Antiphon docs worktree at the Antiphon base named by the code-stage brief. Set `MIKEYS_TOOLS_WORKTREE` and `ANTIPHON_WORKTREE` to those exact roots, run the [Implementation worktree roots](#implementation-worktree-roots) assertion block, then complete the clean/SHA preflight:
 
 ```powershell
-if (git status --porcelain) { throw 'Implementation worktree is not clean.' }
-git rev-parse --show-toplevel
-git rev-parse HEAD
+$AntiphonBaseSha = $env:ANTIPHON_BASE_SHA
+if ($AntiphonBaseSha -notmatch '^[0-9a-fA-F]{40}$') {
+    throw 'The code-stage brief must provide a full ANTIPHON_BASE_SHA.'
+}
+
+foreach ($worktree in $MikeysToolsWorktree, $AntiphonWorktree) {
+    $status = @(git -C $worktree status --porcelain)
+    if ($LASTEXITCODE -ne 0) { throw "Could not inspect implementation worktree: $worktree" }
+    if ($status.Count -ne 0) { throw "Implementation worktree is not clean: $worktree" }
+}
+
+$actualMikeysToolsSha = git -C $MikeysToolsWorktree rev-parse HEAD
+if ($LASTEXITCODE -ne 0 -or $actualMikeysToolsSha -ne $MikeysToolsPrerequisiteSha) {
+    throw 'Mikeys.Tools worktree is not at MIKEYS_TOOLS_PREREQUISITE_SHA.'
+}
+
+$actualAntiphonSha = git -C $AntiphonWorktree rev-parse HEAD
+if ($LASTEXITCODE -ne 0 -or $actualAntiphonSha -ne $AntiphonBaseSha) {
+    throw 'Antiphon worktree is not at ANTIPHON_BASE_SHA.'
+}
 ```
 
-The Mikeys.Tools result must equal `MIKEYS_TOOLS_PREREQUISITE_SHA`. If either worktree is dirty or any required path exists only in another checkout, stop before Task 1. Do not use `git add -f`, copy an untracked tree, or absorb a stash to pass this gate.
+If either asserted root resolves to a primary checkout, either worktree is dirty or at the wrong SHA, or any required path exists only in another checkout, stop before Task 1. Do not use `git add -f`, copy an untracked tree, or absorb a stash to pass this gate.
 
 ---
 
@@ -157,8 +222,8 @@ The Mikeys.Tools result must equal `MIKEYS_TOOLS_PREREQUISITE_SHA`. If either wo
 
 **Files:**
 
-- Create: `D:\src\Mikeys.Tools\Mikey.LlmKeyProxy\Services\SyntheticProjectCredential.cs`
-- Create: `D:\src\Mikeys.Tools\Mikey.LlmKeyProxy.Tests\SyntheticProjectCredentialTests.cs`
+- Create: `$MikeysToolsWorktree\Mikey.LlmKeyProxy\Services\SyntheticProjectCredential.cs`
+- Create: `$MikeysToolsWorktree\Mikey.LlmKeyProxy.Tests\SyntheticProjectCredentialTests.cs`
 
 **Interfaces:**
 
@@ -192,7 +257,7 @@ public void Parse_valid_carriers(string? authorization, string? apiKey, string e
 - [ ] **Step 2: Run the focused test and confirm red**
 
 ```powershell
-$tests = 'D:\src\Mikeys.Tools\Mikey.LlmKeyProxy.Tests\Mikey.LlmKeyProxy.Tests.csproj'
+$tests = Join-Path $MikeysToolsWorktree 'Mikey.LlmKeyProxy.Tests\Mikey.LlmKeyProxy.Tests.csproj'
 $art = Join-Path $env:TEMP ('llm-key-proxy-art-' + [guid]::NewGuid().ToString('N'))
 dotnet test $tests --artifacts-path $art --nologo --filter FullyQualifiedName~SyntheticProjectCredentialTests
 ```
@@ -257,18 +322,18 @@ Do not log raw headers in this class.
 - [ ] **Step 5: Commit the parser and tests**
 
 ```powershell
-git add Mikey.LlmKeyProxy/Services/SyntheticProjectCredential.cs Mikey.LlmKeyProxy.Tests/SyntheticProjectCredentialTests.cs
-git commit -m "feat(llm-key-proxy): parse synthetic project credentials"
+git -C $MikeysToolsWorktree add -- Mikey.LlmKeyProxy/Services/SyntheticProjectCredential.cs Mikey.LlmKeyProxy.Tests/SyntheticProjectCredentialTests.cs
+git -C $MikeysToolsWorktree commit -m "feat(llm-key-proxy): parse synthetic project credentials"
 ```
 
 ### Task 2: Bind without a hold and preserve fail-closed errors
 
 **Files:**
 
-- Modify: `D:\src\Mikeys.Tools\Mikey.LlmKeyProxy\Services\SessionService.cs`
-- Modify: `D:\src\Mikeys.Tools\Mikey.LlmKeyProxy\Services\LlmProxyMiddleware.cs`
-- Modify: `D:\src\Mikeys.Tools\Mikey.LlmKeyProxy.Tests\SessionServiceTests.cs`
-- Create: `D:\src\Mikeys.Tools\Mikey.LlmKeyProxy.Tests\LlmProxyHandlerTests.cs` for handler/error assertions.
+- Modify: `$MikeysToolsWorktree\Mikey.LlmKeyProxy\Services\SessionService.cs`
+- Modify: `$MikeysToolsWorktree\Mikey.LlmKeyProxy\Services\LlmProxyMiddleware.cs`
+- Modify: `$MikeysToolsWorktree\Mikey.LlmKeyProxy.Tests\SessionServiceTests.cs`
+- Create: `$MikeysToolsWorktree\Mikey.LlmKeyProxy.Tests\LlmProxyHandlerTests.cs` for handler/error assertions.
 
 **Interfaces:**
 
@@ -299,7 +364,13 @@ result.KeyId.ShouldBe(keyId);
 result.ForcedProjectError.ShouldBeNull();
 ```
 
-- [ ] **Step 2: Run `SessionServiceTests` and confirm the new cases fail** using `dotnet test ... --artifacts-path $art --filter FullyQualifiedName~SessionServiceTests`.
+- [ ] **Step 2: Run `SessionServiceTests` and confirm the new cases fail**
+
+```powershell
+$tests = Join-Path $MikeysToolsWorktree 'Mikey.LlmKeyProxy.Tests\Mikey.LlmKeyProxy.Tests.csproj'
+$art = Join-Path $env:TEMP ('llm-key-proxy-art-' + [guid]::NewGuid().ToString('N'))
+dotnet test $tests --artifacts-path $art --nologo --filter FullyQualifiedName~SessionServiceTests
+```
 
 - [ ] **Step 3: Integrate the parser in `ResolveOrCreateAsync`**
 
@@ -329,16 +400,16 @@ Use the query/source carried on `SessionBindResult`; do not call `SessionHintExt
 - [ ] **Step 6: Re-run parser, session, project-name-match, and handler tests; then commit**
 
 ```powershell
-git add Mikey.LlmKeyProxy/Services/SessionService.cs Mikey.LlmKeyProxy/Services/LlmProxyMiddleware.cs Mikey.LlmKeyProxy.Tests/SessionServiceTests.cs Mikey.LlmKeyProxy.Tests/LlmProxyHandlerTests.cs
-git commit -m "feat(llm-key-proxy): bind projects from synthetic credentials"
+git -C $MikeysToolsWorktree add -- Mikey.LlmKeyProxy/Services/SessionService.cs Mikey.LlmKeyProxy/Services/LlmProxyMiddleware.cs Mikey.LlmKeyProxy.Tests/SessionServiceTests.cs Mikey.LlmKeyProxy.Tests/LlmProxyHandlerTests.cs
+git -C $MikeysToolsWorktree commit -m "feat(llm-key-proxy): bind projects from synthetic credentials"
 ```
 
 ### Task 3: Pin upstream credential replacement and non-leakage
 
 **Files:**
 
-- Read-only production contract: `D:\src\Mikeys.Tools\Mikey.LlmKeyProxy\Services\UpstreamProxyService.cs`
-- Create: `D:\src\Mikeys.Tools\Mikey.LlmKeyProxy.Tests\UpstreamProxyServiceTests.cs`
+- Read-only production contract: `$MikeysToolsWorktree\Mikey.LlmKeyProxy\Services\UpstreamProxyService.cs`
+- Create: `$MikeysToolsWorktree\Mikey.LlmKeyProxy.Tests\UpstreamProxyServiceTests.cs`
 
 **Interfaces:**
 
@@ -357,7 +428,7 @@ The current implementation already filters both carriers and assigns a new Beare
 - [ ] **Step 3: Run the full proxy test project with a fresh artifact directory**
 
 ```powershell
-$tests = 'D:\src\Mikeys.Tools\Mikey.LlmKeyProxy.Tests\Mikey.LlmKeyProxy.Tests.csproj'
+$tests = Join-Path $MikeysToolsWorktree 'Mikey.LlmKeyProxy.Tests\Mikey.LlmKeyProxy.Tests.csproj'
 $art = Join-Path $env:TEMP ('llm-key-proxy-art-' + [guid]::NewGuid().ToString('N'))
 dotnet test $tests --artifacts-path $art --nologo
 ```
@@ -365,19 +436,19 @@ dotnet test $tests --artifacts-path $art --nologo
 - [ ] **Step 4: Commit the upstream contract test and any required fix**
 
 ```powershell
-git add Mikey.LlmKeyProxy.Tests/UpstreamProxyServiceTests.cs
-git commit -m "test(llm-key-proxy): prevent client credential leakage upstream"
+git -C $MikeysToolsWorktree add -- Mikey.LlmKeyProxy.Tests/UpstreamProxyServiceTests.cs
+git -C $MikeysToolsWorktree commit -m "test(llm-key-proxy): prevent client credential leakage upstream"
 ```
 
 ### Task 4: Make every canonical launcher send the synthetic credential
 
 **Files:**
 
-- Modify: `D:\src\Mikeys.Tools\scripts\llm-launchers\llm-key-proxy-common.ps1`
-- Modify: `D:\src\Mikeys.Tools\scripts\llm-launchers\gkp.ps1`
-- Modify: `D:\src\Mikeys.Tools\scripts\llm-launchers\cxp.ps1`
-- Read-only call site: `D:\src\Mikeys.Tools\scripts\llm-launchers\clproxy.ps1` (it already calls `Set-LlmProxyClientEnv` after project parsing and does not overwrite the token afterward).
-- Modify: `D:\src\Mikeys.Tools\scripts\llm-launchers\tests\LlmNamedSessions.Tests.ps1`
+- Modify: `$MikeysToolsWorktree\scripts\llm-launchers\llm-key-proxy-common.ps1`
+- Modify: `$MikeysToolsWorktree\scripts\llm-launchers\gkp.ps1`
+- Modify: `$MikeysToolsWorktree\scripts\llm-launchers\cxp.ps1`
+- Read-only call site: `$MikeysToolsWorktree\scripts\llm-launchers\clproxy.ps1` (it already calls `Set-LlmProxyClientEnv` after project parsing and does not overwrite the token afterward).
+- Modify: `$MikeysToolsWorktree\scripts\llm-launchers\tests\LlmNamedSessions.Tests.ps1`
 
 **Interfaces:**
 
@@ -404,7 +475,7 @@ $env:OPENAI_API_KEY | Should Be 'llm-project:8e5a6d18-4d55-458f-8bb7-3ebaa81edc0
 - [ ] **Step 2: Run Pester and confirm red**
 
 ```powershell
-Invoke-Pester -Path 'D:\src\Mikeys.Tools\scripts\llm-launchers\tests\LlmNamedSessions.Tests.ps1' -Output Detailed
+Invoke-Pester -Path (Join-Path $MikeysToolsWorktree 'scripts\llm-launchers\tests\LlmNamedSessions.Tests.ps1') -Output Detailed
 ```
 
 - [ ] **Step 3: Implement the common helper and environment rules**
@@ -428,11 +499,19 @@ Keep best-effort `X-Llm-Project` header configuration in Grok/Codex as defense i
 
 - [ ] **Step 4: Re-run `LlmNamedSessions.Tests.ps1` and `GkCommon.Tests.ps1`**, with no live Grok/Codex/Claude process and no request to `:10746`.
 
+```powershell
+$launcherTests = @(
+    (Join-Path $MikeysToolsWorktree 'scripts\llm-launchers\tests\LlmNamedSessions.Tests.ps1'),
+    (Join-Path $MikeysToolsWorktree 'scripts\llm-launchers\tests\GkCommon.Tests.ps1')
+)
+Invoke-Pester -Path $launcherTests -Output Detailed
+```
+
 - [ ] **Step 5: Commit canonical launcher changes**
 
 ```powershell
-git add scripts/llm-launchers/llm-key-proxy-common.ps1 scripts/llm-launchers/gkp.ps1 scripts/llm-launchers/cxp.ps1 scripts/llm-launchers/tests/LlmNamedSessions.Tests.ps1
-git commit -m "feat(llm-launchers): send project through client credentials"
+git -C $MikeysToolsWorktree add -- scripts/llm-launchers/llm-key-proxy-common.ps1 scripts/llm-launchers/gkp.ps1 scripts/llm-launchers/cxp.ps1 scripts/llm-launchers/tests/LlmNamedSessions.Tests.ps1
+git -C $MikeysToolsWorktree commit -m "feat(llm-launchers): send project through client credentials"
 ```
 
 Do not hand-edit `C:\Users\mike.ciechan\.local\bin` in the implementation commit. It is the installed copy; update it during rollout with the canonical installer and verify hashes.
@@ -441,17 +520,17 @@ Do not hand-edit `C:\Users\mike.ciechan\.local\bin` in the implementation commit
 
 **Files:**
 
-- Modify: `D:\src\Mikeys.Tools\Mikey.LlmKeyProxy\README.md`
-- Modify: `D:\src\Mikeys.Tools\scripts\llm-launchers\README.md`
-- Modify: `D:\src\Antiphon\docs\agent-credentials.md`
-- Modify: `D:\src\Antiphon\docs\ai-agent-tui-configuration.md`
-- Modify: `D:\src\Antiphon\docs\herdr-sessions.md`
+- Modify: `$MikeysToolsWorktree\Mikey.LlmKeyProxy\README.md`
+- Modify: `$MikeysToolsWorktree\scripts\llm-launchers\README.md`
+- Modify: `$AntiphonWorktree\docs\agent-credentials.md`
+- Modify: `$AntiphonWorktree\docs\ai-agent-tui-configuration.md`
+- Modify: `$AntiphonWorktree\docs\herdr-sessions.md`
 
 - [ ] **Step 1: Document the scheme, bind order, fail-closed behavior, and non-secret status** in the proxy/launcher READMEs. State that the project GUID is canonical launcher output and that real/dummy/missing credentials remain legacy/unbound inputs.
 
 - [ ] **Step 2: Document Antiphon's two phases**
 
-Use `docs/agent-credentials.md` §2 as the source of truth: profile → managed secrets → project default → inherited caller → agent launch env → launch override → `ExtraEnv`, with later layers winning. Explain that Herdr's generated launch script applies the merged bootstrap env to the wrapper; the wrapper subsequently resolves `X_LLM_PROJECT` and replaces the client credential before starting the actual TUI.
+Use `$AntiphonWorktree\docs\agent-credentials.md` §2 as the source of truth: profile → managed secrets → project default → inherited caller → agent launch env → launch override → `ExtraEnv`, with later layers winning. Explain that Herdr's generated launch script applies the merged bootstrap env to the wrapper; the wrapper subsequently resolves `X_LLM_PROJECT` and replaces the client credential before starting the actual TUI.
 
 - [ ] **Step 3: Keep the CARD-0341 guard accurate**
 
@@ -459,9 +538,12 @@ The stored gkp environment still needs project, local base URL, and a nonblank b
 
 - [ ] **Step 4: Commit docs separately in their owning repositories**
 
-```text
-Mikeys.Tools: docs(llm-key-proxy): document synthetic project credentials
-Antiphon:     docs(agents): document proxy credential handoff
+```powershell
+git -C $MikeysToolsWorktree add -- Mikey.LlmKeyProxy/README.md scripts/llm-launchers/README.md
+git -C $MikeysToolsWorktree commit -m "docs(llm-key-proxy): document synthetic project credentials"
+
+git -C $AntiphonWorktree add -- docs/agent-credentials.md docs/ai-agent-tui-configuration.md docs/herdr-sessions.md
+git -C $AntiphonWorktree commit -m "docs(agents): document proxy credential handoff"
 ```
 
 ### Task 6: Verify, roll out proxy first, then install launchers
