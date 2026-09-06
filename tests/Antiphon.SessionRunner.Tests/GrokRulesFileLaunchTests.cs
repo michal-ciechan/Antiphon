@@ -7,6 +7,7 @@ using TUnit.Core;
 namespace Antiphon.SessionRunner.Tests;
 
 [Category("Unit")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class GrokRulesFileLaunchTests
 {
     [Test]
@@ -43,9 +44,12 @@ public sealed class GrokRulesFileLaunchTests
     {
         var root = Path.Combine(Path.GetTempPath(), "card0395", Guid.NewGuid().ToString("N"));
         await using var runtime = new SessionRunnerRuntime(
-            Options.Create(new SessionRunnerSettings { SessionLogPath = root }), NullLogger<SessionRunnerRuntime>.Instance);
+            Options.Create(new SessionRunnerSettings { SessionLogPath = root, PtyHostSourceDir = Path.Combine(root, "missing-host") }), NullLogger<SessionRunnerRuntime>.Instance);
         var request = Request(root) with { Args = ["--rules", "@C:\\literal path\\rules.md"] };
-        (await Should.ThrowAsync<GrokRulesTransportException>(() => runtime.StartAsync(request, CancellationToken.None)))
+        var error = await CaptureAsync(() => runtime.StartAsync(request, CancellationToken.None));
+        Directory.Exists(root).ShouldBeFalse("source conflict must refuse before rules materialization");
+        runtime.List().ShouldBeEmpty();
+        error.ShouldBeOfType<GrokRulesTransportException>()
             .Code.ShouldBe("grok_rules_source_conflict");
         if (OperatingSystem.IsWindows())
             (await Should.ThrowAsync<GrokRulesLaunchException>(() => runtime.StartAsync(
@@ -60,9 +64,12 @@ public sealed class GrokRulesFileLaunchTests
     {
         var root = Path.Combine(Path.GetTempPath(), "card0395", Guid.NewGuid().ToString("N"));
         await using var runtime = new SessionRunnerRuntime(
-            Options.Create(new SessionRunnerSettings { SessionLogPath = root }), NullLogger<SessionRunnerRuntime>.Instance);
+            Options.Create(new SessionRunnerSettings { SessionLogPath = root, PtyHostSourceDir = Path.Combine(root, "missing-host") }), NullLogger<SessionRunnerRuntime>.Instance);
         var request = Request(root) with { CommandLineBudgetChars = 100 };
-        (await Should.ThrowAsync<GrokRulesTransportException>(() => runtime.StartAsync(request, CancellationToken.None)))
+        var error = await CaptureAsync(() => runtime.StartAsync(request, CancellationToken.None));
+        Directory.Exists(root).ShouldBeFalse("actual argv over budget must refuse before rules materialization");
+        runtime.List().ShouldBeEmpty();
+        error.ShouldBeOfType<GrokRulesTransportException>()
             .Reason.ShouldBe("command_line_budget");
         runtime.List().ShouldBeEmpty();
         Directory.Exists(root).ShouldBeFalse();
@@ -71,4 +78,10 @@ public sealed class GrokRulesFileLaunchTests
     private static RunnerLaunchRequest Request(string root) => new(Guid.NewGuid(), "missing-executable", [],
         new Dictionary<string, string>(), root, 120, 30, TranscriptFormat: TranscriptFormats.Grok,
         GrokRulesPayload: new("full\r\nrules", 1, Guid.NewGuid()));
+
+    private static async Task<Exception?> CaptureAsync(Func<Task> action)
+    {
+        try { await action(); return null; }
+        catch (Exception ex) { return ex; }
+    }
 }
