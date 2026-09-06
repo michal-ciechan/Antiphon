@@ -28,6 +28,34 @@ namespace Antiphon.Tests.Application;
 [NotInParallel]
 public class PolicyRefreshServiceTests
 {
+    [Test]
+    public async Task Grok_legacy_policy_drift_refuses_before_kill_queue_or_stamp_mutation()
+    {
+        await using var h = await CreateHarnessAsync("Grok");
+        await SeedRelaunchReadyAsync(h);
+        await using var db = CreateContext();
+        await db.Agents.Where(a => a.Id == h.AgentId).ExecuteUpdateAsync(s => s.SetProperty(a => a.Kind, AgentKind.Grok));
+        await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(s => s.SetProperty(a => a.AgentKind, AgentKind.Grok));
+        var before = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == h.SessionId);
+        var nativeHistory = Path.Combine(h.TempRoot, "retained-native-history.jsonl");
+        await File.WriteAllTextAsync(nativeHistory, "original native history\r\n");
+        var bytes = await File.ReadAllBytesAsync(nativeHistory);
+        Exception? failure = null;
+        try { await h.Provider.GetRequiredService<PolicyRefreshService>().RefreshAgentAsync(h.AgentId, force: true, CancellationToken.None); }
+        catch (Exception ex) { failure = ex; }
+        h.Adapter.Killed.ShouldBeFalse();
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+        failure.ShouldBeOfType<ConflictException>().Code.ShouldBe("grok_rules_legacy_resume_requires_fresh_start");
+        failure.Message.ShouldContain("History");
+        failure.Message.ShouldContain("fresh");
+        var after = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == h.SessionId);
+        after.Status.ShouldBe(before.Status);
+        after.ComposedBundleStamp.ShouldBe(before.ComposedBundleStamp);
+        after.InstructionFileStamp.ShouldBe(before.InstructionFileStamp);
+        (await File.ReadAllBytesAsync(nativeHistory)).ShouldBe(bytes);
+        Factory(h).Created.ShouldBeEmpty();
+    }
+
     private static AppDbContext CreateContext() => BridgeQueueHarness.CreateContext();
 
     [Test]
@@ -484,7 +512,7 @@ public class PolicyRefreshServiceTests
         ex.Code.ShouldBe(PolicyRefreshService.NotResumableCode);
     }
 
-    private static Task<BridgeQueueHarness> CreateHarnessAsync() =>
+    private static Task<BridgeQueueHarness> CreateHarnessAsync(string kind = "ClaudeCode") =>
         BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
@@ -498,7 +526,7 @@ public class PolicyRefreshServiceTests
                         {
                             ["fake"] = new AgentDefinition
                             {
-                                Kind = "ClaudeCode",
+                                Kind = kind,
                                 Exe = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
                             },
                         },

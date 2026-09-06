@@ -210,6 +210,12 @@ public sealed class PolicyRefreshService
         if (!drift.HasDrift)
             return PolicyRefreshOutcome.None;
 
+        if (session.AgentKind == AgentKind.Grok)
+        {
+            var composition = await scope.ServiceProvider.GetRequiredService<AgentSessionLaunchComposer>().ComposeForAgentAsync(agent, ct);
+            GrokRulesRefreshService.PreflightResume(session, composition.GrokRulesPayload);
+        }
+
         var lane = ResolveLane(agent, session, mode, IsTranscriptBound(session.Id));
         if (lane == Lane.None)
             return Refuse(throwOnBlock, "This agent cannot be policy-refreshed.");
@@ -431,7 +437,9 @@ public sealed class PolicyRefreshService
         if (session.SessionBackend == SessionBackend.Herdr)
             return Lane.None;
 
-        var relaunchEligible = agent.Kind == AgentKind.ClaudeCode && agent.AlwaysOn && transcriptBound;
+        var supported = agent.Kind == AgentKind.ClaudeCode
+            || (agent.Kind == AgentKind.Grok && GrokRulesRefreshService.Receipt(session)?.TransportVersion == 1);
+        var relaunchEligible = supported && agent.AlwaysOn && transcriptBound;
         return mode switch
         {
             PolicyRefreshMode.Relaunch when relaunchEligible => Lane.Relaunch,

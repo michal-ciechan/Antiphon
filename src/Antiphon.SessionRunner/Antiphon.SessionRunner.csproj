@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Antiphon.SessionRunner.Tests" />
+    <InternalsVisibleTo Include="Antiphon.Tests" />
   </ItemGroup>
 
   <ItemGroup>

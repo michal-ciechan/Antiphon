@@ -132,7 +132,7 @@ public sealed class GrokRulesRefreshService(
         await db.SaveChangesAsync(ct);
     }
 
-    public async Task InitializeAsync(Guid sessionId, CancellationToken ct)
+    public async Task CaptureReceiptAsync(Guid sessionId, CancellationToken ct)
     {
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -144,6 +144,19 @@ public sealed class GrokRulesRefreshService(
         session.GrokRulesReceiptJson = JsonSerializer.Serialize(receipt);
         await db.SaveChangesAsync(ct);
         await ReconcileAsync(sessionId, ct);
+    }
+
+    public async Task InitializeAsync(Guid sessionId, CancellationToken ct)
+    {
+        await CaptureReceiptAsync(sessionId, ct);
+        await using var scope = scopes.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId, ct);
+        if (session.GrokRulesGeneration is null) return;
+        var launchKey = $"launch:{session.GrokRulesGeneration:N}";
+        var deadline = clock.GetUtcNow().UtcDateTime.AddSeconds(settings.Value.InitializationTimeoutSeconds);
+        await db.SessionQueuedMessages.Where(m => m.AgentSessionId == sessionId && m.RulesRefreshKey == launchKey
+            && m.RulesDeadlineAt == null).ExecuteUpdateAsync(u => u.SetProperty(m => m.RulesDeadlineAt, deadline), ct);
         var queue = scope.ServiceProvider.GetRequiredService<SessionMessageQueueService>();
         var runtime = scope.ServiceProvider.GetRequiredService<AgentSessionRuntime>();
         while (true)

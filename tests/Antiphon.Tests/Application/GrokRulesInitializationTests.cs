@@ -49,6 +49,9 @@ public sealed class GrokRulesInitializationTests
     [Arguments("fenced", false)]
     [Arguments("tool", false)]
     [Arguments("unrelated_turn", false)]
+    [Arguments("fragment", false)]
+    [Arguments("user", false)]
+    [Arguments("before_prompt", false)]
     public async Task Only_current_refresh_assistant_ack_with_confirmed_prompt_releases_barrier(string variant, bool released)
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -64,9 +67,11 @@ public sealed class GrokRulesInitializationTests
         if (variant == "wrong_generation") ack = ack.Replace(fixture.Receipt.Generation.ToString("N"), Guid.NewGuid().ToString("N"));
         if (variant == "quoted") ack = "> " + ack;
         if (variant == "fenced") ack = "```\n" + ack + "\n```";
+        if (variant == "fragment") ack = ack[..^1];
         if (variant != "no_prompt") Add(1, TranscriptKinds.UserPrompt, message.Body);
         if (variant == "unrelated_turn") Add(2, TranscriptKinds.UserPrompt, "Unrelated user work");
-        Add(3, variant == "tool" ? TranscriptKinds.ToolResult : TranscriptKinds.AssistantText, ack);
+        Add(variant == "before_prompt" ? 0 : 3,
+            variant == "tool" ? TranscriptKinds.ToolResult : variant == "user" ? TranscriptKinds.UserPrompt : TranscriptKinds.AssistantText, ack);
         if (variant != "no_end") Add(4, TranscriptKinds.TurnEnd, null, variant == "provider_error");
         await db.SaveChangesAsync();
         await fixture.Rules.ReconcileAsync(fixture.Id, CancellationToken.None);
