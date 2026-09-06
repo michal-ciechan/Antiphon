@@ -603,6 +603,21 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         return session.ToDto();
     }
 
+    /// <summary>Explicit expiry by an artifact owner; never called by kill, retirement, or worktree cleanup.</summary>
+    public async Task ExpireRulesArtifactAsync(Guid sessionId, CancellationToken ct)
+    {
+        var gate = _launchLocks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            var session = GetSession(sessionId);
+            if (!session.HasExited) throw new InvalidOperationException("A live session's rules cannot expire.");
+            new GrokRulesFileStore(_settings.SessionLogPath, _settings.GrokRules).Expire(sessionId);
+            session.GrokRulesReceipt = null;
+        }
+        finally { gate.Release(); }
+    }
+
     public ChannelReader<RunnerServerSentEvent> Subscribe(CancellationToken ct) => _events.Subscribe(ct);
 
     /// <summary>Transcript ownership, rule C1 (see <see cref="TranscriptClaimRegistry"/>). Test surface.</summary>

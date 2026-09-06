@@ -61,10 +61,34 @@ public sealed record HerdrPaneSidecar
     /// <summary>Temp + rename, so a concurrent restore never observes a torn file.</summary>
     public void SaveAtomic(string path)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var tmp = path + ".tmp";
-        File.WriteAllText(tmp, JsonSerializer.Serialize(this, Options));
-        File.Move(tmp, path, overwrite: true);
+        if (GrokRulesReceipt is null)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var legacyTemp = path + ".tmp";
+            File.WriteAllText(legacyTemp, JsonSerializer.Serialize(this, Options));
+            File.Move(legacyTemp, path, overwrite: true);
+            return;
+        }
+        var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            using (var stream = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                4096, FileOptions.WriteThrough))
+            {
+                stream.Write(JsonSerializer.SerializeToUtf8Bytes(this, Options));
+                stream.Flush(flushToDisk: true);
+            }
+            File.Move(tmp, path, overwrite: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        { throw new global::Antiphon.SessionRunner.Contracts.GrokRulesTransportException("grok_rules_file_write_failed", "metadata", 500); }
+        finally
+        {
+            try { File.Delete(tmp); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
     }
 
     public static HerdrPaneSidecar? TryLoad(string path)

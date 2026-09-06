@@ -200,6 +200,15 @@ public sealed class GrokRulesRefreshService(
         await transaction.CommitAsync(ct);
     }
 
+    internal static bool CanReuse(AgentSession session, string desiredContent)
+    {
+        if (session.GrokRulesState != GrokRulesState.Ready) return false;
+        var receipt = Receipt(session);
+        try { ValidateExpectedReceipt(session, receipt); }
+        catch (Exception ex) when (ex is ConflictException or GrokRulesHttpException) { return false; }
+        return receipt!.Sha256 == GrokRulesTransport.Hash(System.Text.Encoding.UTF8.GetBytes(desiredContent));
+    }
+
     private static void ValidateExpectedReceipt(AgentSession session, GrokRulesReceipt? receipt)
     {
         if (receipt is null || receipt.TransportVersion != 1 || receipt.Generation != session.GrokRulesGeneration

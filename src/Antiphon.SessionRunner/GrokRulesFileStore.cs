@@ -67,6 +67,21 @@ public sealed class GrokRulesFileStore(string sessionLogPath, GrokRulesSettings 
         catch (UnauthorizedAccessException) { return false; }
     }
 
+    // Explicit artifact expiry only. Caller must hold the launch lock and prove the session stopped.
+    internal void Expire(Guid sessionId)
+    {
+        var directory = Path.GetDirectoryName(PathFor(sessionId))!;
+        if (!Directory.Exists(directory)) return;
+        var info = new DirectoryInfo(directory);
+        var files = info.GetFileSystemInfos();
+        if ((info.Attributes & FileAttributes.ReparsePoint) != 0
+            || files.Any(f => (f.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0
+                || (f.Name != "rules.md" && !System.Text.RegularExpressions.Regex.IsMatch(f.Name, @"^rules\.[a-f0-9]{32}\.[a-f0-9]{32}\.tmp$"))))
+            throw new InvalidOperationException("Rules artifact directory contains an unexpected entry; expiry refused.");
+        foreach (var file in files) File.Delete(file.FullName);
+        Directory.Delete(directory, recursive: false);
+    }
+
     private static GrokRulesTransportException WriteFailure(string operation) =>
         new("grok_rules_file_write_failed", operation, 500);
 }

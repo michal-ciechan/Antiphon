@@ -102,9 +102,23 @@ public static class GrokRulesTransport
         var parts = path.Split(separator);
         var prefix = windows ? 1 : unc ? 2 : 1;
         if (parts.Skip(prefix).Any(p => p.Length == 0 || p is "." or "..")) throw InvalidReceipt("path");
+        if ((windows || unc) && parts.Skip(prefix).Any(p =>
+                p.EndsWith('.') || p.EndsWith(' ') || p.Any(c => c < 32 || "<>:|?*".Contains(c))
+                || IsReservedWindowsName(p))) throw InvalidReceipt("path");
         if (unc && (parts.Length < 8 || parts[2] is "?" or ".")) throw InvalidReceipt("path");
         var suffix = string.Join(separator, "instructions", "grok", sessionId.ToString("N"), "rules.md");
         if (!path.EndsWith(separator + suffix, StringComparison.Ordinal)) throw InvalidReceipt("path");
+    }
+
+    private static bool IsReservedWindowsName(string part)
+    {
+        var stem = part.Split('.')[0];
+        return stem.Equals("CON", StringComparison.OrdinalIgnoreCase)
+            || stem.Equals("PRN", StringComparison.OrdinalIgnoreCase)
+            || stem.Equals("AUX", StringComparison.OrdinalIgnoreCase)
+            || stem.Equals("NUL", StringComparison.OrdinalIgnoreCase)
+            || (stem.Length == 4 && (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase)
+                || stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)) && stem[3] is >= '1' and <= '9');
     }
 
     private static GrokRulesTransportException InvalidContent(string reason) =>
