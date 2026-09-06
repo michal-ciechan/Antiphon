@@ -462,6 +462,7 @@ public class AgentSessionLaunchFailureTests
             await using var db = LaunchFixture.CreateContext();
             var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
             session.Status.ShouldBe(SessionStatus.Failed);
+            session.HerdrSupervisionFailureKind.ShouldBe(HerdrSupervisionFailureKind.NonQualifying);
             session.FailureReason.ShouldNotBeNull();
             session.FailureReason.ShouldContain(GrokRulesArgvPolicy.ProblemCode);
             session.FailureReason.ShouldContain("--rules");

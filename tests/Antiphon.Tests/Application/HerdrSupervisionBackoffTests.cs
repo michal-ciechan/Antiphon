@@ -143,6 +143,7 @@ public class HerdrSupervisionBackoffTests
         (await f.StateAsync()).HerdrConsecutiveFailures.ShouldBe(2);
         await f.StartAsync(new StartAgentRequest(Fresh: true));
         (await f.SessionAsync()).Id.ShouldNotBe(id);
+        (await f.SessionAsync()).HerdrSupervisionFailureKind.ShouldBeNull();
         await f.ExitAsync(AgentExitReason.HerdrLaunchDetectTimeout);
         await f.TickAsync();
         (await f.StateAsync()).HerdrConsecutiveFailures.ShouldBe(3);
@@ -307,8 +308,12 @@ public class HerdrSupervisionBackoffTests
         var latch = DateTime.UtcNow.AddMinutes(-5);
         await db.AgentSupervisionStates.Where(s => s.AgentId == f.AgentId).ExecuteUpdateAsync(u => u
             .SetProperty(s => s.Suspended, true).SetProperty(s => s.LivenessLatchedAt, latch));
+        await db.Agents.Where(a => a.Id == f.AgentId).ExecuteUpdateAsync(u => u
+            .SetProperty(a => a.HerdrWorkspaceLabel, "PredictionMarkets").SetProperty(a => a.HerdrTabLabel, "Orch"));
+        f.Harness.Runner.PlacementCheck = _ => throw new ConflictException("preflight must not run", "pane_occupied");
         var before = await f.StateAsync();
         var ex = await Should.ThrowAsync<ConflictException>(() => f.StartAsync());
+        f.Harness.Runner.CheckCalls.Count.ShouldBe(0);
         ex.Code.ShouldBe(HerdrSupervisionStateService.HeldCode);
         ex.Message.ShouldContain("Herdr test");
         ex.Message.ShouldContain("3 of 3");
@@ -352,6 +357,7 @@ public class HerdrSupervisionBackoffTests
         state.LastHerdrObservedStartedAt.ShouldBe(previous.StartedAt);
         state.HerdrConsecutiveFailures.ShouldBe(0);
         await using var db = Db();
+        (await db.AgentIncidents.CountAsync(i => i.AgentId == f.AgentId && i.Kind == AgentIncidentKind.HerdrSupervisionRetried)).ShouldBe(0);
         (await db.AgentIncidents.CountAsync(i => i.AgentId == f.AgentId && i.Kind == AgentIncidentKind.HerdrSupervisionHeld)).ShouldBe(0);
         await f.TickAsync();
         (await f.StateAsync()).HerdrConsecutiveFailures.ShouldBe(0);
@@ -360,13 +366,56 @@ public class HerdrSupervisionBackoffTests
     [Test]
     public async Task Ten_minutes_of_observed_Running_resets_the_herdr_streak()
     {
-        await using var f = await Fixture.CreateAsync([new FakeAgentProtocolAdapter()]);
+        await using var f = await Fixture.CreateAsync([new FakeAgentProtocolAdapter(), new FakeAgentProtocolAdapter()]);
         await f.SeedTerminalAsync(HerdrSupervisionFailureKind.PaneClosed, streak: 1);
         await f.StartAsync();
         (await f.StateAsync()).HerdrConsecutiveFailures.ShouldBe(2);
         await f.TickAsync();
         f.Harness.Clock.Advance(TimeSpan.FromMinutes(9));
         await f.TickAsync();
+        (await f.StateAsync()).HerdrConsecutiveFailures.ShouldBe(2);
+        f.Harness.Clock.Advance(TimeSpan.FromMinutes(2));
+        await f.TickAsync();
+        (await f.StateAsync()).HerdrConsecutiveFailures.ShouldBe(0);
+        await f.ExitAsync(AgentExitReason.HerdrChildGone);
+        await f.StartAsync();
+        (await f.StateAsync()).HerdrHealthySince.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task Explicit_retry_holds_again_after_three_new_attempts()
+    {
+        await using var f = await Fixture.CreateAsync([new FakeAgentProtocolAdapter(), new FakeAgentProtocolAdapter(), new FakeAgentProtocolAdapter()]);
+        await f.SeedTerminalAsync(HerdrSupervisionFailureKind.DetectTimeout, held: true);
+        await f.StartAsync(new StartAgentRequest(ResetHerdrFailureHold: true));
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            await f.ExitAsync(AgentExitReason.HerdrChildGone);
+            await f.TickAsync();
+            (await f.StateAsync()).HerdrConsecutiveFailures.ShouldBe(attempt);
+            if (attempt < 3) await f.StartAsync();
+        }
+        (await f.StateAsync()).HerdrFailureHeldAt.ShouldNotBeNull();
+        await f.NoLaunchAsync();
+        await using var db = Db();
+        (await db.AgentIncidents.CountAsync(i => i.AgentId == f.AgentId && i.Kind == AgentIncidentKind.HerdrSupervisionRetried)).ShouldBe(1);
+        (await db.AgentIncidents.CountAsync(i => i.AgentId == f.AgentId && i.Kind == AgentIncidentKind.HerdrSupervisionHeld)).ShouldBe(1);
+    }
+
+    [Test]
+    public async Task Observed_Running_timestamp_survives_server_restart()
+    {
+        await using var f = await Fixture.CreateAsync([]);
+        await f.SeedTerminalAsync(null, streak: 2);
+        await using var db = Db();
+        await db.AgentSessions.Where(s => s.Cwd == f.Root).ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Running));
+        await f.TickAsync();
+        var first = (await f.StateAsync()).HerdrHealthySince;
+        await f.Harness.DisposeAsync();
+        f.Harness = AgentSupervisionTests.BuildHarness(f.Root, [], definitionKind: "ClaudeCode");
+        f.Harness.Clock.Advance(TimeSpan.FromMinutes(9));
+        await f.TickAsync();
+        (await f.StateAsync()).HerdrHealthySince.ShouldBe(first);
         (await f.StateAsync()).HerdrConsecutiveFailures.ShouldBe(2);
         f.Harness.Clock.Advance(TimeSpan.FromMinutes(2));
         await f.TickAsync();

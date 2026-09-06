@@ -418,6 +418,75 @@ screen-heuristic class as our own probes: disagreement is corroboration for a hu
 | Empty tabs accumulating | not ours — herdr auto-removes them | do not add a `tab.close` |
 | herdr agent is `<slug>-2` | another live agent (often the previous incarnation's pane) holds `<slug>`; nothing is stolen | look at `herdr agent list`; the Warning names the holder pane. Close or rename the holder if you want the unsuffixed name back on the next launch |
 
+### Supervision hold and explicit recovery (CARD-0388)
+
+Cardless, non-pool AlwaysOn Herdr agents pause after three consumed terminal failures in the
+PaneClosed / ChildGone / DetectTimeout family. `Supervision:HerdrFailureLimit` defaults to 3
+and accepts 1–10. The separate general restart/backoff counter keeps its existing semantics.
+The durable Herdr streak consumes each persisted `(sessionId, StartedAt)` once, after the launch
+queue releases the attempt. A typed NonQualifying terminal outcome resets the streak; null
+evidence, pre-row refusals and operator/policy exits do not count or reset it. Ten minutes of
+observed Running (the configured `HealthyUptimeResetMinutes`) resets an unheld streak. Starting
+time, a ready banner, and a successful enqueue are not healthy uptime.
+
+Attention and the agent badge show **Herdr retries paused**, the count and last typed cause.
+The hold survives restart, incident pruning, the Attention lookback, Stop/attach, backend changes,
+and turning AlwaysOn off. It issues no kill/close RPC and preserves the timeout shell and last-pane
+hint. It is separate from user suspension and the liveness latch. The hold is authoritative state;
+its Error incident is timeline history, not a new alert or chat publisher. A channel inbound for a
+held dead agent is dropped through existing drop reporting, with one `ChannelReplyLost` incident
+per hold episode (`FailureReason=HerdrSupervisionHeld`), without starting, rerouting, or posting a
+start notice. Read transcript-confirmed delivery evidence before assessing any other turn.
+
+Inspect the failed session and retained pane, repair the cause, then click **Retry and resume** or
+POST `/api/agents/{id}/start` with `{"resetHerdrFailureHold":true}` (optionally `"fresh":true`).
+An ordinary dead-agent Start returns 409 `herdr_supervision_held` before latch clearing,
+composition, model/provider checks, or named-placement preflight. Explicit retry consumes the old
+outcome, clears the Herdr hold/count/healthy timestamp, retains the dedupe pair, and records a
+timeline acknowledgement. This acknowledgement commits even if a subsequent normal guard refuses
+the launch. It bypasses no rules, quota, provider or placement guard. An already-live Start remains
+idempotent and does not acknowledge the hold, even with the flag. Three new qualifying failures
+hold again; automatic callers never supply the flag.
+
+The migration adds nullable typed evidence and hold state plus a zero-default counter; historical
+rows retain null evidence. A current unsafe Windows Grok rules request is distinguished by
+`grok_rules_argv_unsafe` before any pane RPC or session row; a detect failure has a pane and typed
+terminal evidence. The September 5 incident cannot be retrospectively attributed from its null
+evidence: its argv and process output were not captured. CARD-0388 does not provide multiline
+Grok rules transport (CARD-0395).
+
+### Standing-orchestrator ownership
+
+Declare one primary per **project/channel role**, with explicit full agent IDs and channel IDs.
+Keep its standby stopped and unbound unless a distinct active role is documented. Multiple
+AlwaysOn agents sharing a cwd remain supported; cwd, backend, display name, slug suffix, channel
+silence and pane position do not establish ownership. `ChatChannel.AgentId` is the routing record.
+
+1. Read agents, provider/external channel identities and bindings, active card/task responsibilities,
+   and session/transcript evidence. Record role, full agent ID/name, backend, channel IDs,
+   primary/standby and decision date in the owning project's tracked operations document. Put an
+   unresolved ownership choice on the card's decision revision/Attention, never in generated
+   `docs/cards/` files.
+2. Preserve the currently verified working channel owner while repairing the Herdr seat. The
+   historical fallback candidate was `PredictionMarkets-Orchestrator` (ID prefix `0c83e820`,
+   Grok/PtyHost); `PM-Orchestrator-Grok` (`2ee02f40-7b6d-48b1-96fc-c4344c651910`, Grok/Herdr)
+   was the standby candidate. These historical identities neither prove current bindings nor
+   authorize changing them. Resolve the full current IDs; do not recreate agents from this note.
+3. Before launch, deploy from the main checkout under the bootstrap procedure, apply the migration,
+   and verify the actual loaded server and CARD-0384 named-placement runner versions. Health alone
+   is insufficient. Configure the intended Herdr seat with workspace label `PredictionMarkets`
+   and tab label `Orch`; inspect token precedence and the resolved workspace. Keep the retained
+   timeout shell. Resolve any unsafe Grok rules refusal through CARD-0395 or a verified supported
+   configuration without dropping mandatory bundles or silently changing backend.
+4. Explicitly retry the repaired, unbound standby. Verify the actual Orch pane, no specialist split,
+   sustained Running through the health window, and transcript identity. Before any chosen channel
+   handover, settle outstanding work/replies, explicitly change the single binding, read it back,
+   and verify an authorized real inbound turn's UserPrompt and routed reply.
+5. Record the result and stop/unbind the previous owner after a handover. Otherwise retain the
+   working primary and document the repaired seat as standby. Stop alone is insufficient for a
+   channel-bound standby because inbound can start it again. No delete or cwd uniqueness rule is
+   needed. Code-stage verification sends no live channel messages and changes no live owner.
+
 ## 9. Deferred / out of scope
 
 S4b shipped display-only `pane.report_metadata` labels and client badges for herdr's existing

@@ -3,6 +3,7 @@ using Antiphon.Messaging.Client;
 using Antiphon.Messaging.Client.Testing;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -40,7 +41,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [Category("Integration")]
 [NotInParallel]
-public class HerdrAlwaysOnChannelParityTests
+public partial class HerdrAlwaysOnChannelParityTests
 {
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
 
@@ -593,7 +594,9 @@ public class HerdrAlwaysOnChannelParityTests
         SessionBackend backend,
         FakeHerdrServer? fake,
         IReadOnlyList<FakeAgentProtocolAdapter> ptyAdapters,
-        AgentKind launchKind = AgentKind.ClaudeCode)
+        AgentKind launchKind = AgentKind.ClaudeCode,
+        int launchDetectTimeoutMs = 60_000,
+        IProcessLivenessProbe? processLiveness = null)
     {
         var clock = new MutableTimeProvider(DateTimeOffset.UtcNow);
         var services = new ServiceCollection();
@@ -715,11 +718,12 @@ public class HerdrAlwaysOnChannelParityTests
             {
                 Enabled = true,
                 Session = fake.Session,
+                LaunchDetectTimeoutMs = launchDetectTimeoutMs,
             }));
             runner = new DirectSessionRunnerClient(
                 Path.Combine(tempRoot, "session-logs"),
                 herdrClient: herdrClient,
-                processLiveness: new FakeHerdrPowershellProbe());
+                processLiveness: processLiveness ?? new FakeHerdrPowershellProbe());
             services.AddSingleton<ISessionRunnerClient>(runner);
             services.AddSingleton<IAgentProtocolAdapterFactory>(sp =>
                 new AgentProtocolAdapterFactory(

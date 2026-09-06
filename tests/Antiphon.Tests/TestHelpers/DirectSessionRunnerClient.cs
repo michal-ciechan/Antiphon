@@ -27,6 +27,14 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
     /// CARD-0186 S4: production runner teardown detaches without killing. Tests that simulate a
     /// runner restart need that shape; the default still kills so a forgotten session cannot leak.
     /// </summary>
+    public Action? BeforeStart { get; set; }
+    public int KillCalls { get; private set; }
+
+    // Exercise the production replay/liveness verifier against FakeHerdrServer.
+    public HerdrEventPumpService CreateEventPump() => new(
+        _runtime, _herdrClient!, Options.Create(new HerdrSettings { Enabled = true }),
+        NullLogger<HerdrEventPumpService>.Instance);
+
     public bool KillOnDispose { get; set; } = true;
 
     /// <summary>CARD-0213: when false, GetCapabilitiesAsync omits herdr-attach (R3).</summary>
@@ -151,7 +159,16 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             Backend: SessionRunnerHttpClient.BackendWire(spec.Backend),
             Herdr: spec.Herdr);
 
-        return Map(await _runtime.StartAsync(request, ct));
+        BeforeStart?.Invoke();
+        try
+        {
+            return Map(await _runtime.StartAsync(request, ct));
+        }
+        catch (HerdrLaunchException ex)
+        {
+            // Match the real HTTP client's typed 409; prose alone is not failure evidence.
+            throw MapLaunch(ex);
+        }
     }
 
     public Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct)
@@ -300,8 +317,11 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
     public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) =>
         _runtime.ResizeAsync(sessionId, cols, rows, ct);
 
-    public async Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct) =>
-        Map(await _runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), ct));
+    public async Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct)
+    {
+        KillCalls++;
+        return Map(await _runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), ct));
+    }
 
     public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(
         [EnumeratorCancellation] CancellationToken ct)

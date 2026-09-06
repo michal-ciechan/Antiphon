@@ -232,6 +232,29 @@ public class SessionReconciliationServiceTests
     }
 
     [Test]
+    public async Task A_reconciler_close_after_the_runtime_stamped_DetectTimeout_keeps_it()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(marker, SessionStatus.Running, staleAgent: true);
+            await using var db = CreateContext();
+            // The launch catch and runner exit can publish in either order. Keep the row in the
+            // reconciliation scan's live set so this test exercises its actual evidence writer.
+            await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u => u
+                .SetProperty(s => s.HerdrSupervisionFailureKind, HerdrSupervisionFailureKind.DetectTimeout));
+            var runner = new FakeRunnerClient { Sessions = [new SessionRunnerSessionDto(sessionId, 4242, DateTime.UtcNow.AddHours(-1),
+                "Exited", null, AgentExitReason.HerdrPaneClosed, 10)] };
+            await BuildService(db, runner, new MockEventBus()).ScanAsync(CancellationToken.None);
+            await using var verify = CreateContext();
+            var row = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            row.Status.ShouldBe(SessionStatus.Failed);
+            row.HerdrSupervisionFailureKind.ShouldBe(HerdrSupervisionFailureKind.DetectTimeout);
+        }
+        finally { await CleanupAsync(marker); }
+    }
+
+    [Test]
     public async Task Starting_runner_Running_unowned_resumes_the_launch()
     {
         var marker = NewMarker();

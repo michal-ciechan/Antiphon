@@ -608,6 +608,9 @@ describe('AgentsPage', () => {
 
     await waitFor(() =>
       expect(createSpy).toHaveBeenCalledWith({
+        sessionBackend: 'PtyHost',
+        herdrWorkspaceLabel: null,
+        herdrTabLabel: null,
         name: 'Frontend Claude',
         workingDirectory: 'D:/src/app',
         details: 'UI work',
@@ -652,6 +655,9 @@ describe('AgentsPage', () => {
 
     await waitFor(() =>
       expect(createSpy).toHaveBeenCalledWith({
+        sessionBackend: 'PtyHost',
+        herdrWorkspaceLabel: null,
+        herdrTabLabel: null,
         name: 'Supervised Claude',
         workingDirectory: 'D:/src/app',
         details: null,
@@ -723,6 +729,9 @@ describe('AgentsPage', () => {
     )
     await waitFor(() =>
       expect(createSpy).toHaveBeenCalledWith({
+        sessionBackend: 'PtyHost',
+        herdrWorkspaceLabel: null,
+        herdrTabLabel: null,
         name: 'Frontend Agent',
         workingDirectory: 'D:/src/Antiphon/client',
         details: 'Owns React and Mantine UI work.',

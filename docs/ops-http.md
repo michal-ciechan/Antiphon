@@ -130,6 +130,19 @@ Invoke-RestMethod "$api/api/agents/$agentId/start" -Method Post -Headers $h `
   the persisted flag for this launch only. A start can refuse **409** `subscription_quota_low` or
   `model_disabled`; both are refusals, not warnings on a launch that happened.
 
+- **HERDR RETRY HOLD REQUIRES AN EXPLICIT ACKNOWLEDGEMENT (CARD-0388).** A held dead-agent
+  Start returns 409 `herdr_supervision_held` before other launch guards or named-placement
+  preflight. Read `supervision.herdrConsecutiveFailures`, `herdrFailureHeldAt` and
+  `lastHerdrFailureKind` on the agent; Attention remains until acknowledged, even after incident
+  pruning or AlwaysOn off. After inspecting and repairing the cause, POST the same start route
+  with `{"resetHerdrFailureHold":true}`; `fresh:true` is optional. The UI's **Retry and resume**
+  sends this flag. Acknowledgement commits before normal validation, so a later model, rules,
+  provider or placement refusal can leave the hold cleared without launching. A live Start is
+  idempotent and preserves the hold even with the flag. Stop, attach and automatic callers do
+  not clear it. The hold neither kills panes nor reroutes channel input; held inbound uses existing
+  drop reporting without a chat notice. See [Herdr supervision and standing ownership](herdr-sessions.md#supervision-hold-and-explicit-recovery-card-0388)
+  before repairing or handing over a channel-bound seat.
+
 - **STOP IS THE NAMED-AGENT KILL, AND IT SUSPENDS SUPERVISION.** `POST /api/agents/{id}/stop` kills
   the live session and, on an `alwaysOn` agent, suspends its supervision until a manual start —
   deliberate, so restart supervision never fights a human. An always-on agent that "won't come back"

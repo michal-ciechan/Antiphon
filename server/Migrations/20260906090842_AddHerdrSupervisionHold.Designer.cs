@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Antiphon.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260906082207_AddHerdrSupervisionHold")]
+    [Migration("20260906090842_AddHerdrSupervisionHold")]
     partial class AddHerdrSupervisionHold
     {
         /// <inheritdoc />
@@ -62,6 +62,14 @@ namespace Antiphon.Server.Migrations
                         .IsRequired()
                         .HasMaxLength(4000)
                         .HasColumnType("character varying(4000)");
+
+                    b.Property<string>("HerdrTabLabel")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("HerdrWorkspaceLabel")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
 
                     b.Property<bool>("IsPoolDelegate")
                         .HasColumnType("boolean");
