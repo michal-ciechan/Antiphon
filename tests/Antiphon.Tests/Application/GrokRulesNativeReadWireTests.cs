@@ -22,7 +22,7 @@ public sealed class GrokRulesNativeReadWireTests
 {
     [Test]
     [Timeout(180_000)]
-    public async Task Calibrate_native_read_schema_and_capture_actual_tool_output(CancellationToken ct)
+    public async Task Native_continuation_reads_cover_all_1105_rules_lines(CancellationToken ct)
     {
         if (!OperatingSystem.IsWindows() || Environment.GetEnvironmentVariable(RealCliStubGate.EnvFlag) != "1")
             throw new TUnit.Core.Exceptions.SkipTestException("Windows and ANTIPHON_REAL_CLI_STUB_TESTS=1 required");
@@ -48,7 +48,11 @@ public sealed class GrokRulesNativeReadWireTests
             if (!node.TryGetProperty("tools", out var tools) || tools.GetArrayLength() <= 1 || !request.Contains(nonce))
                 return new ScriptedTextTurn("neutral title");
             File.WriteAllText(Path.Combine(root, $"user-request-{++calls:D3}.json"), request);
-            if (node.GetProperty("input").EnumerateArray().Any(i => i.TryGetProperty("type", out var t) && t.GetString() == "function_call_output"))
+            var outputs = node.GetProperty("input").EnumerateArray()
+                .Where(i => i.TryGetProperty("type", out var t) && t.GetString() == "function_call_output").ToList();
+            if (outputs.Count == 1)
+                return new ScriptedFunctionCall("read_file", JsonSerializer.Serialize(new { target_file = receipt.Path, offset = 1001, limit = 1000 }), "card0395-read-2");
+            if (outputs.Count >= 2)
                 return new ScriptedTextTurn("NATIVE-READ-CALIBRATION-COMPLETE");
             return new ScriptedFunctionCall("read_file", JsonSerializer.Serialize(new { target_file = receipt.Path, limit = 1000 }), "card0395-read-1");
         });
@@ -81,7 +85,15 @@ public sealed class GrokRulesNativeReadWireTests
         await File.WriteAllTextAsync(Path.Combine(root, "manifest.json"), JsonSerializer.Serialize(new {
             started, ended = DateTimeOffset.UtcNow, elapsedSeconds = elapsed.Elapsed.TotalSeconds, process.ExitCode,
             sessionId, receipt, nativeUserRequests = calls, requests = stub.Requests.All.Select(r => new { r.Method, r.Path, bodyLength = r.Body.Length }), acceptance = "calibration only" }));
-        calls.ShouldBeGreaterThanOrEqualTo(2, root);
+        var toolOutputs = string.Join("\n", Directory.EnumerateFiles(root, "user-request-*.json").SelectMany(path => {
+            using var json = JsonDocument.Parse(File.ReadAllText(path));
+            return json.RootElement.GetProperty("input").EnumerateArray()
+                .Where(i => i.TryGetProperty("type", out var t) && t.GetString() == "function_call_output")
+                .Select(i => i.GetProperty("output").GetString()).ToArray();
+        }));
+        foreach (var line in body.Split("\r\n"))
+            toolOutputs.ShouldContain(line, customMessage: "Every line including the tail beyond the native default must be read");
+        calls.ShouldBeGreaterThanOrEqualTo(3, root);
         stub.Requests.All.Any(r => r.Method == "GET" && r.Path == "/api-key"
             && r.Headers.TryGetValue("Authorization", out var auth) && auth.Contains("Bearer " + synthetic)).ShouldBeTrue();
         process.ExitCode.ShouldBe(0, root);

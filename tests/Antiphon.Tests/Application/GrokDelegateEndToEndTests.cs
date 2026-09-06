@@ -689,13 +689,14 @@ public class GrokDelegateEndToEndTests
 
     // ---- harness -------------------------------------------------------------------------------
 
-    private static Harness BuildHarness(
+    internal static Harness BuildHarness(
         string workspacePath,
         string grokHome,
         string grokExe,
         string? claudeExe = null,
         Action<DelegationSettings>? configure = null,
-        bool fakeReportLine = true)
+        bool fakeReportLine = true,
+        Dictionary<string, string>? grokEnvironment = null)
     {
         var sessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-e2e-runner-{Guid.NewGuid():N}");
         var runner = new RecordingRunnerClient(new DirectSessionRunnerClient(sessionLogPath, ptyBackend: ModernBackend));
@@ -757,7 +758,7 @@ public class GrokDelegateEndToEndTests
                 ArgsTemplate = ["--always-approve", "--no-alt-screen"],
                 // Where fakegrok writes its session files, and — the same value, read off the launch
                 // env — where the runner's GrokTranscriptTailer looks for updates.jsonl.
-                Env = GrokLaunchEnv(grokHome, fakeReportLine),
+                Env = grokEnvironment ?? GrokLaunchEnv(grokHome, fakeReportLine),
             };
         });
         services.AddSingleton<AgentRegistry>();
@@ -799,7 +800,7 @@ public class GrokDelegateEndToEndTests
             workspacePath);
     }
 
-    private sealed record Harness(
+    internal sealed record Harness(
         ServiceProvider Provider,
         RecordingRunnerClient Runner,
         AgentSessionLaunchQueue LaunchQueue,
@@ -818,7 +819,7 @@ public class GrokDelegateEndToEndTests
     /// the same persistence the pump's reconnect path uses — and, because it is the real thing,
     /// carries the turn-boundary flush that settles the task with nothing in the test calling it.
     /// </summary>
-    private static async Task PumpTranscriptAsync(IServiceProvider provider, Guid sessionId, CancellationToken ct)
+    internal static async Task PumpTranscriptAsync(IServiceProvider provider, Guid sessionId, CancellationToken ct)
     {
         var runtime = provider.GetRequiredService<AgentSessionRuntime>();
         while (!ct.IsCancellationRequested)
@@ -831,7 +832,7 @@ public class GrokDelegateEndToEndTests
         }
     }
 
-    private static async Task WaitUntilAsync(
+    internal static async Task WaitUntilAsync(
         Func<Task<bool>> condition, TimeSpan timeout, Func<Task<string>> failure)
     {
         var deadline = DateTime.UtcNow + timeout;
