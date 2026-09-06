@@ -60,6 +60,14 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("character varying(4000)");
 
+                    b.Property<string>("HerdrTabLabel")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("HerdrWorkspaceLabel")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
                     b.Property<bool>("IsPoolDelegate")
                         .HasColumnType("boolean");
 

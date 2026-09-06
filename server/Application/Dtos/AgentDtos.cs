@@ -70,7 +70,10 @@ public sealed record AgentSummaryDto(
     AgentKind Kind = AgentKind.ClaudeCode,
     // CARD-0334 S1. Bundle keys and instruction-file paths that have drifted from the live
     // session's recorded stamps. BundlesOutOfDate is Bundles.Count > 0 for compatibility.
-    PolicyDrift? PolicyDrift = null);
+    PolicyDrift? PolicyDrift = null,
+    // CARD-0384: optional herdr placement labels. Null = unpinned / project default.
+    string? HerdrWorkspaceLabel = null,
+    string? HerdrTabLabel = null);
 
 public sealed record AgentDetailDto(
     Guid Id,
@@ -126,7 +129,10 @@ public sealed record AgentDetailDto(
     // CARD-0139. See AgentSummaryDto.Kind.
     AgentKind Kind = AgentKind.ClaudeCode,
     // CARD-0334 S1. See AgentSummaryDto.PolicyDrift.
-    PolicyDrift? PolicyDrift = null);
+    PolicyDrift? PolicyDrift = null,
+    // CARD-0384: optional herdr placement labels. Null = unpinned / project default.
+    string? HerdrWorkspaceLabel = null,
+    string? HerdrTabLabel = null);
 
 /// <summary>
 /// What of a live session's standing instructions the repo has moved past (CARD-0334).
@@ -302,7 +308,10 @@ public sealed record CreateAgentRequest(
     IReadOnlyList<string>? BundleKeys = null,
     string? SystemPromptAppend = null,
     // CARD-0255. Null = bare create. Applied only here; never stored, never re-asserted on PATCH.
-    string? Preset = null);
+    string? Preset = null,
+    // CARD-0384. Null/blank = default (unpinned). Trimmed; control characters / length > 256 are 422.
+    string? HerdrWorkspaceLabel = null,
+    string? HerdrTabLabel = null);
 
 public sealed record DraftAgentRequest(string Description);
 
@@ -366,7 +375,10 @@ public sealed record UpdateAgentRequest(
     // as a value only for an agent with no profile at all, and never for a pool delegate.
     AgentKind? Kind = null,
     // CARD-0334 S3. Null = leave unchanged (an older caller must not reset a chosen mode to Auto).
-    PolicyRefreshMode? PolicyRefreshMode = null);
+    PolicyRefreshMode? PolicyRefreshMode = null,
+    // CARD-0384. Null = leave unchanged; empty/whitespace = clear. Same contract as SystemPromptAppend.
+    string? HerdrWorkspaceLabel = null,
+    string? HerdrTabLabel = null);
 
 /// <summary>CARD-0334 S3. Body of <c>POST /api/agents/{id}/refresh-policy</c>.</summary>
 public sealed record RefreshPolicyRequest(bool Force = false);

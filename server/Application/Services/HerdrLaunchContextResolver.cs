@@ -42,6 +42,7 @@ public sealed class HerdrLaunchContextResolver
         string paneTitle,
         CancellationToken ct)
     {
+        HerdrLaunchOptions options;
         // Card-owned session: the card's board names the project.
         if (session.CardId is Guid cardId)
         {
@@ -49,8 +50,8 @@ public sealed class HerdrLaunchContextResolver
                 .Where(c => c.Id == cardId)
                 .Select(c => c.Board.Project)
                 .FirstOrDefaultAsync(ct);
-            if (project is not null)
-                return FromProject(project, paneTitle);
+            options = project is not null ? FromProject(project, paneTitle) : CatchAll(paneTitle);
+            return ApplyStandingOverrides(session, agent, options);
         }
 
         // Standing / pool agent: board → project, else pool project scope.
@@ -63,7 +64,7 @@ public sealed class HerdrLaunchContextResolver
                     .Select(b => b.Project)
                     .FirstOrDefaultAsync(ct);
                 if (project is not null)
-                    return FromProject(project, paneTitle);
+                    return ApplyStandingOverrides(session, agent, FromProject(project, paneTitle));
             }
 
             if (agent.PoolProjectId is Guid poolProjectId)
@@ -71,11 +72,31 @@ public sealed class HerdrLaunchContextResolver
                 var project = await _db.Projects.AsNoTracking()
                     .FirstOrDefaultAsync(p => p.Id == poolProjectId, ct);
                 if (project is not null)
-                    return FromProject(project, paneTitle);
+                    return ApplyStandingOverrides(session, agent, FromProject(project, paneTitle));
             }
         }
 
-        return CatchAll(paneTitle);
+        return ApplyStandingOverrides(session, agent, CatchAll(paneTitle));
+    }
+
+    /// <summary>
+    /// CARD-0384: standing cardless non-pool agents may override the workspace fallback/create
+    /// label and carry a tab pin. The workspace key is never changed. Card-spawn and pool
+    /// delegates keep project/allocator placement.
+    /// </summary>
+    internal static HerdrLaunchOptions ApplyStandingOverrides(
+        AgentSession session, Agent? agent, HerdrLaunchOptions options)
+    {
+        if (session.CardId is not null || agent is null || agent.IsPoolDelegate)
+            return options;
+
+        var workspaceLabel = string.IsNullOrWhiteSpace(agent.HerdrWorkspaceLabel)
+            ? options.WorkspaceLabel
+            : agent.HerdrWorkspaceLabel.Trim();
+        var tabLabel = string.IsNullOrWhiteSpace(agent.HerdrTabLabel)
+            ? null
+            : agent.HerdrTabLabel.Trim();
+        return options with { WorkspaceLabel = workspaceLabel, TabLabel = tabLabel };
     }
 
     private static HerdrLaunchOptions FromProject(Project project, string paneTitle) =>

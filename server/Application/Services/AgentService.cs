@@ -499,6 +499,8 @@ public sealed class AgentService
                 AutoCompactEnabled = request.AutoCompactEnabled,
                 AutoCompactIdleMinutes = request.AutoCompactIdleMinutes,
                 AutoCompactContextPercent = request.AutoCompactContextPercent,
+                HerdrWorkspaceLabel = NormalizeHerdrLabel(request.HerdrWorkspaceLabel, nameof(request.HerdrWorkspaceLabel)),
+                HerdrTabLabel = NormalizeHerdrLabel(request.HerdrTabLabel, nameof(request.HerdrTabLabel)),
                 BoardId = board.Id,
                 CreatedAt = now,
                 UpdatedAt = now
@@ -640,6 +642,10 @@ public sealed class AgentService
             await ApplyKindAssertOrSetAsync(agent, requestedKind, ct);
         if (request.PolicyRefreshMode is { } policyRefreshMode)
             agent.PolicyRefreshMode = policyRefreshMode;
+        if (request.HerdrWorkspaceLabel is not null)
+            agent.HerdrWorkspaceLabel = NormalizeHerdrLabel(request.HerdrWorkspaceLabel, nameof(request.HerdrWorkspaceLabel));
+        if (request.HerdrTabLabel is not null)
+            agent.HerdrTabLabel = NormalizeHerdrLabel(request.HerdrTabLabel, nameof(request.HerdrTabLabel));
         agent.UpdatedAt = UtcNow();
 
         await SaveChangesOrConflictAsync($"Agent '{agent.Name}' was modified by another operation.", ct);
@@ -1128,7 +1134,9 @@ public sealed class AgentService
             agent.AutoCompactContextPercent,
             AgentLaunchEnv.Parse(agent.LaunchEnvJson),
             agent.Kind,
-            policyDrift);
+            policyDrift,
+            agent.HerdrWorkspaceLabel,
+            agent.HerdrTabLabel);
     }
 
     private async Task<Dictionary<Guid, DateTime>> LoadLastRefreshedAtAsync(
@@ -1214,7 +1222,9 @@ public sealed class AgentService
             agent.AutoCompactContextPercent,
             AgentLaunchEnv.Parse(agent.LaunchEnvJson),
             agent.Kind,
-            drift);
+            drift,
+            agent.HerdrWorkspaceLabel,
+            agent.HerdrTabLabel);
     }
 
     private static (AgentTuiConfiguredSelectionDto? Configured, AgentTuiLiveSessionSelectionDto? Live)
@@ -1481,6 +1491,25 @@ public sealed class AgentService
     /// any future unmapped kind) are refused by name. AlwaysOn and channel-bound refusals were
     /// lifted (CARD-0186). Refusal, never silent remap.
     /// </summary>
+    internal static string? NormalizeHerdrLabel(string? value, string field)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        var trimmed = value.Trim();
+        if (trimmed.Length > Agent.HerdrLabelMaxLength)
+        {
+            throw new ValidationException(
+                field,
+                $"Must be at most {Agent.HerdrLabelMaxLength} characters.");
+        }
+
+        if (trimmed.Any(char.IsControl))
+            throw new ValidationException(field, "Must not contain control characters.");
+
+        return trimmed;
+    }
+
     internal static void ValidateSessionBackendPairing(SessionBackend backend, AgentKind kind)
     {
         if (backend != SessionBackend.Herdr)
