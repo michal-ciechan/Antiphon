@@ -498,6 +498,7 @@ list/detail never include the raw token; issue/rotate return it once for `script
 `ChannelEndpoints.cs`
 
 ```
+GET    /api/channels/consumer                effective inbound consumer identity (group/topic/enabled/broker host-port allowlist)
 GET    /api/channels                         the catalog (rows appear on first inbound message)
 PATCH  /api/channels/{id}                    bind/unbind an agent, preamble, enable/disable
 POST   /api/channels/{id}/send               proactive send — {"text": "..."}

@@ -59,3 +59,17 @@ Third-party / custom providers implement `IChannelAdapter` and host it with
 `AddAntiphonGateway` — copy [`samples/EchoGateway`](../samples/EchoGateway) and
 follow [`docs/messaging/build-your-own-gateway.md`](messaging/build-your-own-gateway.md).
 The wire contract is [`docs/messaging/contract/v1/CONTRACT.md`](messaging/contract/v1/CONTRACT.md).
+
+## Consumer identity and monitored deployments (CARD-0410)
+
+The Service profile defaults both `Kafka__AntiphonConsumerGroup` and
+`Kafka__ExpectedAntiphonConsumerGroup` to `antiphon-server-bridge`. Custom applications
+must supply their own matching inbound group for both values, or set
+`Kafka__InboundUnconsumedMonitorEnabled=false`. Do not rename the outbound
+`Kafka__ConsumerGroup` or the inbox group. Service enforces the expected-group requirement
+in code after configuration binding; an environment variable cannot turn that guard off.
+
+Use `/health/inbound-unconsumed` for monitoring readiness, and `/health` for process
+liveness. Unknown offsets suppress customer notices while ingress and outbound delivery
+continue. See [Telegram monitor semantics](telegram.md#inbound-lag-notices-and-monitor-readiness-card-0410)
+and [deployment operations](telegram-bot-ops.md#consumer-group-deployment-verification-card-0410).
