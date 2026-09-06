@@ -185,6 +185,10 @@ app.MapPost("/sessions", async (
     {
         return Results.BadRequest(new { error = ex.Message });
     }
+    catch (GrokRulesLaunchException ex)
+    {
+        return GrokRulesProblemMapper.Map(ex);
+    }
     catch (HerdrLaunchException ex)
     {
         return HerdrProblemMapper.MapLaunch(ex);

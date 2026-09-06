@@ -18,20 +18,20 @@ namespace Antiphon.SessionRunner.Tests;
 public class HerdrLaunchShapeTests
 {
     [Test]
-    public void Script_content_doubles_single_quotes_is_BOM_and_preserves_newline_args()
+    public void Script_content_doubles_single_quotes_is_BOM_and_preserves_newline_args_for_generic_arguments()
     {
         var newlineArg = "line one\nline two with 'sq' and \"dq\" and $5 and `tick`";
         var content = HerdrLaunchScript.BuildContent(
-            @"C:\tools\it's\grok.exe",
-            ["--no-alt-screen", "--rules", newlineArg, "--session-id", "abc"]);
+            @"C:\tools\it's\tool.exe",
+            ["--no-alt-screen", "--note", newlineArg, "--session-id", "abc"]);
 
         content.ShouldBe(
-            "& 'C:\\tools\\it''s\\grok.exe' @('--no-alt-screen', '--rules', 'line one\nline two with ''sq'' and \"dq\" and $5 and `tick`', '--session-id', 'abc')");
+            "& 'C:\\tools\\it''s\\tool.exe' @('--no-alt-screen', '--note', 'line one\nline two with ''sq'' and \"dq\" and $5 and `tick`', '--session-id', 'abc')");
 
         var tmp = Path.Combine(Path.GetTempPath(), $"herdr-launch-quote-{Guid.NewGuid():N}.launch.ps1");
         try
         {
-            HerdrLaunchScript.Write(tmp, @"C:\tools\it's\grok.exe", ["--rules", newlineArg]);
+            HerdrLaunchScript.Write(tmp, @"C:\tools\it's\tool.exe", ["--note", newlineArg]);
             var bytes = File.ReadAllBytes(tmp);
             var bom = Encoding.UTF8.GetPreamble();
             bytes.Length.ShouldBeGreaterThan(bom.Length);
