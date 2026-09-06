@@ -1,4 +1,6 @@
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -73,4 +75,65 @@ public static class GrokLaunchArgs
     private static bool IsGrok45(string? modelId) =>
         !string.IsNullOrWhiteSpace(modelId)
         && modelId.Trim().Equals("grok-4.5", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// CARD-0382: refuse a composed Grok <c>--rules</c> payload that Windows argv cannot carry.
+    /// Maps a policy violation to <see cref="ConflictException"/> with
+    /// <see cref="GrokRulesArgvPolicy.ProblemCode"/>. No configuration escape hatch.
+    /// </summary>
+    public static void EnsureWindowsRulesPayload(string payload, string subject)
+    {
+        var violation = GrokRulesArgvPolicy.ValidatePayload(
+            payload, OperatingSystem.IsWindows(), isGrok: true);
+        if (violation is not null)
+            throw ToConflict(violation, subject);
+    }
+
+    /// <summary>
+    /// CARD-0382: scan the fully resolved argv (after identity overlays). On the Herdr backend,
+    /// whole-argument <c>$env:NAME</c> tokens are expanded with <see cref="DollarEnvArg"/> before
+    /// scanning so a multiline env value cannot bypass the guard. PtyHost does not expand.
+    /// </summary>
+    public static void EnsureWindowsRulesArgv(
+        IReadOnlyList<string> args,
+        AgentKind kind,
+        SessionBackend backend,
+        IReadOnlyDictionary<string, string>? env,
+        string subject)
+    {
+        var isGrok = kind == AgentKind.Grok;
+        var isWindows = OperatingSystem.IsWindows();
+        IReadOnlyList<string> effective = args;
+        IReadOnlyList<string?>? tokenNames = null;
+        if (backend == SessionBackend.Herdr && args.Count > 0)
+        {
+            env ??= new Dictionary<string, string>();
+            var expanded = new string[args.Count];
+            var names = new string?[args.Count];
+            for (var i = 0; i < args.Count; i++)
+            {
+                var original = args[i] ?? "";
+                if (DollarEnvArg.TryResolve(original, env, out var resolved))
+                {
+                    expanded[i] = resolved;
+                    DollarEnvArg.TryReadName(original, out var name);
+                    names[i] = name;
+                }
+                else
+                {
+                    expanded[i] = original;
+                }
+            }
+
+            effective = expanded;
+            tokenNames = names;
+        }
+
+        var violation = GrokRulesArgvPolicy.ValidateArgv(effective, isWindows, isGrok, tokenNames);
+        if (violation is not null)
+            throw ToConflict(violation, subject);
+    }
+
+    private static ConflictException ToConflict(GrokRulesArgvViolation violation, string subject) =>
+        new($"{subject}: {GrokRulesArgvPolicy.Format(violation)}", GrokRulesArgvPolicy.ProblemCode);
 }
