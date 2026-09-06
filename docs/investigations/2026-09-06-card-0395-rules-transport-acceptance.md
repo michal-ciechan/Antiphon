@@ -1,10 +1,12 @@
 # CARD-0395 implementation and incomplete acceptance
 
-Status: **incomplete; do not land or close CARD-0395**. The initial file transport and acknowledgement
-barrier work through FakeGrok, including restored Windows delegate E2Es. The complete verification
-contract has not been executed. Real-model compliance, native wire dispatch acceptance, and both
-two-auto-compaction endurance arms were not attempted. No auth/quota failure is claimed, no native
-compact identity or elapsed live measurement exists, and no live acceptance gate is passed.
+Status: **incomplete; do not land or close CARD-0395**. Real CLI/PtyHost/script wire
+acceptance and four continuation positive controls passed; a standalone real-model prerequisite
+read all canaries successfully. The first mapped live launch read/acknowledged rules and read
+the full brief, but failed to settle within its declared work window. Three automatic-compaction
+calibrations produced no boundary; a separately recorded 1% threshold attempt is pending.
+Neither endurance arm has run. No native compact identity
+or endurance elapsed measurement exists yet. Authentication works; no auth blocker is claimed.
 
 Continuation worktree: `C:\Antiphon\worktrees\card-task-c7ff2da0`.
 Continuation branch: `feat/card-task-c7ff2da0-verification`, starting at the complete
@@ -154,7 +156,7 @@ cannot satisfy those gates. Live gates are unrun, not skipped/passed.
 | V-7c | Passed: exact named task-only boot-stall/retry E2E; zero skips. |
 | V-8a | Partial: implemented real CLI/PtyHost/script/HTTP-relay/service-graph wire test passed 1/1; see corrected checkpoint. Full evidence schema and PCs remain. |
 | V-8b | Unrun; acceptance harness not implemented. |
-| V-8c | Unrun; acceptance harness not implemented. |
+| V-8c | Authenticated mapped-Program harness implemented; first run stopped at registry env-classification validation before launch. Corrected rerun pending. Standalone live prerequisite passed, but is not this gate. |
 | V-8d | Unrun; acceptance harness not implemented. |
 | V-9a | Unrun; zero real compactions, zero live elapsed/retention measurements. |
 | V-9b | Unrun; zero real compactions, zero live elapsed/retention measurements. |
@@ -391,3 +393,59 @@ PC-30 changes the evidence presented to the checker only; the real provider redi
 
 Updated continuation archive SHA-256: `712f2cd899273192676bf2aafa62eea513c0d0005a0dbbab3c13bd6d9d48ff7b`.
 PC-31 and both live endurance arms remain open; zero genuine auto-compactions have been observed so far.
+
+### New harness attempts in progress
+
+`GrokRulesAutoCompactionCalibrationTests.Native_auto_compaction_emits_its_own_ACP_boundary`:
+first run **1 failed**, zero skips, 26.565 s TUnit / 4.210 s native process. It observed seven
+user requests but zero automatic boundaries. The native read tool refused the requested 2,000-line
+range: **26,648 tokens exceeds maximum 25,000 tokens**. No usage counters were inflated; this
+failed workload is not compaction evidence. The next attempt uses native 1,000-line ranges.
+The installed 1.0.13's extracted `docs/user-guide/26-config-reference.md` confirms
+`session.auto_compact_threshold_percent`; the disposable config sets it to 5. Upstream resolution
+was cross-checked at `72a61251fcffb464bcc687aeb5a998e5a98ec0c9`,
+`crates/codegen/xai-grok-shell/src/util/config/resolve/compaction.rs`.
+
+`GrokRulesLiveMappedDispatchTests.Live_model_delegate_obeys_file_only_rules_and_consumes_full_brief`:
+first run **1 failed**, zero skips, 27.394 s TUnit. Actual failure is
+`OptionsValidationException: Agents:Definitions:grok:Env entry 'GROK_HOME' is not explicitly
+classified and is not recognizably secret` (also auth-path, updater and telemetry names).
+This occurred before any model launch; the test definition now classifies those nonsecret names.
+No production registry/profile configuration was changed. The corrected run is pending.
+
+### Failed mapped-live and calibration attempts, continuation checkpoint
+
+Mapped attempt 2 failed before dispatch: **1 failed / 0 skips**, 32.443 s TUnit,
+`ObjectDisposedException: IServiceProvider`; its test database context outlived the options
+scope. The factory now builds each context directly from its isolated connection string.
+Attempt 3 reached the actual mapped route and native authenticated model: **1 failed / 0 skips**,
+243.357 s TUnit, **217.584 s** measured body, task `ebd9ca55-397a-4c9c-9a15-f1c59087ac54`,
+native/Antiphon session `f1351c77-92e6-4293-b979-11b15e11cbdf`.
+Actual assertion: `ShouldAssertException: ...a003fb209b3b4550a2780d50d70d8995: Dispatched`.
+The native transcript shows full 58-line rules read, matching standalone acknowledgement,
+then full 192-line spilled brief read. It ends at that completed tool result; no final marked
+report arrived in the predeclared three-minute work wait. This is a failed V-8c attempt,
+not evidence of model compliance or an authentication refusal. Failure diagnostics now also
+save the runner screen and queue state for the next same-window rerun.
+
+Calibration attempt 2: **1 failed / 0 skips**, 27.242 s TUnit, 4.810 s native; asking for
+1,000-line ranges still hit the file's 26,648-token native limit. Attempt 3 uses five separate
+500-line files (53,498-byte body each), and the native requests grow to 317,411 bytes through
+real tool output. **1 failed / 0 skips**, 25.021 s TUnit, **4.108 s** native, six user requests,
+zero automatic boundaries; native session `ab471d74-9cf3-467a-813e-e24a0b4bddd2`.
+The fixture model advertises a 256,000-token context and its standard usage stays at 10 input /
+5 output. The CLI estimates new tool output after that count; five percent is too high for each
+individual output estimate. Attempt 4 is separately declared at the supported **1%** setting,
+with the same real tools and unmodified fixture usage. It is pending, not a success claim.
+
+Regression sweep is running sequentially. Initial failures: `DelegateLaunchArgvIntegrityTests`
+**4 passed / 2 failed**, and `CardSpawnModelArgumentTests` **13 passed / 1 failed**. Both assert
+the superseded blanket CARD-0382 multiline refusal. The launch matrix now checks typed content
+and absence from argv; the card negative case targets unsafe inline profile rules, while the
+existing multiline file/barrier case remains. Corrected reruns are pending. Shared argv policy
+has not changed.
+
+Dedicated Herdr server `card0395-c7ff2da0`, version 0.8.2/protocol 20, was started and checked;
+no pane has been launched yet. Availability alone does not satisfy V-8b/d.
+Continuation evidence ZIP checkpoint SHA-256:
+`2aa7cf3e79a55edefdf95f8e0a3bb0ec51ec00150e2b367dfb001797b8ad9257`.
