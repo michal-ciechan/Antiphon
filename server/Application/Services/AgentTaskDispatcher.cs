@@ -3016,6 +3016,8 @@ public sealed class AgentTaskDispatcher
                 $"task {DelegationReportFormatter.Short(claimed.Id)} on agent '{agent.Name}'",
                 ct);
         }
+        GrokLaunchArgs.EnsureWindowsRulesArgv(spec.Args, session.AgentKind, session.SessionBackend,
+            spec.Env, $"Session {session.Id}");
         _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, spec, remoteControlName: null, notes: null);
         await MaybeWarnOrchestratorWorkspaceAsync(claimed, agent, session.Id, ct);
 

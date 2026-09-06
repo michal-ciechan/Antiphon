@@ -31,8 +31,9 @@ public sealed class GrokRulesCompactionAcceptanceTests
     private static async Task RunAsync(bool fileArm, CancellationToken outer)
     {
         if (!OperatingSystem.IsWindows() || Environment.GetEnvironmentVariable("ANTIPHON_HEADED_TESTS") != "1"
-            || Environment.GetEnvironmentVariable("ANTIPHON_GROK_RULES_LIVE_TESTS") != "1")
-            throw new SkipTestException("Explicit live Grok and headed opt-ins required");
+            || Environment.GetEnvironmentVariable("ANTIPHON_GROK_RULES_LIVE_TESTS") != "1"
+            || Environment.GetEnvironmentVariable("ANTIPHON_GROK_RULES_ENDURANCE_TESTS") != "1")
+            throw new SkipTestException("Endurance belongs to the operator's follow-up card; separate endurance, live and headed opt-ins required");
         // Predeclared ceiling applies to the complete arm, including setup and native resume.
         using var ceiling = CancellationTokenSource.CreateLinkedTokenSource(outer);
         ceiling.CancelAfter(TimeSpan.FromMinutes(120)); var ct = ceiling.Token;
@@ -209,7 +210,8 @@ public sealed class GrokRulesCompactionAcceptanceTests
                     var agent = await db.Agents.SingleAsync(a => a.Id == agentId, ct); agent.PersistentSessionId.ShouldBe(sessionId.ToString("D"));
                     var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId, ct); session.GrokRulesState.ShouldBe(GrokRulesState.Ready);
                     var receipt = GrokRulesRefreshService.Receipt(session).ShouldNotBeNull(); receipt.Path.ShouldBe(initialReceipt.Path); receipt.Sha256.ShouldNotBe(previousHash); receipt.Generation.ShouldNotBe(initialReceipt.Generation);
-                    var refresh = await db.SessionQueuedMessages.Where(m => m.AgentSessionId == sessionId && m.RulesRefreshKey != null && m.RulesReceiptJson != null && m.RulesReceiptJson.Contains(receipt.Generation.ToString())).OrderByDescending(m => m.CreatedAt).FirstAsync(ct);
+                    var launchKey = $"launch:{receipt.Generation:N}";
+                    var refresh = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == sessionId && m.RulesRefreshKey == launchKey, ct);
                     refresh.RulesAcknowledgedAt.ShouldNotBeNull(); AssertFullRead(home, refresh.Id, await File.ReadAllTextAsync(receipt.Path, ct));
                     await File.WriteAllTextAsync(Path.Combine(root, "resumed-receipt.json"), JsonSerializer.Serialize(receipt), ct);
                 }

@@ -10,7 +10,7 @@ The JSON combines the unchanged saved manifest, separately generated expected-an
 and five actual checkpoint rows. Native ACP SHA-256:
 `001e3e88cc70840de3512da053535b734659f1982b228d89fc5e198601fe77ad`.
 JSON fixture SHA-256 before any positive-control mutation:
-`bd016ff036921c144d1927403f6e962b491dc3f89865fc640c3ebcbf942a5786`.
+`a81f5df225a8d76f9ca316df5febe7f9009006348aadf04e30821712181d2f1e` (LF checkout form).
 Full public native evidence is retained in the CARD-0395 continuation evidence archive.
 
 The baseline has no rules-file receipt or refresh. Its checkpoint names ending `after-refresh`
