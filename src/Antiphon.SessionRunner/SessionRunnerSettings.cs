@@ -2,6 +2,7 @@ namespace Antiphon.SessionRunner;
 
 public sealed class SessionRunnerSettings
 {
+    public global::Antiphon.SessionRunner.Contracts.GrokRulesSettings GrokRules { get; set; } = new();
     public string SessionLogPath { get; set; } = Path.Combine("workspace", "session-runner-logs");
     public int ReplayBufferMaxChars { get; set; } = 256 * 1024;
 

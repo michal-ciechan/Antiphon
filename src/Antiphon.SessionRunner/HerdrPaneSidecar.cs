@@ -16,6 +16,7 @@ namespace Antiphon.SessionRunner;
 public sealed record HerdrPaneSidecar
 {
     public int SchemaVersion { get; init; } = 1;
+    public GrokRulesReceipt? GrokRulesReceipt { get; init; }
     public required Guid SessionId { get; init; }
     public required string WorkspaceKey { get; init; }
     public required string WorkspaceId { get; init; }

@@ -223,6 +223,8 @@ public sealed class AgentRegistry
             Env: env,
             Cwd: cwd,
             Cols: options.Cols,
-            Rows: options.Rows);
+            Rows: options.Rows,
+            GrokRulesPayload: options.GrokRulesPayload,
+            CommandLineBudgetChars: options.CommandLineBudgetChars);
     }
 }

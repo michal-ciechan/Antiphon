@@ -455,7 +455,9 @@ public sealed class AgentTuiLaunchResolver
             Env: environment,
             Cwd: cwd,
             Cols: options.Cols,
-            Rows: options.Rows);
+            Rows: options.Rows,
+            GrokRulesPayload: options.GrokRulesPayload,
+            CommandLineBudgetChars: options.CommandLineBudgetChars);
 
         return new ResolvedAgentTuiLaunch(
             spec,

@@ -973,6 +973,7 @@ internal sealed class HerdrPaneChild : ISessionChild
                 : null,
             WorkspaceLabel = opts.WorkspaceLabel,
             TabLabel = opts.TabLabel,
+            GrokRulesReceipt = request.InstalledGrokRulesReceipt,
         };
         _sidecar.SaveAtomic(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, request.SessionId));
     }

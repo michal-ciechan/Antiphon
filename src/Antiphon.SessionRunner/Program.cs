@@ -157,8 +157,8 @@ app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings) =>
         ? [SessionBackends.PtyHost, SessionBackends.Herdr]
         : [SessionBackends.PtyHost];
     IReadOnlyList<string>? features = herdrSettings.Value.Enabled
-        ? [RunnerCapabilityFeatures.HerdrAttach, RunnerCapabilityFeatures.HerdrNamedTabPlacement]
-        : null;
+        ? [RunnerCapabilityFeatures.HerdrAttach, RunnerCapabilityFeatures.HerdrNamedTabPlacement, GrokRulesTransport.Capability]
+        : [GrokRulesTransport.Capability];
     return Results.Ok(new RunnerCapabilitiesDto(
         decision.Backend.ToString(), decision.Requested, decision.Reason, decision.FellBack,
         SessionRunnerRuntime.SupportedTranscriptFormats, runnerBuild, sessionBackends,
@@ -188,6 +188,10 @@ app.MapPost("/sessions", async (
     catch (GrokRulesLaunchException ex)
     {
         return GrokRulesProblemMapper.Map(ex);
+    }
+    catch (GrokRulesTransportException ex)
+    {
+        return Results.Problem(title: ex.Code, detail: ex.Message, statusCode: ex.StatusCode, type: ex.Code);
     }
     catch (HerdrLaunchException ex)
     {

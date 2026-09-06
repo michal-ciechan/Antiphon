@@ -47,6 +47,9 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
 
     public async Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
     {
+        if (spec.GrokRulesPayload is not null
+            && (await GetCapabilitiesAsync(ct))?.Features?.Contains(GrokRulesTransport.Capability, StringComparer.Ordinal) != true)
+            throw new ConflictException("Selected runner does not advertise grokRulesFileV1.", "grok_rules_transport_unsupported");
         if (await GetTranscriptCapabilityMismatchAsync(spec.Kind, ct) is { } mismatch)
             throw new RunnerCapabilityMismatchException(mismatch.Message);
 
@@ -83,7 +86,9 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             TranscriptEnabled: TranscriptEnabledFor(spec.Kind),
             TranscriptFormat: TranscriptFormatFor(spec.Kind),
             Backend: backendWire,
-            Herdr: spec.Herdr);
+            Herdr: spec.Herdr,
+            GrokRulesPayload: spec.GrokRulesPayload,
+            CommandLineBudgetChars: spec.CommandLineBudgetChars);
         var response = await _httpClient.PostAsJsonAsync("sessions", request, JsonOptions, ct);
         // CARD-0341: a runner refusal (herdr_gkp_env_missing, pane_occupied, …) carries its reason
         // in problem-details; surface that as the typed exception so the launch path stores the
@@ -678,7 +683,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             dto.Backend,
             dto.Pending,
             dto.HerdrVerifiedAtUtc,
-            dto.HerdrOrigin);
+            dto.HerdrOrigin,
+            dto.GrokRulesReceipt);
 
     private static AgentExitReason MapExitReason(string reason) =>
         Enum.TryParse<AgentExitReason>(reason, ignoreCase: true, out var parsed)

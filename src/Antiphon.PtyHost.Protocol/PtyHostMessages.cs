@@ -49,7 +49,8 @@ public sealed record LaunchMessage(
     int Rows,
     int MemoryLimitMb,
     bool TranscriptEnabled,
-    string AnsiLogPath) : PtyHostMessage;
+    string AnsiLogPath,
+    global::Antiphon.SessionRunner.Contracts.GrokRulesReceipt? GrokRulesReceipt = null) : PtyHostMessage;
 
 /// <summary>
 /// Subscribe to live output, replaying chunks with sequence &gt; <paramref name="LastSeq"/> first.
