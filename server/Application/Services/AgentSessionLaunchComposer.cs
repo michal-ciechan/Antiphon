@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -58,6 +59,7 @@ public sealed class AgentSessionLaunchComposer
         var isCodex = profileKind == AgentKind.Codex;
         var extraArgs = new List<string>();
         string? composedStamp = null;
+        GrokRulesPayload? rulesPayload = null;
         if (isClaudeCode || isGrok || isCodex)
         {
             var sessionName = agent.Name.Trim();
@@ -106,18 +108,16 @@ public sealed class AgentSessionLaunchComposer
                     composed.Text,
                     agent.Name,
                     boundChannels.Select(c => (c.Provider, c.Title ?? c.ExternalId)).ToList());
-                InstructionBundleComposer.EnsureWithinCommandLineBudget(
-                    composed with { Text = rendered },
-                    extraArgs,
-                    _delegationSettings.CommandLineBudgetChars,
-                    $"Agent '{agent.Name}'");
-                // CARD-0382: budget first (D-T1), then refuse a Windows Grok payload that
-                // cannot ride argv. Does not rewrite or omit the rules.
                 if (isGrok)
-                    GrokLaunchArgs.EnsureWindowsRulesPayload(rendered, $"Agent '{agent.Name}'");
-                extraArgs.AddRange(isCodex
-                    ? [CodexLaunchArgs.ConfigFlag, CodexLaunchArgs.DeveloperInstructions(rendered)]
-                    : new[] { isGrok ? "--rules" : "--append-system-prompt", rendered });
+                    rulesPayload = new(rendered, GrokRulesTransport.Version, Guid.NewGuid());
+                else
+                {
+                    InstructionBundleComposer.EnsureWithinCommandLineBudget(
+                        composed with { Text = rendered }, extraArgs, _delegationSettings.CommandLineBudgetChars, $"Agent '{agent.Name}'");
+                    extraArgs.AddRange(isCodex
+                        ? [CodexLaunchArgs.ConfigFlag, CodexLaunchArgs.DeveloperInstructions(rendered)]
+                        : new[] { "--append-system-prompt", rendered });
+                }
             }
         }
 
@@ -125,7 +125,8 @@ public sealed class AgentSessionLaunchComposer
             .Compute(agent.WorkingDirectory, _policyRefresh.InstructionFiles ?? PolicyRefreshSettings.DefaultInstructionFiles)
             .StampLine;
         return new AgentLaunchComposition(
-            extraEnv, extraArgs, delegationTokenHash, composedStamp, instructionFileStamp);
+            extraEnv, extraArgs, delegationTokenHash, composedStamp, instructionFileStamp,
+            rulesPayload, _delegationSettings.CommandLineBudgetChars);
     }
 
     public async Task<AgentKind?> PeekProfileKindAsync(Agent agent, CancellationToken ct)
@@ -162,4 +163,6 @@ public sealed record AgentLaunchComposition(
     IReadOnlyList<string> ExtraArgs,
     string DelegationTokenHash,
     string? ComposedStamp,
-    string? InstructionFileStamp = null);
+    string? InstructionFileStamp = null,
+    GrokRulesPayload? GrokRulesPayload = null,
+    int? CommandLineBudgetChars = null);

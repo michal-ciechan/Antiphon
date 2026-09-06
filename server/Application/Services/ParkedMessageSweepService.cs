@@ -48,6 +48,9 @@ public sealed class ParkedMessageSweepService
             - TimeSpan.FromMinutes(Math.Max(0, _settings.MinParkedMinutes));
         var candidates = await _db.SessionQueuedMessages.AsNoTracking()
             .Where(m => m.Status == QueuedMessageStatus.Pending
+                && m.RulesRefreshKey == null
+                && m.AgentSession.GrokRulesState != GrokRulesState.Pending
+                && m.AgentSession.GrokRulesState != GrokRulesState.Failed
                 && m.DeliveryAttempts >= maxAttempts
                 && m.SourceTaskId == null
                 && m.ConversationKey == null

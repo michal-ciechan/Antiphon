@@ -1847,6 +1847,8 @@ public sealed class AgentTaskReplyService
         var prompt = span.TurnPrompts.LastOrDefault(p => p.Sequence < turnEnd);
         if (prompt?.Text is not string promptText)
             return TurnOutcome.Nothing;
+        if (await GrokRulesRefreshService.IsRefreshPromptAsync(db, sessionId, promptText, ct))
+            return TurnOutcome.Nothing;
 
         // CARD-0348: the answer to a Blocked task starts a NEW turn. Until it ends, the newest
         // boundary is the one the block was settled from, and arm 0 re-handed it within one tick —

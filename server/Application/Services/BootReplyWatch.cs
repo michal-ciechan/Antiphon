@@ -88,6 +88,9 @@ internal static class BootReplyWatch
         db.TranscriptEntries.AsNoTracking().AnyAsync(
             t => t.AgentSessionId == sessionId
                 && (t.Timestamp ?? t.CreatedAt) >= clock
+                && !db.SessionQueuedMessages.Any(m => m.AgentSessionId == sessionId && m.RulesRefreshKey != null
+                    && m.RulesPromptSequence != null && t.Sequence > m.RulesPromptSequence
+                    && (m.RulesTurnEndSequence == null || t.Sequence <= m.RulesTurnEndSequence))
                 && (t.Kind == TranscriptKinds.AssistantText
                     || t.Kind == TranscriptKinds.Thinking
                     || t.Kind == TranscriptKinds.ToolCall
@@ -168,6 +171,8 @@ internal static class BootReplyWatch
     internal static async Task<BootTurn?> LoadBootTurnAsync(
         AppDbContext db, Guid sessionId, DateTime clock, CancellationToken ct)
     {
+        if (await db.AgentSessions.AnyAsync(s => s.Id == sessionId
+            && (s.GrokRulesState == GrokRulesState.Pending || s.GrokRulesState == GrokRulesState.Failed), ct)) return null;
         // EXISTS first: do not load Sequence/Kind/Text/At for every row since the clock just to
         // discover the session already answered. Text is loaded only for the prompt rows the
         // housekeeping check actually needs.
@@ -179,6 +184,7 @@ internal static class BootReplyWatch
                 && (t.Timestamp ?? t.CreatedAt) >= clock
                 && (t.Kind == TranscriptKinds.UserPrompt
                     || t.Kind == TranscriptKinds.QueuedUserPrompt))
+            .Where(t => t.Text == null || !t.Text.StartsWith("[antiphon-grok-rules:"))
             .OrderBy(t => t.Sequence)
             .Select(t => new { t.Sequence, t.Kind, t.Text, At = t.Timestamp ?? t.CreatedAt })
             .ToListAsync(ct);

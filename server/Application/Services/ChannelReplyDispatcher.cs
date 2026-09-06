@@ -274,6 +274,9 @@ public sealed class ChannelReplyDispatcher
             return ChannelReplyDispatchResult.Empty;
         }
 
+        if (await GrokRulesRefreshService.IsRefreshPromptAsync(db, sessionId, promptText, ct))
+            return ChannelReplyDispatchResult.Empty;
+
         // Extract the response BEFORE consuming any correlations: Claude sometimes writes the
         // turn's stop marker before its reply text (observed live 2026-07-24: TurnEnd seq N,
         // AssistantText seq N+1) — consuming on a text-less TurnEnd loses the reply forever.
@@ -1143,6 +1146,8 @@ public sealed class ChannelReplyDispatcher
 
         var userPrompt = await TranscriptTurnWindow.FindOwningPromptAsync(db, sessionId, endSeq, ct);
         if (userPrompt?.Text is not string promptText)
+            return;
+        if (await GrokRulesRefreshService.IsRefreshPromptAsync(db, sessionId, promptText, ct))
             return;
 
         var (responseText, maxTextSeq, containsApiErrorStub) =

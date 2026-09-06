@@ -503,6 +503,44 @@ internal static class Program
         var escaped = text.Replace("\n", "\\n");
         write($"SUBMITTED:{escaped}\r\n");
 
+        if (text.StartsWith("[antiphon-grok-rules:", StringComparison.Ordinal))
+        {
+            if (Environment.GetEnvironmentVariable("ANTIPHON_FAKE_RULES_NO_ACK") == "1")
+            {
+                AppendUserChunkOnly(sessionDir, sessionId, text);
+                return;
+            }
+            var match = System.Text.RegularExpressions.Regex.Match(text,
+                @"\[antiphon-grok-rules:(?<id>[0-9a-f]{32})\].*?file ""(?<path>[^""]+)"".*?generation=(?<generation>[0-9a-f]{32}) sha256=(?<hash>[0-9a-f]{64}) byteCount=(?<count>\d+)",
+                System.Text.RegularExpressions.RegexOptions.Singleline);
+            if (!match.Success) throw new InvalidOperationException("Malformed fake Grok rules refresh prompt.");
+            var id = match.Groups["id"].Value;
+            var generation = match.Groups["generation"].Value;
+            var expected = match.Groups["hash"].Value;
+            string answer;
+            string? read = null;
+            try
+            {
+                var bytes = File.ReadAllBytes(match.Groups["path"].Value);
+                read = new UTF8Encoding(false, true).GetString(bytes);
+                var actual = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes));
+                var partial = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_RULES_PARTIAL_READ") == "1";
+                if (partial) read = read[..(read.Length / 2)];
+                answer = partial
+                    ? $"ANTIPHON_RULES_FAILED id={id} generation={generation} reason=incomplete"
+                    : actual != expected || bytes.Length.ToString() != match.Groups["count"].Value
+                        ? $"ANTIPHON_RULES_FAILED id={id} generation={generation} reason=revision_mismatch"
+                        : $"ANTIPHON_RULES_ACK id={id} generation={generation} sha256={actual}";
+                if (Environment.GetEnvironmentVariable("ANTIPHON_FAKE_RULES_WRONG_ACK") == "1")
+                    answer = answer.Replace(expected, new string('0', 64), StringComparison.Ordinal);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            { answer = $"ANTIPHON_RULES_FAILED id={id} generation={generation} reason=unreadable"; }
+            AppendSessionFiles(sessionDir, sessionId, text, answer, match.Groups["path"].Value, read);
+            write(answer + "\r\nWorked for 1.7s\r\n" + IdleTitle);
+            return;
+        }
+
         if (QuestionToolEnabled && _questionOpen)
         {
             // Measured: the overlay answer is a completed tool_call_update, not a user_message_chunk.
@@ -552,7 +590,8 @@ internal static class Program
             return;
         }
 
-        if (NoReplyEnabled && _apiTurnCount == NoReplyOnTurn)
+        if ((NoReplyEnabled && _apiTurnCount == NoReplyOnTurn)
+            || Environment.GetEnvironmentVariable("ANTIPHON_FAKE_NO_TASK_REPLY") == "1")
         {
             // Real grok paints a spinner and an elapsed timer against a working OSC title while it
             // waits, and keeps doing so for as long as the request is outstanding.
@@ -631,7 +670,8 @@ internal static class Program
     /// <c>_x.ai/session/update</c>, each row flushed as it happens (the real file is line-buffered
     /// — turn_completed landed ~1.5 s after Enter on a trivial turn, no Claude-style flush stall).
     /// </summary>
-    private static void AppendSessionFiles(string sessionDir, string sessionId, string user, string assistant)
+    private static void AppendSessionFiles(string sessionDir, string sessionId, string user, string assistant,
+        string? rulesPath = null, string? rulesRead = null)
     {
         try
         {
@@ -658,6 +698,30 @@ internal static class Program
                     _meta = Meta()
                 }
             }));
+            if (rulesPath is not null && rulesRead is not null)
+            {
+                var callId = Guid.NewGuid().ToString("N");
+                AppendShared(updates, JsonSerializer.Serialize(new
+                {
+                    timestamp = now, method = "session/update",
+                    @params = new
+                    {
+                        sessionId, _meta = Meta(),
+                        update = new { sessionUpdate = "tool_call", toolCallId = callId, title = "read_file", kind = "read",
+                            status = "in_progress", rawInput = new { target_file = rulesPath } }
+                    }
+                }));
+                AppendShared(updates, JsonSerializer.Serialize(new
+                {
+                    timestamp = now, method = "session/update",
+                    @params = new
+                    {
+                        sessionId, _meta = Meta(),
+                        update = new { sessionUpdate = "tool_call_update", toolCallId = callId, status = "completed",
+                            content = new[] { new { type = "content", content = new { type = "text", text = rulesRead } } } }
+                    }
+                }));
+            }
             AppendShared(updates, JsonSerializer.Serialize(new
             {
                 timestamp = now,

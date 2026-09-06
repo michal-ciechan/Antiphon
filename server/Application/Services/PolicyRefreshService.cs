@@ -338,6 +338,11 @@ public sealed class PolicyRefreshService
         string currentFiles,
         CancellationToken ct)
     {
+        if (session.AgentKind == AgentKind.Grok)
+        {
+            var composition = await scope.ServiceProvider.GetRequiredService<AgentSessionLaunchComposer>().ComposeForAgentAsync(agent, ct);
+            GrokRulesRefreshService.PreflightResume(session, composition.GrokRulesPayload);
+        }
         var now = UtcNow();
         Stamp(agent.Id, now);
 

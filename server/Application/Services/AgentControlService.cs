@@ -283,6 +283,8 @@ public sealed class AgentControlService
                 Cols: 120,
                 Rows: 30,
                 ExtraArgs: composition.ExtraArgs,
+                GrokRulesPayload: composition.GrokRulesPayload,
+                CommandLineBudgetChars: composition.CommandLineBudgetChars,
                 ExtraEnv: composition.ExtraEnv,
                 LaunchEnvOverride: launchEnvOverride),
             // ModelTier deliberately omitted (CARD-0246): ResolveForAgentAsync itself fills it from
@@ -293,6 +295,7 @@ public sealed class AgentControlService
             _apiKeyEnvResolver);
         var spec = resolved.Spec;
         var definitionName = spec.DefinitionName;
+        GrokLaunchArgs.EnsureWindowsRulesArgv(spec.Args, spec.Kind, agent.SessionBackend, spec.Env, $"Agent '{agent.Name}'");
 
         // Bootstrap/restart notes ride on every launch of a preamble-configured agent; the launch
         // path picks FreshBody vs ResumeBody where the fresh/resume/fallback truth lives.
@@ -347,6 +350,8 @@ public sealed class AgentControlService
 
         if (previous is not null)
         {
+                GrokRulesLaunchValidation.Validate(spec with { Backend = agent.SessionBackend }, new());
+                GrokRulesRefreshService.PreflightResume(previous, spec.GrokRulesPayload);
                 var resumeNow = UtcNow();
                 previous.DefinitionName = definitionName;
                 previous.Status = SessionStatus.Starting;
@@ -413,7 +418,7 @@ public sealed class AgentControlService
             && previousSessionId != session.Id)
         {
             var moved = await _db.SessionQueuedMessages
-                .Where(m => m.AgentSessionId == previousSessionId && m.Status == QueuedMessageStatus.Pending)
+                .Where(m => m.AgentSessionId == previousSessionId && m.Status == QueuedMessageStatus.Pending && m.RulesRefreshKey == null)
                 .ExecuteUpdateAsync(s => s.SetProperty(m => m.AgentSessionId, session.Id), ct);
             if (moved > 0)
                 _logger.LogInformation(

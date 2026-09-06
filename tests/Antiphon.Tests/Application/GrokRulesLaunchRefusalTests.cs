@@ -18,47 +18,41 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
-/// <summary>CARD-0382 V-1 / V-4: composition-site refusal of unsafe Windows Grok rules.</summary>
+/// <summary>Raw argv refusal remains independent of the composed rules file transport.</summary>
 [Category("Integration")]
 [NotInParallel("AgentControl")]
 public sealed class GrokRulesLaunchRefusalTests
 {
     [Test]
-    public async Task Named_grok_herdr_agent_with_orchestrator_rules_is_refused_before_any_session_exists()
+    public async Task Named_grok_herdr_agent_with_unsafe_raw_rules_is_refused_before_any_session_exists()
     {
         await AssertNamedGrokRefused(SessionBackend.Herdr);
     }
 
     [Test]
-    public async Task Named_grok_pty_host_agent_with_orchestrator_rules_is_refused_before_any_session_exists()
+    public async Task Named_grok_pty_host_agent_with_unsafe_raw_rules_is_refused_before_any_session_exists()
     {
         await AssertNamedGrokRefused(SessionBackend.PtyHost);
     }
 
     [Test]
-    public void Cold_grok_delegate_with_composed_bundles_is_refused_at_compose_time()
+    public void Cold_grok_delegate_keeps_full_composed_bundles_in_typed_payload()
     {
         var (dispatcher, _) = CreateDelegateHarness();
         var task = TaskFor(AgentTaskKind.Worker, AgentTaskRole.Investigate);
         var attached = new[] { InstructionBundles.Orchestrator };
-        var sentinel = UnsafeAppend();
-
-        var ex = Should.Throw<ConflictException>(() =>
-            SpecOf(dispatcher, task, AgentKind.Grok, attached));
-        ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
-        ex.Message.ShouldContain(DelegationReportFormatter.Short(task.Id));
-        ex.Message.ShouldContain("Worker/Investigate");
-        ex.Message.ShouldContain(GrokRulesArgvPolicy.ReasonLineBreak);
-        ex.Message.ShouldNotContain(sentinel);
-        ex.Message.ShouldNotContain("[bundle:orchestrator");
-        ex.Message.ShouldNotContain("override");
+        var spec = SpecOf(dispatcher, task, AgentKind.Grok, attached);
+        spec.GrokRulesPayload.ShouldNotBeNull().Content.ShouldContain("[bundle:orchestrator");
+        spec.GrokRulesPayload.Content.ShouldContain("[bundle:stage-investigate");
+        spec.Args.ShouldNotContain("--rules");
+        spec.Args.ShouldAllBe(a => !a.Contains("[bundle:"));
 
         Should.NotThrow(() => SpecOf(dispatcher, task, AgentKind.ClaudeCode, attached));
         Should.NotThrow(() => SpecOf(dispatcher, task, AgentKind.Codex, attached));
     }
 
     [Test]
-    public async Task Named_grok_agent_with_a_single_line_append_launches_with_the_rendered_line_byte_identical()
+    public async Task Named_grok_agent_with_a_single_line_append_composes_the_rendered_line_byte_identical()
     {
         await using var db = CreateContext();
         var tempRoot = AgentControlServiceIntegrationTests.NewTempRoot();
@@ -81,15 +75,9 @@ public sealed class GrokRulesLaunchRefusalTests
                     SystemPromptAppend: append),
                 CancellationToken.None);
 
-            await harness.Control.StartAsync(
-                agent.Id, new StartAgentRequest(Fresh: true), CancellationToken.None);
-            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
-
-            adapter.Started.ShouldBeTrue();
-            var rulesIndex = adapter.StartedArgs.ToList().IndexOf("--rules");
-            rulesIndex.ShouldBeGreaterThanOrEqualTo(0);
-            adapter.StartedArgs[rulesIndex + 1]
-                .ShouldBe(ChannelPreamble.Render(append, agent.Name, []));
+            var composition = await ComposeAsync(db, agent.Id);
+            composition.GrokRulesPayload.ShouldNotBeNull().Content.ShouldBe(ChannelPreamble.Render(append, agent.Name, []));
+            composition.ExtraArgs.ShouldNotContain("--rules");
         }
         finally
         {
@@ -123,6 +111,9 @@ public sealed class GrokRulesLaunchRefusalTests
             var grok = await SeedGrokProfileAsync(db);
             var sentinel = "card0382-sentinel-" + Guid.NewGuid().ToString("N");
             var append = UnsafeAppend(sentinel);
+            var revision = await db.AgentTuiProfileRevisions.SingleAsync(r => r.Id == grok.ActiveRevisionId);
+            revision.ArgumentsJson = JsonSerializer.Serialize(new[] { "--rules", append });
+            await db.SaveChangesAsync();
             var agent = await harness.AgentService.CreateAsync(
                 new CreateAgentRequest(
                     "Grok Rules Refuse",
@@ -164,6 +155,16 @@ public sealed class GrokRulesLaunchRefusalTests
     private static string UnsafeAppend(string? sentinel = null) =>
         "Custom line one with spaces\r\nline \"two\" with `backticks`\nline three "
         + (sentinel ?? "card0382-sentinel-" + Guid.NewGuid().ToString("N"));
+
+    private static async Task<AgentLaunchComposition> ComposeAsync(AppDbContext db, Guid id)
+    {
+        var (_, provider) = CreateDelegateHarness();
+        await using var owned = provider;
+        var composer = new AgentSessionLaunchComposer(db, Options.Create(new DelegationSettings()),
+            provider.GetRequiredService<AgentRegistry>(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentSessionLaunchComposer>.Instance);
+        return await composer.ComposeForAgentAsync(await db.Agents.SingleAsync(a => a.Id == id), CancellationToken.None);
+    }
 
     private static async Task<AgentTuiProfile> SeedGrokProfileAsync(AppDbContext db)
     {

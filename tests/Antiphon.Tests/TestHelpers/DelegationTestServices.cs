@@ -42,6 +42,8 @@ internal static class DelegationTestServices
     /// </summary>
     public static IServiceCollection AddGitWorkspaceService(this IServiceCollection services)
     {
+        services.AddOptions<global::Antiphon.SessionRunner.Contracts.GrokRulesSettings>();
+        services.TryAddSingleton<GrokRulesRefreshService>();
         services.TryAddSingleton<GitWorkspaceService>();
         return services;
     }

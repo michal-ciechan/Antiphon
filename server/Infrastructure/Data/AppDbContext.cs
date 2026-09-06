@@ -1203,6 +1203,9 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<SessionQueuedMessage>(entity =>
         {
+            entity.Property(m => m.RulesRefreshKey).HasMaxLength(80);
+            entity.Property(m => m.RulesReceiptJson).HasColumnType("jsonb");
+            entity.HasIndex(m => new { m.AgentSessionId, m.RulesRefreshKey }).IsUnique();
             entity.ToTable("SessionQueuedMessages");
             entity.HasKey(m => m.Id);
             entity.Property(m => m.AgentSessionId).IsRequired();
