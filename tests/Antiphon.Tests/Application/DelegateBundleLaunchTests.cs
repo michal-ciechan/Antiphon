@@ -4,7 +4,9 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -206,17 +208,16 @@ public class DelegateBundleLaunchTests
         var (dispatcher, _) = CreateHarness();
         var task = TaskFor(AgentTaskKind.Worker, AgentTaskRole.Investigate);
 
-        var args = ArgsOf(dispatcher, task, kind: AgentKind.Grok);
+        var ex = Should.Throw<ConflictException>(() => ArgsOf(dispatcher, task, kind: AgentKind.Grok));
+        ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
+        ex.Message.ShouldContain(DelegationReportFormatter.Short(task.Id));
 
-        args.ShouldContain("--rules");
-        args.ShouldNotContain("--append-system-prompt", customMessage:
-            "Grok's system-prompt channel is --rules; the bundle would be dropped in silence");
-        args.ShouldNotContain("-c");
-        var rules = args[args.IndexOf("--rules") + 1];
+        var composed = InstructionBundleComposer.Compose(
+            InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Investigate));
         var bundle = InstructionBundles.Get(InstructionBundles.StageInvestigate);
-        rules.ShouldContain($"[bundle:stage-investigate v{bundle.Version}]");
-        rules.ShouldContain(bundle.Text);
-        rules.ShouldContain("[bundle:delegate-basics v");
+        composed.Text.ShouldContain($"[bundle:stage-investigate v{bundle.Version}]");
+        composed.Text.ShouldContain(bundle.Text);
+        composed.Text.ShouldContain("[bundle:delegate-basics v");
     }
 
     [Test]

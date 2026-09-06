@@ -93,7 +93,7 @@ public class GrokDelegateEndToEndTests
     // ---- the capstone --------------------------------------------------------------------------
 
     [Test]
-    public async Task a_Kind_Grok_worker_runs_from_the_delegate_script_to_a_grok_priced_settlement()
+    public async Task a_Kind_Grok_worker_dispatched_from_the_delegate_script_is_refused_before_any_process_starts()
     {
         if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
         if (!File.Exists(FakeGrokExe))
@@ -123,7 +123,8 @@ public class GrokDelegateEndToEndTests
             using var relay = new DelegateTaskApiRelay(workspace.Path, harness.Delegation);
             var run = await DelegateScriptRunner.RunAsync(
                 relay.BaseUrl,
-                "-Role", "Code", "-Kind", "Grok", "-Title", "CARD-0084 S6", "-Goal", MultilineGoal);
+                "-Role", "Code", "-Kind", "Grok", "-Title", "CARD-0084 S6", "-Goal", MultilineGoal,
+                "-Dir", workspace.Path);
 
             run.ExitCode.ShouldBe(0, $"{run.Output}\n{relay.LastFailure}");
             run.Output.ShouldContain("[Grok]", customMessage:
@@ -145,154 +146,26 @@ public class GrokDelegateEndToEndTests
                 await dispatcher.TickAsync(CancellationToken.None);
             }
 
-            await using (var afterTick = CreateContext())
-            {
-                var dispatched = await afterTick.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == queued.Id);
-                dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched, dispatched.FailureReason ?? "no failure reason");
-                sessionId = dispatched.AgentSessionId.ShouldNotBeNull();
-            }
-
-            // The runner→server ingestion stand-in, started before the launch completes so the
-            // transcript is being persisted while the delegate is answering.
-            using var pump = new CancellationTokenSource();
-            var pumping = PumpTranscriptAsync(harness.Provider, sessionId, pump.Token);
-
             await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromMinutes(2), CancellationToken.None);
 
-            // ---- 3. what was actually launched ------------------------------------------------
-            var spec = harness.Runner.SpecFor(sessionId).ShouldNotBeNull(
-                "the dispatch must have started a session on the runner");
-            var args = spec.Args.ToList();
-
-            spec.Exe.ShouldBe(FakeGrokExe, "resolved BY KIND — never the default definition");
-            spec.DefinitionName.ShouldBe("grok");
-            spec.Kind.ShouldBe(AgentKind.Grok);
-            args.ShouldContain("--always-approve", customMessage: "the definition's own template survives");
-            args.ShouldNotContain("--name", customMessage: "--name is Claude-only; grok.exe would refuse to start");
-            args[args.IndexOf("--model") + 1].ShouldBe("grok-4.6", "Frontier on Grok");
-            args.ShouldContain("--rules");
-            args.ShouldNotContain("--append-system-prompt", customMessage:
-                "Grok's system-prompt channel is --rules; the bundle would be dropped in silence");
-            args[args.IndexOf("--rules") + 1]
-                .ShouldContain(InstructionBundles.TextOf(InstructionBundles.DelegateBasics));
-            spec.Env.ShouldContainKey("ANTIPHON_TASK_ID");
-
-            // Ground truth from the OTHER end of the pty: fakegrok writes summary.json out of the
-            // arguments it really parsed, so this is the launched process agreeing about its own
-            // model and session identity rather than the spec being read back to itself.
-            var summary = JsonDocument.Parse(
-                await File.ReadAllTextAsync(SessionFile(grokHome, workspace.Path, sessionId, "summary.json")));
-            summary.RootElement.GetProperty("current_model_id").GetString().ShouldBe("grok-4.6");
-            summary.RootElement.GetProperty("info").GetProperty("id").GetString()
-                .ShouldBe(sessionId.ToString("D"), "the launch's --session-id is what the tailer follows");
-
-            await using (var live = CreateContext())
+            await using (var afterTick = CreateContext())
             {
-                var session = await live.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sessionId);
-                session.Status.ShouldBe(SessionStatus.Running);
-                session.DefinitionName.ShouldBe("grok");
-                session.AgentKind.ShouldBe(AgentKind.Grok, "what every downstream reader keys on");
+                var refused = await afterTick.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == queued.Id);
+                refused.Status.ShouldBe(AgentTaskStatus.Failed, refused.FailureReason ?? "no failure reason");
+                refused.FailureReason.ShouldNotBeNull().ShouldContain(GrokRulesArgvPolicy.ProblemCode);
+                sessionId = refused.AgentSessionId.ShouldNotBeNull();
 
-                var agent = await live.Agents.AsNoTracking()
-                    .SingleAsync(a => a.PersistentSessionId == sessionId.ToString("D"));
-                agent.Kind.ShouldBe(AgentKind.Grok, "the pool row a later Grok task claims on");
+                var session = await afterTick.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sessionId);
+                session.Status.ShouldBe(SessionStatus.Failed);
+                session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
+
+                (await afterTick.SessionQueuedMessages.AsNoTracking()
+                    .CountAsync(m => m.AgentSessionId == sessionId)).ShouldBe(0);
             }
 
-            // ---- 4. the brief: spilled, and its pointer join-proof ----------------------------
-            var spill = Path.Combine(
-                workspace.Path, ".antiphon", $"task-{DelegationReportFormatter.Short(queued.Id)}-brief.md");
-            File.Exists(spill).ShouldBeTrue(
-                $"a Grok brief must travel by file even under the modern ceiling — expected {spill}");
-            var spilled = await File.ReadAllTextAsync(spill);
-            spilled.ShouldContain("HEAD-MARKER");
-            spilled.ShouldContain("run: dotnet run --project tests/Antiphon.Tests");
-            spilled.ShouldContain("TAIL-MARKER");
-            spilled.ShouldContain("\n", customMessage: "the file is where the structure survives");
-
-            var marker = DelegationReportFormatter.TaskMarker(queued.Id);
-            await using (var delivered = CreateContext())
-            {
-                var message = await delivered.SessionQueuedMessages.AsNoTracking()
-                    .SingleAsync(m => m.AgentSessionId == sessionId);
-                message.Origin.ShouldBe(QueuedMessageOrigin.Delegation);
-                message.Body.ShouldNotContain("\n", customMessage:
-                    "the pointer is rendered already-joined, so Grok's newline drop is a no-op on it");
-                message.Body.ShouldNotContain("TAIL-MARKER", customMessage: "the body itself is never typed");
-                message.Status.ShouldBe(QueuedMessageStatus.Sent, await ScreenAsync(harness, sessionId));
-            }
-
-            // ---- 5. what the delegate received, as ITS transcript records it ------------------
-            await WaitUntilAsync(
-                async () =>
-                {
-                    await using var db = CreateContext();
-                    return await db.TranscriptEntries.CountAsync(t =>
-                        t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.TurnEnd) > 0;
-                },
-                TimeSpan.FromSeconds(60),
-                async () => $"no TurnEnd row from the real Grok tailer. Screen:\n{await ScreenAsync(harness, sessionId)}");
-
-            await using (var db = CreateContext())
-            {
-                var prompt = await db.TranscriptEntries.AsNoTracking()
-                    .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt)
-                    .OrderBy(t => t.Sequence)
-                    .FirstAsync();
-                var recorded = prompt.Text ?? string.Empty;
-
-                recorded.ShouldContain(
-                    $"task-{DelegationReportFormatter.Short(queued.Id)}-brief.md' Everything you need is there",
-                    customMessage: "the joined pointer must not fuse the spill path into the next line");
-                recorded.ShouldContain(marker, customMessage: "and settlement correlates on this marker");
-                recorded.TrimEnd().ShouldEndWith(marker);
-            }
-
-            // ---- 6. settlement and price, both arriving on their own -------------------------
-            // Nothing in this test calls OnTurnEndAsync: the turn boundary the pump persists fires
-            // the same flush production fires, which settles the task.
-            await WaitUntilAsync(
-                async () =>
-                {
-                    await using var db = CreateContext();
-                    return await db.AgentTasks.AsNoTracking()
-                        .AnyAsync(t => t.Id == queued.Id && t.Status != AgentTaskStatus.Dispatched);
-                },
-                TimeSpan.FromSeconds(60),
-                async () => $"the delegate's finished turn never settled the task. Screen:\n{await ScreenAsync(harness, sessionId)}");
-
-            pump.Cancel();
-            await pumping;
-
-            await using var verify = CreateContext();
-            var settled = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == queued.Id);
-            settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
-            settled.Result.ShouldNotBeNull().ShouldContain("FAKE response to:", customMessage:
-                "the report is the delegate's own turn-ending text");
-            settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
-            settled.AgentKind.ShouldBe(AgentKind.Grok);
-
-            // The usage counters are fakegrok's turn_completed.usage, read by the real normalizer
-            // into the same four columns Claude's usage lands in — which is why S5 only had to
-            // widen the PRICE, not the rollup.
-            settled.TokensIn.ShouldBe(1);
-            settled.TokensOut.ShouldBe(1);
-            settled.CostPricingVersion.ShouldBe(DelegationCost.PricingVersion);
-
-            var spend = new TokenSpend(
-                settled.TokensIn, settled.CacheReadTokens, settled.CacheCreationTokens, settled.TokensOut);
-            var pricing = harness.Delegation.Pricing;
-            var atGrokRates = DelegationCost.Estimate(
-                pricing, settled.ModelLevel, spend, settled.CompletedAt!.Value, AgentKind.Grok);
-            var atClaudeRates = DelegationCost.Estimate(
-                pricing, settled.ModelLevel, spend, settled.CompletedAt!.Value);
-
-            // xAI's published grok-4.6 list: 1 x $2.00 in + 1 x $6.00 out, per million.
-            atGrokRates.ShouldBe(0.000008m);
-            // The Claude rung Frontier shares — fable at $10/$50 — is what this row would have cost
-            // before S5, and what it must NOT cost now.
-            atClaudeRates.ShouldBe(0.000060m);
-            settled.CostUsd.ShouldBe(atGrokRates, "a Grok delegate is priced on Grok's ladder");
-            settled.CostUsd.ShouldNotBe(atClaudeRates);
+            harness.Runner.SpecFor(sessionId).ShouldBeNull();
+            (await harness.Runner.ListAsync(CancellationToken.None)).ShouldBeEmpty();
+            File.Exists(SessionFile(grokHome, workspace.Path, sessionId, "summary.json")).ShouldBeFalse();
         }
         finally
         {
@@ -310,6 +183,8 @@ public class GrokDelegateEndToEndTests
     [Test]
     public async Task an_unmarked_grok_reply_inside_one_tailer_poll_of_the_nudge_settles_unmarked_after_nudge()
     {
+        throw new SkipTestException(
+            "CARD-0382 D-6: Windows Grok delegate launches with composed rules are refused; re-enable when CARD-0395's transport lands");
         if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
         if (!File.Exists(FakeGrokExe))
             throw new SkipTestException($"fakegrok.exe not staged at {FakeGrokExe} — build the solution first");
@@ -434,6 +309,8 @@ public class GrokDelegateEndToEndTests
     [Test]
     public async Task a_provider_that_never_answers_the_boot_prompt_is_failed_killed_and_retried_once()
     {
+        throw new SkipTestException(
+            "CARD-0382 D-6: Windows Grok delegate launches with composed rules are refused; re-enable when CARD-0395's transport lands");
         if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
         if (!File.Exists(FakeGrokExe))
             throw new SkipTestException($"fakegrok.exe not staged at {FakeGrokExe} — build the solution first");
@@ -695,7 +572,8 @@ public class GrokDelegateEndToEndTests
         {
             using var relay = new DelegateTaskApiRelay(workspace.Path, harness.Delegation);
             var run = await DelegateScriptRunner.RunAsync(
-                relay.BaseUrl, "-Role", "Code", "-Title", "CARD-0084 S6 control", "-Goal", MultilineGoal);
+                relay.BaseUrl, "-Role", "Code", "-Title", "CARD-0084 S6 control", "-Goal", MultilineGoal,
+                "-Dir", workspace.Path);
 
             run.ExitCode.ShouldBe(0, $"{run.Output}\n{relay.LastFailure}");
             run.Output.ShouldContain("queued task");

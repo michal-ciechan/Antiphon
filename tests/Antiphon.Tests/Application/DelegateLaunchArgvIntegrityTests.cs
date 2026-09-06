@@ -5,7 +5,9 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -85,12 +87,22 @@ public class DelegateLaunchArgvIntegrityTests
         using var _ = provider;
 
         var checkedCases = 0;
+        var refusedGrokCases = 0;
         foreach (var kind in Enum.GetValues<AgentTaskKind>())
         foreach (var role in Enum.GetValues<AgentTaskRole>())
         foreach (var agentKind in Enum.GetValues<AgentKind>())
         {
             var sessionId = Guid.NewGuid();
             var task = TaskFor(kind, role, agentKind);
+            if (agentKind == AgentKind.Grok && !AgentTaskRoles.IsSpecialist(role))
+            {
+                var ex = Should.Throw<ConflictException>(
+                    () => ComposeLaunchArgs(dispatcher, task, agentKind, sessionId, Attachments));
+                ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
+                refusedGrokCases++;
+                continue;
+            }
+
             var args = ComposeLaunchArgs(dispatcher, task, agentKind, sessionId, Attachments);
 
             var because = $"{kind}/{role} on {agentKind}";
@@ -101,7 +113,7 @@ public class DelegateLaunchArgvIntegrityTests
             checkedCases++;
         }
 
-        checkedCases.ShouldBe(
+        (checkedCases + refusedGrokCases).ShouldBe(
             Enum.GetValues<AgentTaskKind>().Length
             * Enum.GetValues<AgentTaskRole>().Length
             * Enum.GetValues<AgentKind>().Length,
@@ -121,12 +133,23 @@ public class DelegateLaunchArgvIntegrityTests
         var (dispatcher, provider) = CreateHarness();
         using var _ = provider;
 
+        var checkedCases = 0;
+        var refusedGrokCases = 0;
         foreach (var kind in Enum.GetValues<AgentTaskKind>())
         foreach (var role in Enum.GetValues<AgentTaskRole>())
         foreach (var agentKind in Enum.GetValues<AgentKind>())
         {
             var sessionId = Guid.NewGuid();
             var task = TaskFor(kind, role, agentKind);
+            if (agentKind == AgentKind.Grok && !AgentTaskRoles.IsSpecialist(role))
+            {
+                var ex = Should.Throw<ConflictException>(
+                    () => ComposeLaunchArgs(dispatcher, task, agentKind, sessionId, attached: null));
+                ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
+                refusedGrokCases++;
+                continue;
+            }
+
             var args = ComposeLaunchArgs(dispatcher, task, agentKind, sessionId, attached: null);
 
             var because = $"{kind}/{role} on {agentKind} (role defaults only)";
@@ -134,7 +157,13 @@ public class DelegateLaunchArgvIntegrityTests
             AssertSessionIdSurvives(ExeWithSpace, args, agentKind, sessionId, because);
             AssertAppendedPromptIsIntact(ExeWithSpace, args, because);
             AssertEffortIsKindGated(args, agentKind, task.ModelLevel, because);
+            checkedCases++;
         }
+
+        (checkedCases + refusedGrokCases).ShouldBe(
+            Enum.GetValues<AgentTaskKind>().Length
+            * Enum.GetValues<AgentTaskRole>().Length
+            * Enum.GetValues<AgentKind>().Length);
     }
 
     // ---- the catalog on its own ------------------------------------------------------------------

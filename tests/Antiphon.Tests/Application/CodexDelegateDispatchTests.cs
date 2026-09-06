@@ -134,10 +134,10 @@ public class CodexDelegateDispatchTests
     public void a_grok_delegate_is_untouched_by_the_codex_branch()
     {
         var (dispatcher, _) = CreateHarness();
-        var args = SpecOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.High)).Args.ToList();
+        var args = SpecOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.High, AgentTaskRole.Check)).Args.ToList();
 
         args[args.IndexOf("--model") + 1].ShouldBe("grok-4.6");
-        args.ShouldContain("--rules");
+        args.ShouldNotContain("--rules");
         args.ShouldContain(GrokLaunchArgs.ReasoningEffortFlag);
         args[args.IndexOf(GrokLaunchArgs.ReasoningEffortFlag) + 1]
             .ShouldBe(GrokLaunchArgs.ReasoningEffort(AgentModelLevel.High));
