@@ -38,6 +38,7 @@ public sealed class CardService : IScheduledCardActions
     /// characters. A filesystem failure falls back to typing the original.</para>
     /// </remarks>
     public const int MaxDescriptionLength = 20_000;
+    public const int MaxPrivateNotesLength = 20_000;
 
     /// <summary>
     /// The ceiling for every free-text reason: a move reason, <c>Card.TerminalReason</c>, an
@@ -79,6 +80,7 @@ public sealed class CardService : IScheduledCardActions
     internal const string SchedulerActor = "scheduler";
 
     private readonly AppDbContext _db;
+    private readonly CardTaskFileService? _cardFiles;
     private readonly AgentRegistry _agentRegistry;
     private readonly AgentTuiLaunchResolver? _launchResolver;
     private readonly AgentSessionLaunchComposer? _launchComposer;
@@ -115,9 +117,11 @@ public sealed class CardService : IScheduledCardActions
         AgentSessionLaunchComposer? launchComposer = null,
         IOptions<CardsSettings>? cards = null,
         TrackerCardStatePushService? trackerStatePush = null,
-        IOptions<GrokRulesSettings>? grokRulesSettings = null)
+        IOptions<GrokRulesSettings>? grokRulesSettings = null,
+        CardTaskFileService? cardFiles = null)
     {
         _db = db;
+        _cardFiles = cardFiles;
         _agentRegistry = agentRegistry;
         _launchResolver = launchResolver;
         _launchComposer = launchComposer;
@@ -138,6 +142,7 @@ public sealed class CardService : IScheduledCardActions
     public async Task<CardDto> CreateAsync(Guid boardId, CreateCardRequest request, CancellationToken ct)
     {
         ValidateCreateRequest(request);
+        using var fileLease = _cardFiles is null ? null : await _cardFiles.EnterBoardAsync(boardId, true, ct);
 
         var board = await _db.Boards
             .Include(b => b.Columns)
@@ -162,6 +167,8 @@ public sealed class CardService : IScheduledCardActions
             Title = request.Title.Trim(),
             Alias = MustNormalizeAlias(request.Alias),
             Description = request.Description?.Trim() ?? string.Empty,
+            PrivateNotes = request.PrivateNotes ?? string.Empty,
+            CardFileVisibility = request.CardFileVisibility ?? CardFileVisibility.Inherit,
             Importance = request.Importance ?? CardImportance.Normal,
             ImportanceProvenance = request.Importance is null
                 ? CardImportanceProvenance.Auto
@@ -179,14 +186,23 @@ public sealed class CardService : IScheduledCardActions
         await _db.SaveChangesAsync(ct);
         await _eventBus.PublishToAllAsync("CardChanged", new { boardId = board.Id, cardId = card.Id }, ct);
 
+        fileLease?.Dispose();
         return await GetByIdAsync(card.Id, ct);
     }
 
     public async Task<CardDto> GetByIdAsync(Guid id, CancellationToken ct)
     {
         var card = await LoadCardAsync(id, ct);
-        return await SessionContextUsage.AttachToCardAsync(
+        var dto = await SessionContextUsage.AttachToCardAsync(
             _db, BoardService.ToCardDto(card), _contextWindow, _logger, ct);
+        if (_cardFiles is null) return dto;
+        try { return dto with { CardFileStatus = await _cardFiles.GetCardStatusAsync(id, ct) }; }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception)
+        {
+            return dto with { CardFileStatus = new CardFileCardStatusDto { BoardId = card.BoardId,
+                CardFileVisibility = card.CardFileVisibility, Reason = "status_unavailable", Warnings = ["status_unavailable"] } };
+        }
     }
 
     public async Task<CardListDto> GetSummaryAsync(
@@ -478,8 +494,10 @@ public sealed class CardService : IScheduledCardActions
         Guid id, UpdateCardContentRequest request, CancellationToken ct)
     {
         ValidateUpdateContentRequest(request);
+        using var fileLease = _cardFiles is null ? null : await _cardFiles.EnterCardAsync(id, ct);
 
         var card = await LoadCardForUpdateAsync(id, ct);
+        await _db.Entry(card).ReloadAsync(ct);
         if (request.ConcurrencyToken == Guid.Empty)
             throw new ValidationException(nameof(request.ConcurrencyToken), "Card concurrency token is required.");
         if (request.ConcurrencyToken != card.ConcurrencyToken)
@@ -492,6 +510,8 @@ public sealed class CardService : IScheduledCardActions
         var cellChanged = (request.Importance is { } nextImportance && nextImportance != card.Importance)
             || (request.Urgency is { } nextUrgency && nextUrgency != card.Urgency);
 
+        if (request.PrivateNotes is not null) card.PrivateNotes = request.PrivateNotes;
+        if (request.CardFileVisibility is { } visibility) card.CardFileVisibility = visibility;
         if (request.Title is not null)
             card.Title = request.Title.Trim();
         if (request.Description is not null)
@@ -527,6 +547,7 @@ public sealed class CardService : IScheduledCardActions
         await SaveCardWriteAsync(card, ct);
 
         await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
+        fileLease?.Dispose();
         return await GetByIdAsync(card.Id, ct);
     }
 
@@ -1149,6 +1170,20 @@ public sealed class CardService : IScheduledCardActions
     }
 
     /// <summary>The card's history, newest first. One interleaved sequence across every kind.</summary>
+    public async Task<CardPrivateNotesDto> GetPrivateNotesAsync(Guid id, int? revisionNumber, CancellationToken ct)
+    {
+        var card = await _db.Cards.AsNoTracking().Where(c => c.Id == id)
+            .Select(c => new { c.Id, c.PrivateNotes, c.ConcurrencyToken }).FirstOrDefaultAsync(ct)
+            ?? throw new NotFoundException(nameof(Card), id);
+        if (revisionNumber is null) return new(card.Id, card.PrivateNotes, card.ConcurrencyToken, null);
+        if (revisionNumber <= 0) throw new ValidationException("revisionNumber", "revisionNumber must be positive.");
+        var revision = await _db.CardRevisions.AsNoTracking().Where(r => r.CardId == id
+            && r.RevisionNumber == revisionNumber && r.Kind == CardRevisionKind.ContentEdit)
+            .Select(r => new { r.PrivateNotes }).FirstOrDefaultAsync(ct)
+            ?? throw new NotFoundException("CardRevision", revisionNumber);
+        return new(card.Id, revision.PrivateNotes, card.ConcurrencyToken, revisionNumber);
+    }
+
     public async Task<IReadOnlyList<CardRevisionDto>> GetRevisionsAsync(Guid id, CancellationToken ct)
     {
         if (!await _db.Cards.AnyAsync(c => c.Id == id, ct))
@@ -1535,6 +1570,9 @@ public sealed class CardService : IScheduledCardActions
     private static void ValidateCreateRequest(CreateCardRequest request)
     {
         var errors = new Dictionary<string, string[]>();
+        RequireWithinLimit(errors, "privateNotes", request.PrivateNotes, MaxPrivateNotesLength);
+        if (request.CardFileVisibility is { } visibility && !Enum.IsDefined(visibility))
+            errors["cardFileVisibility"] = ["cardFileVisibility must be Inherit, Private or Public."];
         if (string.IsNullOrWhiteSpace(request.Title))
             errors[nameof(request.Title)] = ["Card title is required."];
         RequireWithinLimit(errors, nameof(request.Title), request.Title?.Trim(), MaxTitleLength);
@@ -1612,11 +1650,15 @@ public sealed class CardService : IScheduledCardActions
     private static void ValidateUpdateContentRequest(UpdateCardContentRequest request)
     {
         var errors = new Dictionary<string, string[]>();
+        RequireWithinLimit(errors, "privateNotes", request.PrivateNotes, MaxPrivateNotesLength);
+        if (request.CardFileVisibility is { } visibility && !Enum.IsDefined(visibility))
+            errors["cardFileVisibility"] = ["cardFileVisibility must be Inherit, Private or Public."];
         if (string.IsNullOrWhiteSpace(request.Reason))
             errors[nameof(request.Reason)] = ["A reason is required for a card correction."];
         RequireWithinLimit(errors, nameof(request.Reason), request.Reason?.Trim(), MaxReasonLength);
 
-        var hasContent = request.Title is not null
+        if (request.ConcurrencyToken == Guid.Empty) errors[nameof(request.ConcurrencyToken)] = ["Card concurrency token is required."];
+        var hasContent = request.PrivateNotes is not null || request.CardFileVisibility is not null || request.Title is not null
             || request.Description is not null
             || request.Importance is not null
             || request.Urgency is not null

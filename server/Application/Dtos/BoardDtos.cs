@@ -16,7 +16,10 @@ public sealed record BoardSummaryDto(
     DateTime UpdatedAt,
     DateTime? ArchivedAt = null,
     string? ArchivedReason = null,
-    string? ArchivedBy = null);
+    string? ArchivedBy = null)
+{
+    public bool SyncCardFiles { get; init; }
+}
 
 public sealed record BoardDetailDto(
     Guid Id,
@@ -31,7 +34,10 @@ public sealed record BoardDetailDto(
     DateTime UpdatedAt,
     DateTime? ArchivedAt = null,
     string? ArchivedReason = null,
-    string? ArchivedBy = null);
+    string? ArchivedBy = null)
+{
+    public bool SyncCardFiles { get; init; }
+}
 
 public sealed record BoardColumnDto(
     Guid Id,
@@ -89,7 +95,13 @@ public sealed record CardDto(
     string? Alias = null,
     // Full card routes predate summary views. Omitting false preserves that wire contract byte for
     // byte; summary consumers deserialize an omitted value as false.
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool HasMore = false);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool HasMore = false)
+{
+    public CardFileVisibility CardFileVisibility { get; init; }
+    public bool HasPrivateNotes { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public CardFileCardStatusDto? CardFileStatus { get; init; }
+}
 
 public sealed record CardListDto(IReadOnlyList<CardDto> Cards, bool Truncated);
 
@@ -158,7 +170,9 @@ public sealed record CreateCardRequest(
     CardUrgency Urgency = CardUrgency.Normal,
     DateTime? DueAt = null,
     IReadOnlyList<string>? Labels = null,
-    string? Alias = null);
+    string? Alias = null,
+    string? PrivateNotes = null,
+    [property: JsonConverter(typeof(CardFileVisibilityConverter))] CardFileVisibility? CardFileVisibility = null);
 
 /// <param name="Reason">
 /// Why this card is moving. Optional, and deliberately NOT named for the close case: "no longer
@@ -237,7 +251,9 @@ public sealed record UpdateCardContentRequest(
     IReadOnlyList<string>? Labels = null,
     string? EditedBy = null,
     CardImportanceProvenance? ImportanceProvenance = null,
-    string? Alias = null);
+    string? Alias = null,
+    string? PrivateNotes = null,
+    [property: JsonConverter(typeof(CardFileVisibilityConverter))] CardFileVisibility? CardFileVisibility = null);
 
 /// <summary>
 /// Relative placement of one card inside its board column (CARD-0098). Absolute positions never
@@ -326,7 +342,13 @@ public sealed record CardRevisionDto(
     DateTime CreatedAt,
     string? TerminalReason = null,
     DateTime? CompletedAt = null,
-    string? Alias = null);
+    string? Alias = null)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+    public CardFileVisibility? CardFileVisibility { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+    public bool? HasPrivateNotes { get; init; }
+}
 
 /// <summary>
 /// What a card's text may weigh, in characters, straight from the <c>CardService</c> constants that
@@ -347,7 +369,11 @@ public sealed record CardLimitsDto(
     IReadOnlyList<string> ImportanceValues,
     IReadOnlyList<string> UrgencyValues,
     int MaxAliasLength,
-    int MaxAliasWords);
+    int MaxAliasWords)
+{
+    public int MaxPrivateNotesLength { get; init; } = 20_000;
+    public string[] CardFileVisibilityValues { get; init; } = ["Inherit", "Private", "Public"];
+}
 
 public sealed record SpawnCardRequest(
     string? DefinitionName = null,

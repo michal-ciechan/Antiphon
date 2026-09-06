@@ -14,7 +14,11 @@ public record ProjectDto(
     IReadOnlyDictionary<string, string> DefaultLaunchEnv,
     DateTime? ArchivedAt = null,
     string? ArchivedReason = null,
-    string? ArchivedBy = null);
+    string? ArchivedBy = null)
+{
+    public Antiphon.Server.Domain.Enums.RepositoryVisibility RepositoryVisibility { get; init; }
+    public string[] CardFileWarnings { get; init; } = [];
+}
 
 /// <summary>
 /// Archive is what "delete" means for a project: the row stays, so boards and agents never dangle.

@@ -17,6 +17,7 @@ public sealed class BoardService
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly AppDbContext _db;
+    private readonly CardTaskFileService? _cardFiles;
     private readonly IEventBus _eventBus;
     private readonly TimeProvider _timeProvider;
     private readonly ContextWindowSettings _contextWindow;
@@ -29,9 +30,11 @@ public sealed class BoardService
         TimeProvider timeProvider,
         IOptions<ContextWindowSettings>? contextWindow = null,
         ILogger<BoardService>? logger = null,
-        IOptions<CardsSettings>? cards = null)
+        IOptions<CardsSettings>? cards = null,
+        CardTaskFileService? cardFiles = null)
     {
         _db = db;
+        _cardFiles = cardFiles;
         _eventBus = eventBus;
         _timeProvider = timeProvider;
         _contextWindow = contextWindow?.Value ?? new ContextWindowSettings();
@@ -67,7 +70,7 @@ public sealed class BoardService
                 b.UpdatedAt,
                 b.ArchivedAt,
                 b.ArchivedReason,
-                b.ArchivedBy))
+                b.ArchivedBy) { SyncCardFiles = b.SyncCardFiles })
             .ToListAsync(ct);
     }
 
@@ -169,10 +172,13 @@ public sealed class BoardService
     /// </summary>
     public async Task<DeleteBoardResultDto> DeleteAsync(Guid id, CancellationToken ct)
     {
+        using var fileLease = _cardFiles is null ? null : await _cardFiles.EnterBoardAsync(id, true, ct);
         var board = await _db.Boards
             .AsNoTracking()
             .FirstOrDefaultAsync(b => b.Id == id, ct)
             ?? throw new NotFoundException(nameof(Board), id);
+
+        if (_cardFiles is not null) await _cardFiles.EnsureDrainedAsync(board.ProjectId, id, ct);
 
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
         await ProjectCascade.DeleteBoardsAsync(_db, [id], ct);
@@ -192,6 +198,7 @@ public sealed class BoardService
     public async Task<BoardSummaryDto> ArchiveAsync(
         Guid id, ArchiveBoardRequest request, CancellationToken ct)
     {
+        using var fileLease = _cardFiles is null ? null : await _cardFiles.EnterBoardAsync(id, true, ct);
         EntityArchive.Validate(request.Reason, request.ArchivedBy);
 
         var board = await _db.Boards
@@ -217,6 +224,7 @@ public sealed class BoardService
     public async Task<BoardSummaryDto> UnarchiveAsync(
         Guid id, UnarchiveBoardRequest request, CancellationToken ct)
     {
+        using var fileLease = _cardFiles is null ? null : await _cardFiles.EnterBoardAsync(id, true, ct);
         EntityArchive.Validate(request.Reason, request.UnarchivedBy);
 
         var board = await _db.Boards
@@ -284,7 +292,7 @@ public sealed class BoardService
             board.UpdatedAt,
             board.ArchivedAt,
             board.ArchivedReason,
-            board.ArchivedBy);
+            board.ArchivedBy) { SyncCardFiles = board.SyncCardFiles };
     }
 
     internal static BoardSummaryDto ToSummaryDto(Board board) =>
@@ -301,7 +309,7 @@ public sealed class BoardService
             board.UpdatedAt,
             board.ArchivedAt,
             board.ArchivedReason,
-            board.ArchivedBy);
+            board.ArchivedBy) { SyncCardFiles = board.SyncCardFiles };
 
     internal static CardDto ToCardDto(Card card, DateTime? now = null)
     {
@@ -371,7 +379,7 @@ public sealed class BoardService
                     ext.AuthorIsOperator,
                     NeedsHumanReview(card))
                 : null,
-            card.Alias);
+            card.Alias) { CardFileVisibility = card.CardFileVisibility, HasPrivateNotes = card.PrivateNotes.Length > 0 };
     }
 
     /// <summary>
@@ -460,7 +468,8 @@ public sealed class BoardService
             revision.CreatedAt,
             revision.TerminalReason,
             revision.CompletedAt,
-            revision.Alias);
+            revision.Alias) { CardFileVisibility = revision.CardFileVisibility,
+                HasPrivateNotes = revision.Kind != CardRevisionKind.ContentEdit || revision.PrivateNotes is null ? null : revision.PrivateNotes.Length > 0 };
     }
 
     internal async Task<Board> LoadBoardAsync(Guid id, CancellationToken ct)

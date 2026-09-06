@@ -26,3 +26,11 @@ report identify `3efe2c69`. Code uses that reviewed plan and the brief's decisio
 These are partial baseline checks for V-1/V-2/V-4/V-5/V-21/V-22/V-23/V-26.
 They do not complete these groups; migration upgrade, service/API, expanded Git
 and mutation controls remain. No PC control has yet been run.
+
+## S2 initial baseline
+
+CardPrivateNotesApiTests: 13 passed, 0 failed; raw HTTP enum-shape rejection,
+notes/history/token behavior, DTO absence, mixed-case field errors and settings
+prerequisites. TRX: c408-s2-notes.trx. Remaining S2 acceptance variants and PCs
+are still pending.
+
