@@ -236,3 +236,36 @@ assertion, with a nonexistent disposable host source preventing actual child cre
 Continue Code on this branch, starting with the listed T-6/T-10 lifecycle gaps and missing named
 tests. Complete every unrun V/R/PC case, then the mandatory isolated real-wire and real-model gates.
 Keep the card open and do not hand this implementation to Land as a completed fix.
+
+## Resumed implementation evidence
+
+This section supersedes the initial-slice metadata/startup gap descriptions above; the full acceptance contract remains open. Commit `318b0966` records pre-spawn receipt persistence and failed-startup recovery. Subsequent verified changes persist the server receipt/refresh row before provider readiness, prevent refresh typing while Starting, record termination intent before owned startup cleanup, and refuse legacy Grok policy drift before notification/kill. A policy fixture initially retained a Claude launch definition; corrected Grok-definition rerun passed.
+
+Current selected verification: 55 server Grok rules tests, 21 runner launch tests, one legacy policy test, two startup ownership cases, four delegate E2Es; all zero failures/skips on their successful runs. These overlap earlier suites and are not an additive unique test total. Slice build+test elapsed: policy 46.156 s, startup 33.266 s, E2E 131.922 s. Native captured ACP parser/live/sync/startup tests use the existing attributed Grok 1.0.5 fixture; they do not establish live 1.0.13 endurance.
+
+Additional mutation evidence follows. Full actual assertion text and exact elapsed measurements are in the archive. Every accepted row restores original source bytes and reruns the same filter green. Rejected build-failure attempts retained in the archive are not positive controls.
+
+| Mutation | Red exit / green exit | Actual assertion excerpt | Elapsed red / green |
+|---|---|---|---|
+| PC-6-CR | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: v should not be null but was at Antiphon.SessionRunner.Tests.GrokRulesArgvPolicyTests.AssertRefused(GrokRulesArgvViolation v, String reason, String flag) in C:\Antiphon\worktree` | 19.672 / 14.110 s |
+| PC-6-NUL | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: v!.Reason should be "nul" but was` | 14.156 / 13.765 s |
+| PC-6-4097-accepted | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: v should not be null but was at Antiphon.SessionRunner.Tests.GrokRulesArgvPolicyTests.AssertRefused(GrokRulesArgvViolation v, String reason, String flag) in C:\Antiphon\worktree` | 13.641 / 14.234 s |
+| PC-6-4096-rejected | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: GrokRulesArgvPolicy.ValidatePayload(payload, isWindows: true, isGrok: true) should be null but was GrokRulesArgvViolation { Reason = token_too_long, Flag = --rules, OccurrenceIn` | 13.765 / 13.907 s |
+| PC-6-alias | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: v should not be null but was at Antiphon.SessionRunner.Tests.GrokRulesArgvPolicyTests.AssertRefused(GrokRulesArgvViolation v, String reason, String flag) in C:\Antiphon\worktree` | 14.000 / 13.234 s |
+| PC-6-equals | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: v should not be null but was at Antiphon.SessionRunner.Tests.GrokRulesArgvPolicyTests.AssertRefused(GrokRulesArgvViolation v, String reason, String flag) in C:\Antiphon\worktree` | 13.828 / 13.594 s |
+| PC-6-later-occurrence | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: v should not be null but was at Antiphon.SessionRunner.Tests.GrokRulesArgvPolicyTests.AssertRefused(GrokRulesArgvViolation v, String reason, String flag) in C:\Antiphon\worktree` | 13.984 / 14.406 s |
+| PC-3-server-raw | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: handler.Starts should be 0 but was` | 43.328 / 41.140 s |
+| PC-4-runner-raw | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: Directory.Exists(root) should be False but was` | 16.188 / 15.281 s |
+| PC-5-server-env | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: handler.Starts should be 0 but was` | 58.343 / 42.016 s |
+| PC-5-runner-env | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: fake.Requests should be empty but had 12 items and was` | 15.781 / 15.016 s |
+| PC-7-server-NUL | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: handler.Requests should be 0 but was` | 27.484 / 29.875 s |
+| PC-7-server-key | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: handler.Requests should be 0 but was` | 59.672 / 26.407 s |
+| PC-7-server-bytes | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: handler.Requests should be 0 but was` | 26.328 / 25.078 s |
+| PC-7-server-kind | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: handler.Requests should be 0 but was` | 25.297 / 25.516 s |
+| PC-7-runner-NUL | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: Directory.Exists(root) should be False but was` | 15.484 / 12.985 s |
+| PC-7-runner-key | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: Directory.Exists(root) should be False but was` | 12.687 / 13.453 s |
+| PC-7-runner-bytes | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: Directory.Exists(root) should be False but was` | 13.141 / 12.484 s |
+| PC-7-runner-kind | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: Directory.Exists(root) should be False but was` | 13.000 / 12.297 s |
+| PC-11-capability | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: handler.Starts should be 0 but was` | 34.657 / 48.891 s |
+
+Current archive SHA-256: `03970e98d978d7226e40706fa822c87df66f456be2f64ce87d4501b7112dd12f`. Earlier archive hash above identifies the prior four-mutation artifact. All still-unrun V/R/PC rows remain open; related newer deterministic checks do not certify the broader gate. No live acceptance call or real auto-compaction has yet been executed.
