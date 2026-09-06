@@ -7,8 +7,8 @@ checks and initial failures are recorded below. PC-1 through PC-31 now have reco
 failures, source restoration and green reruns for their listed mutations.
 
 **Operator scope decision, refinement 20260906194334:** two-auto-compaction endurance is
-deliberately removed from CARD-0395 acceptance and moved to a follow-up card. No follow-up
-card identifier was supplied. No further live compaction attempts will run for this task.
+deliberately removed from CARD-0395 acceptance and moved to **CARD-0416**, identified by the
+closing refinement 20260906205739. No further live compaction attempts will run for this task.
 The revised acceptance is deterministic V/R/PC verification plus the passing single live
 real-model compliance gate. V-9 and its changed-revision live-resume experiment are historical
 observations for the follow-up, not blockers for this card and not falsely marked passed.
@@ -591,7 +591,7 @@ The broader 104-case delivery verification suite is running against the queue fi
 **Revised acceptance complete.** Deterministic V/R/PC mapping is green, including T-8's
 permitted conservative one-follow-on branch. Both authenticated mapped-worker and standing-Herdr
 compliance runs passed with native read/ack/marked-settlement evidence. V-9 endurance was
-intentionally moved to an operator follow-up and is not an acceptance blocker. It was not rerun
+intentionally moved to CARD-0416 and is not an acceptance blocker. It was not rerun
 after the scope decision. The follow-up should reuse the captured genuine compactions and the
 corrected exact launch-key resume query; no failure to trigger compaction is claimed.
 
