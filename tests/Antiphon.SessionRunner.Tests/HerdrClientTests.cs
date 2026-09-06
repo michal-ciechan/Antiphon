@@ -452,6 +452,33 @@ public class HerdrClientTests
         });
     }
 
+    [Test]
+    public async Task Tab_list_round_trips_labels_counts_and_scopes_by_workspace()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.Start();
+        var w1 = fake.SeedWorkspace("w1", "one");
+        var w2 = fake.SeedWorkspace("w2", "two");
+        fake.SeedTab(w1.WorkspaceId, "Orch");
+        fake.SeedTab(w2.WorkspaceId, "Other");
+        var client = ClientFor(fake.Session);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await fake.WaitUntilListeningAsync(cts.Token);
+        _ = await client.ConnectAndValidateAsync(cts.Token);
+        await fake.WaitUntilListeningAsync(cts.Token);
+        var tabs = await client.TabListAsync(w1.WorkspaceId, cts.Token);
+        tabs.ShouldAllBe(t => t.WorkspaceId == w1.WorkspaceId);
+        tabs.ShouldContain(t => t.Label == "Orch");
+        tabs.ShouldNotContain(t => t.Label == "Other");
+        var listReq = fake.Requests.Last(r => r.GetProperty("method").GetString() == "tab.list");
+        listReq.GetProperty("params").GetProperty("workspace_id").GetString().ShouldBe(w1.WorkspaceId);
+
+        await fake.WaitUntilListeningAsync(cts.Token);
+        var unknown = await Should.ThrowAsync<HerdrApiException>(() =>
+            client.TabListAsync("missing", cts.Token));
+        unknown.Code.ShouldBe("not_found");
+    }
+
     private static HerdrClient ClientFor(string pipeName) => new(new HerdrSettings
     {
         Enabled = true,

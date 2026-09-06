@@ -80,6 +80,62 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
 
     public IReadOnlyList<JsonElement> Requests => _requests.ToArray();
 
+    private readonly ConcurrentDictionary<string, string> _failOnce = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, GateHandle> _gates = new(StringComparer.Ordinal);
+
+    /// <summary>CARD-0384: the next RPC for <paramref name="method"/> returns this error code once.</summary>
+    public void FailMethod(string method, string code) =>
+        _failOnce[method] = code;
+
+    /// <summary>
+    /// CARD-0384: the next matching request is recorded when it arrives and answered when
+    /// <see cref="IFakeHerdrGate.Release"/> runs. Later requests of the same method proceed
+    /// immediately after release (the wait handle is already completed).
+    /// </summary>
+    public IFakeHerdrGate GateMethod(string method)
+    {
+        var handle = new GateHandle(this, method);
+        _gates[method] = handle;
+        return handle;
+    }
+
+    public interface IFakeHerdrGate
+    {
+        void Release();
+        void Drop();
+    }
+
+    private sealed class GateHandle : IFakeHerdrGate
+    {
+        private readonly FakeHerdrServer _owner;
+        private readonly string _method;
+        private readonly TaskCompletionSource _released =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public GateHandle(FakeHerdrServer owner, string method)
+        {
+            _owner = owner;
+            _method = method;
+        }
+
+        public bool Dropped { get; private set; }
+
+        public void Release()
+        {
+            _owner._gates.TryRemove(_method, out _);
+            _released.TrySetResult();
+        }
+
+        public void Drop()
+        {
+            Dropped = true;
+            _owner._gates.TryRemove(_method, out _);
+            _released.TrySetResult();
+        }
+
+        public Task WaitAsync(CancellationToken ct) => _released.Task.WaitAsync(ct);
+    }
+
     /// <summary>Each subscribe call's subscriptions array, in order (CARD-0162).</summary>
     public IReadOnlyList<IReadOnlyList<JsonElement>> SubscriptionRecords => _subscriptionRecords.ToArray();
 
@@ -197,9 +253,34 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
                     continue;
                 }
 
+                if (_gates.TryGetValue(method, out var parkedGate))
+                {
+                    var gatedPipe = pipe;
+                    pipe = null;
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await parkedGate.WaitAsync(ct);
+                            if (parkedGate.Dropped)
+                                throw new IOException("gated herdr RPC dropped without applying");
+                            await WriteLineAsync(writer, Handle(request), ct);
+                        }
+                        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+                        catch (IOException) { }
+                        finally
+                        {
+                            try { writer.Dispose(); } catch (IOException) { }
+                            try { reader.Dispose(); } catch (IOException) { }
+                            await gatedPipe.DisposeAsync();
+                        }
+                    }, ct);
+                    continue;
+                }
+
                 try
                 {
-                    await WriteLineAsync(writer, Handle(request), ct);
+                    await WriteLineAsync(writer, await HandleAsync(request, ct), ct);
                 }
                 finally
                 {
@@ -308,6 +389,12 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
     private static TaskCompletionSource NewListeningTcs() =>
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    private Task<string> HandleAsync(JsonElement request, CancellationToken ct)
+    {
+        _ = ct;
+        return Task.FromResult(Handle(request));
+    }
+
     private string Handle(JsonElement request)
     {
         var id = request.GetProperty("id").GetString()!;
@@ -316,12 +403,16 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
 
         try
         {
+            if (_failOnce.TryRemove(method, out var failCode))
+                throw new FakeHerdrApiException(failCode, $"{method} failed ({failCode})");
+
             var resultJson = method switch
             {
                 "ping" => """{"type":"pong","version":"0.8.2","protocol":20}""",
                 "workspace.list" => WorkspaceListJson(),
                 "workspace.create" => WorkspaceCreateJson(parameters),
                 "workspace.report_metadata" => ReportWorkspaceMetadata(parameters),
+                "tab.list" => TabListJson(parameters),
                 "tab.create" => TabCreateJson(parameters),
                 "tab.rename" => TabRenameJson(parameters),
                 "tab.close" => TabCloseJson(parameters),
@@ -385,6 +476,21 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         }
 
         return OkJson();
+    }
+
+    private string TabListJson(JsonElement parameters)
+    {
+        var workspaceId = parameters.ValueKind == JsonValueKind.Object
+            && parameters.TryGetProperty("workspace_id", out var wid)
+            && wid.ValueKind == JsonValueKind.String
+            ? wid.GetString()
+            : null;
+        if (string.IsNullOrWhiteSpace(workspaceId))
+            throw new FakeHerdrApiException("invalid_params", "tab.list requires workspace_id");
+
+        var ws = RequireWorkspace(workspaceId);
+        var items = ws.Tabs.Select(TabJson);
+        return $"{{\"type\":\"tab_list\",\"tabs\":[{string.Join(",", items)}]}}";
     }
 
     private string TabCreateJson(JsonElement parameters)
@@ -579,6 +685,86 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         pane.LaunchDetectKind = null;
         pane.LaunchDetectAtUtc = null;
         pane.AgentSession = null;
+    }
+
+    /// <summary>
+    /// CARD-0384: seed a labelled tab in an existing workspace. <paramref name="paneCount"/>
+    /// panes are created; reported <c>pane_count</c> follows enumeration unless overridden.
+    /// </summary>
+    public TabState SeedTab(string workspaceId, string label, int paneCount = 1, string? cwd = null)
+    {
+        var ws = RequireWorkspace(workspaceId);
+        var tabId = $"{ws.WorkspaceId}:t{++_tabSeq}";
+        var panes = new List<PaneState>();
+        for (var i = 0; i < paneCount; i++)
+        {
+            var paneId = $"{ws.WorkspaceId}:p{++_paneSeq}";
+            var termId = $"term_{++_termSeq:x12}";
+            panes.Add(new PaneState(paneId, tabId, ws.WorkspaceId, termId, cwd, null, null, null, null));
+        }
+
+        var tab = new TabState(tabId, ws.WorkspaceId, label, ws.Tabs.Count + 1, panes);
+        ws.Tabs.Add(tab);
+        return tab;
+    }
+
+    /// <summary>CARD-0384: make tab.list's pane_count disagree with enumeration.</summary>
+    public void SetTabReportedPaneCount(string tabId, int n)
+    {
+        foreach (var ws in Workspaces)
+        {
+            var tab = ws.Tabs.FirstOrDefault(t => t.TabId == tabId);
+            if (tab is null)
+                continue;
+            tab.ReportedPaneCount = n;
+            return;
+        }
+
+        throw new InvalidOperationException($"tab '{tabId}' not found");
+    }
+
+    /// <summary>CARD-0384: drop a tab (and its panes) from the fake.</summary>
+    public void RemoveTab(string tabId)
+    {
+        foreach (var ws in Workspaces)
+        {
+            var idx = ws.Tabs.FindIndex(t => t.TabId == tabId);
+            if (idx < 0)
+                continue;
+            ws.Tabs.RemoveAt(idx);
+            if (ws.ActiveTabId == tabId)
+                ws.ActiveTabId = ws.Tabs.FirstOrDefault()?.TabId ?? "";
+            return;
+        }
+
+        throw new InvalidOperationException($"tab '{tabId}' not found");
+    }
+
+    /// <summary>CARD-0384: move a tab into another workspace (membership TOCTOU).</summary>
+    public void MoveTab(string tabId, string toWorkspaceId)
+    {
+        TabState? found = null;
+        foreach (var ws in Workspaces)
+        {
+            var idx = ws.Tabs.FindIndex(t => t.TabId == tabId);
+            if (idx < 0)
+                continue;
+            found = ws.Tabs[idx];
+            ws.Tabs.RemoveAt(idx);
+            if (ws.ActiveTabId == tabId)
+                ws.ActiveTabId = ws.Tabs.FirstOrDefault()?.TabId ?? "";
+            break;
+        }
+
+        if (found is null)
+            throw new InvalidOperationException($"tab '{tabId}' not found");
+
+        var to = RequireWorkspace(toWorkspaceId);
+        found.WorkspaceId = toWorkspaceId;
+        foreach (var pane in found.Panes)
+            pane.WorkspaceId = toWorkspaceId;
+        found.Number = to.Tabs.Count + 1;
+        to.Tabs.Add(found);
     }
 
     /// <summary>CARD-0224: remove a pane from the fake (herdr restart without layout restore).</summary>
@@ -1035,8 +1221,12 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
             $"{{\"workspace_id\":\"{w.WorkspaceId}\",\"label\":{JsonSerializer.Serialize(w.Label)},\"number\":{w.Number},\"active_tab_id\":\"{w.ActiveTabId}\",\"pane_count\":{w.Tabs.Sum(t => t.Panes.Count)},\"tab_count\":{w.Tabs.Count},\"focused\":false,\"agent_status\":\"unknown\",\"tokens\":{tokens}}}";
     }
 
-    private static string TabJson(TabState t) =>
-        $"{{\"tab_id\":\"{t.TabId}\",\"workspace_id\":\"{t.WorkspaceId}\",\"label\":{JsonSerializer.Serialize(t.Label)},\"number\":{t.Number},\"pane_count\":{t.Panes.Count},\"focused\":false,\"agent_status\":\"unknown\"}}";
+    private static string TabJson(TabState t)
+    {
+        var paneCount = t.ReportedPaneCount ?? t.Panes.Count;
+        return
+            $"{{\"tab_id\":\"{t.TabId}\",\"workspace_id\":\"{t.WorkspaceId}\",\"label\":{JsonSerializer.Serialize(t.Label)},\"number\":{t.Number},\"pane_count\":{paneCount},\"focused\":false,\"agent_status\":\"unknown\"}}";
+    }
 
     private static string PaneJson(PaneState p)
     {
@@ -1110,10 +1300,12 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         List<PaneState> panes)
     {
         public string TabId { get; } = tabId;
-        public string WorkspaceId { get; } = workspaceId;
+        public string WorkspaceId { get; set; } = workspaceId;
         public string Label { get; set; } = label;
-        public int Number { get; } = number;
+        public int Number { get; set; } = number;
         public List<PaneState> Panes { get; } = panes;
+        /// <summary>CARD-0384: when set, tab.list reports this instead of <see cref="Panes"/>.Count.</summary>
+        public int? ReportedPaneCount { get; set; }
     }
 
     internal sealed class PaneState(
@@ -1128,8 +1320,8 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         Dictionary<string, string>? env)
     {
         public string PaneId { get; } = paneId;
-        public string TabId { get; } = tabId;
-        public string WorkspaceId { get; } = workspaceId;
+        public string TabId { get; set; } = tabId;
+        public string WorkspaceId { get; set; } = workspaceId;
         public string TerminalId { get; } = terminalId;
         public string? Cwd { get; set; } = cwd;
         public string? Label { get; set; } = label;

@@ -159,6 +159,18 @@ public sealed class HerdrClient
             cancellationToken);
     }
 
+    public async Task<IReadOnlyList<HerdrTabInfo>> TabListAsync(
+        string workspaceId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(workspaceId);
+        var result = await SendRequestAsync(
+            "tab.list",
+            new HerdrTabListParams(workspaceId),
+            cancellationToken);
+        return DeserializeRequired<HerdrTabListEnvelope>(result, "tab.list").Tabs;
+    }
+
     public async Task<HerdrTabCreateResult> TabCreateAsync(
         string workspaceId,
         string? cwd,
