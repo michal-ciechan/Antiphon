@@ -637,6 +637,10 @@ foreach ($card0395Class in @('GrokRulesCompactionRecoveryTests', 'GrokRulesQueue
 ```
 
 No deployment, production restart or shared database migration was performed. The isolated
-named Herdr server was stopped and its absence verified. `restart: none`.
+named Herdr server was stopped and its absence verified. Deployment requires `restart: server + runner`:
+both the server and session-runner must restart, and migration
+`20260906133335_GrokRulesFileTransport` applies on the next server boot. The updated runner must
+advertise `grokRulesFileV1`; without its restart, every Grok launch with composed rules is refused
+with HTTP 409 `grok_rules_transport_unsupported`.
 
 Final evidence ZIP SHA-256: `a9f7983ff57e16c2647a3549dae8683cfaa2d97022770a927ffcb1cd483dbd22` (312 CRC-verified entries).
