@@ -1,3 +1,4 @@
+using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -37,19 +38,22 @@ public sealed class StandingSpecialistProvisioner
     private readonly ILogger _logger;
     private readonly AgentControlService? _control;
     private readonly AgentWorkspaceProvisioner? _workspace;
+    private readonly string? _claudeConfigJsonPath;
 
     public StandingSpecialistProvisioner(
         AppDbContext db,
         TimeProvider timeProvider,
         ILogger logger,
         AgentControlService? control = null,
-        AgentWorkspaceProvisioner? workspace = null)
+        AgentWorkspaceProvisioner? workspace = null,
+        string? claudeConfigJsonPath = null)
     {
         _db = db;
         _timeProvider = timeProvider;
         _logger = logger;
         _control = control;
         _workspace = workspace;
+        _claudeConfigJsonPath = claudeConfigJsonPath;
     }
 
     /// <summary>
@@ -147,6 +151,33 @@ public sealed class StandingSpecialistProvisioner
             _logger.LogWarning(
                 ex, "Could not prepare the {DisplayName}'s workspace at {Directory}; "
                 + "the deny-all tool hook may not be armed", spec.DisplayName, spec.WorkingDirectory);
+        }
+
+        SeedClaudeTrust(spec);
+    }
+
+    private void SeedClaudeTrust(SpecialistSpec spec)
+    {
+        var result = ClaudeProjectTrust.Seed(spec.WorkingDirectory, _claudeConfigJsonPath);
+        switch (result.Outcome)
+        {
+            case ClaudeProjectTrustOutcome.Seeded:
+                _logger.LogInformation(
+                    "Seeded Claude trust for {Directory} in {ConfigPath} so the {DisplayName}'s first launch skips the trust dialog",
+                    spec.WorkingDirectory, result.ConfigPath, spec.DisplayName);
+                break;
+            case ClaudeProjectTrustOutcome.Unparseable:
+            case ClaudeProjectTrustOutcome.Failed:
+                _logger.LogWarning(
+                    "Could not seed Claude trust for {Directory} in {ConfigPath} ({Outcome}: {Error}); "
+                    + "the launch-time answerer remains the fallback",
+                    spec.WorkingDirectory, result.ConfigPath, result.Outcome, result.Error);
+                break;
+            default:
+                _logger.LogDebug(
+                    "Claude trust seed for {Directory} in {ConfigPath}: {Outcome}",
+                    spec.WorkingDirectory, result.ConfigPath, result.Outcome);
+                break;
         }
     }
 }

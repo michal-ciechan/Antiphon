@@ -97,7 +97,11 @@ public static class ClaudeProjectTrust
 
         var memoKey = MemoKey(path, key);
         if (Memo.TryGetValue(memoKey, out var cached))
-            return cached;
+        {
+            return cached.Outcome == ClaudeProjectTrustOutcome.Seeded
+                ? cached with { Outcome = ClaudeProjectTrustOutcome.AlreadyTrusted }
+                : cached;
+        }
 
         try
         {

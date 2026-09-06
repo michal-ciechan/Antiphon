@@ -1,3 +1,4 @@
+using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -5,6 +6,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -35,7 +37,7 @@ public class CheckInterpreterProvisionerTests
         using var scratch = new TempWorkspace();
         var settings = SettingsFor(scratch.Path);
 
-        var created = await EnsureAsync(settings);
+        var created = await EnsureAsync(settings, scratch);
 
         created.ShouldNotBeNull();
         var agent = await ReloadAsync(created.Id);
@@ -60,7 +62,7 @@ public class CheckInterpreterProvisionerTests
         // edit-only hook on purpose — the specialist reads a bundle it was handed and needs nothing.
         using var scratch = new TempWorkspace();
 
-        await EnsureAsync(SettingsFor(scratch.Path));
+        await EnsureAsync(SettingsFor(scratch.Path), scratch);
 
         var hookPath = Path.Combine(scratch.Path, ".claude", "settings.json");
         File.Exists(hookPath).ShouldBeTrue();
@@ -79,11 +81,11 @@ public class CheckInterpreterProvisionerTests
         using var scratch = new TempWorkspace();
         var settings = SettingsFor(scratch.Path);
 
-        var first = await EnsureAsync(settings);
+        var first = await EnsureAsync(settings, scratch);
         first.ShouldNotBeNull();
         var stampAfterCreate = (await ReloadAsync(first.Id)).UpdatedAt;
 
-        var second = await EnsureAsync(settings);
+        var second = await EnsureAsync(settings, scratch);
 
         second.ShouldNotBeNull();
         second.Id.ShouldBe(first.Id, "found by slug, not created again");
@@ -99,7 +101,7 @@ public class CheckInterpreterProvisionerTests
         // it gone degrades to a digest, and the one after that has a warm agent again.
         using var scratch = new TempWorkspace();
         var settings = SettingsFor(scratch.Path);
-        var first = await EnsureAsync(settings);
+        var first = await EnsureAsync(settings, scratch);
         first.ShouldNotBeNull();
 
         await using (var db = CreateContext())
@@ -108,7 +110,7 @@ public class CheckInterpreterProvisionerTests
             await db.SaveChangesAsync();
         }
 
-        var recreated = await EnsureAsync(settings);
+        var recreated = await EnsureAsync(settings, scratch);
 
         recreated.ShouldNotBeNull();
         recreated.Id.ShouldNotBe(first.Id, "a new row");
@@ -123,7 +125,7 @@ public class CheckInterpreterProvisionerTests
         // and the live agent updates itself; edit the row in the UI and it does not stick.
         using var scratch = new TempWorkspace();
         var settings = SettingsFor(scratch.Path);
-        var agent = await EnsureAsync(settings);
+        var agent = await EnsureAsync(settings, scratch);
         agent.ShouldNotBeNull();
 
         await using (var db = CreateContext())
@@ -133,7 +135,7 @@ public class CheckInterpreterProvisionerTests
             await db.SaveChangesAsync();
         }
 
-        await EnsureAsync(settings);
+        await EnsureAsync(settings, scratch);
 
         var reconciled = await ReloadAsync(agent.Id);
         reconciled.SystemPromptAppend.ShouldBe(CheckInterpretation.Contract);
@@ -151,10 +153,10 @@ public class CheckInterpreterProvisionerTests
         // regained tool access because its hook file vanished is the one failure prose cannot cover.
         using var scratch = new TempWorkspace();
         var settings = SettingsFor(scratch.Path);
-        await EnsureAsync(settings);
+        await EnsureAsync(settings, scratch);
         Directory.Delete(Path.Combine(scratch.Path, ".claude"), recursive: true);
 
-        await EnsureAsync(settings);
+        await EnsureAsync(settings, scratch);
 
         File.Exists(Path.Combine(scratch.Path, ".claude", "settings.json")).ShouldBeTrue();
     }
@@ -166,11 +168,42 @@ public class CheckInterpreterProvisionerTests
         var settings = SettingsFor(scratch.Path);
         settings.CheckInterpreterEnabled = false;
 
-        (await EnsureAsync(settings)).ShouldBeNull();
+        (await EnsureAsync(settings, scratch)).ShouldBeNull();
 
         await using var verify = CreateContext();
         (await verify.Agents.AnyAsync(a => a.Slug == settings.CheckInterpreterAgentSlug)).ShouldBeFalse();
         Directory.Exists(Path.Combine(scratch.Path, ".claude")).ShouldBeFalse("not even the hook file");
+    }
+
+    [Test]
+    public async Task the_specialists_working_directory_is_seeded_as_trusted_in_claude_json()
+    {
+        using var scratch = new TempWorkspace();
+        var settings = SettingsFor(scratch.Path);
+
+        var created = await EnsureAsync(settings, scratch);
+
+        created.ShouldNotBeNull();
+        ClaudeProjectTrust.IsTrusted(scratch.Path, scratch.ClaudeConfigPath).ShouldBeTrue();
+        var key = ClaudeProjectTrust.ProjectKey(scratch.Path);
+        var json = await File.ReadAllTextAsync(scratch.ClaudeConfigPath);
+        json.ShouldContain(key);
+        json.ShouldContain("hasTrustDialogAccepted");
+    }
+
+    [Test]
+    public async Task a_missing_claude_json_is_tolerated_and_logged()
+    {
+        using var scratch = new TempWorkspace(writeClaudeConfig: false);
+        var settings = SettingsFor(scratch.Path);
+        File.Exists(scratch.ClaudeConfigPath).ShouldBeFalse();
+        var logs = new List<string>();
+
+        var created = await EnsureAsync(settings, scratch, new ListLogger<CheckInterpreterProvisioner>(logs));
+
+        created.ShouldNotBeNull();
+        File.Exists(scratch.ClaudeConfigPath).ShouldBeFalse();
+        logs.ShouldContain(l => l.Contains("NoConfigFile", StringComparison.Ordinal));
     }
 
     // ---- the derived working directory ----------------------------------------------------------
@@ -232,12 +265,16 @@ public class CheckInterpreterProvisionerTests
         CheckInterpreterWorkingDirectory = directory,
     };
 
-    private static async Task<Agent?> EnsureAsync(DelegationSettings settings)
+    private static async Task<Agent?> EnsureAsync(
+        DelegationSettings settings,
+        TempWorkspace scratch,
+        ILogger<CheckInterpreterProvisioner>? logger = null)
     {
         await using var db = CreateContext();
         var provisioner = new CheckInterpreterProvisioner(
             db, Options.Create(settings), TimeProvider.System,
-            NullLogger<CheckInterpreterProvisioner>.Instance);
+            logger ?? NullLogger<CheckInterpreterProvisioner>.Instance,
+            claudeConfigJsonPath: scratch.ClaudeConfigPath);
         return await provisioner.EnsureAsync(CancellationToken.None);
     }
 
@@ -249,13 +286,41 @@ public class CheckInterpreterProvisionerTests
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
+    private sealed class ListLogger<T>(List<string> sink) : ILogger<T>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            lock (sink)
+                sink.Add(formatter(state, exception));
+        }
+    }
+
     private sealed class TempWorkspace : IDisposable
     {
-        public string Path { get; } = Directory.CreateTempSubdirectory("antiphon-interp-test").FullName;
+        private readonly string _configDir;
+
+        public string Path { get; }
+        public string ClaudeConfigPath { get; }
+
+        public TempWorkspace(bool writeClaudeConfig = true)
+        {
+            Path = Directory.CreateTempSubdirectory("antiphon-interp-test").FullName;
+            _configDir = Directory.CreateTempSubdirectory("antiphon-claude-cfg").FullName;
+            ClaudeConfigPath = System.IO.Path.Combine(_configDir, ".claude.json");
+            if (writeClaudeConfig)
+                File.WriteAllText(ClaudeConfigPath, """{"projects":{}}""");
+        }
 
         public void Dispose()
         {
             try { Directory.Delete(Path, recursive: true); }
+            catch (IOException) { }
+            try { Directory.Delete(_configDir, recursive: true); }
             catch (IOException) { }
         }
     }

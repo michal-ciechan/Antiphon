@@ -26,7 +26,7 @@ public class OutputDistillerProvisionerTests
         using var scratch = new TempWorkspace();
         var settings = SettingsFor(scratch.Path);
 
-        var created = await EnsureAsync(settings);
+        var created = await EnsureAsync(settings, scratch);
 
         created.ShouldNotBeNull();
         var agent = await ReloadAsync(created.Id);
@@ -49,7 +49,7 @@ public class OutputDistillerProvisionerTests
     {
         using var scratch = new TempWorkspace();
 
-        await EnsureAsync(SettingsFor(scratch.Path));
+        await EnsureAsync(SettingsFor(scratch.Path), scratch);
 
         var hookPath = Path.Combine(scratch.Path, ".claude", "settings.json");
         File.Exists(hookPath).ShouldBeTrue();
@@ -69,11 +69,11 @@ public class OutputDistillerProvisionerTests
         using var scratch = new TempWorkspace();
         var settings = SettingsFor(scratch.Path);
 
-        var first = await EnsureAsync(settings);
+        var first = await EnsureAsync(settings, scratch);
         first.ShouldNotBeNull();
         var stampAfterCreate = (await ReloadAsync(first.Id)).UpdatedAt;
 
-        var second = await EnsureAsync(settings);
+        var second = await EnsureAsync(settings, scratch);
 
         second.ShouldNotBeNull();
         second.Id.ShouldBe(first.Id, "found by slug, not created again");
@@ -87,7 +87,7 @@ public class OutputDistillerProvisionerTests
     {
         using var scratch = new TempWorkspace();
         var settings = SettingsFor(scratch.Path);
-        var first = await EnsureAsync(settings);
+        var first = await EnsureAsync(settings, scratch);
         first.ShouldNotBeNull();
 
         await using (var db = CreateContext())
@@ -96,7 +96,7 @@ public class OutputDistillerProvisionerTests
             await db.SaveChangesAsync();
         }
 
-        var recreated = await EnsureAsync(settings);
+        var recreated = await EnsureAsync(settings, scratch);
 
         recreated.ShouldNotBeNull();
         recreated.Id.ShouldNotBe(first.Id, "a new row");
@@ -109,7 +109,7 @@ public class OutputDistillerProvisionerTests
     {
         using var scratch = new TempWorkspace();
         var settings = SettingsFor(scratch.Path);
-        var agent = await EnsureAsync(settings);
+        var agent = await EnsureAsync(settings, scratch);
         agent.ShouldNotBeNull();
 
         await using (var db = CreateContext())
@@ -119,7 +119,7 @@ public class OutputDistillerProvisionerTests
             await db.SaveChangesAsync();
         }
 
-        await EnsureAsync(settings);
+        await EnsureAsync(settings, scratch);
 
         var reconciled = await ReloadAsync(agent.Id);
         reconciled.SystemPromptAppend.ShouldBe(OutputDistillation.Contract);
@@ -134,10 +134,10 @@ public class OutputDistillerProvisionerTests
     {
         using var scratch = new TempWorkspace();
         var settings = SettingsFor(scratch.Path);
-        await EnsureAsync(settings);
+        await EnsureAsync(settings, scratch);
         Directory.Delete(Path.Combine(scratch.Path, ".claude"), recursive: true);
 
-        await EnsureAsync(settings);
+        await EnsureAsync(settings, scratch);
 
         File.Exists(Path.Combine(scratch.Path, ".claude", "settings.json")).ShouldBeTrue();
     }
@@ -149,7 +149,7 @@ public class OutputDistillerProvisionerTests
         var settings = SettingsFor(scratch.Path);
         settings.OutputDistillerEnabled = false;
 
-        (await EnsureAsync(settings)).ShouldBeNull();
+        (await EnsureAsync(settings, scratch)).ShouldBeNull();
 
         await using var verify = CreateContext();
         (await verify.Agents.AnyAsync(a => a.Slug == settings.OutputDistillerAgentSlug)).ShouldBeFalse();
@@ -195,12 +195,13 @@ public class OutputDistillerProvisionerTests
         OutputDistillerWorkingDirectory = directory,
     };
 
-    private static async Task<Agent?> EnsureAsync(DelegationSettings settings)
+    private static async Task<Agent?> EnsureAsync(DelegationSettings settings, TempWorkspace scratch)
     {
         await using var db = CreateContext();
         var provisioner = new OutputDistillerProvisioner(
             db, Options.Create(settings), TimeProvider.System,
-            NullLogger<OutputDistillerProvisioner>.Instance);
+            NullLogger<OutputDistillerProvisioner>.Instance,
+            claudeConfigJsonPath: scratch.ClaudeConfigPath);
         return await provisioner.EnsureAsync(CancellationToken.None);
     }
 
@@ -214,11 +215,24 @@ public class OutputDistillerProvisionerTests
 
     private sealed class TempWorkspace : IDisposable
     {
-        public string Path { get; } = Directory.CreateTempSubdirectory("antiphon-distiller-test").FullName;
+        private readonly string _configDir;
+
+        public string Path { get; }
+        public string ClaudeConfigPath { get; }
+
+        public TempWorkspace()
+        {
+            Path = Directory.CreateTempSubdirectory("antiphon-distiller-test").FullName;
+            _configDir = Directory.CreateTempSubdirectory("antiphon-claude-cfg").FullName;
+            ClaudeConfigPath = System.IO.Path.Combine(_configDir, ".claude.json");
+            File.WriteAllText(ClaudeConfigPath, """{"projects":{}}""");
+        }
 
         public void Dispose()
         {
             try { Directory.Delete(Path, recursive: true); }
+            catch (IOException) { }
+            try { Directory.Delete(_configDir, recursive: true); }
             catch (IOException) { }
         }
     }

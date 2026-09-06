@@ -31,10 +31,12 @@ public sealed class DiagnoseProvisioner
         TimeProvider timeProvider,
         ILogger<DiagnoseProvisioner> logger,
         AgentControlService? control = null,
-        AgentWorkspaceProvisioner? workspace = null)
+        AgentWorkspaceProvisioner? workspace = null,
+        string? claudeConfigJsonPath = null)
     {
         _settings = settings.Value;
-        _inner = new StandingSpecialistProvisioner(db, timeProvider, logger, control, workspace);
+        _inner = new StandingSpecialistProvisioner(
+            db, timeProvider, logger, control, workspace, claudeConfigJsonPath);
     }
 
     /// <summary>
