@@ -24,9 +24,46 @@ namespace Antiphon.Tests.Application;
 /// both persist and both DeliverToParent. Per-session settle lock + enqueue digest skip.
 /// </summary>
 [Category("Integration")]
-[NotInParallel("AgentQueue")]
+[NotInParallel]
 public class AgentTaskSettlementRaceTests
 {
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Deferred_sweep_never_hands_an_internal_rules_turn_to_settlement(bool late)
+    {
+        using var workspace = new TempWorkspace();
+        await using var provider = BuildHarness();
+        var parent = await SeedSessionAsync(workspace.Path);
+        var (task, sessionId) = await SeedSharedTaskAsync(workspace.Path, parent);
+        await SeedMarkedTurnAsync(sessionId, task.Id, "ANTIPHON_RULES_ACK internal synthetic report-looking text");
+        await using var db = CreateContext();
+        var id = Guid.NewGuid();
+        var prompt = await db.TranscriptEntries.SingleAsync(e => e.AgentSessionId == sessionId && e.Kind == TranscriptKinds.UserPrompt);
+        prompt.Text = GrokRulesRefreshService.Header(id) + "\n" + prompt.Text;
+        db.SessionQueuedMessages.Add(new SessionQueuedMessage { Id = id, AgentSessionId = sessionId,
+            Origin = QueuedMessageOrigin.System, Sequence = 1, Status = QueuedMessageStatus.Sent,
+            Body = prompt.Text, RulesRefreshKey = "launch:" + Guid.NewGuid().ToString("N"), CreatedAt = DateTime.UtcNow });
+        var end = await db.TranscriptEntries.SingleAsync(e => e.AgentSessionId == sessionId && e.Kind == TranscriptKinds.TurnEnd);
+        if (late)
+        {
+            var assistant = await db.TranscriptEntries.SingleAsync(e => e.AgentSessionId == sessionId && e.Kind == TranscriptKinds.AssistantText);
+            assistant.Sequence = end.Sequence + 1;
+        }
+        await db.SaveChangesAsync();
+        await using (var sweep = provider.CreateAsyncScope())
+            await sweep.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().SettleDeferredReportsAsync(CancellationToken.None);
+        provider.GetRequiredService<DeferredReportSweepMarks>().ShouldHandOff(sessionId, end.Sequence, null, DateTime.UtcNow, 3600)
+            .ShouldBeTrue("the internal turn must not be handed to settlement even if its independent exclusion would absorb it");
+        var unchanged = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
+        unchanged.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        unchanged.Result.ShouldBeNull();
+        unchanged.ReportNudgedAt.ShouldBeNull();
+        (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == sessionId)).ShouldBe(1);
+        (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == parent)).ShouldBe(0);
+    }
+
+
     [Test]
     public async Task concurrent_on_turn_end_for_the_same_task_enqueues_one_parent_note()
     {
@@ -267,6 +304,7 @@ public class AgentTaskSettlementRaceTests
         services.AddScoped<AgentTaskService>();
         services.AddSingleton<AgentTaskReplyService>();
         services.AddScoped<AgentTaskDispatcher>();
+        services.AddSingleton<DeferredReportSweepMarks>();
         // Production-shaped: real SaveChanges on the scoped AppDbContext, then the concurrent
         // RetireIdleWarmAgentsAsync tick (own scope, like the 5s hosted sweep).
         services.AddScoped<IDelegateSessionStopper, FlushingSessionStopper>();

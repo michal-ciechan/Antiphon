@@ -23,6 +23,92 @@ namespace Antiphon.Tests.Application;
 public sealed class CardSpawnModelArgumentTests
 {
     [Test]
+    public async Task Card_spawn_installs_the_same_composition_before_its_boot_prompt()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var root = AgentControlServiceIntegrationTests.NewTempRoot();
+        var startGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var readyGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var adapter = new FakeAgentProtocolAdapter { StartGate = startGate, ReadyHold = readyGate, PromptOutput = "card work answered" };
+        await using var harness = AgentControlServiceIntegrationTests.BuildHarness(root, [adapter],
+            defaultKind: "Raw", includeLaunchResolver: true, connectionString: schema.ConnectionString,
+            configureServices: services => {
+                services.AddSingleton(Options.Create(new GrokRulesSettings()));
+                services.AddSingleton<GrokRulesRefreshService>();
+            });
+        adapter.RegisterOnStart = harness.Provider.GetRequiredService<AgentSessionRuntime>();
+        harness.Runner.AdvertiseGrokRules = true;
+        try
+        {
+            await using var db = NewDb(schema.ConnectionString);
+            var profile = await SeedProfileAsync(db, AgentKind.Grok, "--model");
+            var card = await SeedAssignedCardAsync(db, harness, root, profile.Id, AgentKind.Grok, AgentModelLevel.High, null);
+            var agent = await db.Agents.SingleAsync(a => a.Id == card.AssignedAgentId);
+            agent.SystemPromptAppend = "CARD-RULE-FIRST\r\nkeep multiline canaries ðŸ˜€\r\nCARD-RULE-LAST";
+            agent.ReplyStyle = AgentReplyStyle.Terse;
+            await AgentBundleAttachments.SetAsync(db, agent, [InstructionBundles.Orchestrator], DateTime.UtcNow, CancellationToken.None);
+            await db.SaveChangesAsync();
+            var composed = InstructionBundleComposer.Compose([InstructionBundles.Orchestrator], AgentReplyStyles.ComposedKey(agent.ReplyStyle), agent.SystemPromptAppend);
+            ClearHarnessTracking(harness);
+            var spawn = await harness.CardService.SpawnAsync(card.Id, new SpawnCardRequest(), CancellationToken.None);
+            var id = spawn.SessionId;
+            var until = DateTime.UtcNow.AddSeconds(15);
+            while (!await db.AgentSessions.AnyAsync(s => s.Id == id && s.GrokRulesGeneration != null)
+                && DateTime.UtcNow < until) await Task.Delay(20);
+            var prepared = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == id);
+            prepared.GrokRulesGeneration.ShouldNotBeNull();
+            var receipt = await new Antiphon.SessionRunner.GrokRulesFileStore(Path.Combine(root, "runner"), new())
+                .WriteAsync(id, new(composed.Text, 1, prepared.GrokRulesGeneration.Value), CancellationToken.None);
+            harness.Runner.RulesReceipt = queried => queried == id ? receipt : null;
+            startGate.SetResult();
+            until = DateTime.UtcNow.AddSeconds(15);
+            while (!await db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == id && m.RulesRefreshKey != null)
+                && DateTime.UtcNow < until) await Task.Delay(20);
+            var refresh = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == id && m.RulesRefreshKey != null);
+            refresh.RulesDeadlineAt.ShouldBeNull();
+            adapter.Prompts.ShouldBeEmpty();
+            adapter.SubmittedBodies.ShouldBeEmpty("card boot prompt must not cross readiness or rules initialization");
+            adapter.StartedArgs.ShouldContain(GrokLaunchArgs.ReasoningEffortFlag);
+            adapter.StartedArgs.ShouldNotContain(a => a.Contains("CARD-RULE-FIRST"));
+            (await File.ReadAllBytesAsync(receipt.Path)).ShouldBe(System.Text.Encoding.UTF8.GetBytes(composed.Text));
+            adapter.OnSubmitted = async body => {
+                await using var transcript = NewDb(schema.ConnectionString);
+                var seq = await transcript.TranscriptEntries.Where(e => e.AgentSessionId == id).MaxAsync(e => (long?)e.Sequence) ?? 0;
+                var rules = body.StartsWith(GrokRulesRefreshService.Header(refresh.Id), StringComparison.Ordinal);
+                var reply = rules ? $"ANTIPHON_RULES_ACK id={refresh.Id:N} generation={receipt.Generation:N} sha256={receipt.Sha256}" : "card work answered";
+                foreach (var pair in new[] { (TranscriptKinds.UserPrompt, (string?)body), (TranscriptKinds.AssistantText, reply), (TranscriptKinds.TurnEnd, (string?)null) })
+                    transcript.TranscriptEntries.Add(new() { Id = Guid.NewGuid(), AgentSessionId = id, Sequence = ++seq,
+                        Kind = pair.Item1, Text = pair.Item2, Timestamp = DateTime.UtcNow, CreatedAt = DateTime.UtcNow,
+                        StopReason = pair.Item1 == TranscriptKinds.TurnEnd ? "end_turn" : null });
+                await transcript.SaveChangesAsync();
+            };
+            adapter.PromptFailure = prompt => {
+                adapter.SubmittedBodies.Count.ShouldBe(1, "rules refresh must precede direct boot delivery");
+                using var committed = NewDb(schema.ConnectionString);
+                committed.AgentSessions.AsNoTracking().Single(s => s.Id == id).GrokRulesState.ShouldBe(GrokRulesState.Ready);
+                return null;
+            };
+            readyGate.SetResult(true);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(40), CancellationToken.None);
+            var session = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == id);
+            session.Status.ShouldBe(SessionStatus.Running, session.FailureReason);
+            session.GrokRulesState.ShouldBe(GrokRulesState.Ready);
+            session.ComposedBundleStamp.ShouldBe(composed.StampLine);
+            adapter.SubmittedBodies.Count.ShouldBe(1);
+            adapter.SubmittedBodies[0].ShouldStartWith(GrokRulesRefreshService.Header(refresh.Id));
+            adapter.Prompts.Count.ShouldBe(1);
+            adapter.Prompts[0].ShouldContain(card.Title);
+        }
+        finally
+        {
+            readyGate.TrySetResult(false); startGate.TrySetResult();
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(40), CancellationToken.None);
+            AgentControlServiceIntegrationTests.DeleteDirectoryBestEffort(root);
+        }
+    }
+
+
+    [Test]
     public async Task Assigned_card_spawn_composes_instructions_and_authenticates_as_its_own_session()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();

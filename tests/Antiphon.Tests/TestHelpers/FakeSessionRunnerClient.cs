@@ -20,6 +20,8 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
     public Func<ConflictException>? StartRefusal { get; set; }
 
     public bool AdvertiseHerdr { get; set; } = true;
+    public bool AdvertiseGrokRules { get; set; }
+    public Func<Guid, GrokRulesReceipt?>? RulesReceipt { get; set; }
 
     public bool AdvertiseHerdrAttach { get; set; } = true;
 
@@ -37,6 +39,7 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
             ? [SessionBackends.PtyHost, SessionBackends.Herdr]
             : [SessionBackends.PtyHost];
         var features = new List<string>();
+        if (AdvertiseGrokRules) features.Add(GrokRulesTransport.Capability);
         if (AdvertiseHerdr && AdvertiseHerdrAttach)
             features.Add(RunnerCapabilityFeatures.HerdrAttach);
         if (AdvertiseHerdr && AdvertiseHerdrNamedTabPlacement)
@@ -82,7 +85,7 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
 
     public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
         Task.FromResult(new SessionRunnerSessionDto(
-            sessionId, null, DateTime.UtcNow, "Exited", 0, AgentExitReason.KilledByRequest, 0));
+            sessionId, null, DateTime.UtcNow, "Exited", 0, AgentExitReason.KilledByRequest, 0, GrokRulesReceipt: RulesReceipt?.Invoke(sessionId)));
 
     public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct) =>
         throw new NotSupportedException();

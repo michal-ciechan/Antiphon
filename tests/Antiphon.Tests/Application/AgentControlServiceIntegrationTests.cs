@@ -1622,7 +1622,8 @@ public class AgentControlServiceIntegrationTests
         string? connectionString = null,
         bool includeQuotaGate = false,
         bool includeModelAvailability = false,
-        AgentWorkspaceProvisioner? workspace = null)
+        AgentWorkspaceProvisioner? workspace = null,
+        Action<IServiceCollection>? configureServices = null)
     {
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(options =>
@@ -1702,6 +1703,7 @@ public class AgentControlServiceIntegrationTests
         services.AddScoped<CardService>();
         services.AddLogging();
 
+        configureServices?.Invoke(services);
         var provider = services.BuildServiceProvider();
         var scope = provider.CreateScope();
         return new Harness(
