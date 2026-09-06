@@ -1,3 +1,5 @@
+extern alias server;
+using ServerProgram = server::Program;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -28,7 +30,7 @@ public class SmokeTests
         .WithPassword("test")
         .Build();
 
-    private static WebApplicationFactory<Program> _factory = null!;
+    private static WebApplicationFactory<ServerProgram> _factory = null!;
     private static HttpClient _client = null!;
 
     [Before(Class)]
@@ -47,7 +49,7 @@ public class SmokeTests
         Environment.SetEnvironmentVariable("Llm__Providers__openai__ApiKey", " ");
         Environment.SetEnvironmentVariable("Llm__Providers__ollama__ApiKey", " ");
 
-        _factory = new WebApplicationFactory<Program>();
+        _factory = new WebApplicationFactory<ServerProgram>();
         _client = _factory.CreateClient();
     }
 

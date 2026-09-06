@@ -1,3 +1,5 @@
+extern alias server;
+using ServerProgram = server::Program;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.AspNetCore.Hosting;
@@ -27,7 +29,7 @@ namespace Antiphon.Tests.TestHelpers;
 /// testcontainer because the app runs EF migrations on startup, which the in-memory provider
 /// cannot apply.
 /// </summary>
-public class AntiphonWebAppFactory : WebApplicationFactory<Program>
+public class AntiphonWebAppFactory : WebApplicationFactory<ServerProgram>
 {
     /// <summary>
     /// This host's own cloned database. It must NOT be the shared antiphon_test store, because

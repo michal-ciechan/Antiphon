@@ -12,6 +12,59 @@ namespace Antiphon.SessionRunner.Tests;
 public sealed class GrokRulesFileLaunchTests
 {
     [Test]
+    [Arguments("cr")]
+    [Arguments("lf")]
+    [Arguments("crlf")]
+    [Arguments("nul")]
+    [Arguments("alias")]
+    [Arguments("equals")]
+    [Arguments("missing")]
+    [Arguments("duplicate_first")]
+    [Arguments("duplicate_second")]
+    [Arguments("env")]
+    [Arguments("braced_env")]
+    [Arguments("env_flag")]
+    public async Task Unsafe_final_runner_boundary_has_zero_effects_even_without_server_validation(string variant)
+    {
+        foreach (var herdr in new[] { false, true })
+        {
+            if (variant.Contains("env") && !herdr) continue;
+            await using var fake = new FakeHerdrServer { LaunchScriptAgentKind = HerdrAgentKinds.Grok };
+            fake.Start();
+            await fake.WaitUntilListeningAsync();
+            var root = Path.Combine(Path.GetTempPath(), "card0395", Guid.NewGuid().ToString("N"));
+            var settings = new SessionRunnerSettings { SessionLogPath = root, PtyHostSourceDir = Path.Combine(root, "missing-host") };
+            await using var runtime = new SessionRunnerRuntime(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance,
+                new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }), new PowershellProcessProbe());
+            var args = variant switch {
+                "cr" => new[] { "--rules", "private\rsentinel" },
+                "crlf" => ["--rules", "private\r\nsentinel"], "nul" => ["--rules", "private\0sentinel"],
+                "alias" => ["--append-system-prompt", "private\nsentinel"], "equals" => ["--rules=private\nsentinel"],
+                "missing" => ["--rules"], "duplicate_first" => ["--rules", "private\nsentinel", "--rules", "safe"],
+                "duplicate_second" => ["--rules", "safe", "--rules", "private\nsentinel"],
+                "env" => ["--rules", "$env:RULES"], "braced_env" => ["--rules", "${env:RULES}"],
+                "env_flag" => ["$env:FLAG", "private\nsentinel"], _ => ["--rules", "private\nsentinel"] };
+            var request = Request(root) with { Args = args, GrokRulesPayload = null,
+                Env = new Dictionary<string,string> { ["RULES"] = "private\nsentinel", ["FLAG"] = "--rules" },
+                Backend = herdr ? SessionBackends.Herdr : null,
+                Herdr = herdr ? new HerdrLaunchOptions("card0395-" + Guid.NewGuid().ToString("N"), "rules", root, "rules", AgentKind: HerdrAgentKinds.Grok) : null };
+            try
+            {
+                var failure = await CaptureAsync(() => runtime.StartAsync(request, CancellationToken.None));
+                fake.Requests.ShouldBeEmpty("raw refusal must precede every Herdr effect");
+                Directory.Exists(root).ShouldBeFalse("raw refusal must precede every host/store effect");
+                failure.ShouldBeOfType<GrokRulesLaunchException>().Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
+                runtime.List().ShouldBeEmpty();
+            }
+            finally
+            {
+                if (runtime.List().Any(s => s.SessionId == request.SessionId))
+                    await runtime.KillAsync(request.SessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+            }
+        }
+    }
+
+    [Test]
     public async Task Herdr_receipt_is_durable_before_first_request_and_before_typing()
     {
         await using var fake = new FakeHerdrServer { LaunchScriptAgentKind = HerdrAgentKinds.Grok };
@@ -66,16 +119,18 @@ public sealed class GrokRulesFileLaunchTests
     [Arguments("unresolved_key")]
     [Arguments("too_large")]
     [Arguments("wrong_kind")]
+    [Arguments("invalid_unicode")]
     public async Task Invalid_payload_refuses_before_session_registration_or_disk_effects(string reason)
     {
         var root = Path.Combine(Path.GetTempPath(), "card0395", Guid.NewGuid().ToString("N"));
-        var settings = new SessionRunnerSettings { SessionLogPath = root };
+        var settings = new SessionRunnerSettings { SessionLogPath = root, PtyHostSourceDir = Path.Combine(root, "missing-host") };
         await using var runtime = new SessionRunnerRuntime(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance);
         var content = reason switch
         {
             "nul" => "content\0",
             "unresolved_key" => "{{key:NAME}}",
             "too_large" => new string('x', 262145),
+            "invalid_unicode" => "\ud800",
             _ => "content",
         };
         var request = Request(root) with
@@ -83,7 +138,9 @@ public sealed class GrokRulesFileLaunchTests
             TranscriptFormat = reason == "wrong_kind" ? TranscriptFormats.Claude : TranscriptFormats.Grok,
             GrokRulesPayload = new(content, 1, Guid.NewGuid()),
         };
-        var error = await Should.ThrowAsync<GrokRulesTransportException>(() => runtime.StartAsync(request, CancellationToken.None));
+        var failure = await CaptureAsync(() => runtime.StartAsync(request, CancellationToken.None));
+        Directory.Exists(root).ShouldBeFalse("invalid payload must be refused before any store/host effect");
+        var error = failure.ShouldBeOfType<GrokRulesTransportException>();
         error.Code.ShouldBe("grok_rules_content_invalid");
         error.Reason.ShouldStartWith(reason);
         runtime.List().ShouldBeEmpty();

@@ -1169,6 +1169,7 @@ public sealed class SessionMessageQueueService
         if (rules is not null) await rules.ReconcileAsync(sessionId, ct);
         var rulesSession = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
         var rulesClosed = rulesSession is not null && GrokRulesRefreshService.IsClosed(rulesSession);
+        if (rulesClosed && rulesSession?.Status == SessionStatus.Starting) return FlushResult.Nothing;
         if (rulesSession?.GrokRulesState == GrokRulesState.Failed) return FlushResult.Nothing;
         // CARD-0161: resolve ceilings once per flush for this session (herdr vs pty).
         var ceilings = await CeilingsForSessionAsync(db, sessionId, ct);

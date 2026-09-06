@@ -190,6 +190,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             RunAttemptStateMachine.Transition(attempt, RunPhase.InitializingSession, UtcNow());
             await _db.SaveChangesAsync(ct);
 
+            await CaptureGrokRulesReceiptAsync(session, ct);
             await WaitForReadyOrThrowAsync(adapter, session.Id, ct);
             session.Status = SessionStatus.Running;
             session.LastSeenAt = UtcNow();
@@ -433,6 +434,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             EnsureHerdrLaunchAllowed(session, spec);
             await adapter.StartAsync(spec, ct);
 
+            await CaptureGrokRulesReceiptAsync(session, ct);
             await WaitForReadyOrThrowAsync(adapter, session.Id, ct);
             session.Status = SessionStatus.Running;
             session.LastSeenAt = UtcNow();
@@ -602,6 +604,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
             await ((IAttachableProtocolAdapter)adapter).AttachAsync(session.Id, ct);
             attached = true;
+            await CaptureGrokRulesReceiptAsync(session, ct);
             await WaitForReadyOrThrowAsync(adapter, session.Id, ct);
 
             session.Status = SessionStatus.Running;
@@ -677,6 +680,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         var sessionText = sessionId.ToString("D");
         var agentId = await _db.Agents.Where(a => a.PersistentSessionId == sessionText)
             .Select(a => a.Id).FirstOrDefaultAsync(ct);
+        SessionTermination.Record(session, SessionTerminationSource.SystemRequest);
+        await _db.SaveChangesAsync(ct);
         await KillRunnerSessionAsync(sessionId);
         await FailInterruptedLaunchAsync(session, agentId,
             session.GrokRulesFailure ?? "grok_rules_initialization_failed", 0, null, ct);
@@ -1319,6 +1324,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             var spec = await BuildRuntimeLaunchSpecAsync(launchSpec, session, cwd, effectiveResumeMode, ct);
             EnsureHerdrLaunchAllowed(session, spec);
             await adapter.StartAsync(spec, ct);
+            await CaptureGrokRulesReceiptAsync(session, ct);
             await WaitForReadyOrThrowAsync(adapter, session.Id, ct);
 
             session.Status = SessionStatus.Running;
@@ -1581,6 +1587,13 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 .PrepareLaunchAsync(_db, session, spec, ct);
         }
         return spec;
+    }
+
+    private async Task CaptureGrokRulesReceiptAsync(AgentSession session, CancellationToken ct)
+    {
+        if (session.GrokRulesGeneration is null) return;
+        using var scope = _scopeFactory.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<GrokRulesRefreshService>().CaptureReceiptAsync(session.Id, ct);
     }
 
     private async Task InitializeGrokRulesAsync(AgentSession session, CancellationToken ct)
