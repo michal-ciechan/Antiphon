@@ -817,6 +817,8 @@ public class AppDbContext : DbContext
             // PtyHost from the INSERT. Migration column default backfills existing rows; model never
             // relies on it (same shape as ReplyStyle / ModelLevel).
             entity.Property(a => a.SessionBackend).IsRequired();
+            entity.Property(a => a.HerdrWorkspaceLabel).HasMaxLength(Agent.HerdrLabelMaxLength);
+            entity.Property(a => a.HerdrTabLabel).HasMaxLength(Agent.HerdrLabelMaxLength);
             // CARD-0334. Nullable: null means Auto. No HasDefaultValue — Auto is 0, and a
             // database default would make EF omit an explicit Auto from INSERT (same trap as
             // ReplyStyle / ModelLevel). Existing rows stay null, which IS Auto.

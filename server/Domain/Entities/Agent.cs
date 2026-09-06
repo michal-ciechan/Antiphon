@@ -64,6 +64,20 @@ public class Agent
     public SessionBackend SessionBackend { get; set; } = SessionBackend.PtyHost;
 
     /// <summary>
+    /// CARD-0384: optional herdr workspace label override for a standing agent's next launch.
+    /// Null = use the project-derived default. Never a workspace/tab/pane ID.
+    /// </summary>
+    public string? HerdrWorkspaceLabel { get; set; }
+
+    /// <summary>
+    /// CARD-0384: optional dedicated herdr tab label for a standing agent's next launch.
+    /// Null = last-pane then allocator. Never a workspace/tab/pane ID.
+    /// </summary>
+    public string? HerdrTabLabel { get; set; }
+
+    public const int HerdrLabelMaxLength = 256;
+
+    /// <summary>
     /// Per-agent override of the policy-refresh lane (CARD-0334). Null means
     /// <see cref="PolicyRefreshMode.Auto"/> (AlwaysOn ClaudeCode relaunches at idle; others
     /// are notified). PATCH <c>policyRefreshMode</c> and the settings-modal select write it.
