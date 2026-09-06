@@ -152,7 +152,7 @@ cannot satisfy those gates. Live gates are unrun, not skipped/passed.
 | V-7a | Partial: restored capstone passes; additional full brief sentinels/unsafe-profile E2E remain. |
 | V-7b | Passed: exact named unmarked-after-nudge E2E; zero skips. |
 | V-7c | Passed: exact named task-only boot-stall/retry E2E; zero skips. |
-| V-8a | Unrun; acceptance harness not implemented. |
+| V-8a | Partial: implemented real CLI/PtyHost/script/HTTP-relay/service-graph wire test passed 1/1; see corrected checkpoint. Full evidence schema and PCs remain. |
 | V-8b | Unrun; acceptance harness not implemented. |
 | V-8c | Unrun; acceptance harness not implemented. |
 | V-8d | Unrun; acceptance harness not implemented. |
@@ -330,3 +330,42 @@ Requested an authenticated isolated test-home path or approved credential profil
 store was read or copied, and no live provider refusal is claimed from that file check.
 The full dispatch/endurance acceptance classes are absent at the starting tip;
 `GrokRulesNativeReadWireTests` is calibration only. Live gates remain unrun.
+
+### Live prerequisite probe (not V-8c/d or V-9 acceptance)
+
+The existing native OAuth login is present. The repository-supported `GROK_AUTH_PATH`
+override allowed a disposable `GROK_HOME` to use it without reading/copying credentials or
+adding an API-key fallback. A real grok-4.6 model call completed on 2026-09-06 in **19.844 s**,
+exit 0, native session `6bb4afde-33c2-4daa-a0e3-33916a1d192b`.
+The model voluntarily called `read_file` then a continuation with `offset=1001, limit=1000`.
+All three random early/middle/tail file-only answers matched. CLI-reported usage: input 23,992,
+cache-read 39,808, output 478, three calls, displayed cost USD 0.01202852.
+The probe is print mode with a standalone rules file; it has no server queue, mapped dispatch,
+startup ack barrier or compactions. It establishes available authenticated access and preliminary
+model-mediated reading only. **There is no auth blocker and the mandatory live gates remain open.**
+Evidence is `.antiphon/card0395-continuation/live-prerequisite/manifest.json` plus native output.
+
+The first V-8a wire implementation passed one test (30.131 s inside the acceptance run).
+A tightened request classifier then failed one test with `state.GrokRulesState should be
+GrokRulesState.Ready but was GrokRulesState.Failed`, reason `missing_ack`: the classifier
+incorrectly included JSON role/type labels ahead of the content. This is a test-harness defect,
+not a runtime regression or a positive control. Correction and rerun are pending.
+The separate native continuation-read test passed 1 test / 0 failures / 0 skips (31.129 s TUnit).
+
+### Corrected wire dispatch checkpoint
+
+`Real_cli_delegate_wire_reads_full_rules_before_brief_and_settles` passed **1/1**, zero skips,
+76.159 s TUnit, **44.548 s** measured acceptance body. Task `87c11016-4947-415e-af9c-ab7fa743b6ae`,
+Antiphon/native session `a275b1d0-f640-46aa-8f1b-7a54fe7d200a`. Four actual user requests:
+rules read, returned native rules content plus ack, spilled-brief read, returned native brief content
+plus marked report. Dashboard helper traffic is excluded by the current user-query envelope.
+Actual stage-code and delegate-basics composition has 58 lines; every nonblank line was present
+in native function-call output. The separate 1,105-line canary verifies continuation reads.
+The in-process PowerShell invocation supplied an 8,722-byte multiline goal with independent markers.
+This passes the implemented V-8a PtyHost/HTTP-relay path; the full V-8a evidence schema and PC controls
+are still being completed. It does not pass Herdr, mapped real-Program live dispatch, or endurance.
+
+Safe durable evidence: `2026-09-06-card-0395-continuation-evidence.zip` (adjacent), SHA-256
+`bcaea283dfdfc4ad1a05a210604ded87b3bb57c893162adf5f920c613b038dfe`. It includes rules/brief, receipt/queue/settlement timeline, normalized transcript,
+actual assertions, and the live prerequisite's native tool/text rows with thought rows omitted.
+Credential files, headers, homes, plugin caches and full raw request bodies are not archived.
