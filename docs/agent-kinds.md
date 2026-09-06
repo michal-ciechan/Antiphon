@@ -194,7 +194,7 @@ outside `TranscriptTailer`.
 
 **Behaviour worth knowing:**
 - First launch into a directory nobody has run Claude in parks on the **trust dialog**, which makes
-  no output and therefore reads as "ready" to every quiet-period detector. `ClaudeBlockingPromptDetector.ClearStartupTrustPromptAsync` answers it (and *only* it) in both Claude adapters.
+  no output and therefore reads as "ready" to every quiet-period detector. `ClaudeBlockingPromptDetector` answers it by layout in both Claude adapters (digit `"1"` on the numbered menu; on 2.1.258's unnumbered list, `j` then Enter **after** "Yes, I trust this folder" is highlighted — measured modern ConPTY only; inbox conhost does not deliver the Select binding). Standing specialists seed `hasTrustDialogAccepted` at provision; a stuck dialog is `LaunchBlock: TrustDialogNotCleared`. Worktrees inherit trust from the canonical repo root.
 - Remote control (`/remote-control`) is supported and is what puts a session in the claude.ai
   session list. A failed `/remote-control` degrades to an `RcDegraded` incident; it never fails the
   launch.

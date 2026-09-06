@@ -61,7 +61,7 @@ public static class ProviderContractCatalog
             CompactionMarking.UnmarkedAuto),
         BlockingStartupModal: new BlockingStartupModalContract(
             AgentTuiCapabilityState.Supported,
-            "First launch into an unseen cwd parks on the trust dialog. ClaudeBlockingPromptDetector auto-answers it (CARD-0047); the decision is per-cwd in ~/.claude.json.",
+            "First launch into an unseen cwd parks on the trust dialog. ClaudeBlockingPromptDetector answers by layout (CARD-0047 numbered menu; CARD-0390 2.1.258 highlighted list, measured j then Enter on modern ConPTY). A stuck dialog is LaunchBlock TrustDialogNotCleared. Standing specialists seed projects[key].hasTrustDialogAccepted at provision. Decision is per-cwd in ~/.claude.json.",
             BlockingStartupModalKind.AutoAnswerable,
             BlockingStartupModalScope.Cwd),
         SubscriptionUsagePoll: new SubscriptionUsagePollContract(

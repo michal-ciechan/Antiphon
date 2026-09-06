@@ -477,6 +477,8 @@ public sealed class ProviderContractCatalogTests
         claude.State.ShouldBe(AgentTuiCapabilityState.Supported);
         claude.Kind.ShouldBe(BlockingStartupModalKind.AutoAnswerable);
         claude.PerScope.ShouldBe(BlockingStartupModalScope.Cwd);
+        claude.Reason.ShouldContain("CARD-0390");
+        claude.Reason.ShouldContain("TrustDialogNotCleared");
 
         var grok = ProviderContractCatalog.For(AgentKind.Grok).BlockingStartupModal;
         grok.State.ShouldBe(AgentTuiCapabilityState.Supported);
