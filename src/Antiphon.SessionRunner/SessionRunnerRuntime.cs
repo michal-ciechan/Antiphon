@@ -91,6 +91,52 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
     internal readonly record struct LiveHerdrPane(Guid SessionId, string PaneId, RunnerSession Session);
 
+    /// <summary>
+    /// CARD-0382: refuse unsafe Grok rules before a <see cref="RunnerSession"/> is registered,
+    /// a host starts, or Herdr is contacted. Herdr expands whole-argument <c>$env:NAME</c>
+    /// tokens with <see cref="HerdrLaunchScript.TryResolveEnvToken"/> first; PtyHost does not.
+    /// Identity is the request's Grok transcript/kind, not the executable basename.
+    /// </summary>
+    private static void EnsureGrokRulesArgvSafe(RunnerLaunchRequest request, bool useHerdr)
+    {
+        var isGrok = string.Equals(request.TranscriptFormat, TranscriptFormats.Grok, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(request.Herdr?.AgentKind, HerdrAgentKinds.Grok, StringComparison.OrdinalIgnoreCase);
+        var args = request.Args ?? Array.Empty<string>();
+        IReadOnlyList<string> effective = args;
+        IReadOnlyList<string?>? tokenNames = null;
+        if (useHerdr && args.Count > 0)
+        {
+            var env = request.Env ?? new Dictionary<string, string>();
+            var expanded = new string[args.Count];
+            var names = new string?[args.Count];
+            for (var i = 0; i < args.Count; i++)
+            {
+                var original = args[i] ?? "";
+                if (HerdrLaunchScript.TryResolveEnvToken(original, env, out var resolved))
+                {
+                    expanded[i] = resolved;
+                    HerdrLaunchScript.TryReadEnvTokenName(original, out var name);
+                    names[i] = name;
+                }
+                else
+                {
+                    expanded[i] = original;
+                }
+            }
+
+            effective = expanded;
+            tokenNames = names;
+        }
+
+        var violation = GrokRulesArgvPolicy.ValidateArgv(
+            effective, OperatingSystem.IsWindows(), isGrok, tokenNames);
+        if (violation is null)
+            return;
+
+        throw new GrokRulesLaunchException(
+            $"Session {request.SessionId:D}: {GrokRulesArgvPolicy.Format(violation)}");
+    }
+
     public async Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct)
     {
         if (request.SessionId == Guid.Empty)
@@ -119,6 +165,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
 
         var useHerdr = string.Equals(backend, SessionBackends.Herdr, StringComparison.OrdinalIgnoreCase);
+        EnsureGrokRulesArgvSafe(request, useHerdr);
         if (useHerdr && request.Herdr is null)
             throw new ArgumentException("Herdr launch requires HerdrLaunchOptions.", nameof(request));
         if (useHerdr && _herdrClient is null)
