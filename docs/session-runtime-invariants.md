@@ -171,8 +171,26 @@
 
 ### Gotcha #88
 
-- **A resume rebuilds Antiphon's args, bundles and stamps; provider adoption still needs evidence** (CARD-0334/CARD-0395). `PolicyRefreshService`'s relaunch and every other resume path (`AgentControlService.StartAsync(Fresh: false)`) recompose current bundle/attachment/file state and rewrite `AgentSession.ComposedBundleStamp` / `InstructionFileStamp` — a stale stamp is a bug. Those stamps prove composition, not that every provider accepted the replacement. CARD-0395 measured that Grok 1.0.13's native `--resume` keeps the previous system `--rules` value even when a new value is passed. Its [file/reread plan](superpowers/plans/2026-09-06-card-0395-grok-rules-file-plan.md) is not implemented yet. Do not certify Grok policy refresh from new stamps or a healthy launch alone. Grok compaction enters this runtime as `auto_compact_completed` -> `CompactBoundary`; the `compacted` / `event_msg/context_compacted` pair belongs to Codex.
+- **A resume rebuilds Antiphon's args, bundles and stamps; provider adoption still needs evidence** (CARD-0334/CARD-0395). `PolicyRefreshService`'s relaunch and every other resume path (`AgentControlService.StartAsync(Fresh: false)`) recompose current bundle/attachment/file state and rewrite `AgentSession.ComposedBundleStamp` / `InstructionFileStamp` — a stale stamp is a bug. Those stamps prove composition, not that every provider accepted the replacement. CARD-0395 measured that Grok 1.0.13's native `--resume` keeps the previous system `--rules` value even when a new value is passed. Its initial [file/reread implementation](superpowers/plans/2026-09-06-card-0395-grok-rules-file-plan.md) persists the receipt, generation, rules barrier and unique refresh triggers. Ordinary queued work waits for a confirmed owning UserPrompt, matching assistant acknowledgement and successful TurnEnd. Internal rules turns are excluded from task settlement and boot-reply evidence. Real-model and two-compaction acceptance remain open. Do not certify Grok policy refresh from new stamps or a healthy launch alone. Grok compaction enters this runtime as `auto_compact_completed` -> `CompactBoundary`; the `compacted` / `event_msg/context_compacted` pair belongs to Codex.
 
 ### Gotcha #89
 
 - **A Grok `--resume` is typed only when `GROK_HOME/sessions/*/{id}/` exists; a row id is not a conversation** (CARD-0383). Absent ⇒ same row launches `--session-id <id>` (create), which makes the row id the native id from then on. The runner refuses a dead resume with 409 `herdr_grok_native_session_missing` before touching herdr; a detect timeout on an idle shell retires the pane to last-pane instead of closing it. That keep-pane exit is `HerdrLaunchDetectTimeout` (Failed row, Warning log, no incident) — never `HerdrPaneLeftOpen`, whose "tidy the pane by hand" badge would recreate the original split-into-a-stranger's-tab bug. Pinned by `GrokNativeSessionResumeTests`, `HerdrGrokResumeGuardTests`, `HerdrLaunchShapeTests`, `AgentSessionRuntimeTests`, `GrokNativeSessionCanaryTests`, `HerdrGrokNativeSessionLiveTests`.
+
+### Grok rules refresh state (CARD-0395)
+
+The runner owns `SessionLogPath/instructions/grok/{sessionId:N}/rules.md` independently of the
+worktree and native home. The server persists the expected generation/hash/count and validates
+the runner receipt without statting a remote path. PtyHost manifests and Herdr sidecars carry
+metadata only. File text never belongs in adoption metadata or diagnostic messages.
+
+`GrokRulesRefreshService` inserts compact triggers and queue coverage in one transaction under
+the session row lock. `(AgentSessionId, RulesRefreshKey)` is unique. Sync-only catch-up and a
+startup/periodic scan revisit persisted boundaries. Compaction remains a mid-turn boundary;
+queued refresh waits for ordinary idle eligibility. Confirmed prompts are not retyped while
+waiting for an answer, and delivery deadlines survive service recreation. One unresolved
+follow-on read is allowed per refresh-caused compaction chain; another fails `refresh_loop`.
+Established-session refresh failure holds queued work and records an error incident for attention.
+
+The initial implementation still needs the full crash/ownership, native-wire and live endurance
+verification specified by the plan. Do not infer acceptance from the FakeGrok E2E tests.

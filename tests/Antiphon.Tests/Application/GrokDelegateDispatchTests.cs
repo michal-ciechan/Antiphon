@@ -180,17 +180,16 @@ public class GrokDelegateDispatchTests
     }
 
     [Test]
-    public void the_command_line_budget_guards_a_grok_launch_the_same_way()
+    public void grok_file_content_does_not_consume_the_argv_budget_and_passes_the_budget_to_the_runner()
     {
-        // The guard is provider-neutral and runs BEFORE anything is added, so an over-budget
-        // composition fails the launch rather than handing Grok half a contract via --rules.
+        // The runner checks the actual argv including its generated bootstrap.
         var (dispatcher, _) = CreateHarness(budgetChars: 200);
         var task = TaskFor(AgentKind.Grok, AgentModelLevel.High, AgentTaskKind.Worker, AgentTaskRole.Code);
 
-        var ex = Should.Throw<InvalidOperationException>(() => SpecOf(dispatcher, task));
-
-        ex.Message.ShouldContain(DelegationReportFormatter.Short(task.Id));
-        ex.Message.ShouldContain("Nothing was truncated");
+        var spec = SpecOf(dispatcher, task);
+        spec.GrokRulesPayload.ShouldNotBeNull().Content.Length.ShouldBeGreaterThan(200);
+        spec.CommandLineBudgetChars.ShouldBe(200);
+        spec.Args.ShouldNotContain("--rules");
     }
 
     [Test]
@@ -246,61 +245,21 @@ public class GrokDelegateDispatchTests
     // ---- the dispatch itself -------------------------------------------------------------------
 
     [Test]
-    public async Task dispatching_a_grok_worker_on_windows_is_refused_after_the_claim_and_settles_failed_with_the_rules_code()
+    public async Task dispatching_a_grok_worker_keeps_the_brief_unconstructed_until_initialization()
     {
         using var workspace = new TempWorkspace();
         var (dispatcher, stopper) = CreateDispatchHarness();
-        var parent = await SeedParentSessionAsync(workspace.Path);
-        var task = await SeedQueuedTaskAsync(workspace.Path, AgentKind.Grok, parent.Id);
-
+        var task = await SeedQueuedTaskAsync(workspace.Path, AgentKind.Grok);
         var result = await dispatcher.TickAsync(CancellationToken.None);
-
-        await using var verify = CreateContext();
-        var failed = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
-        failed.Status.ShouldBe(AgentTaskStatus.Failed);
-        failed.FailureReason.ShouldNotBeNull();
-        failed.FailureReason.ShouldContain(GrokRulesArgvPolicy.ProblemCode);
-        failed.FailureReason.ShouldNotStartWith("Dispatch failed before a session existed");
-        failed.AgentSessionId.ShouldNotBeNull();
-        result.Failures.ShouldBeGreaterThanOrEqualTo(1);
-
-        var session = await verify.AgentSessions.AsNoTracking()
-            .SingleAsync(s => s.Id == failed.AgentSessionId!.Value);
-        session.Status.ShouldBe(SessionStatus.Failed);
-        session.FailureReason.ShouldNotBeNull();
-        session.FailureReason.ShouldContain(GrokRulesArgvPolicy.ProblemCode);
-        session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
-        session.EndedAt.ShouldNotBeNull();
-
-        (await verify.SessionQueuedMessages.AsNoTracking()
-            .CountAsync(m => m.AgentSessionId == session.Id)).ShouldBe(0);
-        var parentNotes = await verify.SessionQueuedMessages.AsNoTracking()
-            .Where(m => m.AgentSessionId == parent.Id && m.Origin == QueuedMessageOrigin.Delegation)
-            .ToListAsync();
-        parentNotes.ShouldHaveSingleItem();
-        parentNotes[0].Body.ShouldContain(GrokRulesArgvPolicy.ProblemCode);
-
-        (await verify.Agents.AsNoTracking()
-            .AnyAsync(a => a.Id == failed.AgentId)).ShouldBeFalse();
+        await using var db = CreateContext();
+        var dispatched = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        dispatched.FailureReason.ShouldBeNull();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == dispatched.AgentSessionId);
+        session.Status.ShouldBe(SessionStatus.Starting);
+        (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == session.Id)).ShouldBe(0);
+        Directory.Exists(Path.Combine(workspace.Path, ".antiphon")).ShouldBeFalse();
         stopper.Killed.ShouldBeEmpty();
-
-        var eventsAfterFirst = await verify.AgentTaskEvents.AsNoTracking()
-            .Where(e => e.AgentTaskId == task.Id).Select(e => e.Id).ToListAsync();
-
-        await dispatcher.TickAsync(CancellationToken.None);
-        await using var again = CreateContext();
-        var still = await again.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
-        still.Status.ShouldBe(AgentTaskStatus.Failed);
-        still.AgentSessionId.ShouldBe(failed.AgentSessionId);
-        (await again.AgentSessions.AsNoTracking()
-            .CountAsync(s => s.Id == failed.AgentSessionId)).ShouldBe(1);
-        var newEvents = await again.AgentTaskEvents.AsNoTracking()
-            .Where(e => e.AgentTaskId == task.Id && !eventsAfterFirst.Contains(e.Id))
-            .ToListAsync();
-        newEvents.ShouldNotContain(e =>
-            (e.Detail ?? "").Contains("Claude", StringComparison.OrdinalIgnoreCase)
-            || (e.Detail ?? "").Contains("pty-host", StringComparison.OrdinalIgnoreCase)
-            || (e.Detail ?? "").Contains("Codex", StringComparison.OrdinalIgnoreCase));
     }
 
     [Test]
@@ -382,8 +341,8 @@ public class GrokDelegateDispatchTests
 
         await using var verify = CreateContext();
         var settled = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
-        settled.Status.ShouldBe(AgentTaskStatus.Failed);
-        settled.FailureReason.ShouldNotBeNull().ShouldContain(GrokRulesArgvPolicy.ProblemCode);
+        settled.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        settled.FailureReason.ShouldBeNull();
         settled.AgentId.ShouldNotBe(warmClaude, "a cold start is the CORRECT outcome here");
         settled.AgentSessionId.ShouldNotBe(claudeSession);
 
@@ -550,7 +509,7 @@ public class GrokDelegateDispatchTests
 
         await using var verify = CreateContext();
         var settled = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
-        settled.Status.ShouldBe(AgentTaskStatus.Failed);
+        settled.Status.ShouldBe(AgentTaskStatus.Dispatched);
 
         var detail = await LatestDispatchDetailAsync(task.Id);
         detail.ShouldStartWith("Dispatched to agent ");
@@ -768,6 +727,10 @@ public class GrokDelegateDispatchTests
         var agentId = Guid.NewGuid();
         var now = DateTime.UtcNow;
         await using var db = CreateContext();
+        var rulesContent = InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Docs)).Text;
+        var rulesBytes = System.Text.Encoding.UTF8.GetBytes(rulesContent);
+        var receipt = kind == AgentKind.Grok ? new GrokRulesReceipt(
+            $"C:\\runner\\instructions\\grok\\{sessionId:N}\\rules.md", GrokRulesTransport.Hash(rulesBytes), rulesBytes.Length, 1, Guid.NewGuid()) : null;
         db.AgentSessions.Add(new AgentSession
         {
             Id = sessionId,
@@ -780,6 +743,18 @@ public class GrokDelegateDispatchTests
             CreatedAt = now,
             StartedAt = now,
             LastSeenAt = now,
+            GrokRulesReceiptJson = receipt is null ? null : System.Text.Json.JsonSerializer.Serialize(receipt),
+            GrokRulesGeneration = receipt?.Generation,
+            GrokRulesExpectedSha256 = receipt?.Sha256,
+            GrokRulesExpectedByteCount = receipt?.ByteCount,
+            GrokRulesState = receipt is null ? GrokRulesState.None : GrokRulesState.Ready,
+        });
+        if (receipt is not null) db.SessionQueuedMessages.Add(new()
+        {
+            Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = 1, CreatedAt = now,
+            Origin = QueuedMessageOrigin.System, Status = QueuedMessageStatus.Sent,
+            RulesRefreshKey = $"launch:{receipt.Generation:N}", RulesReceiptJson = System.Text.Json.JsonSerializer.Serialize(receipt),
+            RulesAcknowledgedAt = now, Body = "historically acknowledged rules read",
         });
         db.Agents.Add(new Agent
         {

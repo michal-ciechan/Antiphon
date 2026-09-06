@@ -79,13 +79,13 @@ A session's command line is built in layers, and no single file holds the whole 
    | Kind | Argument |
    |---|---|
    | `ClaudeCode` | `--append-system-prompt <text>` |
-   | `Grok` | `--rules <text>` |
+   | `Grok` | Typed full-content payload to the runner; one short literal `--rules` file-read bootstrap |
    | `Codex` | `-c developer_instructions=<text>` — no `--append-system-prompt`, no `--rules` |
 
-   Today all three launch sites use an **argument, never typed**; no pty delivery ceiling
-   applies to that argument. This alone does not establish Grok compaction/resume persistence:
+   Claude and Codex use argv for the full composed text. Grok uses a runner-owned rules file
+   and an internal queued read/acknowledgement turn (CARD-0395). This alone does not establish live model compliance:
    CARD-0395 measured that Grok 1.0.13 retains the old `--rules` on native resume and ignores a
-   replacement value. The current argument bound is the command line, guarded by
+   replacement value. Claude/Codex's argument bound remains the command line, guarded by
    `InstructionBundleComposer.EnsureWithinCommandLineBudget` (`Delegation:CommandLineBudgetChars`),
    which throws rather than truncating. Composition order is attachments → `ReplyStyle` block →
    `SystemPromptAppend`; `Normal` composes nothing. A change takes effect at the next launch — the
@@ -93,13 +93,12 @@ A session's command line is built in layers, and no single file holds the whole 
 
    On Windows, Grok `--rules` is also fail-closed (CARD-0382): a payload containing CR, LF, or
    NUL, or more than 4,096 UTF-16 code units, is refused as 409 `grok_rules_argv_unsafe` before
-   any session starts. Spaces are allowed and passed unchanged. The guard does **not** deliver a
-   multiline orchestrator bundle to Grok; that remains outstanding (CARD-0395). Already-running
-   and warm-reuse Grok sessions are not rewritten. Claude and Codex, and non-Windows Grok, keep
-   their present behaviour.
+   any session starts. Spaces are allowed and passed unchanged. The full Grok composition stays
+   off argv on every OS; the runner checks the generated bootstrap and actual argv budget.
+   Warm reuse requires a matching receipt and acknowledged revision. Existing sessions are not mass-restarted.
 
    CARD-0395's [measured transport plan](superpowers/plans/2026-09-06-card-0395-grok-rules-file-plan.md)
-   is not implemented yet. On the installed 1.0.13, `--rules @path` and `--rules path` pass literal
+   has an initial implementation; mandatory real-model and endurance acceptance remain open. On the installed 1.0.13, `--rules @path` and `--rules path` pass literal
    text; they do not load a file. Native `--agent`/`GROK_AGENT`/`[agent] definition` can load a valid
    definition file, but change the builtin prompt/tool configuration. The plan therefore selects
    an explicit file-read bootstrap and queued rereads, with live behavioral verification required.
