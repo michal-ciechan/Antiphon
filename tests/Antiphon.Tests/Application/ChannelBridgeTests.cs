@@ -54,8 +54,14 @@ public class ChannelBridgeTests
         state.HerdrConsecutiveFailures = 3;
         state.LastHerdrFailureKind = HerdrSupervisionFailureKind.DetectTimeout;
         await db.SaveChangesAsync();
+        var cwd = (await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId)).Cwd;
+        var rows = await db.AgentSessions.CountAsync(s => s.Cwd == cwd);
         for (var i = 0; i < 2; i++)
-            await bridge.HandleInboundAsync(TelegramText(chatId, "held message " + i, title: "Family"), CancellationToken.None);
+            await Should.NotThrowAsync(() => bridge.HandleInboundAsync(
+                TelegramText(chatId, "held message " + i, title: "Family"), CancellationToken.None));
+        (await db.AgentSessions.CountAsync(s => s.Cwd == cwd)).ShouldBe(rows);
+        (await db.Alerts.AnyAsync(a => a.AgentId == h.AgentId && a.Source == "bridge"
+            && a.Title == "Inbound channel message dropped")).ShouldBeTrue();
         h.Adapter.SentInput.ShouldBeEmpty();
         h.Messaging.SentReplies.ShouldBeEmpty();
         (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(0);
