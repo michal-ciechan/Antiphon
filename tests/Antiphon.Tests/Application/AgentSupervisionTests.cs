@@ -1,10 +1,12 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -418,6 +420,91 @@ public class AgentSupervisionTests
         }
     }
 
+    [Test]
+    public async Task Supervised_fresh_threshold_restart_carries_TabLabel_and_previous_pane_hint()
+    {
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var boot = new FakeAgentProtocolAdapter();
+            var resume = new FakeAgentProtocolAdapter();
+            var fresh = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(tempRoot, [boot, resume, fresh], definitionKind: "ClaudeCode");
+            var agent = await CreateNamedAlwaysOnHerdrAgentAsync(harness, tempRoot);
+
+            await harness.Supervisor().TickAsync(CancellationToken.None);
+            harness.Clock.Advance(TimeSpan.FromSeconds(10));
+            await harness.Supervisor().TickAsync(CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            boot.StartedHerdr.ShouldNotBeNull();
+            boot.StartedHerdr!.TabLabel.ShouldBe("Orch");
+            var firstId = await WaitForPersistentSessionAsync(harness, agent.Id);
+
+            var runtime = harness.Provider.GetRequiredService<AgentSessionRuntime>();
+            await runtime.ObserveExitAsync(firstId, 1, AgentExitReason.ProcessExited, CancellationToken.None);
+            await harness.Supervisor().TickAsync(CancellationToken.None);
+            harness.Clock.Advance(TimeSpan.FromMinutes(1));
+            await harness.Supervisor().TickAsync(CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            resume.StartedHerdr.ShouldNotBeNull();
+            resume.StartedHerdr!.TabLabel.ShouldBe("Orch");
+            resume.StartedSessionId.ShouldBe(firstId);
+
+            var resumedId = await WaitForPersistentSessionAsync(harness, agent.Id);
+            await runtime.ObserveExitAsync(resumedId, 1, AgentExitReason.ProcessExited, CancellationToken.None);
+            await harness.Supervisor().TickAsync(CancellationToken.None);
+            harness.Clock.Advance(TimeSpan.FromMinutes(1));
+            await harness.Supervisor().TickAsync(CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            fresh.StartedHerdr.ShouldNotBeNull();
+            fresh.StartedHerdr!.TabLabel.ShouldBe("Orch");
+            fresh.StartedHerdr.ReusePaneOfSessionId.ShouldBe(resumedId);
+            fresh.StartedSessionId.ShouldNotBe(resumedId);
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Supervisor_preflight_refusal_records_failure_and_backoff_without_enqueue()
+    {
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var adapter = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(tempRoot, [adapter], definitionKind: "ClaudeCode");
+            harness.Runner.PlacementCheck = _ =>
+                throw new ConflictException("pane occupied", HerdrProblemTypes.PaneOccupied);
+            var agent = await CreateNamedAlwaysOnHerdrAgentAsync(harness, tempRoot);
+
+            await harness.Supervisor().TickAsync(CancellationToken.None);
+            harness.Clock.Advance(TimeSpan.FromSeconds(10));
+            await harness.Supervisor().TickAsync(CancellationToken.None);
+            try
+            {
+                await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
+            }
+            catch
+            {
+                // preflight throws before enqueue; idle wait should be a no-op
+            }
+
+            adapter.StartedHerdr.ShouldBeNull();
+            harness.Runner.CheckCalls.Count.ShouldBeGreaterThanOrEqualTo(1);
+            await using var verify = CreateContext();
+            var state = await verify.AgentSupervisionStates.SingleAsync(s => s.AgentId == agent.Id);
+            state.ConsecutiveFailures.ShouldBeGreaterThanOrEqualTo(1);
+            state.NextRestartAt.ShouldNotBeNull();
+            (await verify.AgentSessions.CountAsync(s => s.Cwd.StartsWith(tempRoot))).ShouldBe(0);
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
     // ---------- helpers ----------
 
     /// <summary>
@@ -451,6 +538,29 @@ public class AgentSupervisionTests
     private static string NewTempRoot() =>
         Path.Combine(Path.GetTempPath(), $"antiphon-supervision-tests-{Guid.NewGuid():N}");
 
+    private static async Task<AgentDetailDto> CreateNamedAlwaysOnHerdrAgentAsync(Harness harness, string tempRoot)
+    {
+        var workspace = Path.Combine(tempRoot, $"agent-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workspace);
+        var agent = await harness.Scope.ServiceProvider.GetRequiredService<AgentService>()
+            .CreateAsync(
+                new CreateAgentRequest(
+                    "Supervised Named",
+                    workspace,
+                    SessionBackend: SessionBackend.Herdr,
+                    AlwaysOn: true,
+                    HerdrWorkspaceLabel: "PredictionMarkets",
+                    HerdrTabLabel: "Orch"),
+                CancellationToken.None);
+        var db = harness.Scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var entity = await db.Agents.SingleAsync(a => a.Id == agent.Id);
+        entity.AlwaysOn = true;
+        entity.SessionBackend = SessionBackend.Herdr;
+        entity.Kind = AgentKind.ClaudeCode;
+        await db.SaveChangesAsync();
+        return agent;
+    }
+
     private static async Task<AgentDetailDto> CreateAlwaysOnAgentAsync(Harness harness, string tempRoot)
     {
         var workspace = Path.Combine(tempRoot, $"agent-{Guid.NewGuid():N}");
@@ -467,7 +577,10 @@ public class AgentSupervisionTests
         return agent;
     }
 
-    private static Harness BuildHarness(string tempRoot, IReadOnlyList<IAgentProtocolAdapter> adapters)
+    private static Harness BuildHarness(
+        string tempRoot,
+        IReadOnlyList<IAgentProtocolAdapter> adapters,
+        string definitionKind = "Raw")
     {
         var clock = new MutableTimeProvider(DateTimeOffset.UtcNow);
         var supervisorLog = new List<string>();
@@ -503,7 +616,7 @@ public class AgentSupervisionTests
             new OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
             {
                 DefaultDefinition = "fake",
-                Definitions = { ["fake"] = new AgentDefinition { Kind = "Raw", Exe = Cmd } }
+                Definitions = { ["fake"] = new AgentDefinition { Kind = definitionKind, Exe = Cmd } }
             }));
         services.AddSingleton<AgentRegistry>();
         services.AddSingleton<IWorktreeManager>(new NoWorktreeManager());
@@ -526,11 +639,13 @@ public class AgentSupervisionTests
         services.AddScoped<OrchestratorService>();
         services.AddScoped<CardWorkflowRunFactory>();
         services.AddScoped<AgentService>();
+        services.AddScoped<HerdrLaunchContextResolver>();
         services.AddScoped<AgentControlService>();
         services.AddScoped<AgentSupervisorService>();
         services.AddScoped<IAlertService, AlertService>();
         services.AddScoped<IAlertRouter, NullAlertRouter>();
-        services.AddSingleton<ISessionRunnerClient>(new StubRunnerClient());
+        var runner = new FakeSessionRunnerClient();
+        services.AddSingleton<ISessionRunnerClient>(runner);
         services.AddSingleton<Antiphon.Server.Application.Interfaces.IDirectoryWriter>(
             new Antiphon.Server.Infrastructure.FileSystem.FileSystemDirectoryWriter(
                 new System.IO.Abstractions.FileSystem()));
@@ -555,7 +670,8 @@ public class AgentSupervisionTests
             provider.GetRequiredService<AgentSessionLaunchQueue>(),
             eventBus,
             clock,
-            supervisorLog);
+            supervisorLog,
+            runner);
     }
 
     private static async Task CleanupAsync(string tempRoot)
@@ -591,7 +707,8 @@ public class AgentSupervisionTests
         AgentSessionLaunchQueue LaunchQueue,
         MockEventBus EventBus,
         MutableTimeProvider Clock,
-        List<string> SupervisorLog) : IAsyncDisposable
+        List<string> SupervisorLog,
+        FakeSessionRunnerClient Runner) : IAsyncDisposable
     {
         // Fresh scope per call: a reused scope's DbContext identity-resolves to stale tracked
         // entities, hiding writes made through other contexts (and real ticks run in fresh

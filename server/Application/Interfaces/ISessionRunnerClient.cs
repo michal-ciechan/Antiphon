@@ -46,6 +46,14 @@ public interface ISessionRunnerClient
         throw new NotSupportedException("This session-runner client cannot attach herdr panes.");
 
     /// <summary>
+    /// CARD-0384: read-only named-tab placement check. Default returns <c>create</c> so untouched
+    /// fakes still compile; production posts <c>POST /herdr/placement/check</c>.
+    /// </summary>
+    Task<HerdrPlacementCheckResult> CheckHerdrPlacementAsync(
+        HerdrPlacementCheckRequest request, CancellationToken ct) =>
+        Task.FromResult(new HerdrPlacementCheckResult("create"));
+
+    /// <summary>
     /// Null when this runner can host herdr. A message means refuse (old runner / no herdr).
     /// Default null so in-proc fakes do not block attach unless they override.
     /// </summary>

@@ -511,6 +511,124 @@ public class AgentControlServiceIntegrationTests
     }
 
     [Test]
+    public async Task Named_resume_start_carries_TabLabel()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "agent-workspace");
+            Directory.CreateDirectory(workspace);
+            var first = new FakeAgentProtocolAdapter();
+            var resume = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(tempRoot, [first, resume], defaultKind: "ClaudeCode");
+            var agent = await harness.AgentService.CreateAsync(
+                new CreateAgentRequest(
+                    "Named Resume",
+                    workspace,
+                    SessionBackend: SessionBackend.Herdr,
+                    HerdrTabLabel: "Orch"),
+                CancellationToken.None);
+            var started = await harness.Control.StartAsync(
+                agent.Id, new StartAgentRequest(RemoteControl: false), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            await MarkSessionEndedAsync(started.PersistentSessionId!, SessionStatus.Failed);
+            using var scope = harness.Provider.CreateScope();
+            var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
+            await control.StartAsync(agent.Id, new StartAgentRequest(RemoteControl: false), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            resume.StartedHerdr.ShouldNotBeNull();
+            resume.StartedHerdr!.TabLabel.ShouldBe("Orch");
+            resume.StartedHerdr.ReusePaneOfSessionId.ShouldBeNull();
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Named_fresh_start_carries_TabLabel_and_ReusePaneOfSessionId()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "agent-workspace");
+            Directory.CreateDirectory(workspace);
+            var first = new FakeAgentProtocolAdapter();
+            var fresh = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(tempRoot, [first, fresh], defaultKind: "ClaudeCode");
+            var agent = await harness.AgentService.CreateAsync(
+                new CreateAgentRequest(
+                    "Named Fresh",
+                    workspace,
+                    SessionBackend: SessionBackend.Herdr,
+                    HerdrTabLabel: "Orch"),
+                CancellationToken.None);
+            var started = await harness.Control.StartAsync(
+                agent.Id, new StartAgentRequest(Fresh: true, RemoteControl: false), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            var previousId = Guid.Parse(started.PersistentSessionId!);
+            await MarkSessionEndedAsync(started.PersistentSessionId!, SessionStatus.Failed);
+            using var scope = harness.Provider.CreateScope();
+            var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
+            await control.StartAsync(agent.Id, new StartAgentRequest(Fresh: true, RemoteControl: false), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            fresh.StartedHerdr.ShouldNotBeNull();
+            fresh.StartedHerdr!.TabLabel.ShouldBe("Orch");
+            fresh.StartedHerdr.ReusePaneOfSessionId.ShouldBe(previousId);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Named_missing_resume_target_fallback_relaunch_carries_TabLabel()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "agent-workspace");
+            Directory.CreateDirectory(workspace);
+            var first = new FakeAgentProtocolAdapter();
+            var failing = new FakeAgentProtocolAdapter { ReadyResult = false };
+            var fresh = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(tempRoot, [first, failing, fresh], defaultKind: "ClaudeCode");
+            var agent = await harness.AgentService.CreateAsync(
+                new CreateAgentRequest(
+                    "Named Fallback",
+                    workspace,
+                    SessionBackend: SessionBackend.Herdr,
+                    HerdrTabLabel: "Orch"),
+                CancellationToken.None);
+            var started = await harness.Control.StartAsync(
+                agent.Id, new StartAgentRequest(RemoteControl: false), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            failing.StartupOutput = $"No conversation found with session ID: {started.PersistentSessionId}";
+            await MarkSessionEndedAsync(started.PersistentSessionId!, SessionStatus.Stopped);
+            using var scope = harness.Provider.CreateScope();
+            var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
+            await control.StartAsync(agent.Id, new StartAgentRequest(RemoteControl: false), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            fresh.StartedHerdr.ShouldNotBeNull();
+            fresh.StartedHerdr!.TabLabel.ShouldBe("Orch");
+            fresh.StartedHerdr.ReusePaneOfSessionId.ShouldBeNull();
+            fresh.StartedSessionId.ShouldBe(Guid.Parse(started.PersistentSessionId!));
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task Fresh_herdr_arm_sets_ReusePaneOfSessionId_to_the_previous_session()
     {
         await using var db = CreateContext();
@@ -632,6 +750,7 @@ public class AgentControlServiceIntegrationTests
 
             adapter.Started.ShouldBeTrue();
             (adapter.StartedHerdr?.ReusePaneOfSessionId).ShouldBeNull();
+            (adapter.StartedHerdr?.TabLabel).ShouldBeNull();
         }
         finally
         {
@@ -1555,6 +1674,9 @@ public class AgentControlServiceIntegrationTests
         services.AddScoped<OrchestratorService>();
         services.AddScoped<CardWorkflowRunFactory>();
         services.AddScoped<AgentService>();
+        services.AddScoped<HerdrLaunchContextResolver>();
+        var runner = new FakeSessionRunnerClient();
+        services.AddSingleton<ISessionRunnerClient>(runner);
         services.AddScoped<AgentControlService>();
         if (workspace is not null)
             services.AddSingleton(workspace);
@@ -1586,7 +1708,8 @@ public class AgentControlServiceIntegrationTests
             scope.ServiceProvider.GetRequiredService<AgentService>(),
             scope.ServiceProvider.GetRequiredService<AgentControlService>(),
             provider.GetRequiredService<AgentSessionLaunchQueue>(),
-            eventBus);
+            eventBus,
+            runner);
     }
 
     private static async Task<AgentTuiProfile> SeedBlankModelArgumentProfileAsync(
@@ -1837,7 +1960,8 @@ public class AgentControlServiceIntegrationTests
         AgentService AgentService,
         AgentControlService Control,
         AgentSessionLaunchQueue LaunchQueue,
-        MockEventBus EventBus) : IAsyncDisposable
+        MockEventBus EventBus,
+        FakeSessionRunnerClient Runner) : IAsyncDisposable
     {
         public async ValueTask DisposeAsync()
         {

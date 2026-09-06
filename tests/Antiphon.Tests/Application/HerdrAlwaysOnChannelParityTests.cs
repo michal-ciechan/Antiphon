@@ -238,6 +238,123 @@ public class HerdrAlwaysOnChannelParityTests
         }
     }
 
+    [Test]
+    public async Task Named_AlwaysOn_agent_lands_on_its_labelled_tab_across_crash_restart_and_fresh_threshold()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-c384-alwayson-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        FakeHerdrServer? fake = null;
+        try
+        {
+            fake = new FakeHerdrServer { EchoSendTextToScreen = true };
+            fake.Start();
+            await fake.WaitUntilListeningAsync();
+
+            await using var harness = BuildHarness(tempRoot, SessionBackend.Herdr, fake, []);
+            var workspace = Path.Combine(tempRoot, "workspace");
+            Directory.CreateDirectory(workspace);
+            var agent = await harness.Agents.CreateAsync(
+                new CreateAgentRequest(
+                    "CARD0384-Named",
+                    workspace,
+                    SessionBackend: SessionBackend.Herdr,
+                    AlwaysOn: true,
+                    RemoteControlEnabled: false,
+                    HerdrWorkspaceLabel: "PredictionMarkets",
+                    HerdrTabLabel: "Orch"),
+                CancellationToken.None);
+
+            var logs = Path.Combine(tempRoot, "session-logs");
+
+            await harness.Control.StartAsync(
+                agent.Id, new StartAgentRequest(RemoteControl: false, Fresh: true), CancellationToken.None);
+            try
+            {
+                await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                var failed = await harness.Agents.GetByIdAsync(agent.Id, CancellationToken.None);
+                throw new InvalidOperationException(
+                    $"named AlwaysOn start did not idle: status={failed.Status} session={failed.PersistentSessionId} {ex.Message}",
+                    ex);
+            }
+
+            await using (var db = CreateContext())
+            {
+                var rows = await db.AgentSessions.Where(s => s.Cwd.StartsWith(tempRoot)).ToListAsync();
+                var detail = await harness.Agents.GetByIdAsync(agent.Id, CancellationToken.None);
+                (detail.Status == AgentStatus.Running).ShouldBeTrue(
+                    $"named AlwaysOn start status={detail.Status} live={detail.LiveSession?.Status} rows={rows.Count} fail={rows.FirstOrDefault()?.FailureReason}");
+            }
+
+            var firstSessionId = await WaitForPersistentSessionAsync(harness, agent.Id);
+            var firstSidecar = HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(logs, firstSessionId))
+                ?? throw new InvalidOperationException("named start wrote no sidecar");
+            var specialist = fake.SeedTab(firstSidecar.WorkspaceId, "MavRef-DL");
+            var specialistCount = specialist.Panes.Count;
+            AssertNamedOrch(fake, specialistCount, logs, firstSessionId);
+
+            var firstPane = fake.RequireAgentPaneId();
+            await harness.Runner!.SimulateRunnerRestartAsync();
+            fake.SetPaneProcessInfo(firstPane, shellPid: 1);
+            fake.ClearDetectedAgent(firstPane);
+            await harness.Runner.SimulateRunnerRestartAsync();
+            var afterEmpty = await harness.Runner.GetAsync(firstSessionId, CancellationToken.None);
+            afterEmpty.Status.ShouldBe("Exited");
+            await harness.Runtime.ObserveExitAsync(
+                firstSessionId, afterEmpty.ExitCode, afterEmpty.ExitReason, CancellationToken.None);
+
+            await harness.Supervisor().TickAsync(CancellationToken.None);
+            harness.Clock.Advance(TimeSpan.FromSeconds(10));
+            await harness.Supervisor().TickAsync(CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+            var resumedId = await WaitForPersistentSessionAsync(harness, agent.Id);
+            resumedId.ShouldBe(firstSessionId);
+            AssertNamedOrch(fake, specialistCount, logs, resumedId);
+
+            var resumedPane = fake.RequireAgentPaneId();
+            fake.SetPaneProcessInfo(resumedPane, shellPid: 1);
+            fake.ClearDetectedAgent(resumedPane);
+            await harness.Runner.SimulateRunnerRestartAsync();
+            var afterSecond = await harness.Runner.GetAsync(resumedId, CancellationToken.None);
+            await harness.Runtime.ObserveExitAsync(
+                resumedId, afterSecond.ExitCode, afterSecond.ExitReason, CancellationToken.None);
+
+            await using (var db = CreateContext())
+            {
+                var state = await db.AgentSupervisionStates.SingleAsync(s => s.AgentId == agent.Id);
+                state.ConsecutiveFailures = 2;
+                state.NextRestartAt = harness.Clock.GetUtcNow().UtcDateTime.AddSeconds(-1);
+                await db.SaveChangesAsync();
+            }
+
+            await harness.Supervisor().TickAsync(CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+            var freshId = await WaitForPersistentSessionAsync(harness, agent.Id);
+            freshId.ShouldNotBe(resumedId);
+            AssertNamedOrch(fake, specialistCount, logs, freshId);
+        }
+        finally
+        {
+            if (fake is not null)
+                await fake.DisposeAsync();
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    private static void AssertNamedOrch(
+        FakeHerdrServer fake, int specialistCount, string logs, Guid sessionId)
+    {
+        fake.Workspaces[0].Tabs.Count(t => t.Label == "Orch").ShouldBe(1);
+        fake.Workspaces[0].Tabs.Single(t => t.Label == "Orch").Panes.Count.ShouldBe(1);
+        fake.Workspaces[0].Tabs.Single(t => t.Label == "MavRef-DL").Panes.Count.ShouldBe(specialistCount);
+        var sidecar = HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(logs, sessionId));
+        sidecar.ShouldNotBeNull();
+        sidecar!.TabLabel.ShouldBe("Orch");
+        sidecar.WorkspaceLabel.ShouldBe("PredictionMarkets");
+    }
+
     /// <summary>
     /// CARD-0187 S2: the herdr launch definition is parametrised over ClaudeCode / Grok / Codex.
     /// Claude/Grok use the fake CLIs; Codex has none so it uses the same <c>cmd.exe</c> stub as

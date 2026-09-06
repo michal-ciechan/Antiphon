@@ -60,6 +60,12 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             throw new RunnerCapabilityMismatchException(herdrMismatch);
         }
 
+        if (!string.IsNullOrWhiteSpace(spec.Herdr?.TabLabel)
+            && await GetNamedTabPlacementCapabilityMismatchAsync(ct) is { } namedMismatch)
+        {
+            throw new RunnerCapabilityMismatchException(namedMismatch);
+        }
+
         var request = new RunnerLaunchRequest(
             sessionId,
             spec.Exe,
@@ -117,6 +123,21 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         return $"The session runner at :17204 cannot host a herdr session — it reports SessionBackends={supported}{build}. "
             + "Launching anyway would silently open a pty-host (CARD-0160 / CARD-0112). Rebuild and restart it: "
             + "pwsh -File scripts/restart-session-runner.ps1.";
+    }
+
+    private async Task<string?> GetNamedTabPlacementCapabilityMismatchAsync(CancellationToken ct)
+    {
+        await EnsureCapabilitiesProbedAsync(ct);
+        RunnerCapabilitiesDto? cached;
+        lock (_capabilityGate)
+            cached = _cachedCapabilities;
+        if (cached?.Features is { } features
+            && features.Contains(RunnerCapabilityFeatures.HerdrNamedTabPlacement, StringComparer.OrdinalIgnoreCase))
+            return null;
+
+        var build = DescribeBuild(cached?.Build);
+        return $"The session runner does not advertise {RunnerCapabilityFeatures.HerdrNamedTabPlacement}{build}. "
+            + "Rebuild and restart it: pwsh -File scripts/restart-session-runner.ps1.";
     }
 
     private async Task EnsureCapabilitiesProbedAsync(CancellationToken ct)
@@ -532,6 +553,16 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         await ThrowForRunnerProblemAsync(response, ct);
         return await response.Content.ReadFromJsonAsync<HerdrPaneInspectDto>(JsonOptions, ct)
             ?? throw new InvalidOperationException("Session runner returned an empty inspect response.");
+    }
+
+    public async Task<HerdrPlacementCheckResult> CheckHerdrPlacementAsync(
+        HerdrPlacementCheckRequest request, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var response = await _httpClient.PostAsJsonAsync("herdr/placement/check", request, JsonOptions, ct);
+        await ThrowForRunnerProblemAsync(response, ct);
+        return await response.Content.ReadFromJsonAsync<HerdrPlacementCheckResult>(JsonOptions, ct)
+            ?? throw new InvalidOperationException("Session runner returned an empty placement-check response.");
     }
 
     public async Task<SessionRunnerSessionDto> AttachHerdrAsync(HerdrAttachRequest request, CancellationToken ct)

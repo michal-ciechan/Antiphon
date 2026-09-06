@@ -32,6 +32,9 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
     /// <summary>CARD-0213: when false, GetCapabilitiesAsync omits herdr-attach (R3).</summary>
     public bool AdvertiseHerdrAttach { get; set; } = true;
 
+    /// <summary>CARD-0384: when false, GetCapabilitiesAsync omits herdr-named-tab-placement.</summary>
+    public bool AdvertiseHerdrNamedTabPlacement { get; set; } = true;
+
     /// <param name="ptyBackend">
     /// Which pseudoconsole the detached pty-hosts this client spawns should use (<c>inbox</c> /
     /// <c>modern</c>), or null to leave it to the environment.
@@ -157,9 +160,17 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
         IReadOnlyList<string> backends = _herdrClient is null
             ? [SessionBackends.PtyHost]
             : [SessionBackends.PtyHost, SessionBackends.Herdr];
-        IReadOnlyList<string>? features = _herdrClient is not null && AdvertiseHerdrAttach
-            ? [RunnerCapabilityFeatures.HerdrAttach]
-            : null;
+        List<string>? features = null;
+        if (_herdrClient is not null)
+        {
+            features = [];
+            if (AdvertiseHerdrAttach)
+                features.Add(RunnerCapabilityFeatures.HerdrAttach);
+            if (AdvertiseHerdrNamedTabPlacement)
+                features.Add(RunnerCapabilityFeatures.HerdrNamedTabPlacement);
+            if (features.Count == 0)
+                features = null;
+        }
         return Task.FromResult<RunnerCapabilitiesDto?>(new(
             "ModernConPty",
             "modern",
@@ -187,6 +198,23 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
         try
         {
             return await _runtime.InspectHerdrPaneAsync(paneId, ct);
+        }
+        catch (HerdrLaunchException ex)
+        {
+            throw MapLaunch(ex);
+        }
+        catch (HerdrBackendUnavailableException ex)
+        {
+            throw new ServiceUnavailableException(ex.Message, HerdrProblemTypes.Unreachable, ex);
+        }
+    }
+
+    public async Task<HerdrPlacementCheckResult> CheckHerdrPlacementAsync(
+        HerdrPlacementCheckRequest request, CancellationToken ct)
+    {
+        try
+        {
+            return await _runtime.CheckHerdrPlacementAsync(request, ct);
         }
         catch (HerdrLaunchException ex)
         {
