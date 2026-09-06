@@ -24,6 +24,8 @@ public sealed class ClaudeAdapter : IAgentProtocolAdapter
     private TaskCompletionSource? _firstPromptOutput;
     private bool _started;
     private Guid _sessionId;
+    private string? _cwd;
+    private AgentLaunchBlock? _launchBlock;
 
     public ClaudeAdapter(IOptions<AgentRegistrySettings> options, ILogger? logger = null)
     {
@@ -45,6 +47,7 @@ public sealed class ClaudeAdapter : IAgentProtocolAdapter
     public int? Pid => _runner.Pid;
     public AgentExitReason ExitReason => MapExitReason(_runner.ExitReason);
     public string? AuditDirectory => _runner.AuditDirectory;
+    public AgentLaunchBlock? LaunchBlock => _launchBlock;
 
     public event Action<string>? OnTextDelta;
 
@@ -53,6 +56,7 @@ public sealed class ClaudeAdapter : IAgentProtocolAdapter
         if (_started) throw new InvalidOperationException("ClaudeAdapter already started.");
         _started = true;
         _sessionId = spec.SessionId ?? Guid.NewGuid();
+        _cwd = spec.Cwd;
 
         _runner.OnData += ForwardData;
 
@@ -126,14 +130,31 @@ public sealed class ClaudeAdapter : IAgentProtocolAdapter
             ct);
 
         if (resolution.Outcome is ClaudeStartupBlockOutcome.TrustCleared)
-            _logger?.LogInformation("Answered Claude's trust dialog: {Title}", resolution.Prompt?.Title);
+        {
+            _logger?.LogInformation(
+                "Answered Claude's trust dialog: {Title}. {Detail}",
+                resolution.Prompt?.Title, resolution.Detail);
+        }
         else if (resolution.Outcome is ClaudeStartupBlockOutcome.NotAnswerable)
+        {
             _logger?.LogWarning(
                 "Blocked on a modal that will not be auto-answered ({Kind}): {Title}",
                 resolution.Prompt?.Kind, resolution.Prompt?.Title);
-
-        if (resolution.Outcome is ClaudeStartupBlockOutcome.TrustNotCleared)
+        }
+        else if (resolution.Outcome is ClaudeStartupBlockOutcome.TrustNotCleared
+                 or ClaudeStartupBlockOutcome.TrustUnanswerable)
+        {
+            var reason = ClaudeBlockingPromptDetector.FormatTrustDialogNotClearedReason(
+                _cwd,
+                resolution.Prompt?.Layout ?? ClaudeTrustDialogLayout.Unknown,
+                resolution.Detail);
+            _launchBlock = new AgentLaunchBlock(AgentLaunchBlockKind.TrustDialogNotCleared, reason);
+            _logger?.LogError(
+                "Still blocked on Claude's trust dialog ({Outcome}). Nothing can be delivered "
+                + "to this session. Prompt: {Title}. {Detail}",
+                resolution.Outcome, resolution.Prompt?.Title, resolution.Detail);
             return false;
+        }
 
         // CARD-0103's input-responsiveness probe, in lockstep with RunnerClaudeAdapter — quiet is
         // not reading, and this is the only step that proves the difference. SKIPPED on the

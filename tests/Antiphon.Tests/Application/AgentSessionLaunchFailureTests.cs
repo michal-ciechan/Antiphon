@@ -93,6 +93,39 @@ public class AgentSessionLaunchFailureTests
     }
 
     [Test]
+    public async Task Interactive_trust_dialog_block_persists_LaunchBlock_and_the_named_reason()
+    {
+        var cwd = @"C:\logs\antiphon\diagnose";
+        var reason = ClaudeBlockingPromptDetector.FormatTrustDialogNotClearedReason(
+            cwd,
+            ClaudeTrustDialogLayout.HighlightedList,
+            "highlight never reached 'Yes, I trust this folder' after j/Down/Ctrl+N; Enter withheld");
+        var adapter = new FakeAgentProtocolAdapter
+        {
+            ReadyResult = false,
+            LaunchBlock = new AgentLaunchBlock(
+                AgentLaunchBlockKind.TrustDialogNotCleared, reason),
+        };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+
+        var launch = fixture.LaunchInteractiveAsync();
+
+        var ex = await Should.ThrowAsync<AgentLaunchBlockedException>(launch);
+        ex.Block.Kind.ShouldBe(AgentLaunchBlockKind.TrustDialogNotCleared);
+        adapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
+
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        session.Status.ShouldBe(SessionStatus.Failed);
+        session.LaunchBlock.ShouldBe(SessionLaunchBlock.TrustDialogNotCleared);
+        session.FailureReason.ShouldBe(reason);
+        session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
+        (await db.AgentIncidents.CountAsync(
+            i => i.AgentId == fixture.AgentId && i.Kind == AgentIncidentKind.ProviderSignInRequired))
+            .ShouldBe(0);
+    }
+
+    [Test]
     public async Task Herdr_pairing_refusal_records_SystemRequest()
     {
         var adapter = new FakeAgentProtocolAdapter();

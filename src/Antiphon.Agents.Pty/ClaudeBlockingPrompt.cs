@@ -182,6 +182,33 @@ public static partial class ClaudeBlockingPromptDetector
     public static bool IsBlocked(string screen) => Detect(screen) is not null;
 
     /// <summary>
+    /// Named <c>TrustDialogNotCleared</c> reason both Claude adapters persist. One line, cwd,
+    /// layout, answerer detail, and the seed-key remedy (CARD-0390 D-2 / CARD-0391 S3).
+    /// </summary>
+    public static string FormatTrustDialogNotClearedReason(
+        string? cwd,
+        ClaudeTrustDialogLayout layout,
+        string? detail)
+    {
+        var directory = string.IsNullOrWhiteSpace(cwd) ? "(unknown cwd)" : cwd;
+        string key;
+        try
+        {
+            key = string.IsNullOrWhiteSpace(cwd) ? "(unknown)" : ClaudeProjectTrust.ProjectKey(cwd);
+        }
+        catch (Exception)
+        {
+            key = directory.Replace('\\', '/');
+        }
+
+        var detailText = string.IsNullOrWhiteSpace(detail) ? "no detail" : detail;
+        return $"Claude's trust dialog for `{directory}` was not cleared ({layout}; {detailText}). "
+            + "Nothing can be delivered to this session. Trust the directory once — set "
+            + $"projects[\"{key}\"].hasTrustDialogAccepted: true in the session-runner user's "
+            + ".claude.json or accept the dialog interactively — then restart.";
+    }
+
+    /// <summary>
     /// Which option carries the highlight marker. Reads the RENDERED screen line by line: the first
     /// line whose first non-blank character is <c>&gt;</c> or <c>❯</c> names the highlighted option.
     /// </summary>

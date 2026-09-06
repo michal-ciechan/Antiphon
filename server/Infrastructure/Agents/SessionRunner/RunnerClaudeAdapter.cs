@@ -20,6 +20,8 @@ public sealed class RunnerClaudeAdapter : IAgentProtocolAdapter, IAttachableProt
     private readonly ILogger? _logger;
     private long _promptStartSequence;
     private bool _started;
+    private string? _cwd;
+    private AgentLaunchBlock? _launchBlock;
 
     public RunnerClaudeAdapter(
         ISessionRunnerClient client,
@@ -37,6 +39,7 @@ public sealed class RunnerClaudeAdapter : IAgentProtocolAdapter, IAttachableProt
     public int? Pid => _terminal.Pid;
     public AgentExitReason ExitReason => _terminal.ExitReason;
     public string? AuditDirectory => null;
+    public AgentLaunchBlock? LaunchBlock => _launchBlock;
     public event Action<string>? OnTextDelta
     {
         add { }
@@ -48,6 +51,7 @@ public sealed class RunnerClaudeAdapter : IAgentProtocolAdapter, IAttachableProt
         if (_started)
             throw new InvalidOperationException("RunnerClaudeAdapter already started.");
         _started = true;
+        _cwd = spec.Cwd;
         await _terminal.StartAsync(spec, ct);
     }
 
@@ -143,7 +147,8 @@ public sealed class RunnerClaudeAdapter : IAgentProtocolAdapter, IAttachableProt
         // session — CARD-0047's check interpreter was killed and relaunched seven times on that lie
         // (2026-08-16). Checked AFTER the quiet wait, so the modal has finished rendering.
         var blocking = await ResolveBlockingStartupPromptAsync(ct);
-        if (blocking == ClaudeStartupBlockOutcome.TrustNotCleared)
+        if (blocking is ClaudeStartupBlockOutcome.TrustNotCleared
+            or ClaudeStartupBlockOutcome.TrustUnanswerable)
             return false;
 
         var remaining = TimeSpan.FromMilliseconds(_settings.ClaudeReadyMinTotalWaitMs)
@@ -250,15 +255,22 @@ public sealed class RunnerClaudeAdapter : IAgentProtocolAdapter, IAttachableProt
             case ClaudeStartupBlockOutcome.TrustCleared:
                 _logger?.LogInformation(
                     "Session {SessionId} opened on Claude's trust dialog for an unseen working "
-                    + "directory and it was answered; the session is usable. Prompt: {Title}",
-                    _terminal.SessionId, resolution.Prompt?.Title);
+                    + "directory and it was answered; the session is usable. Prompt: {Title}. {Detail}",
+                    _terminal.SessionId, resolution.Prompt?.Title, resolution.Detail);
                 break;
 
             case ClaudeStartupBlockOutcome.TrustNotCleared:
+            case ClaudeStartupBlockOutcome.TrustUnanswerable:
+                _launchBlock = new AgentLaunchBlock(
+                    AgentLaunchBlockKind.TrustDialogNotCleared,
+                    ClaudeBlockingPromptDetector.FormatTrustDialogNotClearedReason(
+                        _cwd,
+                        resolution.Prompt?.Layout ?? ClaudeTrustDialogLayout.Unknown,
+                        resolution.Detail));
                 _logger?.LogError(
-                    "Session {SessionId} is still blocked on Claude's trust dialog after answering "
-                    + "it. Nothing can be delivered to this session. Prompt: {Title}",
-                    _terminal.SessionId, resolution.Prompt?.Title);
+                    "Session {SessionId} is still blocked on Claude's trust dialog ({Outcome}). "
+                    + "Nothing can be delivered to this session. Prompt: {Title}. {Detail}",
+                    _terminal.SessionId, resolution.Outcome, resolution.Prompt?.Title, resolution.Detail);
                 break;
 
             case ClaudeStartupBlockOutcome.NotAnswerable:

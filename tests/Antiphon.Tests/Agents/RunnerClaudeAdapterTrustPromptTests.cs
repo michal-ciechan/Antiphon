@@ -30,18 +30,34 @@ namespace Antiphon.Tests.Agents;
 [Category("Unit")]
 public class RunnerClaudeAdapterTrustPromptTests
 {
+    /// <summary>Live 2.1.258 unnumbered confirm. Highlight default is No; marker is ASCII <c>&gt;</c>.</summary>
     private const string TrustScreen = """
+        ────────────────────────────────────────────────────────────────────────────────────────────────────
          Accessing workspace:
 
-         C:\logs\antiphon\check-interpreter
+         C:\logs\antiphon\diagnose
 
-         Quick safety check: Is this a project you created or one you trust? (Like your own code, a
-         well-known open source project, or work from your team).
+         Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source
+         project, or work from your team). If not, take a moment to review what's in this folder first.
 
-         ❯ 1. Yes, I trust this folder
-           2. No, exit
+         Claude Code'll be able to read, edit, and execute files here.
+
+         Security guide
+
+         > No, exit
+           Yes, I trust this folder
 
          Enter to confirm · Esc to cancel
+        """;
+
+    private const string UnrecognisedTrustScreen = """
+         Accessing workspace:
+
+         C:\logs\antiphon\diagnose
+
+         Quick safety check: Is this a project you created or one you trust?
+
+         Esc to cancel
         """;
 
     private const string ReadyScreen = """
@@ -62,16 +78,60 @@ public class RunnerClaudeAdapterTrustPromptTests
     [Test]
     public async Task A_launch_into_an_untrusted_directory_answers_the_dialog_before_reporting_ready()
     {
-        var client = new ScreenScriptedRunnerClient(TrustScreen, clearedBy: "1", thenShowing: ReadyScreen);
+        var client = ScreenScriptedRunnerClient.HighlightedList(thenShowing: ReadyScreen);
         var adapter = NewAdapter(client);
-        await adapter.StartAsync(NewSpec(), CancellationToken.None);
+        var spec = NewSpec();
+        await adapter.StartAsync(spec, CancellationToken.None);
 
         var ready = await adapter.WaitForReadyAsync(CancellationToken.None);
 
         ready.ShouldBeTrue("the trust dialog is answerable, so the launch must recover, not fail");
-        client.Inputs[0].ShouldBe("1", "the affirmative digit comes first, and it is the only digit sent");
+        client.Inputs[0].ShouldBe("j");
+        client.Inputs[1].ShouldBe("\r");
+        client.Inputs.ShouldBe(
+            ["j", "\r", ComposerInputProbe.TokenFor(spec.SessionId!.Value), ComposerInputProbe.KillLine]);
         ClaudeBlockingPromptDetector.IsBlocked(adapter.SnapshotRenderedScreen())
             .ShouldBeFalse("ready must mean the composer can actually receive the boot prompt");
+    }
+
+    [Test]
+    public async Task A_trust_dialog_that_will_not_clear_fails_the_launch_with_a_named_block()
+    {
+        var client = ScreenScriptedRunnerClient.HighlightedList(thenShowing: ReadyScreen, movesOn: null);
+        var adapter = NewAdapter(client);
+        var spec = NewSpec();
+        await adapter.StartAsync(spec, CancellationToken.None);
+
+        var ready = await adapter.WaitForReadyAsync(CancellationToken.None);
+
+        ready.ShouldBeFalse();
+        adapter.LaunchBlock.ShouldNotBeNull();
+        adapter.LaunchBlock!.Kind.ShouldBe(AgentLaunchBlockKind.TrustDialogNotCleared);
+        adapter.LaunchBlock.Reason.ShouldContain(spec.Cwd);
+        adapter.LaunchBlock.Reason.ShouldContain("hasTrustDialogAccepted");
+        client.Exited.ShouldBeFalse("Enter is withheld while the highlight stays on No");
+        client.Inputs.ShouldNotContain("\r");
+        client.Inputs.ShouldNotContain(ComposerInputProbe.TokenFor(spec.SessionId!.Value));
+    }
+
+    [Test]
+    public async Task An_unrecognised_trust_layout_fails_the_launch_without_typing()
+    {
+        var client = new ScreenScriptedRunnerClient(
+            UnrecognisedTrustScreen, clearedBy: "1", thenShowing: ReadyScreen);
+        var adapter = NewAdapter(client);
+        var spec = NewSpec();
+        await adapter.StartAsync(spec, CancellationToken.None);
+
+        var ready = await adapter.WaitForReadyAsync(CancellationToken.None);
+
+        ready.ShouldBeFalse();
+        adapter.LaunchBlock.ShouldNotBeNull();
+        adapter.LaunchBlock!.Kind.ShouldBe(AgentLaunchBlockKind.TrustDialogNotCleared);
+        adapter.LaunchBlock.Reason.ShouldContain(spec.Cwd);
+        adapter.LaunchBlock.Reason.ShouldContain("hasTrustDialogAccepted");
+        client.Inputs.ShouldBeEmpty();
+        client.Exited.ShouldBeFalse();
     }
 
     [Test]
@@ -197,15 +257,49 @@ public class RunnerClaudeAdapterTrustPromptTests
     /// echoed onto the rendered screen, and Ctrl+U takes it back off. Both are switchable, because
     /// "the composer does not echo" and "the composer will not clear" are the two ways readiness can
     /// now legitimately fail.</para>
+    ///
+    /// <para>The highlighted-list factory matches S1's <c>ScriptedScreen</c>: it moves on a
+    /// configurable key (default <c>j</c>), clears on Enter only when Yes is highlighted, and
+    /// records <see cref="Exited"/> if Enter arrives while No is highlighted.</para>
     /// </summary>
-    private sealed class ScreenScriptedRunnerClient(string initial, string clearedBy, string thenShowing)
-        : ISessionRunnerClient
+    private sealed class ScreenScriptedRunnerClient : ISessionRunnerClient
     {
-        private string _screen = initial;
+        private string _screen;
+        private readonly string? _clearedBy;
+        private readonly string _thenShowing;
         private string _composer = string.Empty;
         private long _sequence;
+        private readonly bool _isList;
+        private bool _listActive;
+        private ClaudeTrustDialogHighlight _highlight;
+        private readonly string? _movesOn;
+        private readonly char _marker = '>';
+
+        public ScreenScriptedRunnerClient(string initial, string clearedBy, string thenShowing)
+        {
+            _screen = initial;
+            _clearedBy = clearedBy;
+            _thenShowing = thenShowing;
+        }
+
+        private ScreenScriptedRunnerClient(string thenShowing, string? movesOn)
+        {
+            _isList = true;
+            _listActive = true;
+            _thenShowing = thenShowing;
+            _movesOn = movesOn;
+            _highlight = ClaudeTrustDialogHighlight.No;
+            _screen = RenderList();
+        }
+
+        public static ScreenScriptedRunnerClient HighlightedList(
+            string thenShowing, string? movesOn = "j")
+            => new(thenShowing, movesOn);
 
         public List<string> Inputs { get; } = [];
+
+        /// <summary>True when Enter arrived while the highlight was still on No.</summary>
+        public bool Exited { get; private set; }
 
         /// <summary>False models the CARD-0103 shape: painted, quiet, and reading nothing.</summary>
         public bool EchoTypedInput { get; init; } = true;
@@ -235,8 +329,32 @@ public class RunnerClaudeAdapterTrustPromptTests
         {
             Inputs.Add(input);
             _sequence++;
-            if (input == clearedBy)
-                _screen = thenShowing;
+            if (_isList && _listActive)
+            {
+                if (_movesOn is not null
+                    && input == _movesOn
+                    && _highlight == ClaudeTrustDialogHighlight.No)
+                {
+                    _highlight = ClaudeTrustDialogHighlight.Yes;
+                    _screen = RenderList();
+                }
+                else if (input == "\r")
+                {
+                    if (_highlight == ClaudeTrustDialogHighlight.Yes)
+                    {
+                        _screen = _thenShowing;
+                        _listActive = false;
+                    }
+                    else
+                    {
+                        Exited = true;
+                    }
+                }
+                return Task.CompletedTask;
+            }
+
+            if (_clearedBy is not null && input == _clearedBy)
+                _screen = _thenShowing;
             else if (input == ComposerInputProbe.KillLine)
             {
                 if (HonourKillLine)
@@ -245,6 +363,34 @@ public class RunnerClaudeAdapterTrustPromptTests
             else if (EchoTypedInput)
                 _composer += input;
             return Task.CompletedTask;
+        }
+
+        private string RenderList()
+        {
+            var noRow = _highlight == ClaudeTrustDialogHighlight.No
+                ? $" {_marker} No, exit"
+                : "   No, exit";
+            var yesRow = _highlight == ClaudeTrustDialogHighlight.Yes
+                ? $" {_marker} Yes, I trust this folder"
+                : "   Yes, I trust this folder";
+            return $"""
+                ────────────────────────────────────────────────────────────────────────────────────────────────────
+                 Accessing workspace:
+
+                 C:\logs\antiphon\diagnose
+
+                 Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source
+                 project, or work from your team). If not, take a moment to review what's in this folder first.
+
+                 Claude Code'll be able to read, edit, and execute files here.
+
+                 Security guide
+
+                {noRow}
+                {yesRow}
+
+                 Enter to confirm · Esc to cancel
+                """;
         }
 
         public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
