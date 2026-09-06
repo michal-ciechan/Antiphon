@@ -171,7 +171,7 @@
 
 ### Gotcha #88
 
-- **A resume is a launch: args, bundles and stamps are rebuilt; the conversation is not** (CARD-0334). `PolicyRefreshService`'s relaunch and every other resume path (`AgentControlService.StartAsync(Fresh: false)`) recompose `--append-system-prompt` from the current bundle/attachment/file state and rewrite `AgentSession.ComposedBundleStamp` / `InstructionFileStamp` from scratch — a stale stamp on a resumed session is a bug, not evidence the resume was partial. What survives is only what `--resume` itself carries: the provider-side conversation history. A drift check or a "did the new instructions land" question is answered from the stamps and the launch note, never from assuming a resume is a no-op restart.
+- **A resume rebuilds Antiphon's args, bundles and stamps; provider adoption still needs evidence** (CARD-0334/CARD-0395). `PolicyRefreshService`'s relaunch and every other resume path (`AgentControlService.StartAsync(Fresh: false)`) recompose current bundle/attachment/file state and rewrite `AgentSession.ComposedBundleStamp` / `InstructionFileStamp` — a stale stamp is a bug. Those stamps prove composition, not that every provider accepted the replacement. CARD-0395 measured that Grok 1.0.13's native `--resume` keeps the previous system `--rules` value even when a new value is passed. Its [file/reread plan](superpowers/plans/2026-09-06-card-0395-grok-rules-file-plan.md) is not implemented yet. Do not certify Grok policy refresh from new stamps or a healthy launch alone. Grok compaction enters this runtime as `auto_compact_completed` -> `CompactBoundary`; the `compacted` / `event_msg/context_compacted` pair belongs to Codex.
 
 ### Gotcha #89
 

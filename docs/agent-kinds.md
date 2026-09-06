@@ -82,8 +82,10 @@ A session's command line is built in layers, and no single file holds the whole 
    | `Grok` | `--rules <text>` |
    | `Codex` | `-c developer_instructions=<text>` — no `--append-system-prompt`, no `--rules` |
 
-   In all three cases it is an **argument, never typed**, so it survives compaction and no pty
-   delivery ceiling applies; the bound is the command line, guarded by
+   Today all three launch sites use an **argument, never typed**; no pty delivery ceiling
+   applies to that argument. This alone does not establish Grok compaction/resume persistence:
+   CARD-0395 measured that Grok 1.0.13 retains the old `--rules` on native resume and ignores a
+   replacement value. The current argument bound is the command line, guarded by
    `InstructionBundleComposer.EnsureWithinCommandLineBudget` (`Delegation:CommandLineBudgetChars`),
    which throws rather than truncating. Composition order is attachments → `ReplyStyle` block →
    `SystemPromptAppend`; `Normal` composes nothing. A change takes effect at the next launch — the
@@ -95,6 +97,12 @@ A session's command line is built in layers, and no single file holds the whole 
    multiline orchestrator bundle to Grok; that remains outstanding (CARD-0395). Already-running
    and warm-reuse Grok sessions are not rewritten. Claude and Codex, and non-Windows Grok, keep
    their present behaviour.
+
+   CARD-0395's [measured transport plan](superpowers/plans/2026-09-06-card-0395-grok-rules-file-plan.md)
+   is not implemented yet. On the installed 1.0.13, `--rules @path` and `--rules path` pass literal
+   text; they do not load a file. Native `--agent`/`GROK_AGENT`/`[agent] definition` can load a valid
+   definition file, but change the builtin prompt/tool configuration. The plan therefore selects
+   an explicit file-read bootstrap and queued rereads, with live behavioral verification required.
 4. **Session identity** — appended last, by `AgentSessionService.BuildSessionIdentityArgs`, and
    only for kinds whose `SessionResume` contract is `Supported`. Any pre-existing
    `--session-id` / `-s` / `--resume` / `-r` / `--continue` / `-c` in the profile args is stripped
@@ -254,6 +262,12 @@ stream. The path is **deterministic**, because grok honours `--session-id` (meas
 none of Claude's discovery/claim/fork machinery applies and the CARD-0006 hazard cannot arise. The
 file is created lazily at the first submit (~1.1 s after Enter), is held open with a `.lock` for
 the whole session (reads must share write/delete), and is flushed per update.
+
+**Version-specific transport evidence (CARD-0395, 1.0.13 / grok-4.6).** The local capture probe
+observed the actual tool-bearing user turn on `POST /responses`, as well as helper calls there.
+The older endpoint table above records CARD-0167/0168's measurement, not an invariant across CLI
+versions. A canary must identify its task nonce and full user-turn body, in addition to the
+synthetic `/api-key` credential hit. See the [measurement record](investigations/2026-09-06-card-0395-rules-transport-measurements.md).
 
 **Behaviour worth knowing:**
 - First launch into a directory nobody has run Grok in parks on **Do you trust the contents of
