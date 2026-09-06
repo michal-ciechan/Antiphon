@@ -75,6 +75,8 @@ change per instance:
       # Slack__AppToken: "${SLACK_APP_TOKEN}"
       Kafka__BootstrapServers: "messaging-redpanda:9092"
       Kafka__ConsumerGroup: "school-revision-messaging-service"
+      # Set both watched/expected groups to the application's actual inbound group before enabling.
+      Kafka__InboundUnconsumedMonitorEnabled: "false"
       ConnectionStrings__Messaging: "Host=postgres;Port=5432;Database=school_revision_messaging;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
     depends_on: [postgres, messaging-redpanda]
 ```
@@ -94,3 +96,18 @@ token/username, its own Redpanda, and its own DB.
 # context = src/ (the Antiphon.Messaging* projects are siblings)
 docker build -f src/Antiphon.Messaging.Service/Dockerfile -t ghcr.io/michal-ciechan/antiphon-messaging-telegram:latest src/
 ```
+
+## Inbound consumption monitor
+
+`Kafka__AntiphonConsumerGroup` and `Kafka__ExpectedAntiphonConsumerGroup` both default to
+`antiphon-server-bridge` in this application profile. They describe the application's
+inbound consumer, distinct from this Service's outbound `Kafka__ConsumerGroup`.
+The expected value is required whenever monitoring is enabled and must match exactly,
+including case. Custom applications supply both values or disable only this monitor with
+`Kafka__InboundUnconsumedMonitorEnabled=false` (including the school_revision example
+above until its actual inbound group is configured).
+
+`GET /health/inbound-unconsumed` is monitor readiness; `/health` remains process liveness.
+Unknown broker evidence suppresses notices and surfaces as degraded monitoring.
+See [semantics](../../docs/telegram.md#inbound-lag-notices-and-monitor-readiness-card-0410)
+and [authorized deployment/rollback](../../docs/telegram-bot-ops.md#consumer-group-deployment-verification-card-0410).

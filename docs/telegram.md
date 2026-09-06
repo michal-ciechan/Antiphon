@@ -156,3 +156,29 @@ blocked-task and decision prompt.
 - `tests/Antiphon.Messaging.Tests/TelegramChannelAdapterTests.cs` — HTML payload shape,
   `Formatting=Plain`, the parse-error → plain fallback, and `RawOverrides` suppression, all
   against the conformance-verified `FakeTelegramServer`.
+
+## Inbound lag notices and monitor readiness (CARD-0410)
+
+The gateway watches the application's inbound consumer group through
+`Kafka:AntiphonConsumerGroup`; `Kafka:ConsumerGroup` is its separate outbound group.
+The standalone Antiphon profile watches and expects `antiphon-server-bridge`.
+A notice requires a nonnegative committed-next offset at or before the receipt offset,
+on that exact partition, and a receipt older than five minutes. Kafka consumption is
+not evidence of answer completion. Health probes remain diagnostics only.
+
+Absent groups, failed broker queries, missing partitions, and partitions with no commit
+are unknown evidence. They produce no customer notice, operational lag event, retry, or
+receipt watermark. A present group with zero members and retained commits can still prove
+lag. Each pass uses fresh observations; it never substitutes zero or a cached commit.
+
+`/health` is process liveness. `/health/inbound-unconsumed` returns 503 for Validating,
+Degraded, or Stale, and 200 for Ready or explicitly Disabled. Ready requires a present group,
+at least one committed partition, no failed partitions, and a successful inbox query.
+Other partitions with NoCommit are listed and suppressed individually. A snapshot becomes
+Stale after two poll intervals plus the observation budget (130 seconds by default).
+Unknown evidence logs an Error on entering degradation, reminders at most every five
+minutes, and an Information `monitor ready` on recovery. Ingress/outbound remain running.
+
+The readiness payload contains only state/reason, expected and watched groups, topic,
+observation time/age, and partition statuses/commits. It is an operator check, never an
+automatic process-kill signal. Old acknowledged receipts are not reopened.

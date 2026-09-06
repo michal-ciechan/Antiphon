@@ -37,3 +37,21 @@ Packages in the `Antiphon.Messaging*` family **version lock-step** (one `<Versio
 - **Enum tolerance:** unknown enum names on the wire map to a declared sentinel
   (`AttachmentKind.Other`, `ChannelReplyKind.Answer`, `ConversationKind.Group`) instead of
   dropping the message.
+
+## Lag evidence and compatibility
+
+Portable Gateway and Client defaults remain `antiphon-consumer`. Set
+`AntiphonConsumerGroup` to the application's inbound consumer group, independently of
+Gateway's outbound `ConsumerGroup`. `ExpectedAntiphonConsumerGroup` is optional for library
+hosts, but if supplied must match ordinally. Standalone Service requires it in code.
+
+DI uses `IConsumerGroupObservationReader`: Present/Absent/QueryFailed group observations,
+with CommittedOffset/NoCommit/QueryFailed partition evidence. Only a nonnegative committed
+next offset can authorize lag. `IConsumerGroupOffsetReader` remains available as a nullable
+projection; null now explicitly means unknown. The old monitor constructor remains source
+compatible but cannot prove group presence through a nullable reader and therefore suppresses
+notices; hosts constructing monitors directly should migrate to the richer constructor.
+
+Disabled monitors and hosts without an inbox store make no broker calls and report Disabled.
+The observation budget defaults to ten seconds. Readiness expires after two polls plus that
+budget. See [monitor semantics](../../docs/telegram.md#inbound-lag-notices-and-monitor-readiness-card-0410).
