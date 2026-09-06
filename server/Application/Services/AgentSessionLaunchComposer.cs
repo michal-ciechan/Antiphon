@@ -111,6 +111,10 @@ public sealed class AgentSessionLaunchComposer
                     extraArgs,
                     _delegationSettings.CommandLineBudgetChars,
                     $"Agent '{agent.Name}'");
+                // CARD-0382: budget first (D-T1), then refuse a Windows Grok payload that
+                // cannot ride argv. Does not rewrite or omit the rules.
+                if (isGrok)
+                    GrokLaunchArgs.EnsureWindowsRulesPayload(rendered, $"Agent '{agent.Name}'");
                 extraArgs.AddRange(isCodex
                     ? [CodexLaunchArgs.ConfigFlag, CodexLaunchArgs.DeveloperInstructions(rendered)]
                     : new[] { isGrok ? "--rules" : "--append-system-prompt", rendered });

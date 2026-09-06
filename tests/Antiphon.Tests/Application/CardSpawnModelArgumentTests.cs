@@ -6,6 +6,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -120,6 +121,40 @@ public sealed class CardSpawnModelArgumentTests
             var flag = adapter.StartedArgs.ToList().IndexOf(GrokLaunchArgs.ReasoningEffortFlag);
             adapter.StartedArgs[flag + 1].ShouldBe(GrokLaunchArgs.ReasoningEffort(AgentModelLevel.High));
             adapter.StartedArgs.ShouldNotContain(ClaudeLaunchArgs.EffortFlag);
+        }
+        finally
+        {
+            AgentControlServiceIntegrationTests.DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Grok_assigned_card_spawn_with_multiline_standing_instructions_is_refused_and_creates_no_session()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var tempRoot = AgentControlServiceIntegrationTests.NewTempRoot();
+        try
+        {
+            await using var db = NewDb(schema.ConnectionString);
+            var adapter = new FakeAgentProtocolAdapter();
+            await using var harness = AgentControlServiceIntegrationTests.BuildHarness(
+                tempRoot, [adapter], defaultKind: "Raw", includeLaunchResolver: true,
+                connectionString: schema.ConnectionString);
+            var profile = await SeedProfileAsync(db, AgentKind.Grok, modelArgumentName: "--model");
+            var card = await SeedAssignedCardAsync(db, harness, tempRoot, profile.Id, AgentKind.Grok,
+                AgentModelLevel.High, modelId: null);
+            var agent = await db.Agents.SingleAsync(a => a.Id == card.AssignedAgentId);
+            var sentinel = "card0382-sentinel-" + Guid.NewGuid().ToString("N");
+            agent.SystemPromptAppend =
+                "Custom line one with spaces\r\nline \"two\" with `backticks`\nline three " + sentinel;
+            await db.SaveChangesAsync();
+
+            ClearHarnessTracking(harness);
+            var ex = await Should.ThrowAsync<ConflictException>(() =>
+                harness.CardService.SpawnAsync(card.Id, new SpawnCardRequest(), CancellationToken.None));
+            ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
+            adapter.Started.ShouldBeFalse();
+            (await db.AgentSessions.CountAsync(s => s.CardId == card.Id)).ShouldBe(0);
         }
         finally
         {

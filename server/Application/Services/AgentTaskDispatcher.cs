@@ -587,6 +587,15 @@ public sealed class AgentTaskDispatcher
                     }
                 }
             }
+            catch (ConflictException ex) when (ex.Code == GrokRulesArgvPolicy.ProblemCode)
+            {
+                // CARD-0382: composition ran after the claim transaction, so a session row
+                // exists. Terminalize it with the rules code before failing the task — the
+                // generic catch would leave Starting and mislabel the reason as occurring
+                // before a session existed.
+                await FailClaimedGrokRulesDispatchAsync(task, ex, ct);
+                failures++;
+            }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
                 _logger.LogWarning(ex, "Failed to dispatch task {ShortId}",
@@ -2033,6 +2042,35 @@ public sealed class AgentTaskDispatcher
         foreach (var (key, value) in AgentLaunchEnv.Parse(claimed.LaunchEnvOverrideJson))
             env[key] = value;
         return env;
+    }
+
+    /// <summary>
+    /// CARD-0382: a rules-argv refusal after the claim transaction. The session row already
+    /// exists in Starting; terminalize it with the rules code and SystemRequest, then fail the
+    /// task without the "before a session existed" prefix. No brief is queued (composition
+    /// threw before EnqueueAsync).
+    /// </summary>
+    private async Task FailClaimedGrokRulesDispatchAsync(
+        AgentTask task, ConflictException ex, CancellationToken ct)
+    {
+        _logger.LogWarning(ex, "Grok rules argv refused for task {ShortId}",
+            DelegationReportFormatter.Short(task.Id));
+
+        var claimed = await _db.AgentTasks.FirstOrDefaultAsync(t => t.Id == task.Id, ct) ?? task;
+        if (claimed.AgentSessionId is Guid sessionId)
+        {
+            var session = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct);
+            if (session is not null && session.Status != SessionStatus.Failed)
+            {
+                session.Status = SessionStatus.Failed;
+                session.FailureReason = ex.Message;
+                session.EndedAt = UtcNow();
+                session.LastSeenAt = session.EndedAt.Value;
+                SessionTermination.Record(session, SessionTerminationSource.SystemRequest);
+            }
+        }
+
+        await FailAndNotifyAsync(claimed, ex.Message, "grok-rules", ct);
     }
 
     private async Task FailAndNotifyAsync(
@@ -3574,6 +3612,9 @@ public sealed class AgentTaskDispatcher
             // config override; the flag differs but the contract does not — it is an ARGUMENT in all
             // three cases, so it survives compaction and no pty ceiling applies. Same branch
             // AgentControlService makes for a named Grok or Codex agent.
+            // CARD-0382: budget first (D-T1), then refuse a Windows Grok payload that cannot ride argv.
+            if (isGrok)
+                GrokLaunchArgs.EnsureWindowsRulesPayload(composed.Text, subject);
             extraArgs.AddRange(isCodex
                 ? [CodexLaunchArgs.ConfigFlag, CodexLaunchArgs.DeveloperInstructions(composed.Text)]
                 : new[] { isGrok ? "--rules" : "--append-system-prompt", composed.Text });
