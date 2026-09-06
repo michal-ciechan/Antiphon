@@ -29,6 +29,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     private readonly HttpClient _httpClient;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly SessionRunnerSettings _settings;
+    private readonly GrokRulesSettings _rulesSettings;
     private readonly object _capabilityGate = new();
     private RunnerCapabilitiesDto? _cachedCapabilities;
     private DateTimeOffset _capabilitiesProbedAt = DateTimeOffset.MinValue;
@@ -37,16 +38,19 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     public SessionRunnerHttpClient(
         HttpClient httpClient,
         IHttpClientFactory httpClientFactory,
-        IOptions<SessionRunnerSettings> settings)
+        IOptions<SessionRunnerSettings> settings,
+        IOptions<GrokRulesSettings>? rulesSettings = null)
     {
         _httpClient = httpClient;
         _httpClientFactory = httpClientFactory;
         _settings = settings.Value;
+        _rulesSettings = rulesSettings?.Value ?? new();
         _httpClient.BaseAddress = new Uri(_settings.BaseUrl.TrimEnd('/') + "/");
     }
 
     public async Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
     {
+        GrokRulesLaunchValidation.Validate(spec, _rulesSettings);
         if (spec.GrokRulesPayload is not null
             && (await GetCapabilitiesAsync(ct))?.Features?.Contains(GrokRulesTransport.Capability, StringComparer.Ordinal) != true)
             throw new ConflictException("Selected runner does not advertise grokRulesFileV1.", "grok_rules_transport_unsupported");

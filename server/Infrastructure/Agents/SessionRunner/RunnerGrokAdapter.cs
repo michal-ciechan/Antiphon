@@ -37,6 +37,7 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter, IAttachableProtoc
     private readonly AgentRegistrySettings _settings;
     private readonly DeliveryVerificationSettings _verification;
     private readonly ILogger? _logger;
+    private readonly GrokRulesSettings _rulesSettings;
     private long _promptStartSequence;
     private long _transcriptBaselineSequence;
     // CARD-0113: last successful GetTranscript LastSequence. Distinct from the per-turn floor
@@ -51,13 +52,15 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter, IAttachableProtoc
         ISessionRunnerClient client,
         IOptions<AgentRegistrySettings> options,
         IOptions<SupervisionSettings>? supervisionSettings = null,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        IOptions<GrokRulesSettings>? rulesSettings = null)
     {
         _client = client;
         _terminal = new RunnerTerminalSession(client);
         _settings = options.Value;
         _verification = (supervisionSettings?.Value ?? new SupervisionSettings()).DeliveryVerification;
         _logger = logger;
+        _rulesSettings = rulesSettings?.Value ?? new();
     }
 
     public Task<int> Exited => _terminal.Exited;
@@ -75,7 +78,7 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter, IAttachableProtoc
     {
         if (_started)
             throw new InvalidOperationException("RunnerGrokAdapter already started.");
-        GrokRulesLaunchValidation.Validate(spec, new GrokRulesSettings());
+        GrokRulesLaunchValidation.Validate(spec, _rulesSettings);
         if (spec.GrokRulesPayload is not null
             && (await _client.GetCapabilitiesAsync(ct))?.Features?.Contains(GrokRulesTransport.Capability, StringComparer.Ordinal) != true)
             throw new ConflictException("Selected runner does not advertise grokRulesFileV1.", "grok_rules_transport_unsupported");
