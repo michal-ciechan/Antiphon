@@ -62,7 +62,7 @@ Grok is a first-class runner kind (`AgentKind.Grok`), not only an OpenCode model
 | Auth | WrapperManaged (login lives in `~/.grok/auth.json`) |
 | Model arg | `--model` |
 
-Pick `grok-4.6` (default) or `grok-4.5` from the catalogue. Sessions resume with `--resume <session-id>`; standing instructions go through `--rules`, never `--append-system-prompt`.
+Pick `grok-4.6` (default) or `grok-4.5` from the catalogue. Sessions resume with `--resume <session-id>`; standing instructions go through `--rules`, never `--append-system-prompt`. On Windows, a `--rules` value containing a newline, NUL, or more than 4,096 UTF-16 code units is refused as 409 `grok_rules_argv_unsafe` (CARD-0382) rather than launched; restoring multiline Grok rules is CARD-0395.
 
 **Structured activity is live for Grok** (CARD-0080 S2): the runner tails Grok's own ACP
 `updates.jsonl` at `GROK_HOME/sessions/<url-enc-cwd>/<session-id>/updates.jsonl`, selected by the

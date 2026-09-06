@@ -88,6 +88,13 @@ A session's command line is built in layers, and no single file holds the whole 
    which throws rather than truncating. Composition order is attachments → `ReplyStyle` block →
    `SystemPromptAppend`; `Normal` composes nothing. A change takes effect at the next launch — the
    drift badge is informational, not an action.
+
+   On Windows, Grok `--rules` is also fail-closed (CARD-0382): a payload containing CR, LF, or
+   NUL, or more than 4,096 UTF-16 code units, is refused as 409 `grok_rules_argv_unsafe` before
+   any session starts. Spaces are allowed and passed unchanged. The guard does **not** deliver a
+   multiline orchestrator bundle to Grok; that remains outstanding (CARD-0395). Already-running
+   and warm-reuse Grok sessions are not rewritten. Claude and Codex, and non-Windows Grok, keep
+   their present behaviour.
 4. **Session identity** — appended last, by `AgentSessionService.BuildSessionIdentityArgs`, and
    only for kinds whose `SessionResume` contract is `Supported`. Any pre-existing
    `--session-id` / `-s` / `--resume` / `-r` / `--continue` / `-c` in the profile args is stripped

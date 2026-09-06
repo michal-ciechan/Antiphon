@@ -240,6 +240,15 @@ keys on the wrapper file name, so pool `grok.exe` launches (#28) never trip it. 
 seeding the names on the agent's `launchEnv` or the project's `DefaultLaunchEnv` — never by
 launching bare `grok.exe`.
 
+**Grok rules argv gate (CARD-0382).** A Windows Grok launch whose effective `--rules` /
+`--append-system-prompt` value contains CR, LF, or NUL, or more than 4,096 UTF-16 code units, is
+refused **before a runner session is registered and before herdr is contacted**. The runner
+answers 409 `grok_rules_argv_unsafe`. Whole-argument `$env:NAME` tokens are resolved with the
+same semantics as the launch script before scanning, so a multiline env value cannot bypass
+the guard. The gate keys on the request's Grok identity, not the executable basename. This
+prevents the clap/argv crash; it does not make a multiline orchestrator bundle launch. Full
+composed-rules delivery is CARD-0395.
+
 **Grok native-session gate (CARD-0383).** A Grok launch whose argv carries `--resume <uuid>` /
 `-r <uuid>` / `--resume=<uuid>` is refused **before herdr is contacted** unless
 `GROK_HOME/sessions/*/{id}/` exists (any cwd encoding — the same bar attach uses). The runner
@@ -365,6 +374,7 @@ screen-heuristic class as our own probes: disagreement is corroboration for a hu
 | Launch fails: pane shell is not PowerShell | herdr default_shell is not `powershell`/`pwsh` | set herdr `default_shell`, or use PtyHost |
 | Launch fails: detection timeout on an idle shell | `pane.get.agent` never became the expected kind; pane holds only PowerShell | pane is **kept** (last-pane + `SessionExited` `HerdrLaunchDetectTimeout`); next start relaunches in place. **Do not close the pane** — that is not a `HerdrPaneLeftOpen` incident. Script left redacted on disk. |
 | Launch fails: detection timeout with a foreign/wrong-kind foreground | same timeout, but the pane is not an idle shell | pane is closed as before; script left redacted |
+| `409 grok_rules_argv_unsafe` | Windows Grok `--rules` / `--append-system-prompt` has CR/LF/NUL or >4096 UTF-16 units | refused before herdr; no pane, no script. CARD-0395 owns a real transport |
 | `409 herdr_grok_native_session_missing` | Grok `--resume <uuid>` with no `sessions/*/{id}/` under `GROK_HOME` | refused before herdr; last-pane kept. Next start creates with `--session-id` |
 | Launch throws instead of falling back | herdr missing/stopped/wrong protocol | start herdr, or set `Enabled: false` and relaunch on `PtyHost` |
 | Sessions `Exited(HerdrRestartPresumedDead)` in a batch | herdr restarted | expected; the next launch relaunches into the restored pane if it still exists, else allocates |
