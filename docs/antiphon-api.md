@@ -197,7 +197,7 @@ GET    /api/agents/preamble-preset?provider=  telegram | slack (404 for anything
 GET    /api/agents/bundles                   attachable instruction bundles (read-only; the catalog is code)
 POST   /api/agents        POST /api/agents/draft        PATCH /api/agents/{id}    DELETE /api/agents/{id}
 GET    /api/agents/{id}/incidents            AgentIncidentDto (Kind, Severity, Message, FailureReason, CreatedAt). `HumanNotifiedAt` is the digest-pager stamp on the `AgentIncidents` row, not an acknowledgement and not on this DTO — a second Critical `ChannelReplyLost` an hour later is a second page.
-POST   /api/agents/{id}/start  |  /stop      start refuses 409 `remote_control_refused` when `remoteControl: true` on a kind whose catalog row is not Supported
+POST   /api/agents/{id}/start  |  /stop      start refuses 409 `remote_control_refused` when `remoteControl: true` on a kind whose catalog row is not Supported. Named herdr placement (`herdrTabLabel`) preflights `POST :17204/herdr/placement/check` and 409s with the runner code (`pane_occupied` / `herdr_tab_ambiguous` / `herdr_tab_invalid`) **before** enqueue; missing `herdr-named-tab-placement` is 409 `herdr_refused`. A post-preflight runner 409 fails the session row asynchronously.
 POST   /api/agents/{id}/attach-herdr         bind a standing Herdr agent to an existing operator pane `{ "paneId": "w2:p3" }`. 409 `herdr_refused` / `session_active` / `herdr_kind_mismatch` / `herdr_pane_bound` / `herdr_native_id_unknown` / `herdr_transcript_not_found` / `herdr_pane_changed` / `session_id_taken`; 404 `herdr_pane_not_found`; 503 `herdr_unreachable`. Stop on an attached session detaches.
 POST   /api/agents/{id}/ensure-directory     create the agent's configured working directory (CARD-0214 readiness `create-directory` fix). Idempotent. 404 if the agent is missing; 422 if mkdir fails. Never takes a path from the caller.
 POST   /api/agents/{id}/queue   PATCH /api/agents/{id}/queue   DELETE /api/agents/{id}/queue/{cardId}
@@ -215,7 +215,8 @@ POST   /api/sessions/{id}/resize  |  /resume  |  /kill
 ```
 
 `PATCH /api/agents/{id}` is where `alwaysOn`, `kind`, `tuiProfileId`, `modelId`, `launchEnv`,
-`bundleKeys`, `replyStyle`, `systemPromptAppend` and `sessionBackend` are set — style keys on
+`bundleKeys`, `replyStyle`, `systemPromptAppend`, `sessionBackend`, `herdrWorkspaceLabel` and
+`herdrTabLabel` are set (null leaves a label unchanged; empty string clears it) — style keys on
 `bundleKeys` are 422 — and where the herdr pairing gate fires
 (`409 herdr_refused`) and where the remote-control capability gate fires
 (`409 remote_control_refused` on a kind whose catalog row is not Supported — ClaudeCode only

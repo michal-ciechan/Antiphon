@@ -197,10 +197,23 @@ session cwd differs from the workspace cwd, the launch script prepends a quoted
 allocator as usual. Reusing an untagged operator workspace never consumes its existing root: it
 runs ordinary `tab.create` in that workspace.
 
-Launch sequence: ensure workspace → **resolve the target pane** (CARD-0224: last-pane record for
+Standing agents may pin an optional **workspace label** and **tab label** (`Agent.HerdrWorkspaceLabel` /
+`HerdrTabLabel`, PATCHed as `herdrWorkspaceLabel` / `herdrTabLabel`). Null on create is default
+placement; an empty string on PATCH clears the pin. The pin is agent-owned, never a pane/tab/workspace
+ID, and takes effect on the next launch (saving does not move a live session). Card-spawn and pool
+delegates ignore it. A named tab is dedicated: live named-launch sidecars reserve the whole tab from
+the allocator. The runner must advertise `herdr-named-tab-placement` or public Start refuses
+`herdr_refused` before enqueue. Public Start preflights `POST /herdr/placement/check` (read-only)
+and maps occupancy/ambiguity/invalid to 409 with the runner's code **before** any session row or
+queue mutation. A later occupant that arrives after an allowed preflight is a runner 409 and an
+asynchronous Failed row — the HTTP response already returned cannot become 409. Workspace matching
+stays token-first: a matching `antiphon-ws` token wins even if the override names another workspace.
+
+Launch sequence: ensure workspace → **named tab pin, if configured, outranks last-pane** (CARD-0384)
+→ otherwise resolve the target pane (CARD-0224: last-pane record for
 this session id, or `ReusePaneOfSessionId`) → then either relaunch/adopt in place, use a freshly
 created root tab/pane, or allocate (`tab.create` / `pane.split`, env on both) → `tab.rename` of a
-created root only → `pane.rename` → `pane.report_metadata` → check the
+created root only (to `TabLabel` when pinned, else `PaneTitle`) → `pane.rename` → `pane.report_metadata` → check the
 pane shell is PowerShell → write
 `<SessionLogPath>/herdr/<sessionId:N>.launch.ps1` (UTF-8 with BOM; one
 `Remove-Item -LiteralPath 'Env:NAME'` per stale name on a relaunch, one
@@ -212,15 +225,23 @@ pane shell is PowerShell → write
 <paneId> <slug>` (suffixed `-2`… if a live agent holds it; skipped, Warning, if the list or
 rename fails) → `pane.process_info` for the child pid → write the sidecar → delete the script.
 
-**Target resolution** (before the allocator; operator tabs are still never split into):
+**Target resolution** (named pin first; then last-pane; operator tabs are still never split into):
 
-| Pane state | Decision |
+| Priority / target state | Resolution |
 |---|---|
-| No last-pane record, or pane unknown to `pane.get` | allocator (today's path) |
-| Empty PowerShell pane that was ours (`Origin = launched`) | **relaunch in place** — type the launch script into that pane; no `tab.create` / `pane.split` / `tab.rename`. The script re-applies this launch's env and removes the names the previous launch set that this one does not carry (the sidecar / last-pane record keeps `LaunchEnvNames` — names only, never values) |
-| Live process whose argv names **our** session id (`--session-id` / `--resume` / `-s`/`-r`) and `pane.Agent` matches | **adopt in place** — bind the pid, type nothing |
-| Occupied by a different id, no id, a different kind, or more than one foreground process | **refuse** (`pane_occupied`) — never steal, never fall back to the allocator. The last-pane record is kept so a later backoff can retry once the pane is free. Codex never carries a session id in argv, so an occupied Codex pane is always refused. |
-| Detect timeout, pane is our launched/created pane, foreground is shell only | **keep the pane** — write a last-pane record (`ExitReason = HerdrLaunchDetectTimeout`) and skip `pane.close` so the next attempt relaunches in place (CARD-0383). `SessionExited` carries `HerdrLaunchDetectTimeout`, not `HerdrPaneLeftOpen` — there is no foreign process and the operator must not close the pane. A wrong-kind detection or any foreign foreground still tears the pane down. |
+| Existing launch guards fail or Herdr cannot be verified | Explicit refusal/error; no alternative backend or placement. |
+| Resolve workspace | Matching `antiphon-ws` token; else unique untagged exact workspace label; else create managed workspace. Workspace override supplies the fallback/create label. |
+| Tab label configured, no matching tab | Create one labelled tab at agent cwd, with one pane; if workspace was just created, name/use its returned root instead. Never allocator/split. |
+| Tab label configured, exactly one single-pane match, idle PowerShell | Launch script in that pane, at agent cwd, applying current env and clearing only proven stale launch-env names. No new tab or split. |
+| Tab label configured, exactly one single-pane match, one live expected-kind process with this session ID in argv | Adopt that process; type no launch script. |
+| Tab label configured, foreign/unidentifiable/wrong-kind occupant or another session's claim | 409 `pane_occupied`; retain names and last-pane; never steal/fallback. |
+| Tab label configured, duplicate label or tab not exactly one pane | 409 `herdr_tab_ambiguous` / `herdr_tab_invalid`; no mutation/fallback. |
+| Selected named target disappears/moves before acquisition | 409 `herdr_pane_changed`; later attempt resolves names again. |
+| No tab label, no valid last-pane | Existing new-workspace-root / allocator path; dedicated named tabs excluded from capacity. |
+| No tab label, launched-origin idle PowerShell last-pane | Existing in-place relaunch. Attached-origin empty history does not authorize typing. |
+| No tab label, matching live last-pane occupant | Existing exact-argv-ID/kind adoption. |
+| No tab label, occupied last-pane | Existing 409 `pane_occupied`, record retained, no allocator fallback. |
+| Typed launch detect timeout, target still only its verified shell | Preserve pane and write last-pane as CARD-0383 does; name pin survives regardless of pane loss. |
 A wrong detected kind or a non-PowerShell shell fails the launch
 (existing catch kills then disposes); the script is left in place for diagnosis **with every
 env value rewritten as `<redacted>`** and the `$env:` tokens unresolved (CARD-0341) — a secret

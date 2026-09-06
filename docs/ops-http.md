@@ -40,7 +40,8 @@ While Claude aliases are on a usage hold, a capability caller that wants to keep
 |---|---|---|
 | Every agent, with its live session | GET | `/api/agents` |
 | One agent | GET | `/api/agents/{id:guid}` |
-| Start / stop an agent | POST | `/api/agents/{id}/start`, `/api/agents/{id}/stop` |
+| Start / stop an agent | POST | `/api/agents/{id}/start`, `/api/agents/{id}/stop` — named herdr pin (`herdrTabLabel`) 409s occupancy **before** enqueue; a later runner 409 is an async Failed row. |
+| Runner named-tab preflight | POST | `:17204/herdr/placement/check` `{ sessionId, herdr }` — read-only; 200 `create`/`relaunch`/`adopt` or 409 with the launch codes. |
 | Manually refresh an agent's policy (CARD-0334) | POST | `/api/agents/{id}/refresh-policy` (`{ force?: bool }`) — idle-gated like the sweep: kill+resume, or a `Notify`-lane message, without suspending supervision. `force` skips only the idle-minutes floor and the cooldown; a working session is always 409 `session_working`, and a Codex/unbound-transcript agent is 409 `not_resumable`. Returns `{ refreshed, notified, agent }`; a Notify-lane 200 is `refreshed: false, notified: true`. |
 | Delete an agent | DELETE | `/api/agents/{id}` |
 | Boards | GET | `/api/boards` (`?includeArchived=true`) |
