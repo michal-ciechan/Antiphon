@@ -1029,3 +1029,493 @@ counts, selected filters, pass/fail and restored-green evidence; all A answers,
 any pre-existing failures reproduced at base, and the commit holding the tests.
 The next stage for THIS artifact is Plan to settle A-1..A-7, then Code to implement
 S1-S7 plus this verification, followed by a separate Review before landing.
+
+## Plan resolution pass - A-1 through A-7
+
+Date: 2026-09-06. Stage: Plan. Task: `83018df7`. Reviewed the complete original
+plan and TestDesign specification at `3843a0bb5608141857fbbb24b586cb02015899b4`.
+That branch was fetched and fast-forwarded into this task's assigned branch;
+the source branch remains in its own worktree.
+
+**Verdict: all seven gaps are resolved; next stage is Code.** This addendum is
+normative wherever earlier D/V text left a choice or conflicts with these answers.
+The original plan and TestDesign's 38 V groups, 17 R guards and 40 PC groups
+(including their variants) remain intact. The assertion amendments below are
+part of that verification contract, not optional suggestions to Code. Separate
+Review remains required after S1-S7. No implementation, tests, live publication,
+ignore installation or historical-data review occurred in this resolution pass.
+
+### A-1 resolved - visibility and path knowledge are independent
+
+**Accept the proposal.** A known safe local destination remains useful diagnostic
+information when repository visibility is Unknown. D-6's sentence that combines
+"Unknown/no-path" is superseded: Unknown visibility alone never nulls a path.
+
+`repositoryVisibility` is always the stored project enum; lack of a checkout
+does not rewrite configured Public/Private to Unknown. `visibilitySource` is
+`Configured` for Public/Private and `Unknown` for Unknown. D-4 still adds no gh,
+provider or network call. Remote present plus no configured classification, a
+failed external gh check, or no clear signal are all **Unknown (not checked)**;
+none supplies consent. A failed outside check does not silently change an existing
+operator assertion either. No gh stderr, credential detail or raw remote URL is
+reported by this feature.
+
+For a safely resolved existing Git target, `repositoryPath` is the normalized
+absolute **project root**, and `directory` is the project-relative forward-slash
+`docs/cards/<stable-slug>` path. The canonical Git toplevel is only a locking/git
+implementation detail; a subdirectory project must not display its parent's
+output path. Status may compute an unpinned slug read-only. For a missing path,
+missing checkout, non-Git target, unsafe traversal or conflicting ownership,
+both destination fields are null; do not present an unchecked configuration
+string as a resolved export destination. Keep the visibility value independently.
+Outstanding ownership at an unavailable target is reported by A-5, never as
+successful cleanup. A successful safe resolution is not invalidated just because
+later visibility, ignore or publication policy refuses writes.
+
+With an otherwise usable target, opted-in board and Unknown visibility, status
+is `eligible=false`, `reason=repository_visibility_unknown`, and a per-card
+`relativeFile=null`; sync has zero eligible cards and zero writes. Board-off
+takes precedence when it also applies. The Unknown warning is emitted in both
+cases. Exact ASCII CLI target/warning lines for V-32 are:
+
+```text
+target      C:\src\example\docs\cards\example (Unknown repository visibility; not checked)
+UNKNOWN REPOSITORY VISIBILITY: sync blocked
+```
+
+When no safe target can be resolved, replace the target line with:
+
+```text
+target      unavailable (no safe resolved card-file target)
+```
+
+The first line remains `card files  NOT WRITTEN: <reason>`; Unknown does not hide
+that a board is also off. Configured Private/Public target text remains D-8's
+`(configured Private repository)` / `(configured Public repository)`.
+
+### A-2 resolved - closed response contracts and the explicit notes exception
+
+**Accept the proposed DTO reuse, nullable revision presence and readiness shape,
+with the following complete definitions.** There is an intentional exception to
+any shorthand claim that "PrivateNotes is never in a response": D-2's explicitly
+opened notes endpoint must return the notes to support reading/editing them.
+**No publication/status/sync/settings response or ordinary card, revision,
+board, project, thread, create/edit or event response contains a
+`privateNotes` property, even as null, or its current/historical text.** Only
+`GET /api/cards/{id}/private-notes` returns that property. Removing this dedicated
+read would break the accepted private-notes UI; broadening its DTO reuse would
+break privacy. `hasPrivateNotes` is a presence flag, not the note text.
+The sole use of that name in an error response is A-3's `errors.privateNotes`
+field-validation key with an array of safe error messages; it never contains
+the submitted value or any stored note. No error echoes note text.
+
+Use `CardFileStatusDto` for board status and sync `policy`. Its complete wire
+field set is below. All fields are present, including explicit nullable values;
+arrays are never null. Implement null inclusion on these DTOs if necessary,
+without changing unrelated endpoint serialization.
+
+| Field | Wire type and exact meaning |
+|---|---|
+| `boardId` | GUID string |
+| `enabled` | bool; effective CardFileSync.Enabled, independent of board permission |
+| `syncCardFiles` | bool; stored board opt-in |
+| `repositoryVisibility` | `Unknown`, `Private` or `Public` |
+| `visibilitySource` | `Unknown` or `Configured`, as A-1 |
+| `repositoryPath` | string or null; A-1 absolute project root |
+| `directory` | string or null; A-1 project-relative directory |
+| `eligible` | bool; at least one card can be newly published under the evaluated policy and repository guards |
+| `reason` | string or null; first applicable write refusal below; null only when eligible |
+| `warnings` | distinct string codes, sorted ordinally for deterministic output; never prose containing card data |
+| `ignored` | bool or null; true if any policy-eligible card file or prospective INDEX is effectively ignored; false if that nonempty set was checked and none is ignored; null if the set is empty or inspection unavailable |
+| `workingTreeRemovalPending` | bool or null; A-5 working-file cleanup outstanding, null when inspection cannot establish it |
+| `gitRemovalPending` | bool or null; A-5 index/current-HEAD cleanup outstanding, null when inspection cannot establish it |
+| `removalPending` | bool; true if either pending field is true or unknown; false only when both are false |
+| `autoCommit` | bool; effective setting, default false |
+| `intervalSeconds` | integer; effective setting, 0 means manual only |
+
+Use `CardFileCardStatusDto` with exactly the above fields plus
+`cardFileVisibility` (Inherit/Private/Public) and `relativeFile` (project-relative
+`docs/cards/<slug>/<filename>.md`, or null). Its eligibility is for that card,
+not for a sibling; its cleanup fields deliberately describe the owning board,
+including a stale INDEX. `relativeFile` is non-null only when that card is
+eligible. Never construct a suppressed card's filename for a response.
+
+Reason precedence for a successful inspection is: `card_file_sync_disabled`,
+`no_repository_path`, `not_a_git_repository` (also a missing checkout),
+`unsafe_card_file_path`, `card_file_directory_conflict`, `board_archived`,
+`project_archived`, `board_not_opted_in`, `repository_visibility_unknown`, then
+`card_private` for a suppressed single card or `no_publishable_cards` for a
+board with zero policy-eligible cards, then `card_files_ignore_missing`,
+`card_file_path_ignored`, and finally `card_file_cleanup_required` if A-5
+prevents additions. No-card and all-Private boards are `eligible=false`,
+`reason=no_publishable_cards` only after the preceding board gates pass,
+`ignored=null`. An eligible card/board has `reason=null`; an opted-in board may
+be saved successfully while its current status is ineligible or ignored.
+An unexpected status probe failure overrides eligibility/reason to
+false/`status_unavailable`, adds that warning and uses null for unobserved
+inspection fields. Preserve already known DB fields and safely resolved paths.
+
+`eligibleCards` counts cards passing Enabled, safe target, active board/project,
+board opt-in, known visibility and card override **before** ignore/cleanup
+readiness; `excludedCards` is total board cards minus that count, including
+archived cards in the total. Therefore an ignored/pending board can have
+`eligibleCards>0` and `policy.eligible=false`. Counts expose no private card
+identity or content and remain Antiphon diagnostics only.
+
+| Surface | Success status and exact additions/shape |
+|---|---|
+| GET board card-files/status | 200 `CardFileStatusDto`, read-only, including when feature disabled |
+| PUT board card-files/settings | 200 `CardFileStatusDto` evaluated after the saved value; matching same-value request has no save/token/event side effect; no sync or ignore edit |
+| POST board card-files/sync | 200 `CardFileSyncBoardResult`: existing `boardId`, `boardName`, `directory`, `written`, `deleted`, `unchanged`, `commitSha`, `writeSkipReason`, `commitSkipReason`, `error`, `dryRun`, plus integer `eligibleCards`, integer `excludedCards`, non-null `policy: CardFileStatusDto`, and `warnings: string[]` |
+| Sync result details | Top-level directory equals policy.directory; outer warnings are the sorted union of policy and operation warnings. Counts/skip/error describe this attempt. Policy describes observed end state; dry-run policy describes the unmodified current state, with prospective counts only. Nullable skip/error/SHA fields are explicitly null when absent. |
+| Card create/content PATCH | Existing 201/200 CardDto plus required `cardFileVisibility`, bool `hasPrivateNotes` (nonempty string, including whitespace), and non-null `cardFileStatus: CardFileCardStatusDto`; post-save status failure keeps 201/200 and the saved card |
+| Single-card GET | Includes the same cardFileStatus; ordinary bulk/list/board/thread embedded cards omit cardFileStatus and perform no per-card repository probe |
+| Ordinary CardRevisionDto | Add nullable `cardFileVisibility` and nullable bool `hasPrivateNotes`; null for legacy/missing or non-ContentEdit snapshots, false for known empty notes, true for any nonempty superseded notes; never the snapshot text |
+| Explicit notes GET | 200 with exactly `cardId`, `privateNotes`, `concurrencyToken`, `revisionNumber`; current notes are string, current revisionNumber=null; historical notes string/null and requested revision number; token is the current card token even on historical reads. Cache-Control:no-store on all outcomes from this route. |
+| /api/cards/limits | Existing fields plus `maxPrivateNotesLength: 20000` and `cardFileVisibilityValues: ["Inherit", "Private", "Public"]` |
+| Board summary/detail and creation | Add `syncCardFiles: bool`; retain their existing success bodies/statuses; no notes or internal ownership fields |
+| ProjectDto (create/update/get/list and nested setup project) | Add `repositoryVisibility` and non-null `cardFileWarnings: string[]`; successful project creation survives ignore-install failure |
+| ProjectSetupResultDto | Existing shape remains; nested project carries warnings, readiness carries the card-files check; existing notes may include safe remediation but never card text |
+
+Status warnings add `public_repository` whenever configured Public and
+`repository_visibility_unknown` whenever Unknown, even if a preceding reason
+already blocks writes. Add `card_files_ignore_missing` when A-6 fails,
+`card_file_path_ignored` on an effective ignored eligible path,
+`card_file_cleanup_required` when removalPending, and
+`card_file_cleanup_status_unknown` when either cleanup inspection is unknown.
+When working cleanup is false and Git cleanup true also add
+`card_file_git_cleanup_pending`. When disabled add `card_file_sync_disabled`.
+Operation warnings are the codes in A-3/A-4. No duplicate codes.
+
+Project `cardFileWarnings` aggregates only ignore/cleanup/status-unavailable
+diagnostics from its targets; it is not a new private-card summary. Readiness adds
+key `card-files`, level `Recommended`: status `Warning` for missing/malformed
+protection, residual exports or unavailable inspection, `NotApplicable` if no
+local target has ever been assigned, otherwise `Ok`. A missing assigned checkout
+is Warning, not Ok. Safe detail names target/board IDs and remediation only;
+fix links to project configuration. This check never changes `canDispatch`.
+
+### A-3 resolved - validation and failure codes
+
+**Accept semantic 422 with camelCase field keys; make enum token behavior
+explicit instead of inheriting the global enum converter's 400 behavior.** Use
+feature-scoped request parsing/conversion for these new fields, retain Domain
+enums, and validate internal service callers too. Do not change all existing
+enum endpoints. Recognize the listed enum names case-insensitively; emit canonical
+names. Do not trim enum tokens. Unknown names, whitespace/empty strings, numeric
+strings and every JSON number (including 0, 99 and fractional values) are invalid
+enum values with 422, never a default. Booleans, arrays and objects are wrong
+shapes with 400. Omitted/null optional enums retain D-1/D-2/D-4 semantics.
+
+All errors use the HttpException hierarchy and Problem Details middleware:
+`type`, `title`, `status`, sanitized `detail`, `traceId`, and the `code` below.
+422 has `errors` mapping exact camelCase keys to nonempty string arrays. Error
+messages name the field, allowed values or length/limit only, never the supplied
+notes, body, malformed JSON excerpt or raw exception/remote stderr. Feature-route
+binding must sanitize before logging as well as before responding; do not retain
+a body-containing inner exception just to return a sanitized outer message.
+
+| Condition | HTTP status / code / field or result |
+|---|---|
+| privateNotes string longer than 20,000 UTF-16 code units | 422 `validation_failed`, `errors.privateNotes` |
+| Invalid card-file/repository enum as defined above | 422 `validation_failed`, `errors.cardFileVisibility` / `errors.repositoryVisibility` |
+| Settings syncCardFiles or expectedSyncCardFiles missing or null | 422 `validation_failed`, corresponding `errors.syncCardFiles` / `errors.expectedSyncCardFiles`; report both if both absent |
+| Malformed JSON, non-object request body, wrong JSON shape for any new field (including a string/number for a boolean or non-string notes) | 400 `bad_request`, no errors collection; feature routes use a sanitized BadRequestException rather than leaking binder detail |
+| CreateBoard optional syncCardFiles omitted/null | Valid false; actual true uses A-6, false never requires enable prerequisites |
+| revisionNumber present but not one base-10 integer fitting Int32 (including empty, repeated query values, overflow) | 400 `bad_request`; omitted means current notes |
+| revisionNumber parsed but <=0 | 422 `validation_failed`, `errors.revisionNumber` |
+| Missing card/board/project or missing/non-ContentEdit historical revision | 404 `not_found`; preserve existing identifier ambiguity/scope errors |
+| Stale card content token | Existing 409 `conflict`; empty token retains existing 422 `validation_failed` and `errors.ConcurrencyToken` (do not rename preexisting fields globally) |
+| Settings expected flag differs under gate | 409 `card_file_policy_changed`, no persistence or event |
+| Enable with Unknown, absent/missing/non-Git target, or missing/malformed A-6 protection | 409 `card_file_policy_refused`; extensions `reason`, `warnings`, `repositoryPath`, `directory` using the status definitions and proposed target policy |
+| Unsafe traversal / overlapping generated-directory ownership on a mutating route | 409 `unsafe_card_file_path` / `card_file_directory_conflict`, before any mutation, including ownership pinning; these guards precede the general enable refusal |
+| Target reassignment / hard board or project deletion before A-5 drain | 409 `card_file_cleanup_required`; `targets` extension is an array of `{boardId, repositoryPath, directory}` for affected owned targets, with safe nullable paths; no individual card filenames/bodies |
+| Sync feature disabled / busy gate | 409 `card_file_sync_disabled` / `card_file_sync_running`; disabled check precedes board lookup for real and dry requests |
+| Sync completed with policy/ignore/cleanup refusal | 200; writeSkipReason is the applicable A-2 reason, written=0; owned deletions allowed |
+| Sync filesystem operation fails | 200; writeSkipReason and commitSkipReason both `card_file_io_error`, error non-null, warning `card_file_io_error`; A-4 defines partial counts |
+| Sync Git command fails or times out | 200; commitSkipReason=`git_error`, error non-null, warning `git_error`; writeSkipReason=`git_error` if inspection/cleanup failure prevents new writes, otherwise retain prior write reason/null |
+| Generated-byte recheck differs before commit | 200; commitSkipReason=`generated_files_changed`, warning `generated_files_changed`; no commit of the mismatched files, SHA null unless an earlier cleanup commit already completed (A-5) |
+| Post-save status inspection fails / GET status inspection fails | Successful mutation retains its 201/200; GET status 200; status reason/warning=`status_unavailable`, eligible=false; not a mutation failure |
+| Ignore setup fails after project persistence | Successful create/update/setup status preserved; warning `card_files_ignore_missing`, no partial overwrite of .gitignore |
+
+Keep existing commit skips `autocommit_disabled`, `dry_run`, `nothing_to_commit`,
+`rebase_in_progress`, `merge_in_progress`, `cherry_pick_in_progress`,
+`detached_head`, and `conflicted_paths`. index.lock and Git command timeouts use
+`git_error` as today. The first failed operation ends that attempt; a later
+policy/autocommit skip must not overwrite its error. On a non-error real attempt,
+AutoCommit=false gives `autocommit_disabled` even after successful disk cleanup;
+AutoCommit=true and no commit needed gives `nothing_to_commit`. Dry-run uses
+`dry_run` unless inspection itself fails. Ordinary DB save failure stays an
+atomic failed save with existing sanitized 500 behavior; it is never converted
+to a successful reconciliation or a successful settings save.
+
+### A-4 resolved - serialized saves, partial I/O and recovery
+
+**Accept waiting saves and observable per-board failure results.** Privacy/content
+saves wait for the shared gate with the request cancellation token. They reload
+authoritative state and check the card token / expected board flag after waiting.
+Two edits with the same card token have one winner, one 409 conflict, one revision
+and one event; never silently retry the losing content. Manual, dry and tick sync
+use try-enter; a busy manual request is 409 card_file_sync_running. No reentrant
+sync from a save, and no file I/O performed merely because a setting was saved.
+
+Extend the gate with a project-ID lease acquired before its canonical Git-root
+lease by every feature publisher and privacy save. This orders path reassignment
+and saves when a checkout is unavailable, so disabling remains possible. Re-read
+target/policy after entering; never reuse a tracked pre-gate entity snapshot.
+Where a target change needs old and new Git roots, acquire the distinct roots
+in normalized ordinal order after the project lease. Subdirectory projects
+still share the Git lease. Failed try-enter releases every already-held lease;
+finally/disposal releases all leases on save/I/O exceptions and cancellation.
+
+Cancellation while waiting causes no mutation. Cancellation during reconciliation
+stops further operations and leaves already completed effects for the next pass;
+it propagates cancellation, not a fake 200 or a newly invented 499 response.
+Cancellation after SaveChanges does not undo an acknowledged DB commit. An
+aborted request is not promised a response; subsequent GET gives current state.
+
+Reconciliation must remove obsolete/unpublished files **before** adding new
+content. A delete failure stops the board: no new public sibling, refreshed INDEX
+containing that sibling, staging or commit later in that attempt. Successful
+earlier deletions remain deleted. A write failure stops remaining writes and
+all later staging/commit. Filesystem reconciliation is not one atomic transaction;
+do not claim rollback of already completed file operations.
+
+Each generated-file replacement is atomic at the individual-file boundary: write
+only the allowed projection to a uniquely named same-directory temporary file,
+close/flush it, then atomically replace/move into the validated final path. An
+interrupted write leaves the old complete file or no final file, never a truncated
+final markdown. Reserve `.antiphon-card-files-<boardGuidN>-<nonce>.tmp` for those
+temporary files; remove this board's contained, non-reparse temporary residue on
+retry, before additions, without staging it. Never fall back to truncating the
+destination if atomic replacement fails. Dry-run creates no temporary file.
+
+On a handled filesystem failure, return the A-3 200 failure result with actual
+completed `written`/`deleted` counts (failed operations do not increment them),
+`unchanged` for verified unchanged desired files, and commitSha=null if no commit
+completed. Error is a fixed safe phase description such as
+`Card-file delete failed; retry reconciliation.`; no body, private filename or
+native error dump. `policy` uses the observed end-state cleanup flags; unknown
+inspection remains unknown/pending. A partial result is never an empty success.
+Written/deleted count completed final markdown writes/working-file deletions,
+not temporary cleanup, index-only unstaging or a HEAD-only removal. Those Git-only
+effects are observable through pending flags, commitSha and commitSkipReason.
+
+SyncAll returns one result for every attempted board and continues after a
+board failure. Convert a caught preflight HttpException to that board's ordinary
+result with both skip reasons equal to its code, error a sanitized description,
+zero mutation counts and warnings containing the code; its status is ineligible.
+Unexpected per-board failures use `card_file_sync_error` in both skips/warnings
+and a sanitized non-null error. A scoped manual request keeps the A-3 HTTP
+preflight errors. Sweep cancellation stops the sweep rather than inventing
+success results for unattempted boards. Warning dedup remains board/target/reason;
+dry-run cannot consume warning transitions.
+
+Recovery does not depend on an in-memory failed-board flag or old snapshots.
+Persist D-1's ownership path/slug before the first mutation. Each new instance
+enumerates owned top-level markdown plus exact index and current-HEAD entries,
+compares with the latest permitted projection, and discovers temporary residue.
+Inspect Git read-only even when AutoCommit=false. Do not select notes or revision
+bodies to recover. An absent directory is not proof of an empty index or HEAD.
+A pin-save failure leaves files untouched. Failed writes are retried from current
+DB values; failed cleanup blocks additions as A-5 specifies until it is drained.
+
+### A-5 resolved - disk revocation works with AutoCommit=false
+
+**Accept the proposal, including keeping Git cleanup pending after disk removal.**
+This is the core safety property: with Enabled=true, turning a previously
+published board off, making a card Private, making visibility Unknown or archiving
+the board/project causes the next real reconciliation to delete its revoked
+working files even when AutoCommit=false. It must not wait for auto-commit to be
+enabled. That setting controls staging/committing only. Enabled=false continues
+to freeze all mutation and cannot claim erasure.
+
+An unpublished path is an owned generated path absent from the current permitted
+set, including obsolete filenames and INDEX when no cards remain. Removal also
+covers a stale INDEX that still describes a revoked card: treat it as cleanup,
+not as a harmless still-desired filename. On a mixed board, remove that stale
+INDEX before adding new card information and rebuild it only after cleanup can
+complete. A conservative byte comparison with the current public-only INDEX
+is allowed to identify a stale INDEX when cards are suppressed; no private-card
+body or old revision is needed. Same-path public content corrections may replace
+their existing files with the current permitted projection; they never restore
+an old body from Git. A corrected file is still subject to the precommit recheck.
+
+For each removed path, distinguish its presence in the working tree, index and
+**current HEAD tree**; historical objects are explicitly outside these flags.
+For stale INDEX cleanup, apply the same rule until its removal/replacement is
+completed from the current public projection. Pending is not a persisted success
+flag: re-inspect under the gate after the operation and on later status/restart.
+
+| Observed state of revoked owned exports | workingTreeRemovalPending | gitRemovalPending | removalPending / target-delete guard |
+|---|---|---|---|
+| Untracked working export only | true | false | true / refuse |
+| Working absent, index-only addition still staged, never in HEAD | false | true | true / refuse |
+| Working absent, HEAD-tracked export with an unstaged deletion | false | true | true / refuse |
+| Working absent, deletion staged but old export still in HEAD | false | true | true / refuse |
+| Working/index/current HEAD drained, even if old commits contain exports | false | false | false / allow subject to other existing deletion rules |
+| Target/index inspection unavailable with possible recorded or legacy exports | null for uninspectable side | null for uninspectable side | true / refuse; warning card_file_cleanup_status_unknown |
+| Never-assigned pathless target with no recorded export ownership | false | false | false; there is no export destination to drain |
+
+Aggregate by board; true on either side wins, otherwise an uninspectable side
+remains null. Do not assume null bookkeeping means no exports: probe the legacy
+computed target. A reachable, inspected empty legacy target is clean. Even a
+safe staged deletion does **not** release ownership while HEAD still contains
+the export. This conservative choice avoids forgetting the cleanup responsibility
+across a path change or hard delete; a normal owner commit resolves it without
+requiring global AutoCommit=true. Changing only GitRepositoryUrl keeps the same
+directory ownership and still applies D-4's visibility reset.
+
+For target reassignment or hard deletion, evaluate the old target against an
+**empty** desired set regardless of its current publication permission: even
+currently eligible exports must be drained before their owner/path can disappear.
+Do not infer that removalPending=false under an enabled publication policy permits
+abandoning its current public files. The operation only checks/refuses; the owner
+turns publication off and reconciles first. All old managed working/index/HEAD
+entries must then be absent, with the normal project deletion rules also passing.
+
+With AutoCommit=false, delete working files and stale INDEX, report actual
+deleted counts and `commitSkipReason=autocommit_disabled`; make **zero** changes
+to index/HEAD, including no unstage of an index-only addition. If Git residue
+remains, preserve ownership and block adding new generated files for this board
+(`card_file_cleanup_required` if no earlier policy reason applies). Other boards
+remain independent. The owner can stage/commit the exact deletions, or remove
+the canceled index-only addition through their normal workflow, then retry.
+An untracked-only removal can finish completely without any Git mutation.
+
+With AutoCommit=true, repair the exact stale paths in the index and commit
+HEAD-tracked removals. Removing a never-HEAD-tracked staged-only addition merely
+unstages it; if this was the sole change, return nothing_to_commit and null SHA.
+Rebuild the commit path list after staging. If cleanup and new publication are
+both needed, drain cleanup first (a separate removal commit is allowed) and only
+then add new generated content. Git refusal/failure during drain blocks additions
+until retry. If an earlier cleanup commit succeeded but later publication failed,
+return its SHA as the last successful commit, actual counts and the later error;
+never claim that a successful commit was rolled back. With multiple commits,
+verification inspects every commit since the seeded HEAD, not just the final tip.
+Dry-run simulates this ordered plan without changing any state: with AutoCommit
+false and Git residue it predicts zero additions; with true it may predict
+additions after successful prospective drain. Its policy still reports current
+pending flags, while writeSkipReason/counts describe that prospective attempt.
+
+Exact additional CLI lines for V-32, after ordinary policy output:
+
+```text
+removal     pending: reconcile previously exported working files
+removal     pending: working files removed; Git index/HEAD cleanup required
+removal     pending: cleanup state unavailable; erasure not confirmed
+```
+
+Choose the unknown line if either cleanup field is null; otherwise the first
+for workingTreeRemovalPending=true and the second for false/true. Print none
+when both false. When Enabled=false also print
+`card-file sync disabled; existing exports are not erased`. Git history is never
+claimed erased, regardless of whether removalPending has cleared.
+
+### A-6 resolved - ignore protection is a prerequisite, not implied consent
+
+**Accept the enable-time refusal proposal and apply it to explicit true on
+CreateBoardRequest too.** There is no new project permission flag or hidden
+"was initialized" exemption. The prerequisites for installing D-7's default are:
+a project with no opted-in boards, a configured existing safe local Git checkout,
+and a usable `.gitignore` (or permission to create it). A preexisting ignore entry
+is not required: setup creates the owned block when protection is absent. An
+effective existing user-owned blanket rule satisfies protection without adding
+or rewriting a block. Configured repository visibility can still be Unknown
+during setup; installing ignores does not classify or opt in the repository.
+
+Distinguish **default protection** from **an allowed publish destination**.
+Default protection must keep the docs/cards namespace closed except for named
+board exceptions. The supported owned forms are exactly D-7's blanket block or
+its `/docs/cards/*` replacement followed by literal stable-board-slug exceptions.
+No wildcard-negation opening all boards, path traversal or unknown broad exception
+counts as default protection. Accept equivalent existing user catch-all rules
+(including effective repository/info/global exclusions) only when their evaluated
+rule structure establishes the same deny-default namespace; Git checks with
+--no-index confirm known off-board paths and a prospective unused board directory
+remain ignored. A probe alone is not proof of a general default. If equivalence
+cannot be established, report card_files_ignore_missing and recommend the simple
+documented managed form instead of guessing. Preserve the user's file bytes.
+
+A well-formed owned block still needs effective-rule checks; a later negation
+can override it. Missing/duplicate/unbalanced owned markers are malformed and
+require owner repair, even if a coincidental pattern ignores today's one file.
+An exception for the board being explicitly enabled is permitted for that
+enable evaluation; a leftover exception for an off board makes protection
+incomplete until removed or that board is deliberately enabled. Rejecting an
+enable is transactional, including board creation: no half-created board,
+policy event, implicit sync or ignore mutation. Missing protection yields
+409 card_file_policy_refused with reason/warning card_files_ignore_missing.
+Unknown/unusable target still wins by the A-2 precedence. Disabling always
+remains possible and reports any newly exposed off-board exception as a warning.
+
+An effectively ignored but protected board **may opt in** for review. Its status
+is card_file_path_ignored and a dry/real sync writes zero until the owner makes
+a supported explicit board exception. The writer never removes an ignore,
+force-adds, or stages .gitignore. Recheck protection before every new publication:
+an already opted-in project that loses its default protection refuses new writes
+with card_files_ignore_missing, while cleanup stays allowed. No install/repair
+runs on tick, status, dry-run or settings PUT.
+
+Intentional removal cannot be inferred from a missing file or block. The
+supported expression of intent is the documented blanket-plus-board-exceptions
+form (or provably equivalent user rules), not deleting all protection. Thus a
+fresh process can distinguish permission using current DB policy and ignore
+configuration without a new persisted acknowledgement bit. Existing projects
+without protection need an explicit owner edit before enabling; migration
+does not mutate their files. New path assignment with already opted-in boards
+does not append a blanket ignore; status warns/refuses publication until the
+new target is deliberately protected and its visibility configured. None of
+these rules mistakes ignore matching for erasure of tracked/staged content.
+
+### A-7 resolved - Position is an internal public-projection input
+
+**Accept the proposal.** Add `int? Position` to CardFilePublicCard's immutable
+scalar whitelist. The existing scalar call is
+`CardRanking.OrderKey(importance, urgency, dueAt, position, createdAt, now)`;
+use it for INDEX ordering and retain the final ordinal Identifier tie-break.
+Keep one `now` value for the render, and preserve null Position sorting after
+placed cards in a rank cell. Precompute the existing review boolean from scalar
+inputs; flatten tracker metadata/labels into immutable scalar values/collections.
+Do not carry Card, CardRevision or ExternalIssueRef references or an object bag.
+
+Position affects ordering only; no new `position` frontmatter or INDEX metadata
+is introduced. Dropping it would regress the current pinned ordering and
+CARD-0098 for eligible cards, with no privacy benefit. V-4's projection boundary
+and V-5's existing placed-card test must both pass, including null/equal-position
+and final identifier tie cases.
+
+### Reconfirmed seven Code slices and verification amendments
+
+Keep seven slices in their original order. The resolutions expand specific
+contracts inside them, not the product scope. S2 depends on the S3 gate/I/O seam
+and S4 read-only ignore evaluator: introduce those minimal shared primitives
+when S2 needs them, then complete reconciliation/setup in their assigned slices.
+Do not stub enable validation to allow unsafe intermediate behavior. No partial
+S1-S7 deployment; no live opt-in, gh probe, cleanup sweep or AutoCommit change.
+
+| Slice | Confirmed scope / additions from this pass | Existing verification groups receiving exact amendments |
+|---|---|---|
+| S1 | Existing entity/default/migration/public projection work; add internal Position and fixed DTO shapes (including cleanup fields). No new database column for ignore acknowledgement or transient failure state. | V-1..V-5/V-11: retain safe defaults and projection SELECT exclusion; add Position/null/tie cases to renderer tests. |
+| S2 | Card/board/project APIs, note history/read, limits and status; feature-scoped enum/binding validation, safe error logging, waiting saves and gate primitives, ignore-read prerequisite on all explicit enable paths. | V-6..V-16/V-19: assert A-2 exact field sets/nulls, sole explicit-notes exception, PUT 200/status, no-card/private/ignored reasons; raw invalid-token/status matrix in A-3; one winner after wait, cancellation and status failure after save. |
+| S3 | Reconciler/repository seam, exact-path Git, driver, ownership guards; deletion-first order, atomic file replacement/temp recovery, project+repo gates, disk-only versus index/HEAD pending, observable partial sweep results. | V-17..V-27: parameterize A-5 state table for both AutoCommit values and fresh service; disk deletion still occurs with false and index/HEAD bytes stay unchanged; staged deletions still block reassignment; retry after index-only unstage/HEAD commit clears pending. V-20 injects partial temp/write/delete/commit failures with exact A-3 result/counts. |
+| S4 | Existing setup/ignore/readiness work; fixed ProjectDto warnings/card-files check, safe equivalent-rule evaluation shared with S2/S3, no implicit initialization exemption. | V-13/V-28..V-30: explicit true on create/settings refuses missing/malformed protection; protected-but-ignored enable succeeds; full ignore removal versus supported exception; late override/off-board exception; fresh process repeats the same verdict; readiness leaves canDispatch unchanged. |
+| S5 | Existing card.ps1/help changes; A-1 exact Unknown/unavailable target text, A-5 three pending states and feature-disabled line, JSON-only note-free new/edit output. | V-31..V-33: pin exact lines, null paths, cleanup flags and 400/422/nonzero rejection; successful blocked/status-unavailable save still exits 0 and calls create once. |
+| S6 | Existing client API/types/components/invalidation; explicit null inspection states, field errors, board-level cleanup status in card UX, Project warnings and readonly remediation. | V-34..V-37: render A-2/A-5 statuses without claiming written/erased, distinguish Unknown from unavailable path, retain failed-read notes protection and no extra opt-in dialog. |
+| S7 | Existing owner docs/bundle/default ignore only; document all seven final answers, especially disk cleanup with AutoCommit=false, current HEAD versus history, prerequisite rules and exclusive notes read. | V-38/document review: exact API/code and rollout references, default-ignore equivalence, cleanup instructions; no generated docs/cards edits or live-data claims. |
+
+These are normative expectation changes to the existing V groups, preserving
+their IDs and named classes/filters; Code records any actual class split against
+those IDs. Keep every R and PC assertion, with these additional variants within
+their existing groups: PC-12 must also catch an erroneous AutoCommit gate around
+working deletion; PC-17 must catch additions while Git cleanup remains pending;
+PC-22 must include a staged-deletion/current-HEAD residue case; PC-24 must catch
+bypassed default-protection validation as well as effective path ignores;
+PC-29 must cover Unknown and both known pending states. Each added mutation is
+its own red/revert/green run. Existing positive-control counts are groups, not
+the number of mutation executions; report the expanded variant counts honestly.
+
+No A item remains for Code to decide. Implement these answers with the preserved
+verification specification, report every V/R/PC item, and hand the completed
+mechanism to separate Review. This pass ran no tests or builds; its checks are
+document preservation, whitespace, scope and the consistency of the contracts.
