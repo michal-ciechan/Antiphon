@@ -1,0 +1,208 @@
+{
+  "manifest": {
+    "fileArm": false,
+    "outcome": "passed",
+    "began": "2026-09-06T19:10:36.4785555+00:00",
+    "ended": "2026-09-06T19:13:22.3537373+00:00",
+    "elapsedSeconds": 165.877719,
+    "ceilingMinutes": 120,
+    "thresholdPercent": 20,
+    "experimentRevision": 2,
+    "workloadFilesPerTurn": [
+      2,
+      1
+    ],
+    "sessionId": "44e3e91b-febf-4f56-857d-3f5b8c42ef16",
+    "agentId": "53fdd7a0-affc-4b26-8fff-1eb5066714b5",
+    "compactIds": [
+      "44e3e91b-febf-4f56-857d-3f5b8c42ef16-559",
+      "44e3e91b-febf-4f56-857d-3f5b8c42ef16-851"
+    ],
+    "nativeBoundaries": [
+      {
+        "Id": "44e3e91b-febf-4f56-857d-3f5b8c42ef16-559",
+        "TimestampMs": 1788721913182,
+        "TokensBefore": 103435,
+        "TokensAfter": 8137
+      },
+      {
+        "Id": "44e3e91b-febf-4f56-857d-3f5b8c42ef16-851",
+        "TimestampMs": 1788721982031,
+        "TokensBefore": 118341,
+        "TokensAfter": 9363
+      }
+    ],
+    "initialReceipt": null,
+    "systemBootstrapRetention": "unobservable on the live interface; behavioral verdict only"
+  },
+  "expected": {
+    "keys": [
+      [
+        "Kb2b000343ea74d288bc6130ca212b84c",
+        "K75a09ba0e9184379be66a7927a45da7e",
+        "K7a45f822294c49ccae3dfa5ac3f06ea9"
+      ],
+      [
+        "K0a86c4781a2d497897207369a72d7d64",
+        "Ka05021280c9744cc89204fbb45bc1586",
+        "Kc03af03fd4b8455e95a8e3fed40ef80c"
+      ],
+      [
+        "Kccf5dd2c608f4fedb6ec8469c9f70cc5",
+        "Kdb1557336a854b0d9fefaeac2602574b",
+        "Ke66c84b88c064aeb96135480125d422a"
+      ],
+      [
+        "K62da711a212f4b4ca31d02455a60cab5",
+        "K4604bd0556f74be5b47e9e8dcdc40715",
+        "K8b3f91e294d043f6be2727c6ec0f6f4d"
+      ],
+      [
+        "Kbc271169c9444ca7aa9e9a1763f03929",
+        "K155812327904458cab4f5b692d51bd9b",
+        "Keac66aec47cc42baac452e8e5db737fd"
+      ],
+      [
+        "K10ef4bf6e7c744eba4b1cc6471a5f671",
+        "K915283102aea43548a43f448353a9678",
+        "K2de3b6be2f9f41bc8b4e86ade143b73f"
+      ]
+    ],
+    "expected": [
+      [
+        "V3cca852b50fe44f99be303feff9fcd18",
+        "Va259a29494414cbaaa10cc93c7e02116",
+        "V9ee43a8ef89b4317851a28592ddf9355"
+      ],
+      [
+        "V746aec9634fd4772b57835c56c06050b",
+        "V0d6f4ba23b004d9cb829a74fc9af6a87",
+        "V4c2042db461143508e5ebcdddf938f3d"
+      ],
+      [
+        "Vffa6f976167b494a836814b337b7da11",
+        "Ve512b9484dc44804867b53966b86df89",
+        "V52e5b31ef1c74fb58cf5f72e1d26cbb2"
+      ],
+      [
+        "V64b859ab3c1a44f4ab3fe1b2029412ba",
+        "V1f82f2902ac64b40bebd85cdb22f8a05",
+        "Ve567b83821ae42899f6efd9bb42ac7a0"
+      ],
+      [
+        "Vb1426ecb96534d22b4950057a8347f74",
+        "Vc4d939d4a1be4c1bb1f54362d6fc6a05",
+        "V35f51264d76849efb0938acdb054022d"
+      ],
+      [
+        "V14a06dd0dabf4a169c4d63242e1a9071",
+        "V1c602834666941578379e15ae61383fb",
+        "V9c52cd464e224ad6a5febc389b072085"
+      ]
+    ],
+    "audit": "AUDIT-067b42f221324314a5b33a2b12517d99"
+  },
+  "checkpoints": [
+    {
+      "Name": "initial",
+      "Expected": [
+        "V3cca852b50fe44f99be303feff9fcd18",
+        "Va259a29494414cbaaa10cc93c7e02116",
+        "V9ee43a8ef89b4317851a28592ddf9355"
+      ],
+      "Actual": [
+        "V3cca852b50fe44f99be303feff9fcd18",
+        "Va259a29494414cbaaa10cc93c7e02116",
+        "V9ee43a8ef89b4317851a28592ddf9355"
+      ],
+      "Verdict": "survived",
+      "BoundaryId": null,
+      "PromptSequence": 1,
+      "EndSequence": 4,
+      "StartedSeconds": 11.5927578,
+      "EndedSeconds": 20.349063,
+      "Text": "EARLY=V3cca852b50fe44f99be303feff9fcd18\nMIDDLE=Va259a29494414cbaaa10cc93c7e02116\nTAIL=V9ee43a8ef89b4317851a28592ddf9355"
+    },
+    {
+      "Name": "compact-1-before-idle",
+      "Expected": [
+        "V746aec9634fd4772b57835c56c06050b",
+        "V0d6f4ba23b004d9cb829a74fc9af6a87",
+        "V4c2042db461143508e5ebcdddf938f3d"
+      ],
+      "Actual": [
+        "V746aec9634fd4772b57835c56c06050b",
+        "V0d6f4ba23b004d9cb829a74fc9af6a87",
+        "V4c2042db461143508e5ebcdddf938f3d"
+      ],
+      "Verdict": "survived",
+      "BoundaryId": "44e3e91b-febf-4f56-857d-3f5b8c42ef16-559",
+      "PromptSequence": 5,
+      "EndSequence": 39,
+      "StartedSeconds": 20.3610942,
+      "EndedSeconds": 96.1159049,
+      "Text": "Continuing the unread remainder of `work-0-1.txt` from line 501 until EOF.\nEARLY=V746aec9634fd4772b57835c56c06050b\nMIDDLE=V0d6f4ba23b004d9cb829a74fc9af6a87\nTAIL=V4c2042db461143508e5ebcdddf938f3d"
+    },
+    {
+      "Name": "compact-1-after-refresh",
+      "Expected": [
+        "Vffa6f976167b494a836814b337b7da11",
+        "Ve512b9484dc44804867b53966b86df89",
+        "V52e5b31ef1c74fb58cf5f72e1d26cbb2"
+      ],
+      "Actual": [
+        "Vffa6f976167b494a836814b337b7da11",
+        "Ve512b9484dc44804867b53966b86df89",
+        "V52e5b31ef1c74fb58cf5f72e1d26cbb2"
+      ],
+      "Verdict": "survived",
+      "BoundaryId": null,
+      "PromptSequence": 40,
+      "EndSequence": 43,
+      "StartedSeconds": 96.1341244,
+      "EndedSeconds": 103.7475715,
+      "Text": "EARLY=Vffa6f976167b494a836814b337b7da11\nMIDDLE=Ve512b9484dc44804867b53966b86df89\nTAIL=V52e5b31ef1c74fb58cf5f72e1d26cbb2"
+    },
+    {
+      "Name": "compact-2-before-idle",
+      "Expected": [
+        "V64b859ab3c1a44f4ab3fe1b2029412ba",
+        "V1f82f2902ac64b40bebd85cdb22f8a05",
+        "Ve567b83821ae42899f6efd9bb42ac7a0"
+      ],
+      "Actual": [
+        "V64b859ab3c1a44f4ab3fe1b2029412ba",
+        "V1f82f2902ac64b40bebd85cdb22f8a05",
+        "Ve567b83821ae42899f6efd9bb42ac7a0"
+      ],
+      "Verdict": "survived",
+      "BoundaryId": "44e3e91b-febf-4f56-857d-3f5b8c42ef16-851",
+      "PromptSequence": 44,
+      "EndSequence": 54,
+      "StartedSeconds": 103.760128,
+      "EndedSeconds": 158.1509681,
+      "Text": "EARLY=V64b859ab3c1a44f4ab3fe1b2029412ba\nMIDDLE=V1f82f2902ac64b40bebd85cdb22f8a05\nTAIL=Ve567b83821ae42899f6efd9bb42ac7a0"
+    },
+    {
+      "Name": "compact-2-after-refresh",
+      "Expected": [
+        "Vb1426ecb96534d22b4950057a8347f74",
+        "Vc4d939d4a1be4c1bb1f54362d6fc6a05",
+        "V35f51264d76849efb0938acdb054022d"
+      ],
+      "Actual": [
+        "Vb1426ecb96534d22b4950057a8347f74",
+        "Vc4d939d4a1be4c1bb1f54362d6fc6a05",
+        "V35f51264d76849efb0938acdb054022d"
+      ],
+      "Verdict": "survived",
+      "BoundaryId": null,
+      "PromptSequence": 55,
+      "EndSequence": 58,
+      "StartedSeconds": 158.1654467,
+      "EndedSeconds": 165.7850621,
+      "Text": "EARLY=Vb1426ecb96534d22b4950057a8347f74\nMIDDLE=Vc4d939d4a1be4c1bb1f54362d6fc6a05\nTAIL=V35f51264d76849efb0938acdb054022d"
+    }
+  ],
+  "nativeAcpSha256": "001e3e88cc70840de3512da053535b734659f1982b228d89fc5e198601fe77ad"
+}

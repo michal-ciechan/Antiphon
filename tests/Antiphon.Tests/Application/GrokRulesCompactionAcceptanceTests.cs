@@ -64,6 +64,7 @@ public sealed class GrokRulesCompactionAcceptanceTests
             + string.Join("\n", Enumerable.Range(0, 6).Select(i => Rule(i, 2)));
         var inline = string.Join(" ", Enumerable.Range(0, 6).SelectMany(i => Enumerable.Range(0, 3).Select(s => Rule(i, s))));
         inline.Length.ShouldBeLessThanOrEqualTo(4096); inline.ShouldNotContain('\n');
+        if (!fileArm) await File.WriteAllTextAsync(Path.Combine(root, "inline-rules.json"), JsonSerializer.Serialize(new { value = inline, utf16Units = inline.Length, sha256 = GrokRulesTransport.Hash(Encoding.UTF8.GetBytes(inline)) }), ct);
         await File.WriteAllTextAsync(Path.Combine(root, "expected.json"), JsonSerializer.Serialize(new { keys, expected, audit }), ct);
         using var repo = await RealCliStubBServerHarness.GitRepo.CreateAsync();
         // Each native read stays below the measured 25,000-token file-tool limit. The model
@@ -72,11 +73,14 @@ public sealed class GrokRulesCompactionAcceptanceTests
         for (var turn = 0; turn < 2; turn++)
         {
             var paths = new List<string>();
-            for (var file = 0; file < 4; file++)
+            // Revision 2: the first 4-file live workload emitted three boundaries in one
+            // turn. Two files, then one, leave a separately observable answer after each.
+            for (var file = 0; file < (turn == 0 ? 2 : 1); file++)
             {
-                var path = Path.Combine(root, $"work-{turn}-{file}.txt");
+                var relativePath = $"work-{turn}-{file}.txt";
+                var path = Path.Combine(repo.RepoPath, relativePath);
                 var content = string.Join("\n", Enumerable.Range(1, 1800).Select(i => $"DATA-{turn}-{file}-{i:D4} " + new string((char)('A' + i % 26), 90)));
-                await File.WriteAllTextAsync(path, content, ct); paths.Add(path);
+                await File.WriteAllTextAsync(path, content, ct); paths.Add(relativePath);
             }
             workloads.Add(paths.ToArray());
         }
@@ -125,6 +129,7 @@ public sealed class GrokRulesCompactionAcceptanceTests
                 var started = elapsed.Elapsed.TotalSeconds;
                 var prompt = nonce + " " + extra + " Resolve these three challenges in order: " + string.Join(", ", keys[checkpoint])
                     + ". Return the values on three plain text lines: EARLY=<first value>, MIDDLE=<second value>, TAIL=<third value>. Make no changes or external calls.";
+                prompt.Length.ShouldBeLessThan(1024, "Keep the native nonce in the actual user prompt, below the transport spill threshold");
                 await factory.Services.GetRequiredService<SessionMessageQueueService>().EnqueueAsync(sessionId, prompt, MessageSendMode.WhenIdle, ct);
                 long promptSequence = 0, endSequence = 0;
                 while (endSequence == 0)
@@ -162,7 +167,7 @@ public sealed class GrokRulesCompactionAcceptanceTests
             for (var turn = 0; turn < 2; turn++)
             {
                 var before = await ProbeAsync(1 + 2 * turn, $"compact-{turn + 1}-before-idle",
-                    "Read all four following disposable data files completely, in order, using continuation ranges as necessary. After all four files have been read, answer the challenges. Files: " + string.Join("; ", workloads[turn]) + ".", true);
+                    "Read the following disposable data files completely, in order, using continuation ranges as necessary. After all files have been read, answer the challenges. Files: " + string.Join("; ", workloads[turn]) + ".", true);
                 if (fileArm)
                 {
                     var boundaryId = before.BoundaryId!;
@@ -171,8 +176,13 @@ public sealed class GrokRulesCompactionAcceptanceTests
                     {
                         if (pumping?.IsFaulted == true) await pumping;
                         ct.ThrowIfCancellationRequested(); await using var db = factory.Db();
+                        var rulesSession = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sessionId, ct);
+                        rulesSession.GrokRulesState.ShouldNotBe(GrokRulesState.Failed, rulesSession.GrokRulesFailure);
                         var boundarySequence = await db.TranscriptEntries.Where(e => e.AgentSessionId == sessionId && e.Uuid == boundaryId).Select(e => e.Sequence).SingleAsync(ct);
-                        refreshId = await db.SessionQueuedMessages.Where(m => m.AgentSessionId == sessionId && m.RulesBoundarySequence >= boundarySequence && m.RulesAcknowledgedAt != null).Select(m => m.Id).FirstOrDefaultAsync(ct);
+                        // A native compact during the refresh can require the bounded follow-on.
+                        // An acknowledged earlier row does not by itself reopen the barrier.
+                        if (rulesSession.GrokRulesState == GrokRulesState.Ready)
+                            refreshId = await db.SessionQueuedMessages.Where(m => m.AgentSessionId == sessionId && m.RulesBoundarySequence >= boundarySequence && m.RulesAcknowledgedAt != null).OrderByDescending(m => m.CreatedAt).Select(m => m.Id).FirstOrDefaultAsync(ct);
                         if (refreshId == Guid.Empty) await Task.Delay(300, ct);
                     }
                     await using var ready = factory.Db(); var session = await ready.AgentSessions.SingleAsync(s => s.Id == sessionId, ct);
@@ -224,7 +234,7 @@ public sealed class GrokRulesCompactionAcceptanceTests
             }
             await File.WriteAllTextAsync(Path.Combine(root, "native-acp.jsonl"), string.Join("\n", NativeLines(home)));
             await File.WriteAllTextAsync(Path.Combine(root, "expected.json"), JsonSerializer.Serialize(new { keys, expected, audit }));
-            await File.WriteAllTextAsync(Path.Combine(root, "manifest.json"), JsonSerializer.Serialize(new { fileArm, outcome, began, ended = DateTimeOffset.UtcNow, elapsedSeconds = elapsed.Elapsed.TotalSeconds, ceilingMinutes = 120, thresholdPercent = 20, sessionId, agentId, compactIds, nativeBoundaries = NativeBoundaries(home), initialReceipt, systemBootstrapRetention = "unobservable on the live interface; behavioral verdict only" }));
+            await File.WriteAllTextAsync(Path.Combine(root, "manifest.json"), JsonSerializer.Serialize(new { fileArm, outcome, began, ended = DateTimeOffset.UtcNow, elapsedSeconds = elapsed.Elapsed.TotalSeconds, ceilingMinutes = 120, thresholdPercent = 20, experimentRevision = 2, workloadFilesPerTurn = new[] { 2, 1 }, sessionId, agentId, compactIds, nativeBoundaries = NativeBoundaries(home), initialReceipt, systemBootstrapRetention = "unobservable on the live interface; behavioral verdict only" }));
         }
     }
 

@@ -29,6 +29,9 @@
     <Content Include="..\Antiphon.SessionRunner.Tests\Fixtures\grok-transport-error.jsonl"
              Link="Fixtures\grok-transport-error.jsonl"
              CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\Antiphon.SessionRunner.Tests\Fixtures\grok-1.0.13-auto-compaction.jsonl"
+             Link="Fixtures\grok-1.0.13-auto-compaction.jsonl"
+             CopyToOutputDirectory="PreserveNewest" />
     <!-- CARD-0186 S4: the named-pipe herdr fake lives with the runner tests; compile it here so
          DirectSessionRunnerClient can talk to it without a test-project reference. -->
     <Compile Include="..\Antiphon.SessionRunner.Tests\FakeHerdrServer.cs"
