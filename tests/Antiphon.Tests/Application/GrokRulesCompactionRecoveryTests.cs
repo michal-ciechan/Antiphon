@@ -19,12 +19,18 @@ namespace Antiphon.Tests.Application;
 [NotInParallel]
 public sealed class GrokRulesCompactionRecoveryTests
 {
-    // Verbatim CARD-0157 capture, Grok 1.0.5, also pinned in GrokTranscriptTailerTests.
-    // Parser/replay evidence only: this is not a CARD-0395 live endurance run.
-    internal const string NativeBoundary = """{"timestamp":1787167460,"method":"_x.ai/session/update","params":{"sessionId":"1636e434-b4bc-4743-ae39-9381bd83a2cc","update":{"sessionUpdate":"auto_compact_completed","tokens_before":106112,"tokens_after":34833,"summary_preview":null},"_meta":{"eventId":"1636e434-b4bc-4743-ae39-9381bd83a2cc-1550","agentTimestampMs":1787167460583}}}""";
+    // Genuine installed Grok 1.0.13 automatic-compaction capture. Fixture provenance
+    // explicitly distinguishes this local-stub trigger calibration from live endurance.
+    internal static readonly string NativeBoundary = CaptureRow("auto_compact_completed");
+    private static readonly string CapturedTool = CaptureRow("tool_call");
+    private static readonly string CapturedEnd = CaptureRow("turn_completed");
 
-    private const string CapturedTool = """{"timestamp":1786999681,"method":"session/update","params":{"sessionId":"01a01178-bfe3-7493-b326-1785d2ebf7db","update":{"sessionUpdate":"tool_call","toolCallId":"call-bb331df7-4505-47df-822e-d2e29fd0a19c-0","title":"read_file","rawInput":{"target_file":"C:\\src\\Antiphon\\docs\\project-context.md","limit":150},"_meta":{"x.ai/tool":{"version":1,"name":"read_file","kind":"read","namespace":"grok_build","label":"Read","read_only":true}}},"_meta":{"totalTokens":40754,"eventId":"01a01178-bfe3-7493-b326-1785d2ebf7db-86","agentTimestampMs":1786999681651,"promptId":"fb469fb0-6940-476a-bc78-fdf757090144","streamStartMs":1786999674711,"turnStartMs":1786999655767,"updateType":"ToolCall","updateParams":{"toolCallId":"call-bb331df7-4505-47df-822e-d2e29fd0a19c-0","title":"read_file","kind":"Other","status":"Pending"}}}}""";
-    private const string CapturedEnd = """{"timestamp":1787001911,"method":"_x.ai/session/update","params":{"sessionId":"01a01178-bfe3-7493-b326-1785d2ebf7db","update":{"sessionUpdate":"turn_completed","prompt_id":"fb469fb0-6940-476a-bc78-fdf757090144","stop_reason":"end_turn","usage":{"inputTokens":18747424,"outputTokens":70713,"totalTokens":18818137,"cachedReadTokens":18482432,"cacheCreationTokens":0,"reasoningTokens":62843,"modelCalls":103,"apiDurationMs":1273834,"costUsdTicks":26753525600,"modelUsage":{"grok-4.6-build":{"inputTokens":18747424,"outputTokens":70713,"totalTokens":18818137,"cachedReadTokens":18482432,"cacheCreationTokens":0,"reasoningTokens":62843,"modelCalls":103,"apiDurationMs":1273834,"costUsdTicks":26753525600}},"numTurns":103}},"_meta":{"eventId":"01a01178-bfe3-7493-b326-1785d2ebf7db-5081","agentTimestampMs":1787001911643}}}""";
+    private static string CaptureRow(string kind) => File.ReadLines(Path.Combine(
+        AppContext.BaseDirectory, "Fixtures", "grok-1.0.13-auto-compaction.jsonl")).First(line =>
+        {
+            using var row = JsonDocument.Parse(line);
+            return row.RootElement.GetProperty("params").GetProperty("update").GetProperty("sessionUpdate").GetString() == kind;
+        });
 
     [Test]
     [Arguments("live", "standing")]
@@ -88,7 +94,7 @@ public sealed class GrokRulesCompactionRecoveryTests
         tool.Kind.ShouldBe(TranscriptKinds.ToolCall);
         await h.Runtime.ObserveTranscriptAsync(tool, CancellationToken.None);
         var captured = tailer.Snapshot().Entries[1];
-        captured.InputTokens.ShouldBe(34833);
+        captured.InputTokens.ShouldBe(15);
         var entry = JsonSerializer.Deserialize<SessionRunnerTranscriptEvent>(JsonSerializer.Serialize(captured))! with { Sequence = 10 };
         h.Runner.SetTranscript(new(h.SessionId, [entry], 10));
         if (lane == "live") await h.Runtime.ObserveTranscriptAsync(entry, CancellationToken.None);

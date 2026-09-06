@@ -5,8 +5,10 @@ Herdr wire compliance and Herdr live compliance now pass with native full-read/a
 The corrected deterministic sweep covers 570 passing cases across 34 classes (four initial
 failures and their corrections are recorded below). Native CLI calibration produced five genuine
 automatic compactions against the local stub; this is not live endurance acceptance.
-The separate authenticated inline endurance arm has started with its predeclared 120-minute
-ceiling; the file arm and PC-31 remain unrun. Authentication works; no auth blocker is claimed.
+The separate authenticated inline endurance arm passed with two genuine auto-compactions
+and five correct canary checkpoints. File attempt 2 passed its first pre-idle canaries but failed
+an overly early harness Ready assertion during a legitimate follow-on refresh. The corrected
+file attempt 3 is running; PC-31 is authored but unrun. Authentication works; no auth blocker is claimed.
 
 Latest continuation checkpoint (supersedes pending statements in the chronological notes):
 
@@ -45,8 +47,35 @@ Latest continuation checkpoint (supersedes pending statements in the chronologic
 
 Durable continuation evidence is the adjacent `2026-09-06-card-0395-continuation-evidence.zip`;
 the latest archive checkpoint/hash below supersedes earlier hashes of that evolving archive.
-Checkpoint SHA-256: `abbee4fce2fabbd8c4ea1e87db7c0a46c35d956e22e157daec19519b68cd8601`
-(183 entries; endurance artifacts are provisional while its run is active).
+Checkpoint SHA-256: `8c3fb93abff8ec45b484d1529c4c43daec90d798a6d88f5bd329d438c6ba4fc3`
+(198 entries; active endurance/PC logs remain provisional).
+
+### Endurance observations recorded before the final file rerun
+
+The first inline experiment read four 1,800-line files and produced three native compactions
+within one turn, so it could not measure a separate canary interval after each. It also exposed
+a harness nonce matcher that did not recognize transport-spilled prompts. Native session
+`d7a4697b-ccb0-4f96-9e5b-ae07bb727e91` completed IDs `-660`, `-1104`, `-1601`
+(101,877→8,234; 102,383→8,530; 102,372→8,731 tokens). Its native observation span was
+244.184 s. After the final native turn ended, only its verified test/native/host PIDs were
+explicitly stopped; the run is aborted/inconclusive, not a TUnit pass or a positive control.
+
+Revision 2 uses two files then one, with short relative paths so the real native UserPrompt
+contains the challenge nonce. Both arms retain threshold 20% and 120-minute ceilings.
+The inline run passed UTC 19:10:36.479–19:13:22.354, body 165.877719 s, TUnit 179.463 s,
+native session `44e3e91b-febf-4f56-857d-3f5b8c42ef16`, IDs `-559` and `-851`
+(103,435→8,137 and 118,341→9,363 tokens). All five canary checkpoints survived.
+Baseline checkpoint labels `after-refresh` mean equivalent next-idle challenges: no file
+receipt or refresh existed, which the harness asserts. System-bootstrap context is unobservable.
+
+File attempt 2, UTC 19:13:46.007–19:18:56.134, body 310.1325324 s / TUnit 325.619 s,
+passed initial and compact-1 pre-idle canaries. The model autonomously reread standing rules
+inside its work turn after native boundary `e9cbe3ca-7913-4a40-b43b-0d166732eb12-596`
+(109,306→7,488 tokens). The subsequent queued idle refresh itself compacted at `-1195`
+(109,706→8,061). Actual failure: `session.GrokRulesState should be GrokRulesState.Ready
+but was GrokRulesState.Pending`. The harness checked an acknowledged prior row before the
+bounded follow-on completed. The correction waits for the barrier to be Ready and fails promptly
+if it becomes Failed; it changes no production recovery behavior. Attempt 3 is separately logged.
 
 Continuation worktree: `C:\Antiphon\worktrees\card-task-c7ff2da0`.
 Continuation branch: `feat/card-task-c7ff2da0-verification`, starting at the complete
@@ -139,58 +168,58 @@ dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-card0395/ --
 
 “Partial” means related executable checks passed, while the complete named contract is unrun.
 V-5 tests require a captured native ACP fixture; the current normalized-row unit/integration checks
-cannot satisfy those gates. Live gates are unrun, not skipped/passed.
+cannot satisfy those gates. Native live compliance now passed; endurance remains separately reported below.
 
 | Gate | Status / available evidence |
 |---|---|
-| V-1a | Partial: bundle/dispatch tests and runner store/launch checks; full composition matrix remains. |
-| V-1b | Partial: bundle/dispatch tests and runner store/launch checks; full composition matrix remains. |
-| V-1c | Partial: bundle/dispatch tests and runner store/launch checks; full composition matrix remains. |
-| V-1d | Partial: bundle/dispatch tests and runner store/launch checks; full composition matrix remains. |
-| V-1e | Partial: bundle/dispatch tests and runner store/launch checks; full composition matrix remains. |
-| V-1f | Partial: bundle/dispatch tests and runner store/launch checks; full composition matrix remains. |
-| V-1g | Partial: bundle/dispatch tests and runner store/launch checks; full composition matrix remains. |
-| V-1h | Partial: bundle/dispatch tests and runner store/launch checks; full composition matrix remains. |
-| V-2a | Partial: atomic store, remote grammar and refusal checks; crash/adoption/HTTP matrix remains. |
-| V-2b | Partial: atomic store, remote grammar and refusal checks; crash/adoption/HTTP matrix remains. |
-| V-2c | Partial: atomic store, remote grammar and refusal checks; crash/adoption/HTTP matrix remains. |
-| V-2d | Partial: atomic store, remote grammar and refusal checks; crash/adoption/HTTP matrix remains. |
-| V-2e | Partial: atomic store, remote grammar and refusal checks; crash/adoption/HTTP matrix remains. |
-| V-2f | Partial: atomic store, remote grammar and refusal checks; crash/adoption/HTTP matrix remains. |
-| V-2g | Partial: atomic store, remote grammar and refusal checks; crash/adoption/HTTP matrix remains. |
-| V-2h | Partial: atomic store, remote grammar and refusal checks; crash/adoption/HTTP matrix remains. |
-| V-2i | Partial: atomic store, remote grammar and refusal checks; crash/adoption/HTTP matrix remains. |
-| V-3a | Partial: raw runner refusal and named-agent raw argv checks; independent server matrix remains. |
-| V-3b | Partial: raw runner refusal and named-agent raw argv checks; independent server matrix remains. |
-| V-3c | Partial: raw runner refusal and named-agent raw argv checks; independent server matrix remains. |
+| V-1a | Passed listed composition matrix: `GrokRulesCompositionTests.Worker_and_stage_bundles_reach_typed_rules_payload_without_argv_text` (five roles), plus `DelegateLaunchArgvIntegrityTests` and dispatch/bundle suites. Original exact source-to-byte tests and PC-2/3/4 retained. |
+| V-1b | Passed both-backend `GrokRulesCompositionTests.Standing_channel_composition_preserves_attachment_style_append_and_preamble_bytes`; actual Herdr standing/channel composition additionally passed V-8b/d. |
+| V-1c | Passed `CardSpawnModelArgumentTests` (14 cases): file composition/barrier plus existing model/profile precedence and corrected unsafe-profile no-session refusal. |
+| V-1d | Passed `GrokRulesFileStoreTests.Rules_content_preserves_control_newlines_unicode_and_tail_beyond_1000_lines`; native >1,000-line continuation and Herdr full-read gates also passed. Exact disk bytes remain the losslessness oracle. |
+| V-1e | Passed `GrokRulesFileStoreTests` exact-byte/Unicode validation, `GrokRulesTransportCompatibilityTests.Invalid_body_is_refused_server_side_before_any_runner_request`, and `GrokRulesFileLaunchTests.Invalid_payload_refuses_before_session_registration_or_disk_effects`; PC-7 independently broke both boundaries. |
+| V-1f | Passed `GrokRulesFileLaunchTests.Actual_argv_budget_includes_generated_bootstrap_before_materialization` and launch/composition budget checks; PC-8 red/green. Claude/Codex argv regression sweep passed. |
+| V-1g | Passed store/launch bootstrap checks and real native V-8 reads. No literal-path expansion claim. `GrokRulesFileLaunchTests` owns the final effective-argv assertion. |
+| V-1h | Passed `GrokRulesFileLaunchTests.Explicit_rules_conflict_and_unsafe_source_precedence_have_no_effects`, compatibility raw-argv matrix and dispatch bare/specialist controls; PC-9 red/green. |
+| V-2a | Passed `GrokRulesFileLaunchTests.Herdr_receipt_is_durable_before_first_request_and_before_typing` and `Launch_failure_retains_pre_spawn_receipt_in_existing_manifest`; PC-13 broke both metadata paths. Actual Herdr launch/read passed V-8b/d. |
+| V-2b | Passed atomic R1/R2 and replacement fault tests in `GrokRulesFileStoreTests`, corruption adoption cases in `GrokRulesAdoptionTests`, PC-10. Live revised-resume behavior still depends on V-9b. |
+| V-2c | Passed six `GrokRulesStoreFailureTests.Storage_failure_refuses_before_any_child_or_pane_effect` variants; final payload/argv refusal zero-effects tests also pass. |
+| V-2d | Passed `GrokRulesFileStoreTests.Shared_cwd_sessions_have_isolated_files_and_generations`; PC-14 cwd mutation red/green. |
+| V-2e | Passed four `GrokRulesAdoptionTests.Restart_recovers_only_a_verified_rules_receipt_and_retains_files_after_worktree_removal` variants plus Pty/Herdr adoption regressions. Explicit artifact-expiry behavior remains unverified by a named case. |
+| V-2f | Passed `GrokRulesTransportCompatibilityTests.Missing_capability_refuses_before_sending_a_payload_to_an_old_runner`; PC-11 red/green. |
+| V-2g | Passed `GrokRulesReceiptTests.Runner_receipt_is_validated_before_commit_or_refresh_input` and store remote-path grammar; PC-12 missing/version/generation/hash/count/path red/green. |
+| V-2h | Partial: startup recovery/retained ownership is exercised by `AgentSessionLaunchFailureTests`; dropped HTTP Start response at the exact runner/server commit seam remains unverified. |
+| V-2i | Partial: `GrokRulesTransportCompatibilityTests.Payload_and_budget_round_trip_while_receipt_remains_metadata_only` and native sidecar evidence pass. Full isolated capabilities-route diagnostic sentinel matrix remains unverified. |
+| V-3a | Passed `GrokRulesTransportCompatibilityTests.Unsafe_raw_rules_are_refused_server_side_before_runner_calls`, named-agent refusals, and card final-profile refusal; PC-3 independently disables the server raw guard. |
+| V-3b | Passed `GrokRulesFileLaunchTests.Unsafe_final_runner_boundary_has_zero_effects_even_without_server_validation` and `GrokRulesRunnerRefusalTests`; PC-4 independently disables the runner raw guard. |
+| V-3c | Passed Herdr effective-environment cases in runner refusal/file-launch and `DollarEnvArgTests` (11) / `AgentTuiLaunchResolverTests` (14); PC-5 server and runner red/green. |
 | V-3d | Passed: all 26 unchanged GrokRulesArgvPolicyTests. |
 | V-3e | Passed policy/store checks: literal values remain unchanged; no native expansion claim. |
-| V-4a | Partial: acknowledgement matrix, deadline recreation, delegate E2E; full lifecycle matrix remains. |
-| V-4b | Partial: acknowledgement matrix, deadline recreation, delegate E2E; full lifecycle matrix remains. |
-| V-4c | Partial: acknowledgement matrix, deadline recreation, delegate E2E; full lifecycle matrix remains. |
-| V-4d | Partial: acknowledgement matrix, deadline recreation, delegate E2E; full lifecycle matrix remains. |
-| V-4e | Partial: acknowledgement matrix, deadline recreation, delegate E2E; full lifecycle matrix remains. |
-| V-4f | Partial: acknowledgement matrix, deadline recreation, delegate E2E; full lifecycle matrix remains. |
-| V-4g | Partial: acknowledgement matrix, deadline recreation, delegate E2E; full lifecycle matrix remains. |
-| V-4h | Partial: acknowledgement matrix, deadline recreation, delegate E2E; full lifecycle matrix remains. |
-| V-4i | Partial: acknowledgement matrix, deadline recreation, delegate E2E; full lifecycle matrix remains. |
-| V-4j | Partial: acknowledgement matrix, deadline recreation, delegate E2E; full lifecycle matrix remains. |
-| V-4k | Partial: acknowledgement matrix, deadline recreation, delegate E2E; full lifecycle matrix remains. |
-| V-5a | Unrun native fixture case; normalized trigger/loop tests only. |
-| V-5b | Unrun native fixture case; normalized trigger/loop tests only. |
-| V-5c | Unrun native fixture case; normalized trigger/loop tests only. |
-| V-5d | Unrun native fixture case; normalized trigger/loop tests only. |
-| V-5e | Unrun native fixture case; normalized trigger/loop tests only. |
-| V-5f | Unrun native fixture case; normalized trigger/loop tests only. |
-| V-5g | Unrun native fixture case; normalized trigger/loop tests only. |
-| V-5h | Unrun native fixture case; normalized trigger/loop tests only. |
-| V-5i | Unrun native fixture case; normalized trigger/loop tests only. |
-| V-5j | Unrun native fixture case; normalized trigger/loop tests only. |
-| V-6a | Partial: dispatch kind/reuse and bundle regressions; full lifecycle/provider regression list remains. |
-| V-6b | Partial: dispatch kind/reuse and bundle regressions; full lifecycle/provider regression list remains. |
-| V-6c | Partial: dispatch kind/reuse and bundle regressions; full lifecycle/provider regression list remains. |
-| V-6d | Partial: dispatch kind/reuse and bundle regressions; full lifecycle/provider regression list remains. |
-| V-6e | Partial: dispatch kind/reuse and bundle regressions; full lifecycle/provider regression list remains. |
+| V-4a | Passed ready/receipt ordering (2), queue-entry barrier matrix, card boot, restored fake E2Es, and native V-8 ack-before-brief. Full concurrent origin/hold-expiry cross-product is not separately certified. |
+| V-4b | Passed `RunnerGrokAdapterSignInPromptTests` (3), `RunnerGrokAdapterTrustPromptTests` (4) and `GrokRulesReadyOrderingTests` (2); no authentication bypass used in live gates. |
+| V-4c | Passed `GrokRulesInitializationTests.Only_current_refresh_assistant_ack_with_confirmed_prompt_releases_barrier`; PC-16 hash/id/generation/prompt/end/provider mutations red/green. Full quoted/tool/split-late cross-product remains unverified. |
+| V-4d | Passed `GrokRulesFailureTests`, initialization delivery-exhaustion/deadline tests, `AgentSessionLaunchFailureTests` (11) and restored boot retry E2E. PC-24 deadline and PC-25 ownership controls retained. |
+| V-4e | Passed 13 `GrokRulesReplayMatrixTests` cases, interrupted launch (6), interrupted queued attempts (11), delivery verification (104). PC-15/16/19/20 retained; no fabricated live acceptance inferred. |
+| V-4f | Passed `GrokRulesChannelTests`, settlement/deferred race cases, `ChannelMachineTurnTextTests` (19), `ChannelFollowUpAttachmentTests` (22), and native Herdr bound fake channel sink; PC-17 independent exclusion mutations red/green. |
+| V-4g | Passed deterministic `GrokRulesResumeMigrationTests` revision case and `GrokNativeSessionResumeTests` (6). Genuine changed-revision resumed-model answer remains V-9b. |
+| V-4h | Passed legacy refusal variants of `GrokRulesResumeMigrationTests` and `PolicyRefreshServiceTests` legacy pre-kill checks; PC-26 legacy-policy/silent-fresh red/green. |
+| V-4i | Passed explicit fresh variants of `GrokRulesResumeMigrationTests`, with old native-history bytes retained; no retained-context claim for the fresh conversation. |
+| V-4j | Passed removal and bare variants of `GrokRulesResumeMigrationTests`; PC-26 removal red/green. |
+| V-4k | Passed exact restored no-task-answer boot E2E and all 73 watchdog cases after scoping the test hook; PC-18 boot-reply red/green. |
+| V-5a | Previously passed nine `GrokRulesCompactionRecoveryTests` lanes/populations with attributed 1.0.5 rows. Updated to genuine captured 1.0.13 rows; focused rerun pending. |
+| V-5b | Partial: native tailer/runtime mid-tool-to-idle ordering in `GrokRulesCompactionRecoveryTests`, queue barrier controls and actual V-9 observations. Blocked Herdr UI plus concurrent already-started ordinary delivery matrix remains unverified. |
+| V-5c | Passed sync/rebased/replay recovery and `GrokRulesReplayMatrixTests`; 1.0.13 fixture rerun pending. PC-20 sync red/green. |
+| V-5d | Passed startup lane of `GrokRulesCompactionRecoveryTests`; 1.0.13 fixture rerun pending. PC-20 startup red/green. |
+| V-5e | Passed `GrokRulesTransactionTests.Queue_write_fault_rolls_back_trigger_and_recovery_reconstructs_native_boundary` and duplicate DB-key test; 1.0.13 fixture rerun pending. PC-19/22 red/green. |
+| V-5f | Passed compact variants of `GrokRulesReplayMatrixTests.Persisted_refresh_evidence_reconciles_after_each_commit_without_new_logical_delivery`; PC-16/22 retained. |
+| V-5g | Passed `GrokRulesReplayMatrixTests.Concurrent_recovery_coalesces_busy_boundaries_and_new_boundary_after_ack_creates_new_read` and `GrokRulesCompactionTests.Concurrent_replay_keeps_one_trigger_per_boundary_and_coalesces_untyped_reads`; PC-22 coverage red/green. |
+| V-5h | Partial: `GrokRulesCompactionTests.Refresh_caused_compaction_permits_one_follow_on_then_fails_with_ownership_retained` and PC-24 follow-on pass. Production conservatively requests one follow-on; it does not certify a full-read evidence object for before/after-read coverage. |
+| V-5i | Passed established-session ownership assertions in failure/compaction tests and PC-25; no automatic kill on failed established refresh. |
+| V-5j | Passed checkpoint/tokenless parser tests and Codex normalizer/tailer/working-state regressions; new full 1.0.13 fixture parser rerun pending. |
+| V-6a | Passed Grok dispatch pool eligibility/revision/ready cases and PC-27 unacknowledged/invalid-receipt controls. No stand-alone `GrokRulesPoolReuseTests` class was added. |
+| V-6b | Passed all 20 `PolicyRefreshServiceTests` and deterministic revision/removal resume matrix. Genuine revised model behavior still depends on V-9b. |
+| V-6c | Passed all named provider regressions in the continuation sweep: Claude/Codex argv, Codex dispatch/tailers, compaction recovery, normalizers and working state; zero skips. |
+| V-6d | Passed launch failure/ownership, interrupted launch, termination-source, restored E2Es and five `PtyKillProcessTreeTests`; PC-25 retained. |
+| V-6e | Passed wrong-kind payload validation in server/runner boundary matrices and bare/specialist dispatch controls. Baseline V-9 additionally asserts no file receipt or refresh row. |
 | V-7a | Partial: restored capstone passes; additional full brief sentinels/unsafe-profile E2E remain. |
 | V-7b | Passed: exact named unmarked-after-nudge E2E; zero skips. |
 | V-7c | Passed: exact named task-only boot-stall/retry E2E; zero skips. |
@@ -198,8 +227,8 @@ cannot satisfy those gates. Live gates are unrun, not skipped/passed.
 | V-8b | Passed 1/0/0: `GrokRulesHerdrAcceptanceTests.Real_cli_herdr_standing_attachment_reads_rules_before_work`; actual named Herdr server, standing reuse, full >1,000-line read, bound fake channel sink, marked settlement. 14.420 s body / 32.590 s TUnit. |
 | V-8c | Passed 1/0/0: `GrokRulesLiveMappedDispatchTests` attempt 5; actual mapped POST, native authenticated model, rules-only canaries and restart requirement, full brief and marked settlement. 75.746 s body / 95.391 s TUnit. Earlier four failures retained below. |
 | V-8d | Passed 1/0/0: `GrokRulesHerdrAcceptanceTests.Live_model_herdr_standing_attachment_obeys_rules_after_startup_ack`; native authenticated model, full rules read, same standing Herdr pane/session, rules-only canaries, marked settlement, no ack leak to bound fake channel. 85.011 s body / 103.947 s TUnit. |
-| V-9a | Running first authenticated inline arm, native supported threshold 20%, 120-minute ceiling. No endurance success claimed. |
-| V-9b | Harness authored; unrun. Calibration has five native boundaries but cannot satisfy this live gate. |
+| V-9a | Passed revised authenticated inline arm: 1/0/0, 165.877719 s body / 179.463 s TUnit. Native threshold 20%, ceiling 120 minutes, two distinct completed IDs, all five canary checkpoints survived. Initial four-file experiment was inconclusive and is retained. |
+| V-9b | File attempt 2: 1 failed/0 skips, first pre-idle canaries passed; harness asserted Ready during legitimate Pending follow-on after refresh-induced compact. 310.133 s body / 325.619 s TUnit. Corrected wait now requires the complete barrier to reopen; same-workload attempt 3 is running. |
 
 ## Regression control ledger
 
@@ -208,20 +237,20 @@ evidence separately from outstanding native, failure-injection and live requirem
 
 | Control | Status |
 |---|---|
-| R-1 | Partial related deterministic coverage; full mapped cases unrun. |
-| R-2 | Partial related deterministic coverage; full mapped cases unrun. |
-| R-3 | Partial related deterministic coverage; full mapped cases unrun. |
-| R-4 | Partial related deterministic coverage; full mapped cases unrun. |
-| R-5 | Partial related deterministic coverage; full mapped cases unrun. |
-| R-6 | Partial related deterministic coverage; full mapped cases unrun. |
-| R-7 | Partial related deterministic coverage; full mapped cases unrun. |
-| R-8 | Partial related deterministic coverage; full mapped cases unrun. |
-| R-9 | Partial related deterministic coverage; full mapped cases unrun. |
-| R-10 | Partial related deterministic coverage; full mapped cases unrun. |
-| R-11 | Partial related deterministic coverage; full mapped cases unrun. |
-| R-12 | Partial related deterministic coverage; full mapped cases unrun. |
-| R-13 | Unrun live evidence requirements. |
-| R-14 | Partial related deterministic coverage; full mapped cases unrun. |
+| R-1 | Composition/store/argv matrices, PC-1/2/3/4 and normal V-7 dispatch pass; full named unsafe-profile E2E remains V-7a. |
+| R-2 | Independent server/direct-runner raw and effective-env guards plus unchanged shared policy pass; PC-3/4/5/6 red/green. |
+| R-3 | Native default-agent full reads and live compliance pass; revised native-resume behavioral proof remains V-9b. |
+| R-4 | Pre-spawn store/metadata and missing-capability tests pass; exact dropped-Start-response seam remains V-2h. |
+| R-5 | Distinct paths, verified receipt adoption and worktree removal pass; explicit artifact expiry and dropped-response seam remain V-2e/h. |
+| R-6 | Owning prompt/ack/end matrix, crash replay and real V-8 order pass; quoted/split/late cross-product remains V-4c. |
+| R-7 | Sync/startup/transaction crash tests and PC-19/20/22 pass on earlier fixture; genuine 1.0.13 capture replacement rerun pending. |
+| R-8 | Native working-state/parser and queue ordering pass; blocked Herdr UI/already-started-delivery interleaving remains V-5b. |
+| R-9 | Attachment/channel/retired-agent recovery and dispatch pool eligibility pass, including PC-23/27. |
+| R-10 | Settlement/deferred/channel/boot exclusions and all restored task-only E2Es pass; PC-17/18 red/green. |
+| R-11 | Persisted deadlines, replay, one-follow-on cap and established ownership tests pass; full native read-position coverage remains V-5h. |
+| R-12 | Legacy/removal refusal and explicit-fresh history preservation pass; PC-26 red/green. |
+| R-13 | Actual V-8c/d live compliance and V-9a two-compaction baseline pass; file endurance and PC-31 remain pending. |
+| R-14 | Exact Unicode bytes, limits, metadata-only serialization, no env transport and PC-1/7 pass; full HTTP diagnostic matrix remains V-2i. |
 
 ## Positive controls
 

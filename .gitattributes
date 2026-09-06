@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Preserve the byte hashes recorded by CARD-0395 native acceptance provenance.
+tests/Antiphon.SessionRunner.Tests/Fixtures/grok-1.0.13-auto-compaction.jsonl text eol=lf
+tests/Antiphon.Tests/Agents/Fixtures/grok-rules-live-inline-1.0.13.json text eol=lf

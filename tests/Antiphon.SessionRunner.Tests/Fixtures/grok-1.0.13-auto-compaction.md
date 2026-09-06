@@ -1,6 +1,7 @@
 # Native Grok 1.0.13 automatic-compaction fixture
 
-Ten unchanged native ACP rows selected from the isolated real-CLI/local-stub calibration
+All 33 unchanged native ACP rows, including surrounding prompt, read tools, continuation and
+the final turn end, from the isolated real-CLI/local-stub calibration
 `GrokRulesAutoCompactionCalibrationTests.Native_auto_compaction_emits_its_own_ACP_boundary`,
 2026-09-06 18:30:35.922–18:30:40.124 UTC. Native session:
 `b4988433-4595-40c9-84ad-8c6cb63fe1e2`. Five actual automatic starts/completions; no rows seeded.
@@ -14,6 +15,6 @@ CLI boundaries against a scripted summarizer, **not real-model retention/enduran
 
 Source ACP SHA-256:
 `0a0e676cda51eb4588078a56adf24a449a5a0678da39c8360fc16ad44b6b974a`.
-Selected JSONL SHA-256:
-`f9960c190b84774a47d4a17848ee5fc72b4bcff5fe69d06c197e4164ad0a3a9a`.
+Fixture JSONL SHA-256 (identical to source; no content redactions were needed):
+`0a0e676cda51eb4588078a56adf24a449a5a0678da39c8360fc16ad44b6b974a`.
 The full safe calibration evidence is in the continuation ZIP next to the CARD-0395 acceptance ledger.

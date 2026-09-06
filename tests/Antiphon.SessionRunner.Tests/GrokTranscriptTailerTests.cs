@@ -761,7 +761,9 @@ public class GrokTranscriptTailerTests
         var boundaries = parts.Where(p => p.Kind == TranscriptKinds.CompactBoundary).ToArray();
         boundaries.Select(p => p.Uuid).ShouldBe(new[] { 9, 16, 23, 30, 37 }
             .Select(n => $"b4988433-4595-40c9-84ad-8c6cb63fe1e2-{n}").ToArray());
-        parts.ShouldNotContain(p => p.Kind == TranscriptKinds.TurnEnd);
+        var lastBoundary = parts.FindLastIndex(p => p.Kind == TranscriptKinds.CompactBoundary);
+        parts.Take(lastBoundary + 1).ShouldNotContain(p => p.Kind == TranscriptKinds.TurnEnd);
+        parts.Skip(lastBoundary + 1).ShouldContain(p => p.Kind == TranscriptKinds.TurnEnd);
     }
 
     private static List<TranscriptPart> NormalizeFixture(string fileName)
