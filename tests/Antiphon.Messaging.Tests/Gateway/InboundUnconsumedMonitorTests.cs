@@ -27,8 +27,8 @@ public sealed class InboundUnconsumedMonitorTests
         ConsumerLag.IsUnconsumed(committedNextOffset: 11, recordOffset: 10).ShouldBeFalse();
 
     [Test]
-    public void Absent_group_offset_is_unconsumed() =>
-        ConsumerLag.IsUnconsumed(committedNextOffset: null, recordOffset: 10).ShouldBeTrue();
+    public void Absent_group_offset_is_unknown_not_unconsumed() =>
+        ConsumerLag.IsUnconsumed(committedNextOffset: null, recordOffset: 10).ShouldBeFalse();
 
     [Test]
     public async Task Overdue_unconsumed_acknowledges_once_and_publishes_one_event()
