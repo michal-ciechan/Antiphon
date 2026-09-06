@@ -169,11 +169,15 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     // When set, StartAsync throws this — simulates a spawn failure (missing exe, runner 500) so
     // tests can assert the launch-failure paths (session Failed + agent rolled back from Working).
     public Exception? ThrowOnStart { get; set; }
+    /// <summary>CARD-0384: factory form so a StartRefusal hook can mint a fresh exception per call.</summary>
+    public Func<Exception?>? ThrowOnStartFactory { get; set; }
 
     public event Action<string>? OnTextDelta;
 
     public Task StartAsync(AgentLaunchSpec spec, CancellationToken ct)
     {
+        if (ThrowOnStartFactory?.Invoke() is { } refusal)
+            throw refusal;
         if (ThrowOnStart is not null)
             throw ThrowOnStart;
 

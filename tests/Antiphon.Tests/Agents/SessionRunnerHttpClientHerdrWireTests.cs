@@ -91,6 +91,87 @@ public class SessionRunnerHttpClientHerdrWireTests
     }
 
     [Test]
+    public async Task TabLabel_appears_on_the_POST_body()
+    {
+        var launched = await CaptureLaunchAsync(
+            new AgentLaunchSpec(
+                "grok",
+                AgentKind.Grok,
+                "grok.exe",
+                [],
+                new Dictionary<string, string>(),
+                Path.GetTempPath(),
+                120,
+                30,
+                Backend: SessionBackend.Herdr,
+                Herdr: new HerdrLaunchOptions(
+                    "none", "Antiphon", null, "g",
+                    AgentKind: HerdrAgentKinds.Grok,
+                    TabLabel: "Orch")));
+
+        launched.Herdr.ShouldNotBeNull();
+        launched.Herdr.TabLabel.ShouldBe("Orch");
+    }
+
+    [Test]
+    public void Old_launch_body_without_tabLabel_deserialises_null()
+    {
+        const string json = """
+            {"sessionId":"00000000-0000-0000-0000-000000000001","exe":"grok.exe","args":[],"env":{},"cwd":"c:\\\\tmp","cols":120,"rows":30,"herdr":{"workspaceKey":"none","workspaceLabel":"Antiphon","workspaceCwd":null,"paneTitle":"g","agentKind":"grok"}}
+            """;
+
+        var launched = JsonSerializer.Deserialize<RunnerLaunchRequest>(
+            json, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        launched.ShouldNotBeNull();
+        launched.Herdr.ShouldNotBeNull();
+        launched.Herdr.TabLabel.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task Placement_check_posts_options_without_exe_or_env_and_maps_409_to_conflict()
+    {
+        string? posted = null;
+        var handler = new CapturingHandler(async request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/herdr/placement/check")
+            {
+                posted = request.Content is null ? null : await request.Content.ReadAsStringAsync();
+                return Json(new HerdrPlacementCheckResult("relaunch", "w1", "w1:t1", "w1:p1"));
+            }
+
+            return Problem(409, HerdrProblemTypes.PaneOccupied, "occupied");
+        });
+        var client = new SessionRunnerHttpClient(
+            new HttpClient(handler) { BaseAddress = new Uri("http://runner.test/") },
+            new StubFactory(),
+            Options.Create(new SessionRunnerSettings { BaseUrl = "http://runner.test" }));
+
+        var result = await client.CheckHerdrPlacementAsync(
+            new HerdrPlacementCheckRequest(
+                Guid.NewGuid(),
+                new HerdrLaunchOptions("none", "Antiphon", null, "g", TabLabel: "Orch")),
+            CancellationToken.None);
+        result.Action.ShouldBe("relaunch");
+        posted.ShouldNotBeNull();
+        posted.ShouldContain("sessionId");
+        posted.ShouldContain("herdr");
+        posted.ShouldNotContain("\"exe\"");
+        posted.ShouldNotContain("\"env\"");
+
+        var failHandler = new CapturingHandler(_ => Task.FromResult(Problem(
+            409, HerdrProblemTypes.PaneOccupied, "pane occupied")));
+        var failClient = new SessionRunnerHttpClient(
+            new HttpClient(failHandler) { BaseAddress = new Uri("http://runner.test/") },
+            new StubFactory(),
+            Options.Create(new SessionRunnerSettings { BaseUrl = "http://runner.test" }));
+        var ex = await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ConflictException>(() =>
+            failClient.CheckHerdrPlacementAsync(
+                new HerdrPlacementCheckRequest(Guid.NewGuid(), new HerdrLaunchOptions("none", "Antiphon", null, "g", TabLabel: "Orch")),
+                CancellationToken.None));
+        ex.Code.ShouldBe(HerdrProblemTypes.PaneOccupied);
+    }
+
+    [Test]
     public void Old_launch_body_without_reusePaneOfSessionId_deserialises_null()
     {
         const string json = """
@@ -321,7 +402,8 @@ public class SessionRunnerHttpClientHerdrWireTests
                     "test",
                     false,
                     TranscriptFormats: [TranscriptFormats.Claude, TranscriptFormats.Grok, TranscriptFormats.Codex],
-                    SessionBackends: [SessionBackends.PtyHost, SessionBackends.Herdr]));
+                    SessionBackends: [SessionBackends.PtyHost, SessionBackends.Herdr],
+                    Features: [RunnerCapabilityFeatures.HerdrAttach, RunnerCapabilityFeatures.HerdrNamedTabPlacement]));
             }
 
             if (request.RequestUri.AbsolutePath == "/sessions")

@@ -1480,9 +1480,16 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             {
                 AgentSlug = string.IsNullOrWhiteSpace(agent?.Slug) ? null : agent.Slug,
             };
-            // CARD-0224: fresh-arm fallback still lands in the previous session's pane.
-            if (launchSpec.Herdr?.ReusePaneOfSessionId is Guid reuse)
-                herdr = herdr with { ReusePaneOfSessionId = reuse };
+            // CARD-0224 / CARD-0384: preserve queued ReusePaneOfSessionId and TabLabel via `with`
+            // rather than rebuilding a partial options record that can drop new fields.
+            if (launchSpec.Herdr is { } queued)
+            {
+                herdr = herdr with
+                {
+                    ReusePaneOfSessionId = queued.ReusePaneOfSessionId,
+                    TabLabel = queued.TabLabel,
+                };
+            }
         }
 
         var spec = launchSpec with

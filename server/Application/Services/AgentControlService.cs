@@ -313,11 +313,27 @@ public sealed class AgentControlService
 
         AgentExecutableResolver.Default.EnsureSpawnable(spec.Exe);
 
-        if (!fresh)
+        if (agent.SessionBackend == SessionBackend.Herdr)
         {
-            var previous = await FindResumableSessionAsync(agent, spec.Kind, cwd, ct);
-            if (previous is not null)
+            var probe = new AgentSession
             {
+                CardId = null,
+                DefinitionName = definitionName,
+                AgentKind = spec.Kind,
+            };
+            var paneTitle = HerdrLaunchContextResolver.PaneTitleFor(agent, probe);
+            var resolver = _herdrContext ?? new HerdrLaunchContextResolver(_db);
+            spec = spec with { Herdr = await resolver.ResolveAsync(probe, agent, paneTitle, ct) };
+        }
+
+        AgentSession? previous = null;
+        if (!fresh)
+            previous = await FindResumableSessionAsync(agent, spec.Kind, cwd, ct);
+        var chosenSessionId = previous?.Id ?? Guid.NewGuid();
+        await PreflightNamedPlacementAsync(agent, spec, chosenSessionId, ct);
+
+        if (previous is not null)
+        {
                 var resumeNow = UtcNow();
                 previous.DefinitionName = definitionName;
                 previous.Status = SessionStatus.Starting;
@@ -343,17 +359,16 @@ public sealed class AgentControlService
                 previous.SessionBackend = agent.SessionBackend;
                 await _db.SaveChangesAsync(ct);
 
-                _launchQueue.EnqueueInteractiveSession(
-                    previous.Id, agent.Id, spec, remoteControlName, resume: true, notes: notes,
-                    initialPrompt: initialPrompt);
-                return previous.Id;
-            }
+            _launchQueue.EnqueueInteractiveSession(
+                previous.Id, agent.Id, spec, remoteControlName, resume: true, notes: notes,
+                initialPrompt: initialPrompt);
+            return previous.Id;
         }
 
         var now = UtcNow();
         var session = new AgentSession
         {
-            Id = Guid.NewGuid(),
+            Id = chosenSessionId,
             CardId = null,
             WorktreeId = null,
             DefinitionName = definitionName,
@@ -413,14 +428,14 @@ public sealed class AgentControlService
             {
                 spec = spec with
                 {
-                    Herdr = new HerdrLaunchOptions(
-                        WorkspaceKey: spec.Herdr?.WorkspaceKey ?? "none",
-                        WorkspaceLabel: spec.Herdr?.WorkspaceLabel ?? "Antiphon",
-                        WorkspaceCwd: spec.Herdr?.WorkspaceCwd,
-                        PaneTitle: spec.Herdr?.PaneTitle ?? "agent",
-                        AgentKind: spec.Herdr?.AgentKind,
-                        AgentSlug: spec.Herdr?.AgentSlug,
-                        ReusePaneOfSessionId: previousSessionId),
+                    Herdr = spec.Herdr is { } existing
+                        ? existing with { ReusePaneOfSessionId = previousSessionId }
+                        : new HerdrLaunchOptions(
+                            WorkspaceKey: "none",
+                            WorkspaceLabel: "Antiphon",
+                            WorkspaceCwd: null,
+                            PaneTitle: "agent",
+                            ReusePaneOfSessionId: previousSessionId),
                 };
             }
         }
@@ -440,6 +455,29 @@ public sealed class AgentControlService
         _launchQueue.EnqueueInteractiveSession(
             session.Id, agent.Id, spec, remoteControlName, notes: notes, initialPrompt: initialPrompt);
         return session.Id;
+    }
+
+    private async Task PreflightNamedPlacementAsync(
+        Agent agent, AgentLaunchSpec spec, Guid sessionId, CancellationToken ct)
+    {
+        if (agent.SessionBackend != SessionBackend.Herdr)
+            return;
+        if (string.IsNullOrWhiteSpace(spec.Herdr?.TabLabel))
+            return;
+        if (_sessionRunner is null)
+            return;
+
+        var caps = await _sessionRunner.GetCapabilitiesAsync(ct);
+        if (caps?.Features is not { } features
+            || !features.Contains(RunnerCapabilityFeatures.HerdrNamedTabPlacement, StringComparer.OrdinalIgnoreCase))
+        {
+            throw new ConflictException(
+                $"The session runner does not advertise {RunnerCapabilityFeatures.HerdrNamedTabPlacement}. Rebuild and restart it: pwsh -File scripts/restart-session-runner.ps1.",
+                HerdrProblemTypes.Refused);
+        }
+
+        await _sessionRunner.CheckHerdrPlacementAsync(
+            new HerdrPlacementCheckRequest(sessionId, spec.Herdr), ct);
     }
 
     // The agent's last interactive session is resumable when it is the same session-identity kind
