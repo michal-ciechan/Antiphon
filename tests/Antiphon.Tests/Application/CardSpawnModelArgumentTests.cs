@@ -215,7 +215,7 @@ public sealed class CardSpawnModelArgumentTests
     }
 
     [Test]
-    public async Task Grok_assigned_card_spawn_with_multiline_standing_instructions_is_refused_and_creates_no_session()
+    public async Task Grok_assigned_card_spawn_with_unsafe_inline_profile_rules_is_refused_and_creates_no_session()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var tempRoot = AgentControlServiceIntegrationTests.NewTempRoot();
@@ -227,12 +227,14 @@ public sealed class CardSpawnModelArgumentTests
                 tempRoot, [adapter], defaultKind: "Raw", includeLaunchResolver: true,
                 connectionString: schema.ConnectionString);
             var profile = await SeedProfileAsync(db, AgentKind.Grok, modelArgumentName: "--model");
+            var revision = await db.AgentTuiProfileRevisions.SingleAsync(r => r.Id == profile.ActiveRevisionId);
+            revision.ArgumentsJson = JsonSerializer.Serialize(new[] { "--rules", "Unsafe inline line one\nline two" });
+            await db.SaveChangesAsync();
             var card = await SeedAssignedCardAsync(db, harness, tempRoot, profile.Id, AgentKind.Grok,
                 AgentModelLevel.High, modelId: null);
             var agent = await db.Agents.SingleAsync(a => a.Id == card.AssignedAgentId);
             var sentinel = "card0382-sentinel-" + Guid.NewGuid().ToString("N");
-            agent.SystemPromptAppend =
-                "Custom line one with spaces\r\nline \"two\" with `backticks`\nline three " + sentinel;
+            agent.SystemPromptAppend = "Safe server-owned multiline rules\n" + sentinel;
             await db.SaveChangesAsync();
 
             ClearHarnessTracking(harness);
