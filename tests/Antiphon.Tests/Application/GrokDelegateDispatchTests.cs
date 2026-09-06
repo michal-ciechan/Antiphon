@@ -4,7 +4,9 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -38,10 +40,10 @@ public class GrokDelegateDispatchTests
     // ---- launch spec ---------------------------------------------------------------------------
 
     [Test]
-    public void a_grok_delegate_launches_the_grok_definition_with_rules_and_a_grok_model()
+    public void a_grok_delegate_launches_the_grok_definition_with_a_grok_model_when_nothing_composes()
     {
         var (dispatcher, _) = CreateHarness();
-        var task = TaskFor(AgentKind.Grok, AgentModelLevel.High);
+        var task = TaskFor(AgentKind.Grok, AgentModelLevel.High, AgentTaskKind.Worker, AgentTaskRole.Check);
 
         var spec = SpecOf(dispatcher, task);
         var args = spec.Args.ToList();
@@ -58,12 +60,8 @@ public class GrokDelegateDispatchTests
         args[args.IndexOf(GrokLaunchArgs.ReasoningEffortFlag) + 1]
             .ShouldBe(GrokLaunchArgs.ReasoningEffort(AgentModelLevel.High));
         args.ShouldNotContain(ClaudeLaunchArgs.EffortFlag);
-        args.ShouldContain("--rules");
-        args.ShouldNotContain("--append-system-prompt", customMessage:
-            "Grok's system-prompt channel is --rules; the bundle would be dropped in silence");
-        // Same contract as Claude's: the bundles ride an ARGUMENT, so they survive compaction.
-        args[args.IndexOf("--rules") + 1]
-            .ShouldContain(InstructionBundles.TextOf(InstructionBundles.DelegateBasics));
+        args.ShouldNotContain("--rules");
+        args.ShouldNotContain("--append-system-prompt");
     }
 
     [Test]
@@ -75,10 +73,10 @@ public class GrokDelegateDispatchTests
         // than decorative.
         var (dispatcher, _) = CreateHarness();
 
-        ModelArgOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.Frontier)).ShouldBe("grok-4.6");
-        ModelArgOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.High)).ShouldBe("grok-4.6");
-        ModelArgOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.Medium)).ShouldBe("grok-4.6");
-        ModelArgOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.Low)).ShouldBe("grok-4.6");
+        ModelArgOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.Frontier, AgentTaskKind.Worker, AgentTaskRole.Check)).ShouldBe("grok-4.6");
+        ModelArgOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.High, AgentTaskKind.Worker, AgentTaskRole.Check)).ShouldBe("grok-4.6");
+        ModelArgOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.Medium, AgentTaskKind.Worker, AgentTaskRole.Check)).ShouldBe("grok-4.6");
+        ModelArgOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.Low, AgentTaskKind.Worker, AgentTaskRole.Check)).ShouldBe("grok-4.6");
     }
 
     [Test]
@@ -89,7 +87,7 @@ public class GrokDelegateDispatchTests
     public void every_grok_tier_names_its_own_reasoning_effort(AgentModelLevel level, string expectedEffort)
     {
         var (dispatcher, _) = CreateHarness();
-        var args = SpecOf(dispatcher, TaskFor(AgentKind.Grok, level)).Args.ToList();
+        var args = SpecOf(dispatcher, TaskFor(AgentKind.Grok, level, AgentTaskKind.Worker, AgentTaskRole.Check)).Args.ToList();
 
         args[args.IndexOf("--model") + 1].ShouldBe("grok-4.6");
         args.ShouldContain(GrokLaunchArgs.ReasoningEffortFlag);
@@ -103,7 +101,7 @@ public class GrokDelegateDispatchTests
         // The ladder cannot produce this pairing; an explicit ModelId of grok-4.5 under
         // Frontier can, and the CLI refuses to launch with xhigh (CARD-0289 live probe).
         var (dispatcher, _) = CreateHarness();
-        var task = TaskFor(AgentKind.Grok, AgentModelLevel.Frontier);
+        var task = TaskFor(AgentKind.Grok, AgentModelLevel.Frontier, AgentTaskKind.Worker, AgentTaskRole.Check);
         var agent = new Agent
         {
             Id = Guid.NewGuid(),
@@ -171,7 +169,7 @@ public class GrokDelegateDispatchTests
         // Never a fallback to the default definition. The message is what the operator gets as the
         // task's failure reason, so it has to name the kind AND where to fix it.
         var (dispatcher, _) = CreateHarness(withGrokDefinition: false);
-        var task = TaskFor(AgentKind.Grok, AgentModelLevel.High);
+        var task = TaskFor(AgentKind.Grok, AgentModelLevel.High, AgentTaskKind.Worker, AgentTaskRole.Check);
 
         var ex = Should.Throw<InvalidOperationException>(() => SpecOf(dispatcher, task));
 
@@ -201,7 +199,7 @@ public class GrokDelegateDispatchTests
         // Correlation, reply routing and depth accounting all ride the env, and none of it is
         // Claude-shaped — a Grok delegate that could not call home would settle nothing.
         var (dispatcher, _) = CreateHarness();
-        var task = TaskFor(AgentKind.Grok, AgentModelLevel.High);
+        var task = TaskFor(AgentKind.Grok, AgentModelLevel.High, AgentTaskKind.Worker, AgentTaskRole.Check);
 
         var grok = SpecOf(dispatcher, task);
         var claude = SpecOf(dispatcher, TaskFor(AgentKind.ClaudeCode, AgentModelLevel.High));
@@ -228,7 +226,7 @@ public class GrokDelegateDispatchTests
             throw new TUnit.Core.Exceptions.SkipTestException($"fakegrok.exe not staged at {fakeGrok}");
 
         var (dispatcher, _) = CreateHarness(grokExe: fakeGrok);
-        var task = TaskFor(AgentKind.Grok, AgentModelLevel.Medium);
+        var task = TaskFor(AgentKind.Grok, AgentModelLevel.Medium, AgentTaskKind.Worker, AgentTaskRole.Check);
 
         var spec = SpecOf(dispatcher, task);
 
@@ -236,7 +234,7 @@ public class GrokDelegateDispatchTests
         spec.Kind.ShouldBe(AgentKind.Grok);
         spec.Args.ShouldContain("--always-approve");
         spec.Args.ShouldContain("--no-alt-screen");
-        spec.Args.ShouldContain("--rules");
+        spec.Args.ShouldNotContain("--rules");
         spec.Args.ShouldContain(GrokLaunchArgs.ReasoningEffortFlag);
         spec.Args.ToList()[spec.Args.ToList().IndexOf(GrokLaunchArgs.ReasoningEffortFlag) + 1]
             .ShouldBe(GrokLaunchArgs.ReasoningEffort(AgentModelLevel.Medium));
@@ -248,38 +246,85 @@ public class GrokDelegateDispatchTests
     // ---- the dispatch itself -------------------------------------------------------------------
 
     [Test]
-    public async Task dispatching_a_grok_task_writes_a_grok_session_a_grok_pool_row_and_a_spilled_brief()
+    public async Task dispatching_a_grok_worker_on_windows_is_refused_after_the_claim_and_settles_failed_with_the_rules_code()
     {
-        // The whole thread in one pass: the task's kind reaches the SESSION row (which is what the
-        // brief's spill gate, the tailer and delivery all read), the pool ROW (which is what the
-        // next task's claim reads), and the definition name (which is what gets launched).
         using var workspace = new TempWorkspace();
-        var (dispatcher, _) = CreateDispatchHarness();
-        var task = await SeedQueuedTaskAsync(workspace.Path, AgentKind.Grok);
+        var (dispatcher, stopper) = CreateDispatchHarness();
+        var parent = await SeedParentSessionAsync(workspace.Path);
+        var task = await SeedQueuedTaskAsync(workspace.Path, AgentKind.Grok, parent.Id);
 
         var result = await dispatcher.TickAsync(CancellationToken.None);
 
-        result.Dispatched.ShouldBeGreaterThanOrEqualTo(1);
         await using var verify = CreateContext();
-        var dispatched = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
-        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        var failed = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureReason.ShouldNotBeNull();
+        failed.FailureReason.ShouldContain(GrokRulesArgvPolicy.ProblemCode);
+        failed.FailureReason.ShouldNotStartWith("Dispatch failed before a session existed");
+        failed.AgentSessionId.ShouldNotBeNull();
+        result.Failures.ShouldBeGreaterThanOrEqualTo(1);
 
         var session = await verify.AgentSessions.AsNoTracking()
-            .SingleAsync(s => s.Id == dispatched.AgentSessionId!.Value);
-        session.AgentKind.ShouldBe(AgentKind.Grok);
-        session.DefinitionName.ShouldBe("grok");
+            .SingleAsync(s => s.Id == failed.AgentSessionId!.Value);
+        session.Status.ShouldBe(SessionStatus.Failed);
+        session.FailureReason.ShouldNotBeNull();
+        session.FailureReason.ShouldContain(GrokRulesArgvPolicy.ProblemCode);
+        session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
+        session.EndedAt.ShouldNotBeNull();
 
-        var agent = await verify.Agents.AsNoTracking().SingleAsync(a => a.Id == dispatched.AgentId!.Value);
-        agent.Kind.ShouldBe(AgentKind.Grok);
-        agent.IsPoolDelegate.ShouldBeTrue();
+        (await verify.SessionQueuedMessages.AsNoTracking()
+            .CountAsync(m => m.AgentSessionId == session.Id)).ShouldBe(0);
+        var parentNotes = await verify.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.AgentSessionId == parent.Id && m.Origin == QueuedMessageOrigin.Delegation)
+            .ToListAsync();
+        parentNotes.ShouldHaveSingleItem();
+        parentNotes[0].Body.ShouldContain(GrokRulesArgvPolicy.ProblemCode);
 
-        // CARD-0084 S1, now reached through the real dispatch: Grok's composer joins every typed
-        // line, so the brief goes out as a file and a pointer rather than as one run-on paragraph.
-        var brief = await verify.SessionQueuedMessages.AsNoTracking()
-            .Where(m => m.AgentSessionId == session.Id).ToListAsync();
-        brief.ShouldHaveSingleItem();
-        brief[0].Body.ShouldContain("YOUR BRIEF IS NOT IN THIS MESSAGE");
-        brief[0].Body.ShouldContain(DelegationReportFormatter.TaskMarker(task.Id));
+        (await verify.Agents.AsNoTracking()
+            .AnyAsync(a => a.Id == failed.AgentId)).ShouldBeFalse();
+        stopper.Killed.ShouldBeEmpty();
+
+        var eventsAfterFirst = await verify.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == task.Id).Select(e => e.Id).ToListAsync();
+
+        await dispatcher.TickAsync(CancellationToken.None);
+        await using var again = CreateContext();
+        var still = await again.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
+        still.Status.ShouldBe(AgentTaskStatus.Failed);
+        still.AgentSessionId.ShouldBe(failed.AgentSessionId);
+        (await again.AgentSessions.AsNoTracking()
+            .CountAsync(s => s.Id == failed.AgentSessionId)).ShouldBe(1);
+        var newEvents = await again.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == task.Id && !eventsAfterFirst.Contains(e.Id))
+            .ToListAsync();
+        newEvents.ShouldNotContain(e =>
+            (e.Detail ?? "").Contains("Claude", StringComparison.OrdinalIgnoreCase)
+            || (e.Detail ?? "").Contains("pty-host", StringComparison.OrdinalIgnoreCase)
+            || (e.Detail ?? "").Contains("Codex", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Test]
+    public async Task a_refused_cold_grok_dispatch_leaves_a_warm_grok_agent_untouched()
+    {
+        using var workspace = new TempWorkspace();
+        using var other = new TempWorkspace();
+        var (dispatcher, stopper) = CreateDispatchHarness();
+        var (warmId, warmSession) = await SeedWarmAgentAsync(other.Path, AgentKind.Grok);
+        await SeedQueuedTaskAsync(workspace.Path, AgentKind.Grok);
+
+        await using var before = CreateContext();
+        var warmBefore = await before.Agents.AsNoTracking().SingleAsync(a => a.Id == warmId);
+        var sessionBefore = await before.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == warmSession);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using var after = CreateContext();
+        var warmAfter = await after.Agents.AsNoTracking().SingleAsync(a => a.Id == warmId);
+        var sessionAfter = await after.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == warmSession);
+        warmAfter.Status.ShouldBe(warmBefore.Status);
+        warmAfter.PersistentSessionId.ShouldBe(warmBefore.PersistentSessionId);
+        sessionAfter.Status.ShouldBe(sessionBefore.Status);
+        stopper.Killed.ShouldBeEmpty();
     }
 
     [Test]
@@ -336,13 +381,11 @@ public class GrokDelegateDispatchTests
         await dispatcher.TickAsync(CancellationToken.None);
 
         await using var verify = CreateContext();
-        var dispatched = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
-        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
-        dispatched.AgentId.ShouldNotBe(warmClaude, "a cold start is the CORRECT outcome here");
-        dispatched.AgentSessionId.ShouldNotBe(claudeSession);
-
-        var spawned = await verify.Agents.AsNoTracking().SingleAsync(a => a.Id == dispatched.AgentId!.Value);
-        spawned.Kind.ShouldBe(AgentKind.Grok);
+        var settled = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Failed);
+        settled.FailureReason.ShouldNotBeNull().ShouldContain(GrokRulesArgvPolicy.ProblemCode);
+        settled.AgentId.ShouldNotBe(warmClaude, "a cold start is the CORRECT outcome here");
+        settled.AgentSessionId.ShouldNotBe(claudeSession);
 
         // And the warm Claude is untouched — still idle, still claimable by the Claude work it is for.
         var untouched = await verify.Agents.AsNoTracking().SingleAsync(a => a.Id == warmClaude);
@@ -505,6 +548,10 @@ public class GrokDelegateDispatchTests
 
         await dispatcher.TickAsync(CancellationToken.None);
 
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Failed);
+
         var detail = await LatestDispatchDetailAsync(task.Id);
         detail.ShouldStartWith("Dispatched to agent ");
         detail.ShouldContain("(grok-4.6)", customMessage: "the seeded task is Medium, which now also maps to grok-4.6");
@@ -664,7 +711,30 @@ public class GrokDelegateDispatchTests
         return task;
     }
 
-    private static async Task<AgentTask> SeedQueuedTaskAsync(string directory, AgentKind agentKind)
+    private static async Task<AgentSession> SeedParentSessionAsync(string directory)
+    {
+        var now = DateTime.UtcNow;
+        var session = new AgentSession
+        {
+            Id = Guid.NewGuid(),
+            DefinitionName = "claude",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Running,
+            Cwd = directory,
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = now,
+            StartedAt = now,
+            LastSeenAt = now,
+        };
+        await using var db = CreateContext();
+        db.AgentSessions.Add(session);
+        await db.SaveChangesAsync();
+        return session;
+    }
+
+    private static async Task<AgentTask> SeedQueuedTaskAsync(
+        string directory, AgentKind agentKind, Guid? parentSessionId = null)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -682,6 +752,8 @@ public class GrokDelegateDispatchTests
             Ephemeral = true,
             Status = AgentTaskStatus.Queued,
             CreatedAt = DateTime.UtcNow,
+            ReplyTo = parentSessionId is null ? AgentTaskReplyTo.None : AgentTaskReplyTo.Session,
+            ParentSessionId = parentSessionId,
         };
         await using var db = CreateContext();
         db.AgentTasks.Add(task);

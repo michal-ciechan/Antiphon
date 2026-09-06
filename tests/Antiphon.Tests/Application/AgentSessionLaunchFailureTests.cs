@@ -394,6 +394,149 @@ public class AgentSessionLaunchFailureTests
         }
     }
 
+    [Test]
+    public async Task Grok_raw_multiline_rules_in_a_launch_argument_refuses_the_launch_before_the_process_starts()
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        await SetSessionKindAsync(fixture.SessionId, AgentKind.Grok);
+        var sentinel = "card0382-sentinel-" + Guid.NewGuid().ToString("N");
+        var grokHome = Path.Combine(Path.GetTempPath(), $"antiphon-grok-home-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(grokHome);
+        try
+        {
+            var spec = new AgentLaunchSpec(
+                "fake", AgentKind.Grok, "fake",
+                ["--always-approve", "--rules", "line one\nline two " + sentinel],
+                new Dictionary<string, string> { ["GROK_HOME"] = grokHome },
+                fixture.Workspace, 120, 30);
+
+            var ex = await Should.ThrowAsync<ConflictException>(
+                () => fixture.LaunchInteractiveAsync(spec: spec));
+            ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
+            adapter.Started.ShouldBeFalse();
+
+            await using var db = LaunchFixture.CreateContext();
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+            session.Status.ShouldBe(SessionStatus.Failed);
+            session.FailureReason.ShouldNotBeNull();
+            session.FailureReason.ShouldContain(GrokRulesArgvPolicy.ProblemCode);
+            session.FailureReason.ShouldContain("--rules");
+            session.FailureReason.ShouldNotContain(sentinel);
+            session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
+            session.EndedAt.ShouldNotBeNull();
+        }
+        finally
+        {
+            try { Directory.Delete(grokHome, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
+    public async Task Grok_raw_multiline_rules_in_a_launch_argument_refuses_the_launch_before_the_process_starts_on_resume_too()
+    {
+        var resumeAdapter = new FakeAgentProtocolAdapter();
+        var freshAdapter = new FakeAgentProtocolAdapter();
+        await using var fixture = await LaunchFixture.CreateAsync(resumeAdapter, freshAdapter);
+        await SetSessionKindAsync(fixture.SessionId, AgentKind.Grok);
+        var sentinel = "card0382-sentinel-" + Guid.NewGuid().ToString("N");
+        var grokHome = Path.Combine(Path.GetTempPath(), $"antiphon-grok-home-{Guid.NewGuid():N}");
+        var encoded = Uri.EscapeDataString(Path.GetFullPath(fixture.Workspace));
+        Directory.CreateDirectory(Path.Combine(grokHome, "sessions", encoded, fixture.SessionId.ToString("D")));
+        try
+        {
+            var spec = new AgentLaunchSpec(
+                "fake", AgentKind.Grok, "fake",
+                ["--always-approve", "--rules", "line one\nline two " + sentinel],
+                new Dictionary<string, string> { ["GROK_HOME"] = grokHome },
+                fixture.Workspace, 120, 30);
+
+            var ex = await Should.ThrowAsync<ConflictException>(
+                () => fixture.LaunchInteractiveAsync(resume: true, spec: spec));
+            ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
+            resumeAdapter.Started.ShouldBeFalse();
+            freshAdapter.Started.ShouldBeFalse();
+        }
+        finally
+        {
+            try { Directory.Delete(grokHome, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
+    public async Task Grok_herdr_launch_whose_rules_come_from_an_env_token_is_refused_server_side()
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        await SetSessionKindAsync(fixture.SessionId, AgentKind.Grok);
+        await SetSessionBackendAsync(fixture.SessionId, SessionBackend.Herdr);
+        var sentinel = "card0382-sentinel-" + Guid.NewGuid().ToString("N");
+        var grokHome = Path.Combine(Path.GetTempPath(), $"antiphon-grok-home-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(grokHome);
+        try
+        {
+            var spec = new AgentLaunchSpec(
+                "fake", AgentKind.Grok, "fake",
+                ["--rules", "$env:GROK_RULES"],
+                new Dictionary<string, string>
+                {
+                    ["GROK_HOME"] = grokHome,
+                    ["GROK_RULES"] = "a\nb " + sentinel,
+                },
+                fixture.Workspace, 120, 30,
+                Backend: SessionBackend.Herdr);
+
+            var ex = await Should.ThrowAsync<ConflictException>(
+                () => fixture.LaunchInteractiveAsync(spec: spec));
+            ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
+            ex.Message.ShouldContain(GrokRulesArgvPolicy.ReasonLineBreak);
+            ex.Message.ShouldContain("GROK_RULES");
+            ex.Message.ShouldNotContain(sentinel);
+            adapter.Started.ShouldBeFalse();
+        }
+        finally
+        {
+            try { Directory.Delete(grokHome, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
+    public async Task Grok_pty_host_launch_with_an_env_token_value_is_not_expanded_and_passes_the_rules_guard()
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        await SetSessionKindAsync(fixture.SessionId, AgentKind.Grok);
+        var grokHome = Path.Combine(Path.GetTempPath(), $"antiphon-grok-home-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(grokHome);
+        try
+        {
+            var spec = new AgentLaunchSpec(
+                "fake", AgentKind.Grok, "fake",
+                ["--rules", "$env:GROK_RULES"],
+                new Dictionary<string, string>
+                {
+                    ["GROK_HOME"] = grokHome,
+                    ["GROK_RULES"] = "a\nb card0382-not-expanded",
+                },
+                fixture.Workspace, 120, 30);
+
+            await fixture.LaunchInteractiveAsync(spec: spec);
+            adapter.Started.ShouldBeTrue();
+            adapter.StartedArgs.ShouldContain("$env:GROK_RULES");
+        }
+        finally
+        {
+            try { Directory.Delete(grokHome, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
+    public async Task Grok_rules_equals_form_and_append_system_prompt_alias_are_refused()
+    {
+        await AssertGrokRawArgsRefused(["--rules=a\nb"]);
+        await AssertGrokRawArgsRefused(["--append-system-prompt", "a\r\nb"]);
+    }
+
     /// <summary>
     /// Killing an already-killed process is a no-op, not an error — the runner answers false for a
     /// session it no longer knows. Driven through the real double-teardown path: a --resume launch
@@ -1168,6 +1311,39 @@ public class AgentSessionLaunchFailureTests
         var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
         session.AgentKind = kind;
         await db.SaveChangesAsync();
+    }
+
+    private static async Task SetSessionBackendAsync(Guid sessionId, SessionBackend backend)
+    {
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
+        session.SessionBackend = backend;
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task AssertGrokRawArgsRefused(IReadOnlyList<string> args)
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        await SetSessionKindAsync(fixture.SessionId, AgentKind.Grok);
+        var grokHome = Path.Combine(Path.GetTempPath(), $"antiphon-grok-home-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(grokHome);
+        try
+        {
+            var spec = new AgentLaunchSpec(
+                "fake", AgentKind.Grok, "fake",
+                args,
+                new Dictionary<string, string> { ["GROK_HOME"] = grokHome },
+                fixture.Workspace, 120, 30);
+            var ex = await Should.ThrowAsync<ConflictException>(
+                () => fixture.LaunchInteractiveAsync(spec: spec));
+            ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
+            adapter.Started.ShouldBeFalse();
+        }
+        finally
+        {
+            try { Directory.Delete(grokHome, recursive: true); } catch { /* best effort */ }
+        }
     }
 
     private static AgentLaunchSpec GrokSpec(string cwd, string grokHome) =>

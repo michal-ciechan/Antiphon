@@ -1509,6 +1509,15 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         // "env values only": args are process-listing-visible and quoted into logs and failure
         // reasons, and --append-system-prompt text additionally lands in transcripts.
         ApiKeyPlaceholder.EnsureResolved(spec, session.Id);
+        // CARD-0382: last server-side scan of the resolved argv (profile/registry --rules that
+        // never went through composition). Herdr expands $env:NAME with DollarEnvArg first;
+        // PtyHost does not expand (D-T4).
+        GrokLaunchArgs.EnsureWindowsRulesArgv(
+            spec.Args,
+            session.AgentKind,
+            spec.Backend,
+            spec.Env,
+            $"Session {session.Id:D}");
         return spec;
     }
 
