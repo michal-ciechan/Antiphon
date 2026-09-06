@@ -77,3 +77,55 @@ Antiphon.Messaging.Gateway.Testing.InMemoryInboxReceiptStore.RecordAsync(Antipho
 Antiphon.Messaging.Gateway.Testing.InMemoryInboxReceiptStore.ScheduleAckRetryAsync(System.Guid id, System.DateTimeOffset nextAttemptAt, int attemptCount, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
 const Antiphon.Messaging.Gateway.InboundUnconsumedMonitorService.AcknowledgementText = "[Antiphon] I received this message, but the service is unavailable. It is queued and will be processed when the service returns." -> string!
 static Antiphon.Messaging.Gateway.ConsumerLag.IsUnconsumed(long? committedNextOffset, long recordOffset) -> bool
+
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.ExpectedAntiphonConsumerGroup.get -> string?
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.ExpectedAntiphonConsumerGroup.set -> void
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.ObservationBudgetSeconds.get -> int
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.ObservationBudgetSeconds.set -> void
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.RequireExpectedAntiphonConsumerGroup.get -> bool
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.RequireExpectedAntiphonConsumerGroup.set -> void
+Antiphon.Messaging.Gateway.ConsumerGroupObservation
+Antiphon.Messaging.Gateway.ConsumerGroupObservation.GroupId.get -> string!
+Antiphon.Messaging.Gateway.ConsumerGroupObservation.GroupId.init -> void
+Antiphon.Messaging.Gateway.ConsumerGroupObservation.GroupStatus.get -> Antiphon.Messaging.Gateway.ConsumerGroupStatus
+Antiphon.Messaging.Gateway.ConsumerGroupObservation.GroupStatus.init -> void
+Antiphon.Messaging.Gateway.ConsumerGroupObservation.MemberCount.get -> int?
+Antiphon.Messaging.Gateway.ConsumerGroupObservation.MemberCount.init -> void
+Antiphon.Messaging.Gateway.ConsumerGroupObservation.ObservedAt.get -> System.DateTimeOffset
+Antiphon.Messaging.Gateway.ConsumerGroupObservation.ObservedAt.init -> void
+Antiphon.Messaging.Gateway.ConsumerGroupObservation.Partitions.get -> System.Collections.Generic.IReadOnlyList<Antiphon.Messaging.Gateway.PartitionOffsetObservation!>!
+Antiphon.Messaging.Gateway.ConsumerGroupObservation.Partitions.init -> void
+Antiphon.Messaging.Gateway.ConsumerGroupObservation.ReasonCode.get -> string?
+Antiphon.Messaging.Gateway.ConsumerGroupObservation.ReasonCode.init -> void
+Antiphon.Messaging.Gateway.ConsumerGroupObservation.Topic.get -> string!
+Antiphon.Messaging.Gateway.ConsumerGroupObservation.Topic.init -> void
+Antiphon.Messaging.Gateway.ConsumerGroupStatus
+Antiphon.Messaging.Gateway.ConsumerGroupStatus.Absent = 1 -> Antiphon.Messaging.Gateway.ConsumerGroupStatus
+Antiphon.Messaging.Gateway.ConsumerGroupStatus.Present = 0 -> Antiphon.Messaging.Gateway.ConsumerGroupStatus
+Antiphon.Messaging.Gateway.ConsumerGroupStatus.QueryFailed = 2 -> Antiphon.Messaging.Gateway.ConsumerGroupStatus
+Antiphon.Messaging.Gateway.IConsumerGroupObservationReader
+Antiphon.Messaging.Gateway.IConsumerGroupObservationReader.ObserveAsync(string! groupId, string! topic, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<Antiphon.Messaging.Gateway.ConsumerGroupObservation!>!
+Antiphon.Messaging.Gateway.KafkaConsumerGroupObservationReader
+Antiphon.Messaging.Gateway.KafkaConsumerGroupObservationReader.KafkaConsumerGroupObservationReader(Microsoft.Extensions.Options.IOptions<Antiphon.Messaging.Gateway.AntiphonGatewayOptions!>! options, System.TimeProvider! time, System.Func<Confluent.Kafka.IAdminClient!>? adminClientFactory = null) -> void
+Antiphon.Messaging.Gateway.KafkaConsumerGroupObservationReader.ObserveAsync(string! groupId, string! topic, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<Antiphon.Messaging.Gateway.ConsumerGroupObservation!>!
+Antiphon.Messaging.Gateway.KafkaConsumerGroupOffsetReader.KafkaConsumerGroupOffsetReader(Antiphon.Messaging.Gateway.IConsumerGroupObservationReader! reader) -> void
+Antiphon.Messaging.Gateway.LagAssessment
+Antiphon.Messaging.Gateway.LagAssessment.Consumed = 1 -> Antiphon.Messaging.Gateway.LagAssessment
+Antiphon.Messaging.Gateway.LagAssessment.Unconsumed = 2 -> Antiphon.Messaging.Gateway.LagAssessment
+Antiphon.Messaging.Gateway.LagAssessment.Unknown = 0 -> Antiphon.Messaging.Gateway.LagAssessment
+Antiphon.Messaging.Gateway.PartitionOffsetObservation
+Antiphon.Messaging.Gateway.PartitionOffsetObservation.CommittedNextOffset.get -> long?
+Antiphon.Messaging.Gateway.PartitionOffsetObservation.CommittedNextOffset.init -> void
+Antiphon.Messaging.Gateway.PartitionOffsetObservation.Partition.get -> int
+Antiphon.Messaging.Gateway.PartitionOffsetObservation.Partition.init -> void
+Antiphon.Messaging.Gateway.PartitionOffsetObservation.ReasonCode.get -> string?
+Antiphon.Messaging.Gateway.PartitionOffsetObservation.ReasonCode.init -> void
+Antiphon.Messaging.Gateway.PartitionOffsetObservation.Status.get -> Antiphon.Messaging.Gateway.PartitionOffsetStatus
+Antiphon.Messaging.Gateway.PartitionOffsetObservation.Status.init -> void
+Antiphon.Messaging.Gateway.PartitionOffsetStatus
+Antiphon.Messaging.Gateway.PartitionOffsetStatus.CommittedOffset = 0 -> Antiphon.Messaging.Gateway.PartitionOffsetStatus
+Antiphon.Messaging.Gateway.PartitionOffsetStatus.NoCommit = 1 -> Antiphon.Messaging.Gateway.PartitionOffsetStatus
+Antiphon.Messaging.Gateway.PartitionOffsetStatus.QueryFailed = 2 -> Antiphon.Messaging.Gateway.PartitionOffsetStatus
+static Antiphon.Messaging.Gateway.ConsumerLag.Assess(Antiphon.Messaging.Gateway.ConsumerGroupObservation! observation, int partition, long recordOffset) -> Antiphon.Messaging.Gateway.LagAssessment
+Antiphon.Messaging.Gateway.ConsumerGroupObservation.ConsumerGroupObservation(string! GroupId, string! Topic, Antiphon.Messaging.Gateway.ConsumerGroupStatus GroupStatus, string? ReasonCode, int? MemberCount, System.Collections.Generic.IReadOnlyList<Antiphon.Messaging.Gateway.PartitionOffsetObservation!>! Partitions, System.DateTimeOffset ObservedAt) -> void
+Antiphon.Messaging.Gateway.PartitionOffsetObservation.PartitionOffsetObservation(int Partition, Antiphon.Messaging.Gateway.PartitionOffsetStatus Status, long? CommittedNextOffset, string? ReasonCode) -> void

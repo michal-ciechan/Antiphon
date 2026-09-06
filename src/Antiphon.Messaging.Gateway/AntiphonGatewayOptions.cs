@@ -40,6 +40,10 @@ public sealed class AntiphonGatewayOptions
     /// </summary>
     public string AntiphonConsumerGroup { get; set; } = "antiphon-consumer";
 
+    public string? ExpectedAntiphonConsumerGroup { get; set; }
+    public bool RequireExpectedAntiphonConsumerGroup { get; set; }
+    public int ObservationBudgetSeconds { get; set; } = 10;
+
     /// <summary>Additive operational topic for inbound-unconsumed events. Not channels.inbound.</summary>
     public string InboundUnconsumedTopic { get; set; } = "channels.ops.inbound-unconsumed";
 
