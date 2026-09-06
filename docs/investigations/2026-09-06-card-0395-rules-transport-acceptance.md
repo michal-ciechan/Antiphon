@@ -6,7 +6,11 @@ contract has not been executed. Real-model compliance, native wire dispatch acce
 two-auto-compaction endurance arms were not attempted. No auth/quota failure is claimed, no native
 compact identity or elapsed live measurement exists, and no live acceptance gate is passed.
 
-Worktree: `C:\Antiphon\worktrees\card-task-dfc6f878`.
+Continuation worktree: `C:\Antiphon\worktrees\card-task-c7ff2da0`.
+Continuation branch: `feat/card-task-c7ff2da0-verification`, starting at the complete
+previous implementation tip `79edc300` without rewriting its commits.
+
+Previous worktree: `C:\Antiphon\worktrees\card-task-dfc6f878`.
 Branch: `feat/card-task-dfc6f878-implementation`, based on fetched `57db87f555173a13c9d1623bd28836479573e5a6`.
 Initial slices: `a06242c0` typed payload/store, `402d1481` settings/effective budget,
 `d6044934` durable barriers/refresh/FakeGrok E2Es, `8c0ec49b` dispatch fixtures/documentation.
@@ -31,7 +35,7 @@ The migration was generated with EF CLI; isolated tests applied their normal tes
 - Legacy resume/removal preflights retain history and require the explicit existing fresh action.
   Warm Grok pool reuse checks receipt revision and Ready state. No live migration was performed.
 
-## Known unfinished implementation/verification work
+## Historical initial-slice gaps (superseded by resumed implementation evidence)
 
 1. T-10 metadata ordering is incomplete: the file exists before launch, but normal PtyHost manifest
    and Herdr sidecar receipt persistence still occurs after native child/pane launch. Implement and
@@ -200,32 +204,32 @@ assertion, with a nonexistent disposable host source preventing actual child cre
 | Group | Status |
 |---|---|
 | PC-1 | Executed: separate truncation and newline-normalization mutations. |
-| PC-2 | Unrun; no failing assertion or green rerun claimed. |
-| PC-3 | Unrun; no failing assertion or green rerun claimed. |
-| PC-4 | Unrun; no failing assertion or green rerun claimed. |
-| PC-5 | Unrun; no failing assertion or green rerun claimed. |
-| PC-6 | Unrun; no failing assertion or green rerun claimed. |
-| PC-7 | Unrun; no failing assertion or green rerun claimed. |
+| PC-2 | Recorded red/restore/green: `PC-2-raw-body`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
+| PC-3 | Recorded red/restore/green: `PC-3-server-raw`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
+| PC-4 | Recorded red/restore/green: `PC-4-runner-raw`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
+| PC-5 | Recorded red/restore/green: `PC-5-server-env`, `PC-5-runner-env`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
+| PC-6 | Recorded red/restore/green: `PC-6-CR`, `PC-6-NUL`, `PC-6-4097-accepted`, `PC-6-4096-rejected`, `PC-6-alias`, `PC-6-equals`, `PC-6-later-occurrence`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
+| PC-7 | Recorded red/restore/green: `PC-7-server-NUL`, `PC-7-server-key`, `PC-7-server-bytes`, `PC-7-server-kind`, `PC-7-runner-NUL`, `PC-7-runner-key`, `PC-7-runner-bytes`, `PC-7-runner-kind`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
 | PC-8 | Executed runner-boundary mutation; see evidence above. |
 | PC-9 | Executed runner-boundary mutation; see evidence above. |
-| PC-10 | Unrun; no failing assertion or green rerun claimed. |
-| PC-11 | Unrun; no failing assertion or green rerun claimed. |
-| PC-12 | Unrun; no failing assertion or green rerun claimed. |
-| PC-13 | Unrun; no failing assertion or green rerun claimed. |
-| PC-14 | Unrun; no failing assertion or green rerun claimed. |
-| PC-15 | Unrun; no failing assertion or green rerun claimed. |
-| PC-16 | Unrun; no failing assertion or green rerun claimed. |
-| PC-17 | Unrun; no failing assertion or green rerun claimed. |
-| PC-18 | Unrun; no failing assertion or green rerun claimed. |
-| PC-19 | Unrun; no failing assertion or green rerun claimed. |
-| PC-20 | Unrun; no failing assertion or green rerun claimed. |
-| PC-21 | Unrun; no failing assertion or green rerun claimed. |
-| PC-22 | Unrun; no failing assertion or green rerun claimed. |
-| PC-23 | Unrun; no failing assertion or green rerun claimed. |
-| PC-24 | Unrun; no failing assertion or green rerun claimed. |
-| PC-25 | Unrun; no failing assertion or green rerun claimed. |
-| PC-26 | Unrun; no failing assertion or green rerun claimed. |
-| PC-27 | Unrun; no failing assertion or green rerun claimed. |
+| PC-10 | Recorded red/restore/green: `PC-10-before-replace`, `PC-10-swallow-replace`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
+| PC-11 | Recorded red/restore/green: `PC-11-capability`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
+| PC-12 | Recorded red/restore/green: `PC-12-missing`, `PC-12-version`, `PC-12-generation`, `PC-12-hash`, `PC-12-count`, `PC-12-path`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
+| PC-13 | Recorded red/restore/green: `PC-13-pty-manifest`, `PC-13-herdr-sidecar`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
+| PC-14 | Recorded red/restore/green: `PC-14-cwd`, `PC-14-premature-delete`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
+| PC-15 | Recorded red/restore/green: `PC-15-flush`, `PC-15-now-sendnow`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
+| PC-16 | Recorded red/restore/green: `PC-16-hash`, `PC-16-id`, `PC-16-generation`, `PC-16-prompt`, `PC-16-end`, `PC-16-provider`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
+| PC-17 | Recorded red/restore/green: `PC-17-settlement`, `PC-17-channel-main`, `PC-17-channel-machine`, `PC-17-deferred`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
+| PC-18 | Recorded red/restore/green: `PC-18-boot-reply`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
+| PC-19 | Recorded red/restore/green: `PC-19-watermark-before-queue`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
+| PC-20 | Recorded red/restore/green: `PC-20-sync`, `PC-20-startup`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
+| PC-21 | Recorded red/restore/green: `PC-21-turn-end`, `PC-21-mid-tool`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
+| PC-22 | Recorded red/restore/green: `PC-22-database-index`, `PC-22-coverage`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
+| PC-23 | Recorded red/restore/green: `PC-23-append-gate`, `PC-23-named-agent`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
+| PC-24 | Recorded red/restore/green: `PC-24-deadline`, `PC-24-followon`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
+| PC-25 | Recorded red/restore/green: `PC-25-established-kill`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
+| PC-26 | Recorded red/restore/green: `PC-26-legacy-policy`, `PC-26-silent-fresh`, `PC-26-removal`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
+| PC-27 | Recorded red/restore/green: `PC-27-unacknowledged`, `PC-27-invalid-receipt`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
 | PC-28 | Unrun; no failing assertion or green rerun claimed. |
 | PC-29 | Unrun; no failing assertion or green rerun claimed. |
 | PC-30 | Unrun; no failing assertion or green rerun claimed. |
@@ -233,8 +237,8 @@ assertion, with a nonexistent disposable host source preventing actual child cre
 
 ## Handoff
 
-Continue Code on this branch, starting with the listed T-6/T-10 lifecycle gaps and missing named
-tests. Complete every unrun V/R/PC case, then the mandatory isolated real-wire and real-model gates.
+Continue Code on the continuation branch. The historical T-6/T-10 implementation gaps above
+were addressed by the resumed implementation; do not rebuild them. Finish the missing acceptance harnesses and remaining named tests. Complete every unrun V/R/PC case, then the mandatory isolated real-wire and real-model gates.
 Keep the card open and do not hand this implementation to Land as a completed fix.
 
 ## Resumed implementation evidence
@@ -313,3 +317,16 @@ Additional mutation evidence follows. Full actual assertion text and exact elaps
 | PC-17-deferred | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: provider.GetRequiredService<DeferredReportSweepMarks>().ShouldHandOff(sessionId, end.Sequence, null, DateTime.UtcNow, 3600) should be True but was` | 50.343 / 48.407 s |
 
 Current archive SHA-256: `0b56117e0c5a9bc5f1172a1e8760a3f4e6d53173661dd6125fc9d30f5de71e05`. Earlier archive hash above identifies the prior four-mutation artifact. All still-unrun V/R/PC rows remain open; related newer deterministic checks do not certify the broader gate. No live acceptance call or real auto-compaction has yet been executed.
+
+## Continuation c7ff2da0 — active verification
+
+2026-09-06: reconciled the stale PC summary table against the already-committed mutation
+evidence. This is a documentation correction, not a new execution or broader V/R certification.
+PC-28..31 remain unrun. The V/R tables remain conservative pending case-level verification.
+
+Prerequisite checks: Docker server 29.5.3 and grok/dotnet/python/pwsh are available.
+The conventional `%LOCALAPPDATA%\Antiphon\grok-test-home\auth.json` is absent.
+Requested an authenticated isolated test-home path or approved credential profile; no credential
+store was read or copied, and no live provider refusal is claimed from that file check.
+The full dispatch/endurance acceptance classes are absent at the starting tip;
+`GrokRulesNativeReadWireTests` is calibration only. Live gates remain unrun.
