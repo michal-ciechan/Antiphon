@@ -78,6 +78,10 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
   const [replyStyle, setReplyStyle] = useState<AgentReplyStyle>('Normal')
   const [policyRefreshMode, setPolicyRefreshMode] = useState<PolicyRefreshMode>('Auto')
   const [sessionBackend, setSessionBackend] = useState<SessionBackend>('PtyHost')
+  const [herdrWorkspaceLabel, setHerdrWorkspaceLabel] = useState('')
+  const [herdrTabLabel, setHerdrTabLabel] = useState('')
+  const [seededWorkspaceLabel, setSeededWorkspaceLabel] = useState<string | null>(null)
+  const [seededTabLabel, setSeededTabLabel] = useState<string | null>(null)
   const [bundleKeys, setBundleKeys] = useState<string[]>([])
   const [seededBundlesFor, setSeededBundlesFor] = useState<string | null>(null)
   const [loadingPreset, setLoadingPreset] = useState(false)
@@ -128,6 +132,10 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
     setPolicyRefreshMode(agent.policyDrift?.mode ?? 'Auto')
     // Older server omits the field — PtyHost is what that means.
     setSessionBackend(agent.sessionBackend ?? 'PtyHost')
+    setHerdrWorkspaceLabel(agent.herdrWorkspaceLabel ?? '')
+    setHerdrTabLabel(agent.herdrTabLabel ?? '')
+    setSeededWorkspaceLabel(agent.herdrWorkspaceLabel ?? null)
+    setSeededTabLabel(agent.herdrTabLabel ?? null)
     setConfirmingDelete(false)
     setSeededBundlesFor(null)
   }, [agent, opened])
@@ -170,6 +178,8 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
       })
     }
 
+    const workspaceChanged = (herdrWorkspaceLabel.trim() || null) !== (seededWorkspaceLabel || null)
+    const tabChanged = (herdrTabLabel.trim() || null) !== (seededTabLabel || null)
     updateAgent.mutate(
       {
         name: name.trim(),
@@ -194,6 +204,11 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
         sessionBackend,
         // Always sent, so an emptied picker detaches: null on the request means "leave unchanged".
         bundleKeys,
+        // CARD-0384: only changed fields; empty string is the explicit clear (not undefined).
+        ...(workspaceChanged
+          ? { herdrWorkspaceLabel: herdrWorkspaceLabel.trim() }
+          : {}),
+        ...(tabChanged ? { herdrTabLabel: herdrTabLabel.trim() } : {}),
       },
       {
         onSuccess: () => {
@@ -300,6 +315,24 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
             onChange={(value) => setSessionBackend(value as SessionBackend)}
           />
         </Input.Wrapper>
+        {sessionBackend === 'Herdr' && (
+          <>
+            <TextInput
+              label="Workspace label"
+              description="Dedicated workspace name. Changes apply on the next launch; saving does not move a live session."
+              placeholder="project name"
+              value={herdrWorkspaceLabel}
+              onChange={(event) => setHerdrWorkspaceLabel(event.currentTarget.value)}
+            />
+            <TextInput
+              label="Tab label"
+              description="Dedicated single-pane tab. Changes apply on the next launch; saving does not move a live session."
+              placeholder="automatic placement"
+              value={herdrTabLabel}
+              onChange={(event) => setHerdrTabLabel(event.currentTarget.value)}
+            />
+          </>
+        )}
 
         <Select
           label="Auto-compact"

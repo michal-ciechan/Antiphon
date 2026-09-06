@@ -176,6 +176,10 @@ export interface AgentSummaryDto {
    * 'PtyHost'.
    */
   sessionBackend?: SessionBackend
+  /** CARD-0384: optional herdr workspace label. Null = project default. */
+  herdrWorkspaceLabel?: string | null
+  /** CARD-0384: optional dedicated herdr tab label. Null = last-pane then allocator. */
+  herdrTabLabel?: string | null
   /**
    * The live session was launched with instruction bundles the repo has since moved on from — an
    * edited bundle file, an attachment added or removed, a changed reply style (CARD-0058).
@@ -365,6 +369,9 @@ export interface CreateAgentRequest {
   bundleKeys?: string[] | null
   /** Omit/null = no agent-specific appended system prompt. */
   systemPromptAppend?: string | null
+  /** CARD-0384. Omit/null/blank = unpinned. */
+  herdrWorkspaceLabel?: string | null
+  herdrTabLabel?: string | null
 }
 
 export interface UpdateAgentRequest {
@@ -415,6 +422,12 @@ export interface UpdateAgentRequest {
    * to Auto. `Auto` is the stored default (AlwaysOn Claude relaunches; others are notified).
    */
   policyRefreshMode?: PolicyRefreshMode | null
+  /**
+   * CARD-0384. Omit/null = leave unchanged; empty string = clear. Same contract as
+   * systemPromptAppend.
+   */
+  herdrWorkspaceLabel?: string | null
+  herdrTabLabel?: string | null
 }
 
 export interface DraftAgentRequest {

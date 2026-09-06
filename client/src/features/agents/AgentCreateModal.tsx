@@ -7,6 +7,7 @@ import {
   Modal,
   MultiSelect,
   Select,
+  SegmentedControl,
   Stack,
   Switch,
   Text,
@@ -16,8 +17,8 @@ import {
 import { notifications } from '@mantine/notifications'
 import { useMemo, useState } from 'react'
 import { TbSparkles } from 'react-icons/tb'
-import type { AgentAssignmentPolicy, AgentModelLevel, AgentReplyStyle } from '../../api/agents'
-import { useCreateAgent, useDraftAgent, useInstructionBundles } from '../../api/agents'
+import type { AgentAssignmentPolicy, AgentModelLevel, AgentReplyStyle, SessionBackend } from '../../api/agents'
+import { SESSION_BACKEND_OPTIONS, useCreateAgent, useDraftAgent, useInstructionBundles } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
 import { useSetupCatalog, type AgentPresetDto } from '../../api/projectSetup'
 import { DirectoryAutocomplete } from './DirectoryAutocomplete'
@@ -58,6 +59,9 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
   const [boardId, setBoardId] = useState<string | null>(null)
   const [bundleKeys, setBundleKeys] = useState<string[]>([])
   const [systemPromptAppend, setSystemPromptAppend] = useState('')
+  const [sessionBackend, setSessionBackend] = useState<SessionBackend>('PtyHost')
+  const [herdrWorkspaceLabel, setHerdrWorkspaceLabel] = useState('')
+  const [herdrTabLabel, setHerdrTabLabel] = useState('')
   const [presetKey, setPresetKey] = useState<string | null>('orchestrator')
   const [creationError, setCreationError] = useState<string | null>(null)
   const catalog = useSetupCatalog(opened)
@@ -93,6 +97,9 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
     setBoardId(null)
     setBundleKeys([])
     setSystemPromptAppend('')
+    setSessionBackend('PtyHost')
+    setHerdrWorkspaceLabel('')
+    setHerdrTabLabel('')
     setPresetKey('orchestrator')
     setFilledKey(null)
     setCreationError(null)
@@ -145,6 +152,9 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
         remoteControlEnabled: rc.supported && remoteControlEnabled,
         boardId: boardId ?? undefined,
         systemPromptAppend: systemPromptAppend.trim() || null,
+        sessionBackend,
+        herdrWorkspaceLabel: herdrWorkspaceLabel.trim() || null,
+        herdrTabLabel: herdrTabLabel.trim() || null,
         preset: presetKey,
         ...(filledKey
           ? { alwaysOn, bundleKeys }
@@ -291,6 +301,38 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
           onChange={(event) => setSystemPromptAppend(event.currentTarget.value)}
           minRows={3}
         />
+        <Input.Wrapper
+          label="Session backend"
+          description={
+            SESSION_BACKEND_OPTIONS.find((option) => option.value === sessionBackend)?.description ?? ''
+          }
+        >
+          <SegmentedControl
+            fullWidth
+            mt={4}
+            data={SESSION_BACKEND_OPTIONS.map(({ value, label }) => ({ value, label }))}
+            value={sessionBackend}
+            onChange={(value) => setSessionBackend(value as SessionBackend)}
+          />
+        </Input.Wrapper>
+        {sessionBackend === 'Herdr' && (
+          <>
+            <TextInput
+              label="Workspace label"
+              description="Dedicated workspace name. Changes apply on the next launch."
+              placeholder="project name"
+              value={herdrWorkspaceLabel}
+              onChange={(event) => setHerdrWorkspaceLabel(event.currentTarget.value)}
+            />
+            <TextInput
+              label="Tab label"
+              description="Dedicated single-pane tab. Changes apply on the next launch."
+              placeholder="automatic placement"
+              value={herdrTabLabel}
+              onChange={(event) => setHerdrTabLabel(event.currentTarget.value)}
+            />
+          </>
+        )}
         <Switch
           label="Always on"
           description="Auto-start at boot and auto-restart on crash (backing off, never giving up). Stop suspends until the next manual start."
