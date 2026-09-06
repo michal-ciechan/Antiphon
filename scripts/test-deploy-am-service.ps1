@@ -17,6 +17,9 @@ function Assert-Throws { param([scriptblock]$Action, [string]$Name) try { & $Act
 
 $root = Split-Path -Parent $PSScriptRoot; $context = Join-Path $root 'src'; $dockerfile = Join-Path $context 'Antiphon.Messaging.Service\Dockerfile'; $fixture = Join-Path ([IO.Path]::GetTempPath()) ('am-service-deploy-' + [guid]::NewGuid().ToString('N'))
 try {
+    $serverProfile = Get-Content -Raw (Join-Path $root 'server/appsettings.json') | ConvertFrom-Json
+    $serviceProfile = Get-Content -Raw (Join-Path $context 'Antiphon.Messaging.Service/appsettings.json') | ConvertFrom-Json
+    Assert-True ($serverProfile.AntiphonMessaging.ConsumerGroup -eq 'antiphon-server-bridge' -and $serviceProfile.Kafka.AntiphonConsumerGroup -ceq $serverProfile.AntiphonMessaging.ConsumerGroup -and $serviceProfile.Kafka.ExpectedAntiphonConsumerGroup -ceq $serverProfile.AntiphonMessaging.ConsumerGroup -and $serviceProfile.Kafka.ConsumerGroup -cne $serverProfile.AntiphonMessaging.ConsumerGroup) 'repository profiles agree on the server inbound group'
     New-Item -ItemType Directory -Force $fixture | Out-Null
     foreach ($dir in @('one', 'two', 'three')) { New-Item -ItemType Directory -Force (Join-Path $fixture $dir) | Out-Null; [IO.File]::WriteAllText((Join-Path $fixture "$dir\file.txt"), $dir) }
     $fixtureDockerfile = Join-Path $fixture 'Dockerfile'

@@ -1,5 +1,8 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Messaging.Client;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Api.Endpoints;
 
@@ -9,6 +12,11 @@ public static class ChannelEndpoints
     {
         var channels = app.MapGroup("/api/channels")
             .WithTags("Channels");
+
+        channels.MapGet("/consumer", (
+            IOptions<AntiphonMessagingOptions> messaging,
+            IOptions<ChannelBridgeSettings> bridge) =>
+            Results.Ok(ChannelConsumerIdentityDto.From(messaging.Value, bridge.Value)));
 
         channels.MapGet("/", async (
             ChatChannelService service,
