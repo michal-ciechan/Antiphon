@@ -857,6 +857,14 @@ internal sealed class HerdrPaneChild : ISessionChild
         try
         {
             var typed = HerdrLaunchScript.TypedCommand(scriptPath);
+            if (request.InstalledGrokRulesReceipt is not null)
+                new HerdrPaneSidecar
+                {
+                    SessionId = request.SessionId, WorkspaceKey = opts.WorkspaceKey,
+                    WorkspaceId = workspaceId, TabId = tabId, PaneId = paneId, ShellPid = shellPid,
+                    LaunchPending = true, GrokRulesReceipt = request.InstalledGrokRulesReceipt,
+                    UpdatedAtUtc = DateTime.UtcNow,
+                }.SaveAtomic(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, request.SessionId));
             await _client.PaneSendTextAsync(paneId, typed, ct);
             await _client.PaneSendKeysAsync(paneId, ["enter"], ct);
 

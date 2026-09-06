@@ -253,6 +253,13 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         {
             if (useHerdr)
             {
+                if (request.InstalledGrokRulesReceipt is { } receipt)
+                    new HerdrPaneSidecar
+                    {
+                        SessionId = request.SessionId, GrokRulesReceipt = receipt, LaunchPending = true,
+                        WorkspaceKey = request.Herdr!.WorkspaceKey, WorkspaceId = "", TabId = "", PaneId = "",
+                        UpdatedAtUtc = DateTime.UtcNow,
+                    }.SaveAtomic(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, request.SessionId));
                 await session.StartHerdrAsync(
                     request,
                     _herdrClient!,
@@ -265,6 +272,13 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             }
             else
             {
+                if (request.InstalledGrokRulesReceipt is { } receipt)
+                    new PtyHostManifest
+                    {
+                        SessionId = request.SessionId, GrokRulesReceipt = receipt, LaunchPending = true,
+                        PipeName = PtyHostProtocol.PipeNameFor(request.SessionId), HostPid = 0,
+                        HostStartTimeUtc = DateTime.MinValue, CreatedAtUtc = DateTime.UtcNow,
+                    }.SaveAtomic(PtyHostManifest.PathFor(_settings.PtyHostManifestDir, request.SessionId));
                 await session.StartAsync(request, _launcher, ct);
             }
 
@@ -734,7 +748,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (_sessions.ContainsKey(manifest.SessionId))
                 continue;
 
-            if (probe.IsAlive(manifest.HostPid, manifest.HostStartTimeUtc))
+            if (manifest.HostPid > 0 && probe.IsAlive(manifest.HostPid, manifest.HostStartTimeUtc))
             {
                 var session = new RunnerSession(manifest.SessionId, _settings, _events, _logger, _transcriptClaims);
                 try

@@ -9,6 +9,7 @@ using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -25,8 +26,26 @@ public sealed class GrokRulesRefreshService(
             .Select(s => s.Id).ToListAsync(ct);
         foreach (var id in ids)
         {
-            var session = await db.AgentSessions.SingleAsync(s => s.Id == id, ct);
-            if (session.GrokRulesState == GrokRulesState.Failed) continue;
+            try { await RecoverSessionAsync(id, ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                scope.ServiceProvider.GetService<ILogger<GrokRulesRefreshService>>()?
+                    .LogWarning("Rules recovery for {SessionId} failed ({ErrorType}); remaining sessions will still be reconciled", id, ex.GetType().Name);
+            }
+        }
+    }
+
+    internal async Task RecoverSessionAsync(Guid id, CancellationToken ct)
+    {
+        await using var scope = scopes.CreateAsyncScope();
+        if (scope.ServiceProvider.GetService<ILaunchOwnership>()?.Owns(id) == true) return;
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == id, ct);
+        // Starting has not passed provider readiness; the launch recovery owner handles it.
+        if (session.Status == SessionStatus.Starting) return;
+        try
+        {
+            if (session.GrokRulesState == GrokRulesState.Failed) return;
             var receipt = Receipt(session);
             if (receipt?.Generation != session.GrokRulesGeneration)
             {
@@ -43,6 +62,20 @@ public sealed class GrokRulesRefreshService(
             if (session.GrokRulesState == GrokRulesState.Ready)
                 await QueueLaunchBriefAsync(db, session, queue, ct);
             await queue.FlushIfIdleAsync(id, ct);
+        }
+        catch (Exception ex) when (ex is ConflictException or GrokRulesHttpException)
+        {
+            await db.Entry(session).ReloadAsync(ct);
+            session.GrokRulesState = GrokRulesState.Failed;
+            session.GrokRulesFailure = session.GrokRulesReadyAt is null
+                ? "grok_rules_initialization_failed: revision_mismatch" : "grok_rules_refresh_failed: revision_mismatch";
+            await db.SaveChangesAsync(ct);
+        }
+        finally
+        {
+            await db.Entry(session).ReloadAsync(ct);
+            if (session.GrokRulesState == GrokRulesState.Failed && session.GrokRulesReadyAt is null)
+                await scope.ServiceProvider.GetRequiredService<AgentSessionService>().FailRecoveredRulesStartupAsync(id, ct);
         }
     }
     public static string Header(Guid id) => $"[antiphon-grok-rules:{id:N}]";
@@ -249,6 +282,8 @@ public sealed class GrokRulesRefreshService(
                 CreatedAt = clock.GetUtcNow().UtcDateTime, RulesRefreshKey = key,
                 RulesReceiptJson = session.GrokRulesReceiptJson, RulesChainId = chain ?? id,
                 RulesFollowOnCount = followOn, RulesBoundarySequence = boundary,
+                RulesDeadlineAt = boundary is null && session.Status == SessionStatus.Running
+                    ? clock.GetUtcNow().UtcDateTime.AddSeconds(settings.Value.InitializationTimeoutSeconds) : null,
                 Body = Prompt(id, receipt),
             };
             rows.Add(row);
@@ -300,6 +335,14 @@ public sealed class GrokRulesRefreshService(
                 var grace = graceScope.ServiceProvider.GetService<IOptions<Antiphon.Server.Application.Settings.DelegationSettings>>()
                     ?.Value.FinalMessageGraceSeconds ?? 120;
                 if (end is not null && now >= end.CreatedAt.AddSeconds(grace)) { Fail(session, row, "missing_ack"); return; }
+            }
+            else
+            {
+                using var attemptScope = scopes.CreateScope();
+                var ceiling = attemptScope.ServiceProvider.GetService<IOptions<Antiphon.Server.Application.Settings.SupervisionSettings>>()
+                    ?.Value.DeliveryVerification.MaxDeliveryAttempts ?? 3;
+                if (row.Status == QueuedMessageStatus.Pending && row.DeliveryVerdict is not null
+                    && row.DeliveryAttempts >= Math.Max(1, ceiling)) { Fail(session, row, "delivery_failed"); return; }
             }
         }
         if (row.RulesDeadlineAt is { } deadline && now >= deadline) Fail(session, row, "timeout");

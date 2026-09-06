@@ -57,6 +57,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
 
     /// <summary>CARD-0323: last typed launch-script file contents, captured at <c>pane.send_text</c>.</summary>
     public string? LastLaunchScriptContent { get; private set; }
+    public Action<string>? BeforeRequest { get; set; }
 
     /// <summary>CARD-0187: delay before the launch-script send_text is reflected in pane.agent.</summary>
     public int LaunchScriptDetectDelayMs { get; set; }
@@ -229,6 +230,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
                 _requests.Enqueue(request);
 
                 var method = request.GetProperty("method").GetString()!;
+                BeforeRequest?.Invoke(method);
                 if (method == "events.subscribe")
                 {
                     // Long-lived on a detached task so AcceptLoop can keep serving pane.get / etc.

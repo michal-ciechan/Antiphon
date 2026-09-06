@@ -667,6 +667,29 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         }
     }
 
+    internal async Task FailRecoveredRulesStartupAsync(Guid sessionId, CancellationToken ct)
+    {
+        if (_launchOwnership?.Owns(sessionId) == true) return;
+        var session = await _db.AgentSessions.SingleAsync(s => s.Id == sessionId, ct);
+        await _db.Entry(session).ReloadAsync(ct);
+        if (session.GrokRulesState != GrokRulesState.Failed || session.GrokRulesReadyAt is not null
+            || session.Status is not (SessionStatus.Starting or SessionStatus.Running)) return;
+        var sessionText = sessionId.ToString("D");
+        var agentId = await _db.Agents.Where(a => a.PersistentSessionId == sessionText)
+            .Select(a => a.Id).FirstOrDefaultAsync(ct);
+        await KillRunnerSessionAsync(sessionId);
+        await FailInterruptedLaunchAsync(session, agentId,
+            session.GrokRulesFailure ?? "grok_rules_initialization_failed", 0, null, ct);
+        foreach (var attempt in await _db.RunAttempts.Where(a => a.AgentSessionId == sessionId && a.CompletedAt == null).ToListAsync(ct))
+            if (!RunAttemptStateMachine.IsTerminal(attempt.Phase))
+            {
+                RunAttemptStateMachine.Transition(attempt, RunPhase.Failed, UtcNow());
+                attempt.ErrorDetails = session.FailureReason;
+            }
+        await _db.SaveChangesAsync(ct);
+        // The existing dead-session task reconciler releases task claims after observing the exit.
+    }
+
     private async Task FailInterruptedLaunchAsync(
         AgentSession session,
         Guid agentId,

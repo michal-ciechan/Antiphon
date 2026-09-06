@@ -18,6 +18,26 @@ namespace Antiphon.Tests.Application;
 public sealed class GrokRulesInitializationTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Exhausted_delivery_fails_only_after_a_persisted_unconfirmed_verdict(bool inFlight)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Rules.ReconcileAsync(fixture.Id, CancellationToken.None);
+        await using var db = fixture.Db();
+        var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == fixture.Id);
+        row.RulesDeadlineAt.ShouldNotBeNull("startup deadline begins at ready eligibility even before typing");
+        row.DeliveryAttempts = 3;
+        row.Status = inFlight ? QueuedMessageStatus.Sent : QueuedMessageStatus.Pending;
+        row.DeliveryVerdict = inFlight ? null : DeliveryVerdict.NoTranscriptRecord;
+        await db.SaveChangesAsync();
+        await fixture.Rules.ReconcileAsync(fixture.Id, CancellationToken.None);
+        var session = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == fixture.Id);
+        session.GrokRulesState.ShouldBe(inFlight ? GrokRulesState.Pending : GrokRulesState.Failed);
+        if (!inFlight) session.GrokRulesFailure.ShouldBe("grok_rules_initialization_failed: delivery_failed");
+    }
+
+    [Test]
     [Arguments("valid", true)]
     [Arguments("wrong_id", false)]
     [Arguments("wrong_hash", false)]
