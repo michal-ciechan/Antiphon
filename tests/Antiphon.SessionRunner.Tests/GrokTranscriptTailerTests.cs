@@ -754,6 +754,16 @@ public class GrokTranscriptTailerTests
         end.ApiErrorStatus.ShouldBe(402);
     }
 
+    [Test]
+    public void Native_1_0_13_auto_compactions_keep_five_distinct_identities_without_ending_the_turn()
+    {
+        var parts = NormalizeFixture("grok-1.0.13-auto-compaction.jsonl");
+        var boundaries = parts.Where(p => p.Kind == TranscriptKinds.CompactBoundary).ToArray();
+        boundaries.Select(p => p.Uuid).ShouldBe(new[] { 9, 16, 23, 30, 37 }
+            .Select(n => $"b4988433-4595-40c9-84ad-8c6cb63fe1e2-{n}").ToArray());
+        parts.ShouldNotContain(p => p.Kind == TranscriptKinds.TurnEnd);
+    }
+
     private static List<TranscriptPart> NormalizeFixture(string fileName)
     {
         var path = Path.Combine(AppContext.BaseDirectory, "Fixtures", fileName);

@@ -52,6 +52,7 @@ public sealed class AgentControlService
     private readonly PolicyRefreshService? _policyRefresh;
     private readonly OrchestratorWorkspaceWarningService? _workspaceWarning;
     private readonly HerdrSupervisionStateService _herdrSupervision;
+    private readonly global::Antiphon.SessionRunner.Contracts.GrokRulesSettings _grokRulesSettings;
 
     public AgentControlService(
         AppDbContext db,
@@ -77,7 +78,8 @@ public sealed class AgentControlService
         PolicyRefreshService? policyRefresh = null,
         OrchestratorWorkspaceWarningService? workspaceWarning = null,
         HerdrSupervisionStateService? herdrSupervision = null,
-        IOptions<SupervisionSettings>? supervision = null)
+        IOptions<SupervisionSettings>? supervision = null,
+        IOptions<global::Antiphon.SessionRunner.Contracts.GrokRulesSettings>? grokRulesSettings = null)
     {
         _db = db;
         _agentService = agentService;
@@ -99,6 +101,7 @@ public sealed class AgentControlService
         _modelAvailability = modelAvailability;
         _policyRefresh = policyRefresh;
         _workspaceWarning = workspaceWarning;
+        _grokRulesSettings = grokRulesSettings?.Value ?? new();
         _herdrSupervision = herdrSupervision ?? new HerdrSupervisionStateService(
             db, supervision ?? Options.Create(new SupervisionSettings()), timeProvider, launchQueue, eventBus);
     }
@@ -350,7 +353,7 @@ public sealed class AgentControlService
 
         if (previous is not null)
         {
-                GrokRulesLaunchValidation.Validate(spec with { Backend = agent.SessionBackend }, new());
+                GrokRulesLaunchValidation.Validate(spec with { Backend = agent.SessionBackend }, _grokRulesSettings);
                 GrokRulesRefreshService.PreflightResume(previous, spec.GrokRulesPayload);
                 var resumeNow = UtcNow();
                 previous.DefinitionName = definitionName;

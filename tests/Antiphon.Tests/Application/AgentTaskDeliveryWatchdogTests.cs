@@ -1361,8 +1361,11 @@ public class AgentTaskDeliveryWatchdogTests
 
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        replies.DelayAfterOpenTaskLoadedAsync = async (_, ct) =>
+        replies.DelayAfterOpenTaskLoadedAsync = async (sessionId, ct) =>
         {
+            // The class shares its test database. Only hold this race's live settlement;
+            // the sweep may also encounter open tasks left by other cases in the class.
+            if (sessionId != task.AgentSessionId) return;
             entered.TrySetResult();
             using var reg = ct.Register(() => release.TrySetCanceled());
             await release.Task.WaitAsync(ct);

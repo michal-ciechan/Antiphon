@@ -8,6 +8,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Domain.StateMachine;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -93,6 +94,7 @@ public sealed class CardService : IScheduledCardActions
     private readonly ApiKeyEnvResolver? _apiKeyEnvResolver;
     private readonly DelegationSettings _delegationSettings;
     private readonly CardsSettings _cards;
+    private readonly GrokRulesSettings _grokRulesSettings;
     // CARD-0347: optional like the launch resolver. Production always registers it; a fixture
     // that omits it gets no GitHub push on close/reopen.
     private readonly TrackerCardStatePushService? _trackerStatePush;
@@ -112,7 +114,8 @@ public sealed class CardService : IScheduledCardActions
         IOptions<DelegationSettings>? delegationSettings = null,
         AgentSessionLaunchComposer? launchComposer = null,
         IOptions<CardsSettings>? cards = null,
-        TrackerCardStatePushService? trackerStatePush = null)
+        TrackerCardStatePushService? trackerStatePush = null,
+        IOptions<GrokRulesSettings>? grokRulesSettings = null)
     {
         _db = db;
         _agentRegistry = agentRegistry;
@@ -129,6 +132,7 @@ public sealed class CardService : IScheduledCardActions
         _delegationSettings = delegationSettings?.Value ?? new DelegationSettings();
         _cards = cards?.Value ?? new CardsSettings();
         _trackerStatePush = trackerStatePush;
+        _grokRulesSettings = grokRulesSettings?.Value ?? new();
     }
 
     public async Task<CardDto> CreateAsync(Guid boardId, CreateCardRequest request, CancellationToken ct)
@@ -1286,6 +1290,13 @@ public sealed class CardService : IScheduledCardActions
             tuiProfileRevisionId = resolved.ProfileRevisionId;
             effectiveModelId = resolved.EffectiveModelId;
         }
+
+        // Validate the final profile argv and typed rules before claiming a card/session.
+        // Composition alone cannot see unsafe rules supplied by the selected profile.
+        GrokRulesLaunchValidation.Validate(spec with
+        {
+            Backend = card.AssignedAgent?.SessionBackend ?? spec.Backend
+        }, _grokRulesSettings);
 
         // CARD-0212: refuse an explicit remote-control name on a kind that cannot take it
         // before claiming a session row, so a 409 leaves no session behind.

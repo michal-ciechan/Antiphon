@@ -46,6 +46,19 @@ public sealed class GrokRulesAutoCompactionCalibrationTests
         stub.Script.SetResponder(StubEndpointKeys.GrokResponses, request => {
             using var parsed = JsonDocument.Parse(request);
             var node = parsed.RootElement;
+            var lastUser = node.GetProperty("input").EnumerateArray()
+                .LastOrDefault(i => i.TryGetProperty("role", out var role) && role.GetString() == "user");
+            if (lastUser.ValueKind != JsonValueKind.Undefined
+                && lastUser.GetProperty("content").ToString().Contains("Respond with ONLY the <summary>"))
+                return new ScriptedTextTurn("<summary>" + nonce + " The user requested an isolated native tool reading calibration. "
+                    + "No repository changes, external actions, decisions, or delegated work were requested. "
+                    + "The standing rules pointer is " + receipt.Path + ". The assistant has read disposable workload files through the real read_file tool. "
+                    + "Continue the pending reading task through the remaining workload files until completion. "
+                    + "The original request was: Read the entire standing rules file, including all continuation reads. "
+                    + "The only experiment is to observe the CLI's own automatic context compaction as tool output accumulates. "
+                    + "All files are neutral synthetic acceptance material and no acceptance result should be invented. "
+                    + "The expected final calibration marker is NATIVE-READ-CALIBRATION-COMPLETE. "
+                    + "No test or production state has been changed by the reading work, and no outstanding user approval is needed.</summary>");
             if (!node.TryGetProperty("tools", out var tools) || tools.GetArrayLength() <= 1 || !request.Contains(nonce))
                 return new ScriptedTextTurn(nonce + " The isolated calibration session is reading a disposable text file through native read_file tools. No repository changes or external actions were requested. Continue the pending reading task until the requested tool exchanges are complete, then report completion. The only purpose is to observe automatic context compaction in the CLI; all content is synthetic neutral material and the real rules-file location remains in the original system bootstrap. Preserve that pointer and the current task.");
             File.WriteAllText(Path.Combine(root, $"user-request-{++calls:D3}.json"), request);

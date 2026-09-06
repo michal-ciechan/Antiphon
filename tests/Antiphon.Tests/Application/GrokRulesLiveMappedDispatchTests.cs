@@ -9,6 +9,8 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
+using Antiphon.Messaging.Client;
+using Antiphon.Messaging.Client.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -59,17 +61,17 @@ public sealed class GrokRulesLiveMappedDispatchTests
         for (var i = 0; i < indexes.Length; i++) while (string.IsNullOrWhiteSpace(lines[indexes[i]])) indexes[i]--;
         var expected = indexes.Select(i => lines[i].Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Last()).ToArray();
         var nonce = "LIVE-" + Guid.NewGuid().ToString("N");
-        var goal = nonce + "-HEAD\nThis is a harmless transport acceptance. Make no code changes or external calls.\n"
+        var goal = nonce + "-HEAD\nThis is a harmless transport acceptance in a disposable worktree. Make no external calls.\n"
             + "From your standing rules file, report the final whitespace-delimited word on each of these one-based lines: "
             + string.Join(", ", indexes.Select(i => i + 1)) + ". Label the three answers early, middle, tail. Preserve punctuation.\n"
-            + "Also report the HEAD, MIDDLE and TAIL markers found in this brief. This completes the requested work.\n\n"
+            + "Also report the HEAD, MIDDLE and TAIL markers found in this brief. Write the three answers and all three markers to acceptance-result.txt in your current working directory, and leave it uncommitted. That file is the only requested change and completes the work.\n\n"
             + string.Join("\n\n", Enumerable.Range(1, 75).Select(i => (i == 38 ? nonce + "-MIDDLE\n" : "")
                 + $"Neutral paragraph {i:D3}: the phrase \"disposable acceptance material\" exists only to exercise full multiline brief delivery."))
             + "\n" + nonce + "-TAIL";
         await File.WriteAllTextAsync(Path.Combine(root, "goal.md"), goal, ct);
         await File.WriteAllTextAsync(Path.Combine(root, "expected.json"), JsonSerializer.Serialize(new { indexes, expected }), ct);
         var wrapper = Path.Combine(root, "dispatch.ps1");
-        await File.WriteAllTextAsync(wrapper,"param($Script,$GoalFile,$Repo)\n$goalText=Get-Content -LiteralPath $GoalFile -Raw\n& $Script Code -Kind Grok -Level High -Dir $Repo -Worktree -ReadOnly -Goal $goalText -Title 'CARD-0395 live acceptance' -NoInheritEnv\nexit $LASTEXITCODE\n",ct);
+        await File.WriteAllTextAsync(wrapper,"param($Script,$GoalFile,$Repo)\n$goalText=Get-Content -LiteralPath $GoalFile -Raw\n& $Script Code -Kind Grok -Level High -Dir $Repo -Worktree -Goal $goalText -Title 'CARD-0395 live acceptance' -NoInheritEnv\nexit $LASTEXITCODE\n",ct);
         Guid taskId=Guid.Empty, sessionId=Guid.Empty; var began=DateTimeOffset.UtcNow;var elapsed=Stopwatch.StartNew();string outcome="failed";
         using var pump=new CancellationTokenSource();Task? pumping=null;
         try
@@ -144,19 +146,32 @@ public sealed class GrokRulesLiveMappedDispatchTests
         else if(node.ValueKind==JsonValueKind.Array) foreach(var c in node.EnumerateArray()) foreach(var s in AllStrings(c)) yield return s;
         else if(node.ValueKind==JsonValueKind.Object) foreach(var p in node.EnumerateObject()) foreach(var s in AllStrings(p.Value)) yield return s;
     }
-    private sealed class LiveFactory(DirectSessionRunnerClient runner,RealCliStubBServerHarness.GitRepo repo,Dictionary<string,string> env,string grok):AntiphonWebAppFactory
+    internal sealed class LiveFactory(DirectSessionRunnerClient runner,RealCliStubBServerHarness.GitRepo repo,Dictionary<string,string> env,string grok,string? inlineRules = null):AntiphonWebAppFactory
     {
+        public FakeAntiphonMessagingClient Messaging { get; } = new();
         protected override void ApplyTestOverrides(IServiceCollection services)
         {
             services.RemoveAll<ISessionRunnerClient>();services.AddSingleton<ISessionRunnerClient>(runner);
+            services.RemoveAll<IAntiphonMessagingProducer>();services.AddSingleton<IAntiphonMessagingProducer>(Messaging);
+            services.RemoveAll<IAntiphonMessagingConsumer>();services.AddSingleton<IAntiphonMessagingConsumer>(Messaging);
             services.RemoveAll<IHostedService>(); // Drive the production dispatch/sync owners explicitly; no unrelated periodic work.
-            services.PostConfigure<AgentRegistrySettings>(s=> { s.Definitions.Clear();s.DefaultDefinition="grok";s.GrokCredentialProbeEnabled=true;s.Definitions["grok"]=new(){Kind="Grok",Exe=grok,ArgsTemplate=["--always-approve","--no-alt-screen","--no-subagents","--disable-web-search"],Env=env,NonSecretEnvironmentNames=["GROK_HOME","GROK_AUTH_PATH","GROK_DISABLE_AUTO_UPDATER","GROK_TELEMETRY_ENABLED","GROK_FEEDBACK_ENABLED"]}; });
+            services.PostConfigure<AgentRegistrySettings>(s =>
+            {
+                s.Definitions.Clear(); s.DefaultDefinition = "grok"; s.GrokCredentialProbeEnabled = true;
+                s.Definitions["grok"] = new()
+                {
+                    Kind = "Grok", Exe = grok,
+                    ArgsTemplate = ["--always-approve", "--no-alt-screen", "--no-subagents", "--disable-web-search", .. (inlineRules is null ? Array.Empty<string>() : new[] { "--rules", inlineRules })],
+                    Env = env,
+                    NonSecretEnvironmentNames = env.Keys.Where(k => !AgentEnvironmentVariableNames.LooksSecret(k)).ToList()
+                };
+            });
             services.PostConfigure<DelegationSettings>(s=> { s.AllowedRoots=[repo.RepoPath];s.CheckEnabled=false;s.CheckInterpreterEnabled=false;s.DiagnoseEnabled=false;s.OutputDistillerEnabled=false; });
             services.PostConfigure<GitSettings>(s=> { s.WorkspacePath=repo.RepoPath;s.WorktreeBasePath=repo.WorktreeRoot; });
         }
         public AppDbContext Db() => new(new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(ConnectionString, o => o.MigrationsAssembly("Antiphon.Server").SetPostgresVersion(16,0)).Options);
     }
-    private sealed class MappedForwarder:IDisposable
+    internal sealed class MappedForwarder:IDisposable
     {
         private readonly HttpListener listener=new();private readonly HttpClient client;private readonly Task pump;
         public string BaseUrl { get; }

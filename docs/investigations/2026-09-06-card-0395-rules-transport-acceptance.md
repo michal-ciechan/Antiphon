@@ -1,12 +1,52 @@
 # CARD-0395 implementation and incomplete acceptance
 
-Status: **incomplete; do not land or close CARD-0395**. Real CLI/PtyHost/script wire
-acceptance and four continuation positive controls passed; a standalone real-model prerequisite
-read all canaries successfully. The first mapped live launch read/acknowledged rules and read
-the full brief, but failed to settle within its declared work window. Three automatic-compaction
-calibrations produced no boundary; a separately recorded 1% threshold attempt is pending.
-Neither endurance arm has run. No native compact identity
-or endurance elapsed measurement exists yet. Authentication works; no auth blocker is claimed.
+Status: **incomplete; do not land or close CARD-0395**. Mapped server live compliance,
+Herdr wire compliance and Herdr live compliance now pass with native full-read/ack evidence.
+The corrected deterministic sweep covers 570 passing cases across 34 classes (four initial
+failures and their corrections are recorded below). Native CLI calibration produced five genuine
+automatic compactions against the local stub; this is not live endurance acceptance.
+The separate authenticated inline endurance arm has started with its predeclared 120-minute
+ceiling; the file arm and PC-31 remain unrun. Authentication works; no auth blocker is claimed.
+
+Latest continuation checkpoint (supersedes pending statements in the chronological notes):
+
+- Mapped live attempt 4 produced the correct report but failed the real Code worktree-progress
+  guard because its task prohibited changes. The corrected task writes only `acceptance-result.txt`
+  inside its disposable worktree; the guard remains enabled. Attempt 5 passed in 75.7455169 s
+  body / 95.391 s TUnit, UTC 18:36:12.955–18:37:28.756, task
+  `af1f407e-ba62-4e68-91b3-5fb65c2c3439`, native/session `4d3fc3c9-ae43-488b-86cb-78b8ba20cd9d`.
+- Herdr wire attempts exposed fixture kind persistence, `-ReadOnly` overriding `-Shared`, and
+  the native 1,000-line read cap. Corrected wire uses actual `-Shared` standing reuse and a second
+  offset-1001 read. Wire passed UTC 18:54:27.957–18:54:42.376, session
+  `c647f63e-ac51-45fd-a194-b2711313872f`, task `f63cbeba-521d-4aa2-bde5-4f7339e6539b`.
+  Live passed UTC 18:55:07.908–18:56:32.917, session `24509666-15f3-41de-85ad-5c18e798b5d7`,
+  task `b49e462b-f00b-4259-8215-73169ed25b1a`, pane `w6:p1` on the isolated
+  `card0395-c7ff2da0` server. Logs retain all failed attempts as well as the green runs.
+- Calibration attempt 4 observed native auto-compaction start but failed because the stub
+  misclassified the summary request. Corrected matching uses the actual last user message's
+  summary instruction. Attempt 5 passed: five real file reads, unchanged fixture usage
+  (10 input / 5 output), supported native threshold 1%, observed native window 500,000,
+  body 4.1919343 s / TUnit 19.840 s, UTC 18:30:35.922–18:30:40.124. Native session
+  `b4988433-4595-40c9-84ad-8c6cb63fe1e2` emitted five distinct completed IDs ending
+  `-9`, `-16`, `-23`, `-30`, `-37`. Tokens-before 13,343 and tokens-after 15 are native
+  observations from the stub calibration, not real-model retention results. The selected
+  unmodified native fixture and provenance are under `tests/Antiphon.SessionRunner.Tests/Fixtures/`.
+- Regression sweep: server 395/399 initially passed, runner 166/166, Pty 5/5; zero skips.
+  Two obsolete argv assertions were corrected (6/6 green, 18.012 s), card unsafe-profile
+  preflight was fixed before card/session claim (14/14 green, 38.437 s), and a watchdog
+  delay hook was scoped to its own session (73/73 green, 38.112 s). These corrected runs
+  give passing coverage of the original 570 cases, without counting reruns twice.
+  `AgentControlService` now also uses injected rules settings for its early resume preflight;
+  its focused rerun and the newly captured fixture test are pending.
+- Both endurance harnesses use separate native-auth homes, native automatic compaction only,
+  the same 20% supported threshold, disjoint challenge keys, actual answer parsing, and a
+  predeclared 120-minute ceiling per arm. A zero/multiple-boundary workload is inconclusive;
+  file-arm pre-idle canary failure returns acceptance to Plan. No endurance pass is claimed here.
+
+Durable continuation evidence is the adjacent `2026-09-06-card-0395-continuation-evidence.zip`;
+the latest archive checkpoint/hash below supersedes earlier hashes of that evolving archive.
+Checkpoint SHA-256: `abbee4fce2fabbd8c4ea1e87db7c0a46c35d956e22e157daec19519b68cd8601`
+(183 entries; endurance artifacts are provisional while its run is active).
 
 Continuation worktree: `C:\Antiphon\worktrees\card-task-c7ff2da0`.
 Continuation branch: `feat/card-task-c7ff2da0-verification`, starting at the complete
@@ -155,11 +195,11 @@ cannot satisfy those gates. Live gates are unrun, not skipped/passed.
 | V-7b | Passed: exact named unmarked-after-nudge E2E; zero skips. |
 | V-7c | Passed: exact named task-only boot-stall/retry E2E; zero skips. |
 | V-8a | Partial: implemented real CLI/PtyHost/script/HTTP-relay/service-graph wire test passed 1/1; see corrected checkpoint. Full evidence schema and PCs remain. |
-| V-8b | Unrun; acceptance harness not implemented. |
-| V-8c | Authenticated mapped-Program harness implemented; first run stopped at registry env-classification validation before launch. Corrected rerun pending. Standalone live prerequisite passed, but is not this gate. |
-| V-8d | Unrun; acceptance harness not implemented. |
-| V-9a | Unrun; zero real compactions, zero live elapsed/retention measurements. |
-| V-9b | Unrun; zero real compactions, zero live elapsed/retention measurements. |
+| V-8b | Passed 1/0/0: `GrokRulesHerdrAcceptanceTests.Real_cli_herdr_standing_attachment_reads_rules_before_work`; actual named Herdr server, standing reuse, full >1,000-line read, bound fake channel sink, marked settlement. 14.420 s body / 32.590 s TUnit. |
+| V-8c | Passed 1/0/0: `GrokRulesLiveMappedDispatchTests` attempt 5; actual mapped POST, native authenticated model, rules-only canaries and restart requirement, full brief and marked settlement. 75.746 s body / 95.391 s TUnit. Earlier four failures retained below. |
+| V-8d | Passed 1/0/0: `GrokRulesHerdrAcceptanceTests.Live_model_herdr_standing_attachment_obeys_rules_after_startup_ack`; native authenticated model, full rules read, same standing Herdr pane/session, rules-only canaries, marked settlement, no ack leak to bound fake channel. 85.011 s body / 103.947 s TUnit. |
+| V-9a | Running first authenticated inline arm, native supported threshold 20%, 120-minute ceiling. No endurance success claimed. |
+| V-9b | Harness authored; unrun. Calibration has five native boundaries but cannot satisfy this live gate. |
 
 ## Regression control ledger
 
