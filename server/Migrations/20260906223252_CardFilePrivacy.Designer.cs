@@ -3,6 +3,7 @@ using System;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Antiphon.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260906223252_CardFilePrivacy")]
+    partial class CardFilePrivacy
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -314,30 +317,6 @@ namespace Antiphon.Server.Migrations
                     b.Property<string>("FailureReason")
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)");
-
-                    b.Property<int?>("GrokRulesExpectedByteCount")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("GrokRulesExpectedSha256")
-                        .HasColumnType("text");
-
-                    b.Property<string>("GrokRulesFailure")
-                        .HasColumnType("text");
-
-                    b.Property<Guid?>("GrokRulesGeneration")
-                        .HasColumnType("uuid");
-
-                    b.Property<long?>("GrokRulesLaunchTranscriptFloor")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("GrokRulesReadyAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("GrokRulesReceiptJson")
-                        .HasColumnType("text");
-
-                    b.Property<int>("GrokRulesState")
-                        .HasColumnType("integer");
 
                     b.Property<int?>("HerdrSupervisionFailureKind")
                         .HasColumnType("integer");
@@ -3289,40 +3268,6 @@ namespace Antiphon.Server.Migrations
                     b.Property<int>("Origin")
                         .HasColumnType("integer");
 
-                    b.Property<DateTime?>("RulesAcknowledgedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<long?>("RulesBoundarySequence")
-                        .HasColumnType("bigint");
-
-                    b.Property<Guid?>("RulesChainId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("RulesCoveredByMessageId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("RulesDeadlineAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("RulesFailure")
-                        .HasColumnType("text");
-
-                    b.Property<int>("RulesFollowOnCount")
-                        .HasColumnType("integer");
-
-                    b.Property<long?>("RulesPromptSequence")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("RulesReceiptJson")
-                        .HasColumnType("jsonb");
-
-                    b.Property<string>("RulesRefreshKey")
-                        .HasMaxLength(80)
-                        .HasColumnType("character varying(80)");
-
-                    b.Property<long?>("RulesTurnEndSequence")
-                        .HasColumnType("bigint");
-
                     b.Property<DateTime?>("SentAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -3342,9 +3287,6 @@ namespace Antiphon.Server.Migrations
 
                     b.HasIndex("SourceScheduleId")
                         .HasDatabaseName("IX_SessionQueuedMessages_SourceScheduleId");
-
-                    b.HasIndex("AgentSessionId", "RulesRefreshKey")
-                        .IsUnique();
 
                     b.HasIndex("Origin", "Status")
                         .HasDatabaseName("IX_SessionQueuedMessages_OpenChannelCorrelations")

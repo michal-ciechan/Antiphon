@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text;
-using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Services;
@@ -23,7 +22,7 @@ internal static class CardTaskFileRenderer
     internal const string CardsRoot = "docs/cards";
     internal const string IndexFileName = "INDEX.md";
 
-    private static readonly (string Header, Func<Card, bool> Match)[] IndexGroups =
+    private static (string Header, Func<CardFilePublicCard, bool> Match)[] IndexGroups =>
     [
         ("Needs decision", c => c.ArchivedAt is null && c.Status == CardStatus.NeedsDecision),
         ("In progress", c => c.ArchivedAt is null && c.Status == CardStatus.InProgress),
@@ -92,7 +91,7 @@ internal static class CardTaskFileRenderer
         return utc.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
     }
 
-    internal static string RenderCard(Card card)
+    internal static string RenderCard(CardFilePublicCard card)
     {
         var labels = BoardService.ParseLabels(card.LabelsJson);
         var sb = new StringBuilder();
@@ -114,14 +113,14 @@ internal static class CardTaskFileRenderer
             AppendLine(sb, $"started: {FormatTimestamp(started)}");
         if (card.CompletedAt is { } completed)
             AppendLine(sb, $"completed: {FormatTimestamp(completed)}");
-        if (card.ExternalIssueRef is { } ext)
+        if (card.ExternalTracker is { } tracker)
         {
-            AppendLine(sb, $"external_tracker: {ext.TrackerKind}");
-            AppendLine(sb, $"external_key: {YamlQuote(ext.ExternalKey)}");
-            AppendLine(sb, $"external_url: {YamlQuote(ext.Url)}");
-            if (ext.Author is not null)
-                AppendLine(sb, $"external_author: {YamlQuote(ext.Author)}");
-            if (BoardService.NeedsHumanReview(card))
+            AppendLine(sb, $"external_tracker: {tracker}");
+            AppendLine(sb, $"external_key: {YamlQuote(card.ExternalKey!)}");
+            AppendLine(sb, $"external_url: {YamlQuote(card.ExternalUrl!)}");
+            if (card.ExternalAuthor is not null)
+                AppendLine(sb, $"external_author: {YamlQuote(card.ExternalAuthor)}");
+            if (card.NeedsHumanReview)
                 AppendLine(sb, "needs_human_review: true");
         }
         if (card.ArchivedAt is { } archived)
@@ -160,7 +159,7 @@ internal static class CardTaskFileRenderer
 
     internal static string RenderIndex(
         string boardName,
-        IReadOnlyList<Card> cards,
+        IReadOnlyList<CardFilePublicCard> cards,
         IReadOnlyDictionary<Guid, string> fileNames)
     {
         var archived = cards.Count(c => c.ArchivedAt is not null);
@@ -177,7 +176,7 @@ internal static class CardTaskFileRenderer
         {
             var group = cards
                 .Where(match)
-                .OrderBy(c => CardRanking.OrderKey(c, now))
+                .OrderBy(c => CardRanking.OrderKey(c.Importance, c.Urgency, c.DueAt, c.Position, c.CreatedAt, now))
                 .ThenBy(c => c.Identifier, StringComparer.Ordinal)
                 .ToList();
             if (group.Count == 0)
@@ -198,15 +197,15 @@ internal static class CardTaskFileRenderer
         return WithSingleTrailingLf(sb.ToString());
     }
 
-    private static string IndexBits(Card card, DateTime now)
+    private static string IndexBits(CardFilePublicCard card, DateTime now)
     {
         var bits = new StringBuilder();
         if (card.Importance != CardImportance.Normal)
             bits.Append($" `{card.Importance.ToString().ToLowerInvariant()}`");
-        var effective = CardRanking.EffectiveUrgency(card, now);
+        var effective = CardRanking.EffectiveUrgency(card.Urgency, card.DueAt, now);
         if (effective != CardUrgency.Normal)
             bits.Append($" `{effective.ToString().ToLowerInvariant()}`");
-        if (BoardService.NeedsHumanReview(card))
+        if (card.NeedsHumanReview)
             bits.Append(" `review`");
         return bits.ToString();
     }

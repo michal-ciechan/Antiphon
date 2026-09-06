@@ -4,6 +4,10 @@ namespace Antiphon.Server.Domain.Entities;
 
 public class Board
 {
+    public bool SyncCardFiles { get; set; } = false;
+    public string? CardFilesDirectorySlug { get; set; }
+    public string? CardFilesRepositoryPath { get; set; }
+
     public Guid Id { get; set; }
     public Guid ProjectId { get; set; }
     public string Name { get; set; } = string.Empty;

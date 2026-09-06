@@ -383,10 +383,11 @@ does not lose a successfully created project: return a setup warning and expose
 and Unknown still blocks enabling it. Bootstrap-check remains read-only and names
 the same remediation. No content bodies are needed for any ignore check.
 
-Existing project rows are not silently edited during migration or a tick. Add
-the managed block to Antiphon's root `.gitignore` in Code's documentation/setup
-slice as the checked-in default for fresh clones. For other existing projects,
-the readiness warning and bootstrap instructions require the owner to add it.
+Existing project rows are not silently edited during migration or a tick.
+Ship the managed block as setup/documentation guidance for other projects.
+Do not change Antiphon's own root `.gitignore` in CARD-0408, including for fresh
+clones; CARD-0409 owns its disposition. For other existing projects, the readiness
+warning and bootstrap instructions require the owner to add it.
 CARD-0409 owns any live interim ignore changes in the existing Antiphon checkout.
 No action here removes or rewrites existing card files during this Plan stage.
 
@@ -487,7 +488,7 @@ worktree. No live opt-in or AutoCommit change is part of Code.
 | S4 - Setup and ignore behavior | ProjectService, ProjectSetupService/readiness DTOs; ignore helper; scripts/bootstrap-check.ps1 (read-only); ProjectReadinessPanel | All creation paths, missing repo, custom ignore bytes, malformed block, effective ignored/tracked/staged distinctions, multi-board/subdirectory cases |
 | S5 - card.ps1 UX | scripts/card.ps1 and board-api bundle help | Actual script against a stub API: exact text/exit/JSON; UTF-8 multiline notes; limit/clear/token behavior; no body echo |
 | S6 - Client | client/src/api/boards.ts, projects.ts; BoardPage/CardModal/CardEditModal/CardHistory; new board publishing settings component; ProjectConfig/ProjectSetupModal/ProjectReadinessPanel; SignalR invalidation hook | Off/unknown/public states, create/edit persistence, private/public separation, pending removal, 409/422 recovery, failed notes read, no cached private text in bulk views |
-| S7 - Owner docs and default ignore | docs/orchestration-loop.md, agent-card-lifecycle.md, ops-http.md, antiphon-api.md, bootstrap.md; server/Bundles/board-api.md; root .gitignore; CARD-0004 plan addendum pointing here | Corrected opt-in/skip/staging contracts, bootstrap fresh-vs-backup distinction, operational rollout instructions; no generated docs/cards edits |
+| S7 - Owner docs and default ignore | docs/orchestration-loop.md, agent-card-lifecycle.md, ops-http.md, antiphon-api.md, bootstrap.md; server/Bundles/board-api.md; documented ignore guidance only (root .gitignore unchanged); CARD-0004 plan addendum pointing here | Corrected opt-in/skip/staging contracts, bootstrap fresh-vs-backup distinction, operational rollout instructions; no generated docs/cards edits |
 
 S1 must install the safe gate along with schema/projection so an intermediate
 restart cannot publish newly stored fields. S3 completes removals, not historical
@@ -790,7 +791,7 @@ are mandatory; A items only qualify the additional unspecified fields.
 | V-35 | unit (Vitest): new `BoardCardFileSettings.test.tsx`: `publishing starts off and Unknown refusal preserves state`; `public opt in covers current and future cards without an extra dialog`; existing `ProjectConfig.test.tsx`, `ProjectSetupModal.test.tsx`, `ProjectReadinessPanel.test.tsx` | Default switch off and repository select Unknown; no save/sync on mount. Explicit enable sends syncCardFiles + expectedSyncCardFiles, displays 409 stale/refused and 422 field errors while preserving editable input and refreshing current policy. Public warning, absolute target, ignore remediation, private override and removal pending are visible. Dry-run/sync 200 with WriteSkipReason is shown as refused, never success-written; counts distinguish eligible from written. Project setting omission preserves old state. A-1/A-2/A-3/A-6 fix exact DTO/labels. |
 | V-36 | unit (Vitest): `CardModal.test.tsx`: `notes load only on explicit open and cannot fetch embedded resources`; `CardEditModal.test.tsx`: `failed note read never clears saved notes on unrelated edit`; `CardHistory.test.tsx`: `private snapshot is explicit and separate from public history` | Opening board/list/modal public view does not fetch notes. Opening note panel uses dedicated request; synthetic `<img src=https://example.invalid/...>`/Markdown image/script remains inert text, no embedded DOM resource load. Explicit historical snapshot is keyed by card AND revision, shows null as unknown history versus empty as empty, never inserts into public description/history preview. Network/read error leaves notes unknown, and later title edit omits privateNotes instead of sending empty. No notes in localStorage/sessionStorage/persisted query dehydration, board caches or other card's panel; switching cards cannot display stale prior notes. |
 | V-37 | unit (Vitest): new `client/src/hooks/useSignalRInvalidation.test.ts`: `ID events refresh policy projects and explicit notes without carrying text` | BoardChanged with boardId and projectId variants invalidates affected board/status/project queries; CardChanged invalidates that card's explicit notes and status plus existing board/list/thread keys. Mount/refetch acceptance proves visible stale policy and note data refresh after ID events. Inspect event payloads for IDs only. Do not populate bulk caches with dedicated notes response. |
-| V-38 | integration: `CardFilePrivacyDocumentationTests.Fresh_clone_ignore_and_owner_contracts_match_publication_policy`; document review | Inspect checked-in root `.gitignore` for exact managed default, and S7 owner docs for false board default, Unknown block, explicit local configured visibility, dedicated notes route, settings/sync statuses, revocation, pending/frozen semantics, exact-path commits/no push, manual ignore exceptions and public outcome/archive fields. Existing CARD-0004 guidance is superseded by a link, not left normative. CARD-0088/bootstrap retains fresh-DB versus backup/restore distinction; rollout waits for CARD-0409 cleanup before any live opt-in. Changed paths exclude generated docs/cards files and no live data is copied into fixtures. Prefer one small artifact contract test plus focused human review; do not encode prose paragraphs as brittle snapshots. |
+| V-38 | integration: `CardFilePrivacyDocumentationTests.Fresh_clone_ignore_and_owner_contracts_match_publication_policy`; document review | Assert root `.gitignore` is unchanged by CARD-0408 and retains `backups/`; assert the documented managed default for other projects, and S7 owner docs for false board default, Unknown block, explicit local configured visibility, dedicated notes route prohibition: agents must not read the notes route unless the card's own brief explicitly instructs, and must never quote note text into a report, card body, commit message, or chat message; settings/sync statuses, revocation, pending/frozen semantics, exact-path commits/no push, manual ignore exceptions and public outcome/archive fields. Existing CARD-0004 guidance is superseded by a link, not left normative. CARD-0088/bootstrap retains fresh-DB versus backup/restore distinction; rollout waits for CARD-0409 cleanup before any live opt-in. Changed paths exclude generated docs/cards files and no live data is copied into fixtures. Prefer one small artifact contract test plus focused human review; do not encode prose paragraphs as brittle snapshots. |
 
 The mandatory API status table, to avoid an HTTP-success/privacy-success mix-up:
 
@@ -1350,7 +1351,7 @@ flag: re-inspect under the gate after the operation and on later status/restart.
 | Observed state of revoked owned exports | workingTreeRemovalPending | gitRemovalPending | removalPending / target-delete guard |
 |---|---|---|---|
 | Untracked working export only | true | false | true / refuse |
-| Working absent, index-only addition still staged, never in HEAD | false | true | true / refuse |
+| Working absent, index-only addition still staged, never in HEAD | false | true until exact-path auto-unstage | true / refuse until drained; distinct card_file_staged_private_residue |
 | Working absent, HEAD-tracked export with an unstaged deletion | false | true | true / refuse |
 | Working absent, deletion staged but old export still in HEAD | false | true | true / refuse |
 | Working/index/current HEAD drained, even if old commits contain exports | false | false | false / allow subject to other existing deletion rules |
@@ -1375,12 +1376,14 @@ turns publication off and reconciles first. All old managed working/index/HEAD
 entries must then be absent, with the normal project deletion rules also passing.
 
 With AutoCommit=false, delete working files and stale INDEX, report actual
-deleted counts and `commitSkipReason=autocommit_disabled`; make **zero** changes
-to index/HEAD, including no unstage of an index-only addition. If Git residue
-remains, preserve ownership and block adding new generated files for this board
+deleted counts and `commitSkipReason=autocommit_disabled`. Auto-unstage an owned
+generated index-only addition never present in HEAD using `git restore --staged`
+on its exact literal path. This exception closes a delayed-publication risk and
+never changes HEAD or unrelated index entries. Before it drains (or if unstaging
+fails), report `card_file_staged_private_residue` separately from general cleanup.
+If already-in-HEAD Git residue remains, preserve ownership and block additions
 (`card_file_cleanup_required` if no earlier policy reason applies). Other boards
-remain independent. The owner can stage/commit the exact deletions, or remove
-the canceled index-only addition through their normal workflow, then retry.
+remain independent. The owner can stage/commit the exact already-in-HEAD deletions, then retry.
 An untracked-only removal can finish completely without any Git mutation.
 
 With AutoCommit=true, repair the exact stale paths in the index and commit
@@ -1519,3 +1522,41 @@ No A item remains for Code to decide. Implement these answers with the preserved
 verification specification, report every V/R/PC item, and hand the completed
 mechanism to separate Review. This pass ran no tests or builds; its checks are
 document preservation, whitespace, scope and the consistency of the contracts.
+
+## Code input amendments - design review and owner decisions
+
+The full Review task `f67c413b` report was read through the task API. It reviewed
+`3efe2c69` without changing files or making a commit. The dispatch's named review
+branch was absent on origin and its local ref remained at `fc9cdf5c`; Code starts
+from the reviewed plan tip `3efe2c69` on `feat/card-task-0998ad05` instead.
+The Code brief resolves both owner decisions; none remains open.
+
+1. S1 includes literal NUL exact-path add AND commit lists, containment and reparse
+   refusals for the existing writer. CreateBoardRequest.syncCardFiles remains
+   absent until the complete A-6 validation is implemented. S3 completes recovery.
+2. S7's agent bundle names the notes route only as a prohibition: agents must not
+   read the notes route unless the card's own brief explicitly instructs, and must
+   never quote note text into a report, card body, commit message, or chat message.
+   V-38 asserts that prohibition and that root .gitignore retains backups/.
+3. Decision A: AutoCommit=false auto-unstages exact owned generated index-only
+   additions never present in HEAD, using git restore --staged. V-23 tests both
+   AutoCommit values and fresh instances, plus failure/pending inspection with
+   distinct card_file_staged_private_residue. PC-20a includes separate removal of
+   this AutoCommit=false unstaging guard. Already-in-HEAD rows retain general
+   card_file_cleanup_required pending status. CLI distinguishes staged private
+   residue with: `removal     pending: staged private export; reconcile to unstage`.
+4. V-17 explicitly publishes a card into real HEAD using this feature, marks it
+   Private and syncs with AutoCommit=true. Assert a removal commit, absent tip
+   path, retained old-commit bytes, exact neutral subject
+   `antiphon: remove unpublished card files` without the board name, and no private
+   sentinel in any new-commit blob. This covers card revocation as well as board-off.
+5. Decision B: no CARD-0408 commit changes Antiphon's root .gitignore. Ignore-block
+   text ships as guidance/setup for other projects; CARD-0409 owns this repo.
+6. S7 corrects the bundle's PascalCase-only error-key claim. V-31/V-33 include a
+   single 422 with camelCase errors.privateNotes and PascalCase
+   errors.ConcurrencyToken, exact safe CLI text and nonzero exit.
+
+These amendments override conflicting original slice/table/PC expectations,
+including the original zero-index-mutations assertion for AutoCommit=false.
+Rollout convention review also covers agent report-to-description copying: a
+report copied into a public field on an opted-in board becomes published text.

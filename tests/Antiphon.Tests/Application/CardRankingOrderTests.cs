@@ -53,7 +53,7 @@ public class CardRankingOrderTests
             [low.Id] = "card-0001.md",
             [critical.Id] = "card-0002.md"
         };
-        var index = CardTaskFileRenderer.RenderIndex("B", [low, critical], names);
+        var index = CardTaskFileRenderer.RenderIndex("B", [CardFilePublicProjection.Select.Compile()(low), CardFilePublicProjection.Select.Compile()(critical)], names);
         var criticalAt = index.IndexOf("CARD-0002", StringComparison.Ordinal);
         var lowAt = index.IndexOf("CARD-0001", StringComparison.Ordinal);
         criticalAt.ShouldBeLessThan(lowAt);

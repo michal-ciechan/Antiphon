@@ -4,6 +4,9 @@ namespace Antiphon.Server.Domain.Entities;
 
 public class Card
 {
+    public CardFileVisibility CardFileVisibility { get; set; } = CardFileVisibility.Inherit;
+    public string PrivateNotes { get; set; } = string.Empty;
+
     public Guid Id { get; set; }
     public Guid BoardId { get; set; }
     public Guid BoardColumnId { get; set; }

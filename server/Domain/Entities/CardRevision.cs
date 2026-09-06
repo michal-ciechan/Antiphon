@@ -25,6 +25,9 @@ namespace Antiphon.Server.Domain.Entities;
 /// </remarks>
 public class CardRevision
 {
+    public CardFileVisibility? CardFileVisibility { get; set; }
+    public string? PrivateNotes { get; set; }
+
     public Guid Id { get; set; }
     public Guid CardId { get; set; }
 
