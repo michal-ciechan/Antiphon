@@ -17,6 +17,15 @@ public static class CardFileSyncEndpoints
         var boards = app.MapGroup("/api/boards")
             .WithTags("Boards");
 
+        boards.MapGet("/{id:guid}/card-files/status", async (Guid id, CardTaskFileService sync, CancellationToken ct)
+            => Results.Ok(await sync.GetStatusAsync(id, ct)));
+        boards.MapPut("/{id:guid}/card-files/settings", async (Guid id, HttpContext http, CardTaskFileService sync,
+            Antiphon.Server.Application.Interfaces.IEventBus events, CancellationToken ct) =>
+        {
+            var request = await CardFileRequestReader.ReadAsync<CardFileSettingsRequest>(http, ct);
+            return Results.Ok(await sync.UpdateSettingsAsync(id, request.SyncCardFiles, request.ExpectedSyncCardFiles, events, ct));
+        });
+
         boards.MapPost("/{id:guid}/card-files/sync", async (
             Guid id,
             CardTaskFileService sync,
@@ -36,3 +45,5 @@ public static class CardFileSyncEndpoints
         });
     }
 }
+
+public sealed record CardFileSettingsRequest(bool? SyncCardFiles = null, bool? ExpectedSyncCardFiles = null);

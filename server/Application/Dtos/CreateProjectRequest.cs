@@ -1,3 +1,6 @@
+using System.Text.Json.Serialization;
+using Antiphon.Server.Domain.Enums;
+
 namespace Antiphon.Server.Application.Dtos;
 
 public record CreateProjectRequest(
@@ -8,4 +11,5 @@ public record CreateProjectRequest(
     bool NotificationsEnabled,
     string? LocalRepositoryPath,
     string? BaseBranch,
-    IReadOnlyDictionary<string, string>? DefaultLaunchEnv = null);
+    IReadOnlyDictionary<string, string>? DefaultLaunchEnv = null,
+    [property: JsonConverter(typeof(RepositoryVisibilityConverter))] RepositoryVisibility? RepositoryVisibility = null);

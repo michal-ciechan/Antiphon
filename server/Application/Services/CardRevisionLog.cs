@@ -61,6 +61,8 @@ internal static class CardRevisionLog
             Title = card.Title,
             Alias = card.Alias,
             Description = card.Description,
+            PrivateNotes = card.PrivateNotes,
+            CardFileVisibility = card.CardFileVisibility,
             Importance = card.Importance,
             Urgency = card.Urgency,
             DueAt = card.DueAt,

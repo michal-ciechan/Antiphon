@@ -74,20 +74,22 @@ public static class ProjectEndpoints
         });
 
         projects.MapPost("/", async (
-            CreateProjectRequest request,
+            HttpContext http,
             ProjectService service,
             CancellationToken cancellationToken) =>
         {
+            var request = await CardFileRequestReader.ReadAsync<CreateProjectRequest>(http, cancellationToken);
             var project = await service.CreateAsync(request, cancellationToken);
             return Results.Created($"/api/projects/{project.Id}", project);
         });
 
         projects.MapPut("/{id:guid}", async (
             Guid id,
-            UpdateProjectRequest request,
+            HttpContext http,
             ProjectService service,
             CancellationToken cancellationToken) =>
         {
+            var request = await CardFileRequestReader.ReadAsync<UpdateProjectRequest>(http, cancellationToken);
             var project = await service.UpdateAsync(id, request, cancellationToken);
             return Results.Ok(project);
         });

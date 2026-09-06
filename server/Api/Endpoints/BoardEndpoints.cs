@@ -62,10 +62,11 @@ public static class BoardEndpoints
 
         boards.MapPost("/{id:guid}/cards", async (
             Guid id,
-            CreateCardRequest request,
+            HttpContext http,
             CardService service,
             CancellationToken cancellationToken) =>
         {
+            var request = await CardFileRequestReader.ReadAsync<CreateCardRequest>(http, cancellationToken);
             var card = await service.CreateAsync(id, request, cancellationToken);
             return Results.Created($"/api/cards/{card.Id}", card);
         });

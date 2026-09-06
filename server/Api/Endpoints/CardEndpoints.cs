@@ -98,12 +98,12 @@ public static class CardEndpoints
         // invites partial-intent bugs, and the two have different concurrency stories.
         cards.MapPatch("/{id}/content", async (
             string id,
-            UpdateCardContentRequest request,
             HttpContext http,
             CardService service,
             AgentTaskService tasks,
             CancellationToken cancellationToken) =>
         {
+            var request = await CardFileRequestReader.ReadAsync<UpdateCardContentRequest>(http, cancellationToken);
             var cardId = await ResolveAsync(http, id, service, tasks, cancellationToken);
             return Results.Ok(await service.UpdateContentAsync(cardId, request, cancellationToken));
         });
@@ -120,6 +120,25 @@ public static class CardEndpoints
         {
             var cardId = await ResolveAsync(http, id, service, tasks, cancellationToken);
             return Results.Ok(await service.PlaceAsync(cardId, request, cancellationToken));
+        });
+
+        cards.MapGet("/{id}/private-notes", async (string id, HttpContext http, CardService service,
+            AgentTaskService tasks, CancellationToken cancellationToken) =>
+        {
+            http.Response.Headers.CacheControl = "no-store";
+            http.Response.OnStarting(() => { http.Response.Headers.CacheControl = "no-store"; return Task.CompletedTask; });
+            int? revision = null;
+            if (http.Request.Query.TryGetValue("revisionNumber", out var values))
+            {
+                if (values.Count != 1 || string.IsNullOrEmpty(values[0])
+                    || !System.Text.RegularExpressions.Regex.IsMatch(values[0]!, "^-?[0-9]+$")
+                    || !int.TryParse(values[0], System.Globalization.NumberStyles.AllowLeadingSign,
+                        System.Globalization.CultureInfo.InvariantCulture, out var number))
+                    throw new BadRequestException("revisionNumber must be one base-10 integer.");
+                revision = number;
+            }
+            var cardId = await ResolveAsync(http, id, service, tasks, cancellationToken);
+            return Results.Ok(await service.GetPrivateNotesAsync(cardId, revision, cancellationToken));
         });
 
         cards.MapGet("/{id}/revisions", async (

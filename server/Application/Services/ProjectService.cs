@@ -1,3 +1,4 @@
+using Antiphon.Server.Domain.Enums;
 using System.Net.Http.Headers;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -14,6 +15,7 @@ namespace Antiphon.Server.Application.Services;
 public class ProjectService
 {
     private readonly AppDbContext _db;
+    private readonly CardTaskFileService? _cardFiles;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly GithubSettings _githubSettings;
     private readonly ILogger<ProjectService> _logger;
@@ -26,9 +28,11 @@ public class ProjectService
         IOptions<GithubSettings> githubSettings,
         ILogger<ProjectService> logger,
         ProjectReadinessCache? readinessCache = null,
-        IEventBus? eventBus = null)
+        IEventBus? eventBus = null,
+        CardTaskFileService? cardFiles = null)
     {
         _db = db;
+        _cardFiles = cardFiles;
         _httpClientFactory = httpClientFactory;
         _githubSettings = githubSettings.Value;
         _logger = logger;
@@ -62,11 +66,13 @@ public class ProjectService
         CreateProjectRequest request, CancellationToken cancellationToken)
     {
         ValidateRequest(request.Name, request.GitRepositoryUrl, request.LocalRepositoryPath);
+        ValidateVisibility(request.RepositoryVisibility);
 
         var project = new Project
         {
             Id = Guid.NewGuid(),
             Name = request.Name,
+            RepositoryVisibility = request.RepositoryVisibility ?? RepositoryVisibility.Unknown,
             GitRepositoryUrl = request.GitRepositoryUrl,
             LocalRepositoryPath = string.IsNullOrWhiteSpace(request.LocalRepositoryPath)
                 ? null
@@ -95,12 +101,20 @@ public class ProjectService
     public async Task<ProjectDto> UpdateAsync(
         Guid id, UpdateProjectRequest request, CancellationToken cancellationToken)
     {
+        using var fileLease = _cardFiles is null ? null : await _cardFiles.EnterProjectAsync(id, true, request.LocalRepositoryPath, cancellationToken);
         var project = await _db.Projects
             .FirstOrDefaultAsync(p => p.Id == id, cancellationToken)
             ?? throw new NotFoundException(nameof(Project), id);
 
         ValidateRequest(request.Name, request.GitRepositoryUrl, request.LocalRepositoryPath);
+        ValidateVisibility(request.RepositoryVisibility);
 
+        await _db.Entry(project).ReloadAsync(cancellationToken);
+        var pathChanged = !SamePath(project.LocalRepositoryPath, request.LocalRepositoryPath);
+        var targetChanged = pathChanged || !string.Equals(project.GitRepositoryUrl, request.GitRepositoryUrl, StringComparison.Ordinal);
+        if (pathChanged && _cardFiles is not null) await _cardFiles.EnsureDrainedAsync(id, null, cancellationToken);
+        if (request.RepositoryVisibility is { } visibility) project.RepositoryVisibility = visibility;
+        else if (targetChanged) project.RepositoryVisibility = RepositoryVisibility.Unknown;
         project.Name = request.Name;
         project.GitRepositoryUrl = request.GitRepositoryUrl;
         project.LocalRepositoryPath = string.IsNullOrWhiteSpace(request.LocalRepositoryPath)
@@ -123,6 +137,7 @@ public class ProjectService
 
         _logger.LogInformation("Updated project {ProjectName} ({ProjectId})", project.Name, project.Id);
 
+        if (_eventBus is not null) await _eventBus.PublishToAllAsync("BoardChanged", new { projectId = id }, cancellationToken);
         return ToDto(project);
     }
 
@@ -149,10 +164,12 @@ public class ProjectService
     /// </summary>
     public async Task DeleteAsync(Guid id, bool force, CancellationToken cancellationToken)
     {
+        using var fileLease = _cardFiles is null ? null : await _cardFiles.EnterProjectAsync(id, true, null, cancellationToken);
         var project = await _db.Projects
             .FirstOrDefaultAsync(p => p.Id == id, cancellationToken)
             ?? throw new NotFoundException(nameof(Project), id);
 
+        if (_cardFiles is not null) await _cardFiles.EnsureDrainedAsync(id, null, cancellationToken);
         var counts = await ProjectCascade.MeasureAsync(_db, id, cancellationToken);
         var impact = ToImpactDto(project, counts);
 
@@ -187,6 +204,7 @@ public class ProjectService
     public async Task<ProjectDto> ArchiveAsync(
         Guid id, ArchiveProjectRequest request, CancellationToken cancellationToken)
     {
+        using var fileLease = _cardFiles is null ? null : await _cardFiles.EnterProjectAsync(id, true, null, cancellationToken);
         EntityArchive.Validate(request.Reason, request.ArchivedBy);
 
         var project = await _db.Projects
@@ -214,6 +232,7 @@ public class ProjectService
     public async Task<ProjectDto> UnarchiveAsync(
         Guid id, UnarchiveProjectRequest request, CancellationToken cancellationToken)
     {
+        using var fileLease = _cardFiles is null ? null : await _cardFiles.EnterProjectAsync(id, true, null, cancellationToken);
         EntityArchive.Validate(request.Reason, request.UnarchivedBy);
 
         var project = await _db.Projects
@@ -369,6 +388,17 @@ public class ProjectService
         }
     }
 
+    private static void ValidateVisibility(RepositoryVisibility? visibility)
+    {
+        if (visibility is { } value && !Enum.IsDefined(value))
+            throw new ValidationException("repositoryVisibility", "repositoryVisibility must be Unknown, Private or Public.");
+    }
+
+    private static bool SamePath(string? left, string? right) =>
+        string.IsNullOrWhiteSpace(left) && string.IsNullOrWhiteSpace(right)
+        || !string.IsNullOrWhiteSpace(left) && !string.IsNullOrWhiteSpace(right)
+            && string.Equals(Path.GetFullPath(left).TrimEnd('\\', '/'), Path.GetFullPath(right).TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
+
     private static void ValidateRequest(string name, string gitRepositoryUrl, string? localRepositoryPath)
     {
         var errors = new Dictionary<string, string[]>();
@@ -413,7 +443,7 @@ public class ProjectService
             AgentLaunchEnv.Parse(entity.DefaultLaunchEnvJson),
             entity.ArchivedAt,
             entity.ArchivedReason,
-            entity.ArchivedBy);
+            entity.ArchivedBy) { RepositoryVisibility = entity.RepositoryVisibility };
 }
 
 public record TestGitConnectivityResult(bool Success, string Message);
