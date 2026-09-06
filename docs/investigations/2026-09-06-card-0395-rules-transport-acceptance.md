@@ -230,9 +230,9 @@ assertion, with a nonexistent disposable host source preventing actual child cre
 | PC-25 | Recorded red/restore/green: `PC-25-established-kill`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
 | PC-26 | Recorded red/restore/green: `PC-26-legacy-policy`, `PC-26-silent-fresh`, `PC-26-removal`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
 | PC-27 | Recorded red/restore/green: `PC-27-unacknowledged`, `PC-27-invalid-receipt`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
-| PC-28 | Unrun; no failing assertion or green rerun claimed. |
-| PC-29 | Unrun; no failing assertion or green rerun claimed. |
-| PC-30 | Unrun; no failing assertion or green rerun claimed. |
+| PC-28 | Queued refresh pointer mutated to a missing file: 1 assertion failure / bytes restored / 1 pass. Actual `state.GrokRulesState should be GrokRulesState.Ready but was GrokRulesState.Failed`; reason `grok_rules_initialization_failed: unreadable`. Red 134.469 s / green 90.859 s including build. Native argv bootstrap itself was not changed. |
+| PC-29 | Two controls executed: native read stops at line 1,000; real dispatch reads only 10 of its 58 rule lines but sends a success ack. Both named assertions fail, both source restorations pass. See continuation controls. |
+| PC-30 | Helper-only captured evidence substituted at the acceptance oracle: task-tail/tool-bearing assertion fails, restore passes. No provider route changed. See continuation controls. |
 | PC-31 | Unrun; no failing assertion or green rerun claimed. |
 
 ## Handoff
@@ -369,3 +369,25 @@ Safe durable evidence: `2026-09-06-card-0395-continuation-evidence.zip` (adjacen
 `bcaea283dfdfc4ad1a05a210604ded87b3bb57c893162adf5f920c613b038dfe`. It includes rules/brief, receipt/queue/settlement timeline, normalized transcript,
 actual assertions, and the live prerequisite's native tool/text rows with thought rows omitted.
 Credential files, headers, homes, plugin caches and full raw request bodies are not archived.
+
+PC-28 continuation checkpoint: the mutation changed only the initialization message file pointer.
+The source was restored before its green rerun; this is an explicit read/barrier control, not
+a claim that a missing argv-only pointer was exercised. Full logs and elapsed live in
+`.antiphon/card0395-continuation/mutations.json` and the named red/green logs (archive update pending).
+
+### Continuation wire positive controls
+
+All four cases below ran exactly one test red and the same test green after restoring source bytes.
+No skips; no build failure counted as a control. PC-29 separates the >1,000-line native oracle
+from the 58-line actual Worker dispatch; it does not claim a >1,000-line Worker bundle.
+PC-30 changes the evidence presented to the checker only; the real provider redirect stays intact.
+
+| Mutation | Actual assertion | Red / green build+test seconds |
+|---|---|---|
+| PC-28-refresh-missing | `ShouldAssertException: state.GrokRulesState should be GrokRulesState.Ready but was GrokRulesState.Failed Additional Info: grok_rules_initialization_failed: unreadable` | 134.469 / 90.859 |
+| PC-29-native-first1000 | `ShouldAssertException: toolOutputs should contain (case insensitive comparison) "RULE-LINE-1001 neutral calibration material." but was actually "1→RULE-LINE-0001 neutral calibration material. RULE-LINE-0002 neutral calibration material. RULE-LIN..." Additional Info: Every line including the tail beyond the native default must be read` | 72.781 / 71.984 |
+| PC-29-dispatch-first10 | `ShouldAssertException: toolText should contain (case insensitive comparison) "[bundle:delegate-basics v36f4d127]" but was actually "function_call_output card0395-rules-read 1→[bundle:stage-code v2503714b] You are executing the lande..." Additional Info: Native rules output must cover every composed line` | 97.719 / 95.203 |
+| PC-30-helper-only | `ShouldAssertException: all.Any(r => r.Contains(nonce + "-TAIL") && r.Contains("\"tools\"")) should be True but was False Additional Info: Full task tail must reach a tool-bearing user request` | 92.141 / 94.766 |
+
+Updated continuation archive SHA-256: `712f2cd899273192676bf2aafa62eea513c0d0005a0dbbab3c13bd6d9d48ff7b`.
+PC-31 and both live endurance arms remain open; zero genuine auto-compactions have been observed so far.

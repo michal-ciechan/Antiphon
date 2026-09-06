@@ -172,10 +172,10 @@ public sealed class GrokRulesDispatchAcceptanceTests
             rules.ShouldContain(InstructionBundles.Get(InstructionBundles.StageKeyFor(AgentTaskRole.Code)).Text);
             spec.Args.ShouldNotContain("--agent"); spec.Args.ShouldNotContain("--rules");
             var all = captured.ToArray();
+            all.Any(r => r.Contains(nonce + "-TAIL") && r.Contains("\"tools\"")).ShouldBeTrue("Full task tail must reach a tool-bearing user request");
             var toolText = string.Join("\n", all.SelectMany(FunctionOutputs));
             foreach (var line in rules.Split('\n').Select(l => l.TrimEnd('\r')).Where(l => !string.IsNullOrWhiteSpace(l)))
                 toolText.ShouldContain(line, customMessage: "Native rules output must cover every composed line");
-            all.Any(r => r.Contains(nonce + "-TAIL") && r.Contains("\"tools\"")).ShouldBeTrue("Full task tail must reach a tool-bearing user request");
             stub.Requests.All.Any(r => r.Method == "GET" && r.Path == "/api-key"
                 && r.Headers.TryGetValue("Authorization", out var auth) && auth.Contains("Bearer " + synthetic)).ShouldBeTrue();
             await File.WriteAllTextAsync(Path.Combine(root, "rules.md"), rules, ct);
