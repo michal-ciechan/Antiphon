@@ -1,6 +1,6 @@
 # CARD-0395 verification and live acceptance
 
-Status: **final deterministic checks in progress**. Mapped server live compliance, Herdr wire
+Status: **revised acceptance complete; ready for Review**. Mapped server live compliance, Herdr wire
 compliance and Herdr live compliance pass with native full-read/ack/marked-settlement evidence.
 The corrected deterministic sweep covers 570 passing cases across 34 classes; later focused
 checks and initial failures are recorded below. PC-1 through PC-31 now have recorded assertion
@@ -60,8 +60,8 @@ Latest continuation checkpoint (supersedes pending statements in the chronologic
 
 Durable continuation evidence is the adjacent `2026-09-06-card-0395-continuation-evidence.zip`;
 the latest archive checkpoint/hash below supersedes earlier hashes of that evolving archive.
-Checkpoint SHA-256: `8c3fb93abff8ec45b484d1529c4c43daec90d798a6d88f5bd329d438c6ba4fc3`
-(Historical checkpoint; final archive hash below supersedes this value.)
+Checkpoint SHA-256: `a9f7983ff57e16c2647a3549dae8683cfaa2d97022770a927ffcb1cd483dbd22`
+(312 entries; final verified archive)
 
 ### Endurance observations recorded before the final file rerun
 
@@ -179,9 +179,9 @@ dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-card0395/ --
 
 ## Every V gate
 
-“Partial” means related executable checks passed, while the complete named contract is unrun.
-V-5 tests require a captured native ACP fixture; the current normalized-row unit/integration checks
-cannot satisfy those gates. Native live compliance now passed; endurance remains separately reported below.
+Current rows below supersede chronological pending statements later in this file. V-5 uses the
+unchanged captured native 1.0.13 fixture through real parsing/runtime/recovery lanes. Fault tests
+state their seam explicitly. Native authenticated compliance passed; V-9 endurance is operator-descoped.
 
 | Gate | Status / available evidence |
 |---|---|
@@ -207,7 +207,7 @@ cannot satisfy those gates. Native live compliance now passed; endurance remains
 | V-3c | Passed Herdr effective-environment cases in runner refusal/file-launch and `DollarEnvArgTests` (11) / `AgentTuiLaunchResolverTests` (14); PC-5 server and runner red/green. |
 | V-3d | Passed: all 26 unchanged GrokRulesArgvPolicyTests. |
 | V-3e | Passed policy/store checks: literal values remain unchanged; no native expansion claim. |
-| V-4a | Passed ready/receipt ordering (2), queue-entry barrier matrix, card boot, restored fake E2Es, and native V-8 ack-before-brief. Final queue-origin/hold-expiry expansion is recorded in the focused table. |
+| V-4a | Passed all 28 queue-origin/entry-point cases (26.291 s): flush, Now, send-now and expired hold across all seven origins. No bytes or charged attempts before acknowledgment; human/task work stays pending and ineligible supervision compacts follow their existing cancellation contract. Ready/receipt, card boot, fake E2E and native V-8 order also pass. |
 | V-4b | Passed `RunnerGrokAdapterSignInPromptTests` (3), `RunnerGrokAdapterTrustPromptTests` (4) and `GrokRulesReadyOrderingTests` (2); no authentication bypass used in live gates. |
 | V-4c | Passed all 19 initialization cases, including quoted/fenced/tool/user/stale/premature/provider-error negatives and native split acknowledgment with late owning prompt. Correct prompt/ack/successful-end releases once; PC-16 independently mutates each prerequisite. |
 | V-4d | Passed `GrokRulesFailureTests`, initialization delivery-exhaustion/deadline tests, `AgentSessionLaunchFailureTests` (11) and restored boot retry E2E. PC-24 deadline and PC-25 ownership controls retained. |
@@ -219,13 +219,13 @@ cannot satisfy those gates. Native live compliance now passed; endurance remains
 | V-4j | Passed removal and bare variants of `GrokRulesResumeMigrationTests`; PC-26 removal red/green. |
 | V-4k | Passed exact restored no-task-answer boot E2E and all 73 watchdog cases after scoping the test hook; PC-18 boot-reply red/green. |
 | V-5a | Passed genuine captured Grok 1.0.13 tool/boundary/end rows through live, sync and startup lanes across standing/channel/retired-pool populations. Final blocked/in-flight extensions are recorded in the final focused table. |
-| V-5b | Partial: native tailer/runtime mid-tool-to-idle ordering in `GrokRulesCompactionRecoveryTests`, queue barrier controls and actual V-9 observations. Blocked Herdr UI plus concurrent already-started ordinary delivery matrix remains unverified. |
+| V-5b | Passed all 11 native recovery cases (30.962 s), including mid-tool zero input, blocked Herdr zero attempts until idle, and interrupted ordinary Sent/null delivery held until its complete UserPrompt arrives. Confirmation then types only the rules refresh, preserving newer ordinary work. The in-flight case models the persisted interrupted-attempt seam; established queue locking serializes active sends. |
 | V-5c | Passed native 1.0.13 sync/rebased/replay recovery and 13 persisted replay cases. PC-20 sync red/green retained. |
 | V-5d | Passed native 1.0.13 startup recovery lane; PC-20 startup red/green retained. |
 | V-5e | Passed all three transaction tests against native 1.0.13 boundary evidence: queue-write rollback/recovery and DB duplicate-key refusal. PC-19/22 red/green retained. |
 | V-5f | Passed compact variants of `GrokRulesReplayMatrixTests.Persisted_refresh_evidence_reconciles_after_each_commit_without_new_logical_delivery`; PC-16/22 retained. |
 | V-5g | Passed `GrokRulesReplayMatrixTests.Concurrent_recovery_coalesces_busy_boundaries_and_new_boundary_after_ack_creates_new_read` and `GrokRulesCompactionTests.Concurrent_replay_keeps_one_trigger_per_boundary_and_coalesces_untyped_reads`; PC-22 coverage red/green. |
-| V-5h | Passed persisted conservative one-follow-on branch and restart-safe loop failure with retained ownership. The implementation always requests one follow-on for a compact during refresh; it does not optimize away that read from tool-position evidence. This may reject an otherwise recoverable repeated-compaction chain; it never silently releases work without the later acknowledged read. |
+| V-5h | Passed T-8's permitted conservative one-follow-on branch and restart-safe loop failure with retained ownership. The implementation always requests one follow-on for a compact during refresh; it does not optimize away that read from tool-position evidence. This may reject an otherwise recoverable repeated-compaction chain; it never silently releases work without the later acknowledged read. |
 | V-5i | Passed established-session ownership assertions in failure/compaction tests and PC-25; no automatic kill on failed established refresh. |
 | V-5j | Passed all 32 Grok tailer cases including all five distinct boundaries from the unchanged 33-row native 1.0.13 fixture, no early TurnEnd, checkpoint/tokenless controls; Codex normalizer/tailer/working-state regressions also pass. |
 | V-6a | Passed Grok dispatch pool eligibility/revision/ready cases and PC-27 unacknowledged/invalid-receipt controls. No stand-alone `GrokRulesPoolReuseTests` class was added. |
@@ -258,7 +258,7 @@ the conservative V-5h follow-on behavior remain disclosed; no full live-resume c
 | R-5 | Distinct paths, real runtime adoption, worktree removal, live-expiry refusal, stopped-session expiry and sibling retention pass; V-2h commit-state recovery also passes. |
 | R-6 | All 19 owning prompt/ack/end cases pass, including native split/late capture and quoted/tool negatives; persisted replay and native V-8 ordering pass. |
 | R-7 | Native 1.0.13 live/sync/startup/transaction recovery passes; independent PC-19/20/22 assertion red/green retained. |
-| R-8 | Native working-state/parser and queue ordering pass; blocked Herdr UI/already-started-delivery interleaving remains V-5b. |
+| R-8 | Native working-state/parser, all 11 native recovery cases and all 28 queue-origin/entry-point cases pass. Closed-barrier recovery permits transcript-only confirmation of already-sent work; no Enter/retype bypass is allowed. |
 | R-9 | Attachment/channel/retired-agent recovery and dispatch pool eligibility pass, including PC-23/27. |
 | R-10 | Settlement/deferred/channel/boot exclusions and all restored task-only E2Es pass; PC-17/18 red/green. |
 | R-11 | Persisted deadlines, replay, conservative one-follow-on cap and ownership pass. V-5h deliberately performs a later read rather than claiming tool-position-based coverage. |
@@ -315,16 +315,17 @@ assertion, with a nonexistent disposable host source preventing actual child cre
 | PC-25 | Recorded red/restore/green: `PC-25-established-kill`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
 | PC-26 | Recorded red/restore/green: `PC-26-legacy-policy`, `PC-26-silent-fresh`, `PC-26-removal`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
 | PC-27 | Recorded red/restore/green: `PC-27-unacknowledged`, `PC-27-invalid-receipt`. See resumed evidence and ZIP for exact assertions; this certifies only the listed mutations. |
-| PC-28 | Queued refresh pointer mutated to a missing file: 1 assertion failure / bytes restored / 1 pass. Actual `state.GrokRulesState should be GrokRulesState.Ready but was GrokRulesState.Failed`; reason `grok_rules_initialization_failed: unreadable`. Red 134.469 s / green 90.859 s including build. Native argv bootstrap itself was not changed. |
+| PC-28 | Two missing-file controls passed assertion-red/source-restored-green. Original queued-pointer mutation retained. Stricter final control moves the owned file after runner receipt/argv commit and before native read, so both actual bootstrap and refresh name a missing file: `state.GrokRulesState should be GrokRulesState.Ready but was GrokRulesState.Failed`, reason `grok_rules_initialization_failed: unreadable`. Red 74.172 s / green 103.281 s including builds, each 1 case/0 skips; no external provider route. |
 | PC-29 | Two controls executed: native read stops at line 1,000; real dispatch reads only 10 of its 58 rule lines but sends a success ack. Both named assertions fail, both source restorations pass. See continuation controls. |
 | PC-30 | Helper-only captured evidence substituted at the acceptance oracle: task-tail/tool-bearing assertion fails, restore passes. No provider route changed. See continuation controls. |
 | PC-31 | Executed against captured authenticated baseline evidence: expected-row mutation failed independent-oracle comparison (106.000 s red / 35.765 s green); duplicate-ID mutation failed `ids.Distinct(StringComparer.Ordinal).Count() should be 2 but was 1` (35.453 s red / 35.766 s green). Each 1 failed/0 skips, bytes restored, 1 passed/0 skips. No native/model data was fabricated. |
 
 ## Handoff
 
-Continue Code on the continuation branch. The historical T-6/T-10 implementation gaps above
-were addressed by the resumed implementation; do not rebuild them. Finish the missing acceptance harnesses and remaining named tests. Complete every unrun V/R/PC case, then the mandatory isolated real-wire and real-model gates.
-Keep the card open and do not hand this implementation to Land as a completed fix.
+Review the continuation branch and completed revised acceptance evidence below. The original implementation is preserved. The operator moved endurance to a
+follow-up; do not restore it as this card's acceptance gate. Review the conservative one-follow-on
+behavior and the two disclosed fault-test seams. No deployment, shared migration or restart is
+requested by this Code stage.
 
 ## Resumed implementation evidence
 
@@ -563,3 +564,79 @@ rules barrier (one failure), and 28 queue-origin/entry-point cases (26 passed; t
 cases need the established cancel-on-ineligible expectation). A stricter PC-28 run moves the
 owned disposable file named by both native bootstrap and refresh after runner commit, before
 native read; its assertion-red/restored-green evidence will be recorded below.
+
+
+### Final expansion resolution
+
+Both pending expansions above now pass: 11/11 native recovery (30.962 s) and 28/28 queue
+barrier origin cases (26.291 s), zero skips. The in-flight failure was a real barrier bug:
+`DeliveryVerdict` stayed null despite a complete matching transcript. The queue now allows only
+transcript confirmation while the barrier is closed; it does not re-press Enter or retype ordinary
+input. After confirmation, the rules refresh precedes newer ordinary work. The two supervision
+failures were expectation errors: boot/expired-hold flush cancels those compacts by the existing
+cancel-not-strand policy, which remains unchanged.
+
+The stricter PC-28 control completed 1 assertion failure then 1 restored-source pass, zero skips,
+74.172 s / 103.281 s including builds. Actual failure text is in the PC table and archived ledger.
+Only the verified disposable rules file was moved; the original bootstrap literal and refresh both
+named that now-missing file. Source bytes were restored before the fresh green run.
+
+The isolated named Herdr server `card0395-c7ff2da0` (owned PID 61168) was stopped via its named
+server command; absence was verified. No production/shared server or runner was restarted.
+The broader 104-case delivery verification suite is running against the queue fix; final results follow.
+
+
+## Final acceptance verdict (supersedes all earlier pending checkpoints)
+
+**Revised acceptance complete.** Deterministic V/R/PC mapping is green, including T-8's
+permitted conservative one-follow-on branch. Both authenticated mapped-worker and standing-Herdr
+compliance runs passed with native read/ack/marked-settlement evidence. V-9 endurance was
+intentionally moved to an operator follow-up and is not an acceptance blocker. It was not rerun
+after the scope decision. The follow-up should reuse the captured genuine compactions and the
+corrected exact launch-key resume query; no failure to trigger compaction is claimed.
+
+The final queue change was verified by 156 passing cases across the five queue/recovery classes
+below: zero failures and zero skips. These overlap the corrected 570-case regression sweep;
+no aggregate unique-test count is inferred. Other focused finals are listed for exact audit.
+
+| Final test log / class | Passed | Failed | Skipped | TUnit elapsed |
+|---|---:|---:|---:|---|
+| `final6-GrokRulesCompactionRecoveryTests.log` | 11 | 0 | 0 | 30s 962ms |
+| `final6-GrokRulesQueueBarrierTests.log` | 28 | 0 | 0 | 26s 291ms |
+| `final7-SessionMessageQueueInterruptedAttemptTests.log` | 11 | 0 | 0 | 31s 993ms |
+| `final6-SessionMessageQueueDeliveryVerificationTests.log` | 104 | 0 | 0 | 4m 30s 521ms |
+| `final6-GrokRulesCompactionTests.log` | 2 | 0 | 0 | 24s 046ms |
+| `final2-GrokRulesInitializationTests.log` | 19 | 0 | 0 | 31s 807ms |
+| `final2-AgentSessionInterruptedLaunchResumeTests.log` | 8 | 0 | 0 | 32s 647ms |
+| `final-GrokRulesHttpAcceptanceTests.log` | 1 | 0 | 0 | 5s 960ms |
+| `final-GrokTranscriptTailerTests-corrected.log` | 32 | 0 | 0 | 5s 041ms |
+| `final-GrokRulesResumeMigrationTests.log` | 6 | 0 | 0 | 20s 238ms |
+| `final-GrokRulesTransactionTests.log` | 3 | 0 | 0 | 15s 870ms |
+| `final4-GrokDelegateEndToEndTests.log` | 5 | 0 | 0 | 2m 07s 859ms |
+| `final4-DelegateLaunchArgvIntegrityTests.log` | 6 | 0 | 0 | 16s 613ms |
+| `final5-GrokDelegateDispatchTests.log` | 38 | 0 | 0 | 22s 526ms |
+
+`final6-build.log`: build passed, 0 errors (122 warning messages retained). The two incorrectly
+named class filters selected zero tests (exit 8) and are excluded from every success count; the
+correct 38-case dispatch and 11-case interrupted-attempt classes passed. Original failures,
+fixture corrections, real defects and assertion-only positive controls remain separately recorded.
+PC-1 through PC-31 have retained red/restored-green evidence; compilation errors never count.
+
+Final production corrections in this continuation: validate final card profile before claim;
+use configured rules settings in resume preflight; fail unsafe resolved dispatch argv before
+queueing; and allow transcript-only confirmation of interrupted ordinary input under a pending
+rules barrier without typing through it. Existing shared argv policy remains unchanged.
+
+Rerun the five final queue classes sequentially with the repository's normal TUnit front door:
+
+```powershell
+foreach ($card0395Class in @('GrokRulesCompactionRecoveryTests', 'GrokRulesQueueBarrierTests', 'SessionMessageQueueInterruptedAttemptTests', 'SessionMessageQueueDeliveryVerificationTests', 'GrokRulesCompactionTests')) {
+    dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-card0395/ -- --treenode-filter "/*/*/$card0395Class/*"
+    if ($LASTEXITCODE -ne 0) { throw "$card0395Class failed: $LASTEXITCODE" }
+}
+```
+
+No deployment, production restart or shared database migration was performed. The isolated
+named Herdr server was stopped and its absence verified. `restart: none`.
+
+Final evidence ZIP SHA-256: `a9f7983ff57e16c2647a3549dae8683cfaa2d97022770a927ffcb1cd483dbd22` (312 CRC-verified entries).

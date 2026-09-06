@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
@@ -42,13 +43,21 @@ public sealed class GrokRulesCompactionRecoveryTests
     [Arguments("startup", "standing")]
     [Arguments("startup", "channel")]
     [Arguments("startup", "retired-pool")]
+    [Arguments("blocked-herdr", "standing")]
+    [Arguments("in-flight", "standing")]
     public async Task Captured_native_boundary_reaches_one_durable_refresh_without_idle_input(string lane, string population)
     {
         await using var h = await BridgeQueueHarness.CreateAsync(new() { ConfigureServices = services => {
             services.AddSingleton(Options.Create(new GrokRulesSettings()));
             services.AddSingleton<GrokRulesRefreshService>();
             services.AddSingleton<CompactionRecoveryService>();
+            services.AddSingleton(sp => new PtyDeliveryProfile(
+                sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<PtyDeliveryProfile>.Instance,
+                sp.GetRequiredService<IOptions<DelegationSettings>>(), TimeProvider.System, backendOverride: "inbox"));
+            services.AddSingleton<SessionDeliveryProfile>();
         }});
+        h.Runner.Capabilities = new("InboxConhost", "inbox", "test", false,
+            SessionBackends: [SessionBackends.PtyHost, SessionBackends.Herdr]);
         var rules = h.Provider.GetRequiredService<GrokRulesRefreshService>();
         var payload = new GrokRulesPayload("attachment-only standing rules\n", 1, Guid.NewGuid());
         var bytes = Encoding.UTF8.GetBytes(payload.Content);
@@ -75,10 +84,19 @@ public sealed class GrokRulesCompactionRecoveryTests
             RulesAcknowledgedAt = DateTime.UtcNow, Status = QueuedMessageStatus.Sent });
         session.GrokRulesReadyAt = DateTime.UtcNow;
         session.GrokRulesState = GrokRulesState.Ready;
+        if (lane == "blocked-herdr")
+        {
+            session.SessionBackend = SessionBackend.Herdr;
+            h.Runtime.SetTestAgentStatus(h.SessionId, "blocked");
+        }
         await db.SaveChangesAsync();
         if (population == "channel") await h.BindChannelAsync();
         if (population == "retired-pool")
             await db.Agents.Where(a => a.Id == h.AgentId).ExecuteDeleteAsync();
+        Guid? inFlight = lane == "in-flight"
+            ? await h.SeedPendingMessageAsync("ordinary work already submitted before the boundary",
+                deliveryAttempts: 1, baselineSequence: 0, status: QueuedMessageStatus.Sent)
+            : null;
         var ordinary = await h.SeedPendingMessageAsync("older ordinary work must follow the reread");
         await h.MarkWorkingAsync();
 
@@ -97,7 +115,7 @@ public sealed class GrokRulesCompactionRecoveryTests
         captured.InputTokens.ShouldBe(15);
         var entry = JsonSerializer.Deserialize<SessionRunnerTranscriptEvent>(JsonSerializer.Serialize(captured))! with { Sequence = 10 };
         h.Runner.SetTranscript(new(h.SessionId, [entry], 10));
-        if (lane == "live") await h.Runtime.ObserveTranscriptAsync(entry, CancellationToken.None);
+        if (lane is "live" or "blocked-herdr" or "in-flight") await h.Runtime.ObserveTranscriptAsync(entry, CancellationToken.None);
         else if (lane == "sync") await h.Runtime.SyncTranscriptAsync(h.SessionId, CancellationToken.None);
         else
         {
@@ -129,6 +147,23 @@ public sealed class GrokRulesCompactionRecoveryTests
         turnEnd.Kind.ShouldBe(TranscriptKinds.TurnEnd);
         await h.Runtime.ObserveTranscriptAsync(turnEnd, CancellationToken.None);
         await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        if (lane == "blocked-herdr")
+        {
+            h.Adapter.SubmittedBodies.ShouldBeEmpty("a blocking Herdr UI must not charge a refresh attempt or type work");
+            (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == refresh.Id)).DeliveryAttempts.ShouldBe(0);
+            h.Runtime.SetTestAgentStatus(h.SessionId, "idle");
+            await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+        }
+        if (inFlight is Guid priorId)
+        {
+            h.Adapter.SubmittedBodies.ShouldBeEmpty("an already-started ordinary delivery must finish before a refresh can type");
+            (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == priorId)).DeliveryAttempts.ShouldBe(1);
+            await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt,
+                "ordinary work already submitted before the boundary", timestamp: DateTime.UtcNow);
+            await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+            await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+            (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == priorId)).DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
+        }
         h.Adapter.SubmittedBodies.ShouldHaveSingleItem().ShouldStartWith(GrokRulesRefreshService.Header(refresh.Id));
         (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == ordinary)).Status.ShouldBe(QueuedMessageStatus.Pending);
 

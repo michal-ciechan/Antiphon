@@ -1196,7 +1196,18 @@ public sealed class SessionMessageQueueService
         }
 
         var interrupted = await LoadInterruptedSentRunAsync(db, sessionId, ct);
-        if (rulesClosed && interrupted.Any(m => m.RulesRefreshKey is null)) return FlushResult.Nothing;
+        if (rulesClosed && interrupted.Any(m => m.RulesRefreshKey is null))
+        {
+            // A boundary must hold new input, not discard evidence for input already sent.
+            // Confirm from the transcript only: ordinary recovery must not re-press Enter
+            // or retype through the closed rules barrier.
+            var confirmed = await LateConfirmAttemptedMessagesAsync(db, sessionId, interrupted, ct);
+            lateConfirmed?.Record(confirmed);
+            interrupted = interrupted.Where(m => m.Status == QueuedMessageStatus.Sent
+                && m.DeliveryVerdict == null).ToList();
+            if (interrupted.Any(m => m.RulesRefreshKey is null))
+                return confirmed.Handled > 0 ? FlushResult.LateConfirmed : FlushResult.Nothing;
+        }
         if (interrupted.Count > 0)
         {
             var recovered = await RecoverDeliveryRunLockedAsync(
