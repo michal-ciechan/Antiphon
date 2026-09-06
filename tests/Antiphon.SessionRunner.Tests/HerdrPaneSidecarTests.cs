@@ -133,6 +133,79 @@ public class HerdrPaneSidecarTests
     }
 
     [Test]
+    public void Placement_labels_round_trip_and_old_files_load_with_null_labels()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "herdr-sidecar-labels-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var sessionId = Guid.NewGuid();
+            var sidecar = new HerdrPaneSidecar
+            {
+                SessionId = sessionId,
+                WorkspaceKey = "project:abc",
+                WorkspaceId = "w2",
+                TabId = "w2:t1",
+                PaneId = "w2:p1",
+                ChildPid = 1,
+                ShellPid = 1,
+                LaunchedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.UtcNow,
+                WorkspaceLabel = "PredictionMarkets",
+                TabLabel = "Orch",
+            };
+            sidecar.SaveAtomic(HerdrPaneSidecar.PathFor(root, sessionId));
+            var json = File.ReadAllText(HerdrPaneSidecar.PathFor(root, sessionId));
+            json.ShouldContain("\"workspaceLabel\"");
+            json.ShouldContain("\"tabLabel\"");
+            var loaded = HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(root, sessionId))!;
+            loaded.WorkspaceLabel.ShouldBe("PredictionMarkets");
+            loaded.TabLabel.ShouldBe("Orch");
+
+            var oldPath = HerdrPaneSidecar.PathFor(root, Guid.NewGuid());
+            Directory.CreateDirectory(Path.GetDirectoryName(oldPath)!);
+            File.WriteAllText(oldPath, """
+                {"schemaVersion":1,"sessionId":"00000000-0000-0000-0000-000000000001","workspaceKey":"k","workspaceId":"w","tabId":"t","paneId":"p","launchedAtUtc":"2026-01-01T00:00:00Z","updatedAtUtc":"2026-01-01T00:00:00Z"}
+                """);
+            var old = HerdrPaneSidecar.TryLoad(oldPath)!;
+            old.WorkspaceLabel.ShouldBeNull();
+            old.TabLabel.ShouldBeNull();
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
+    public void FromSidecar_and_FromLaunchRequest_copy_labels()
+    {
+        var sidecar = new HerdrPaneSidecar
+        {
+            SessionId = Guid.NewGuid(),
+            WorkspaceKey = "k",
+            WorkspaceId = "w",
+            TabId = "t",
+            PaneId = "p",
+            LaunchedAtUtc = DateTime.UtcNow,
+            UpdatedAtUtc = DateTime.UtcNow,
+            WorkspaceLabel = "PredictionMarkets",
+            TabLabel = "Orch",
+        };
+        var last = HerdrLastPane.FromSidecar(sidecar, "x");
+        last.WorkspaceLabel.ShouldBe("PredictionMarkets");
+        last.TabLabel.ShouldBe("Orch");
+
+        var fromReq = HerdrLastPane.FromLaunchRequest(
+            new RunnerLaunchRequest(
+                sidecar.SessionId, "e", [], new Dictionary<string, string>(), "c", 120, 30),
+            new HerdrLaunchOptions("k", "PredictionMarkets", "c", "title", TabLabel: "Orch"),
+            "w", "t", "p", 1, "timeout");
+        fromReq.WorkspaceLabel.ShouldBe("PredictionMarkets");
+        fromReq.TabLabel.ShouldBe("Orch");
+    }
+
+    [Test]
     public void try_load_tolerates_corrupt_json()
     {
         var root = Path.Combine(Path.GetTempPath(), "herdr-sidecar-bad-" + Guid.NewGuid().ToString("N"));

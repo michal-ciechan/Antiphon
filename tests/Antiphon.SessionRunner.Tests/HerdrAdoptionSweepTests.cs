@@ -787,6 +787,44 @@ public class HerdrAdoptionSweepTests
         DeleteLogRoot(settings.SessionLogPath);
     }
 
+    [Test]
+    public async Task R22_dedicated_tab_exclusion_survives_runner_restart_adoption()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        var workspaceKey = "k1";
+        var ws = fake.SeedWorkspace("w1", "PredictionMarkets", new Dictionary<string, string> { ["antiphon-ws"] = workspaceKey });
+        var orch = fake.SeedTab(ws.WorkspaceId, "Orch");
+        var sessionId = Guid.NewGuid();
+
+        await using (var runtimeA = BuildRuntime(settings, fake))
+        {
+            await StartHerdrSessionAsync(
+                runtimeA, sessionId, settings.SessionLogPath,
+                workspaceKey: workspaceKey, tabLabel: "Orch");
+        }
+
+        File.Exists(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId)).ShouldBeTrue();
+        await using var runtimeB = BuildRuntime(settings, fake);
+        await runtimeB.AdoptOrphanedHostsAsync(new StubProbe(alive: true), CancellationToken.None);
+        runtimeB.Get(sessionId).Status.ShouldBe("Running");
+
+        var e = Guid.NewGuid();
+        await StartHerdrSessionAsync(runtimeB, e, settings.SessionLogPath, workspaceKey: workspaceKey);
+        fake.Workspaces[0].Tabs.Single(t => t.Label == "Orch").Panes.Count.ShouldBe(1);
+        fake.Requests.Any(r =>
+            r.GetProperty("method").GetString() == "pane.split"
+            && r.GetProperty("params").GetProperty("target_pane_id").GetString() == orch.Panes[0].PaneId)
+            .ShouldBeFalse();
+        CountMethod(fake, "tab.create").ShouldBeGreaterThanOrEqualTo(1);
+
+        await runtimeB.KillAsync(e, TimeSpan.FromSeconds(2), CancellationToken.None);
+        await runtimeB.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
     private static SessionRunnerRuntime BuildRuntime(
         SessionRunnerSettings settings,
         FakeHerdrServer fake,
@@ -810,7 +848,9 @@ public class HerdrAdoptionSweepTests
         bool transcriptEnabled = false,
         string? transcriptFormat = null,
         string? agentKind = null,
-        Guid? reusePaneOfSessionId = null)
+        Guid? reusePaneOfSessionId = null,
+        string? workspaceKey = null,
+        string? tabLabel = null)
     {
         var dto = await runtime.StartAsync(
             new RunnerLaunchRequest(
@@ -825,12 +865,13 @@ public class HerdrAdoptionSweepTests
                 TranscriptFormat: transcriptFormat,
                 Backend: SessionBackends.Herdr,
                 Herdr: new HerdrLaunchOptions(
-                    WorkspaceKey: $"test-{sessionId:N}"[..32],
+                    WorkspaceKey: workspaceKey ?? $"test-{sessionId:N}"[..32],
                     WorkspaceLabel: "card0186-adopt",
                     WorkspaceCwd: cwd,
                     PaneTitle: "card0186-adopt",
                     AgentKind: agentKind,
-                    ReusePaneOfSessionId: reusePaneOfSessionId)),
+                    ReusePaneOfSessionId: reusePaneOfSessionId,
+                    TabLabel: tabLabel)),
             CancellationToken.None);
         dto.Status.ShouldBe("Running");
         return dto;

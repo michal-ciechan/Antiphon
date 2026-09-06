@@ -610,6 +610,57 @@ public class HerdrAttachTests
     }
 
     [Test]
+    public async Task Pending_named_launch_claim_refuses_attach_as_bound()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        var ws = fake.SeedWorkspace("w1", "PredictionMarkets", new Dictionary<string, string> { ["antiphon-ws"] = "k1" });
+        var orch = fake.SeedTab(ws.WorkspaceId, "Orch");
+        await using var runtime = BuildRuntime(settings, fake);
+        var gate = fake.GateMethod("pane.send_text");
+        var aId = Guid.NewGuid();
+        var a = runtime.StartAsync(
+            new RunnerLaunchRequest(
+                aId,
+                @"C:\tools\claude.exe",
+                ["--session-id", aId.ToString("D")],
+                new Dictionary<string, string>(),
+                settings.SessionLogPath,
+                Cols: 120,
+                Rows: 30,
+                Backend: SessionBackends.Herdr,
+                Herdr: new HerdrLaunchOptions(
+                    "k1", "PredictionMarkets", settings.SessionLogPath, "named-agent",
+                    AgentKind: HerdrAgentKinds.Claude, TabLabel: "Orch")),
+            CancellationToken.None);
+        var start = DateTime.UtcNow;
+        while (fake.Requests.Count(r => r.GetProperty("method").GetString() == "pane.send_text") == 0)
+        {
+            if (DateTime.UtcNow - start > TimeSpan.FromSeconds(10))
+                throw new TimeoutException("named launch did not reach pane.send_text");
+            await Task.Delay(20);
+        }
+
+        var attachId = Guid.NewGuid();
+        var ex = await Should.ThrowAsync<HerdrLaunchException>(() =>
+            runtime.AttachHerdrAsync(
+                new HerdrAttachRequest(
+                    attachId, orch.Panes[0].PaneId, HerdrAgentKinds.Grok, TranscriptFormats.Grok,
+                    1, "k1"),
+                CancellationToken.None));
+        ex.Code.ShouldBe(HerdrProblemTypes.PaneBound);
+        ex.Message.ShouldContain(aId.ToString("D"));
+        a.IsCompleted.ShouldBeFalse();
+        gate.Release();
+        var dto = await a;
+        dto.Status.ShouldBe("Running");
+        await runtime.KillAsync(aId, TimeSpan.FromSeconds(2), CancellationToken.None);
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
+    [Test]
     public void Executable_family_lists_kind_binaries_and_excludes_pwsh()
     {
         HerdrAgentKinds.IsFamilyMember(HerdrAgentKinds.Grok, "grok.exe").ShouldBeTrue();

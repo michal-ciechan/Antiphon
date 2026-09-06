@@ -39,6 +39,8 @@ internal static class HerdrProblemMapper
         HerdrProblemTypes.TranscriptNotFound => "Herdr transcript not found",
         HerdrProblemTypes.PaneChanged => "Herdr pane changed",
         HerdrProblemTypes.PaneOccupied => "Herdr pane occupied",
+        HerdrProblemTypes.TabAmbiguous => "Herdr tab ambiguous",
+        HerdrProblemTypes.TabInvalid => "Herdr tab invalid",
         HerdrProblemTypes.GkpEnvMissing => "Herdr gkp launch cannot route",
         HerdrProblemTypes.GrokNativeSessionMissing => "Herdr grok native session missing",
         HerdrLaunchException.CodeDetectTimeout => "Herdr launch detect timeout",

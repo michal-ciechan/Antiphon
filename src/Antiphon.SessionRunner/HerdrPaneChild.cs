@@ -18,6 +18,9 @@ internal sealed class HerdrPaneChild : ISessionChild
     private readonly ILogger _logger;
     private readonly Func<IReadOnlyList<HerdrPaneAllocator.LivePane>> _liveAntiphonPanes;
     private readonly IProcessLivenessProbe _processLiveness;
+    private readonly HerdrPlacementCoordinator? _coordinator;
+    private readonly Func<string, Guid?, PaneBinding?>? _findBound;
+    private readonly HerdrNamedTabResolver _namedTabs;
 
     private Guid _sessionId;
     private string? _paneId;
@@ -39,13 +42,18 @@ internal sealed class HerdrPaneChild : ISessionChild
         SessionRunnerSettings settings,
         ILogger logger,
         Func<IReadOnlyList<HerdrPaneAllocator.LivePane>> liveAntiphonPanes,
-        IProcessLivenessProbe processLiveness)
+        IProcessLivenessProbe processLiveness,
+        HerdrPlacementCoordinator? coordinator = null,
+        Func<string, Guid?, PaneBinding?>? findBoundPane = null)
     {
         _client = client;
         _settings = settings;
         _logger = logger;
         _liveAntiphonPanes = liveAntiphonPanes;
         _processLiveness = processLiveness;
+        _coordinator = coordinator;
+        _findBound = findBoundPane;
+        _namedTabs = new HerdrNamedTabResolver(HerdrNamedTabResolver.HostLabelComparer);
     }
 
     public event Action<ChildExit>? Exited;
@@ -284,8 +292,22 @@ internal sealed class HerdrPaneChild : ISessionChild
 
         await _client.ConnectAndValidateAsync(ct);
 
-        var ensured = await EnsureWorkspaceAsync(opts, request.Env, ct);
-        var target = await ResolveTargetPaneAsync(ensured.WorkspaceId, opts, request, expectedKind, ct);
+        IAsyncDisposable? keyLock = null;
+        if (!string.IsNullOrWhiteSpace(opts.TabLabel) && _coordinator is not null)
+            keyLock = await _coordinator.LockWorkspaceKeyAsync(opts.WorkspaceKey, ct);
+        try
+        {
+            var ensured = await EnsureWorkspaceAsync(opts, request.Env, ct);
+            if (!string.IsNullOrWhiteSpace(opts.TabLabel))
+                return await LaunchNamedAsync(request, opts, expectedKind, ensured, keyLock, ct);
+
+            if (keyLock is not null)
+            {
+                await keyLock.DisposeAsync();
+                keyLock = null;
+            }
+
+            var target = await ResolveTargetPaneAsync(ensured.WorkspaceId, opts, request, expectedKind, ct);
 
         if (target.Kind == TargetPaneKind.Adopt)
             return await AdoptInPlaceAsync(request, opts, expectedKind, target, ct);
@@ -317,9 +339,243 @@ internal sealed class HerdrPaneChild : ISessionChild
             sidecarWorkspaceId = ensured.WorkspaceId;
         }
 
-        return await CompleteTypedLaunchAsync(
-            request, opts, expectedKind, sidecarWorkspaceId, tabId, paneId, ct,
-            createdRootTabId, useRootWorkingDirectory, previousEnvNames);
+            return await CompleteTypedLaunchAsync(
+                request, opts, expectedKind, sidecarWorkspaceId, tabId, paneId, ct,
+                createdRootTabId, useRootWorkingDirectory, previousEnvNames);
+        }
+        finally
+        {
+            if (keyLock is not null)
+                await keyLock.DisposeAsync();
+        }
+    }
+
+    private async Task<ChildStarted> LaunchNamedAsync(
+        RunnerLaunchRequest request,
+        HerdrLaunchOptions opts,
+        string expectedKind,
+        EnsuredWorkspace ensured,
+        IAsyncDisposable? keyLock,
+        CancellationToken ct)
+    {
+        var tabLabel = opts.TabLabel!;
+        var resolver = _namedTabs;
+        IAsyncDisposable? wsLock = null;
+        PlacementClaim? claim = null;
+        try
+        {
+            if (_coordinator is not null)
+                wsLock = await _coordinator.LockWorkspaceIdAsync(ensured.WorkspaceId, ct);
+
+            string tabId;
+            string paneId;
+            var createdRootTabId = (string?)null;
+            var justCreated = false;
+            NamedOccupant? occupant = null;
+
+            if (ensured.CreatedRootTab is not null && ensured.CreatedRootPane is not null)
+            {
+                tabId = ensured.CreatedRootTab.TabId;
+                paneId = ensured.CreatedRootPane.PaneId;
+                createdRootTabId = tabId;
+                justCreated = true;
+            }
+            else
+            {
+                IReadOnlyList<HerdrTabInfo> tabs;
+                try
+                {
+                    tabs = await _client.TabListAsync(ensured.WorkspaceId, ct);
+                }
+                catch (Exception ex) when (ex is HerdrApiException or HerdrBackendUnavailableException)
+                {
+                    throw;
+                }
+
+                IReadOnlyList<HerdrPaneInfo> panes;
+                try
+                {
+                    panes = await _client.PaneListAsync(ensured.WorkspaceId, ct);
+                }
+                catch (Exception ex) when (ex is HerdrApiException or HerdrBackendUnavailableException)
+                {
+                    throw;
+                }
+
+                var pick = resolver.PickUniqueSinglePaneTab(tabs, panes, ensured.WorkspaceId, tabLabel);
+                if (pick is null)
+                {
+                    var created = await _client.TabCreateAsync(
+                        ensured.WorkspaceId, request.Cwd, request.Env, tabLabel, ct);
+                    tabId = created.TabId;
+                    paneId = created.InitialPaneId;
+                    justCreated = true;
+                }
+                else
+                {
+                    tabId = pick.Tab.TabId;
+                    paneId = pick.Pane.PaneId;
+                    RefuseIfForeignBinding(paneId, request.SessionId, opts);
+                }
+            }
+
+            if (_coordinator is not null)
+                claim = _coordinator.Claim(request.SessionId, ensured.WorkspaceId, tabId, paneId, named: true);
+
+            HerdrPaneInfo livePane;
+            try
+            {
+                livePane = await _client.PaneGetAsync(paneId, ct);
+            }
+            catch (HerdrApiException ex) when (IsPaneNotFound(ex))
+            {
+                throw new HerdrLaunchException(
+                    $"named tab '{tabLabel}' pane {paneId} disappeared before acquisition",
+                    HerdrProblemTypes.PaneChanged);
+            }
+
+            if (!string.Equals(livePane.WorkspaceId, ensured.WorkspaceId, StringComparison.Ordinal)
+                || !string.Equals(livePane.TabId, tabId, StringComparison.Ordinal))
+            {
+                throw new HerdrLaunchException(
+                    $"named tab '{tabLabel}' pane {paneId} moved before acquisition",
+                    HerdrProblemTypes.PaneChanged);
+            }
+
+            if (!justCreated)
+            {
+                HerdrPaneProcessInfo proc;
+                try
+                {
+                    proc = await _client.PaneProcessInfoAsync(paneId, ct);
+                }
+                catch (HerdrApiException ex) when (IsPaneNotFound(ex))
+                {
+                    throw new HerdrLaunchException(
+                        $"named tab '{tabLabel}' pane {paneId} disappeared before acquisition",
+                        HerdrProblemTypes.PaneChanged);
+                }
+
+                var shellName = proc.ShellPid is int shell
+                    ? _processLiveness.TryGetProcessName(shell)
+                    : null;
+                occupant = resolver.Classify(livePane, proc, expectedKind, request.SessionId, shellName);
+                if (occupant.Kind == NamedOccupantKind.Occupied)
+                {
+                    throw new HerdrLaunchException(
+                        occupant.OccupiedDetail ?? $"pane {paneId} is occupied; not stolen",
+                        HerdrProblemTypes.PaneOccupied);
+                }
+
+                HerdrPaneInfo recheck;
+                try
+                {
+                    recheck = await _client.PaneGetAsync(paneId, ct);
+                }
+                catch (HerdrApiException ex) when (IsPaneNotFound(ex))
+                {
+                    throw new HerdrLaunchException(
+                        $"named tab '{tabLabel}' pane {paneId} disappeared before acquisition",
+                        HerdrProblemTypes.PaneChanged);
+                }
+
+                if (!string.Equals(recheck.WorkspaceId, ensured.WorkspaceId, StringComparison.Ordinal)
+                    || !string.Equals(recheck.TabId, tabId, StringComparison.Ordinal))
+                {
+                    throw new HerdrLaunchException(
+                        $"named tab '{tabLabel}' pane {paneId} moved before acquisition",
+                        HerdrProblemTypes.PaneChanged);
+                }
+            }
+
+            if (wsLock is not null)
+            {
+                await wsLock.DisposeAsync();
+                wsLock = null;
+            }
+
+            if (keyLock is not null)
+            {
+                await keyLock.DisposeAsync();
+                keyLock = null;
+            }
+
+            if (occupant?.Kind == NamedOccupantKind.Adopt)
+            {
+                var adopted = await AdoptInPlaceAsync(
+                    request, opts, expectedKind,
+                    new TargetPane(
+                        TargetPaneKind.Adopt,
+                        occupant.WorkspaceId,
+                        occupant.TabId,
+                        occupant.PaneId,
+                        Occupant: occupant.Occupant,
+                        ShellPid: occupant.ShellPid),
+                    ct,
+                    delayPaneIdAssignment: true);
+                if (claim is not null)
+                {
+                    await claim.DisposeAsync();
+                    claim = null;
+                }
+
+                return adopted;
+            }
+
+            IReadOnlyList<string>? previousEnvNames = null;
+            var last = HerdrLastPane.TryLoad(_settings.SessionLogPath, request.SessionId);
+            if (last is null && opts.ReusePaneOfSessionId is Guid prevId)
+                last = HerdrLastPane.TryLoad(_settings.SessionLogPath, prevId);
+            if (last is not null
+                && string.Equals(last.PaneId, paneId, StringComparison.Ordinal)
+                && string.Equals(last.TabId, tabId, StringComparison.Ordinal)
+                && string.Equals(last.WorkspaceId, ensured.WorkspaceId, StringComparison.Ordinal))
+            {
+                previousEnvNames = last.LaunchEnvNames;
+            }
+
+            var started = await CompleteTypedLaunchAsync(
+                request, opts, expectedKind, ensured.WorkspaceId, tabId, paneId, ct,
+                createdRootTabId,
+                useRootWorkingDirectory: createdRootTabId is not null,
+                previousEnvNames,
+                applyWorkingDirectory: true,
+                delayPaneIdAssignment: true);
+            if (claim is not null)
+            {
+                await claim.DisposeAsync();
+                claim = null;
+            }
+
+            return started;
+        }
+        finally
+        {
+            if (wsLock is not null)
+                await wsLock.DisposeAsync();
+            if (claim is not null)
+                await claim.DisposeAsync();
+        }
+    }
+
+    private void RefuseIfForeignBinding(string paneId, Guid sessionId, HerdrLaunchOptions opts)
+    {
+        if (_coordinator?.FindPaneClaim(paneId, sessionId) is { } pending)
+        {
+            throw new HerdrLaunchException(
+                $"pane {paneId} is occupied by session {pending.SessionId:D}; not stolen",
+                HerdrProblemTypes.PaneOccupied);
+        }
+
+        if (_findBound is null || _findBound(paneId, sessionId) is not { } bound)
+            return;
+
+        if (opts.ReusePaneOfSessionId is Guid prev && bound.SessionId == prev && !bound.Live)
+            return;
+
+        throw new HerdrLaunchException(
+            $"pane {paneId} is occupied by session {bound.SessionId:D}; not stolen",
+            HerdrProblemTypes.PaneOccupied);
     }
 
     private enum TargetPaneKind { Allocate, Relaunch, Adopt }
@@ -557,12 +813,18 @@ internal sealed class HerdrPaneChild : ISessionChild
         CancellationToken ct,
         string? createdRootTabId = null,
         bool useRootWorkingDirectory = false,
-        IReadOnlyList<string>? previousEnvNames = null)
+        IReadOnlyList<string>? previousEnvNames = null,
+        bool applyWorkingDirectory = false,
+        bool delayPaneIdAssignment = false)
     {
-        _paneId = paneId;
+        if (!delayPaneIdAssignment)
+            _paneId = paneId;
 
         if (createdRootTabId is not null)
-            await _client.TabRenameAsync(createdRootTabId, opts.PaneTitle, ct);
+        {
+            var tabName = string.IsNullOrWhiteSpace(opts.TabLabel) ? opts.PaneTitle : opts.TabLabel;
+            await _client.TabRenameAsync(createdRootTabId, tabName, ct);
+        }
 
         await _client.PaneRenameAsync(paneId, opts.PaneTitle, ct);
         await _client.PaneReportMetadataAsync(
@@ -576,7 +838,7 @@ internal sealed class HerdrPaneChild : ISessionChild
         // CARD-0341: the script is the only carrier of env into a reused pane, so it applies
         // request.Env itself and removes what the previous launch set but this one does not carry.
         var scriptPath = HerdrLaunchScript.PathFor(_settings.SessionLogPath, request.SessionId);
-        var workingDirectory = useRootWorkingDirectory ? request.Cwd : null;
+        var workingDirectory = applyWorkingDirectory || useRootWorkingDirectory ? request.Cwd : null;
         var clearNames = StaleEnvNames(previousEnvNames, request.Env);
         HerdrLaunchScript.Write(
             scriptPath,
@@ -629,6 +891,8 @@ internal sealed class HerdrPaneChild : ISessionChild
         WriteSidecar(
             request, opts, expectedKind, workspaceId, tabId, paneId,
             childPid, shellPid, launchedAt, HerdrPaneOrigins.Launched);
+        if (delayPaneIdAssignment)
+            _paneId = paneId;
         HerdrLastPane.TryDelete(_settings.SessionLogPath, request.SessionId);
         if (opts.ReusePaneOfSessionId is Guid prev && prev != request.SessionId)
             HerdrLastPane.TryDelete(_settings.SessionLogPath, prev);
@@ -643,12 +907,14 @@ internal sealed class HerdrPaneChild : ISessionChild
         HerdrLaunchOptions opts,
         string expectedKind,
         TargetPane target,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool delayPaneIdAssignment = false)
     {
         var occupant = target.Occupant
             ?? throw new InvalidOperationException("AdoptInPlace requires an occupant.");
 
-        _paneId = target.PaneId;
+        if (!delayPaneIdAssignment)
+            _paneId = target.PaneId;
 
         await _client.PaneRenameAsync(target.PaneId, opts.PaneTitle, ct);
         await _client.PaneReportMetadataAsync(
@@ -663,6 +929,8 @@ internal sealed class HerdrPaneChild : ISessionChild
         WriteSidecar(
             request, opts, expectedKind, target.WorkspaceId, target.TabId, target.PaneId,
             occupant.Pid, target.ShellPid, startUtc, HerdrPaneOrigins.Launched);
+        if (delayPaneIdAssignment)
+            _paneId = target.PaneId;
         HerdrLastPane.TryDelete(_settings.SessionLogPath, request.SessionId);
         if (target.LastPaneSessionId is Guid last && last != request.SessionId)
             HerdrLastPane.TryDelete(_settings.SessionLogPath, last);
@@ -703,6 +971,8 @@ internal sealed class HerdrPaneChild : ISessionChild
             LaunchEnvNames = request.Env is { Count: > 0 }
                 ? request.Env.Keys.Order(StringComparer.Ordinal).ToList()
                 : null,
+            WorkspaceLabel = opts.WorkspaceLabel,
+            TabLabel = opts.TabLabel,
         };
         _sidecar.SaveAtomic(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, request.SessionId));
     }
@@ -1109,6 +1379,21 @@ internal sealed class HerdrPaneChild : ISessionChild
             workspaceId,
             new Dictionary<string, string?> { ["antiphon-ws"] = workspaceKey },
             ct);
+    }
+
+    internal static string? FindExistingWorkspaceId(
+        IReadOnlyList<HerdrWorkspaceInfo> listed, HerdrLaunchOptions opts)
+    {
+        var tokenMatch = listed.FirstOrDefault(w => TokenEquals(w, opts.WorkspaceKey));
+        if (tokenMatch is not null)
+            return tokenMatch.WorkspaceId;
+
+        var untaggedLabelMatches = listed
+            .Where(w =>
+                string.Equals(w.Label, opts.WorkspaceLabel, StringComparison.Ordinal)
+                && !HasNonEmptyAntiphonWorkspaceToken(w))
+            .ToList();
+        return untaggedLabelMatches.Count == 1 ? untaggedLabelMatches[0].WorkspaceId : null;
     }
 
     private static bool HasNonEmptyAntiphonWorkspaceToken(HerdrWorkspaceInfo workspace) =>
