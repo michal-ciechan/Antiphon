@@ -39,6 +39,12 @@ export interface AttentionVisual {
 }
 
 export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
+  HerdrSupervisionHeld: {
+    label: 'Herdr retries paused',
+    color: 'danger',
+    icon: TbClockPause,
+    hint: 'Inspect and fix the failed launches, then Retry and resume on the agent.',
+  },
   BlockedQuestion: {
     label: 'Blocked',
     color: 'warning',

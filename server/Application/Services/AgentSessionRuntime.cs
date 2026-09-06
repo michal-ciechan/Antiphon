@@ -151,12 +151,17 @@ public sealed class AgentSessionRuntime
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var session = await db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct);
+            await using var transaction = await db.Database.BeginTransactionAsync(ct);
+            var session = await db.AgentSessions.FromSqlInterpolated(
+                $"""SELECT * FROM "AgentSessions" WHERE "Id" = {sessionId} FOR UPDATE""").FirstOrDefaultAsync(ct);
             if (session is null)
                 return;
 
             var now = _timeProvider.GetUtcNow().UtcDateTime;
             var changed = false;
+            var oldHerdrEvidence = session.HerdrSupervisionFailureKind;
+            HerdrSupervisionFailureEvidence.Record(session, HerdrSupervisionFailureEvidence.FromExitReason(exitReason));
+            changed |= oldHerdrEvidence != session.HerdrSupervisionFailureKind;
             // A CPU-spin watchdog kill reclaims an IDLE session whose process was busy-looping a
             // core after its turn completed — the non-zero exit code is just the kill's. It must
             // land as Stopped, not Failed, so the next message resumes the session by id.
@@ -248,6 +253,7 @@ public sealed class AgentSessionRuntime
 
             if (changed)
                 await db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
             if (changedAgentId is Guid agentId)
                 await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), ct);
         }

@@ -486,6 +486,9 @@ public class AgentControlServiceIntegrationTests
 
             await MarkSessionEndedAsync(first.PersistentSessionId!, SessionStatus.Stopped);
 
+            await db.AgentSessions.Where(s => s.Id == Guid.Parse(first.PersistentSessionId!))
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.HerdrSupervisionFailureKind, HerdrSupervisionFailureKind.DetectTimeout));
+
             // A fresh scope mirrors a new HTTP request — no stale tracked entities.
             using var scope = harness.Provider.CreateScope();
             var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
@@ -502,6 +505,7 @@ public class AgentControlServiceIntegrationTests
             var sessions = await verify.AgentSessions.Where(s => s.Cwd == workspace).ToListAsync();
             sessions.Count.ShouldBe(1);
             sessions[0].Status.ShouldBe(SessionStatus.Running);
+            sessions[0].HerdrSupervisionFailureKind.ShouldBeNull();
         }
         finally
         {

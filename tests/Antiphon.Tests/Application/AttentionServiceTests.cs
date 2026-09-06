@@ -2425,7 +2425,7 @@ public class AttentionServiceTests
         new(sessionId, pid, DateTime.UtcNow.AddMinutes(-45), "Running", null, AgentExitReason.Unknown,
             LastSequence: 900, HostPid: hostPid);
 
-    private static AttentionService BuildService(
+    internal static AttentionService BuildService(
         ISessionRunnerClient runner,
         int staleAfterDays = 7,
         IWorkspaceProgressProbe? workspaceProgress = null,
@@ -2443,7 +2443,7 @@ public class AttentionServiceTests
     /// makes every assertion in this file id-scoped; the deleting is what stops a half-dispatched
     /// task of ours from turning up in someone else's global sweep.
     /// </summary>
-    private sealed class Scenario : IAsyncDisposable
+    internal sealed class Scenario : IAsyncDisposable
     {
         private readonly List<Guid> _tasks = [];
         private readonly List<Guid> _sessions = [];
@@ -2454,6 +2454,18 @@ public class AttentionServiceTests
         private readonly List<Guid> _projects = [];
         private readonly List<Guid> _holds = [];
         private readonly HashSet<string> _holdKeys = [];
+
+        public async Task HoldHerdrAsync(Guid agentId, DateTime heldAt, int count,
+            HerdrSupervisionFailureKind kind, Guid? consumedSessionId)
+        {
+            await using var db = CreateContext();
+            db.AgentSupervisionStates.Add(new AgentSupervisionState
+            {
+                AgentId = agentId, HerdrFailureHeldAt = heldAt, HerdrConsecutiveFailures = count,
+                LastHerdrFailureKind = kind, LastHerdrObservedSessionId = consumedSessionId, UpdatedAt = heldAt,
+            });
+            await db.SaveChangesAsync();
+        }
 
         public bool Owns(AttentionItemDto item) =>
             (item.TaskId is { } t && _tasks.Contains(t))
@@ -3323,7 +3335,7 @@ public class AttentionServiceTests
         }
     }
 
-    private sealed class FakeRunnerClient : ISessionRunnerClient
+    internal sealed class FakeRunnerClient : ISessionRunnerClient
     {
         public IReadOnlyList<SessionRunnerSessionDto> Sessions { get; init; } = [];
         public Exception? ListError { get; init; }

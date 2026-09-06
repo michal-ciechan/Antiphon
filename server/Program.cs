@@ -394,6 +394,7 @@ try
     builder.Services.AddScoped<WorktreeResidueSweepService>();
     builder.Services.AddScoped<WorktreeResidueJob>();
     builder.Services.AddScoped<AgentSupervisorService>();
+    builder.Services.AddScoped<HerdrSupervisionStateService>();
     builder.Services.AddScoped<IAgentIncidentRecorder>(sp => sp.GetRequiredService<AgentSupervisorService>());
     builder.Services.AddScoped<AppHostWatchdogStateAttentionService>();
     builder.Services.AddScoped<ChannelIngressIncidentService>();

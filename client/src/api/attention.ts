@@ -15,6 +15,7 @@ import type { AlertSeverity } from './agents'
 
 /** The named conditions. Mirrors the server enum; the server serialises these as strings. */
 export type AttentionKind =
+  | 'HerdrSupervisionHeld'
   /** The delegate asked a question. Only a human answer moves this. */
   | 'BlockedQuestion'
   /** A queued message spent its delivery attempts and parked — nothing will retry it (CARD-0055). */

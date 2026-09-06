@@ -133,6 +133,31 @@ public sealed class ChannelBridgeService : BackgroundService
         {
             sessionId = await EnsureAgentSessionAsync(agentId, ct);
         }
+        catch (ConflictException ex) when (ex.Code == HerdrSupervisionStateService.HeldCode)
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await using var transaction = await db.Database.BeginTransactionAsync(ct);
+            await db.Agents.FromSqlInterpolated(
+                $"""SELECT * FROM "Agents" WHERE "Id" = {agentId} FOR UPDATE""").AsNoTracking().SingleAsync(ct);
+            var state = await db.AgentSupervisionStates.AsNoTracking().SingleAsync(s => s.AgentId == agentId, ct);
+            if (!await db.AgentIncidents.AnyAsync(i => i.AgentId == agentId
+                && i.Kind == AgentIncidentKind.ChannelReplyLost && i.FailureReason == "HerdrSupervisionHeld"
+                && i.CreatedAt >= state.HerdrFailureHeldAt, ct))
+            {
+                db.AgentIncidents.Add(new AgentIncident
+                {
+                    Id = Guid.NewGuid(), AgentId = agentId, SessionId = state.LastHerdrObservedSessionId,
+                    Kind = AgentIncidentKind.ChannelReplyLost, Severity = AlertSeverity.Critical,
+                    Message = ColumnText.Clip($"Inbound on {channel.Provider}:{message.Conversation.Id} was not delivered: {ex.Message}", AgentIncident.MessageMaxLength),
+                    FailureReason = "HerdrSupervisionHeld", CreatedAt = _timeProvider.GetUtcNow().UtcDateTime,
+                });
+                await db.SaveChangesAsync(ct);
+            }
+            await transaction.CommitAsync(ct);
+            await RaiseBridgeDropAlertAsync(channel, agentId, ct);
+            return;
+        }
         catch (ModelDisabledException ex)
         {
             _logger.LogWarning(

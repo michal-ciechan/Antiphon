@@ -1,10 +1,12 @@
+using Antiphon.Server.Domain.Enums;
+
 namespace Antiphon.Server.Domain.Entities;
 
 /// <summary>
 /// Per-agent supervision bookkeeping (1:1 with <see cref="Agent"/>). Kept out of the Agents row so
 /// supervisor churn never contends with agent updates. The ladder never gives up: failures only
 /// stretch <see cref="NextRestartAt"/> further out (30-day cap), and sustained healthy uptime
-/// resets everything.
+/// resets the ordinary ladder. A separate durable Herdr hold requires explicit operator retry.
 /// </summary>
 public class AgentSupervisionState
 {
@@ -14,6 +16,12 @@ public class AgentSupervisionState
     public bool Suspended { get; set; }
 
     public int ConsecutiveFailures { get; set; }
+    public int HerdrConsecutiveFailures { get; set; }
+    public DateTime? HerdrFailureHeldAt { get; set; }
+    public HerdrSupervisionFailureKind? LastHerdrFailureKind { get; set; }
+    public Guid? LastHerdrObservedSessionId { get; set; }
+    public DateTime? LastHerdrObservedStartedAt { get; set; }
+    public DateTime? HerdrHealthySince { get; set; }
     public DateTime? NextRestartAt { get; set; }
     public DateTime? LastAttemptAt { get; set; }
 

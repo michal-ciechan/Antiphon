@@ -171,13 +171,16 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     public Exception? ThrowOnStart { get; set; }
     /// <summary>CARD-0384: factory form so a StartRefusal hook can mint a fresh exception per call.</summary>
     public Func<Exception?>? ThrowOnStartFactory { get; set; }
+    public TaskCompletionSource? StartGate { get; set; }
 
     public event Action<string>? OnTextDelta;
 
-    public Task StartAsync(AgentLaunchSpec spec, CancellationToken ct)
+    public async Task StartAsync(AgentLaunchSpec spec, CancellationToken ct)
     {
         if (ThrowOnStartFactory?.Invoke() is { } refusal)
             throw refusal;
+        if (StartGate is not null)
+            await StartGate.Task.WaitAsync(ct);
         if (ThrowOnStart is not null)
             throw ThrowOnStart;
 
@@ -192,7 +195,6 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
         if (RegisterOnStart is not null && spec.SessionId is Guid sessionId)
             RegisterOnStart.Register(sessionId, this);
         Emit(StartupOutput);
-        return Task.CompletedTask;
     }
 
     public Task AttachAsync(Guid sessionId, CancellationToken ct)

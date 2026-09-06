@@ -79,7 +79,7 @@ public sealed class AgentService
             .ToListAsync(ct);
 
         var liveSessions = await LoadLiveSessionsAsync(agents.Select(a => a.PersistentSessionId), ct);
-        var supervision = await LoadSupervisionAsync(agents.Where(a => a.AlwaysOn).Select(a => a.Id), ct);
+        var supervision = await LoadSupervisionAsync(agents.Select(a => a.Id), ct);
         // One query for every agent's attachments (CARD-0058 slice 6) — the list's drift badges are
         // otherwise N queries. Explicit rather than an Include for the same reason the launch paths
         // are: a missing include reads as "no attachments" and would clear every badge on the page.
@@ -152,9 +152,7 @@ public sealed class AgentService
     {
         var agent = await LoadAgentDetailAsync(id, asNoTracking: true, ct);
         var liveSessions = await LoadLiveSessionsAsync([agent.PersistentSessionId], ct);
-        var supervision = agent.AlwaysOn
-            ? (await LoadSupervisionAsync([agent.Id], ct)).GetValueOrDefault(agent.Id)
-            : null;
+        var supervision = (await LoadSupervisionAsync([agent.Id], ct)).GetValueOrDefault(agent.Id);
         var live = ResolveLiveSession(liveSessions, agent.PersistentSessionId);
         var attachedKeys = await AgentBundleAttachments.LoadAsync(_db, agent.Id, _logger, ct);
         var lastRefreshed = await LoadLastRefreshedAtAsync([agent.Id], ct);
@@ -228,7 +226,8 @@ public sealed class AgentService
             .ToDictionaryAsync(
                 s => s.AgentId,
                 s => new AgentSupervisionDto(
-                    s.Suspended, s.ConsecutiveFailures, s.NextRestartAt, s.LastEscalationTier),
+                    s.Suspended, s.ConsecutiveFailures, s.NextRestartAt, s.LastEscalationTier,
+                    s.HerdrConsecutiveFailures, s.HerdrFailureHeldAt, s.LastHerdrFailureKind),
                 ct);
     }
 

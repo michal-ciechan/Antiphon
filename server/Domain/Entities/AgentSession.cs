@@ -4,6 +4,7 @@ namespace Antiphon.Server.Domain.Entities;
 
 public class AgentSession
 {
+    public HerdrSupervisionFailureKind? HerdrSupervisionFailureKind { get; set; }
     public Guid Id { get; set; }
 
     // Nullable: a session can be cardless (a long-running, human-driven interactive terminal).

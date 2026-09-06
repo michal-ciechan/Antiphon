@@ -39,6 +39,31 @@ namespace Antiphon.Tests.Application;
 [NotInParallel("AgentSessionLaunchFailure")]
 public class AgentSessionLaunchFailureTests
 {
+    [Test]
+    public async Task A_runner_detect_timeout_409_stamps_DetectTimeout_and_keeps_the_runner_prose()
+    {
+        await using var fixture = await LaunchFixture.CreateAsync(new FakeAgentProtocolAdapter
+            { ThrowOnStart = HerdrSupervisionBackoffTests.Timeout() });
+        await Should.ThrowAsync<ConflictException>(fixture.LaunchInteractiveAsync());
+        await using var db = LaunchFixture.CreateContext();
+        var row = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        row.Status.ShouldBe(SessionStatus.Failed);
+        row.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
+        row.HerdrSupervisionFailureKind.ShouldBe(HerdrSupervisionFailureKind.DetectTimeout);
+        row.FailureReason.ShouldContain("did not detect agent kind");
+    }
+
+    [Test]
+    public async Task A_runner_pane_occupied_409_on_a_row_stamps_NonQualifying()
+    {
+        await using var fixture = await LaunchFixture.CreateAsync(new FakeAgentProtocolAdapter
+            { ThrowOnStart = new ConflictException("occupied", "pane_occupied") });
+        await Should.ThrowAsync<ConflictException>(fixture.LaunchInteractiveAsync());
+        await using var db = LaunchFixture.CreateContext();
+        (await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId)).HerdrSupervisionFailureKind
+            .ShouldBe(HerdrSupervisionFailureKind.NonQualifying);
+    }
+
     // ---- Slice 1: kill before dispose -----------------------------------------------------------
 
     /// <summary>
@@ -275,6 +300,10 @@ public class AgentSessionLaunchFailureTests
         await using var fixture = await LaunchFixture.CreateAsync(resumeAdapter, freshAdapter);
         freshAdapter.RegisterOnStart = fixture.Runtime;
 
+        await using (var seed = LaunchFixture.CreateContext())
+            await seed.AgentSessions.Where(s => s.Id == fixture.SessionId).ExecuteUpdateAsync(u => u
+                .SetProperty(s => s.HerdrSupervisionFailureKind, HerdrSupervisionFailureKind.PaneClosed));
+
         await fixture.LaunchInteractiveAsync(resume: true);
 
         resumeAdapter.Lifecycle.ShouldBe(
@@ -287,6 +316,20 @@ public class AgentSessionLaunchFailureTests
         await using var db = LaunchFixture.CreateContext();
         var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
         session.Status.ShouldBe(SessionStatus.Running);
+        session.HerdrSupervisionFailureKind.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task A_missing_resume_fallback_that_then_times_out_stamps_DetectTimeout_on_the_same_row()
+    {
+        var resume = new FakeAgentProtocolAdapter { StartupOutput = "No conversation found with session ID: 0b5f2f7e", ReadyResult = false };
+        var fresh = new FakeAgentProtocolAdapter { ThrowOnStart = HerdrSupervisionBackoffTests.Timeout() };
+        await using var fixture = await LaunchFixture.CreateAsync(resume, fresh);
+        await Should.ThrowAsync<ConflictException>(fixture.LaunchInteractiveAsync(resume: true));
+        await using var db = LaunchFixture.CreateContext();
+        var row = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        row.Status.ShouldBe(SessionStatus.Failed);
+        row.HerdrSupervisionFailureKind.ShouldBe(HerdrSupervisionFailureKind.DetectTimeout);
     }
 
     /// <summary>

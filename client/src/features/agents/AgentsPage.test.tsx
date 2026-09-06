@@ -232,6 +232,33 @@ function getVisibleInput(label: string) {
 }
 
 describe('AgentsPage', () => {
+  it('shows Herdr retries paused with the reason, independent of suspended and the countdown', async () => {
+    const held = { ...agentSummary, supervision: { suspended: true, consecutiveFailures: 5,
+      nextRestartAt: '2030-01-01T00:00:00Z', lastEscalationTier: 0,
+      herdrFailureHeldAt: '2026-09-06T00:00:00Z', herdrConsecutiveFailures: 3,
+      lastHerdrFailureKind: 'DetectTimeout' as const } }
+    server.use(...agentHandlers([held], { ...held, queue: [] }))
+    renderWithProviders(<AgentsPage />)
+    expect((await screen.findAllByText(/Herdr retries paused/)).length).toBeGreaterThan(0)
+    await userEvent.click(await screen.findByText('Frontend Claude'))
+    expect((await screen.findAllByText(/DetectTimeout/)).length).toBeGreaterThan(0)
+  })
+
+  it.each([true, false])('posts the explicit retry flag only when the agent is held (%s)', async (held) => {
+    const detail = { ...agentDetail, supervision: { suspended: false, consecutiveFailures: 5,
+      nextRestartAt: null, lastEscalationTier: 0, herdrConsecutiveFailures: 3,
+      herdrFailureHeldAt: held ? '2026-09-06T00:00:00Z' : null, lastHerdrFailureKind: 'DetectTimeout' as const } }
+    let body: Record<string, unknown> | undefined
+    server.use(...agentHandlers([detail], detail), http.post('/api/agents/agent-1/start', async ({ request }) => {
+      body = await request.json() as Record<string, unknown>
+      return HttpResponse.json(detail)
+    }))
+    renderWithProviders(<AgentsPage />)
+    await userEvent.click(await screen.findByText('Frontend Claude'))
+    await userEvent.click(await screen.findByRole('button', { name: held ? 'Retry and resume' : 'Start' }))
+    await waitFor(() => expect(body).toEqual(held ? { resetHerdrFailureHold: true } : {}))
+  })
+
   it('renders agent roster with queue length and no badge for quiet states', async () => {
     server.use(...agentHandlers())
 

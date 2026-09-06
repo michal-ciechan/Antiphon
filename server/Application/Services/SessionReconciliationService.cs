@@ -152,6 +152,8 @@ public sealed class SessionReconciliationService
     private async Task<int> ReconcileSessionsAsync(
         IReadOnlyList<SessionRunnerSessionDto> runnerSessions, DateTime now, CancellationToken ct)
     {
+        await using var transaction = _db.Database.CurrentTransaction is null
+            ? await _db.Database.BeginTransactionAsync(ct) : null;
         var liveSessions = await _db.AgentSessions
             .Where(s => LiveStatuses.Contains(s.Status))
             .ToListAsync(ct);
@@ -164,6 +166,11 @@ public sealed class SessionReconciliationService
 
         foreach (var session in liveSessions)
         {
+            await _db.AgentSessions.FromSqlInterpolated(
+                $"""SELECT * FROM "AgentSessions" WHERE "Id" = {session.Id} FOR UPDATE""").AsNoTracking().SingleAsync(ct);
+            await _db.Entry(session).ReloadAsync(ct);
+            if (!LiveStatuses.Contains(session.Status))
+                continue;
             // A Starting session may legitimately not have reached the runner yet.
             if (session.Status == SessionStatus.Starting && now - session.StartedAt < startingGrace)
                 continue;
@@ -182,6 +189,8 @@ public sealed class SessionReconciliationService
             }
             else if (string.Equals(runnerSession.Status, "Exited", StringComparison.OrdinalIgnoreCase))
             {
+                HerdrSupervisionFailureEvidence.Record(session,
+                    HerdrSupervisionFailureEvidence.FromExitReason(runnerSession.ExitReason));
                 // Same mapping as AgentSessionRuntime.CloseSessionOnExitAsync: a CPU-spin watchdog
                 // kill is a clean, resumable stop despite the kill's non-zero exit code.
                 // CARD-0186: herdr pane-closed / presumed-dead / child-gone / pane-left-open are
@@ -210,6 +219,8 @@ public sealed class SessionReconciliationService
             return 0;
 
         await _db.SaveChangesAsync(ct);
+        if (transaction is not null)
+            await transaction.CommitAsync(ct);
         await _alerts.RaiseAsync(
             new AlertRaise(
                 AlertSeverity.Warning, "reconciler", "Reconciliation closed phantom session(s)",

@@ -32,6 +32,38 @@ namespace Antiphon.Tests.Application;
 public class ChannelBridgeTests
 {
     [Test]
+    public async Task Herdr_held_agent_inbound_is_dropped_with_one_incident_and_no_start_notice_or_reroute()
+    {
+        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            AlwaysOn = true,
+            Bridge = new ChannelBridgeSettings { Enabled = true, DebounceWindowMs = 0, AgentStartTimeoutSeconds = 5 },
+            ConfigureServices = s => s.AddSingleton<ChannelInboundDebouncer>(),
+        });
+        var chatId = await h.BindChannelAsync();
+        var bridge = new ChannelBridgeService(h.Messaging, h.Queue,
+            h.Provider.GetRequiredService<ChannelInboundDebouncer>(), h.EventBus,
+            h.Provider.GetRequiredService<IServiceScopeFactory>(),
+            h.Provider.GetRequiredService<IOptions<ChannelBridgeSettings>>(),
+            h.Provider.GetRequiredService<TimeProvider>(), NullLogger<ChannelBridgeService>.Instance);
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Stopped));
+        var state = await db.AgentSupervisionStates.SingleOrDefaultAsync(s => s.AgentId == h.AgentId);
+        if (state is null) { state = new AgentSupervisionState { AgentId = h.AgentId }; db.AgentSupervisionStates.Add(state); }
+        state.HerdrFailureHeldAt = DateTime.UtcNow.AddSeconds(-1);
+        state.HerdrConsecutiveFailures = 3;
+        state.LastHerdrFailureKind = HerdrSupervisionFailureKind.DetectTimeout;
+        await db.SaveChangesAsync();
+        for (var i = 0; i < 2; i++)
+            await bridge.HandleInboundAsync(TelegramText(chatId, "held message " + i, title: "Family"), CancellationToken.None);
+        h.Adapter.SentInput.ShouldBeEmpty();
+        h.Messaging.SentReplies.ShouldBeEmpty();
+        (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(0);
+        (await db.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.ChannelReplyLost
+            && i.FailureReason == "HerdrSupervisionHeld")).ShouldBe(1);
+        (await db.AgentSupervisionStates.AsNoTracking().SingleAsync(s => s.AgentId == h.AgentId)).HerdrFailureHeldAt.ShouldNotBeNull();
+    }
+    [Test]
     public async Task First_inbound_message_discovers_the_channel_unrouted()
     {
         await using var h = await HarnessAsync();

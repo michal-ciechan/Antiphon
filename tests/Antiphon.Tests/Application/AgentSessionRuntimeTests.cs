@@ -334,6 +334,7 @@ public class AgentSessionRuntimeTests
             session.Status.ShouldBe(SessionStatus.Failed, "pane-closed is not operator Stopped");
             session.FailureReason.ShouldNotBeNull();
             session.FailureReason.ShouldContain("HerdrPaneClosed");
+            session.HerdrSupervisionFailureKind.ShouldBe(HerdrSupervisionFailureKind.PaneClosed);
             (await verify.Agents.SingleAsync(a => a.Id == agentId)).Status.ShouldBe(AgentStatus.Failed);
         }
         finally
@@ -382,6 +383,7 @@ public class AgentSessionRuntimeTests
             session.Status.ShouldBe(SessionStatus.Failed);
             session.FailureReason.ShouldNotBeNull();
             session.FailureReason.ShouldContain("HerdrLaunchDetectTimeout");
+            session.HerdrSupervisionFailureKind.ShouldBe(HerdrSupervisionFailureKind.DetectTimeout);
             (await verify.AgentIncidents.CountAsync(
                 i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.HerdrPaneLeftOpen))
                 .ShouldBe(0, "idle-shell keep-pane is not a foreign-process warning; closing the pane recreates CARD-0383");
@@ -393,6 +395,51 @@ public class AgentSessionRuntimeTests
             await CleanupSessionAsync(sessionId, agentId);
             DeleteDirectoryBestEffort(logPath);
         }
+    }
+
+    [Test]
+    [Arguments(AgentExitReason.HerdrChildGone, HerdrSupervisionFailureKind.ChildGone)]
+    [Arguments(AgentExitReason.ProcessExited, HerdrSupervisionFailureKind.NonQualifying)]
+    public async Task Terminal_exit_stamps_the_typed_evidence(AgentExitReason reason, HerdrSupervisionFailureKind expected)
+    {
+        var (sessionId, agentId, logPath, runtime) = await SeedRunningSessionAsync();
+        try
+        {
+            await runtime.ObserveExitAsync(sessionId, null, reason, CancellationToken.None);
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            (await db.AgentSessions.SingleAsync(s => s.Id == sessionId)).HerdrSupervisionFailureKind.ShouldBe(expected);
+        }
+        finally { await CleanupSessionAsync(sessionId, agentId); DeleteDirectoryBestEffort(logPath); }
+    }
+
+    [Test]
+    public async Task A_pane_closed_exit_after_DetectTimeout_evidence_keeps_DetectTimeout()
+    {
+        var (sessionId, agentId, logPath, runtime) = await SeedRunningSessionAsync();
+        try
+        {
+            await runtime.ObserveExitAsync(sessionId, null, AgentExitReason.HerdrLaunchDetectTimeout, CancellationToken.None);
+            await runtime.ObserveExitAsync(sessionId, null, AgentExitReason.HerdrPaneClosed, CancellationToken.None);
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            (await db.AgentSessions.SingleAsync(s => s.Id == sessionId)).HerdrSupervisionFailureKind.ShouldBe(HerdrSupervisionFailureKind.DetectTimeout);
+        }
+        finally { await CleanupSessionAsync(sessionId, agentId); DeleteDirectoryBestEffort(logPath); }
+    }
+
+    [Test]
+    public async Task An_operator_stopped_row_gets_no_evidence()
+    {
+        var (sessionId, agentId, logPath, runtime) = await SeedRunningSessionAsync(SessionTerminationSource.OperatorRequest, SessionStatus.Stopped);
+        try
+        {
+            await runtime.ObserveExitAsync(sessionId, null, AgentExitReason.HerdrPaneClosed, CancellationToken.None);
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            var row = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            row.HerdrSupervisionFailureKind.ShouldBeNull();
+            row.TerminationSource.ShouldBe(SessionTerminationSource.OperatorRequest);
+            row.Status.ShouldBe(SessionStatus.Stopped);
+        }
+        finally { await CleanupSessionAsync(sessionId, agentId); DeleteDirectoryBestEffort(logPath); }
     }
 
     private static async Task<(Guid SessionId, Guid AgentId, string LogPath, AgentSessionRuntime Runtime)> SeedRunningSessionAsync(

@@ -577,20 +577,23 @@ public class AgentSupervisionTests
         return agent;
     }
 
-    private static Harness BuildHarness(
-        string tempRoot,
-        IReadOnlyList<IAgentProtocolAdapter> adapters,
-        string definitionKind = "Raw")
+    internal static Harness BuildHarness(string tempRoot, IReadOnlyList<IAgentProtocolAdapter> adapters,
+        SupervisionSettings? supervision = null, ISessionRunnerClient? runner = null,
+        bool includeModelAvailability = false, string definitionKind = "Raw",
+        Action<DbContextOptionsBuilder>? configureDb = null)
     {
         var clock = new MutableTimeProvider(DateTimeOffset.UtcNow);
         var supervisorLog = new List<string>();
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(options =>
+        {
             options.UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
             {
                 npgsql.MigrationsAssembly("Antiphon.Server");
                 npgsql.SetPostgresVersion(16, 0);
-            }));
+            });
+            configureDb?.Invoke(options);
+        });
         var eventBus = new MockEventBus();
         services.AddSingleton(eventBus);
         services.AddSingleton<IEventBus>(eventBus);
@@ -605,7 +608,7 @@ public class AgentSupervisionTests
         {
             InternalTrackerRepositoryPathPrefix = tempRoot
         }));
-        services.AddSingleton<IOptions<SupervisionSettings>>(Options.Create(new SupervisionSettings
+        services.AddSingleton<IOptions<SupervisionSettings>>(Options.Create(supervision ?? new SupervisionSettings
         {
             TickSeconds = 1,
             BackoffBaseSeconds = 5,
@@ -642,10 +645,13 @@ public class AgentSupervisionTests
         services.AddScoped<HerdrLaunchContextResolver>();
         services.AddScoped<AgentControlService>();
         services.AddScoped<AgentSupervisorService>();
+        services.AddScoped<HerdrSupervisionStateService>();
+        if (includeModelAvailability)
+            services.AddScoped<ModelAvailability>();
         services.AddScoped<IAlertService, AlertService>();
         services.AddScoped<IAlertRouter, NullAlertRouter>();
-        var runner = new FakeSessionRunnerClient();
-        services.AddSingleton<ISessionRunnerClient>(runner);
+        var fakeRunner = new FakeSessionRunnerClient();
+        services.AddSingleton<ISessionRunnerClient>(runner ?? fakeRunner);
         services.AddSingleton<Antiphon.Server.Application.Interfaces.IDirectoryWriter>(
             new Antiphon.Server.Infrastructure.FileSystem.FileSystemDirectoryWriter(
                 new System.IO.Abstractions.FileSystem()));
@@ -671,10 +677,10 @@ public class AgentSupervisionTests
             eventBus,
             clock,
             supervisorLog,
-            runner);
+            fakeRunner);
     }
 
-    private static async Task CleanupAsync(string tempRoot)
+    internal static async Task CleanupAsync(string tempRoot)
     {
         await using var db = CreateContext();
         var agentIds = await db.Agents
@@ -700,7 +706,7 @@ public class AgentSupervisionTests
         }
     }
 
-    private sealed record Harness(
+    internal sealed record Harness(
         ServiceProvider Provider,
         IServiceScope Scope,
         AgentControlService Control,
@@ -756,7 +762,7 @@ public class AgentSupervisionTests
     /// CARD-0222: an OFFSET over the real clock, not a frozen instant — see
     /// HerdrAlwaysOnChannelParityTests' identical provider for why a frozen clock deadlocks any
     /// SessionMessageQueueService poll loop.
-    private sealed class MutableTimeProvider(DateTimeOffset start) : TimeProvider
+    internal sealed class MutableTimeProvider(DateTimeOffset start) : TimeProvider
     {
         private TimeSpan _offset = start - DateTimeOffset.UtcNow;
 

@@ -240,7 +240,7 @@ export function AgentsPage() {
                         onClick={() =>
                           // Remote control comes from the agent's persisted setting (Agent Settings).
                           startAgent.mutate(
-                            {},
+                            selected.data.supervision?.herdrFailureHeldAt ? { resetHerdrFailureHold: true } : {},
                             {
                               onError: (error) =>
                                 notifications.show({
@@ -251,7 +251,7 @@ export function AgentsPage() {
                           )
                         }
                       >
-                        Start
+                        {selected.data.supervision?.herdrFailureHeldAt ? 'Retry and resume' : 'Start'}
                       </Button>
                     </Tooltip>
                     {selected.data.sessionBackend === 'Herdr' && (
@@ -716,6 +716,15 @@ function SupervisionBadge({ agent, compact = false }: { agent: AgentSummaryDto; 
     return () => clearInterval(timer)
   }, [nextRestartAt])
 
+  if (agent.supervision?.herdrFailureHeldAt) {
+    return (
+      <Tooltip label={`${agent.supervision.herdrConsecutiveFailures} failed attempts (${agent.supervision.lastHerdrFailureKind}); inspect, fix, then Retry and resume`} withArrow>
+        <Badge size="sm" color="red" variant="light" leftSection={<TbShieldPause size={12} />}>
+          Herdr retries paused{compact ? '' : ` (${agent.supervision.lastHerdrFailureKind})`}
+        </Badge>
+      </Tooltip>
+    )
+  }
   if (!agent.alwaysOn) return null
 
   if (agent.supervision?.suspended) {

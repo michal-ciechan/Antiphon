@@ -31,7 +31,8 @@ namespace Antiphon.Tests.Application;
 public class AgentAttachHerdrTests
 {
     [Test]
-    public async Task Attach_binds_the_native_id_running_with_origin_attached()
+    [Arguments(false)] [Arguments(true)]
+    public async Task Attach_binds_the_native_id_running_with_origin_attached(bool held)
     {
         var tempRoot = NewTemp();
         await using var fake = StartFake();
@@ -44,6 +45,16 @@ public class AgentAttachHerdrTests
             using var grok = PinGrokHome(tempRoot, nativeId, cwd);
             var pane = SeedGrokPane(fake, nativeId, cwd);
             var agent = await CreateGrokHerdrAgentAsync(harness, cwd);
+
+            if (held)
+            {
+                await using var seed = CreateContext();
+                seed.AgentSupervisionStates.Add(new AgentSupervisionState { AgentId = agent.Id,
+                    HerdrFailureHeldAt = DateTime.UtcNow, HerdrConsecutiveFailures = 3,
+                    LastHerdrFailureKind = HerdrSupervisionFailureKind.DetectTimeout,
+                    Suspended = true, LivenessLatchedAt = DateTime.UtcNow });
+                await seed.SaveChangesAsync();
+            }
 
             var detail = await harness.Control.AttachHerdrAsync(
                 agent.Id, new AttachHerdrPaneRequest(pane.PaneId), CancellationToken.None);
@@ -63,6 +74,13 @@ public class AgentAttachHerdrTests
                 row.CardId.ShouldBeNull();
                 var queued = await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == nativeId);
                 queued.ShouldBe(0);
+                if (held)
+                {
+                    var state = await db.AgentSupervisionStates.SingleAsync(s => s.AgentId == agent.Id);
+                    state.HerdrFailureHeldAt.ShouldNotBeNull();
+                    state.Suspended.ShouldBeFalse();
+                    state.LivenessLatchedAt.ShouldBeNull();
+                }
             }
 
             fake.Requests.Any(r => r.GetProperty("method").GetString() == "pane.send_text")

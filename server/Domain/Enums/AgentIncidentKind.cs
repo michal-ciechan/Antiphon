@@ -532,4 +532,6 @@ public enum AgentIncidentKind
     /// group. Plan reserved 40; that number shipped as AppHostWatchdogDisabled.
     /// </summary>
     OrchestratorWorkspaceUnconfigured = 53,
+    HerdrSupervisionHeld = 54,
+    HerdrSupervisionRetried = 55,
 }

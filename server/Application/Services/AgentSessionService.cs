@@ -348,6 +348,15 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             }
             catch (ResumeTargetMissingException)
             {
+                await _db.Entry(session).ReloadAsync(ct);
+                session.HerdrSupervisionFailureKind = null;
+                session.TerminationSource = SessionTerminationSource.Unknown;
+                session.Status = SessionStatus.Starting;
+                session.StartedAt = UtcNow();
+                session.EndedAt = null;
+                session.ExitCode = null;
+                session.FailureReason = null;
+                await _db.SaveChangesAsync(ct);
                 _logger.LogInformation(
                     "Resume target for session {SessionId} was not found; starting fresh with the same id",
                     sessionId);
@@ -361,6 +370,14 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "Failed to start interactive agent session {SessionId}", sessionId);
+            await using var evidenceTransaction = _db.Database.CurrentTransaction is null
+                ? await _db.Database.BeginTransactionAsync(CancellationToken.None) : null;
+            await _db.AgentSessions.FromSqlInterpolated(
+                $"""SELECT * FROM "AgentSessions" WHERE "Id" = {sessionId} FOR UPDATE""").AsNoTracking().SingleAsync(CancellationToken.None);
+            // Cleanup's exit observer has its own context. Re-read before merging typed
+            // evidence so an unrelated catch cannot overwrite its proven timeout.
+            await _db.Entry(session).ReloadAsync(CancellationToken.None);
+            HerdrSupervisionFailureEvidence.Record(session, HerdrSupervisionFailureEvidence.FromLaunchFailure(ex));
             session.Status = SessionStatus.Failed;
             session.FailureReason = ex.Message;
             session.EndedAt = UtcNow();
@@ -387,6 +404,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
             await _db.SaveChangesAsync(CancellationToken.None);
             // Let the UI refetch: the now-Failed session is no longer "live", so the agent card returns
+            if (evidenceTransaction is not null)
+                await evidenceTransaction.CommitAsync(CancellationToken.None);
             // to offering a fresh start instead of a dead terminal.
             await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), CancellationToken.None);
 
@@ -807,7 +826,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
     // Internal control-flow marker: a --resume launch failed because the conversation is gone
     // (Claude needle, or runner 409 herdr_grok_native_session_missing).
-    private sealed class ResumeTargetMissingException : Exception
+    internal sealed class ResumeTargetMissingException : Exception
     {
         public ResumeTargetMissingException() : base(ClaudeSessionNotFoundFailureReason) { }
 

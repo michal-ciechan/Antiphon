@@ -4,12 +4,15 @@ namespace Antiphon.Server.Application.Settings;
 /// Always-on agent supervision (spec: 2026-07-20-always-on-agents-and-alerting.md).
 /// The backoff ladder never gives up: min(BaseSeconds · 2ⁿ, BackoffMaxSeconds) — with the
 /// defaults that is 5s, 10s, … ~15 min, ~2 h, ~15 h, days, capped at 30 days forever.
+/// Qualifying Herdr failures have a separate durable hold after HerdrFailureLimit attempts.
 /// </summary>
 public sealed class SupervisionSettings
 {
     public bool Enabled { get; set; } = true;
 
     public int TickSeconds { get; set; } = 10;
+
+    public int HerdrFailureLimit { get; set; } = 3;
 
     public double BackoffBaseSeconds { get; set; } = 5;
 

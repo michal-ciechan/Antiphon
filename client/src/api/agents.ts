@@ -248,6 +248,9 @@ export interface PolicyDriftDto {
 }
 
 export interface AgentSupervisionDto {
+  herdrConsecutiveFailures?: number
+  herdrFailureHeldAt?: string | null
+  lastHerdrFailureKind?: 'NonQualifying' | 'PaneClosed' | 'ChildGone' | 'DetectTimeout' | null
   suspended: boolean
   consecutiveFailures: number
   nextRestartAt: string | null
@@ -255,6 +258,8 @@ export interface AgentSupervisionDto {
 }
 
 export type AgentIncidentKind =
+  | 'HerdrSupervisionHeld'
+  | 'HerdrSupervisionRetried'
   | 'Crash'
   | 'StartFailure'
   | 'RestartScheduled'
@@ -447,6 +452,7 @@ export interface AssignAgentCardRequest {
 }
 
 export interface StartAgentRequest {
+  resetHerdrFailureHold?: boolean
   /** Omit = use the agent's persisted remoteControlEnabled setting. */
   remoteControl?: boolean | null
   /** Force a brand-new conversation. By default an interactive start resumes the agent's previous Claude session. */

@@ -51,6 +51,7 @@ public sealed class AgentControlService
     private readonly HerdrLaunchContextResolver? _herdrContext;
     private readonly PolicyRefreshService? _policyRefresh;
     private readonly OrchestratorWorkspaceWarningService? _workspaceWarning;
+    private readonly HerdrSupervisionStateService _herdrSupervision;
 
     public AgentControlService(
         AppDbContext db,
@@ -74,7 +75,9 @@ public sealed class AgentControlService
         HerdrLaunchContextResolver? herdrContext = null,
         ModelAvailability? modelAvailability = null,
         PolicyRefreshService? policyRefresh = null,
-        OrchestratorWorkspaceWarningService? workspaceWarning = null)
+        OrchestratorWorkspaceWarningService? workspaceWarning = null,
+        HerdrSupervisionStateService? herdrSupervision = null,
+        IOptions<SupervisionSettings>? supervision = null)
     {
         _db = db;
         _agentService = agentService;
@@ -96,6 +99,8 @@ public sealed class AgentControlService
         _modelAvailability = modelAvailability;
         _policyRefresh = policyRefresh;
         _workspaceWarning = workspaceWarning;
+        _herdrSupervision = herdrSupervision ?? new HerdrSupervisionStateService(
+            db, supervision ?? Options.Create(new SupervisionSettings()), timeProvider, launchQueue, eventBus);
     }
 
     /// <summary>
@@ -131,6 +136,14 @@ public sealed class AgentControlService
     public async Task<AgentDetailDto> StartAsync(Guid agentId, StartAgentRequest request, CancellationToken ct)
     {
         var agent = await LockAgentAsync(agentId, ct);
+
+        var herdrState = await _herdrSupervision.ObserveAsync(agentId, request.ResetHerdrFailureHold, false, ct);
+        await _db.Entry(agent).ReloadAsync(ct);
+        var alreadyLive = await HasLiveSessionAsync(agent, ct);
+        if (!alreadyLive && herdrState.HerdrFailureHeldAt is not null)
+            throw new ConflictException(_herdrSupervision.HeldMessage(agent.Name, herdrState), HerdrSupervisionStateService.HeldCode);
+        if (!alreadyLive && Guid.TryParse(agent.PersistentSessionId, out var pendingId) && _launchQueue.Owns(pendingId))
+            return await _agentService.GetByIdAsync(agent.Id, ct);
 
         // Any Start (human, bridge, supervisor) lifts the supervision suspend latch, cancels a
         // pending scheduled restart, and clears CARD-0312's LivenessLatchedAt — a start IS the
@@ -342,6 +355,7 @@ public sealed class AgentControlService
                 previous.EndedAt = null;
                 previous.ExitCode = null;
                 previous.FailureReason = null;
+                previous.HerdrSupervisionFailureKind = null;
                 // A resume is a new life of this row. Leaving the kill's PolicyRefresh (or a
                 // crash's ProcessExit) stamped would make SessionTermination.Record a no-op on
                 // the next close — first-writer-wins would never record the real closer.

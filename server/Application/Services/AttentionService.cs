@@ -206,6 +206,7 @@ public sealed class AttentionService
         items.AddRange(await BuildOrchestratorWorkspaceItemsAsync(since, ct));
         items.AddRange(await BuildQueuedInputStuckItemsAsync(since, ct));
         items.AddRange(await BuildBootReplyMissingItemsAsync(since, ct));
+        items.AddRange(await BuildHerdrSupervisionHeldItemsAsync(ct));
         items.AddRange(await BuildAgentOutlivedTaskItemsAsync(now, ct));
         items.AddRange(await BuildModelAvailabilityHoldItemsAsync(now, ct));
         items.AddRange(await BuildScheduleMisfireItemsAsync(now, ct));
@@ -1416,13 +1417,36 @@ public sealed class AttentionService
 
     // ---- condition 9: recent Error-or-worse incidents, grouped ----------------------------------
 
+    private async Task<List<AttentionItemDto>> BuildHerdrSupervisionHeldItemsAsync(CancellationToken ct)
+    {
+        var holds = await _db.AgentSupervisionStates.AsNoTracking().Include(s => s.Agent)
+            .Where(s => s.HerdrFailureHeldAt != null).ToListAsync(ct);
+        var items = new List<AttentionItemDto>();
+        foreach (var state in holds)
+        {
+            var name = state.Agent?.Name ?? state.AgentId.ToString("D");
+            var headline = HerdrSupervisionStateService.Headline(name, state, _supervision.HerdrFailureLimit);
+            var evidence = await _db.AgentIncidents.AsNoTracking()
+                .Where(i => i.AgentId == state.AgentId && i.Kind == AgentIncidentKind.HerdrSupervisionHeld
+                    && i.CreatedAt >= state.HerdrFailureHeldAt)
+                .OrderByDescending(i => i.CreatedAt).Select(i => i.Message).FirstOrDefaultAsync(ct);
+            items.Add(new AttentionItemDto(AttentionKind.HerdrSupervisionHeld, AlertSeverity.Error,
+                null, state.LastHerdrObservedSessionId, state.AgentId, null, name, headline,
+                evidence ?? headline, state.HerdrFailureHeldAt!.Value, null,
+                state.LastHerdrObservedSessionId is null ? [AttentionAction.OpenAgent]
+                    : [AttentionAction.OpenAgent, AttentionAction.OpenDrawer]));
+        }
+        return items;
+    }
+
     private async Task<List<AttentionItemDto>> BuildRecentIncidentItemsAsync(
         DateTime since, HashSet<Guid> attachedIncidents, CancellationToken ct)
     {
         var items = new List<AttentionItemDto>();
 
         var recent = await _db.AgentIncidents.AsNoTracking()
-            .Where(i => i.Severity >= AlertSeverity.Error && i.CreatedAt >= since)
+            .Where(i => i.Severity >= AlertSeverity.Error && i.CreatedAt >= since
+                && i.Kind != AgentIncidentKind.HerdrSupervisionHeld)
             .Select(i => new { i.Id, i.AgentId, i.SessionId, i.Kind, i.Severity, i.Message, i.CreatedAt, i.FailureReason })
             .ToListAsync(ct);
 

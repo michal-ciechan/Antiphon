@@ -250,6 +250,7 @@ public enum AttentionKind
     /// Appended after shipped 29; do not renumber.
     /// </summary>
     DelegationCapability = 30,
+    HerdrSupervisionHeld = 31,
 }
 
 /// <summary>

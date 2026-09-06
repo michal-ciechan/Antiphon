@@ -14,10 +14,11 @@ namespace Antiphon.Server.Application.Services;
 /// <summary>
 /// Always-on agent supervision (spec: 2026-07-20-always-on-agents-and-alerting.md). Each tick
 /// ensures every <c>AlwaysOn</c> agent that is not user-suspended has a live session: starting it
-/// at boot, restarting it after crashes on a backoff ladder that never gives up (doubling to a
+/// at boot, restarting it after crashes on a backoff ladder (doubling to a
 /// 30-day cap), recording every decision as an <see cref="AgentIncident"/> with the attempt
 /// number, chosen delay, and absolute next-retry time, and firing tier-escalation incidents
 /// exactly once when the ladder crosses hourly (Warning) and daily (Critical).
+/// Repeated qualifying Herdr failures instead hold future starts until explicit operator retry.
 /// </summary>
 public sealed class AgentSupervisorService : IAgentIncidentRecorder
 {
@@ -35,6 +36,8 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
     private readonly SupervisionSettings _settings;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AgentSupervisorService> _logger;
+    private readonly AgentSessionLaunchQueue _launchQueue;
+    private readonly HerdrSupervisionStateService _herdrSupervision;
 
     public AgentSupervisorService(
         AppDbContext db,
@@ -44,7 +47,9 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         IAlertService alerts,
         IOptions<SupervisionSettings> settings,
         TimeProvider timeProvider,
-        ILogger<AgentSupervisorService> logger)
+        ILogger<AgentSupervisorService> logger,
+        AgentSessionLaunchQueue launchQueue,
+        HerdrSupervisionStateService? herdrSupervision = null)
     {
         _db = db;
         _control = control;
@@ -54,6 +59,8 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         _settings = settings.Value;
         _timeProvider = timeProvider;
         _logger = logger;
+        _launchQueue = launchQueue;
+        _herdrSupervision = herdrSupervision ?? new HerdrSupervisionStateService(db, settings, timeProvider, launchQueue, eventBus);
     }
 
     /// <summary>Runs one supervision sweep. Returns the number of actions taken (schedules + attempts).</summary>
@@ -103,10 +110,31 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
 
     private async Task<bool> SuperviseAsync(Agent agent, CancellationToken ct)
     {
+        // Keep the scheduling decision and evidence consumption under the same agent lock.
+        // Commit before Start: composition and runner RPCs never run under this transaction.
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
         var now = UtcNow();
-        var state = await GetOrCreateStateAsync(agent.Id, ct);
+        var previouslyHeld = await _db.AgentSupervisionStates.AsNoTracking()
+            .Where(s => s.AgentId == agent.Id).Select(s => s.HerdrFailureHeldAt).FirstOrDefaultAsync(ct);
+        var state = await _herdrSupervision.ObserveAsync(agent.Id, false, true, ct);
+        await _db.Entry(agent).ReloadAsync(ct);
+        if (state.HerdrFailureHeldAt is not null)
+        {
+            // T-5: retain the terminal observation on the tripping tick, without scheduling.
+            if (previouslyHeld is null && state.LastHerdrObservedSessionId is { } failedId
+                && !await _db.AgentIncidents.AnyAsync(i => i.AgentId == agent.Id
+                    && i.Kind == AgentIncidentKind.Crash && i.SessionId == failedId
+                    && i.CreatedAt >= state.LastHerdrObservedStartedAt, ct))
+            {
+                await RecordIncidentAsync(agent.Id, failedId, AgentIncidentKind.Crash, AlertSeverity.Warning,
+                    $"Session died ({state.LastHerdrFailureKind}); Herdr retries paused.", ct: ct);
+            }
+            return await CompleteAsync(false);
+        }
         if (state.Suspended)
-            return false;
+            return await CompleteAsync(false);
+        if (Guid.TryParse(agent.PersistentSessionId, out var ownedId) && _launchQueue.Owns(ownedId))
+            return await CompleteAsync(false);
 
         var liveSession = await FindPersistentSessionAsync(agent, LiveSessionStatuses, ct);
         if (liveSession is not null)
@@ -142,7 +170,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
                 await _db.SaveChangesAsync(ct);
             }
 
-            return false;
+            return await CompleteAsync(false);
         }
 
         // Not running. Schedule a restart if none is pending.
@@ -180,11 +208,11 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
 
             await _db.SaveChangesAsync(ct);
             await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
-            return true;
+            return await CompleteAsync(true);
         }
 
         if (now < state.NextRestartAt)
-            return false;
+            return await CompleteAsync(false);
 
         // Due: attempt the restart.
         var attemptNumber = state.ConsecutiveFailures + 1;
@@ -193,6 +221,12 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         await _db.SaveChangesAsync(ct);
 
         var fresh = state.ConsecutiveFailures >= _settings.FreshAfterResumeFailures;
+        await transaction.CommitAsync(ct);
+        await transaction.DisposeAsync();
+        // A manual Start may have consumed another outcome while this tick was handing off.
+        state = await _herdrSupervision.ObserveAsync(agent.Id, false, false, ct);
+        if (state.HerdrFailureHeldAt is not null)
+            return false;
         try
         {
             _logger.LogInformation(
@@ -210,6 +244,11 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             refreshed.UpdatedAt = UtcNow();
             await _db.SaveChangesAsync(ct);
             return true;
+        }
+        catch (ConflictException ex) when (ex.Code == HerdrSupervisionStateService.HeldCode)
+        {
+            await _herdrSupervision.ObserveAsync(agent.Id, false, false, ct);
+            return false;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -253,6 +292,15 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
             return true;
         }
+
+        async Task<bool> CompleteAsync(bool result)
+        {
+            await _db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+            if (previouslyHeld != state.HerdrFailureHeldAt)
+                await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
+            return result;
+        }
     }
 
     /// <summary>min(base · 2ⁿ, cap) — the never-give-up ladder.</summary>
@@ -283,6 +331,8 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
     public async Task<AgentSupervisionState> GetOrCreateStateAsync(Guid agentId, CancellationToken ct)
     {
         var state = await _db.AgentSupervisionStates.FirstOrDefaultAsync(s => s.AgentId == agentId, ct);
+        if (state is not null && _db.Entry(state).State != EntityState.Added)
+            await _db.Entry(state).ReloadAsync(ct);
         if (state is null)
         {
             state = new AgentSupervisionState { AgentId = agentId, UpdatedAt = UtcNow() };

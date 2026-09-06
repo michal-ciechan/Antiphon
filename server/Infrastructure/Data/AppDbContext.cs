@@ -156,6 +156,7 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<AgentSupervisionState>(entity =>
         {
             entity.ToTable("AgentSupervisionStates");
+            entity.Property(s => s.HerdrConsecutiveFailures).HasDefaultValue(0);
             entity.HasKey(s => s.AgentId);
             entity.Property(s => s.UpdatedAt).IsRequired();
 

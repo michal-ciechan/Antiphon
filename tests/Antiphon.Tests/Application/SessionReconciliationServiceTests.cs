@@ -50,6 +50,7 @@ public class SessionReconciliationServiceTests
             dbSession.Status.ShouldBe(SessionStatus.Failed);
             dbSession.FailureReason.ShouldNotBeNull();
             dbSession.FailureReason.ShouldContain("does not know this session");
+            dbSession.HerdrSupervisionFailureKind.ShouldBeNull();
             dbSession.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
             dbSession.EndedAt.ShouldNotBeNull();
 
@@ -204,11 +205,30 @@ public class SessionReconciliationServiceTests
             dbSession.Status.ShouldBe(SessionStatus.Failed, "pane-closed must not slip in as Stopped");
             dbSession.FailureReason.ShouldNotBeNull();
             dbSession.FailureReason.ShouldContain("HerdrPaneClosed");
+            dbSession.HerdrSupervisionFailureKind.ShouldBe(HerdrSupervisionFailureKind.PaneClosed);
         }
         finally
         {
             await CleanupAsync(marker);
         }
+    }
+
+    [Test]
+    [Arguments(AgentExitReason.HerdrChildGone, HerdrSupervisionFailureKind.ChildGone)]
+    [Arguments(AgentExitReason.ProcessExited, HerdrSupervisionFailureKind.NonQualifying)]
+    public async Task Runner_reported_typed_exit_stamps_evidence(AgentExitReason reason, HerdrSupervisionFailureKind expected)
+    {
+        var marker = NewMarker();
+        try
+        {
+            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(marker, SessionStatus.Running, staleAgent: true);
+            await using var db = CreateContext();
+            var runner = new FakeRunnerClient { Sessions = [new SessionRunnerSessionDto(sessionId, 4242, DateTime.UtcNow.AddHours(-1), "Exited", null, reason, 10)] };
+            await BuildService(db, runner, new MockEventBus()).ScanAsync(CancellationToken.None);
+            await using var verify = CreateContext();
+            (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).HerdrSupervisionFailureKind.ShouldBe(expected);
+        }
+        finally { await CleanupAsync(marker); }
     }
 
     [Test]
@@ -994,7 +1014,7 @@ public class SessionReconciliationServiceTests
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
-    private static SessionReconciliationService BuildService(
+    internal static SessionReconciliationService BuildService(
         AppDbContext db,
         ISessionRunnerClient runnerClient,
         MockEventBus eventBus,
@@ -1219,7 +1239,7 @@ public class SessionReconciliationServiceTests
         public void Unregister(Guid sessionId) => Owned.Remove(sessionId);
     }
 
-    private sealed class FakeRunnerClient : ISessionRunnerClient
+    internal sealed class FakeRunnerClient : ISessionRunnerClient
     {
         public IReadOnlyList<SessionRunnerSessionDto> Sessions { get; set; } = [];
         public Exception? ListError { get; set; }

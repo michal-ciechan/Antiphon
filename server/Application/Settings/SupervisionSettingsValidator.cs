@@ -8,6 +8,8 @@ public sealed class SupervisionSettingsValidator : IValidateOptions<SupervisionS
     public ValidateOptionsResult Validate(string? name, SupervisionSettings options)
     {
         var failures = new List<string>();
+        if (options.HerdrFailureLimit is < 1 or > 10)
+            failures.Add("Supervision:HerdrFailureLimit must be between 1 and 10.");
         var refresh = options.PolicyRefresh ?? new PolicyRefreshSettings();
 
         if (refresh.IdleMinutes < 1)

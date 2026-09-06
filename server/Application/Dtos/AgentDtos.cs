@@ -245,7 +245,10 @@ public sealed record AgentSupervisionDto(
     bool Suspended,
     int ConsecutiveFailures,
     DateTime? NextRestartAt,
-    int LastEscalationTier);
+    int LastEscalationTier,
+    int HerdrConsecutiveFailures = 0,
+    DateTime? HerdrFailureHeldAt = null,
+    HerdrSupervisionFailureKind? LastHerdrFailureKind = null);
 
 public sealed record AgentIncidentDto(
     Guid Id,
@@ -435,7 +438,8 @@ public sealed record StartAgentRequest(
     /// the agent has no channel preamble. Stamps and file names only — never bundle text.
     /// The sweep is the writer; a client that copies it onto a manual start just gets the note.
     /// </summary>
-    string? PolicyRefreshDelta = null);
+    string? PolicyRefreshDelta = null,
+    bool ResetHerdrFailureHold = false);
 
 /// <summary>CARD-0213: bind a standing Herdr agent to an existing operator pane.</summary>
 public sealed record AttachHerdrPaneRequest(string PaneId);
