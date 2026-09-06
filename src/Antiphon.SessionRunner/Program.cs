@@ -33,6 +33,11 @@ builder.Host.UseSerilog((ctx, lc) =>
 });
 
 builder.Services.Configure<SessionRunnerSettings>(builder.Configuration.GetSection("SessionRunner"));
+builder.Services.PostConfigure<SessionRunnerSettings>(settings =>
+{
+    builder.Configuration.GetSection("GrokRules").Bind(settings.GrokRules);
+    settings.GrokRules.Validate();
+});
 // CARD-0120: the raw client is additive only. No launch or delivery path resolves it until the
 // explicitly separate Herdr backend slices opt a session in; HerdrSettings.Enabled defaults false.
 builder.Services.Configure<HerdrSettings>(builder.Configuration.GetSection("SessionRunner:Herdr"));

@@ -209,8 +209,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             finalArgs.InsertRange(terminator < 0 ? finalArgs.Count : terminator, ["--rules", bootstrap]);
             request = request with { Args = finalArgs };
             EnsureGrokRulesArgvSafe(request, useHerdr);
-            var budget = request.CommandLineBudgetChars ?? 28000;
-            var actualLength = request.Exe.Length + finalArgs.Sum(arg => arg.Length + 3);
+            var budget = request.CommandLineBudgetChars ?? 30000;
+            var actualArgs = useHerdr
+                ? finalArgs.Select(arg => HerdrLaunchScript.TryResolveEnvToken(arg, request.Env, out var value) ? value : arg)
+                : finalArgs;
+            var actualLength = request.Exe.Length + actualArgs.Sum(arg => arg.Length + 3);
             if (budget <= 0 || actualLength > budget)
                 throw new GrokRulesTransportException("grok_rules_argv_unsafe", "command_line_budget");
             request = request with

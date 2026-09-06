@@ -5,8 +5,12 @@ namespace Antiphon.SessionRunner;
 /// <summary>Owns only the runner session's stable rules file, independent of cwd and native home.</summary>
 public sealed class GrokRulesFileStore(string sessionLogPath, GrokRulesSettings settings)
 {
-    public string PathFor(Guid sessionId) => Path.Combine(Path.GetFullPath(sessionLogPath),
-        "instructions", "grok", sessionId.ToString("N"), "rules.md");
+    public string PathFor(Guid sessionId)
+    {
+        try { return Path.Combine(Path.GetFullPath(sessionLogPath), "instructions", "grok", sessionId.ToString("N"), "rules.md"); }
+        catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException)
+        { throw WriteFailure("canonical_path"); }
+    }
 
     public async Task<GrokRulesReceipt> WriteAsync(Guid sessionId, GrokRulesPayload payload, CancellationToken ct)
     {
