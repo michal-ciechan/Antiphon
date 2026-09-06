@@ -20,7 +20,14 @@ public sealed record RunnerLaunchRequest(
     string? Backend = null,
     // Herdr-lane placement context, resolved by the server (the runner has no DB access).
     // Required when Backend == SessionBackends.Herdr; ignored otherwise.
-    HerdrLaunchOptions? Herdr = null);
+    HerdrLaunchOptions? Herdr = null,
+    GrokRulesPayload? GrokRulesPayload = null,
+    int? CommandLineBudgetChars = null)
+{
+    // Set only by the runner after materialization, never trusted from a caller.
+    [System.Text.Json.Serialization.JsonIgnore]
+    public GrokRulesReceipt? InstalledGrokRulesReceipt { get; init; }
+}
 
 /// <summary>Values for <see cref="RunnerLaunchRequest.Backend"/> (CARD-0160).</summary>
 public static class SessionBackends
@@ -197,7 +204,8 @@ public sealed record RunnerSessionDto(
     // The list endpoint is cheap (no herdr calls) and reports the last stamp.
     DateTime? HerdrVerifiedAtUtc = null,
     // CARD-0213: HerdrPaneOrigins on a herdr session. Null for pty / older runners / unknown.
-    string? HerdrOrigin = null);
+    string? HerdrOrigin = null,
+    GrokRulesReceipt? GrokRulesReceipt = null);
 
 public sealed record RunnerBufferDto(
     Guid SessionId,

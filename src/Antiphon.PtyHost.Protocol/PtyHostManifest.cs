@@ -11,6 +11,7 @@ namespace Antiphon.PtyHost.Protocol;
 public sealed record PtyHostManifest
 {
     public int SchemaVersion { get; init; } = 1;
+    public global::Antiphon.SessionRunner.Contracts.GrokRulesReceipt? GrokRulesReceipt { get; init; }
     public required Guid SessionId { get; init; }
     public required string PipeName { get; init; }
     public int ProtocolVersion { get; init; } = PtyHostProtocol.Version;

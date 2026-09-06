@@ -46,7 +46,9 @@ public sealed record AgentLaunchOptions(
     // no tier on offer. A pre-computed TierModelAlias still wins where a caller supplies one,
     // because it may be keyed on a kind this launch does not resolve to (the dispatcher keys on
     // session.AgentKind, not profile.Kind).
-    AgentModelLevel? ModelTier = null);
+    AgentModelLevel? ModelTier = null,
+    global::Antiphon.SessionRunner.Contracts.GrokRulesPayload? GrokRulesPayload = null,
+    int? CommandLineBudgetChars = null);
 
 /// <summary>
 /// How the resolved launch treated the model argument (CARD-0182 D4).
@@ -80,4 +82,6 @@ public sealed record AgentLaunchSpec(
     // CARD-0160: which lane hosts the child. PtyHost is the default — herdr stays opt-in.
     SessionBackend Backend = SessionBackend.PtyHost,
     // Required when Backend == Herdr; ignored otherwise. Resolved server-side (runner has no DB).
-    global::Antiphon.SessionRunner.Contracts.HerdrLaunchOptions? Herdr = null);
+    global::Antiphon.SessionRunner.Contracts.HerdrLaunchOptions? Herdr = null,
+    global::Antiphon.SessionRunner.Contracts.GrokRulesPayload? GrokRulesPayload = null,
+    int? CommandLineBudgetChars = null);

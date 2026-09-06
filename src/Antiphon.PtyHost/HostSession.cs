@@ -135,6 +135,7 @@ public sealed class HostSession : IAsyncDisposable
             Cols = launch.Cols,
             Rows = launch.Rows,
             TranscriptEnabled = launch.TranscriptEnabled,
+            GrokRulesReceipt = launch.GrokRulesReceipt,
             AnsiLogPath = launch.AnsiLogPath,
             CreatedAtUtc = DateTime.UtcNow,
         };

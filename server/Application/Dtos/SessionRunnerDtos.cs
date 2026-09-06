@@ -30,7 +30,8 @@ public sealed record SessionRunnerSessionDto(
     // CARD-0186 S3: stamped by the single-session GET after a passing herdr liveness verify.
     DateTime? HerdrVerifiedAtUtc = null,
     // CARD-0213: HerdrPaneOrigins. Null for pty / older runners.
-    string? HerdrOrigin = null);
+    string? HerdrOrigin = null,
+    global::Antiphon.SessionRunner.Contracts.GrokRulesReceipt? GrokRulesReceipt = null);
 
 public sealed record SessionRunnerBufferDto(
     Guid SessionId,

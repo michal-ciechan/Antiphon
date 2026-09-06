@@ -8,4 +8,7 @@
     <AssemblyName>Antiphon.PtyHost.Protocol</AssemblyName>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\Antiphon.SessionRunner.Contracts\Antiphon.SessionRunner.Contracts.csproj" />
+  </ItemGroup>
 </Project>

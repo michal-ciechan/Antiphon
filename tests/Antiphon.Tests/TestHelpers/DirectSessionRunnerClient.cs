@@ -157,7 +157,9 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             TranscriptEnabled: transcriptEnabled,
             TranscriptFormat: transcriptFormat,
             Backend: SessionRunnerHttpClient.BackendWire(spec.Backend),
-            Herdr: spec.Herdr);
+            Herdr: spec.Herdr,
+            GrokRulesPayload: spec.GrokRulesPayload,
+            CommandLineBudgetChars: spec.CommandLineBudgetChars);
 
         BeforeStart?.Invoke();
         try
@@ -177,10 +179,10 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
         IReadOnlyList<string> backends = _herdrClient is null
             ? [SessionBackends.PtyHost]
             : [SessionBackends.PtyHost, SessionBackends.Herdr];
-        List<string>? features = null;
+        List<string>? features = [GrokRulesTransport.Capability];
         if (_herdrClient is not null)
         {
-            features = [];
+            features = [GrokRulesTransport.Capability];
             if (AdvertiseHerdrAttach)
                 features.Add(RunnerCapabilityFeatures.HerdrAttach);
             if (AdvertiseHerdrNamedTabPlacement)
@@ -440,7 +442,8 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             dto.Backend,
             dto.Pending,
             dto.HerdrVerifiedAtUtc,
-            dto.HerdrOrigin);
+            dto.HerdrOrigin,
+            dto.GrokRulesReceipt);
 
     private static AgentExitReason MapExitReason(string reason) =>
         Enum.TryParse<AgentExitReason>(reason, ignoreCase: true, out var parsed)

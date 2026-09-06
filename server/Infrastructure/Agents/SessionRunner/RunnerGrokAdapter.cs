@@ -2,6 +2,8 @@ using System.Text.RegularExpressions;
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Settings;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Logging;
@@ -73,6 +75,10 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter, IAttachableProtoc
     {
         if (_started)
             throw new InvalidOperationException("RunnerGrokAdapter already started.");
+        GrokRulesLaunchValidation.Validate(spec, new GrokRulesSettings());
+        if (spec.GrokRulesPayload is not null
+            && (await _client.GetCapabilitiesAsync(ct))?.Features?.Contains(GrokRulesTransport.Capability, StringComparer.Ordinal) != true)
+            throw new ConflictException("Selected runner does not advertise grokRulesFileV1.", "grok_rules_transport_unsupported");
         _started = true;
         _launchEnv = spec.Env;
         await _terminal.StartAsync(spec, ct);

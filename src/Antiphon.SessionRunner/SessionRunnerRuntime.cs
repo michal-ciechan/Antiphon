@@ -26,6 +26,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         Enum.GetValues<TranscriptTailerKind>().Select(FormatFor).ToArray();
 
     private readonly ConcurrentDictionary<Guid, RunnerSession> _sessions = new();
+    private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _launchLocks = new();
     private readonly SessionRunnerEventHub _events = new();
     // One transcript, one session (CARD-0006 rule C1). Process-wide because the runner process is
     // the only thing that knows which sessions are live.
@@ -141,6 +142,14 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
     public async Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct)
     {
+        var gate = _launchLocks.GetOrAdd(request.SessionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try { return await StartCoreAsync(request, ct); }
+        finally { gate.Release(); }
+    }
+
+    private async Task<RunnerSessionDto> StartCoreAsync(RunnerLaunchRequest request, CancellationToken ct)
+    {
         if (request.SessionId == Guid.Empty)
             throw new ArgumentException("SessionId must not be empty.", nameof(request));
         if (string.IsNullOrWhiteSpace(request.Exe))
@@ -180,7 +189,38 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 nameof(request));
         }
 
+        if (request.GrokRulesPayload is { } rules)
+        {
+            _settings.GrokRules.Validate();
+            GrokRulesTransport.Encode(rules,
+                string.Equals(request.TranscriptFormat, TranscriptFormats.Grok, StringComparison.OrdinalIgnoreCase),
+                _settings.GrokRules.MaxFileBytes);
+            var effective = useHerdr
+                ? request.Args.Select(arg => HerdrLaunchScript.TryResolveEnvToken(arg, request.Env, out var value) ? value : arg).ToArray()
+                : request.Args;
+            if (GrokRulesTransport.HasExplicitRules(effective))
+                throw new GrokRulesTransportException("grok_rules_source_conflict", "Move the append to SystemPromptAppend.");
+            if (_sessions.TryGetValue(request.SessionId, out var running) && !running.HasExited)
+                throw new InvalidOperationException($"Session '{request.SessionId}' is already running.");
+            var store = new GrokRulesFileStore(_settings.SessionLogPath, _settings.GrokRules);
+            var bootstrap = GrokRulesTransport.Bootstrap(store.PathFor(request.SessionId));
+            var finalArgs = request.Args.ToList();
+            var terminator = finalArgs.IndexOf("--");
+            finalArgs.InsertRange(terminator < 0 ? finalArgs.Count : terminator, ["--rules", bootstrap]);
+            request = request with { Args = finalArgs };
+            EnsureGrokRulesArgvSafe(request, useHerdr);
+            var budget = request.CommandLineBudgetChars ?? 28000;
+            var actualLength = request.Exe.Length + finalArgs.Sum(arg => arg.Length + 3);
+            if (budget <= 0 || actualLength > budget)
+                throw new GrokRulesTransportException("grok_rules_argv_unsafe", "command_line_budget");
+            request = request with
+            {
+                InstalledGrokRulesReceipt = await store.WriteAsync(request.SessionId, rules, ct),
+            };
+        }
+
         var session = new RunnerSession(request.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness);
+        session.GrokRulesReceipt = request.InstalledGrokRulesReceipt;
         if (!_sessions.TryAdd(request.SessionId, session))
         {
             // A session id can be relaunched once its process has exited (claude --resume reuses
@@ -1042,6 +1082,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     /// <summary>Per-session state. Internal so <see cref="HerdrEventPumpService"/> can verify/apply status.</summary>
     internal sealed class RunnerSession : IAsyncDisposable
     {
+        internal GrokRulesReceipt? GrokRulesReceipt { get; set; }
         private readonly Guid _sessionId;
         private readonly SessionRunnerSettings _settings;
         private readonly SessionRunnerEventHub _events;
@@ -1629,7 +1670,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         request.Rows,
                         request.MemoryLimitMb,
                         request.TranscriptEnabled,
-                        _ansiLogPath),
+                        _ansiLogPath,
+                        GrokRulesReceipt),
                     ct);
 
                 _childPid = launched.ChildPid;
@@ -1694,6 +1736,10 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         /// </summary>
         public async Task<bool> AdoptAsync(PtyHostManifest manifest, CancellationToken ct)
         {
+            if (manifest.GrokRulesReceipt is { } receipt
+                && await new GrokRulesFileStore(_settings.SessionLogPath, _settings.GrokRules)
+                    .VerifyAsync(_sessionId, receipt, ct))
+                GrokRulesReceipt = receipt;
             _hostPid = manifest.HostPid;
             _childPid = manifest.ChildPid;
             _adopted = true;
@@ -1989,6 +2035,10 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             Func<string, Guid?, PaneBinding?> findBound,
             CancellationToken ct)
         {
+            if (sidecar.GrokRulesReceipt is { } receipt
+                && await new GrokRulesFileStore(_settings.SessionLogPath, _settings.GrokRules)
+                    .VerifyAsync(_sessionId, receipt, ct))
+                GrokRulesReceipt = receipt;
             _adopted = true;
             _backend = SessionBackends.Herdr;
             _pendingReason = null;
@@ -2159,7 +2209,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     Backend: _backend,
                     Pending: _pendingReason,
                     HerdrVerifiedAtUtc: _herdrVerifiedAtUtc,
-                    HerdrOrigin: _herdrOrigin);
+                    HerdrOrigin: _herdrOrigin,
+                    GrokRulesReceipt: GrokRulesReceipt);
             }
         }
 
