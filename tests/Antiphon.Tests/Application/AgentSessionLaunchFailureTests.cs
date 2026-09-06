@@ -40,6 +40,35 @@ namespace Antiphon.Tests.Application;
 public class AgentSessionLaunchFailureTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Grok_recovered_failed_barrier_reaps_only_uninitialized_startup(bool previouslyReady)
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        adapter.RegisterOnStart = fixture.Runtime;
+        await fixture.LaunchInteractiveAsync();
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        session.AgentKind = AgentKind.Grok;
+        session.GrokRulesState = GrokRulesState.Failed;
+        session.GrokRulesReadyAt = previouslyReady ? DateTime.UtcNow.AddMinutes(-1) : null;
+        session.GrokRulesFailure = "grok_rules_initialization_failed: timeout";
+        await db.SaveChangesAsync();
+        await fixture.Services.GetRequiredService<AgentSessionService>()
+            .FailRecoveredRulesStartupAsync(session.Id, CancellationToken.None);
+        await db.Entry(session).ReloadAsync();
+        adapter.Killed.ShouldBe(!previouslyReady);
+        session.Status.ShouldBe(previouslyReady ? SessionStatus.Running : SessionStatus.Failed);
+        if (!previouslyReady)
+        {
+            session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
+            session.FailureReason.ShouldBe("grok_rules_initialization_failed: timeout");
+            session.EndedAt.ShouldNotBeNull();
+        }
+    }
+
+    [Test]
     public async Task A_runner_detect_timeout_409_stamps_DetectTimeout_and_keeps_the_runner_prose()
     {
         await using var fixture = await LaunchFixture.CreateAsync(new FakeAgentProtocolAdapter

@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.PtyHost.Protocol;
 
 namespace Antiphon.SessionRunner.Tests;
 
@@ -10,6 +11,56 @@ namespace Antiphon.SessionRunner.Tests;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class GrokRulesFileLaunchTests
 {
+    [Test]
+    public async Task Herdr_receipt_is_durable_before_first_request_and_before_typing()
+    {
+        await using var fake = new FakeHerdrServer { LaunchScriptAgentKind = HerdrAgentKinds.Grok };
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var root = Path.Combine(Path.GetTempPath(), "card0395", Guid.NewGuid().ToString("N"));
+        var settings = new SessionRunnerSettings { SessionLogPath = root };
+        var request = Request(root) with { Exe = "grok", Backend = SessionBackends.Herdr,
+            Herdr = new HerdrLaunchOptions("card0395-" + Guid.NewGuid().ToString("N"), "rules", root, "rules", AgentKind: HerdrAgentKinds.Grok) };
+        var snapshots = new List<(string Method, HerdrPaneSidecar? Sidecar)>();
+        fake.BeforeRequest = method => snapshots.Add((method, HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(root, request.SessionId))));
+        await using var runtime = new SessionRunnerRuntime(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance,
+            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }), new PowershellProcessProbe());
+        try
+        {
+            var result = await runtime.StartAsync(request, CancellationToken.None);
+            var initial = snapshots.First().Sidecar;
+            initial.ShouldNotBeNull("receipt must precede even the first Herdr request");
+            initial.LaunchPending.ShouldBeTrue();
+            initial.GrokRulesReceipt.ShouldBe(result.GrokRulesReceipt);
+            var typed = snapshots.First(s => s.Method == "pane.send_text").Sidecar;
+            typed.ShouldNotBeNull();
+            typed.PaneId.ShouldNotBeEmpty();
+            typed.LaunchPending.ShouldBeTrue();
+            typed.GrokRulesReceipt.ShouldBe(result.GrokRulesReceipt);
+            HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(root, request.SessionId))!.LaunchPending.ShouldBeFalse();
+        }
+        finally { await runtime.KillAsync(request.SessionId, TimeSpan.FromSeconds(2), CancellationToken.None); }
+    }
+
+    [Test]
+    public async Task Launch_failure_retains_pre_spawn_receipt_in_existing_manifest()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "card0395", Guid.NewGuid().ToString("N"));
+        var settings = new SessionRunnerSettings { SessionLogPath = root, PtyHostSourceDir = Path.Combine(root, "missing-host") };
+        await using var runtime = new SessionRunnerRuntime(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance);
+        var request = Request(root);
+        var failure = await CaptureAsync(() => runtime.StartAsync(request, CancellationToken.None));
+        failure.ShouldNotBeNull();
+        var manifest = PtyHostManifest.TryLoad(PtyHostManifest.PathFor(settings.PtyHostManifestDir, request.SessionId));
+        manifest.ShouldNotBeNull("receipt must survive failure before the host is spawned");
+        manifest.LaunchPending.ShouldBeTrue();
+        manifest.HostPid.ShouldBe(0);
+        manifest.GrokRulesReceipt.ShouldNotBeNull();
+        manifest.GrokRulesReceipt.Generation.ShouldBe(request.GrokRulesPayload!.Generation);
+        File.ReadAllBytes(manifest.GrokRulesReceipt.Path).ShouldBe(GrokRulesTransport.Encode(request.GrokRulesPayload, true, 262144));
+        runtime.List().ShouldBeEmpty();
+    }
+
     [Test]
     [Arguments("nul")]
     [Arguments("unresolved_key")]

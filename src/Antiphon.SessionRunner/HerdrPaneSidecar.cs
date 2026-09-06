@@ -16,6 +16,7 @@ namespace Antiphon.SessionRunner;
 public sealed record HerdrPaneSidecar
 {
     public int SchemaVersion { get; init; } = 1;
+    public bool LaunchPending { get; init; }
     public GrokRulesReceipt? GrokRulesReceipt { get; init; }
     public required Guid SessionId { get; init; }
     public required string WorkspaceKey { get; init; }
@@ -101,7 +102,7 @@ public sealed record HerdrPaneSidecar
     {
         var path = PathFor(sessionLogPath, sessionId);
         var sidecar = TryLoad(path);
-        if (sidecar is not null
+        if (sidecar is not null && !sidecar.LaunchPending
             && !string.Equals(sidecar.Origin, HerdrPaneOrigins.Attached, StringComparison.OrdinalIgnoreCase))
         {
             try

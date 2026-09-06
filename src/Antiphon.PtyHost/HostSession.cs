@@ -95,6 +95,18 @@ public sealed class HostSession : IAsyncDisposable
 
         try
         {
+            if (launch.GrokRulesReceipt is not null)
+            {
+                _manifest = new PtyHostManifest
+                {
+                    SessionId = _options.SessionId, PipeName = _options.PipeName,
+                    HostPid = Environment.ProcessId,
+                    HostStartTimeUtc = TryGetProcessStartUtc(Environment.ProcessId) ?? DateTime.UtcNow,
+                    LaunchPending = true, GrokRulesReceipt = launch.GrokRulesReceipt,
+                    CreatedAtUtc = DateTime.UtcNow,
+                };
+                _manifest.SaveAtomic(_options.ManifestPath);
+            }
             await _runner.StartAsync(
                 launch.Exe,
                 launch.Args.ToArray(),
