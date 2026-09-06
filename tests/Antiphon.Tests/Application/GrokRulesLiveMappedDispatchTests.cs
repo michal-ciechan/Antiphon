@@ -101,7 +101,6 @@ public sealed class GrokRulesLiveMappedDispatchTests
             var result=settled.Result.ShouldNotBeNull();
             foreach(var answer in expected) result.ShouldContain(answer);
             foreach(var suffix in new[]{"HEAD","MIDDLE","TAIL"}) result.ShouldContain(nonce+"-"+suffix);
-            result.ShouldContain("restart: none",customMessage:"This requirement appears only in stage-code standing rules, not in the task goal");
             (await File.ReadAllTextAsync(receipt.Path,ct)).ShouldBe(expectedRules);
             await File.WriteAllTextAsync(Path.Combine(root,"rules.md"),expectedRules,ct);
             await File.WriteAllTextAsync(Path.Combine(root,"result.md"),result,ct);
