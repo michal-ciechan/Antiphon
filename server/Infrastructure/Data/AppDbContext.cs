@@ -340,6 +340,7 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<Project>(entity =>
         {
+            entity.Property(p => p.RepositoryVisibility).HasConversion<string>().HasDefaultValue(RepositoryVisibility.Unknown);
             entity.ToTable("Projects");
             entity.HasKey(p => p.Id);
             entity.Property(p => p.Name).IsRequired().HasMaxLength(200);
@@ -570,6 +571,9 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<Board>(entity =>
         {
+            entity.Property(b => b.SyncCardFiles).HasDefaultValue(false);
+            entity.Property(b => b.CardFilesDirectorySlug).HasMaxLength(60);
+            entity.Property(b => b.CardFilesRepositoryPath).HasMaxLength(1000);
             entity.ToTable("Boards");
             entity.HasKey(b => b.Id);
             entity.Property(b => b.ProjectId).IsRequired();
@@ -886,6 +890,8 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<Card>(entity =>
         {
+            entity.Property(c => c.PrivateNotes).IsRequired().HasColumnType("text").HasDefaultValue("");
+            entity.Property(c => c.CardFileVisibility).HasConversion<string>().HasDefaultValue(CardFileVisibility.Inherit);
             entity.ToTable("Cards");
             entity.HasKey(c => c.Id);
             entity.Property(c => c.BoardId).IsRequired();
@@ -974,6 +980,8 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<CardRevision>(entity =>
         {
+            entity.Property(r => r.PrivateNotes).HasColumnType("text");
+            entity.Property(r => r.CardFileVisibility).HasConversion<string>();
             entity.ToTable("CardRevisions");
             entity.HasKey(r => r.Id);
             entity.Property(r => r.CardId).IsRequired();

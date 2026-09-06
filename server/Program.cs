@@ -366,6 +366,7 @@ try
     builder.Services.AddScoped<IScheduledCardActions>(sp => sp.GetRequiredService<CardService>());
     builder.Services.AddSingleton<CardTaskFileSyncGate>();
     builder.Services.AddScoped<CardTaskFileService>();
+    builder.Services.AddScoped<Antiphon.Server.Application.Interfaces.ICardFileRepository, Antiphon.Server.Infrastructure.Git.CardFileRepository>();
     builder.Services.AddScoped<CardCommentService>();
     // One card's work gathered from the four places it is recorded, correlated by the identifier
     // everything already cites. Read-only; scoped because it is one query burst per request.

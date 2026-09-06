@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Antiphon.Server.Application.Dtos;
 
 /// <summary>
@@ -6,12 +8,18 @@ namespace Antiphon.Server.Application.Dtos;
 public sealed record CardFileSyncBoardResult(
     Guid BoardId,
     string BoardName,
-    string? Directory,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Directory,
     int Written,
     int Deleted,
     int Unchanged,
-    string? CommitSha,
-    string? WriteSkipReason,
-    string? CommitSkipReason,
-    string? Error,
-    bool DryRun);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? CommitSha,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? WriteSkipReason,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? CommitSkipReason,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Error,
+    bool DryRun)
+{
+    public int EligibleCards { get; init; }
+    public int ExcludedCards { get; init; }
+    public CardFileStatusDto Policy { get; init; } = new();
+    public string[] Warnings { get; init; } = [];
+}

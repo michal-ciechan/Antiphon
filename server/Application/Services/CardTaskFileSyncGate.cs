@@ -34,6 +34,31 @@ public sealed class CardTaskFileSyncGate
         return entered ? new Lease(sem) : null;
     }
 
+    public async ValueTask<IDisposable?> EnterProjectAsync(Guid projectId, bool wait, CancellationToken ct)
+        => await EnterKeyAsync($"project:{projectId:N}", wait, ct);
+
+    public async ValueTask<IDisposable?> EnterRepositoryAsync(string repositoryPath, bool wait, CancellationToken ct)
+        => await EnterKeyAsync(Normalize(repositoryPath), wait, ct);
+
+    private async ValueTask<IDisposable?> EnterKeyAsync(string key, bool wait, CancellationToken ct)
+    {
+        var sem = _locks.GetOrAdd(key, static _ => new SemaphoreSlim(1, 1));
+        if (!wait) return await sem.WaitAsync(0, ct) ? new Lease(sem) : null;
+        await sem.WaitAsync(ct);
+        return new Lease(sem);
+    }
+
+    public bool NoteSkipReason(Guid boardId, string? target, string? reason)
+    {
+        var key = $"{boardId:N}|{target}";
+        if (reason is null) { _lastSkipReasons.TryRemove(key, out _); return false; }
+        var changed = !_lastSkipReasons.TryGetValue(key, out var previous) || previous != reason;
+        _lastSkipReasons[key] = reason;
+        if (changed) _logger.LogWarning("Card file sync skipped for board {BoardId}: {Reason}", boardId, reason);
+        else _logger.LogDebug("Card file sync skipped for board {BoardId}: {Reason}", boardId, reason);
+        return changed;
+    }
+
     /// <summary>
     /// Remember the last skip reason for this repository. Returns true when the reason
     /// <em>changed</em> (S2 logs at Warning only then).

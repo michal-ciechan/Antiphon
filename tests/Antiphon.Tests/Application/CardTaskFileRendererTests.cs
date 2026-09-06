@@ -58,7 +58,7 @@ public class CardTaskFileRendererTests
         card.DecisionNotifiedAt = DateTime.UtcNow;
         card.RevisionCount = 9;
 
-        var rendered = CardTaskFileRenderer.RenderCard(card);
+        var rendered = CardTaskFileRenderer.RenderCard(Project(card));
 
         rendered.ShouldContain("id: 86b6542a-5f1e-4107-b04b-46d81c636225");
         rendered.ShouldContain("identifier: CARD-0004");
@@ -105,7 +105,7 @@ public class CardTaskFileRendererTests
         var card = MakeCard(Guid.NewGuid(), "CARD-0350", "bounded check headers and optional card aliases", "body", CardStatus.Backlog);
         card.Alias = "Check header alias";
 
-        var rendered = CardTaskFileRenderer.RenderCard(card);
+        var rendered = CardTaskFileRenderer.RenderCard(Project(card));
 
         rendered.ShouldContain("title: \"bounded check headers and optional card aliases\"");
         rendered.ShouldContain("alias: \"Check header alias\"");
@@ -125,7 +125,7 @@ public class CardTaskFileRendererTests
             description: "body",
             status: CardStatus.Backlog);
 
-        var rendered = CardTaskFileRenderer.RenderCard(card);
+        var rendered = CardTaskFileRenderer.RenderCard(Project(card));
 
         rendered.ShouldNotContain("started:");
         rendered.ShouldNotContain("completed:");
@@ -143,8 +143,8 @@ public class CardTaskFileRendererTests
         with.TerminalReason = "done because X";
         var without = MakeCard(Guid.NewGuid(), "CARD-0003", "t", "d", CardStatus.Done);
 
-        CardTaskFileRenderer.RenderCard(with).ShouldContain("## Outcome");
-        CardTaskFileRenderer.RenderCard(without).ShouldNotContain("## Outcome");
+        CardTaskFileRenderer.RenderCard(Project(with)).ShouldContain("## Outcome");
+        CardTaskFileRenderer.RenderCard(Project(without)).ShouldNotContain("## Outcome");
     }
 
     [Test]
@@ -162,7 +162,7 @@ public class CardTaskFileRendererTests
         var cards = new[] { backlogLow, done, archived, backlogHigh, inProgress, backlogMid };
         var names = cards.ToDictionary(c => c.Id, c => CardTaskFileRenderer.CardFileName(c.Identifier, c.Title));
 
-        var index = CardTaskFileRenderer.RenderIndex("Antiphon", cards, names);
+        var index = CardTaskFileRenderer.RenderIndex("Antiphon", cards.Select(Project).ToArray(), names);
 
         index.ShouldContain("# Antiphon — cards");
         index.ShouldContain("6 cards, 1 archived.");
@@ -208,7 +208,7 @@ public class CardTaskFileRendererTests
             [older.Id] = "CARD-0001-older.md",
             [placed.Id] = "CARD-0002-later.md"
         };
-        var index = CardTaskFileRenderer.RenderIndex("Antiphon", [older, placed], names);
+        var index = CardTaskFileRenderer.RenderIndex("Antiphon", [Project(older), Project(placed)], names);
         var placedAt = index.IndexOf("CARD-0002", StringComparison.Ordinal);
         var olderAt = index.IndexOf("CARD-0001", StringComparison.Ordinal);
         placedAt.ShouldBeLessThan(olderAt);
@@ -244,18 +244,18 @@ public class CardTaskFileRendererTests
             Card = card
         };
 
-        var rendered = CardTaskFileRenderer.RenderCard(card);
+        var rendered = CardTaskFileRenderer.RenderCard(Project(card));
         rendered.ShouldContain("importance_provenance: Auto");
         rendered.ShouldContain("external_author: \"bob\"");
         rendered.ShouldContain("needs_human_review: true");
 
         var names = new Dictionary<Guid, string> { [card.Id] = "CARD-0325-from-github.md" };
-        var index = CardTaskFileRenderer.RenderIndex("Antiphon", [card], names);
+        var index = CardTaskFileRenderer.RenderIndex("Antiphon", [Project(card)], names);
         index.ShouldContain("`review`");
 
         card.ImportanceProvenance = CardImportanceProvenance.Human;
-        CardTaskFileRenderer.RenderCard(card).ShouldNotContain("needs_human_review:");
-        CardTaskFileRenderer.RenderIndex("Antiphon", [card], names).ShouldNotContain("`review`");
+        CardTaskFileRenderer.RenderCard(Project(card)).ShouldNotContain("needs_human_review:");
+        CardTaskFileRenderer.RenderIndex("Antiphon", [Project(card)], names).ShouldNotContain("`review`");
     }
 
     [Test]
@@ -273,6 +273,8 @@ public class CardTaskFileRendererTests
     {
         CardTaskFileRenderer.YamlQuote("a\\b\"c").ShouldBe("\"a\\\\b\\\"c\"");
     }
+
+    private static CardFilePublicCard Project(Card card) => CardFilePublicProjection.Select.Compile()(card);
 
     private static Card MakeCard(
         Guid id,
