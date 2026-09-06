@@ -12,7 +12,7 @@ namespace Antiphon.Messaging.Tests.Gateway;
 /// CARD-0245 S2a — lag probe, exactly-once acknowledgement, operational event, negatives.
 /// No broker: fake offset reader, in-memory inbox, scripted adapter.
 /// </summary>
-public sealed class InboundUnconsumedMonitorTests
+public sealed partial class InboundUnconsumedMonitorTests
 {
     [Test]
     public void Committed_before_record_is_unconsumed() =>
@@ -109,7 +109,7 @@ public sealed class InboundUnconsumedMonitorTests
         harness.Adapter.Sent.ShouldHaveSingleItem();
     }
 
-    private sealed class Harness
+    internal sealed class Harness
     {
         public InMemoryInboxReceiptStore Store { get; } = new();
         public FakeOffsets Offsets { get; } = new() { Committed = 10 };
@@ -118,9 +118,12 @@ public sealed class InboundUnconsumedMonitorTests
         public FakeHealth Health { get; } = new() { Result = "fail: timeout" };
         public OffsetClock Clock { get; } = new();
         public InboundUnconsumedMonitorService Sut { get; }
+        public InboundUnconsumedMonitorStatus Status { get; }
+        public CapturingLogger<InboundUnconsumedMonitorStatus> Logs { get; } = new();
 
-        private Harness()
+        internal Harness()
         {
+            Status = new(Options.Create(new AntiphonGatewayOptions()), Clock, Logs);
             Sut = new InboundUnconsumedMonitorService(
                 [Store],
                 Offsets,
@@ -135,7 +138,7 @@ public sealed class InboundUnconsumedMonitorTests
                     InboundUnconsumedMonitorEnabled = true,
                 }),
                 Clock,
-                NullLogger<InboundUnconsumedMonitorService>.Instance);
+                NullLogger<InboundUnconsumedMonitorService>.Instance, Status);
         }
 
         public static Harness OverdueUnconsumed(TimeSpan? age = null)
@@ -162,14 +165,21 @@ public sealed class InboundUnconsumedMonitorTests
         public Task<int> TickAsync() => Sut.TickAsync(CancellationToken.None);
     }
 
-    private sealed class FakeOffsets : IConsumerGroupOffsetReader
+    internal sealed class FakeOffsets : IConsumerGroupObservationReader
     {
         public long? Committed { get; set; }
-        public Task<long?> GetCommittedOffsetAsync(string groupId, string topic, int partition, CancellationToken cancellationToken)
-            => Task.FromResult(Committed);
+        public ConsumerGroupObservation? Observation { get; set; }
+        public List<(string Group, string Topic)> Calls { get; } = [];
+        public Task<ConsumerGroupObservation> ObserveAsync(string groupId, string topic, CancellationToken cancellationToken)
+        {
+            Calls.Add((groupId, topic));
+            return Task.FromResult(Observation ?? new ConsumerGroupObservation(groupId, topic,
+                ConsumerGroupStatus.Present, Committed.HasValue ? null : "no_committed_offsets", 0,
+                [new(0, Committed.HasValue ? PartitionOffsetStatus.CommittedOffset : PartitionOffsetStatus.NoCommit, Committed, Committed.HasValue ? null : "no_committed_offsets")], DateTimeOffset.UtcNow));
+        }
     }
 
-    private sealed class CapturingPublisher : IInboundUnconsumedEventPublisher
+    internal sealed class CapturingPublisher : IInboundUnconsumedEventPublisher
     {
         public List<InboundUnconsumedEvent> Events { get; } = [];
         public Task PublishAsync(InboundUnconsumedEvent evt, CancellationToken cancellationToken)
@@ -179,13 +189,14 @@ public sealed class InboundUnconsumedMonitorTests
         }
     }
 
-    private sealed class FakeHealth : IAppHostHealthProbe
+    internal sealed class FakeHealth : IAppHostHealthProbe
     {
         public string Result { get; set; } = "http 200";
-        public Task<string> ProbeAsync(CancellationToken cancellationToken) => Task.FromResult(Result);
+        public int Calls { get; private set; }
+        public Task<string> ProbeAsync(CancellationToken cancellationToken) { Calls++; return Task.FromResult(Result); }
     }
 
-    private sealed class ScriptedAdapter : IChannelAdapter
+    internal sealed class ScriptedAdapter : IChannelAdapter
     {
         public Queue<SendResult> Results { get; } = new();
         public List<ChannelReply> Sent { get; } = [];
@@ -206,7 +217,7 @@ public sealed class InboundUnconsumedMonitorTests
     }
 
     /// <summary>Offset over the real clock (CARD-0222): never a frozen instant.</summary>
-    private sealed class OffsetClock : TimeProvider
+    internal sealed class OffsetClock : TimeProvider
     {
         private TimeSpan _offset;
         public override DateTimeOffset GetUtcNow() => DateTimeOffset.UtcNow + _offset;

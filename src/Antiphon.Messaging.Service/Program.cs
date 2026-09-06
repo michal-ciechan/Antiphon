@@ -52,6 +52,7 @@ if (!string.IsNullOrWhiteSpace(builder.Configuration["Slack:BotToken"]))
 // Ingress + outbound loops live in Antiphon.Messaging.Gateway. Section name "Kafka" keeps the
 // deployed env vars (Kafka__BootstrapServers, Kafka__ConsumerGroup, …) working.
 builder.Services.AddAntiphonGateway(builder.Configuration, "Kafka");
+builder.Services.PostConfigure<AntiphonGatewayOptions>(o => o.RequireExpectedAntiphonConsumerGroup = true);
 builder.Services.AddSingleton<EfInboxReceiptStore>();
 builder.Services.AddSingleton<IInboxReceiptStore>(sp => sp.GetRequiredService<EfInboxReceiptStore>());
 builder.Services.AddSingleton<IInboundReceiptSink>(sp => sp.GetRequiredService<EfInboxReceiptStore>());
@@ -75,6 +76,11 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+app.MapGet("/health/inbound-unconsumed", (IInboundUnconsumedMonitorStatus status) =>
+{
+    var snapshot = status.GetSnapshot();
+    return Results.Json(snapshot, MessagingJson.Options, statusCode: snapshot.HttpStatusCode);
+});
 
 // Connected channels and what each supports.
 app.MapGet("/api/channels", (IEnumerable<IChannelAdapter> adapters) =>
