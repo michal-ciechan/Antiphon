@@ -19,7 +19,8 @@ public sealed class InboundUnconsumedMonitorService : BackgroundService
     internal static readonly TimeSpan MaxAckBackoff = TimeSpan.FromMinutes(15);
 
     private readonly IInboxReceiptStore? _store;
-    private readonly IConsumerGroupOffsetReader _offsets;
+    private readonly IConsumerGroupObservationReader _observations;
+    private readonly InboundUnconsumedMonitorStatus _status;
     private readonly IReadOnlyDictionary<string, IChannelAdapter> _adapters;
     private readonly IInboundUnconsumedEventPublisher _publisher;
     private readonly IAppHostHealthProbe _health;
@@ -36,15 +37,31 @@ public sealed class InboundUnconsumedMonitorService : BackgroundService
         IOptions<AntiphonGatewayOptions> options,
         TimeProvider time,
         ILogger<InboundUnconsumedMonitorService> logger)
+        : this(stores, new LegacyObservationReader(offsets, time), adapters, publisher, health, options, time,
+            logger, new InboundUnconsumedMonitorStatus(options, time,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<InboundUnconsumedMonitorStatus>.Instance)) { }
+
+    public InboundUnconsumedMonitorService(
+        IEnumerable<IInboxReceiptStore> stores,
+        IConsumerGroupObservationReader observations,
+        IEnumerable<IChannelAdapter> adapters,
+        IInboundUnconsumedEventPublisher publisher,
+        IAppHostHealthProbe health,
+        IOptions<AntiphonGatewayOptions> options,
+        TimeProvider time,
+        ILogger<InboundUnconsumedMonitorService> logger,
+        InboundUnconsumedMonitorStatus status)
     {
         _store = stores.FirstOrDefault();
-        _offsets = offsets;
+        _observations = observations;
+        _status = status;
         _adapters = adapters.ToDictionary(a => a.Channel, StringComparer.OrdinalIgnoreCase);
         _publisher = publisher;
         _health = health;
         _options = options.Value;
         _time = time;
         _logger = logger;
+        if (!_options.InboundUnconsumedMonitorEnabled || _store is null) _status.Disable(_store is null);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -76,6 +93,8 @@ public sealed class InboundUnconsumedMonitorService : BackgroundService
 
         var now = _time.GetUtcNow();
         var cutoff = now - TimeSpan.FromMinutes(Math.Max(1, _options.InboundUnconsumedMinutes));
+        var observation = await _observations.ObserveAsync(_options.AntiphonConsumerGroup,
+            _options.ResolveInboundTopic(), cancellationToken);
         IReadOnlyList<InboundReceipt> overdue;
         try
         {
@@ -83,9 +102,14 @@ public sealed class InboundUnconsumedMonitorService : BackgroundService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogWarning(ex, "[inbound-unconsumed] inbox query failed");
+            _status.Update(observation, "inbox_query_failed");
             return 0;
         }
+
+        var invalidReceipt = overdue.Any(r => r.Offset < 0) ? "receipt_offset_invalid"
+            : overdue.Any(r => r.Topic != observation.Topic || !observation.Partitions.Any(p => p.Partition == r.Partition))
+                && observation.GroupStatus == ConsumerGroupStatus.Present ? "partition_outside_snapshot" : null;
+        _status.Update(observation, invalidReceipt);
 
         var acted = 0;
         string? healthCache = null;
@@ -95,7 +119,7 @@ public sealed class InboundUnconsumedMonitorService : BackgroundService
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                if (await ProcessAsync(receipt, now, HealthAsync, cancellationToken))
+                if (await ProcessAsync(receipt, observation, now, HealthAsync, cancellationToken))
                     acted++;
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
@@ -111,13 +135,12 @@ public sealed class InboundUnconsumedMonitorService : BackgroundService
 
     private async Task<bool> ProcessAsync(
         InboundReceipt receipt,
+        ConsumerGroupObservation observation,
         DateTimeOffset now,
         Func<Task<string>> health,
         CancellationToken ct)
     {
-        var committed = await _offsets.GetCommittedOffsetAsync(
-            _options.AntiphonConsumerGroup, receipt.Topic, receipt.Partition, ct);
-        if (!ConsumerLag.IsUnconsumed(committed, receipt.Offset))
+        if (receipt.Topic != observation.Topic || ConsumerLag.Assess(observation, receipt.Partition, receipt.Offset) != LagAssessment.Unconsumed)
             return false;
 
         var acknowledged = receipt.AcknowledgedAt.HasValue;
@@ -198,5 +221,18 @@ public sealed class InboundUnconsumedMonitorService : BackgroundService
         _logger.LogWarning(
             "[inbound-unconsumed] ack failed for {Channel} {MessageId} (attempt {Attempt}, next {Next}): {Error}",
             receipt.Channel, receipt.ChannelMessageId, attempt, now + delay, error);
+    }
+
+    // Existing constructors remain usable. A nullable legacy reader cannot establish group presence
+    // or enumerate partitions, so its evidence cannot authorize customer notifications.
+    private sealed class LegacyObservationReader(IConsumerGroupOffsetReader reader, TimeProvider time) : IConsumerGroupObservationReader
+    {
+        public Task<ConsumerGroupObservation> ObserveAsync(string groupId, string topic, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _ = reader;
+            return Task.FromResult(new ConsumerGroupObservation(groupId, topic, ConsumerGroupStatus.QueryFailed,
+                "query_failed", null, [], time.GetUtcNow()));
+        }
     }
 }

@@ -8,6 +8,17 @@ namespace Antiphon.Messaging.Tests.Gateway;
 public sealed class LibrarySufficiencyTests
 {
     [Test]
+    public void Service_maps_monitor_readiness_and_requires_expected_group()
+    {
+        var serviceDir = Path.Combine(RepoRoot, "src", "Antiphon.Messaging.Service");
+        var source = File.ReadAllText(Path.Combine(serviceDir, "Program.cs"));
+        source.ShouldContain("/health/inbound-unconsumed");
+        source.ShouldContain("PostConfigure<AntiphonGatewayOptions>");
+        source.ShouldContain("RequireExpectedAntiphonConsumerGroup = true");
+        using var profile = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(serviceDir, "appsettings.json")));
+        profile.RootElement.GetProperty("Kafka").GetProperty("ExpectedAntiphonConsumerGroup").GetString().ShouldBe("antiphon-server-bridge");
+    }
+    [Test]
     public void Service_has_no_hand_rolled_ingress_or_outbound_loops()
     {
         var serviceDir = Path.Combine(RepoRoot, "src", "Antiphon.Messaging.Service");

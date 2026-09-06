@@ -84,6 +84,9 @@ Antiphon.Messaging.Gateway.AntiphonGatewayOptions.ObservationBudgetSeconds.get -
 Antiphon.Messaging.Gateway.AntiphonGatewayOptions.ObservationBudgetSeconds.set -> void
 Antiphon.Messaging.Gateway.AntiphonGatewayOptions.RequireExpectedAntiphonConsumerGroup.get -> bool
 Antiphon.Messaging.Gateway.AntiphonGatewayOptions.RequireExpectedAntiphonConsumerGroup.set -> void
+Antiphon.Messaging.Gateway.AntiphonGatewayOptionsValidator
+Antiphon.Messaging.Gateway.AntiphonGatewayOptionsValidator.AntiphonGatewayOptionsValidator() -> void
+Antiphon.Messaging.Gateway.AntiphonGatewayOptionsValidator.Validate(string? name, Antiphon.Messaging.Gateway.AntiphonGatewayOptions! options) -> Microsoft.Extensions.Options.ValidateOptionsResult!
 Antiphon.Messaging.Gateway.ConsumerGroupObservation
 Antiphon.Messaging.Gateway.ConsumerGroupObservation.GroupId.get -> string!
 Antiphon.Messaging.Gateway.ConsumerGroupObservation.GroupId.init -> void
@@ -105,6 +108,30 @@ Antiphon.Messaging.Gateway.ConsumerGroupStatus.Present = 0 -> Antiphon.Messaging
 Antiphon.Messaging.Gateway.ConsumerGroupStatus.QueryFailed = 2 -> Antiphon.Messaging.Gateway.ConsumerGroupStatus
 Antiphon.Messaging.Gateway.IConsumerGroupObservationReader
 Antiphon.Messaging.Gateway.IConsumerGroupObservationReader.ObserveAsync(string! groupId, string! topic, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<Antiphon.Messaging.Gateway.ConsumerGroupObservation!>!
+Antiphon.Messaging.Gateway.IInboundUnconsumedMonitorStatus
+Antiphon.Messaging.Gateway.IInboundUnconsumedMonitorStatus.GetSnapshot() -> Antiphon.Messaging.Gateway.InboundUnconsumedMonitorSnapshot!
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorService.InboundUnconsumedMonitorService(System.Collections.Generic.IEnumerable<Antiphon.Messaging.Gateway.IInboxReceiptStore!>! stores, Antiphon.Messaging.Gateway.IConsumerGroupObservationReader! observations, System.Collections.Generic.IEnumerable<Antiphon.Messaging.IChannelAdapter!>! adapters, Antiphon.Messaging.Gateway.IInboundUnconsumedEventPublisher! publisher, Antiphon.Messaging.Gateway.IAppHostHealthProbe! health, Microsoft.Extensions.Options.IOptions<Antiphon.Messaging.Gateway.AntiphonGatewayOptions!>! options, System.TimeProvider! time, Microsoft.Extensions.Logging.ILogger<Antiphon.Messaging.Gateway.InboundUnconsumedMonitorService!>! logger, Antiphon.Messaging.Gateway.InboundUnconsumedMonitorStatus! status) -> void
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorSnapshot
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorSnapshot.AgeSeconds.get -> double?
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorSnapshot.AgeSeconds.init -> void
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorSnapshot.ExpectedGroup.get -> string?
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorSnapshot.ExpectedGroup.init -> void
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorSnapshot.HttpStatusCode.get -> int
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorSnapshot.ObservedAt.get -> System.DateTimeOffset?
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorSnapshot.ObservedAt.init -> void
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorSnapshot.Partitions.get -> System.Collections.Generic.IReadOnlyList<Antiphon.Messaging.Gateway.PartitionOffsetObservation!>!
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorSnapshot.Partitions.init -> void
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorSnapshot.ReasonCode.get -> string?
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorSnapshot.ReasonCode.init -> void
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorSnapshot.State.get -> Antiphon.Messaging.Gateway.MonitorState
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorSnapshot.State.init -> void
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorSnapshot.Topic.get -> string!
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorSnapshot.Topic.init -> void
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorSnapshot.WatchedGroup.get -> string!
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorSnapshot.WatchedGroup.init -> void
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorStatus
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorStatus.GetSnapshot() -> Antiphon.Messaging.Gateway.InboundUnconsumedMonitorSnapshot!
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorStatus.InboundUnconsumedMonitorStatus(Microsoft.Extensions.Options.IOptions<Antiphon.Messaging.Gateway.AntiphonGatewayOptions!>! options, System.TimeProvider! time, Microsoft.Extensions.Logging.ILogger<Antiphon.Messaging.Gateway.InboundUnconsumedMonitorStatus!>! logger) -> void
 Antiphon.Messaging.Gateway.KafkaConsumerGroupObservationReader
 Antiphon.Messaging.Gateway.KafkaConsumerGroupObservationReader.KafkaConsumerGroupObservationReader(Microsoft.Extensions.Options.IOptions<Antiphon.Messaging.Gateway.AntiphonGatewayOptions!>! options, System.TimeProvider! time, System.Func<Confluent.Kafka.IAdminClient!>? adminClientFactory = null) -> void
 Antiphon.Messaging.Gateway.KafkaConsumerGroupObservationReader.ObserveAsync(string! groupId, string! topic, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<Antiphon.Messaging.Gateway.ConsumerGroupObservation!>!
@@ -113,6 +140,12 @@ Antiphon.Messaging.Gateway.LagAssessment
 Antiphon.Messaging.Gateway.LagAssessment.Consumed = 1 -> Antiphon.Messaging.Gateway.LagAssessment
 Antiphon.Messaging.Gateway.LagAssessment.Unconsumed = 2 -> Antiphon.Messaging.Gateway.LagAssessment
 Antiphon.Messaging.Gateway.LagAssessment.Unknown = 0 -> Antiphon.Messaging.Gateway.LagAssessment
+Antiphon.Messaging.Gateway.MonitorState
+Antiphon.Messaging.Gateway.MonitorState.Degraded = 2 -> Antiphon.Messaging.Gateway.MonitorState
+Antiphon.Messaging.Gateway.MonitorState.Disabled = 4 -> Antiphon.Messaging.Gateway.MonitorState
+Antiphon.Messaging.Gateway.MonitorState.Ready = 1 -> Antiphon.Messaging.Gateway.MonitorState
+Antiphon.Messaging.Gateway.MonitorState.Stale = 3 -> Antiphon.Messaging.Gateway.MonitorState
+Antiphon.Messaging.Gateway.MonitorState.Validating = 0 -> Antiphon.Messaging.Gateway.MonitorState
 Antiphon.Messaging.Gateway.PartitionOffsetObservation
 Antiphon.Messaging.Gateway.PartitionOffsetObservation.CommittedNextOffset.get -> long?
 Antiphon.Messaging.Gateway.PartitionOffsetObservation.CommittedNextOffset.init -> void
@@ -128,4 +161,5 @@ Antiphon.Messaging.Gateway.PartitionOffsetStatus.NoCommit = 1 -> Antiphon.Messag
 Antiphon.Messaging.Gateway.PartitionOffsetStatus.QueryFailed = 2 -> Antiphon.Messaging.Gateway.PartitionOffsetStatus
 static Antiphon.Messaging.Gateway.ConsumerLag.Assess(Antiphon.Messaging.Gateway.ConsumerGroupObservation! observation, int partition, long recordOffset) -> Antiphon.Messaging.Gateway.LagAssessment
 Antiphon.Messaging.Gateway.ConsumerGroupObservation.ConsumerGroupObservation(string! GroupId, string! Topic, Antiphon.Messaging.Gateway.ConsumerGroupStatus GroupStatus, string? ReasonCode, int? MemberCount, System.Collections.Generic.IReadOnlyList<Antiphon.Messaging.Gateway.PartitionOffsetObservation!>! Partitions, System.DateTimeOffset ObservedAt) -> void
+Antiphon.Messaging.Gateway.InboundUnconsumedMonitorSnapshot.InboundUnconsumedMonitorSnapshot(Antiphon.Messaging.Gateway.MonitorState State, string? ReasonCode, string? ExpectedGroup, string! WatchedGroup, string! Topic, System.DateTimeOffset? ObservedAt, double? AgeSeconds, System.Collections.Generic.IReadOnlyList<Antiphon.Messaging.Gateway.PartitionOffsetObservation!>! Partitions) -> void
 Antiphon.Messaging.Gateway.PartitionOffsetObservation.PartitionOffsetObservation(int Partition, Antiphon.Messaging.Gateway.PartitionOffsetStatus Status, long? CommittedNextOffset, string? ReasonCode) -> void

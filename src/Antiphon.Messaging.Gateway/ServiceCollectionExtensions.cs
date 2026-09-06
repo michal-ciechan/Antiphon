@@ -33,6 +33,8 @@ public static class ServiceCollectionExtensions
 
     private static IServiceCollection AddAntiphonGatewayCore(this IServiceCollection services)
     {
+        services.AddOptions<AntiphonGatewayOptions>().ValidateOnStart();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<AntiphonGatewayOptions>, AntiphonGatewayOptionsValidator>());
         services.AddSingleton<IProducer<string, string>>(sp =>
         {
             var kafka = sp.GetRequiredService<IOptions<AntiphonGatewayOptions>>().Value;
@@ -45,10 +47,18 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<GatewayIngressService>();
         services.AddHostedService<GatewayOutboundService>();
         services.TryAddSingleton(TimeProvider.System);
-        services.TryAddSingleton<IConsumerGroupOffsetReader, KafkaConsumerGroupOffsetReader>();
+        services.TryAddSingleton<IConsumerGroupObservationReader, KafkaConsumerGroupObservationReader>();
+        services.TryAddSingleton<IConsumerGroupOffsetReader>(sp => new KafkaConsumerGroupOffsetReader(sp.GetRequiredService<IConsumerGroupObservationReader>()));
+        services.TryAddSingleton<InboundUnconsumedMonitorStatus>();
+        services.TryAddSingleton<IInboundUnconsumedMonitorStatus>(sp => sp.GetRequiredService<InboundUnconsumedMonitorStatus>());
         services.TryAddSingleton<IAppHostHealthProbe, HttpAppHostHealthProbe>();
         services.TryAddSingleton<IInboundUnconsumedEventPublisher, KafkaInboundUnconsumedEventPublisher>();
-        services.AddHostedService<InboundUnconsumedMonitorService>();
+        services.AddHostedService(sp => new InboundUnconsumedMonitorService(
+            sp.GetServices<IInboxReceiptStore>(), sp.GetRequiredService<IConsumerGroupObservationReader>(),
+            sp.GetServices<IChannelAdapter>(), sp.GetRequiredService<IInboundUnconsumedEventPublisher>(),
+            sp.GetRequiredService<IAppHostHealthProbe>(), sp.GetRequiredService<IOptions<AntiphonGatewayOptions>>(),
+            sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<InboundUnconsumedMonitorService>>(),
+            sp.GetRequiredService<InboundUnconsumedMonitorStatus>()));
         return services;
     }
 }
