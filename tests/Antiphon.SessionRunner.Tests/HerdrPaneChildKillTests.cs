@@ -304,6 +304,75 @@ public class HerdrPaneChildKillTests
         }
     }
 
+    [Test]
+    public async Task Named_launch_failure_before_sidecar_never_closes_the_operator_shell_or_kills_an_unproven_pid()
+    {
+        await using var fake = new FakeHerdrServer { LaunchScriptAgentKind = HerdrAgentKinds.Codex };
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = new SessionRunnerSettings
+        {
+            SessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-c384-kill-named-{Guid.NewGuid():N}"),
+            PtyHostLingerHours = 0.02,
+        };
+        var ws = fake.SeedWorkspace("w1", "PredictionMarkets", new Dictionary<string, string> { ["antiphon-ws"] = "k1" });
+        var orch = fake.SeedTab(ws.WorkspaceId, "Orch");
+        using var dummy = StartDummy();
+        try
+        {
+            await using var runtime = new SessionRunnerRuntime(
+                Options.Create(settings),
+                NullLogger<SessionRunnerRuntime>.Instance,
+                new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, LaunchDetectTimeoutMs = 2_000 }),
+                new PowershellProcessProbe());
+            var gate = fake.GateMethod("pane.send_text");
+            var sessionId = Guid.NewGuid();
+            var start = runtime.StartAsync(
+                new RunnerLaunchRequest(
+                    sessionId,
+                    "claude",
+                    ["--session-id", sessionId.ToString("D")],
+                    new Dictionary<string, string>(),
+                    settings.SessionLogPath,
+                    Cols: 120,
+                    Rows: 30,
+                    Backend: SessionBackends.Herdr,
+                    Herdr: new HerdrLaunchOptions(
+                        "k1", "PredictionMarkets", settings.SessionLogPath, "named-agent",
+                        AgentKind: HerdrAgentKinds.Claude, TabLabel: "Orch")),
+                CancellationToken.None);
+            var waitStart = DateTime.UtcNow;
+            while (fake.Requests.Count(r => r.GetProperty("method").GetString() == "pane.send_text") == 0)
+            {
+                if (DateTime.UtcNow - waitStart > TimeSpan.FromSeconds(10))
+                    throw new TimeoutException("named launch did not reach pane.send_text");
+                await Task.Delay(20);
+            }
+
+            fake.SetPaneProcessInfo(
+                orch.Panes[0].PaneId,
+                4242,
+                [(dummy.Id, "cmd.exe", new[] { "cmd" }, settings.SessionLogPath)]);
+            gate.Release();
+            var ex = await Should.ThrowAsync<HerdrLaunchException>(() => start);
+            ex.Message.ShouldContain("codex");
+            fake.Requests.Count(r => r.GetProperty("method").GetString() == "pane.close").ShouldBe(0);
+            dummy.HasExited.ShouldBeFalse();
+            fake.Workspaces[0].Tabs.ShouldContain(t => t.TabId == orch.TabId);
+            File.Exists(HerdrLastPane.PathFor(settings.SessionLogPath, sessionId)).ShouldBeFalse();
+        }
+        finally
+        {
+            KillBestEffort(dummy);
+            try
+            {
+                if (Directory.Exists(settings.SessionLogPath))
+                    Directory.Delete(settings.SessionLogPath, recursive: true);
+            }
+            catch { /* best-effort */ }
+        }
+    }
+
     private static Process StartDummy()
     {
         var psi = new ProcessStartInfo(Cmd, "/d /q /k @echo off & prompt $G")

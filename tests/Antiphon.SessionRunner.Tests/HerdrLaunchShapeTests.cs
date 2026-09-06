@@ -752,6 +752,21 @@ public class HerdrLaunchShapeTests
     };
 
     [Test]
+    public async Task Null_TabLabel_never_sends_tab_list()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        await using var runtime = BuildRuntime(settings, fake);
+        var sessionId = Guid.NewGuid();
+        await StartAsync(runtime, sessionId, settings.SessionLogPath);
+        CountMethod(fake, "tab.list").ShouldBe(0);
+        await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
+    [Test]
     public async Task Resume_with_a_last_pane_must_not_call_tab_create()
     {
         await using var fake = new FakeHerdrServer();
@@ -1137,7 +1152,8 @@ public class HerdrLaunchShapeTests
         string? workspaceCwd = null,
         string? paneTitle = null,
         string? requestCwd = null,
-        Guid? reusePaneOfSessionId = null) =>
+        Guid? reusePaneOfSessionId = null,
+        string? tabLabel = null) =>
         runtime.StartAsync(
             new RunnerLaunchRequest(
                 sessionId,
@@ -1155,7 +1171,8 @@ public class HerdrLaunchShapeTests
                     PaneTitle: paneTitle ?? "card0187-launch",
                     AgentKind: agentKind,
                     AgentSlug: agentSlug,
-                    ReusePaneOfSessionId: reusePaneOfSessionId)),
+                    ReusePaneOfSessionId: reusePaneOfSessionId,
+                    TabLabel: tabLabel)),
             CancellationToken.None);
 
     private static int CountMethod(FakeHerdrServer fake, string method) =>

@@ -41,6 +41,10 @@ public sealed record HerdrPaneSidecar
     /// relaunch into the same pane can remove the ones it no longer carries. Null on pre-field files.
     /// </summary>
     public IReadOnlyList<string>? LaunchEnvNames { get; init; }
+    /// <summary>CARD-0384: placement labels at launch. Null on pre-field files.</summary>
+    public string? WorkspaceLabel { get; init; }
+    /// <summary>CARD-0384: dedicated tab pin snapshot. Null on pre-field files / unpinned launches.</summary>
+    public string? TabLabel { get; init; }
 
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
     {

@@ -36,6 +36,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     private readonly HerdrClient? _herdrClient;
     private readonly IProcessLivenessProbe _processLiveness;
     private readonly ILogger<SessionRunnerRuntime> _logger;
+    private readonly HerdrPlacementCoordinator _placement = new();
+    private readonly HerdrNamedTabResolver _namedTabs = new(HerdrNamedTabResolver.HostLabelComparer);
 
     /// <summary>
     /// CARD-0162: fired when the set of live herdr panes changes (launch / adopt / exit) so the
@@ -166,6 +168,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     _herdrClient!,
                     () => CollectLiveAntiphonPanes(request.Herdr!.WorkspaceKey),
                     () => NotifyPaneSetChanged(),
+                    _placement,
+                    LookupBinding,
                     ct);
                 NotifyPaneSetChanged();
             }
@@ -249,6 +253,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _herdrClient,
                 () => CollectLiveAntiphonPanes(request.WorkspaceKey),
                 () => NotifyPaneSetChanged(),
+                _placement,
+                LookupBinding,
                 ct);
             NotifyPaneSetChanged();
             return session.ToDto();
@@ -271,14 +277,22 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
     }
 
-    private readonly record struct BoundPane(Guid SessionId, string Origin);
+    private readonly record struct BoundPane(Guid SessionId, string Origin, bool Live);
+
+    private PaneBinding? LookupBinding(string paneId, Guid? exceptSessionId) =>
+        FindBoundPane(paneId, exceptSessionId) is { } bound
+            ? new PaneBinding(bound.SessionId, bound.Origin, bound.Live)
+            : null;
 
     /// <summary>
-    /// A live session, on-disk sidecar, or another id's last-pane pointing at <paramref name="paneId"/>.
-    /// Same-id last-pane is allowed (the operator is reclaiming their own pane).
+    /// A live session, on-disk sidecar, pending named claim, or another id's last-pane pointing at
+    /// <paramref name="paneId"/>. Same-id last-pane is allowed (the operator is reclaiming their own pane).
     /// </summary>
     private BoundPane? FindBoundPane(string paneId, Guid? exceptSessionId)
     {
+        if (_placement.FindPaneClaim(paneId, exceptSessionId) is { } claim)
+            return new BoundPane(claim.SessionId, HerdrPaneOrigins.Launched, Live: true);
+
         foreach (var (id, session) in _sessions)
         {
             if (exceptSessionId is Guid skip && id == skip)
@@ -286,11 +300,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (session.HasExited)
                 continue;
             if (string.Equals(session.HerdrPaneId, paneId, StringComparison.Ordinal))
-                return new BoundPane(id, session.HerdrOrigin ?? HerdrPaneOrigins.Launched);
+                return new BoundPane(id, session.HerdrOrigin ?? HerdrPaneOrigins.Launched, Live: true);
             if (session.PendingSidecar is { } pending
                 && string.Equals(pending.PaneId, paneId, StringComparison.Ordinal))
             {
-                return new BoundPane(id, pending.Origin ?? HerdrPaneOrigins.Launched);
+                return new BoundPane(id, pending.Origin ?? HerdrPaneOrigins.Launched, Live: true);
             }
         }
 
@@ -302,7 +316,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 continue;
             if (_sessions.TryGetValue(sidecar.SessionId, out var live) && live.HasExited)
                 continue;
-            return new BoundPane(sidecar.SessionId, sidecar.Origin ?? HerdrPaneOrigins.Launched);
+            return new BoundPane(sidecar.SessionId, sidecar.Origin ?? HerdrPaneOrigins.Launched, Live: true);
         }
 
         foreach (var last in HerdrLastPane.LoadAll(_settings.SessionLogPath))
@@ -311,7 +325,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 continue;
             if (!string.Equals(last.PaneId, paneId, StringComparison.Ordinal))
                 continue;
-            return new BoundPane(last.SessionId, last.Origin);
+            return new BoundPane(last.SessionId, last.Origin, Live: false);
         }
 
         return null;
@@ -320,6 +334,20 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     /// <summary>Live Antiphon herdr panes for the allocator (sidecar + still in this runner).</summary>
     private IReadOnlyList<HerdrPaneAllocator.LivePane> CollectLiveAntiphonPanes(string workspaceKey)
     {
+        var reservedTabs = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var sidecar in HerdrPaneSidecar.LoadAll(_settings.SessionLogPath))
+        {
+            if (!string.Equals(sidecar.WorkspaceKey, workspaceKey, StringComparison.Ordinal))
+                continue;
+            if (string.IsNullOrWhiteSpace(sidecar.TabLabel))
+                continue;
+            if (string.Equals(sidecar.Origin, HerdrPaneOrigins.Attached, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!_sessions.TryGetValue(sidecar.SessionId, out var live) || live.HasExited)
+                continue;
+            reservedTabs.Add(sidecar.TabId);
+        }
+
         var result = new List<HerdrPaneAllocator.LivePane>();
         foreach (var sidecar in HerdrPaneSidecar.LoadAll(_settings.SessionLogPath))
         {
@@ -329,6 +357,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 continue;
             if (!_sessions.TryGetValue(sidecar.SessionId, out var session) || session.HasExited)
                 continue;
+            if (reservedTabs.Contains(sidecar.TabId) || _placement.IsNamedTabReserved(sidecar.TabId))
+                continue;
             // TabNumber unknown from sidecar alone — use 0 and let allocator order by TabId as tiebreak.
             // Callers that have tab.get can refine; for gap refill within one tab, number equality is fine.
             result.Add(new HerdrPaneAllocator.LivePane(
@@ -336,6 +366,59 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// CARD-0384: read-only named-tab placement classification. Never creates furniture,
+    /// refreshes tokens, writes files, or leaves a claim.
+    /// </summary>
+    public async Task<HerdrPlacementCheckResult> CheckHerdrPlacementAsync(
+        HerdrPlacementCheckRequest request, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.Herdr);
+        EnsureHerdrClient();
+        await _herdrClient!.ConnectAndValidateAsync(ct);
+
+        var listed = await _herdrClient.WorkspaceListAsync(ct);
+        var workspaceId = HerdrPaneChild.FindExistingWorkspaceId(listed, request.Herdr);
+        if (workspaceId is null || string.IsNullOrWhiteSpace(request.Herdr.TabLabel))
+            return new HerdrPlacementCheckResult(HerdrNamedTabResolver.ActionCreate);
+
+        var tabs = await _herdrClient.TabListAsync(workspaceId, ct);
+        var matches = _namedTabs.MatchTabs(tabs, workspaceId, request.Herdr.TabLabel);
+        if (matches.Count == 0)
+            return new HerdrPlacementCheckResult(HerdrNamedTabResolver.ActionCreate, workspaceId);
+
+        var panes = await _herdrClient.PaneListAsync(workspaceId, ct);
+        var pick = _namedTabs.PickUniqueSinglePaneTab(tabs, panes, workspaceId, request.Herdr.TabLabel);
+        if (pick is null)
+            return new HerdrPlacementCheckResult(HerdrNamedTabResolver.ActionCreate, workspaceId);
+
+        var pane = await _herdrClient.PaneGetAsync(pick.Pane.PaneId, ct);
+        var proc = await _herdrClient.PaneProcessInfoAsync(pick.Pane.PaneId, ct);
+        var expectedKind = string.IsNullOrEmpty(request.Herdr.AgentKind)
+            ? HerdrAgentKinds.Claude
+            : request.Herdr.AgentKind;
+        var shellName = proc.ShellPid is int shell ? _processLiveness.TryGetProcessName(shell) : null;
+        var occupant = _namedTabs.Classify(pane, proc, expectedKind, request.SessionId, shellName);
+        if (occupant.Kind == NamedOccupantKind.Occupied
+            || FindBoundPane(pick.Pane.PaneId, request.SessionId) is { Live: true })
+        {
+            throw new HerdrLaunchException(
+                occupant.OccupiedDetail
+                ?? $"pane {pick.Pane.PaneId} is occupied; not stolen",
+                HerdrProblemTypes.PaneOccupied);
+        }
+
+        if (occupant.Kind == NamedOccupantKind.Adopt)
+        {
+            return new HerdrPlacementCheckResult(
+                HerdrNamedTabResolver.ActionAdopt, workspaceId, pick.Tab.TabId, pick.Pane.PaneId);
+        }
+
+        return new HerdrPlacementCheckResult(
+            HerdrNamedTabResolver.ActionRelaunch, workspaceId, pick.Tab.TabId, pick.Pane.PaneId);
     }
 
     internal static bool TryResolveTranscriptTailer(string format, out TranscriptTailerKind tailer)
@@ -619,7 +702,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 case HerdrBarVerdict.Adopt:
                     var session = new RunnerSession(
                         sidecar.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness);
-                    await session.AdoptHerdrAsync(sidecar, _herdrClient!, () => NotifyPaneSetChanged(), ct);
+                    await session.AdoptHerdrAsync(sidecar, _herdrClient!, () => NotifyPaneSetChanged(), _placement, LookupBinding, ct);
                     _sessions.TryAdd(sidecar.SessionId, session);
                     NotifyPaneSetChanged();
                     _logger.LogInformation(
@@ -707,7 +790,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         switch (verdict)
         {
             case HerdrBarVerdict.Adopt:
-                await session.AdoptHerdrAsync(sidecar, _herdrClient, () => NotifyPaneSetChanged(), ct);
+                await session.AdoptHerdrAsync(sidecar, _herdrClient, () => NotifyPaneSetChanged(), _placement, LookupBinding, ct);
                 NotifyPaneSetChanged();
                 _logger.LogInformation(
                     "Pending herdr session {SessionId} adopted after herdr returned (pane {PaneId})",
@@ -1120,6 +1203,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             HerdrClient herdrClient,
             Func<IReadOnlyList<HerdrPaneAllocator.LivePane>> liveAntiphonPanes,
             Action onPaneSetChanged,
+            HerdrPlacementCoordinator placement,
+            Func<string, Guid?, PaneBinding?> findBound,
             CancellationToken ct)
         {
             Directory.CreateDirectory(_settings.SessionLogPath);
@@ -1131,7 +1216,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             {
                 _backend = SessionBackends.Herdr;
                 _herdrChild = new HerdrPaneChild(
-                    herdrClient, _settings, _logger, liveAntiphonPanes, _processLiveness);
+                    herdrClient, _settings, _logger, liveAntiphonPanes, _processLiveness,
+                    placement,
+                    findBound);
                 _herdrChild.Exited += exit =>
                 {
                     lock (_gate)
@@ -1191,6 +1278,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             HerdrClient herdrClient,
             Func<IReadOnlyList<HerdrPaneAllocator.LivePane>> liveAntiphonPanes,
             Action onPaneSetChanged,
+            HerdrPlacementCoordinator placement,
+            Func<string, Guid?, PaneBinding?> findBound,
             CancellationToken ct)
         {
             Directory.CreateDirectory(_settings.SessionLogPath);
@@ -1204,7 +1293,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _backend = SessionBackends.Herdr;
                 _herdrOrigin = HerdrPaneOrigins.Attached;
                 _herdrChild = new HerdrPaneChild(
-                    herdrClient, _settings, _logger, liveAntiphonPanes, _processLiveness);
+                    herdrClient, _settings, _logger, liveAntiphonPanes, _processLiveness,
+                    placement,
+                    findBound);
                 _herdrChild.Exited += exit =>
                 {
                     lock (_gate)
@@ -1847,6 +1938,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             HerdrPaneSidecar sidecar,
             HerdrClient client,
             Action onPaneSetChanged,
+            HerdrPlacementCoordinator placement,
+            Func<string, Guid?, PaneBinding?> findBound,
             CancellationToken ct)
         {
             _adopted = true;
@@ -1862,7 +1955,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _settings,
                 _logger,
                 liveAntiphonPanes: () => Array.Empty<HerdrPaneAllocator.LivePane>(),
-                _processLiveness);
+                _processLiveness,
+                placement,
+                findBound);
             // Re-bind the existing pane without re-launching: reconstruct the child's identity fields.
             await ((HerdrPaneChild)_herdrChild).AttachExistingAsync(sidecar, ct);
             _herdrChild.Exited += exit =>

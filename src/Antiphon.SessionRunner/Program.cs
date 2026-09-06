@@ -157,7 +157,7 @@ app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings) =>
         ? [SessionBackends.PtyHost, SessionBackends.Herdr]
         : [SessionBackends.PtyHost];
     IReadOnlyList<string>? features = herdrSettings.Value.Enabled
-        ? [RunnerCapabilityFeatures.HerdrAttach]
+        ? [RunnerCapabilityFeatures.HerdrAttach, RunnerCapabilityFeatures.HerdrNamedTabPlacement]
         : null;
     return Results.Ok(new RunnerCapabilitiesDto(
         decision.Backend.ToString(), decision.Requested, decision.Reason, decision.FellBack,
@@ -188,6 +188,25 @@ app.MapPost("/sessions", async (
     catch (HerdrLaunchException ex)
     {
         return HerdrProblemMapper.MapLaunch(ex);
+    }
+});
+
+app.MapPost("/herdr/placement/check", async (
+    HerdrPlacementCheckRequest request,
+    SessionRunnerRuntime runtime,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        return Results.Ok(await runtime.CheckHerdrPlacementAsync(request, cancellationToken));
+    }
+    catch (HerdrLaunchException ex)
+    {
+        return HerdrProblemMapper.MapLaunch(ex);
+    }
+    catch (HerdrBackendUnavailableException ex)
+    {
+        return HerdrProblemMapper.MapUnavailable(ex);
     }
 });
 
