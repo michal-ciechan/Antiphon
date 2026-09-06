@@ -82,10 +82,10 @@ public sealed class GatewayMonitorValidationTests
         builder.Services.AddAntiphonGateway(o => { o.BootstrapServers = "127.0.0.1:1"; o.InboundUnconsumedMonitorEnabled = enabled; });
         using var host = builder.Build();
         await host.StartAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        reader.Calls.ShouldBeEmpty();
         var snapshot = host.Services.GetRequiredService<IInboundUnconsumedMonitorStatus>().GetSnapshot();
         snapshot.State.ShouldBe(MonitorState.Disabled); snapshot.HttpStatusCode.ShouldBe(200);
         if (enabled) snapshot.ReasonCode.ShouldBe("no_inbox_store");
-        reader.Calls.ShouldBeEmpty();
         await host.StopAsync().WaitAsync(TimeSpan.FromSeconds(5));
     }
 

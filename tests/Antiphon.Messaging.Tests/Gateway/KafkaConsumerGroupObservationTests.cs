@@ -20,6 +20,10 @@ public sealed class KafkaConsumerGroupObservationTests
         if (Environment.GetEnvironmentVariable("ANTIPHON_BROKER_TESTS") != "1") return;
         _broker = new RedpandaBuilder("docker.redpanda.com/redpandadata/redpanda:v25.3.4").WithCommand("--set", "redpanda.auto_create_topics_enabled=false").Build();
         await _broker.StartAsync();
+        // The module's generated startup script does not apply this cluster property from
+        // WithCommand on v25.3.4. Set it explicitly on the disposable container before tests.
+        var configured = await _broker.ExecAsync(["rpk", "cluster", "config", "set", "auto_create_topics_enabled", "false"]);
+        configured.ExitCode.ShouldBe(0);
     }
 
     [After(Class)]
@@ -57,7 +61,7 @@ public sealed class KafkaConsumerGroupObservationTests
         using var producer = new ProducerBuilder<string, string>(new ProducerConfig { BootstrapServers = bootstrap }).Build();
         for (var p = 0; p < partitions; p++)
             for (var i = 0; i < 3; i++) await producer.ProduceAsync(new TopicPartition(name, p), new() { Key = "test", Value = "test" });
-        return (bootstrap, name + "-group", name);
+        return (bootstrap, $"c0410-group-{Guid.NewGuid():N}", name);
     }
 
     private IConsumer<string, string> Consumer(string bootstrap, string group) =>
@@ -89,6 +93,13 @@ public sealed class KafkaConsumerGroupObservationTests
         var o = await ObserveAsync(c); o.GroupStatus.ShouldBe(ConsumerGroupStatus.Absent); o.ReasonCode.ShouldBe("group_absent");
         var settled = await admin.DescribeConsumerGroupsAsync([c.Group], new DescribeConsumerGroupsOptions { RequestTimeout = TimeSpan.FromSeconds(5) });
         foreach (var g in settled.ConsumerGroupDescriptions) Console.WriteLine($"V-35a settled State={g.State} Error={g.Error.Code}");
+        var probe = await _broker!.ExecAsync(["rpk", "cluster", "info", "--format", "json"]);
+        probe.ExitCode.ShouldBe(0);
+        using var metadataJson = System.Text.Json.JsonDocument.Parse(probe.Stdout);
+        metadataJson.RootElement.GetProperty("cluster_name").GetString().ShouldNotBeNullOrWhiteSpace();
+        var autoCreate = await _broker.ExecAsync(["rpk", "cluster", "config", "get", "auto_create_topics_enabled"]);
+        autoCreate.ExitCode.ShouldBe(0);
+        autoCreate.Stdout.Trim().ShouldBe("false");
     }
 
     [Test]
