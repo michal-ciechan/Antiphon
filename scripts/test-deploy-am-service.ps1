@@ -16,7 +16,7 @@ function Assert-True { param([bool]$Condition, [string]$Name, [string]$Detail = 
 function Assert-Throws { param([scriptblock]$Action, [string]$Name) try { & $Action; Fail $Name 'did not throw' } catch { Pass $Name } }
 
 function Reset-MonitorFake {
-    $script:monitorCase = ''; $script:identityReads = 0; $script:persisted = $false
+    $script:monitorCase = ''; $script:identityReads = 0; $script:persisted = $false; $script:brokerReads = 0
 }
 Reset-MonitorFake
 $http = {
@@ -40,8 +40,17 @@ function Add-MonitorFake {
             $watched = if ($script:persisted) { $group } else { 'antiphon-consumer' }
             return [pscustomobject]@{ExitCode=0;Output=(@{AntiphonConsumerGroup=$watched;ExpectedAntiphonConsumerGroup=$expected;InboundTopic='channels.inbound';ConsumerGroup='antiphon-messaging-service';BootstrapServers='am-redpanda:9092';secret='never-log-this'} | ConvertTo-Json -Compress)}
         }
-        if ($command -match 'C0410_OVERRIDE') { $script:commands.Add($command); return [pscustomobject]@{ExitCode=0;Output=(@{name='docker-compose.override.yml';exists=($script:monitorCase -in @('unmarked','marked'));managed=($script:monitorCase -ne 'unmarked')} | ConvertTo-Json -Compress)} }
-        if ($command -match 'rpk cluster info') { $script:commands.Add($command); return [pscustomobject]@{ExitCode=0;Output='{"cluster_name":"c0410-cluster"}'} }
+        if ($command -match 'C0410_OVERRIDE') {
+            $script:commands.Add($command)
+            if ($script:monitorCase -eq 'ambiguous-compose') { return [pscustomobject]@{ExitCode=43;Output='never-log-this'} }
+            $name = if ($script:monitorCase -eq 'compose-yaml') { 'compose.override.yaml' } else { 'docker-compose.override.yml' }
+            return [pscustomobject]@{ExitCode=0;Output=(@{name=$name;exists=($script:monitorCase -in @('unmarked','marked'));managed=($script:monitorCase -ne 'unmarked')} | ConvertTo-Json -Compress)}
+        }
+        if ($command -match 'rpk cluster info') {
+            $script:commands.Add($command); $script:brokerReads++
+            $cluster = if ($script:monitorCase -eq 'broker-mismatch' -and $script:brokerReads -eq 2) { 'different-cluster' } else { 'c0410-cluster' }
+            return [pscustomobject]@{ExitCode=0;Output=(@{cluster_name=$cluster} | ConvertTo-Json -Compress)}
+        }
         if ($command -match 'C0410_MANAGED') { $script:commands.Add($command); $script:persisted = $true; return [pscustomobject]@{ExitCode=0;Output=@()} }
         if ($command -match '/health/inbound-unconsumed') {
             $script:commands.Add($command)
@@ -52,8 +61,17 @@ function Add-MonitorFake {
             return [pscustomobject]@{ExitCode=0;Output=@((@{state='Ready';watchedGroup=$group;expectedGroup='antiphon-server-bridge';topic='channels.inbound';ageSeconds=$age;partitions=@(@{partition=0;status=$offsetStatus;committedNextOffset=12});secret='never-log-this'} | ConvertTo-Json -Depth 5 -Compress),$status)}
         }
         if ($command -match 'rpk group describe') { $script:commands.Add($command); return [pscustomobject]@{ExitCode=0;Output=$(if ($script:monitorCase -eq 'no-numeric') { 'channels.inbound 0 - - -' } else { 'channels.inbound 0 12 0 12 0' })} }
-        if ($command -match '^docker inspect' -and $command -notmatch '&&') { $script:commands.Add($command); return [pscustomobject]@{ExitCode=0;Output='new-container new-image running'} }
+        if ($command -match '^docker inspect' -and $command -notmatch '&&') { $script:commands.Add($command); return [pscustomobject]@{ExitCode=0;Output='bbbbbbbbbbbb sha256:bbbbbbbbbbbb running'} }
         & $script:originalRunner $command
+    }
+}
+
+function Invoke-ExpectedDeployment {
+    param([string]$Root, [scriptblock]$Ssh, [scriptblock]$Scp, [scriptblock]$Http)
+    try { Invoke-AmServiceDeployment $Root $true $true 10 $Ssh $Scp $Http }
+    catch {
+        Fail 'deploy writes the managed override and verifies the merge before recreate' $_.Exception.Message
+        return [pscustomobject]@{ AdapterNames=@(); OverridePath=''; OverrideBackupPath='' }
     }
 }
 
@@ -61,7 +79,7 @@ $root = Split-Path -Parent $PSScriptRoot; $context = Join-Path $root 'src'; $doc
 try {
     $serverProfile = Get-Content -Raw (Join-Path $root 'server/appsettings.json') | ConvertFrom-Json
     $serviceProfile = Get-Content -Raw (Join-Path $context 'Antiphon.Messaging.Service/appsettings.json') | ConvertFrom-Json
-    Assert-True ($serverProfile.AntiphonMessaging.ConsumerGroup -eq 'antiphon-server-bridge' -and $serviceProfile.Kafka.AntiphonConsumerGroup -ceq $serverProfile.AntiphonMessaging.ConsumerGroup -and $serviceProfile.Kafka.ExpectedAntiphonConsumerGroup -ceq $serverProfile.AntiphonMessaging.ConsumerGroup -and $serviceProfile.Kafka.ConsumerGroup -cne $serverProfile.AntiphonMessaging.ConsumerGroup) 'repository profiles agree on the server inbound group'
+    Assert-True ($serverProfile.AntiphonMessaging.ConsumerGroup -ceq 'antiphon-server-bridge' -and $serviceProfile.Kafka.AntiphonConsumerGroup -ceq $serverProfile.AntiphonMessaging.ConsumerGroup -and $serviceProfile.Kafka.ExpectedAntiphonConsumerGroup -ceq $serverProfile.AntiphonMessaging.ConsumerGroup -and $serviceProfile.Kafka.ConsumerGroup -cne $serverProfile.AntiphonMessaging.ConsumerGroup) 'repository profiles agree on the server inbound group'
     New-Item -ItemType Directory -Force $fixture | Out-Null
     foreach ($dir in @('one', 'two', 'three')) { New-Item -ItemType Directory -Force (Join-Path $fixture $dir) | Out-Null; [IO.File]::WriteAllText((Join-Path $fixture "$dir\file.txt"), $dir) }
     $fixtureDockerfile = Join-Path $fixture 'Dockerfile'
@@ -86,7 +104,7 @@ try {
     } finally { Remove-Item -LiteralPath $archive.Path -Force -ErrorAction SilentlyContinue }
 
     $script:commands = New-Object 'System.Collections.Generic.List[string]'; $script:scpCalls = New-Object 'System.Collections.Generic.List[string]'
-    $ssh = { param($command) $script:commands.Add($command); if ($command -match 'docker compose config') { return [pscustomobject]@{ExitCode=0;Output='{"context":"/home/mc/antiphon-messaging/build/src","dockerfile":"Antiphon.Messaging.Service/Dockerfile","secret":"never-log-this"}'.Replace('\','')} }; if ($command -match 'docker inspect') { return [pscustomobject]@{ExitCode=0;Output=@('old-container old-image running','{"secret":"never-log-this"}'.Replace('\',''))} }; return [pscustomobject]@{ExitCode=0;Output=@()} }
+    $ssh = { param($command) $script:commands.Add($command); if ($command -match 'docker compose config') { return [pscustomobject]@{ExitCode=0;Output='{"context":"/home/mc/antiphon-messaging/build/src","dockerfile":"Antiphon.Messaging.Service/Dockerfile","secret":"never-log-this"}'.Replace('\','')} }; if ($command -match 'docker inspect') { return [pscustomobject]@{ExitCode=0;Output=@('aaaaaaaaaaaa sha256:aaaaaaaaaaaa running','{"secret":"never-log-this"}'.Replace('\',''))} }; return [pscustomobject]@{ExitCode=0;Output=@()} }
     $scp = { param($source,$destination) $script:scpCalls.Add("$source -> $destination"); return [pscustomobject]@{ExitCode=0;Output=@()} }
     $ssh = Add-MonitorFake $ssh
     $preflightLog = @(Invoke-AmServiceDeployment $root $false $false 10 $ssh $scp $http 6>&1 | ForEach-Object { $_.ToString() }) -join "`n"
@@ -95,7 +113,7 @@ try {
     Assert-True (-not $preflightLog.Contains('never-log-this')) 'remote seam narrows Compose output before logging' $preflightLog
 
     $script:commands.Clear(); $script:scpCalls.Clear()
-    $failingSsh = { param($command) $script:commands.Add($command); if ($command -match 'docker compose config') { return [pscustomobject]@{ExitCode=0;Output='{"context":"/home/mc/antiphon-messaging/build/src","dockerfile":"Antiphon.Messaging.Service/Dockerfile"}'.Replace('\','')} }; if ($command -match 'docker inspect') { return [pscustomobject]@{ExitCode=0;Output=@('old-container old-image running','{}')} }; if ($command -match 'docker compose build') { return [pscustomobject]@{ExitCode=9;Output='secret=never-log-this'} }; return [pscustomobject]@{ExitCode=0;Output=@()} }
+    $failingSsh = { param($command) $script:commands.Add($command); if ($command -match 'docker compose config') { return [pscustomobject]@{ExitCode=0;Output='{"context":"/home/mc/antiphon-messaging/build/src","dockerfile":"Antiphon.Messaging.Service/Dockerfile"}'.Replace('\','')} }; if ($command -match 'docker inspect') { return [pscustomobject]@{ExitCode=0;Output=@('aaaaaaaaaaaa sha256:aaaaaaaaaaaa running','{}')} }; if ($command -match 'docker compose build') { return [pscustomobject]@{ExitCode=9;Output='secret=never-log-this'} }; return [pscustomobject]@{ExitCode=0;Output=@()} }
     $failingSsh = Add-MonitorFake $failingSsh
     Reset-MonitorFake
     $failureText = ''
@@ -105,14 +123,16 @@ try {
     Assert-True (-not $failureText.Contains('never-log-this')) 'remote seam failure diagnostics do not leak remote output' $failureText
 
     $script:commands.Clear(); $script:scpCalls.Clear(); $migrationOutput = @(Get-AmServiceMigrationIds (Join-Path $context 'Antiphon.Messaging.Service\Migrations'))
-    $successSsh = { param($command) $script:commands.Add($command); if ($command -match 'docker compose config') { return [pscustomobject]@{ExitCode=0;Output='{"context":"/home/mc/antiphon-messaging/build/src","dockerfile":"Antiphon.Messaging.Service/Dockerfile"}'.Replace('\','')} }; if ($command -match 'curl -fsS') { return [pscustomobject]@{ExitCode=0;Output=(@('[{"channel":"telegram"},{"channel":"slack"}]'.Replace('\','')) + $migrationOutput)} }; if ($command -match 'docker inspect') { return [pscustomobject]@{ExitCode=0;Output=@('old-container old-image running','{"State":"running"}'.Replace('\',''))} }; return [pscustomobject]@{ExitCode=0;Output=@()} }
+    $successSsh = { param($command) $script:commands.Add($command); if ($command -match 'docker compose config') { return [pscustomobject]@{ExitCode=0;Output='{"context":"/home/mc/antiphon-messaging/build/src","dockerfile":"Antiphon.Messaging.Service/Dockerfile"}'.Replace('\','')} }; if ($command -match 'curl -fsS') { return [pscustomobject]@{ExitCode=0;Output=(@('[{"channel":"telegram"},{"channel":"slack"}]'.Replace('\','')) + $migrationOutput)} }; if ($command -match 'docker inspect') { return [pscustomobject]@{ExitCode=0;Output=@('aaaaaaaaaaaa sha256:aaaaaaaaaaaa running','{"State":"running"}'.Replace('\',''))} }; return [pscustomobject]@{ExitCode=0;Output=@()} }
     $successSsh = Add-MonitorFake $successSsh
     Reset-MonitorFake
-    $success = Invoke-AmServiceDeployment $root $true $true 10 $successSsh $scp $http
+    $success = Invoke-ExpectedDeployment $root $successSsh $scp $http
     Assert-True (($success.AdapterNames -join ',') -eq 'telegram,slack') 'remote seam parses endpoint adapters after recreate' ($success.AdapterNames -join ',')
     Assert-True (((($script:commands -join "`n") -match 'docker compose build messaging-service') -and (($script:commands -join "`n") -match 'docker compose up -d --no-deps messaging-service'))) 'remote seam issues fixed-target build and recreate sequence' ($script:commands -join ' | ')
     $cleanupWasRequested = (($script:commands -join "`n") -match "rm -f -- '/tmp/am-service-src-")
     Assert-True $cleanupWasRequested 'remote seam removes transient upload after handled deployment' ($script:commands -join ' | ')
+    $verificationCommand = @($script:commands | Where-Object { $_ -match 'curl -fsS' }) -join "`n"
+    Assert-True ($verificationCommand.Contains("cd '/home/mc/antiphon-messaging'")) 'technical verification uses the deployment Compose directory'
 
     Reset-MonitorFake; $script:commands.Clear(); $script:scpCalls.Clear()
     $log = @(Invoke-AmServiceDeployment $root $false $false 10 $successSsh $scp $http 6>&1 | ForEach-Object { $_.ToString() }) -join "`n"
@@ -129,15 +149,15 @@ try {
     Assert-True ($log.Contains('server override (differs from repository default antiphon-server-bridge)') -and $log.Contains('proposed: Kafka__AntiphonConsumerGroup=family-bridge-custom')) 'server override is shown and used'
 
     Reset-MonitorFake; $script:commands.Clear()
-    $success = Invoke-AmServiceDeployment $root $true $true 10 $successSsh $scp $http
+    $success = Invoke-ExpectedDeployment $root $successSsh $scp $http
     $all = $script:commands -join "`n"
-    $writeIndex = $all.IndexOf('cat >'); $mergeIndex = $all.IndexOf('"merged" == "effective"'); $upIndex = $all.IndexOf('docker compose up -d --no-deps messaging-service')
+    $writeIndex = $all.IndexOf('cat >'); $mergeIndex = $all.IndexOf('merged="merged"'); $upIndex = $all.IndexOf('docker compose up -d --no-deps messaging-service')
     $written = @($script:commands | Where-Object { $_ -match 'C0410_MANAGED' })
     Assert-True ($written.Count -eq 1 -and $writeIndex -ge 0 -and $mergeIndex -gt $writeIndex -and $upIndex -gt $mergeIndex -and $all -notmatch 'docker compose -f' -and $success.OverridePath -eq '/home/mc/antiphon-messaging/docker-compose.override.yml') 'deploy writes the managed override and verifies the merge before recreate' 'expected persistent override write, then merged config, then ordinary compose up'
     Assert-True ($written.Count -eq 1 -and ([regex]::Matches($written[0], 'Kafka__').Count -eq 2) -and $written[0].Contains('# managed-by: scripts/deploy-am-service.ps1 CARD-0410 - do not hand-edit')) 'managed override has exactly the two environment keys and marker'
 
     Reset-MonitorFake; $script:monitorCase='marked'; $script:commands.Clear()
-    $success = Invoke-AmServiceDeployment $root $true $true 10 $successSsh $scp $http
+    $success = Invoke-ExpectedDeployment $root $successSsh $scp $http
     $all = $script:commands -join "`n"
     Assert-True ($success.OverrideBackupPath -match 'docker-compose.override.yml.bak-' -and $all.IndexOf('cp --') -lt $all.IndexOf('cat >')) 'marked existing override is backed up and reported'
     foreach ($case in @('degraded','wrong-group','stale','no-commit','readiness-404','missing-merged','no-numeric')) {
@@ -149,6 +169,15 @@ try {
     $log = @(Invoke-AmServiceDeployment $root $true $true 10 $successSsh $scp $http 6>&1 | ForEach-Object { $_.ToString() }) -join "`n"
     $written = @($script:commands | Where-Object { $_ -match 'C0410_MANAGED' }) -join "`n"
     Assert-True (-not $log.Contains('never-log-this') -and -not $written.Contains('never-log-this')) 'identity, compose, and container output never leak'
+    foreach ($case in @('ambiguous-compose','broker-mismatch')) {
+        Reset-MonitorFake; $script:monitorCase=$case; $script:commands.Clear(); $script:scpCalls.Clear()
+        $failureLog = ''
+        try { $failureLog = @(Invoke-AmServiceDeployment $root $true $true 10 $successSsh $scp $http 6>&1 | ForEach-Object { $_.ToString() }) -join "`n"; Fail "$case refuses" 'did not throw' } catch { Pass "$case refuses" }
+        Assert-True ($script:scpCalls.Count -eq 0 -and ($script:commands -join "`n") -notmatch 'cat >|tar xzf|docker compose up') "$case refuses without writes"
+    }
+    Reset-MonitorFake; $script:monitorCase='compose-yaml'
+    $preview = Invoke-AmServiceDeployment $root $false $false 10 $successSsh $scp $http
+    Assert-True ($preview.OverridePath -eq '/home/mc/antiphon-messaging/compose.override.yaml') 'compose.yaml uses its ordinary compose.override.yaml filename'
 } catch { Fail 'test setup or execution' $_.Exception.Message } finally { if (Test-Path -LiteralPath $fixture) { Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue } }
 Write-Host ''; Write-Host ('CARD-0270 deploy-am-service: {0} passed, {1} failed' -f $script:passed, $script:failed)
 if ($script:failed) { foreach ($item in $script:failures) { Write-Host ('  ' + $item) }; Write-Host 'DEPLOY-AM-SERVICE TESTS EXIT CODE: 1  (FAIL - do not report this run as green)'; exit 1 }

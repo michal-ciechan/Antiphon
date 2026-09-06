@@ -161,11 +161,10 @@ function Get-AmServiceGatewaySettings {
 import json,subprocess
 d=json.loads(subprocess.check_output(["docker","compose","config","--format","json"]))
 env=d["services"]["messaging-service"].get("environment",{})
-profile={}
-if "MODE" == "effective":
-    profile=json.loads(subprocess.check_output(["docker","exec","am-service","cat","/app/appsettings.json"])).get("Kafka",{})
+profile=json.loads(subprocess.check_output(["docker","exec","am-service","cat","/app/appsettings.json"])).get("Kafka",{})
 keys=["AntiphonConsumerGroup","ExpectedAntiphonConsumerGroup","InboundTopic","ConsumerGroup","BootstrapServers"]
-print(json.dumps({k:env.get("Kafka__"+k,profile.get(k)) for k in keys}))
+merged="MODE" == "merged"
+print(json.dumps({k:env.get("Kafka__"+k,None if merged and k in keys[:2] else profile.get(k)) for k in keys}))
 '@
     $code = $code.Replace('MODE', $mode)
     $command = "cd /home/mc/antiphon-messaging && python3 - <<'C0410_GATEWAY_SETTINGS'`n$code`nC0410_GATEWAY_SETTINGS"
@@ -236,7 +235,29 @@ function Assert-AmServiceMonitor {
     Write-Host "Monitor build marker verified: readiness route Ready; sampled offsets numeric; ageSeconds=$($body.ageSeconds)."
 }
 
+function ConvertTo-AmServiceContainerFact {
+    param([string]$Text)
+    if ($Text -cnotmatch '^[0-9a-f]{12,64} sha256:[0-9a-f]{12,64} (created|running|paused|restarting|removing|exited|dead)$') { throw 'Invalid container/image/status projection.' }
+    return $Text
+}
+
 function Invoke-AmServiceDeployment {
+    param(
+        [Parameter(Mandatory)][string]$RepositoryRoot, [Parameter(Mandatory)][bool]$PerformDeploy,
+        [Parameter(Mandatory)][bool]$SkipTrafficCheck, [Parameter(Mandatory)][int]$PollTimeoutSec,
+        [scriptblock]$SshRunner, [scriptblock]$ScpRunner, [scriptblock]$HttpRunner
+    )
+    try {
+        $result = Invoke-AmServiceDeploymentCore @PSBoundParameters
+        Write-Host 'REMOTE DEPLOY VERDICT: ok'
+        return $result
+    } catch {
+        Write-Host "REMOTE DEPLOY VERDICT: failed $($_.Exception.Message)"
+        throw
+    }
+}
+
+function Invoke-AmServiceDeploymentCore {
     param(
         [Parameter(Mandatory)][string]$RepositoryRoot, [Parameter(Mandatory)][bool]$PerformDeploy,
         [Parameter(Mandatory)][bool]$SkipTrafficCheck, [Parameter(Mandatory)][int]$PollTimeoutSec,
@@ -273,13 +294,12 @@ function Invoke-AmServiceDeployment {
     if ($projection.context -ne $remoteContext -or $projection.dockerfile -ne $dockerfileRelative) { throw 'Remote Compose build contract changed.' }
     Write-Host "Remote Compose build projection: context=$($projection.context); dockerfile=$($projection.dockerfile)"
     $facts = Invoke-AmServiceRunner $SshRunner @("docker inspect --format '{{.Id}} {{.Image}} {{.State.Status}}' am-service && cd $remoteRoot && docker compose ps --format json messaging-service") 'remote safe container facts'
-    $previous = if ($facts.Count) { $facts[0].Trim() } else { 'unavailable' }
+    $previous = if ($facts.Count) { ConvertTo-AmServiceContainerFact $facts[0].Trim() } else { throw 'Container identity unavailable.' }
     $composeStatus = 'unavailable'
     if ($facts.Count -gt 1) {
         try {
             $compose = $facts[1] | ConvertFrom-Json -ErrorAction Stop
-            if ($null -ne $compose.State) { $composeStatus = $compose.State.ToString() }
-            elseif ($null -ne $compose.Status) { $composeStatus = $compose.Status.ToString() }
+            if ($compose.State -match '^(created|running|paused|restarting|removing|exited|dead)$') { $composeStatus = $compose.State.ToString() }
         } catch { $composeStatus = 'unparseable' }
     }
     Write-Host "Previous am-service container/image/status: $previous"
@@ -310,7 +330,7 @@ function Invoke-AmServiceDeployment {
         $replace = "set -eu`narchive='$upload'`nstaging='$stage'`ncurrent='$remoteContext'`nbackup='$backup'`ncleanup() { rm -f -- `"`$archive`"; }`ntrap cleanup EXIT HUP INT TERM`nrm -rf -- `"`$staging`"`nmkdir -p `"`$staging`"`ntar xzf `"`$archive`" -C `"`$staging`"`n$checks`nactual_hash=`$(sha256sum `"`$staging/$dockerfileRelative`" | awk '{print `$1}')`ntest `"`$actual_hash`" = '$hash'`ntest -d `"`$current`"`nmv `"`$current`" `"`$backup`"`nmv `"`$staging`" `"`$current`"`ncd '$remoteRoot'`ndocker compose build messaging-service`ndocker compose up -d --no-deps messaging-service"
         try { Invoke-AmServiceRunner $SshRunner @($replace) 'remote archive replacement/build/recreate' | Out-Null } catch { throw "Remote replacement/build/recreate failed; retained source backup: $backup; staging path: $stage. $($_.Exception.Message)" }
         Write-Host "Retained source backup: $backup"
-        $verify = "set -eu`ndeadline=`$((`$(date +%s) + $PollTimeoutSec))`nwhile [ `"`$(docker inspect --format '{{.State.Running}}' am-service 2>/dev/null || true)`" != true ]; do [ `"`$(date +%s)`" -lt `"`$deadline`" ] || exit 41; sleep 2; done`nchannels=`$(curl -fsS http://localhost:18090/api/channels)`nprintf '%s\n' `"`$channels`"`ndocker compose exec -T am-postgres sh -c 'psql -X -At -v ON_ERROR_STOP=1 -U `"`$POSTGRES_USER`" -d `"`$POSTGRES_DB`" -c '\''SELECT `"MigrationId`" FROM `"__EFMigrationsHistory`" ORDER BY `"MigrationId`";'\'''`nif docker logs --since 5m --tail 100 am-service 2>&1 | grep -Eiq 'Unhandled exception|fail:|crit:'; then exit 42; fi"
+        $verify = "set -eu`ncd '$remoteRoot'`ndeadline=`$((`$(date +%s) + $PollTimeoutSec))`nwhile [ `"`$(docker inspect --format '{{.State.Running}}' am-service 2>/dev/null || true)`" != true ]; do [ `"`$(date +%s)`" -lt `"`$deadline`" ] || exit 41; sleep 2; done`nchannels=`$(curl -fsS http://localhost:18090/api/channels)`nprintf '%s\n' `"`$channels`"`ndocker compose exec -T am-postgres sh -c 'psql -X -At -v ON_ERROR_STOP=1 -U `"`$POSTGRES_USER`" -d `"`$POSTGRES_DB`" -c '\''SELECT `"MigrationId`" FROM `"__EFMigrationsHistory`" ORDER BY `"MigrationId`";'\'''`nif docker logs --since 5m --tail 100 am-service 2>&1 | grep -Eiq 'Unhandled exception|fail:|crit:'; then exit 42; fi"
         $remoteVerify = Invoke-AmServiceRunner $SshRunner @($verify) 'remote technical verification'
         if ($remoteVerify.Count -lt 1) { throw 'Remote technical verification returned no channel JSON.' }
         try { $channels = @($remoteVerify[0] | ConvertFrom-Json -ErrorAction Stop) } catch { throw 'The am-service /api/channels response was not parseable channel JSON.' }
@@ -320,6 +340,7 @@ function Invoke-AmServiceDeployment {
         $result.MigrationCount = $remoteMigrations.Count; $result.AdapterNames = $names
         Assert-AmServiceMonitor $SshRunner $identity
         $running = @(Invoke-AmServiceRunner $SshRunner @("docker inspect --format '{{.Id}} {{.Image}} {{.State.Status}}' am-service") 'running image identity')
+        if ($running.Count) { $running[0] = ConvertTo-AmServiceContainerFact $running[0].Trim() }
         if (-not $running.Count -or ($running[0] -split ' ')[1] -eq ($previous -split ' ')[1]) { throw 'Running image ID did not change from PreviousContainer.' }
         $result.RunningContainer = $running[0]
         Write-Host "Running am-service container/image/status: $($running[0])"
