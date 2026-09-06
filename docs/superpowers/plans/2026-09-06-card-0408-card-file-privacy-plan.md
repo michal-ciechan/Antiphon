@@ -619,3 +619,413 @@ choice and the inherited-public meaning of board opt-in are deliberate defaults,
 not work deferred to Code. Future live visibility detection, tracker-wide privacy,
 credential storage, history erasure and arbitrary third-party writer races are
 outside this mechanism's guarantee.
+
+## Verification design
+
+Date: 2026-09-06. Stage: TestDesign. Task: `8c839a5e`. Inspected code and plan:
+`bf5a4219a9450597506de7cf9938e6346731f89e`. This is a verification specification,
+not implemented tests or a claim that the mechanism already passes. The original
+plan above is unchanged. Names below are the required new test names; parameter
+rows count as distinct cases. V items are acceptance evidence, R items explain
+the regressions they catch, and PC items are deliberately broken production guards.
+
+**Stage verdict: return to Plan for A-1 through A-7 before Code.** The safety
+oracles are concrete, but those gaps prevent exact API/CLI tests from being
+implemented without choosing a contract. Each gap includes a proposed resolution;
+these proposals are not silently substituted for the plan. No live-data review or
+new product preference is needed to complete this TestDesign deliverable.
+
+### Proves it works now
+
+#### Grounding and existing tests to adapt
+
+Paths in this subsection are repository-relative. Test classes are under
+`tests/Antiphon.Tests/Application/` unless another directory is named.
+
+| Code inspected | Current behavior the tests must distinguish from the new contract |
+|---|---|
+| `server/Application/Services/CardTaskFileService.cs`: `SyncBoardAsync` | Loads board and all cards before `TryEnterAsync`; early returns for archive/no cards; constructs filenames and both render calls from whole `Card` entities. A successful policy mock alone cannot establish privacy. |
+| Same file: `SyncAllAsync`, `UniqueBoardSlugAsync` | Sweep excludes archived board/project rows; exceptions are logged but produce no result; slug is recalculated from names. Test actual cleanup candidates, failure visibility and persisted ownership. |
+| Same file: `CommitAsync`, `RunGitAsync` | Both add and `commit --only` receive the board directory, and raw stderr becomes Error. Existing `Unrelated_staged_file_stays_staged_and_is_absent_from_the_sync_commit` only covers a source file outside that directory. It does not catch the flagged commit-path guard issue. |
+| `server/Application/Services/CardTaskFileRenderer.cs`: `RenderCard`, `RenderIndex` | Both accept entity data. Description, outcome, archive actor/reason and tracker metadata are public output. INDEX computes its counts from its input collection. Tests must check projection, names and counts as well as body bytes. |
+| `server/Application/Settings/CardFileSyncSettings.cs` | Enabled=true, AutoCommit=false, IntervalSeconds=60; IntervalSeconds=0 means manual only. False AutoCommit currently still writes. Keep these feature defaults separate from board opt-in=false. |
+| `server/Infrastructure/Orchestration/CardTaskFileSyncHostedService.cs` | Uses real `PeriodicTimer`, floor five seconds, fresh scope and `SyncAllAsync`; disabled/manual-only exits. No save-triggered sync. Exercise this driver as well as the service. |
+| `server/Api/Endpoints/CardFileSyncEndpoints.cs` | One POST route; checks Enabled before board lookup, then returns 200 with the service result. Disabled unknown-board request is already pinned as 409. Status/settings are new routes, not an existing board PATCH. |
+| `CardTaskFileSyncGate.cs` | Case-insensitive normalized local-path lock, zero-wait acquisition, repo-only warning cache. It does not yet canonicalize two project subdirectories to one Git index. |
+| `CardService.cs`, `CardRevisionLog.cs`, `BoardDtos.cs`, `CardEndpoints.cs` | Content PATCH validates, loads, checks token, snapshots OLD values, trims public Description, saves and emits IDs. New notes must preserve whitespace and join that atomic write without entering ordinary DTOs. Identifier reads use the existing resolver. |
+| `ProjectService.cs`, `ProjectSetupService.cs`, `ProjectSetupDtos.cs` | Setup delegates creation to ProjectService/BoardService; readiness uses typed checks; setup has `notes`, plain ProjectDto has no warning collection. Neither path currently installs this ignore block. |
+| `scripts/card.ps1`, `Scripts/CardDiagnoseScriptTests.cs` | Script has a UTF-8 JSON byte path, file text reader, fresh-token lookup and a real-process/loopback-stub test pattern. `new`/`edit` currently lack their own JSON-only response branch. |
+| `client/src/api/{boards,projects}.ts`, board/settings components, `hooks/useSignalRInvalidation.ts` | Separate public description/edit/history surfaces already exist. BoardChanged does not currently invalidate project/status queries; CardChanged does not explicitly invalidate a notes query. |
+
+Retain the renderer's escaping, LF, author/review, archive and ordering tests.
+Change their input fixtures to the public projection; do not reintroduce a Card
+renderer overload for test convenience. In particular,
+`Index_orders_a_later_placed_card_ahead_of_an_older_same_rank_card` must remain green.
+The S3 replacement for `Archived_board_and_archived_project_skip_without_touching_disk`
+must seed old exports and expect removal. Replace the archived exclusion in
+`SyncAllAsync_syncs_the_pathed_project_reports_pathless_and_skips_archived` with
+cleanup assertions. Existing publication tests must explicitly opt in, configure
+visibility and use an allowed ignore policy; do not make safe defaults permissive
+in a shared fixture merely to rescue old tests.
+
+#### Contract gaps for Plan, with proposed resolutions
+
+| ID | Exact ambiguity / conflict | Proposed resolution for Plan to adopt or replace; affected evidence |
+|---|---|---|
+| A-1 | D-6 says "Unknown/no-path values use null paths" but also says directory is null only without a safe resolved target; D-4/D-8 require Unknown notices to identify the configured target. Visibility Unknown does not make a known local path unknown. | Keep a safely resolved `repositoryPath` and `directory` for Unknown visibility, with `relativeFile=null` and eligibility=false; use null paths only for unavailable/unsafe targets. Keep configured visibility separate from path usability. Pin exact Unknown CLI target text after this decision. V-3, V-15, V-32. |
+| A-2 | D-6 does not specify PUT-settings success body/status, the type/fields of sync-result `policy`, or board/card `reason` when eligible, empty or ignored. D-2 leaves revision presence-field name/nullability open. Project create must return a setup warning, but ProjectDto has no warning slot; readiness check key/level are unnamed. | Recommend PUT 200 returning board status; `policy` uses that same status DTO; `reason=null` when permitted, `card_private` for a suppressed single card, `no_publishable_cards` for an opted-in board with zero eligible cards, and `card_file_path_ignored` for effective ignore refusal. Recommend `CardRevisionDto.hasPrivateNotes: bool?` (null for unknown snapshots, false for known empty), `ProjectDto.cardFileWarnings: string[]`, readiness key `card-files` with Recommended/Warning for missing protection or residue, leaving `canDispatch` unchanged. Specify `ignored` for an empty desired set and whether a no-card board is `eligible`; neither is inferable from counts. V-6, V-9, V-15, V-28, V-35. |
+| A-3 | D-2 only says invalid card enums are rejected; D-4 explicitly promises project-enum 422. `Program.cs` uses `JsonStringEnumConverter(... allowIntegerValues:false)`, so invalid JSON enum tokens can fail binding before service validation (400). ValidationException uses caller-provided error-key casing; notes error casing is unspecified. | Recommend 422 `validation_failed` with camelCase `errors.privateNotes`, `errors.cardFileVisibility`, `errors.repositoryVisibility`, `errors.syncCardFiles` and `errors.expectedSyncCardFiles` for semantically invalid supplied fields. Keep malformed JSON/wrong JSON primitive types 400. Explicitly settle numeric enum tokens (including 0), numeric strings, empty string and unknown names, with no fallback to Inherit/Unknown. Do not change all enums globally just to satisfy these routes. V-7, V-12, V-14, V-33. |
+| A-4 | D-5 specifies operational git failure as a 200 result, but not filesystem write/delete failure. It says a failed board is visible "as a result/log", whereas D-6 requires consumers to inspect results. Lock behavior for privacy saves and cancellation is not specified; only concurrent sync has a defined 409. | Recommend wait-with-cancellation for privacy saves, while manual/tick sync retains try-enter and 409 `card_file_sync_running`; check card tokens after waiting. Recommend a failed reconcile returns HTTP 200/result with `error`, warning `card_file_io_error`, removalPending=true when applicable, and no new writes/commit until retry. Decide the exact WriteSkipReason/CommitSkipReason for I/O failure and a sweep's per-board failure entry. Never return success-looking empty results. V-16, V-19, V-20, V-24. |
+| A-5 | D-5 says removal stages/commits on the next successful reconcile, but AutoCommit=false normally performs neither. `removalPending` is described by "old exports remain" without defining worktree versus index/HEAD state. Cleanup guards mention staged paths but do not distinguish a staged addition from a safe staged deletion. | Recommend AutoCommit=false still deletes working files but never stages or commits. Keep removalPending true while HEAD/index still contains an unpublished export that needs owner action; report it separately from write refusal. With AutoCommit=true it clears only after successful removal/unstaging; a canceled staged-only addition needs no commit. Explicitly decide when path reassignment/hard deletion becomes allowed with unstaged or staged deletions and how a fresh service reconstructs failure/pending state. V-17, V-18, V-20, V-23, V-26, V-32. |
+| A-6 | D-7 says ignore installation occurs "before allowing any board opt-in", while D-6's named enable refusals cover only Unknown/no usable target. Missing protection on an existing configured project has no specified settings response. Enabling an already effectively ignored board is permitted for dry-run review. | Recommend missing/malformed protection gives 409 `card_file_policy_refused` before enabling, with `card_files_ignore_missing` in warnings; effective existing user protection satisfies setup. A protected board may opt in without altering ignores; sync still refuses new writes until owner adds a board exception. Specify whether this recommendation also applies to explicit true on CreateBoardRequest and how intentional removal of an ignore is distinguished from failed setup. V-13, V-27, V-28. |
+| A-7 | D-3 calls its projection a whitelist but omits `Position`; the actual renderer delegates ranking to `CardRanking.OrderKey(Card, now)`, which reads Position. A whitelist without that field cannot retain the existing pinned ordering. | Include `Position` (and any needed precomputed review/sort values) as internal projection inputs only, not new frontmatter. Reuse the scalar ranking overload; never pass Card/ExternalIssueRef entity references through the projection. V-4, V-5. |
+
+Plan should record explicit answers here or in an addendum, then hand this spec
+to Code. These are not reasons to weaken the already specified assertions below.
+In particular Unknown BLOCKS, Public cannot bypass board-off, PrivateNotes never
+enter generated data, and directory-wide commits are forbidden regardless of
+which response-shape clarification is chosen.
+
+#### Fixtures and evidence rules
+
+- Use synthetic `C408_PUBLIC_BODY`, `C408_NOTE_OLD`, `C408_NOTE_CURRENT`, and
+  `C408_PRIVATE_CARD_*` sentinels with a per-test suffix. Keep old/current note
+  sentinels exclusively in PrivateNotes/snapshot fields. A separate contact-like
+  synthetic marker may move from Description to notes for the atomic-edit case;
+  that marker's old public Description legitimately remains in database history.
+- Service integration uses owned TestDbFixture rows and `ScratchGitRepo`, with
+  a seed HEAD created BEFORE staging any contaminants. `ScratchGitRepo.CommitFileAsync`
+  calls `git add .`; do not use it once unrelated/staged test data exists. Use
+  explicit fixture Git paths thereafter. Never use the checked-out repository
+  or live project roots as a sync target. Configure only `.invalid` remotes.
+- New process-spawning classes, including real Git/PowerShell classes, carry
+  `[ParallelLimiter<ProcessSpawnLimit>]` from this assembly. Add it to the existing
+  CardTaskFileServiceTests when adapting that class. Give a whole-repo sweep test
+  unkeyed `[NotInParallel]`; every shared-database assertion also filters the
+  test's project/board/card IDs. Web tests extend AntiphonWebAppFactory and retain
+  ProductionRunnerGuard/RefusingSessionRunnerClient. Set tick interval 0 except
+  in the isolated hosted-driver test. Never point at runner 17204.
+- Use the planned `ICardFileRepository` seam for deterministic file failures,
+  command recording and barriers. Inspect the EF command/projection for sync
+  only: it must not select PrivateNotes or revision bodies. Test native Git
+  index/commit behavior with real Git as well; a mock command list is insufficient.
+- Capture generated file **bytes and names**, INDEX rows/counts/groups, current
+  Git tree/index and new commit messages/blobs, response JSON and structured
+  logs. Search raw and decoded JSON, and use exact public expected bytes where
+  possible so escaping is not a way to hide a sentinel leak. Assert no synthetic
+  note marker at these boundaries. No filename/stub/hash/count contribution from
+  a Private card. API-only excluded counts and hasPrivateNotes are permitted.
+- Capture HEAD, `git status --porcelain=v1 -z`, `git ls-files --stage -z`, and
+  per-file hashes; `git diff --cached --binary` and `git diff-tree --no-commit-id
+  --name-status -r -z --no-renames HEAD` prove the actual changed set. Use
+  `git show HEAD:<path>` for public bytes and `git show :<path>` for index bytes.
+  Existing history may contain seeded formerly public text; assert absence in
+  the NEW tree/commits, not retroactive erasure from all Git objects.
+- Byte-idempotence cases hold public inputs, rank/urgency time and ignore policy
+  fixed. Use no near-threshold due dates. If the hosted driver gains a TimeProvider
+  seam, use an auto-advancing timer-capable provider confined to this driver;
+  never freeze the whole server graph. For races use awaited barriers, separate
+  DbContexts and a shared gate, not sleeps or probabilistic repetition.
+- A baseline pass cannot pass on the strength of zero selected tests. Report
+  named tests and case counts for each command and PC run. Compile errors do not
+  count as a successful positive control.
+
+#### Defaults, projection and private storage (S1/S2)
+
+| ID | Layer / concrete test name(s) | Setup, action and exact oracle |
+|---|---|---|
+| V-1 | unit: `CardFilePolicyTests.Defaults_are_board_off_card_Inherit_notes_empty_repository_Unknown`; integration: `CardFilePrivacyMigrationTests.Upgrade_does_not_grandfather_existing_boards_or_copy_descriptions` | Pin entity/request/config defaults: false/Inherit/empty/Unknown, internal ownership fields null, Enabled=true/AutoCommit=false/60. In a NEW disposable test database migrate to the predecessor migration, insert old board/card/ContentEdit rows, migrate forward, and assert backfills plus null historical notes/visibility. Existing synthetic markdown and `.gitignore` hashes do not change from migration alone. Never downgrade the shared database or its template. |
+| V-2 | unit: `CardFilePolicyTests.Board_repository_card_policy_matrix`; integration: `CardFilePrivacySyncTests.Board_off_never_writes_even_for_explicit_Public_card` | Enumerate 2 board flags x 3 repository values x 3 card overrides = 18 cases with Enabled=true, active board/project and usable allowed target. Board=false always denies `board_not_opted_in`; board=true + Unknown always denies `repository_visibility_unknown`; known + Private denies card; known + Inherit/Public permits. Exactly four permitted rows (two known repositories x two eligible card values). For board-off repeat AutoCommit false/true and manual/dry-run/sweep: Written=0, no newly created docs/cards tree, unchanged HEAD/index. |
+| V-3 | integration: `CardFilePrivacySyncTests.Unknown_repository_visibility_with_remote_present_BLOCKS_publication` | Seed an opted-in board with both Inherit and Public cards, usable scratch Git repo, allowed ignore policy and remote `https://example.invalid/c408.git`; configured visibility remains Unknown. For AutoCommit=false and true, manual/dry-run/SyncAll must return **WriteSkipReason == "repository_visibility_unknown", Written == 0, CommitSha == null, eligibleCards == 0, excludedCards == 2**; no directory, filenames or INDEX, HEAD/index unchanged. A remote, GitHubIntegrationEnabled=true or unavailable provider credentials never turns this into a publish path. D-4 uses configured visibility: assert no gh/provider request occurs. There is no gh-failure branch to mock into production in this slice; a failed future detector must leave this same Unknown input. |
+| V-4 | unit: `CardTaskFileRendererTests.Public_projection_has_no_entity_or_private_note_input`; integration: `CardFilePrivacySyncTests.PrivateNotes_with_template_markers_and_frontmatter_delimiters_never_render` | Assert renderer/index signatures accept only the immutable public projection, with no Card/CardRevision/object/entity navigation/private-note field reachable through it. Create eligible public text containing literal `{{PrivateNotes}}`, `${PrivateNotes}`, frontmatter delimiters, fenced sections, quotes, pipes and CRLF; notes contain distinct old/current sentinels and `---\nprivateNotes:`/fence-closing text. Sync with AutoCommit=true and decode every new blob/index/log. Public markers remain literal; both note sentinels are absent in bytes, names, metadata and commit subject/body. A sync SELECT interceptor rejects any PrivateNotes/revision-body selection. Check exact expected public output, not merely that a regex redacts a marker. |
+| V-5 | unit: existing `CardTaskFileRendererTests` formatting/order tests; integration: `CardFilePrivacySyncTests.Private_card_contributes_no_filename_index_count_or_metadata`; `Private_note_only_edit_keeps_all_generated_bytes_and_HEAD` | Mixed board has one public card and one Private card with markers in title, alias, description, labels, external fields, archive fields and outcome. INDEX reports only the public card and its archive/group totals. Change override Public -> Private -> Inherit on an opted-in known repo and verify removal/reappearance; on an off board all remain absent. Edit only notes twice through CardService, retaining old/current history; no file hash, index blob or HEAD change. Public eligible archived cards still render archive/outcome fields; runtime fields remain excluded. Preserve Position-based ordering per A-7. |
+| V-6 | integration: `CardPrivateNotesApiTests.Create_and_atomic_public_to_private_edit_preserve_notes_and_history` | POST /api/boards/{id}/cards returns 201 CardDto with hasPrivateNotes/visibility/status but no note text. PATCH /api/cards/{id}/content returns 200. A single correction replaces Description and stores notes, rotates token once, adds one ContentEdit snapshot of superseded notes/visibility/public fields with the existing reason/author/sequence. Current explicit read returns current text/revisionNumber=null; historical read at that new revision returns OLD text. Inject save failure: neither field nor token/revision persists; no event. |
+| V-7 | integration: `CardPrivateNotesApiTests.Omitted_null_empty_and_limit_inputs_have_distinct_semantics`; `Invalid_card_file_visibility_never_falls_back_to_Inherit` | On edit omitted/null notes and visibility preserve; empty notes clears; whitespace-only notes stay whitespace. On create omitted/null notes become empty and visibility Inherit. Preserve leading/trailing spaces, LF, Unicode and shell metacharacters exactly. 20,000 .NET UTF-16 code units accepted, 20,001 rejected without echoing content; include supplementary Unicode to pin code-unit counting consistently with existing string limits. Test all valid enum strings and invalid integer 0/99, numeric string, unknown name, empty string; mutation/readback must not occur on rejection. Final status/error keys require A-3. Limits route returns maxPrivateNotesLength=20,000 and the three named visibility values. |
+| V-8 | integration: `CardPrivateNotesApiTests.Stale_token_loses_no_notes_and_allocates_no_revision`; `Concurrent_note_edits_have_one_winner_after_gate_acquisition` | Two scoped contexts edit using one token. Exactly one 200, one existing 409 conflict, one new revision and one CardChanged; winner text/token survive. Empty Guid remains 422. Force the loser to wait before gate/token check so pre-gate cached entity state would fail this test. Include public-to-private atomic content correction. |
+| V-9 | integration: `CardPrivateNotesApiTests.Explicit_note_read_uses_identifier_scope_no_store_and_snapshot_kind` | Dedicated GET works with GUID and normal CARD identifier, board/cwd/task scope; existing collision is 409 and wrong board/missing card 404. Current response has only cardId/privateNotes/concurrencyToken/revisionNumber, Cache-Control:no-store. Missing revision and every non-ContentEdit kind return 404. Old ContentEdit with null snapshot returns privateNotes=null; known empty returns empty. Cross-board same revision number cannot fetch another card. Malformed revisionNumber handling must follow the clarified validation contract. |
+| V-10 | integration: `CardPrivateNotesApiTests.Ordinary_read_write_and_event_boundaries_never_serialize_note_text`; `CardPrivateNotesBoundaryTests.Tracker_diagnostics_and_launch_composition_exclude_current_and_historical_notes` | Through real public DTO mapping inspect card GET, board summary/detail, GET /api/cards?boardId=..., thread, revisions, create/edit/move responses and ID-only BoardChanged/CardChanged. Only explicit note-read DTO contains notes. Capture actual tracker adapter payloads using the patterns in CardServiceTrackerPushTests/TrackerCardStatePushServiceTests, and task/card launch composition at a fake runner/event bus using AgentTaskCardBindingTests/AgentSystemPromptLaunchTests harness conventions. Assert notes do not enter requests/prompts/briefs/diagnostics/logs even when notes ask for inclusion. No real agent/tracker launch. Public Description/outcome behavior is unchanged; this is not a tracker ACL test. |
+| V-11 | integration: `CardFilePrivacyDefaultsTests.All_card_and_board_creation_paths_keep_safe_defaults`; `CardFilePrivacyMigrationTests.Database_round_trip_retains_private_fields_but_fresh_database_does_not_import_markdown` | Exercise ordinary BoardService/CardService creation, ProjectSetup board creation, tracker import (`ExternalTrackerSyncService` path), database seeder and scheduled/automated creation paths that construct Card/Board. Each omitted policy field stays false/Inherit/empty/Unknown; cover fresh UI/CLI payloads in V-31/V-34. Round-trip synthetic notes, snapshots and settings through PostgreSQL in fresh contexts, and a disposable DB copy/restore fixture; confirm explicit notes endpoint after round-trip. A separate fresh migrated/seeded DB with synthetic docs/cards does not reconstruct cards/notes/policies from markdown. This adds persistence coverage to CARD-0088, not a backup implementation. |
+
+#### API policy and status (S2)
+
+Use raw HTTP JSON for enum/missing-property cases; serializing a typed valid
+request cannot prove invalid binding. Existing exact refusal contracts below
+are mandatory; A items only qualify the additional unspecified fields.
+
+| ID | Layer / concrete test name(s) | Setup, action and exact oracle |
+|---|---|---|
+| V-12 | integration: `CardFilePolicyApiTests.Settings_require_both_fields_and_compare_expected_value_under_gate` | PUT /api/boards/{id}/card-files/settings missing either syncCardFiles or expectedSyncCardFiles returns 422, no save/event. A stale expected boolean returns 409 code=card_file_policy_changed; matching expected state changes only that board flag and emits IDs. A repeated current-value request is idempotent. No renderer, sync, agent, file, ignore, stage or commit call occurs. Success body/status and field-error shape require A-2/A-3. |
+| V-13 | integration: `CardFilePolicyApiTests.Enabling_Unknown_or_unusable_target_is_409_before_save`; `Public_opt_in_warns_and_disabling_missing_target_remains_possible` | Enabling Unknown, missing path, missing directory or non-Git target gives 409 card_file_policy_refused, flag remains false. Valid configured Public enables with public_repository warning, no extra confirmation action. Equivalent explicit true on board creation uses identical validation and leaves no half-created board on failure. When a previously enabled target disappears, disabling still succeeds and reports pending/unavailable status. Ignore prerequisites require A-6. |
+| V-14 | integration: `CardFilePolicyApiTests.Project_visibility_defaults_preserves_omission_and_resets_on_target_change` | Create project omitting visibility -> Unknown. PUT omitting/null preserves the current value when URL/path unchanged. Changing either URL or LocalRepositoryPath resets Unknown unless request explicitly sets new valid visibility; normalize equivalent path spelling so a non-change is not a reset. Invalid values reject atomically, expected 422 for project enum per D-4/A-3. Target cleanup refusal (V-26) must roll back both path and visibility. Old client cannot reset permission accidentally. |
+| V-15 | integration: `CardFilePolicyApiTests.Status_and_create_response_describe_policy_without_publishing`; `Create_status_failure_preserves_201_and_returns_status_unavailable` | GET board status 200 is read-only with Enabled either value; nonexistent board 404. Verify every D-6 property, enum casing, absolute safe root, project-relative directory, autoCommit/interval, warnings and nullable relativeFile for suppressed cards; no remote URL/notes. Create and content PATCH return 201/200 even for board-off/Unknown/ignored targets. Inject status I/O failure AFTER save: eligible=false/reason=status_unavailable/warning, no duplicate create or rollback claim. Bulk reads omit cardFileStatus and make zero per-card repository probes. A-1/A-2 settle Unknown paths/eligible reason/presence shapes. |
+| V-16 | integration: `CardFileSyncEndpointTests.Policy_refusal_is_200_with_zero_writes_and_allows_cleanup_counts`; `Concurrent_sync_returns_409_without_mutation`; existing disabled/unknown tests | POST sync: unknown existing-enabled-feature board ID -> 404; feature-disabled real AND dry-run requests -> 409 card_file_sync_disabled before lookup, including unknown IDs. Busy repo -> 409 card_file_sync_running. Board-off/Unknown/all-private -> 200 with the respective WriteSkipReason (board_not_opted_in/repository_visibility_unknown/no_publishable_cards), Written=0; Deleted may be positive on real/dry cleanup. Safe resolved directory is returned on refusal per A-1. Unsafe path -> 409 unsafe_card_file_path; overlapping ownership -> 409 card_file_directory_conflict, both before mutation. Operational git failure -> 200, CommitSha=null, CommitSkipReason=git_error, sanitized Error/warning. A-4 settles filesystem failures. |
+
+#### Reconciliation, concurrency and Git (S3)
+
+| ID | Layer / concrete test name(s) | Setup, action and exact oracle |
+|---|---|---|
+| V-17 | integration: `CardFilePrivacySyncTests.Revocation_removes_previously_exported_files_and_last_public_index`; `First_post_migration_sync_with_AutoCommit_true_only_removes_unpublished_exports` | Start with actual successful public sync (card+INDEX), then separately card Private, board off, project Unknown, board archive, project archive, hard removal of last card in fixture, or all cards Private. Reconcile each through manual and sweep: old top-level managed markdown absent, Written=0 for whole-board suppression, obsolete INDEX absent, unrelated `.txt`/nested/sibling files byte-identical. Individual eligible card archive keeps its file. Repeat AutoCommit=false/true; true commits tracked deletions with no new private/public additions for blocked board. Seed legacy files with unpinned old rows to model the first migrated pass; no automatic grandfathering. |
+| V-18 | integration: `CardFilePrivacySyncTests.Enabled_false_freezes_IO_and_does_not_claim_erasure` | Seed exported files and set board off then feature Enabled=false. Both direct service path and tick perform zero mutations (DB ownership, files, ignore, staging, commits); endpoint refusal remains V-16. GET status still reports exports/pending and explicitly says disabled feature does not erase files. Re-enable feature while board stays off; cleanup then succeeds. A-5 fixes pending fields after successful disk-only cleanup. |
+| V-19 | integration: `CardFilePrivacyConcurrencyTests.Sync_after_completed_revocation_never_uses_pre_gate_snapshot`; `Revocation_waits_for_inflight_sync_then_next_sync_removes_export`; `Concurrent_creates_and_content_edits_serialize_with_publication` | Use barriers at gate acquisition and snapshot load, two DbContexts and one canonical gate. Order 1: hold the gate for a privacy save, persist card Private/board off/project Unknown, release, then admit sync; it must load NEW state and never write/commit that card. If concurrent sync uses try-enter it first gets 409 and retry after save has the same oracle. Order 2: sync owns gate and pauses before commit; privacy save cannot complete until it exits, then reports removal pending and next sync deletes. Parameterize policy edits, content correction and eligible create. Test cancellation releases leases and subsequent work completes. No claim of immediate erasure on a save or protection against arbitrary external writers. A-4 fixes save contention response. |
+| V-20 | integration: `CardFilePrivacyRecoveryTests.Delete_failure_keeps_removal_pending_and_blocks_new_content_until_retry`; `Restart_after_pin_write_delete_or_stage_reconciles_from_current_DB` | Throw deterministically before delete, after ownership SaveChanges, after first public write, after delete, and after staging/before commit. Dispose service/context, instantiate fresh ones; retries use pinned old target and latest policy, never old revision text. For failed removal, add a new eligible sibling card: it must not be published while stale unpublished residue remains. Once fault is removed, delete stale files/index, publish only current eligible cards and recover commit/pending state. Preserve unrelated bytes/index throughout. Cancellation likewise releases gate. A-4/A-5 must define durable failure detection, error result and pending semantics. |
+| V-21 | integration: `CardFilePrivacyGitTests.AutoCommit_stages_and_commits_only_exact_generated_paths_never_directory` | Seed HEAD; stage modifications to an unrelated source file, `.gitignore`, `docs/cards/board/notes.txt`, `docs/cards/board/nested/keep.md`, another board's markdown, and `docs/cards/board-other/keep.md`; also leave untracked contaminants under the board. Run opted-in allowed sync with AutoCommit=true. Actual new commit path set equals desired generated files plus obsolete top-level managed markdown deletions, EXACTLY. All excluded index entries/blob IDs and working bytes remain as before; untracked files stay untracked. No bare commit, `git add .`, directory pathspec, `-f`, push, stash or reset. Assert both recorded add/commit path lists and `git diff-tree`/HEAD blobs. This specifically closes the Plan-stage commit-path guard issue. |
+| V-22 | integration: `CardFilePrivacyGitTests.Staged_generated_body_is_replaced_with_current_public_projection`; `Changed_generated_bytes_before_commit_refuse_with_generated_files_changed` | Stage a generated version containing an old synthetic disclosable body; update DB public text and place sensitive detail only in PrivateNotes. New index/HEAD body must equal current public projection, not old staged bytes. Inject a byte change after reconcile/stage but before commit recheck: CommitSha=null, CommitSkipReason=generated_files_changed, HEAD unchanged, next clean reconcile commits current public bytes. Test missing expected file and reappearing deleted file too. Unrelated staged data remains intact. |
+| V-23 | integration: `CardFilePrivacyGitTests.Index_only_private_addition_is_unstaged_without_nonexistent_commit_path`; `Tracked_stale_file_is_deleted_when_entire_working_directory_is_absent` | Seed an unpublished top-level file as an index-only addition (never in HEAD), remove its working file/directory, revoke and sync AutoCommit=true. Index entry disappears; no invalid commit path is passed; no commit is required when this was the only change. Separately seed a HEAD-tracked stale file whose directory is absent: commit deletion, new HEAD has no path. Include both cases together with a desired public file and unrelated staged source edit. A-5 specifies AutoCommit=false status/cleanup guard behavior. |
+| V-24 | integration: `CardFilePrivacyHostedServiceTests.Tick_manual_and_dry_run_share_policy_and_cleanup_results`; `Sweep_reports_failed_board_and_continues_to_other_owned_board`; unit: `CardFilePolicyTests.Warning_dedup_is_per_board_target_reason_and_dry_run_does_not_change_it` | Use equivalent cloned fixture states for dry/manual/driver; compare board-specific eligible/excluded/policy reasons and prospective Written/Deleted/Unchanged, allowing commit-specific fields to differ. Global SyncAll includes off/archived/empty cleanup candidates. One board's failure does not suppress another's success. Driver Enabled=false/interval=0 resolves no sync; enabled driver produces a real sweep via controlled timer or one bounded floor-5s tick. Alternate two boards with different reasons in one repo: one Warning per board/reason transition, repeated Debug, target/reason change warns again, success resets refusal transition. Dry-run must not consume the next warning. Failure-result shape requires A-4. |
+| V-25 | integration: `CardFilePrivacySyncTests.Dry_run_changes_no_database_file_ignore_index_HEAD_or_warning_state` | Snapshot own DB rows including tokens/timestamps/pinned fields, directory inventory and file hashes, ignore bytes, index entries and HEAD plus gate warning-state observations. Run dry=true for eligible fresh board, off/Unknown cleanup, ignored files, archived board and stale index. All snapshots unchanged; prospective counts reflect the same policy, with Written=0 for privacy/ignore refusal and cleanup Deleted>0 as applicable. No directory creation, slug persistence, temporary body file, add, commit or implicit ignore installation. Then real run must still emit its first warning. |
+| V-26 | integration: `CardFilePrivacyOwnershipTests.Rename_pins_slug_and_collisions_keep_distinct_owners`; `Subdirectory_projects_share_git_gate_but_not_generated_targets`; `Unsafe_or_overlapping_paths_refuse_before_any_mutation`; `Path_change_and_hard_delete_refuse_until_old_exports_drained` | Rename after first write: recorded slug unchanged, no orphan; title rename changes only that card's path. Colliding names/case variations stay distinct and a new collision cannot claim another board's stored directory. Two project subdirectories of one repo share gate/index but write their own docs/cards targets. Test `..`/prefix-sibling containment and reparse points/junctions at project root, docs/cards, board directory and managed file, including alias spellings: 409 named guard, no outside-target touch or DB ownership mutation. Test equal resolved board directories across projects. Old path reassignment/board or project hard delete with working or index-only residue -> 409 card_file_cleanup_required and unchanged ownership/rows; include null bookkeeping legacy probe and unreachable target. After approved cleanup semantics from A-5, retry succeeds; unrelated ProjectDeletionTests rules still apply. |
+| V-27 | integration: `CardFilePrivacyGitTests.Literal_NUL_pathspec_handles_metacharacters_and_large_generated_sets`; `Git_refusal_guards_retry_without_committing_unrelated_state` | Real Git case with spaces/Unicode/brackets in allowed roots and stale top-level markdown names, plus >32,767 bytes of combined pathspec input; no wildcard/prefix overmatch, exact add AND commit lists, NUL/literal mode, no argument-length failure. Slug sanitizer prevents some metacharacters in NEW filenames; put them in legacy stale names/repository path instead of weakening sanitizer. Existing CRLF/autocrlf cases still produce LF-equivalent public blobs and no repeated commit. Parameterize rebase-merge/rebase-apply, MERGE_HEAD, CHERRY_PICK_HEAD, detached HEAD, unmerged managed paths, index.lock, timeout and cancellation: expected existing CommitSkipReason, no new commit; removal/writes obey policy; remove only fixture-owned marker and retry. Empty allowed set invokes neither add nor commit. Pure removal of disabled/archived board has neutral subject `antiphon: remove unpublished card files`, trailer antiphon=true, no board/card/note marker; eligible sync uses permitted board name only. Capture sanitized error/logs using synthetic credential-like stderr, never real secrets. |
+
+#### Ignore, CLI, UI and owner documentation (S4-S7)
+
+| ID | Layer / concrete test name(s) | Setup, action and exact oracle |
+|---|---|---|
+| V-28 | integration: `CardFileIgnoreTests.Project_create_setup_and_path_assignment_install_ignore_once`; `Existing_user_ignore_bytes_are_preserved_and_failures_are_warnings` | Fresh ProjectService create, ProjectSetup, and later path assignment on project with no opted-in boards install the exact D-7 block at the project local path (including a subdirectory project), before any publish. With a missing checkout/non-Git/pathless target the ignore helper creates neither directory nor Git repo; leave ProjectSetup's existing explicit CreateDirectory option unchanged and set it false for this case. LF/CRLF, BOM/no-BOM, no trailing newline, comments and custom patterns preserve preexisting bytes; repeated install creates no duplicate. Effective user rule satisfies protection without owned block. Malformed/duplicate owned markers and denied write preserve project creation and original ignore bytes; expose card_files_ignore_missing via A-2/A-6 warning/readiness contracts. |
+| V-29 | integration: `CardFileIgnoreTests.Effective_ignore_blocks_new_writes_including_tracked_files_but_allows_removals`; `Board_exceptions_do_not_publish_private_cards_or_other_boards` | Board opted in and repo known, entire tree ignored -> 200 sync result, WriteSkipReason=card_file_path_ignored, Written=0, no new generated bytes/commit; eligibleCards still reports policy-eligible cards. Repeat dry-run. Check both untracked and already tracked generated path with git check-ignore --no-index semantics. Owner-created stable-slug exception permits eligible board only; Private card still absent, other board stays ignored/off. Effective global/info-exclude patterns also block. Never force-add or automatically remove/edit/stage an ignore. Removal of revoked files remains allowed while ignore active. |
+| V-30 | integration: `CardFileIgnoreTests.Migration_tick_status_and_bootstrap_check_never_install_ignore`; `Ignore_does_not_hide_tracked_or_staged_cleanup_required` | Existing project without block: migration, repeated tick, status, dry-run and read-only bootstrap-check leave ignore bytes absent/unchanged and show remediation on diagnostic surfaces (migration itself emits no status). Non-opted-in board with tracked or staged generated file reports card_file_cleanup_required despite matching ignore; no false "safe because ignored" claim. Test using a loopback stub for bootstrap script if endpoint-backed, never the shared stack. Reassigning a clean project's path when it already has opted-in boards does not append blanket ignore or override exceptions. |
+| V-31 | integration: `Scripts/CardFilePrivacyScriptTests.New_and_edit_print_server_target_policy_and_configured_visibility`; `Json_returns_one_note_free_response_object` | Run actual pwsh -NoProfile -NonInteractive -File scripts/card.ps1 against loopback stub, isolated task-token env. New board-off returns exit 0, existing summary/ID followed by exact D-8 lines: `card files  NOT WRITTEN: board_not_opted_in`, target full directory plus `(configured Public repository)`, `policy      Inherit; board sync off; AutoCommit off`, and private-notes storage/exclusion line. Configured Public prints its warning even when blocked. Eligible Inherit/Public uses `ELIGIBLE: next sync (60s)` and full predicted file path, interval 0 uses `manual sync`; configured Private is never phrased as provider-verified. -Json new/edit stdout parses as exactly one response object with no human prefix/suffix or notes; stderr contains no notes. No POST sync and no gh invocation from creation. |
+| V-32 | integration: `Scripts/CardFilePrivacyScriptTests.Unknown_missing_status_and_pending_removal_never_claim_written` | Unknown prints `UNKNOWN REPOSITORY VISIBILITY: sync blocked` and refusal; target/path behavior follows A-1. Older server omitting status prints exactly `status unavailable; export safety not confirmed`. Edit with removalPending=true says removal pending, not erased. Failed status probe on successful create stays exit 0; API rejection nonzero. Assert token/id remain usable, one create call only, no hidden sync. A-2/A-5 settle exact status/reason and pending wording needed beyond D-8's sample. |
+| V-33 | integration: `Scripts/CardFilePrivacyScriptTests.Private_notes_file_preserves_UTF8_without_echo_and_clear_is_explicit`; `Notes_validation_and_tokens_preserve_current_edit_contract` | Temp notes file contains leading/trailing whitespace, LF, Unicode, quotes, backticks and literal `$()`; recorded UTF-8 JSON field exactly matches it, all process output omits it. Empty file and edit -ClearPrivateNotes each send empty string; omitted field sends no change. File+clear, clear on new, unsupported inline -PrivateNotes, missing file, invalid visibility and over-limit notes fail locally/nonzero before mutation request; error reports length/limit only. Use /limits=20,000 and boundary inputs. Existing get/history responses contain no note text. Ordinary edit uses freshly fetched token; -Token sends literal supplied token and a stub 409 stays nonzero without retrying a changed write. |
+| V-34 | unit (Vitest): `BoardPage.test.tsx` / `CardModal.test.tsx`: `create keeps Inherit and stores private notes separately`; `CardEditModal.test.tsx`: `atomic correction preserves note whitespace and token` | All create entry points show Inherit by default and send new notes only in privateNotes, public Description separately. Edited notes/override persist and empty notes explicitly clear; title-only edit omits untouched notes. Existing reason/token/limits flow remains. Public preview has no note text. Help names title/body/outcome/archive reasons as public fields on eligible cards. Private panel label uses D-8 wording. |
+| V-35 | unit (Vitest): new `BoardCardFileSettings.test.tsx`: `publishing starts off and Unknown refusal preserves state`; `public opt in covers current and future cards without an extra dialog`; existing `ProjectConfig.test.tsx`, `ProjectSetupModal.test.tsx`, `ProjectReadinessPanel.test.tsx` | Default switch off and repository select Unknown; no save/sync on mount. Explicit enable sends syncCardFiles + expectedSyncCardFiles, displays 409 stale/refused and 422 field errors while preserving editable input and refreshing current policy. Public warning, absolute target, ignore remediation, private override and removal pending are visible. Dry-run/sync 200 with WriteSkipReason is shown as refused, never success-written; counts distinguish eligible from written. Project setting omission preserves old state. A-1/A-2/A-3/A-6 fix exact DTO/labels. |
+| V-36 | unit (Vitest): `CardModal.test.tsx`: `notes load only on explicit open and cannot fetch embedded resources`; `CardEditModal.test.tsx`: `failed note read never clears saved notes on unrelated edit`; `CardHistory.test.tsx`: `private snapshot is explicit and separate from public history` | Opening board/list/modal public view does not fetch notes. Opening note panel uses dedicated request; synthetic `<img src=https://example.invalid/...>`/Markdown image/script remains inert text, no embedded DOM resource load. Explicit historical snapshot is keyed by card AND revision, shows null as unknown history versus empty as empty, never inserts into public description/history preview. Network/read error leaves notes unknown, and later title edit omits privateNotes instead of sending empty. No notes in localStorage/sessionStorage/persisted query dehydration, board caches or other card's panel; switching cards cannot display stale prior notes. |
+| V-37 | unit (Vitest): new `client/src/hooks/useSignalRInvalidation.test.ts`: `ID events refresh policy projects and explicit notes without carrying text` | BoardChanged with boardId and projectId variants invalidates affected board/status/project queries; CardChanged invalidates that card's explicit notes and status plus existing board/list/thread keys. Mount/refetch acceptance proves visible stale policy and note data refresh after ID events. Inspect event payloads for IDs only. Do not populate bulk caches with dedicated notes response. |
+| V-38 | integration: `CardFilePrivacyDocumentationTests.Fresh_clone_ignore_and_owner_contracts_match_publication_policy`; document review | Inspect checked-in root `.gitignore` for exact managed default, and S7 owner docs for false board default, Unknown block, explicit local configured visibility, dedicated notes route, settings/sync statuses, revocation, pending/frozen semantics, exact-path commits/no push, manual ignore exceptions and public outcome/archive fields. Existing CARD-0004 guidance is superseded by a link, not left normative. CARD-0088/bootstrap retains fresh-DB versus backup/restore distinction; rollout waits for CARD-0409 cleanup before any live opt-in. Changed paths exclude generated docs/cards files and no live data is copied into fixtures. Prefer one small artifact contract test plus focused human review; do not encode prose paragraphs as brittle snapshots. |
+
+The mandatory API status table, to avoid an HTTP-success/privacy-success mix-up:
+
+| Operation and condition | Existing/fixed status and code | Mutation expectation |
+|---|---|---|
+| Create card with off/Unknown/ignored publication | 201, CardDto.cardFileStatus explains refusal | DB card saved; no sync |
+| Edit content under same refusal | 200, CardDto.cardFileStatus explains refusal/pending | Atomic DB edit; no sync |
+| POST real or dry sync when feature disabled | 409 `card_file_sync_disabled` | Nothing, even for unknown board ID |
+| POST sync unknown board, feature enabled | 404 | Nothing |
+| POST sync busy canonical repo | 409 `card_file_sync_running` | Nothing |
+| POST sync policy refusal, feature enabled | 200 with WriteSkipReason | No new writes; owned removal allowed |
+| POST sync unsafe/overlapping target | 409 `unsafe_card_file_path` / `card_file_directory_conflict` | No mutation |
+| POST sync operational Git error | 200 with CommitSkipReason and sanitized Error/warning | Never commit; preserve retryable state |
+| PUT settings missing either boolean | 422 | No save |
+| PUT settings stale expected flag | 409 `card_file_policy_changed` | No save |
+| Enable board with Unknown/unusable target | 409 `card_file_policy_refused` | No save |
+| Change target/delete owner with outstanding exports | 409 `card_file_cleanup_required` | Old ownership/rows preserved |
+| GET explicit notes missing/non-content revision | 404 | Nothing |
+| Stale card content token | 409, existing conflict shape | No note loss/revision/event |
+
+### Guards the regression
+
+- R-1: New entity/migration/import/setup defaults accidentally opt in old or new
+  work | caught by V-1/V-2/V-11 because both raw defaults and real filesystem
+  absence are asserted; Public-on-off is a dedicated row.
+- R-2: Treating Unknown, remote presence, provider failure or integration enabled
+  as permission | caught by the EXACT V-3 BLOCKS test because it requires
+  `repository_visibility_unknown`, zero writes and unchanged index/HEAD, with
+  an explicit Public card and board opt-in already present.
+- R-3: Passing entities to the renderer, broad serialization, template expansion
+  or selecting notes for sync | caught by V-4/V-5/V-10 because both projection
+  boundary and hostile-content blob/output absence are pinned.
+- R-4: Filtering only card bodies, after filenames/index grouping, or letting
+  Public bypass board-off | caught by V-2/V-5/V-17 because private identifiers,
+  titles, group/count changes, stubs and last INDEX are all observable failures.
+- R-5: Trimming notes, treating null as clear, snapshotting new values or checking
+  token before acquiring the gate | caught by V-6/V-7/V-8/V-19: exact old/current
+  text, one revision/event, one concurrent winner and post-save snapshot ordering.
+- R-6: Returning notes through DTOs/logs/tracker/prompts or eagerly fetching/caching
+  them in UI | caught by V-9/V-10/V-31/V-36/V-37, including response and cache
+  contents rather than just hidden DOM text.
+- R-7: Early-return revocation/archive/no-card handling or active-only sweep
+  selection | caught by V-17/V-18/V-24 because seeded prior files must disappear
+  while disabled-feature mode must leave them alone.
+- R-8: Lost ownership/failure state on restart, slug renames, or abandoned old
+  targets | caught by V-20/V-23/V-26 through fresh service instances and actual
+  worktree/index residue, including null bookkeeping legacy rows.
+- R-9: Reintroducing directory-wide add OR commit, dropping --only, force-add or
+  a repo-wide cleanup fallback | caught by V-21/V-27 because contaminants inside
+  the same directory and unrelated staged entries must remain outside HEAD.
+- R-10: Reusing staged secret-bearing blobs, dropping generated-byte recheck or
+  omitting index-only removals | caught by V-22/V-23 because exact index/HEAD bytes,
+  absent-file cases and no-commit-path cases are checked independently.
+- R-11: Locking by project subdirectory/cached snapshot, or clearing the lease
+  before SaveChanges/commit | caught by V-19/V-26 barrier order and shared-index
+  assertions; retries do not authorize publication from a revoked snapshot.
+- R-12: Lexical-prefix containment, following junctions, broad recursive deletion
+  or overlapping ownership | caught by V-26 because all outside-target bytes and
+  pre-mutation ownership state are captured and must survive named 409 refusal.
+- R-13: Dry-run writes bookkeeping/ignore/index/log-dedup state, or per-repo skip
+  dedup hides/spams another board | caught by V-24/V-25 complete state snapshots
+  and alternating board warnings.
+- R-14: Mistaking ignore for protection of tracked/staged content, removing user
+  rules, or treating absence of ignore as consent | caught by V-28/V-29/V-30:
+  effective no-index check, residue status and preservation of original bytes.
+- R-15: Treating 200 sync or 201 create as proof of exported files, stale settings
+  overwrites, or status failure rolling back/retrying successful creation | caught
+  by V-12/V-15/V-16/V-31/V-32/V-35 actual request counts and status messages.
+- R-16: New private fields become a markdown-based backup/import, an agent memory
+  feature, or an excuse to omit database preservation | caught by V-11/V-38 DB
+  round-trip/fresh-DB evidence and owner-document boundary review.
+- R-17: Projection drops Position, public outcome/archive text, escaping or LF
+  normalization | caught by preserved renderer tests and V-4/V-5/V-27 exact bytes
+  and placed-card order; privacy must not corrupt eligible public output.
+
+### Positive controls
+
+Code runs each control on its completed implementation: establish the named
+baseline green, make the single production mutation below, build and observe
+the specified assertion red, revert ONLY that mutation, rebuild and observe
+the same test green. Record PC ID, actual file/line changed, selected case count,
+failing assertion and restored result. Do not commit mutated guards or alter a
+test expectation. A compiler error, unavailable Git/DB, timeout or zero-test run
+is not the required red. Where a new seam has not yet been named, the mutation
+names its exact behavioral statement, not a demand for a second implementation.
+
+| Control | One-line production mutation | Required failing test / assertion |
+|---|---|---|
+| PC-1 | Flip the new Board.SyncCardFiles initializer from false to true. | V-1 `Defaults_are_board_off_card_Inherit_notes_empty_repository_Unknown`: board flag false. Separately mutate the new migration's board backfill/default to true and run V-1 upgrade case as PC-1b; entity default alone does not prove migration safety. |
+| PC-2 | Remove the board-opt-in denial predicate from policy evaluation. | V-2 `Board_off_never_writes_even_for_explicit_Public_card`: zero writes and board_not_opted_in. |
+| PC-3 | Change Unknown policy denial to the known/allowed branch. | V-3 `Unknown_repository_visibility_with_remote_present_BLOCKS_publication`: exact reason/zero files fails, with the repo/ignore already usable. |
+| PC-4 | Make the Private-card eligibility predicate return true. | V-5 `Private_card_contributes_no_filename_index_count_or_metadata`: private filename and extra INDEX row/count fail. |
+| PC-5 | At sync public-projection construction, append the synthetic card's PrivateNotes to Description. | V-4 hostile-note test: new file/HEAD bytes contain forbidden note sentinel. This mutation may require selecting notes; do not weaken the projection test to compile it. If projection is SQL-only, make this one projection expression read and append notes; the SELECT guard must also fail. |
+| PC-6 | Replace the ordinary card GET return expression with the dedicated private-notes read result. | V-10 ordinary-boundaries test: raw/decoded response contains a privateNotes field/text; its API is not the explicit notes route. |
+| PC-7 | Make AppendContentEdit set snapshot PrivateNotes to null instead of the superseded value. | V-6 history assertion expects C408_NOTE_OLD. |
+| PC-8 | Change the private-notes update guard so a null/omitted value sets empty string. | V-7 omitted/null preservation case loses exact existing notes. |
+| PC-9 | Bypass the post-gate card concurrency-token inequality rejection. | V-8 stale-token case must fail on 200, extra revision/event or lost winner text; no DB concurrency collision is needed for the sequential stale-token arm. |
+| PC-10 | Remove the 20,000-code-unit notes length validator. | V-7 over-limit API case accepts 20,001 or saves it instead of rejecting; keep UI/CLI out of this control so their local validation cannot mask it. |
+| PC-11 | Remove the revision-kind predicate on explicit historical notes selection. | V-9 non-ContentEdit case must return 404 instead of a 200 null snapshot. |
+| PC-12 | Replace the private-revocation reconciliation path with an early skip return. | V-17 card/board revocation variant leaves old markdown/INDEX on disk. |
+| PC-13 | Restore SyncAll's active-only archived board/project filter. | V-24 cleanup candidate case fails because seeded archived exports survive and the owned board result is absent. |
+| PC-14 | Remove the Enabled guard in the shared reconcile core. | V-18 direct-service invocation mutates files/ownership despite Enabled=false; endpoint guard must not mask the test. |
+| PC-15 | Replace the authoritative post-gate board/card load with the already-loaded pre-gate snapshot (single load assignment; use a fixture barrier that has populated that snapshot). | V-19 completed-revocation case sees stale public bytes after save. Also exercise Public->Private, not only board off. |
+| PC-16 | Change gate key from canonical Git toplevel to configured project directory. | V-26 subdirectory-project case admits simultaneous owners of one index. |
+| PC-17 | Ignore deletion failure and continue into new-file publication. | V-20 delete-failure case finds the newly eligible sibling's file/commit despite unresolved private residue. |
+| PC-18a | Feed add the board-directory pathspec in place of the exact allowlist. | V-21 sees excluded index entries staged/altered or recorded broad pathspec; even a still-safe --only commit cannot mask unsafe staging. |
+| PC-18b | Feed commit the board-directory pathspec in place of the exact commit list. | V-21 actual commit contains staged notes.txt/nested/other unapproved same-directory content. Controls a and b are separate red/revert/green runs. |
+| PC-19 | Disable the working-file/projection equality check immediately before commit. | V-22 `Changed_generated_bytes_before_commit_refuse_with_generated_files_changed`: unexpected commit/blob instead of refusal. |
+| PC-20a | Drop index/status-only stale paths from the generated removal allowlist. | V-23 index-only addition or directory-absent tracked case leaves unpublished index/HEAD entry. |
+| PC-20b | Reuse the pre-add allowlist as the commit list without rebuilding changes against HEAD. | V-23 never-HEAD-tracked addition case gets nonexistent-path Git error instead of successful unstage/no-commit. |
+| PC-21 | Remove the reparse/containment refusal before reconciling a managed path. | V-26 unsafe-path case misses named 409 or touches outside fixture target. Repeat root and managed-file parameter rows. |
+| PC-22 | Bypass the outstanding-export guard on project path assignment/hard deletion. | V-26 path-change/delete case succeeds while old working/index residue and ownership must be retained. |
+| PC-23 | Unconditionally save the first-pass slug during dry run. | V-25 changes CardFilesDirectorySlug/repository path or row state. Also run PC-23b removing the dry-run check before deletion: the same test loses seeded private legacy file. |
+| PC-24 | Change effective ignore check to disregard ignored paths (or remove --no-index). | V-29 blocks new writes assertion fails; use tracked-path parameter for --no-index mutation. The no-force-add assertion remains independent in V-21/V-27. |
+| PC-25 | Skip project-creation ignore installation. | V-28 fresh-create case lacks exact managed block/effective protection. |
+| PC-26 | Suppress tracked/index residue detection when an ignore rule matches. | V-30 cleanup-required case reports safe/ready despite known tracked/staged export. |
+| PC-27 | Remove the board expectedSyncCardFiles comparison. | V-12 stale expected-state test overwrites policy instead of 409 card_file_policy_changed. |
+| PC-28 | Let status-probe failure escape the successfully saved card create path. | V-15 status-failure case loses 201/status_unavailable and invites retry; verify exactly one saved card. |
+| PC-29 | In script status output, replace the eligible/not-written distinction with unconditional "WRITTEN". | V-31/V-32 board-off/Unknown/eligible case fails exact text; no filesystem test alone would catch this false assurance. |
+| PC-30 | On private-note query error, initialize/save privateNotes as empty rather than unknown/omitted. | V-36 CardEditModal failed-read/unrelated-edit test sees privateNotes="" in the PATCH. |
+| PC-31 | Render fetched private notes through a resource-loading Markdown/HTML component instead of inert text. | V-36 CardModal notes test sees image/iframe/script DOM or external resource request; sentinel in private panel is allowed but resource fetching is not. |
+| PC-32 | Include the explicit notes query in persisted/dehydrated/bulk cache data. | V-36 cache-boundary test finds sentinel in serialized cache/storage or another card panel. Use the actual cache persistence boundary; do not introduce persistence only to mutate it. If there is no persistence layer, mutate the bulk-cache mapping instead. |
+| PC-33 | Change policy warning-cache key from (board,target) to target only. | V-24 alternating-board case gets duplicate Warnings or suppresses the second board's first warning. |
+| PC-34 | Drop literal-path handling from add/commit pathspec input. | V-27 bracketed legacy path case overmatches or misses a required literal path. Keep NUL serialization separately asserted, including its large-input case. |
+| PC-35 | Flip CardFileSyncSettings.AutoCommit's default to true. | V-1 defaults assertion and existing renderer `AutoCommit_defaults_false_so_the_first_restart_cannot_commit_unreviewed` fail. |
+| PC-36 | Append PrivateNotes to the content-write log message instead of logging only IDs. | V-10 captured-log assertion finds the note sentinel; a clean HTTP response cannot mask logging it. |
+| PC-37 | Remove reset-to-Unknown when project URL/path changes without explicit visibility. | V-14 persists the old known value instead of Unknown. |
+| PC-38 | Replace the neutral removal-only subject with the disabled board's name. | V-27 removal commit subject fails exact string and private-board-marker absence. |
+| PC-39 | Bypass the specific in-progress/conflict guard in CommitAsync/repository seam, one guard at a time: rebase, merge, cherry-pick, detached HEAD and unmerged managed paths. | V-27 corresponding parameter must lose its named CommitSkipReason or make an unexpected commit. Run five separate mutations; Git itself refusing later with generic git_error is still a meaningful assertion failure, not the intended guarded result. |
+| PC-40 | Remove Cache-Control:no-store from explicit notes GET. | V-9 current/history header assertion fails. |
+
+Each PC qualifies the corresponding R guard only after the actual assertion
+fails for the intended reason. A control may expose more than one assertion;
+report the privacy-relevant one. Controls with a/b variants require BOTH runs.
+Following A-1 through A-7 resolution, Plan must update any affected expected
+response assertions before Code runs these controls; do not retrospectively
+bless an observed implementation as the expected contract.
+
+### Out of scope
+
+- CARD-0409 owns the live historical cleanup: classify/redact already-written
+  material, correct source cards, find old orphan directories and decide interim
+  ignore disposition. CARD-0408 tests use synthetic owned legacy directories to
+  prove future removal. They do not read or certify the real generated corpus,
+  rewrite Git history, remove copied/pushed data or authorize board opt-in.
+  Historical cleanup completion remains a rollout prerequisite, not a unit-test
+  assertion this work can satisfy.
+- CARD-0088 already owns bootstrap fresh-install versus backup/restore. V-11 is
+  a synthetic migration/persistence/DB round-trip check for the new columns; it
+  does not run dev-backup/dev-restore on live data or create another backup service,
+  scheduler, memory store or provisioning script.
+- No live GitHub/gh visibility probe: D-4 explicitly chooses operator-configured
+  visibility. V-3 models an unclassified repository with a remote and fails closed.
+  A future detector requires its own failure-path tests; configured Private is
+  not proof of actual current provider visibility.
+- No content scanner, encryption, tracker-wide ACL or new note authorization
+  role. Public fields remain public on opted-in boards, even if a caller manually
+  copies confidential text there. Existing card resolver/scope behavior is tested.
+- No arbitrary human/editor/Git writer race guarantee, external push, shared-stack
+  restart, production runner or live database access. New writes and retries
+  serialize publishers and saves belonging to this mechanism only.
+- No full E2E or full backend assembly is forced by this document-only stage.
+  Code uses focused backend/API/process and component tests below. A scoped E2E
+  may be added if a real browser-only failure cannot be covered by the existing
+  component harness; first rebuild client/dist and use the isolated E2E runner.
+
+### Cost
+
+**TestDesign execution:** zero tests/builds run; source/fixture review and document
+integrity checks only. Code must implement these names, run all V/R/PC evidence
+and retain results for separate Review. The full ~25.5-minute assembly and Pty
+suite are not a default verify step for this card; the current testing/build
+owner supersedes older generic bundle timing/full-suite advice.
+
+**Required backend classes/filters after implementation.** The command pattern
+for EACH named class below is:
+
+```powershell
+dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c408/ -- --treenode-filter "/*/*/CardFilePolicyTests/*"
+```
+
+Replace only `CardFilePolicyTests` with each class in this complete list, running
+foreground and sequentially. This lists exact class filters, not a namespace:
+
+| Slice / evidence | Classes |
+|---|---|
+| S1 defaults/projection | CardFilePolicyTests, CardFilePrivacyMigrationTests, CardFilePrivacyDefaultsTests, CardTaskFileRendererTests |
+| S2 APIs/notes | CardPrivateNotesApiTests, CardPrivateNotesBoundaryTests, CardFilePolicyApiTests, CardFileSyncEndpointTests, CardFileSyncDisabledEndpointTests, CardCorrectionApiTests, CardIdentifierResolutionTests |
+| S3 writer/recovery | CardFilePrivacySyncTests, CardFilePrivacyConcurrencyTests, CardFilePrivacyRecoveryTests, CardFilePrivacyGitTests, CardFilePrivacyOwnershipTests, CardFilePrivacyHostedServiceTests, CardTaskFileServiceTests, BoardProjectArchiveApiTests, ProjectDeletionTests |
+| S4 setup/readiness | CardFileIgnoreTests, ProjectServiceTests, ProjectSetupServiceTests, ProjectReadinessTests |
+| S5 CLI | CardFilePrivacyScriptTests (namespace Antiphon.Tests.Scripts), CardDiagnoseScriptTests |
+| S7 artifact guard | CardFilePrivacyDocumentationTests |
+
+For a PC, narrow to the exact test method, for example:
+
+```powershell
+dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c408/ -- --treenode-filter "/*/*/CardFilePrivacySyncTests/Unknown_repository_visibility_with_remote_present_BLOCKS_publication"
+```
+
+New classes that use only the policy/renderer/fakes are Unit; native file/Git,
+database/API and child-process cases are Integration. If splitting a proposed
+class is necessary to keep one lane per class, record the replacement exact filter
+against its V/PC IDs in the Code evidence, rather than broadening to a namespace.
+
+**Required client commands** (wrapper propagates actual exit status):
+
+```powershell
+pwsh -File scripts/test-client.ps1 BoardPage.test
+pwsh -File scripts/test-client.ps1 CardModal.test
+pwsh -File scripts/test-client.ps1 CardEditModal.test
+pwsh -File scripts/test-client.ps1 CardHistory.test
+pwsh -File scripts/test-client.ps1 BoardCardFileSettings.test
+pwsh -File scripts/test-client.ps1 ProjectConfig.test
+pwsh -File scripts/test-client.ps1 ProjectSetupModal.test
+pwsh -File scripts/test-client.ps1 ProjectReadinessPanel.test
+pwsh -File scripts/test-client.ps1 useSignalRInvalidation.test
+```
+
+Run `npm run build` with working directory `client/` after client edits. No extra
+browser bundle build is needed if that completed build is current. After controls,
+run `git diff --check`, inspect changed-path list for unintended docs/cards or
+mutation residue, and verify the new migration/designer/snapshot were CLI-generated.
+Delete only verified worktree-contained bin-c408 directories after all foreground
+processes finish; do not touch shared main-checkout outputs.
+
+**Planning estimate, not measured timing:** verification floor about 60 minutes
+once tests exist (isolated migration/DB/API setup, real Git scenarios, process
+script tests, component tests and build); allow roughly 90-150 additional minutes
+for all mutation/revert/rebuild controls and evidence capture. Test implementation
+is extra. The large-input Git case, migration upgrade and barrier/failure harnesses
+are the expensive parts. Do not trade those safety assertions for a namespace-wide
+green run, widen timeouts or call a missed control covered by inspection.
+
+Review receives a V-1..V-38 / R-1..R-17 / PC-1..PC-40 checklist with variant
+counts, selected filters, pass/fail and restored-green evidence; all A answers,
+any pre-existing failures reproduced at base, and the commit holding the tests.
+The next stage for THIS artifact is Plan to settle A-1..A-7, then Code to implement
+S1-S7 plus this verification, followed by a separate Review before landing.
