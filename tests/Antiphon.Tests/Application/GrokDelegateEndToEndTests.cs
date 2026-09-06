@@ -87,10 +87,38 @@ public class GrokDelegateEndToEndTests
         "HEAD-MARKER prove the Grok delegate path end to end.\n"
         + "run: dotnet run --project tests/Antiphon.Tests --treenode-filter \"/*/*/GrokDelegateEndToEndTests/*\"\n"
         + "read: docs/superpowers/plans/2026-08-18-grok-delegate-kind-card-0084.md\n"
-        + "Report what the launched process actually received.\n"
+        + "MIDDLE-MARKER Report what the launched process actually received.\n"
         + "TAIL-MARKER";
 
     // ---- the capstone --------------------------------------------------------------------------
+
+    [Test]
+    public async Task a_Kind_Grok_worker_with_unsafe_registry_rules_is_refused_before_any_process_starts()
+    {
+        if (!IsWindows) throw new SkipTestException("Windows raw-argv policy test");
+        using var workspace = new TempWorkspace();
+        var home = Path.Combine(workspace.Path, "unused-grok-home");
+        var sentinel = "private-raw-" + Guid.NewGuid().ToString("N");
+        await using var harness = BuildHarness(workspace.Path, home, "grok-must-never-start.exe",
+            grokArgs: ["--rules", "first line\n" + sentinel]);
+        using var relay = new DelegateTaskApiRelay(workspace.Path, harness.Delegation);
+        var title = "unsafe-raw-" + Guid.NewGuid().ToString("N");
+        var run = await DelegateScriptRunner.RunAsync(relay.BaseUrl,
+            "-Role", "Code", "-Kind", "Grok", "-Title", title, "-Goal", MultilineGoal, "-Dir", workspace.Path);
+        run.ExitCode.ShouldBe(0, run.Output);
+        using (var scope = harness.Provider.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
+        await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+        await using var db = CreateContext();
+        var task = await db.AgentTasks.SingleAsync(t => t.Title == title && t.WorkingDirectory == workspace.Path);
+        task.AgentKind.ShouldBe(AgentKind.Grok); task.Status.ShouldBe(AgentTaskStatus.Failed);
+        task.FailureReason.ShouldNotBeNull().ShouldNotContain(sentinel);
+        (await harness.Runner.ListAsync(CancellationToken.None)).ShouldBeEmpty();
+        var refused = await db.AgentSessions.SingleAsync(s => s.Id == task.AgentSessionId);
+        refused.Status.ShouldBe(SessionStatus.Failed);
+        refused.FailureReason.ShouldNotBeNull().ShouldContain("grok_rules_argv_unsafe");
+        (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == refused.Id)).ShouldBe(0);
+    }
 
     [Test]
     public async Task a_Kind_Grok_worker_dispatched_from_the_delegate_script_reads_rules_settles_and_prices_on_the_grok_ladder()
@@ -176,8 +204,12 @@ public class GrokDelegateEndToEndTests
                 var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
                 var receipt = GrokRulesRefreshService.Receipt(session).ShouldNotBeNull();
                 (await File.ReadAllTextAsync(receipt.Path)).ShouldBe(spec.GrokRulesPayload.Content);
-                (await File.ReadAllTextAsync(SessionFile(grokHome, workspace.Path, sessionId, "updates.jsonl")))
-                    .ShouldContain("read_file");
+                var native = await File.ReadAllTextAsync(SessionFile(grokHome, workspace.Path, sessionId, "updates.jsonl"));
+                native.ShouldContain("read_file");
+                var spillName = $"task-{DelegationReportFormatter.Short(task.Id)}-brief.md";
+                var spilled = await File.ReadAllTextAsync(Path.Combine(workspace.Path, ".antiphon", spillName));
+                foreach (var marker in new[] { "HEAD-MARKER", "MIDDLE-MARKER", "TAIL-MARKER" }) spilled.ShouldContain(marker);
+                native.ShouldContain(spillName); // FakeGrok confirms the pointer; native full-read evidence is V-8.
                 var spend = new TokenSpend(task.TokensIn, task.CacheReadTokens, task.CacheCreationTokens, task.TokensOut);
                 task.CostUsd.ShouldBe(DelegationCost.Estimate(harness.Delegation.Pricing, task.ModelLevel, spend,
                     task.CompletedAt!.Value, AgentKind.Grok));
@@ -696,7 +728,8 @@ public class GrokDelegateEndToEndTests
         string? claudeExe = null,
         Action<DelegationSettings>? configure = null,
         bool fakeReportLine = true,
-        Dictionary<string, string>? grokEnvironment = null)
+        Dictionary<string, string>? grokEnvironment = null,
+        string[]? grokArgs = null)
     {
         var sessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-e2e-runner-{Guid.NewGuid():N}");
         var runner = new RecordingRunnerClient(new DirectSessionRunnerClient(sessionLogPath, ptyBackend: ModernBackend));
@@ -755,7 +788,7 @@ public class GrokDelegateEndToEndTests
             {
                 Kind = "Grok",
                 Exe = grokExe,
-                ArgsTemplate = ["--always-approve", "--no-alt-screen"],
+                ArgsTemplate = grokArgs?.ToList() ?? ["--always-approve", "--no-alt-screen"],
                 // Where fakegrok writes its session files, and — the same value, read off the launch
                 // env — where the runner's GrokTranscriptTailer looks for updates.jsonl.
                 Env = grokEnvironment ?? GrokLaunchEnv(grokHome, fakeReportLine),

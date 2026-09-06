@@ -20,6 +20,52 @@ public sealed class GrokRulesInitializationTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task Native_split_ack_and_late_owning_prompt_release_once_after_successful_turn(bool latePrompt)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Rules.ReconcileAsync(fixture.Id, CancellationToken.None);
+        await using var db = fixture.Db();
+        var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == fixture.Id);
+        row.DeliveryAttempts = 1; row.LastDeliveryBaselineSequence = 0;
+        await db.SaveChangesAsync();
+        var normalizer = new Antiphon.SessionRunner.GrokTranscriptNormalizer();
+        var promptId = Guid.NewGuid().ToString("D");
+        var ack = $"ANTIPHON_RULES_ACK id={row.Id:N} generation={fixture.Receipt.Generation:N} sha256={fixture.Receipt.Sha256}";
+        var user = normalizer.Normalize(Native(new { sessionUpdate = "user_message_chunk", content = new { type = "text", text = row.Body } })).ShouldHaveSingleItem();
+        if (!latePrompt) Persist(1, user);
+        foreach (var chunk in new[] { ack[..20], ack[20..70], ack[70..] })
+            normalizer.Normalize(Native(new { sessionUpdate = "agent_message_chunk", content = new { type = "text", text = chunk } })).ShouldBeEmpty();
+        var final = normalizer.Normalize(Native(new { sessionUpdate = "turn_completed", prompt_id = promptId, stop_reason = "end_turn" }));
+        final.Single(p => p.Kind == TranscriptKinds.AssistantText).Text.ShouldBe(ack);
+        long sequence = 2;
+        foreach (var part in final) Persist(sequence++, part);
+        await db.SaveChangesAsync();
+        await fixture.Rules.ReconcileAsync(fixture.Id, CancellationToken.None);
+        if (latePrompt)
+        {
+            (await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == fixture.Id)).GrokRulesState.ShouldBe(GrokRulesState.Pending);
+            Persist(1, user); await db.SaveChangesAsync();
+            await fixture.Rules.ReconcileAsync(fixture.Id, CancellationToken.None);
+        }
+        await fixture.Rules.ReconcileAsync(fixture.Id, CancellationToken.None);
+        await db.Entry(row).ReloadAsync();
+        row.RulesAcknowledgedAt.ShouldNotBeNull(); row.RulesPromptSequence.ShouldBe(1);
+        row.DeliveryAttempts.ShouldBe(1);
+        (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == fixture.Id)).ShouldBe(1);
+        (await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == fixture.Id)).GrokRulesState.ShouldBe(GrokRulesState.Ready);
+
+        string Native(object update) => JsonSerializer.Serialize(new { method = "session/update", @params = new
+        { sessionId = fixture.Id.ToString("D"), update, _meta = new { eventId = Guid.NewGuid().ToString("D"), promptId } } });
+        void Persist(long seq, Antiphon.SessionRunner.TranscriptPart part) => db.TranscriptEntries.Add(new()
+        {
+            Id = Guid.NewGuid(), AgentSessionId = fixture.Id, Sequence = seq, Kind = part.Kind,
+            Text = part.Text, Uuid = part.Uuid, StopReason = part.StopReason, CreatedAt = DateTime.UtcNow, Timestamp = DateTime.UtcNow
+        });
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task Exhausted_delivery_fails_only_after_a_persisted_unconfirmed_verdict(bool inFlight)
     {
         await using var fixture = await Fixture.CreateAsync();
