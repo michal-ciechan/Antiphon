@@ -10,6 +10,7 @@ public sealed record ScriptedError(int StatusCode, string? JsonBody = null) : St
 
 /// <summary>One complete single-text-block turn (no tool_use).</summary>
 public sealed record ScriptedTextTurn(string Text) : StubResponse;
+public sealed record ScriptedFunctionCall(string Name, string Arguments, string CallId) : StubResponse;
 
 /// <summary>
 /// Per-endpoint FIFO of scripted responses. Missing scripts fall back to a default text turn
@@ -19,6 +20,11 @@ public sealed class StubScript
 {
     private readonly ConcurrentDictionary<string, ConcurrentQueue<StubResponse>> _queues = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, StubResponse> _defaults = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, Func<string, StubResponse>> _responders = new(StringComparer.OrdinalIgnoreCase);
+
+    public void SetResponder(string endpointKey, Func<string, StubResponse> responder) => _responders[endpointKey] = responder;
+    public StubResponse Next(string endpointKey, string body) =>
+        _responders.TryGetValue(endpointKey, out var responder) ? responder(body) : Next(endpointKey);
 
     public void Enqueue(string endpointKey, StubResponse response)
         => QueueFor(endpointKey).Enqueue(response);
@@ -31,12 +37,14 @@ public sealed class StubScript
         if (_queues.TryGetValue(endpointKey, out var q))
             while (q.TryDequeue(out _)) { }
         _defaults.TryRemove(endpointKey, out _);
+        _responders.TryRemove(endpointKey, out _);
     }
 
     public void Reset()
     {
         _queues.Clear();
         _defaults.Clear();
+        _responders.Clear();
     }
 
     /// <summary>Dequeues the next scripted response, or the default, or a ScriptedTextTurn("ok").</summary>

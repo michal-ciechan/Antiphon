@@ -20,7 +20,8 @@ internal static class GrokStubEndpoints
                 return;
             }
 
-            await OpenAiResponsesSse.WriteModelsListAsync(ctx.Response, ctx.RequestAborted);
+            ctx.Response.ContentType = "application/json";
+            await ctx.Response.WriteAsync("""{"object":"list","data":[{"id":"grok-4.6","object":"model","created":0,"owned_by":"stub"}]}""", ctx.RequestAborted);
         });
 
         app.MapGet("/settings", async (HttpContext ctx) =>
@@ -72,19 +73,10 @@ internal static class GrokStubEndpoints
 
         app.MapPost("/responses", async (HttpContext ctx) =>
         {
-            var next = script.Next(StubEndpointKeys.GrokResponses);
-            switch (next)
-            {
-                case ScriptedError err:
-                    await OpenAiResponsesSse.WriteErrorAsync(ctx.Response, err, ctx.RequestAborted);
-                    break;
-                case ScriptedTextTurn turn:
-                    await OpenAiResponsesSse.WriteTextTurnAsync(ctx.Response, turn.Text, ctx.RequestAborted);
-                    break;
-                default:
-                    await OpenAiResponsesSse.WriteTextTurnAsync(ctx.Response, "ok", ctx.RequestAborted);
-                    break;
-            }
+            using var reader = new StreamReader(ctx.Request.Body);
+            var body = await reader.ReadToEndAsync(ctx.RequestAborted);
+            var next = script.Next(StubEndpointKeys.GrokResponses, body);
+            await GrokResponsesSse.WriteAsync(ctx.Response, next, ctx.RequestAborted);
         });
 
         // Re-probed 2026-08-24: grok -p sends the user turn to Chat Completions; /responses is
