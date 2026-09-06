@@ -26,32 +26,16 @@ The migration was generated with EF CLI; isolated tests applied their normal tes
 - Matching owning UserPrompt, assistant acknowledgement and successful TurnEnd are required.
   Rules turns have explicit task settlement, deferred settlement, channel and boot-reply exclusions.
 - Transactional compact trigger rows, replay deduplication, conservative one-follow-on loop limit,
-  error incidents and periodic recovery are present. These tests seed normalized boundaries;
-  they are not native compaction acceptance.
+  error incidents and periodic recovery are present. Parser/recovery tests now feed an attributed
+  native Grok 1.0.5 capture through the real tailer; they are not live compaction acceptance.
 - Legacy resume/removal preflights retain history and require the explicit existing fresh action.
   Warm Grok pool reuse checks receipt revision and Ready state. No live migration was performed.
 
 ## Known unfinished implementation/verification work
 
-1. T-10 metadata ordering is incomplete: the file exists before launch, but normal PtyHost manifest
-   and Herdr sidecar receipt persistence still occurs after native child/pane launch. Implement and
-   fault-test the required durable pre-spawn receipt ordering and torn-metadata recovery.
-2. Recovery needs the complete owned-startup failure matrix. A server restart after status became
-   Running but before initialization ended uses the periodic recovery path; that path does not yet
-   terminalize/reap a failed owned initialization through the failed-launch owner. A bad receipt
-   can abort a recovery pass and delay other sessions. Deadline start currently follows first eligible
-   queue attempt, and must be pinned against the required first-ready startup eligibility.
-3. Complete the actual Herdr adoption/live-target checks, v1 native resume and policy-refresh tests,
-   explicit artifact expiry, complete remote-path/malformed receipt matrix, and all direct-call
-   body-validation/configuration boundaries. Card resume/control preflights still use default rules
-   settings at some early checks; the adapter/client/runner use injected settings.
-4. Complete the channel/late-chunk and queue bypass interleavings, delivery-attempt exhaustion reason,
-   interrupted ordinary delivery ordering, all crash points, startup recovery isolation, and initial
-   task/claim/card ownership assertions. A full subsequent tool read is not normalized as an evidence
-   object; loop handling conservatively requests one follow-on instead of claiming read coverage.
-5. Implement `GrokRulesDispatchAcceptanceTests`, `GrokRulesCompactionAcceptanceTests`, genuine 1.0.13
-   auto-compaction fixture/provenance and the full V/PC matrices. No plan-specified live harness was
-   authored or executed in this slice. Missing coverage must not be replaced with seeded success.
+The two initial implementation gaps are fixed in `318b0966`, `b47dfd8a`, and `63cf2906`: receipt metadata is persisted before spawn; failed startup recovery records termination intent, performs owned cleanup, and retains recoverable ownership when kill is unconfirmed. Server receipt/queue persistence precedes provider readiness. These supersede the original gap descriptions.
+
+Remaining work is the complete V/R audit and named regressions, Herdr live-target/recovery edge cases, and the mandatory mapped wire/live/endurance acceptance. A follow-on is conservatively requested for refresh-induced compaction; no native complete-read coverage optimization is claimed. Explicit rules artifact expiry exists on the runtime service, without an operator HTTP route. Live gates remain open regardless of deterministic results.
 
 ## Executed test suites
 
@@ -313,3 +297,17 @@ Additional mutation evidence follows. Full actual assertion text and exact elaps
 | PC-17-deferred | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: provider.GetRequiredService<DeferredReportSweepMarks>().ShouldHandOff(sessionId, end.Sequence, null, DateTime.UtcNow, 3600) should be True but was` | 50.343 / 48.407 s |
 
 Current archive SHA-256: `0b56117e0c5a9bc5f1172a1e8760a3f4e6d53173661dd6125fc9d30f5de71e05`. Earlier archive hash above identifies the prior four-mutation artifact. All still-unrun V/R/PC rows remain open; related newer deterministic checks do not certify the broader gate. No live acceptance call or real auto-compaction has yet been executed.
+
+## Native file-read calibration, 2026-09-06
+
+Direct installed CLI, **not mapped dispatch or real-model acceptance**. Grok `1.0.13 (5e9a58528b76) [stable]`, synthetic credential, `RealCliStubEnv.ForGrok` dual loopback redirects, disposable home. Successful attempt also used an external disposable cwd and disabled Claude/Codex configuration imports. Default agent retained; no `--agent` replacement.
+
+| Attempt | Native elapsed | Native exit | Result |
+|---|---:|---:|---|
+| 1 | 24.310 s | 0 | Rejected: default `ok`, zero qualifying Responses requests. |
+| 2 | 2.851 s | 1 | Rejected: pinned `grok-4.6` absent from stub model catalog; explicit unknown-model error. |
+| 3 | 3.044 s | 0 | Calibration passed: native `read_file` output contains lines 1–1000 of a 1,105-line file. Native schema establishes one-based `offset` and default 1,000-line limit. |
+
+Attempt 3's preliminary manifest counted three matching request bodies; one was a dashboard helper carrying historical nonce text. There were two actual user/tool requests. The upcoming acceptance matcher checks the **current** user query and tool-bearing shape, so this helper cannot satisfy it. No full-file read, ACK barrier, settlement, live-model, or compaction result is claimed from this calibration. Its TUnit test passed 1/1, zero skips (17.869 s test-host duration).
+
+Sanitized durable evidence: `2026-09-06-card-0395-native-calibration-evidence.zip`, SHA-256 `ec64feca7c9a81a47504bf2584e6cef1b70f09d5624e8e2a96e925664a9eb7d1`. Contains per-attempt manifests, native errors, selected owned native events, actual function call/output, schema, raw-capture hashes, executable hash and redaction provenance. No request headers or auth stores.
