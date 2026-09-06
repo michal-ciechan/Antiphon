@@ -606,6 +606,12 @@ public sealed class AgentSessionRuntime
             return;
         }
 
+        using (var rulesScope = _scopeFactory.CreateScope())
+        {
+            var rules = rulesScope.ServiceProvider.GetService<GrokRulesRefreshService>();
+            if (rules is not null) await rules.ReconcileAsync(sessionId, ct);
+        }
+
         // CARD-0288: catch-up is the settlement path for a report-boundary TurnEnd that only
         // ever arrived via backfill. The live re-emission then dedups as seen and never flushes.
         // Settlement is its own try/catch and is NOT gated on AddedTurnBoundary — a previous

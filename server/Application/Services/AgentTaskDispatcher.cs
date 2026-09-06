@@ -952,7 +952,7 @@ public sealed class AgentTaskDispatcher
         var sessionIds = suspects.Select(t => t.AgentSessionId!.Value).Distinct().ToList();
         var sessionById = (await _db.AgentSessions.AsNoTracking()
                 .Where(s => sessionIds.Contains(s.Id))
-                .Select(s => new { s.Id, s.Status, s.LaunchResumedAt })
+                .Select(s => new { s.Id, s.Status, s.LaunchResumedAt, s.GrokRulesState })
                 .ToListAsync(ct))
             .ToDictionary(s => s.Id);
 
@@ -964,6 +964,8 @@ public sealed class AgentTaskDispatcher
             ct.ThrowIfCancellationRequested();
             var sessionId = task.AgentSessionId!.Value;
             sessionById.TryGetValue(sessionId, out var sessionSnap);
+            if (sessionSnap?.GrokRulesState is GrokRulesState.Pending or GrokRulesState.Failed)
+                continue; // The persisted rules deadline owns initialization, before any task brief.
 
             // CARD-0340 S2: a resumed launch's watchdog clock is the resume, not dispatch.
             // Do not restamp DispatchedAt — FailNeverStarted finds the brief with
@@ -2183,6 +2185,10 @@ public sealed class AgentTaskDispatcher
             if (end is null)
                 continue; // no boundary at all — nothing has been deferred here
 
+            var owningPrompt = await TranscriptTurnWindow.FindOwningPromptAsync(_db, sessionId, end.Sequence, ct);
+            if (await GrokRulesRefreshService.IsRefreshPromptAsync(_db, sessionId, owningPrompt?.Text, ct))
+                continue;
+
             // CARD-0159: a cancelled TurnEnd is an idle boundary, never a report. Re-invoking
             // settlement on it after the grace would recreate the incident — Succeeded on the
             // interrupted turn's narration. Skip both arms; the task stays Working.
@@ -3019,6 +3025,8 @@ public sealed class AgentTaskDispatcher
         // session.AgentKind, not a constant: whose composer this brief is typed into decides whether
         // it may be typed at all (CARD-0084 S1). It is ClaudeCode on every spawn today; reading it
         // off the session is what makes a Grok delegate spill instead of arriving run-on.
+        if (spec.GrokRulesPayload is null)
+        {
         var brief = FitBriefForTyping(claimed, _settings, _ptyProfile?.Ceilings, _logger, session.AgentKind);
         try
         {
@@ -3034,6 +3042,8 @@ public sealed class AgentTaskDispatcher
             _logger.LogWarning(
                 ex, "Task {ShortId}: the brief is queued but could not be delivered yet",
                 DelegationReportFormatter.Short(claimed.Id));
+        }
+
         }
 
         await _eventBus.PublishToAllAsync(
@@ -3139,6 +3149,7 @@ public sealed class AgentTaskDispatcher
 
         await _db.SaveChangesAsync(ct);
 
+        var deferRulesBrief = false;
         if (program is { } resolved)
         {
             try
@@ -3156,6 +3167,7 @@ public sealed class AgentTaskDispatcher
                         ct);
                 }
 
+                deferRulesBrief = spec.GrokRulesPayload is not null;
                 _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, spec, remoteControlName: null, notes: null);
                 await MaybeWarnOrchestratorWorkspaceAsync(task, agent, session.Id, ct);
             }
@@ -3167,6 +3179,7 @@ public sealed class AgentTaskDispatcher
             }
         }
 
+        if (deferRulesBrief) return;
         var brief = FitBriefForTyping(task, _settings, _ptyProfile?.Ceilings, _logger, session.AgentKind);
         try
         {
@@ -3427,7 +3440,7 @@ public sealed class AgentTaskDispatcher
         IReadOnlyList<string>? attachedBundleKeys = null,
         IReadOnlyDictionary<string, string>? projectDefaultEnv = null)
     {
-        var extraArgs = ComposeDelegateArgs(task, agent, session, attachedBundleKeys);
+        var extraArgs = ComposeDelegateArgs(task, agent, session, attachedBundleKeys, out var grokRulesPayload);
         var kind = session.AgentKind;
 
         return _agentRegistry.Resolve(
@@ -3446,6 +3459,8 @@ public sealed class AgentTaskDispatcher
                 Cols: session.Cols,
                 Rows: session.Rows,
                 ExtraArgs: extraArgs,
+                GrokRulesPayload: grokRulesPayload,
+                CommandLineBudgetChars: _settings.CommandLineBudgetChars,
                 // The agent's own launch env, merged BEFORE ExtraEnv so the ANTIPHON_* block below
                 // always wins (CARD-0106 S2). A pool delegate's row carries "{}" and contributes
                 // nothing; a pinned standing agent contributes whatever its settings say.
@@ -3486,7 +3501,7 @@ public sealed class AgentTaskDispatcher
         // the resolver appends the catalogue-validated model. Two --model flags would otherwise
         // reach the process. The alias is offered through TierModelAlias, never ExtraArgs, so a
         // blank ModelArgumentName can drop it.
-        var extraArgs = ComposeDelegateArgs(task, agent, session, attachedBundleKeys);
+        var extraArgs = ComposeDelegateArgs(task, agent, session, attachedBundleKeys, out var grokRulesPayload);
         var tierModelAlias = string.IsNullOrWhiteSpace(agent.ModelId)
             ? TierAliasFor(session.AgentKind, task.ModelLevel)
             : null;
@@ -3504,6 +3519,8 @@ public sealed class AgentTaskDispatcher
                 Cols: session.Cols,
                 Rows: session.Rows,
                 ExtraArgs: extraArgs,
+                GrokRulesPayload: grokRulesPayload,
+                CommandLineBudgetChars: _settings.CommandLineBudgetChars,
                 AgentEnv: AgentLaunchEnv.ParseForAgent(agent),
                 ExtraEnv: BuildEnv(task, agent, session),
                 ApiKeyProjectId: apiKeyProjectId,
@@ -3535,8 +3552,10 @@ public sealed class AgentTaskDispatcher
         AgentTask task,
         Agent agent,
         AgentSession session,
-        IReadOnlyList<string>? attachedBundleKeys)
+        IReadOnlyList<string>? attachedBundleKeys,
+        out GrokRulesPayload? grokRulesPayload)
     {
+        grokRulesPayload = null;
         // WHICH PROGRAM is being launched, read off the session row the dispatch just wrote — the
         // same value BuildEnv, the brief's spill gate and the pool claim all key on, so there is one
         // answer to "what is on the other end of this pty" rather than four (CARD-0084 S3).
@@ -3604,8 +3623,9 @@ public sealed class AgentTaskDispatcher
         var subject = $"Task {DelegationReportFormatter.Short(task.Id)} ({task.Kind}/{task.Role})";
         // Guarded BEFORE anything is added: over-budget throws at compose time and the launch fails
         // loudly. Truncating would run the delegate under half a contract with nothing to show it.
-        InstructionBundleComposer.EnsureWithinCommandLineBudget(
-            composed, extraArgs, _settings.CommandLineBudgetChars, subject);
+        if (!isGrok)
+            InstructionBundleComposer.EnsureWithinCommandLineBudget(
+                composed, extraArgs, _settings.CommandLineBudgetChars, subject);
         if (!composed.IsEmpty)
         {
             // Grok's system-prompt channel is --rules and Codex's is a `-c developer_instructions=`
@@ -3614,10 +3634,11 @@ public sealed class AgentTaskDispatcher
             // AgentControlService makes for a named Grok or Codex agent.
             // CARD-0382: budget first (D-T1), then refuse a Windows Grok payload that cannot ride argv.
             if (isGrok)
-                GrokLaunchArgs.EnsureWindowsRulesPayload(composed.Text, subject);
-            extraArgs.AddRange(isCodex
-                ? [CodexLaunchArgs.ConfigFlag, CodexLaunchArgs.DeveloperInstructions(composed.Text)]
-                : new[] { isGrok ? "--rules" : "--append-system-prompt", composed.Text });
+                grokRulesPayload = new(composed.Text, GrokRulesTransport.Version, Guid.NewGuid());
+            else
+                extraArgs.AddRange(isCodex
+                    ? [CodexLaunchArgs.ConfigFlag, CodexLaunchArgs.DeveloperInstructions(composed.Text)]
+                    : new[] { "--append-system-prompt", composed.Text });
             // Logged because a composition is otherwise invisible from everywhere else: the args are
             // not stored, and the agent row of a pool delegate is deleted when its task settles.
             _logger.LogInformation(
@@ -3942,6 +3963,19 @@ public sealed class AgentTaskDispatcher
         var sessionId = await LiveSessionIdOfAsync(agent, ct);
         if (sessionId is not Guid session)
             return ReuseOutcome.SpawnFresh;
+
+        if (claimed.AgentKind == AgentKind.Grok)
+        {
+            var installed = await _db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == session, ct);
+            var desired = InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(claimed.Kind, claimed.Role,
+                await AgentBundleAttachments.LoadAsync(_db, agent.Id, _logger, ct)));
+            var receipt = GrokRulesRefreshService.Receipt(installed);
+            if (!desired.IsEmpty && (receipt is null || installed.GrokRulesState != GrokRulesState.Ready
+                || receipt.Generation != installed.GrokRulesGeneration
+                || receipt.Sha256 != GrokRulesTransport.Hash(System.Text.Encoding.UTF8.GetBytes(desired.Text))))
+                return ReuseOutcome.SpawnFresh;
+            if (desired.IsEmpty && receipt is not null) return ReuseOutcome.SpawnFresh;
+        }
 
         agent.Status = AgentStatus.Running;
         agent.PoolIdleSince = null;

@@ -235,6 +235,7 @@ public sealed class SessionMessageQueueService
             DeliveryOutcome outcome;
             try
             {
+                await EnsureRulesAllowOrdinaryInputAsync(sessionId, ct);
                 outcome = await DeliverAsync(sessionId, nowBody, ct, nowBaseline);
                 if (outcome.Verdict == DeliveryVerdict.ForbiddenBody)
                 {
@@ -793,6 +794,7 @@ public sealed class SessionMessageQueueService
         await sem.WaitAsync(ct);
         try
         {
+            await EnsureRulesAllowOrdinaryInputAsync(sessionId, ct);
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var message = await db.SessionQueuedMessages
@@ -1139,6 +1141,18 @@ public sealed class SessionMessageQueueService
 
     private enum FlushResult { Nothing, Delivered, Failed, LateConfirmed }
 
+    private async Task EnsureRulesAllowOrdinaryInputAsync(Guid sessionId, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var session = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sessionId, ct);
+        if (GrokRulesRefreshService.IsClosed(session))
+            throw new ConflictException(session.GrokRulesFailure ?? "Rules acknowledgement is pending; queued work is retained.",
+                session.GrokRulesState == GrokRulesState.Failed
+                    ? (session.GrokRulesFailure?.Split(':')[0] ?? "grok_rules_initialization_failed")
+                    : "grok_rules_initialization_pending");
+    }
+
     // Claims and delivers the oldest pending message (caller holds the per-session lock). With
     // batching enabled, a CONTIGUOUS head run of Channel-origin messages from the SAME conversation
     // coalesces into one delivery under the batch markers (OpenClaw's 'collect' model): a run of 1
@@ -1150,6 +1164,12 @@ public sealed class SessionMessageQueueService
         CancellationToken ct,
         LateConfirmCollector? lateConfirmed = null)
     {
+        using var rulesScope = _scopeFactory.CreateScope();
+        var rules = rulesScope.ServiceProvider.GetService<GrokRulesRefreshService>();
+        if (rules is not null) await rules.ReconcileAsync(sessionId, ct);
+        var rulesSession = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
+        var rulesClosed = rulesSession is not null && GrokRulesRefreshService.IsClosed(rulesSession);
+        if (rulesSession?.GrokRulesState == GrokRulesState.Failed) return FlushResult.Nothing;
         // CARD-0161: resolve ceilings once per flush for this session (herdr vs pty).
         var ceilings = await CeilingsForSessionAsync(db, sessionId, ct);
 
@@ -1175,6 +1195,7 @@ public sealed class SessionMessageQueueService
         }
 
         var interrupted = await LoadInterruptedSentRunAsync(db, sessionId, ct);
+        if (rulesClosed && interrupted.Any(m => m.RulesRefreshKey is null)) return FlushResult.Nothing;
         if (interrupted.Count > 0)
         {
             var recovered = await RecoverDeliveryRunLockedAsync(
@@ -1187,7 +1208,9 @@ public sealed class SessionMessageQueueService
 
         var pending = await db.SessionQueuedMessages
             .Where(m => m.AgentSessionId == sessionId && m.Status == QueuedMessageStatus.Pending)
-            .OrderBy(m => m.Sequence)
+            .Where(m => !rulesClosed || (m.RulesRefreshKey != null && m.RulesCoveredByMessageId == null
+                && m.RulesAcknowledgedAt == null && m.RulesFailure == null))
+            .OrderByDescending(m => m.RulesRefreshKey != null).ThenBy(m => m.Sequence)
             .ToListAsync(ct);
         if (pending.Count == 0)
             return FlushResult.Nothing;
@@ -1379,6 +1402,12 @@ public sealed class SessionMessageQueueService
         var baseline = await CaptureTranscriptBaselineAsync(db, sessionId, ct);
         foreach (var m in run)
         {
+            if (m.RulesRefreshKey is not null && m.RulesDeadlineAt is null)
+            {
+                var rulesSettings = rulesScope.ServiceProvider.GetService<IOptions<GrokRulesSettings>>()?.Value ?? new();
+                m.RulesDeadlineAt = now.AddSeconds(m.RulesRefreshKey.StartsWith("launch:", StringComparison.Ordinal)
+                    ? rulesSettings.InitializationTimeoutSeconds : rulesSettings.RefreshTimeoutSeconds);
+            }
             m.Status = QueuedMessageStatus.Sent;
             m.SentAt = now;
             m.DeliveryAttempts++;
@@ -3020,6 +3049,13 @@ public sealed class SessionMessageQueueService
     private async Task HandleDeliveryFailureAsync(
         Guid sessionId, IReadOnlyList<Guid>? messageIds, DeliveryVerdict verdict, CancellationToken ct)
     {
+        if (messageIds is { Count: > 0 })
+        {
+            await using var rulesScope = _scopeFactory.CreateAsyncScope();
+            var rulesDb = rulesScope.ServiceProvider.GetRequiredService<AppDbContext>();
+            if (await rulesDb.SessionQueuedMessages.AnyAsync(m => messageIds.Contains(m.Id) && m.RulesRefreshKey != null, ct))
+                return; // Rules deadlines own failure; never kill an established session here.
+        }
         try
         {
             // Last look for the evidence before anything destructive happens. A NoTranscriptRecord

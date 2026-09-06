@@ -10,6 +10,17 @@ namespace Antiphon.Server.Domain.Entities;
 /// </summary>
 public class SessionQueuedMessage
 {
+    public string? RulesRefreshKey { get; set; }
+    public string? RulesReceiptJson { get; set; }
+    public DateTime? RulesDeadlineAt { get; set; }
+    public DateTime? RulesAcknowledgedAt { get; set; }
+    public string? RulesFailure { get; set; }
+    public long? RulesPromptSequence { get; set; }
+    public long? RulesTurnEndSequence { get; set; }
+    public Guid? RulesCoveredByMessageId { get; set; }
+    public Guid? RulesChainId { get; set; }
+    public int RulesFollowOnCount { get; set; }
+    public long? RulesBoundarySequence { get; set; }
     public Guid Id { get; set; }
     public Guid AgentSessionId { get; set; }
 

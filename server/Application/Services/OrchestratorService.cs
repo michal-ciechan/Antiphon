@@ -946,6 +946,8 @@ public sealed class OrchestratorService
                         Cols: request.Cols,
                         Rows: request.Rows,
                         ExtraArgs: composition.ExtraArgs,
+                        GrokRulesPayload: composition.GrokRulesPayload,
+                        CommandLineBudgetChars: composition.CommandLineBudgetChars,
                         ExtraEnv: composition.ExtraEnv),
                     ct,
                     _apiKeyEnvResolver);

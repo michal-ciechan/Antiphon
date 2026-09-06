@@ -40,6 +40,15 @@ public sealed class CompactionRecoveryService
 
     public async Task OnCompactBoundaryAsync(Guid sessionId, long sequence, CancellationToken ct)
     {
+        using (var rulesScope = _scopeFactory.CreateScope())
+        {
+            var db = rulesScope.ServiceProvider.GetRequiredService<AppDbContext>();
+            if (await db.AgentSessions.AnyAsync(s => s.Id == sessionId && s.AgentKind == AgentKind.Grok && s.GrokRulesGeneration != null, ct))
+            {
+                await rulesScope.ServiceProvider.GetRequiredService<GrokRulesRefreshService>().ReconcileAsync(sessionId, ct);
+                return;
+            }
+        }
         // Cheap same-process dedupe; the durable check below is the one that matters.
         var seen = _handledSequences.GetOrAdd(sessionId, 0);
         if (sequence <= seen)

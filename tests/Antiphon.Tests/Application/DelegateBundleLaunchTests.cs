@@ -203,17 +203,17 @@ public class DelegateBundleLaunchTests
     // ---- CARD-0146 S3: stage bundles reach Grok --rules and Codex -c -----------------------------
 
     [Test]
-    public void a_grok_investigate_launch_carries_the_stage_bundle_on_rules()
+    public void a_grok_investigate_launch_carries_the_stage_bundle_in_the_typed_payload()
     {
         var (dispatcher, _) = CreateHarness();
         var task = TaskFor(AgentTaskKind.Worker, AgentTaskRole.Investigate);
 
-        var ex = Should.Throw<ConflictException>(() => ArgsOf(dispatcher, task, kind: AgentKind.Grok));
-        ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
-        ex.Message.ShouldContain(DelegationReportFormatter.Short(task.Id));
+        var spec = SpecOf(dispatcher, task, kind: AgentKind.Grok);
+        spec.Args.ShouldNotContain("--rules");
 
         var composed = InstructionBundleComposer.Compose(
             InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Investigate));
+        spec.GrokRulesPayload.ShouldNotBeNull().Content.ShouldBe(composed.Text);
         var bundle = InstructionBundles.Get(InstructionBundles.StageInvestigate);
         composed.Text.ShouldContain($"[bundle:stage-investigate v{bundle.Version}]");
         composed.Text.ShouldContain(bundle.Text);

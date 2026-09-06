@@ -494,6 +494,12 @@ try
     // Compaction recovery (incident + workspace re-read note); dispatched lazily from the runtime
     // on CompactBoundary transcript entries.
     builder.Services.AddSingleton<CompactionRecoveryService>();
+    builder.Services.AddOptions<Antiphon.SessionRunner.Contracts.GrokRulesSettings>()
+        .Bind(builder.Configuration.GetSection("GrokRules"))
+        .Validate(s => s.MaxFileBytes > 0 && s.InitializationTimeoutSeconds > 0 && s.RefreshTimeoutSeconds > 0,
+            "GrokRules settings must be positive.").ValidateOnStart();
+    builder.Services.AddSingleton<GrokRulesRefreshService>();
+    builder.Services.AddHostedService<GrokRulesRecoveryHostedService>();
     builder.Services.AddSingleton<TranscriptBindingIncidentService>();
     // Same-sender inbound debounce for the channel bridge (host-constructed service — an
     // unregistered dependency here fails at startup, not at first message).

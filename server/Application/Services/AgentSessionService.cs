@@ -196,6 +196,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             await _db.SaveChangesAsync(ct);
 
             RunAttemptStateMachine.Transition(attempt, RunPhase.StreamingTurn, UtcNow());
+            await InitializeGrokRulesAsync(session, ct);
             await _db.SaveChangesAsync(ct);
 
             await _eventBus.PublishToGroupAsync(
@@ -442,6 +443,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // record) so working/idle, the queue and the cards all read idle, not "Working"
             // forever (live miss 2026-08-08).
             var interruptedTurn = await WriteRestartBoundaryIfInterruptedAsync(session.Id, ct);
+            await InitializeGrokRulesAsync(session, ct);
 
             await _eventBus.PublishToGroupAsync(
                 AgentSessionGroups.Session(session.Id),
@@ -607,6 +609,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             await _db.SaveChangesAsync(ct);
 
             await WriteRestartBoundaryIfInterruptedAsync(session.Id, ct);
+            await InitializeGrokRulesAsync(session, ct);
             await _eventBus.PublishToGroupAsync(
                 AgentSessionGroups.Session(session.Id),
                 "SessionStarted",
@@ -1270,6 +1273,9 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
         var effectiveResumeMode = ApplyEffectiveResumeMode(session, launchSpec, resumeMode);
 
+        GrokRulesLaunchValidation.Validate(launchSpec, new Antiphon.SessionRunner.Contracts.GrokRulesSettings());
+        GrokRulesRefreshService.PreflightResume(session, launchSpec.GrokRulesPayload);
+
         var now = UtcNow();
         session.Status = SessionStatus.Starting;
         session.StartedAt = now;
@@ -1300,6 +1306,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // freshly resumed process means the old turn died — record its end. No auto-continue
             // here: a human resumed this card session deliberately and will say what they want.
             await WriteRestartBoundaryIfInterruptedAsync(session.Id, ct);
+            await InitializeGrokRulesAsync(session, ct);
 
             // Deliver anything queued while the session was Starting (the enqueue path refuses
             // to type into a booting TUI — see LaunchInteractiveProcessAsync).
@@ -1544,7 +1551,21 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             spec.Backend,
             spec.Env,
             $"Session {session.Id:D}");
+        if (spec.GrokRulesPayload is not null)
+        {
+            using var rulesScope = _scopeFactory.CreateScope();
+            await rulesScope.ServiceProvider.GetRequiredService<GrokRulesRefreshService>()
+                .PrepareLaunchAsync(_db, session, spec, ct);
+        }
         return spec;
+    }
+
+    private async Task InitializeGrokRulesAsync(AgentSession session, CancellationToken ct)
+    {
+        if (session.GrokRulesGeneration is null) return;
+        using var scope = _scopeFactory.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<GrokRulesRefreshService>().InitializeAsync(session.Id, ct);
+        await _db.Entry(session).ReloadAsync(ct);
     }
 
     /// <summary>

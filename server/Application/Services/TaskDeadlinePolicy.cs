@@ -124,6 +124,8 @@ internal static class TaskDeadlinePolicy
     {
         if (task.AgentSessionId is not Guid sessionId || task.DispatchedAt is not DateTime dispatched)
             return null;
+        if (await db.AgentSessions.AnyAsync(s => s.Id == sessionId
+            && (s.GrokRulesState == GrokRulesState.Pending || s.GrokRulesState == GrokRulesState.Failed), ct)) return null;
 
         var ceiling = Minutes(CeilingMinutes(settings, task.Role));
         var modelWait = Minutes(settings.ModelWaitDeadlineMinutes);

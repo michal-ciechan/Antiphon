@@ -4,6 +4,14 @@ namespace Antiphon.Server.Domain.Entities;
 
 public class AgentSession
 {
+    public Guid? GrokRulesGeneration { get; set; }
+    public string? GrokRulesExpectedSha256 { get; set; }
+    public int? GrokRulesExpectedByteCount { get; set; }
+    public string? GrokRulesReceiptJson { get; set; }
+    public GrokRulesState GrokRulesState { get; set; }
+    public string? GrokRulesFailure { get; set; }
+    public DateTime? GrokRulesReadyAt { get; set; }
+    public long? GrokRulesLaunchTranscriptFloor { get; set; }
     public HerdrSupervisionFailureKind? HerdrSupervisionFailureKind { get; set; }
     public Guid Id { get; set; }
 

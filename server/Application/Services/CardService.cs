@@ -1248,6 +1248,8 @@ public sealed class CardService : IScheduledCardActions
                     Cols: request.Cols,
                     Rows: request.Rows,
                     ExtraArgs: composition.ExtraArgs,
+                    GrokRulesPayload: composition.GrokRulesPayload,
+                    CommandLineBudgetChars: composition.CommandLineBudgetChars,
                     ExtraEnv: composition.ExtraEnv,
                     // The CARD's board names the project for a card spawn (plan section 4), whether
                     // or not the agent that runs it happens to sit on the same board.
