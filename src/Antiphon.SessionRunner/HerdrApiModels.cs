@@ -131,6 +131,9 @@ public sealed record HerdrWorkspaceReportMetadataParams(
     [property: JsonPropertyName("ttl_ms"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? TtlMs = null,
     [property: JsonPropertyName("seq"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ulong? Seq = null);
 
+public sealed record HerdrTabListParams(
+    [property: JsonPropertyName("workspace_id")] string WorkspaceId);
+
 public sealed record HerdrTabCreateParams(
     [property: JsonPropertyName("workspace_id"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? WorkspaceId = null,
     [property: JsonPropertyName("cwd"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Cwd = null,
@@ -222,6 +225,9 @@ internal sealed record HerdrWorkspaceCreateEnvelope(
     [property: JsonPropertyName("workspace")] HerdrWorkspaceInfo Workspace,
     [property: JsonPropertyName("tab")] HerdrTabInfo? Tab = null,
     [property: JsonPropertyName("root_pane")] HerdrPaneInfo? RootPane = null);
+
+internal sealed record HerdrTabListEnvelope(
+    [property: JsonPropertyName("tabs")] IReadOnlyList<HerdrTabInfo> Tabs);
 
 internal sealed record HerdrTabCreateEnvelope(
     [property: JsonPropertyName("tab")] HerdrTabInfo Tab,

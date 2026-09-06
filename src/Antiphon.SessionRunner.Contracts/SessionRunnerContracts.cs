@@ -54,7 +54,26 @@ public sealed record HerdrLaunchOptions(
     // CARD-0224: last-pane of a previous session to target when THIS launch has a new id
     // (FreshAfterResumeFailures). Null on the wire means "session id only" — an old server in
     // front of a new runner gets the resume-arm behaviour. Never set on card spawns.
-    Guid? ReusePaneOfSessionId = null);
+    Guid? ReusePaneOfSessionId = null,
+    // CARD-0384: optional dedicated tab label. Null/absent takes the last-pane → allocator path.
+    // An old server in front of a new runner omits the field and gets unpinned placement.
+    string? TabLabel = null);
+
+/// <summary>CARD-0384: read-only named-tab placement probe. No exe/env; IDs are diagnostic only.</summary>
+public sealed record HerdrPlacementCheckRequest(
+    Guid SessionId,
+    HerdrLaunchOptions Herdr);
+
+/// <summary>
+/// CARD-0384: allowed placement classification. <see cref="Action"/> is
+/// <c>create</c>, <c>relaunch</c>, or <c>adopt</c>. Occupancy/ambiguity/invalid shape are 409s,
+/// not this record.
+/// </summary>
+public sealed record HerdrPlacementCheckResult(
+    string Action,
+    string? WorkspaceId = null,
+    string? TabId = null,
+    string? PaneId = null);
 
 /// <summary>
 /// CARD-0213: bind a standing Antiphon session to a herdr pane Antiphon did not launch.
@@ -109,6 +128,9 @@ public static class HerdrNativeSessionSources
 public static class RunnerCapabilityFeatures
 {
     public const string HerdrAttach = "herdr-attach";
+
+    /// <summary>CARD-0384: runner implements named-tab placement (TabLabel + check route).</summary>
+    public const string HerdrNamedTabPlacement = "herdr-named-tab-placement";
 }
 
 /// <summary>Values for <see cref="RunnerLaunchRequest.TranscriptFormat"/>.</summary>
@@ -752,6 +774,12 @@ public static class HerdrProblemTypes
 
     /// <summary>409 on POST /sessions: last-pane is occupied by a foreign process (CARD-0224).</summary>
     public const string PaneOccupied = "pane_occupied";
+
+    /// <summary>409: more than one tab in the workspace matches the configured label (CARD-0384).</summary>
+    public const string TabAmbiguous = "herdr_tab_ambiguous";
+
+    /// <summary>409: the matching labelled tab is not exactly one pane (CARD-0384).</summary>
+    public const string TabInvalid = "herdr_tab_invalid";
 
     /// <summary>
     /// 409 on POST /sessions: a gkp (local llm-key-proxy) Grok launch whose env carries no
