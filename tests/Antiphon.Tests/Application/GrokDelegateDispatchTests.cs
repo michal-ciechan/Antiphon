@@ -37,6 +37,50 @@ namespace Antiphon.Tests.Application;
 [NotInParallel("AgentQueue")]
 public class GrokDelegateDispatchTests
 {
+    [Test]
+    [Arguments("pending")]
+    [Arguments("failed")]
+    [Arguments("legacy")]
+    [Arguments("malformed")]
+    [Arguments("hash")]
+    [Arguments("generation")]
+    [Arguments("version")]
+    [Arguments("path")]
+    [Arguments("count")]
+    [Arguments("expected_hash")]
+    public async Task Warm_grok_invalid_rules_revision_cannot_acquire_or_overwrite_the_live_session(string variant)
+    {
+        using var workspace = new TempWorkspace();
+        var (dispatcher, _) = CreateDispatchHarness();
+        var (warm, sessionId) = await SeedWarmAgentAsync(workspace.Path, AgentKind.Grok);
+        await using var db = CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
+        var receipt = GrokRulesRefreshService.Receipt(session)!;
+        var invalid = variant switch {
+            "hash" => receipt with { Sha256 = new string('0', 64) },
+            "version" => receipt with { TransportVersion = 2 },
+            "path" => receipt with { Path = "relative/rules.md" },
+            "count" => receipt with { ByteCount = receipt.ByteCount + 1 },
+            _ => receipt,
+        };
+        session.GrokRulesReceiptJson = variant == "legacy" ? null : variant == "malformed" ? "{" : System.Text.Json.JsonSerializer.Serialize(invalid);
+        if (variant == "pending") session.GrokRulesState = GrokRulesState.Pending;
+        if (variant == "failed") session.GrokRulesState = GrokRulesState.Failed;
+        if (variant == "generation") session.GrokRulesGeneration = Guid.NewGuid();
+        if (variant == "expected_hash") session.GrokRulesExpectedSha256 = new string('1', 64);
+        await db.SaveChangesAsync();
+        var before = session.GrokRulesReceiptJson;
+        var task = await SeedQueuedTaskAsync(workspace.Path, AgentKind.Grok);
+        await dispatcher.TickAsync(CancellationToken.None);
+        var actual = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
+        actual.AgentSessionId.ShouldNotBe(sessionId, variant + " cannot qualify as warm");
+        actual.AgentId.ShouldNotBe(warm);
+        (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == sessionId && m.Origin != QueuedMessageOrigin.System)).ShouldBe(0);
+        var retained = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sessionId);
+        retained.GrokRulesReceiptJson.ShouldBe(before);
+        retained.Status.ShouldBe(SessionStatus.Running);
+    }
+
     // ---- launch spec ---------------------------------------------------------------------------
 
     [Test]

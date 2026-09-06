@@ -561,8 +561,9 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
             => throw new NotSupportedException();
 
+        public SessionRunnerSessionDto? SessionResponse { get; set; }
         public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct)
-            => throw new NotSupportedException();
+            => Task.FromResult(SessionResponse ?? throw new NotSupportedException());
 
         public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct)
             => throw new NotSupportedException();

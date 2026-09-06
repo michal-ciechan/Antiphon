@@ -267,5 +267,17 @@ Additional mutation evidence follows. Full actual assertion text and exact elaps
 | PC-7-runner-bytes | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: Directory.Exists(root) should be False but was` | 13.141 / 12.484 s |
 | PC-7-runner-kind | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: Directory.Exists(root) should be False but was` | 13.000 / 12.297 s |
 | PC-11-capability | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: handler.Starts should be 0 but was` | 34.657 / 48.891 s |
+| PC-15-flush | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: h.Adapter.SubmittedBodies should be empty but had 1 item and was` | 69.547 / 40.046 s |
+| PC-15-now-sendnow | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: h.Adapter.SubmittedBodies should be empty but had 1 item and was` | 39.188 / 54.594 s |
+| PC-16-hash | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: session.GrokRulesState == GrokRulesState.Ready should be False but was` | 59.718 / 40.829 s |
+| PC-16-id | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: session.GrokRulesState == GrokRulesState.Ready should be False but was` | 56.890 / 60.610 s |
+| PC-16-generation | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: session.GrokRulesState == GrokRulesState.Ready should be False but was` | 79.531 / 63.734 s |
+| PC-16-prompt | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: session.GrokRulesState == GrokRulesState.Ready should be False but was` | 47.063 / 41.593 s |
+| PC-16-end | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: session.GrokRulesState == GrokRulesState.Ready should be False but was` | 41.329 / 42.218 s |
+| PC-16-provider | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: session.GrokRulesState == GrokRulesState.Ready should be False but was` | 57.703 / 58.625 s |
+| PC-24-deadline | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: state.GrokRulesState should be GrokRulesState.Failed but was` | 35.656 / 35.313 s |
+| PC-24-followon | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: session.GrokRulesFailure should be "grok_rules_refresh_failed: refresh_loop" but was` | 35.422 / 35.390 s |
+| PC-25-established-kill | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: adapter.Killed should be False but was` | 51.797 / 54.235 s |
+| PC-26-legacy-policy | 2 / 0 | `TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ShouldAssertException: h.Adapter.SubmittedBodies should be empty but had 1 item and was` | 41.188 / 38.328 s |
 
-Current archive SHA-256: `03970e98d978d7226e40706fa822c87df66f456be2f64ce87d4501b7112dd12f`. Earlier archive hash above identifies the prior four-mutation artifact. All still-unrun V/R/PC rows remain open; related newer deterministic checks do not certify the broader gate. No live acceptance call or real auto-compaction has yet been executed.
+Current archive SHA-256: `a39bc58b6d643827e33fcd653c1afac79fe95b82c5a7b2ecd846303b61e30983`. Earlier archive hash above identifies the prior four-mutation artifact. All still-unrun V/R/PC rows remain open; related newer deterministic checks do not certify the broader gate. No live acceptance call or real auto-compaction has yet been executed.

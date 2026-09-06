@@ -3970,9 +3970,7 @@ public sealed class AgentTaskDispatcher
             var desired = InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(claimed.Kind, claimed.Role,
                 await AgentBundleAttachments.LoadAsync(_db, agent.Id, _logger, ct)));
             var receipt = GrokRulesRefreshService.Receipt(installed);
-            if (!desired.IsEmpty && (receipt is null || installed.GrokRulesState != GrokRulesState.Ready
-                || receipt.Generation != installed.GrokRulesGeneration
-                || receipt.Sha256 != GrokRulesTransport.Hash(System.Text.Encoding.UTF8.GetBytes(desired.Text))))
+            if (!desired.IsEmpty && !GrokRulesRefreshService.CanReuse(installed, desired.Text))
                 return ReuseOutcome.SpawnFresh;
             if (desired.IsEmpty && receipt is not null) return ReuseOutcome.SpawnFresh;
         }

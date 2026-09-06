@@ -74,13 +74,21 @@ public sealed class GrokRulesFileLaunchTests
         var settings = new SessionRunnerSettings { SessionLogPath = root };
         var request = Request(root) with { Exe = "grok", Backend = SessionBackends.Herdr,
             Herdr = new HerdrLaunchOptions("card0395-" + Guid.NewGuid().ToString("N"), "rules", root, "rules", AgentKind: HerdrAgentKinds.Grok) };
-        var snapshots = new List<(string Method, HerdrPaneSidecar? Sidecar)>();
-        fake.BeforeRequest = method => snapshots.Add((method, HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(root, request.SessionId))));
+        var snapshots = new List<(string Method, HerdrPaneSidecar? Sidecar, byte[]? Bytes)>();
+        fake.BeforeRequest = method =>
+        {
+            var sidecar = HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(root, request.SessionId));
+            var path = sidecar?.GrokRulesReceipt?.Path;
+            snapshots.Add((method, sidecar, path is not null && File.Exists(path) ? File.ReadAllBytes(path) : null));
+        };
         await using var runtime = new SessionRunnerRuntime(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance,
             new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }), new PowershellProcessProbe());
         try
         {
             var result = await runtime.StartAsync(request, CancellationToken.None);
+            foreach (var snapshot in snapshots)
+                snapshot.Bytes.ShouldBe(GrokRulesTransport.Encode(request.GrokRulesPayload!, true, 262144),
+                    "complete rules bytes must precede the first allocation and every subsequent launch boundary");
             var initial = snapshots.First().Sidecar;
             initial.ShouldNotBeNull("receipt must precede even the first Herdr request");
             initial.LaunchPending.ShouldBeTrue();

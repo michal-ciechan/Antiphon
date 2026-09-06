@@ -16,12 +16,12 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
-[NotInParallel("MessageQueue")]
+[NotInParallel]
 public sealed class GrokRulesCompactionRecoveryTests
 {
     // Verbatim CARD-0157 capture, Grok 1.0.5, also pinned in GrokTranscriptTailerTests.
     // Parser/replay evidence only: this is not a CARD-0395 live endurance run.
-    private const string NativeBoundary = """{"timestamp":1787167460,"method":"_x.ai/session/update","params":{"sessionId":"1636e434-b4bc-4743-ae39-9381bd83a2cc","update":{"sessionUpdate":"auto_compact_completed","tokens_before":106112,"tokens_after":34833,"summary_preview":null},"_meta":{"eventId":"1636e434-b4bc-4743-ae39-9381bd83a2cc-1550","agentTimestampMs":1787167460583}}}""";
+    internal const string NativeBoundary = """{"timestamp":1787167460,"method":"_x.ai/session/update","params":{"sessionId":"1636e434-b4bc-4743-ae39-9381bd83a2cc","update":{"sessionUpdate":"auto_compact_completed","tokens_before":106112,"tokens_after":34833,"summary_preview":null},"_meta":{"eventId":"1636e434-b4bc-4743-ae39-9381bd83a2cc-1550","agentTimestampMs":1787167460583}}}""";
 
     [Test]
     [Arguments("live")]
@@ -77,7 +77,7 @@ public sealed class GrokRulesCompactionRecoveryTests
                 Kind = entry.Kind, Uuid = entry.Uuid, Text = entry.Text, InputTokens = entry.InputTokens,
                 CreatedAt = DateTime.UtcNow, Timestamp = DateTime.UtcNow });
             await db.SaveChangesAsync();
-            await rules.RecoverSessionAsync(h.SessionId, CancellationToken.None);
+            await rules.RecoverActiveAsync(CancellationToken.None);
         }
         (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == h.SessionId && m.RulesBoundarySequence != null))
             .ShouldBe(1, $"{lane} must create the trigger before another recovery lane can mask its absence");

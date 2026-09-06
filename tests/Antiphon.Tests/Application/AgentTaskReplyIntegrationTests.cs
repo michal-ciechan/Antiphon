@@ -30,6 +30,40 @@ namespace Antiphon.Tests.Application;
 public class AgentTaskReplyIntegrationTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Grok_rules_refresh_with_task_marker_neither_settles_nor_nudges(bool late)
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+        var id = Guid.NewGuid();
+        var prompt = GrokRulesRefreshService.Header(id) + "\n" + DelegationReportFormatter.TaskMarker(task.Id);
+        await using var db = CreateContext();
+        db.SessionQueuedMessages.Add(new SessionQueuedMessage { Id = id, AgentSessionId = sessionId,
+            Sequence = 1, Origin = QueuedMessageOrigin.System, Status = QueuedMessageStatus.Sent,
+            CreatedAt = DateTime.UtcNow, SentAt = DateTime.UtcNow, DeliveryAttempts = 1,
+            RulesRefreshKey = "launch:" + Guid.NewGuid().ToString("N"), Body = prompt });
+        await db.SaveChangesAsync();
+        var response = "ANTIPHON_RULES_ACK marker-like rules prose\n[antiphon-report:" + DelegationReportFormatter.Short(task.Id) + " done]";
+        await SeedTurnAsync(sessionId, prompt, late ? null : response, closingVerdict: false);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        if (late)
+        {
+            var seq = await db.TranscriptEntries.Where(e => e.AgentSessionId == sessionId).MaxAsync(e => e.Sequence);
+            db.TranscriptEntries.Add(NewEntry(sessionId, seq + 1, TranscriptKinds.AssistantText, response));
+            await db.SaveChangesAsync();
+            await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        }
+        var unchanged = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
+        unchanged.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        unchanged.Result.ShouldBeNull();
+        (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == sessionId)).ShouldBe(1, "no report nudge for internal refresh");
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), "genuine task report");
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(AgentTaskStatus.Succeeded);
+    }
+
+    [Test]
     public async Task a_marked_turn_settles_the_task_and_stores_the_report_verbatim()
     {
         using var workspace = new TempWorkspace();
