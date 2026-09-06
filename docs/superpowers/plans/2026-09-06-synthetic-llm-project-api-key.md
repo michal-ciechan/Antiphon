@@ -13,7 +13,10 @@
 ## Global constraints
 
 - This is a two-repository implementation: proxy/launcher changes belong in `D:\src\Mikeys.Tools`; Antiphon documentation changes belong in `D:\src\Antiphon`. Do not mix their commits.
-- Do not kill or restart the live proxy on `localhost:10746` to compile or test. Every .NET command uses a fresh `--artifacts-path` under `%TEMP%`.
+- `D:\src\Mikeys.Tools` commit `0f1005174d4a76a241f4b53ed38498a46e0b751c` is an inspection base, not an implementation base: `Mikey.LlmKeyProxy.Cli`, its dependency projects, and `scripts/llm-launchers/llm-key-proxy.ps1` are not tracked there, while the launcher baseline has substantial uncommitted work. A separately reviewed prerequisite must be committed and pushed first.
+- The code-stage brief must pin that prerequisite by a full 40-character `MIKEYS_TOOLS_PREREQUISITE_SHA`. Task 1 cannot begin from a branch name, moving remote head, dirty checkout, stash, patch file, or working-tree-only dependency.
+- Perform implementation in one clean isolated worktree per repository. The existing `D:\src\Mikeys.Tools` and `D:\src\Antiphon` checkouts contain unrelated work and are read-only evidence until their owners make them clean for rollout; never stage from either checkout into this feature.
+- During Tasks 1-5, do not kill or restart the live proxy on `localhost:10746` to compile or test; every .NET command uses a fresh `--artifacts-path` under `%TEMP%`. Task 6's targeted Aspire restart is the sole live-bin build: its script stops the owned resource before building and starts it afterward.
 - The synthetic value is a project selector, not a secret and not a valid upstream/LiteLLM key. Never log or return the real project key.
 - Never forward the synthetic credential, the dummy `llm-key-proxy`, inbound `Authorization`, inbound `x-api-key`, or any `X-Llm-*` header upstream. Forward only `Authorization: Bearer <resolved real project key>`.
 - Real credentials, the exact dummy `llm-key-proxy`, and missing credentials retain today's bound-session/process-reuse/hold/picker/cwd behavior.
@@ -64,13 +67,89 @@ Preserve the current sticky-session behavior and make the new signal explicit:
 - Modify `scripts/llm-launchers/llm-key-proxy-common.ps1`, `gkp.ps1`, `cxp.ps1`, and `clproxy.ps1`.
 - Modify `scripts/llm-launchers/tests/LlmNamedSessions.Tests.ps1`; retain `GkCommon.Tests.ps1` header coverage.
 - Modify `Mikey.LlmKeyProxy/README.md` and `scripts/llm-launchers/README.md`.
-- No functional change to `Mikey.LlmKeyProxy.Cli`: it already resolves a selected project and returns `--project <name>` to the launcher, which then creates the synthetic credential.
+- After Task 0 has pinned the tracked prerequisite, make no functional change to `Mikey.LlmKeyProxy.Cli`: that baseline resolves a selected project and returns `--project <name>` to the launcher, which then creates the synthetic credential.
 
 ### Antiphon
 
 - Modify `docs/agent-credentials.md`, `docs/ai-agent-tui-configuration.md`, and `docs/herdr-sessions.md` to distinguish the stored bootstrap env from the credential emitted by the wrapper.
 - Cite, but do not change, `src/Antiphon.SessionRunner/HerdrGkpLaunchGuard.cs` unless tests prove it checks the exact dummy value. Current code only requires a nonblank value in `XAI_API_KEY` or `GROK_CODE_XAI_API_KEY`.
 - Do not persist `llm-project:...` in agent `launchEnv`: per `docs/agent-credentials.md` §2, agent/project/inherited env is merged before the wrapper runs. Keep `X_LLM_PROJECT` plus the current bootstrap credential there; `gkp.ps1`/`cxp.ps1`/`clproxy.ps1` computes and overwrites the client credential after project resolution.
+
+---
+
+### Task 0: Land and pin the Mikeys.Tools prerequisite baseline
+
+**Ownership:** This is a gate owned by the existing CLI/launcher-baseline change, not a synthetic-credential commit. Its owner reviews and lands the complete dependency closure for the CLI, contracts/tests/solution wiring, canonical starter/installer, and launcher helper APIs that Task 4 consumes. The synthetic-credential implementer must not scoop those files out of the current dirty checkout.
+
+**Produces:**
+
+- A pushed full commit SHA, supplied to the code-stage brief as `MIKEYS_TOOLS_PREREQUISITE_SHA`.
+- Tracked `Mikey.LlmKeyProxy.Cli/Mikey.LlmKeyProxy.Cli.csproj`, `Mikey.LlmKeyProxy.Contracts/Mikey.LlmKeyProxy.Contracts.csproj`, `Mikey.LlmKeyProxy.Cli.Tests/Mikey.LlmKeyProxy.Cli.Tests.csproj`, and `scripts/llm-launchers/llm-key-proxy.ps1` at that SHA.
+- The prerequisite launcher baseline containing `Get-OptionalProxyProjectArgs` and `Set-LlmProxyClientEnv`, with its own tests passing before this feature starts.
+
+- [ ] **Step 1: Have the prerequisite owner commit, test, review, and push the existing baseline as its own change**
+
+Do not create that commit from this feature plan or include any synthetic parser, binding, forwarding, or credential-emission change in it. Record the pushed full SHA in the next code-stage brief; do not leave it as an implicit branch tip.
+
+The prerequisite owner runs its clean-checkout suites without touching the live proxy:
+
+```powershell
+$prerequisiteArtifacts = Join-Path $env:TEMP ('llm-key-proxy-prerequisite-' + [guid]::NewGuid().ToString('N'))
+dotnet test 'Mikey.LlmKeyProxy.Cli.Tests\Mikey.LlmKeyProxy.Cli.Tests.csproj' --artifacts-path $prerequisiteArtifacts --nologo
+Invoke-Pester -Path 'scripts\llm-launchers\tests\LlmNamedSessions.Tests.ps1' -Output Detailed
+Invoke-Pester -Path 'scripts\llm-launchers\tests\LlmKeyProxyStart.Tests.ps1' -Output Detailed
+```
+
+Record discovered/passed/failed counts with the prerequisite SHA. A failure or any request to `localhost:10746` blocks the prerequisite; do not weaken an assertion or widen a timeout.
+
+- [ ] **Step 2: Verify the pinned SHA is remote-backed and contains the required clean-checkout inputs**
+
+Run from a Mikeys.Tools repository before creating the feature worktree:
+
+```powershell
+$MikeysToolsPrerequisiteSha = $env:MIKEYS_TOOLS_PREREQUISITE_SHA
+if ($MikeysToolsPrerequisiteSha -notmatch '^[0-9a-fA-F]{40}$') {
+    throw 'The code-stage brief must provide a full MIKEYS_TOOLS_PREREQUISITE_SHA.'
+}
+
+git fetch --all --prune
+git cat-file -e "$MikeysToolsPrerequisiteSha`^{commit}"
+if ($LASTEXITCODE -ne 0) { throw 'Pinned Mikeys.Tools prerequisite commit is unavailable.' }
+
+$remoteRefs = @(git branch -r --contains $MikeysToolsPrerequisiteSha)
+if ($remoteRefs.Count -eq 0) { throw 'Pinned prerequisite is not present on a fetched remote ref.' }
+
+$requiredPaths = @(
+    'Mikey.LlmKeyProxy.Cli/Mikey.LlmKeyProxy.Cli.csproj',
+    'Mikey.LlmKeyProxy.Contracts/Mikey.LlmKeyProxy.Contracts.csproj',
+    'Mikey.LlmKeyProxy.Cli.Tests/Mikey.LlmKeyProxy.Cli.Tests.csproj',
+    'scripts/llm-launchers/llm-key-proxy.ps1',
+    'scripts/llm-launchers/tests/LlmKeyProxyStart.Tests.ps1'
+)
+foreach ($requiredPath in $requiredPaths) {
+    git cat-file -e "${MikeysToolsPrerequisiteSha}:$requiredPath"
+    if ($LASTEXITCODE -ne 0) { throw "Prerequisite does not track $requiredPath." }
+}
+
+$commonAtPrerequisite = (git show "${MikeysToolsPrerequisiteSha}:scripts/llm-launchers/llm-key-proxy-common.ps1") -join "`n"
+foreach ($requiredFunction in 'Get-OptionalProxyProjectArgs', 'Set-LlmProxyClientEnv') {
+    if ($commonAtPrerequisite -notmatch "function\s+$requiredFunction\b") {
+        throw "Prerequisite launcher baseline lacks $requiredFunction."
+    }
+}
+```
+
+- [ ] **Step 3: Create dedicated Mikeys.Tools and Antiphon worktrees, then run a clean preflight**
+
+Create the Mikeys.Tools feature worktree at the exact prerequisite SHA and the Antiphon docs worktree at the Antiphon base named by the code-stage brief. Before the first failing test, run this in each feature worktree:
+
+```powershell
+if (git status --porcelain) { throw 'Implementation worktree is not clean.' }
+git rev-parse --show-toplevel
+git rev-parse HEAD
+```
+
+The Mikeys.Tools result must equal `MIKEYS_TOOLS_PREREQUISITE_SHA`. If either worktree is dirty or any required path exists only in another checkout, stop before Task 1. Do not use `git add -f`, copy an untracked tree, or absorb a stash to pass this gate.
 
 ---
 
@@ -391,7 +470,81 @@ Antiphon:     docs(agents): document proxy credential handoff
 
 Use a new `%TEMP%` artifacts directory, record discovered/passed/failed counts, and do not call the live proxy.
 
-- [ ] **Step 2: Publish/deploy the new proxy parser to the existing local run directory** using the supported `llm-key-proxy.ps1` path. This is the first point at which restarting `:10746` is allowed. Verify `GET http://localhost:10746/health` against the individual resource, not only the Aspire dashboard.
+- [ ] **Step 2: Land the proxy commit, update the canonical Aspire checkout, restart only that resource, and prove the new binary is serving**
+
+The live port is currently backed by the Aspire/DCP process chain and `D:\src\Mikeys.Tools\Mikey.LlmKeyProxy\bin\Debug\net9.0\Mikey.LlmKeyProxy.exe`; it is not the standalone `%USERPROFILE%\.local\llm-key-proxy\run` publish. `scripts/llm-launchers/llm-key-proxy.ps1` returns immediately whenever `/health` succeeds, so it is a starter, not a deployment command for this live instance.
+
+First push and land the Mikeys.Tools feature commits. The owner of the canonical `D:\src\Mikeys.Tools` checkout must preserve or relocate all unrelated work, update that checkout to the landed full feature SHA, and leave it clean. Do not overwrite, stash, reset, or silently absorb the owner's changes. Supply the landed SHA as `MIKEYS_TOOLS_FEATURE_SHA`, then run the following from the clean canonical checkout:
+
+```powershell
+$canonicalRepo = 'D:\src\Mikeys.Tools'
+$MikeysToolsFeatureSha = $env:MIKEYS_TOOLS_FEATURE_SHA
+if ($MikeysToolsFeatureSha -notmatch '^[0-9a-fA-F]{40}$') {
+    throw 'Rollout requires the landed full MIKEYS_TOOLS_FEATURE_SHA.'
+}
+if (git -C $canonicalRepo status --porcelain) { throw 'Canonical Aspire checkout is dirty; stop rollout.' }
+if ((git -C $canonicalRepo rev-parse HEAD) -ne $MikeysToolsFeatureSha) {
+    throw 'Canonical Aspire checkout is not at the landed feature SHA.'
+}
+git -C $canonicalRepo fetch --all --prune
+if ($LASTEXITCODE -ne 0) { throw 'Could not refresh remote refs before rollout.' }
+$featureRemoteRefs = @(git -C $canonicalRepo branch -r --contains $MikeysToolsFeatureSha)
+if ($featureRemoteRefs.Count -eq 0) { throw 'Feature SHA is not present on a fetched remote ref.' }
+
+$listener = Get-NetTCPConnection -LocalPort 10746 -State Listen -ErrorAction Stop | Select-Object -First 1
+$liveProcess = Get-CimInstance Win32_Process -Filter "ProcessId = $($listener.OwningProcess)"
+$processChain = @($liveProcess)
+$cursor = $liveProcess
+for ($depth = 0; $depth -lt 6 -and $cursor.ParentProcessId; $depth++) {
+    $cursor = Get-CimInstance Win32_Process -Filter "ProcessId = $($cursor.ParentProcessId)"
+    if (-not $cursor) { break }
+    $processChain += $cursor
+}
+
+$expectedExe = Join-Path $canonicalRepo 'Mikey.LlmKeyProxy\bin\Debug\net9.0\Mikey.LlmKeyProxy.exe'
+if ($liveProcess.ExecutablePath -ne $expectedExe -or 'dcp.exe' -notin $processChain.Name) {
+    throw 'Port 10746 is not the expected Aspire-owned proxy. Stop for an owner-specific deployment path.'
+}
+
+$beforeProcessId = $liveProcess.ProcessId
+$beforeCreated = $liveProcess.CreationDate
+pwsh -NoProfile -File (Join-Path $canonicalRepo 'scripts\restart-llm-key-proxy.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'Aspire proxy restart failed.' }
+
+$restartDeadline = (Get-Date).AddSeconds(60)
+$liveProcess = $null
+do {
+    $listener = Get-NetTCPConnection -LocalPort 10746 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($listener) {
+        $liveProcess = Get-CimInstance Win32_Process -Filter "ProcessId = $($listener.OwningProcess)"
+    }
+    if ($liveProcess -and $liveProcess.ProcessId -ne $beforeProcessId) { break }
+    Start-Sleep -Milliseconds 500
+} while ((Get-Date) -lt $restartDeadline)
+if (-not $liveProcess) { throw 'Proxy did not return to port 10746 after the targeted restart.' }
+if ($liveProcess.ProcessId -eq $beforeProcessId -or $liveProcess.CreationDate -le $beforeCreated) {
+    throw 'Aspire did not replace the live proxy process.'
+}
+if ($liveProcess.ExecutablePath -ne $expectedExe) { throw 'Restarted proxy came from an unexpected binary path.' }
+
+$liveDll = Join-Path $canonicalRepo 'Mikey.LlmKeyProxy\bin\Debug\net9.0\Mikey.LlmKeyProxy.dll'
+rg -a -q -F 'SyntheticProjectCredential' $liveDll
+if ($LASTEXITCODE -ne 0) { throw 'Built live DLL does not contain the new parser type.' }
+
+$health = Invoke-RestMethod -Uri 'http://localhost:10746/health' -TimeoutSec 5
+if ($health.status -ne 'ok') { throw 'Individual proxy health check failed.' }
+
+$probe = Invoke-WebRequest -SkipHttpErrorCheck -Method Post `
+    -Uri 'http://localhost:10746/v1/chat/completions' `
+    -ContentType 'application/json' `
+    -Headers @{ Authorization = 'Bearer llm-project:__synthetic_rollout_probe_missing__' } `
+    -Body '{}'
+if ($probe.StatusCode -ne 404 -or $probe.Content -notmatch 'project_not_found') {
+    throw 'Live proxy did not exhibit the new fail-closed synthetic-credential behavior.'
+}
+```
+
+Do not install launchers unless all four deployment proofs pass: expected Aspire ownership, a replaced process from the expected executable path, the new parser type in the built DLL, and the synthetic fail-closed probe. `/health` alone is insufficient. If the ownership check reports a standalone instance, stop; do not invoke `llm-key-proxy.ps1` while it is healthy and claim it deployed anything.
 
 - [ ] **Step 3: Install canonical launchers**
 
@@ -405,9 +558,11 @@ Compare SHA-256 hashes for `llm-key-proxy-common.ps1`, `gkp.ps1`, `cxp.ps1`, and
 
 Use a disposable/new proxy session and `--require-project --project CostAllocation` (or an operator-approved low-cost test project). Verify from `/api/sessions` and `/api/holds` that the new session is Bound to the expected project, no hold was created, and no `/select/{holdId}` browser opened. Verify upstream success without printing any credential.
 
-- [ ] **Step 5: Recheck legacy behavior**
+- [ ] **Step 5: Accept legacy compatibility from the isolated integration tests**
 
-With an isolated HTTP test client, prove dummy/missing/real non-synthetic values still enter the normal hold path. Cancel the test hold; do not wait five minutes and do not disturb live agent sessions.
+Use the recorded `SessionServiceTests` and `LlmProxyHandlerTests` results from Step 1 to prove that dummy, missing, and real non-synthetic credentials retain the normal hold path and that the browser seam is not called unexpectedly. Record the discovered/passed/failed counts for those cases.
+
+Do not send a legacy-compatibility smoke to shared `localhost:10746`: its store and live sessions are shared and `OpenBrowserOnHold=true` there. No process-level legacy smoke is required for this rollout. If a later investigation specifically requires one, launch a separately published proxy on a random unused port with a temporary `LLM_KEY_PROXY_STORE`, `LLM_KEY_PROXY_OPEN_BROWSER=0`, and a non-routable loopback upstream, then kill that isolated process and remove its temporary directory; never reuse port `10746` or its store.
 
 ## Launcher and Antiphon environment matrix
 
@@ -453,7 +608,7 @@ With an isolated HTTP test client, prove dummy/missing/real non-synthetic values
 ## Rollback
 
 1. Reinstall the previous launcher revision first so clients send the legacy dummy/real credentials that both proxy versions understand.
-2. Republish/restart the previous proxy revision only after launchers are back. Verify `:10746/health` directly.
+2. Put the clean canonical Aspire checkout at the pinned previous full SHA and use `scripts/restart-llm-key-proxy.ps1` only after launchers are back. Require a replaced process from the expected Aspire executable path, confirm `SyntheticProjectCredential` is absent from that revision's rebuilt DLL, and check the individual `/health`; do not send a legacy credential to the shared instance as a rollback probe.
 3. Existing database sessions/projects/keys require no migration or cleanup; the feature adds no stored secret or schema.
 4. A new launcher accidentally used against an old proxy must only fall back to the old hold/picker behavior; routing URLs still point to localhost, so the synthetic value must never reach Maven directly.
 
@@ -474,5 +629,7 @@ With an isolated HTTP test client, prove dummy/missing/real non-synthetic values
 - Empty/malformed references cannot accidentally become a hold.
 - Both credential carriers and upstream non-leakage are tested.
 - Grok/Codex hard-coded dummy overwrites are removed; Claude's unbound real-token behavior is preserved.
-- Proxy-before-launcher rollout, direct health verification, rollback, and installed-copy hash checks are included.
+- A pushed full Mikeys.Tools prerequisite SHA and clean isolated worktrees gate every feature edit, so the CLI/starter/launcher baseline cannot be absorbed from a dirty checkout.
+- Proxy-before-launcher rollout detects Aspire ownership, uses the targeted Aspire restart, proves the new binary and behavior in addition to health, and checks installed-copy hashes.
+- Legacy compatibility is accepted from isolated integration tests; no dummy/missing/real credential is sent to the shared live proxy.
 - No implementation placeholder, schema migration, live-proxy test dependency, or generated-card edit is required.
