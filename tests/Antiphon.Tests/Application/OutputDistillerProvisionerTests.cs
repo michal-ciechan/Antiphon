@@ -125,7 +125,7 @@ public class OutputDistillerProvisionerTests
         reconciled.SystemPromptAppend.ShouldBe(OutputDistillation.Contract);
         reconciled.SystemPromptAppend!.ShouldContain("NEVER invent, round, rename or paraphrase an identifier or a number.");
         reconciled.SystemPromptAppend!.ShouldContain($"contract v{OutputDistillation.ContractVersion}");
-        reconciled.SystemPromptAppend!.ShouldContain("contract v1");
+        reconciled.SystemPromptAppend!.ShouldContain("contract v2");
         reconciled.SystemPromptAppend!.ShouldContain("USE NO TOOLS");
     }
 
@@ -159,10 +159,10 @@ public class OutputDistillerProvisionerTests
     [Test]
     public void the_version_label_matches_the_bundle()
     {
-        OutputDistillation.ContractVersion.ShouldBe("1");
+        OutputDistillation.ContractVersion.ShouldBe("2");
         OutputDistillation.Contract.ShouldContain($"contract v{OutputDistillation.ContractVersion}");
         OutputDistillation.Contract.ShouldBe(InstructionBundles.TextOf(InstructionBundles.OutputDistiller));
-        OutputDistillation.Contract.ShouldStartWith("You are the Antiphon OUTPUT DISTILLER (contract v1).");
+        OutputDistillation.Contract.ShouldStartWith("You are the Antiphon OUTPUT DISTILLER (contract v2).");
         OutputDistillation.OutputFormatReminder.ShouldContain("never `blocked`");
         var reporting = DelegationReportFormatter.DistillReportingContract(
             Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"), 20_000);
