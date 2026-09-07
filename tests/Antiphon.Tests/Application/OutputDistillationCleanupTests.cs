@@ -18,6 +18,41 @@ namespace Antiphon.Tests.Application;
 public class OutputDistillationCleanupTests
 {
     [Test]
+    public async Task Clock_pump_does_not_expire_a_ledger_write_while_real_io_is_blocked()
+    {
+        var barrier = new CleanupBarrier("ledger")
+        { Release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously) };
+        using var h = new OutputDistillationHarness(configureDb: o => o.AddInterceptors(barrier));
+        var seat = await h.EnsureSpecialistAsync();
+        var seed = await h.SeedSourceAsync();
+        using var stop = new CancellationTokenSource();
+        var pending = h.Distiller.RequestAsync(seed.Task.Id, seed.QueuedMessageId, stop.Token);
+        Task? pump = null;
+        try
+        {
+            var run = await h.WaitForDistillAsync(seat.Id);
+            barrier.Armed = true;
+            await h.SettleDistillAsync(run.Id, h.PassingDistillation());
+            pump = h.PumpClockAsync(pending);
+            await barrier.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var cleanupTime = h.Clock.GetUtcNow();
+            await Task.Delay(100);
+            h.Clock.GetUtcNow().ShouldBe(cleanupTime);
+            barrier.Active.ShouldBeTrue("the pump must not cancel real ledger I/O with a clock advance");
+            barrier.Release.TrySetResult();
+            await pump;
+            (await h.LedgerAsync(seed.Task.Id)).ShouldHaveSingleItem().Outcome.ShouldBe(DistillationOutcome.Shadowed);
+        }
+        finally
+        {
+            barrier.Release.TrySetResult();
+            stop.Cancel();
+            try { await pending; } catch (OperationCanceledException) { }
+            if (pump is not null) { try { await pump; } catch (OperationCanceledException) { } }
+        }
+    }
+
+    [Test]
     public async Task A_canceled_never_typed_brief_is_expired_despite_its_dispatch_stamp()
     {
         var barrier = new CleanupBarrier("cancel")

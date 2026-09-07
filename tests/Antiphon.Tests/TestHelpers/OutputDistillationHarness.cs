@@ -6,6 +6,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -34,6 +35,8 @@ internal sealed class OutputDistillationHarness : IDisposable
     public string Scratch => _scratch;
     private readonly string _scratch;
     private readonly DelegationSettings _settings;
+    private readonly object _clockLock = new();
+    private bool _waitingForPoll;
 
     public OutputDistillationHarness(Action<DelegationSettings>? configure = null, Action<IServiceCollection>? servicesOverride = null, Action<DbContextOptionsBuilder>? configureDb = null)
     {
@@ -62,6 +65,7 @@ internal sealed class OutputDistillationHarness : IDisposable
 
         var services = new ServiceCollection();
         services.AddLogging();
+        services.AddSingleton<ILogger<OutputDistillationService>>(new PollWaitLogger(this));
         services.AddDbContext<AppDbContext>(o => { o.UseNpgsql(TestDbFixture.ConnectionString); configureDb?.Invoke(o); });
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton<TimeProvider>(Clock);
@@ -232,8 +236,48 @@ internal sealed class OutputDistillationHarness : IDisposable
         await using var db = CreateContext();
         var queued = await db.AgentTasks.AnyAsync(t => t.AgentName == SpecialistSlug
             && t.Role == AgentTaskRole.Distill && t.Status == AgentTaskStatus.Queued);
-        Clock.Advance(TimeSpan.FromSeconds(queued ? _settings.OutputDistillerWaitSeconds : 2));
-        await run.WaitAsync(TimeSpan.FromSeconds(5));
+        // A poll delay can be registered after an advance, so keep pumping while it waits.
+        // Do not advance during real I/O: one two-second step exhausts the cleanup budget.
+        var firstAdvance = true;
+        for (var spins = 0; !run.IsCompleted && spins < 400; spins++)
+        {
+            lock (_clockLock)
+            {
+                if (_waitingForPoll)
+                {
+                    Clock.Advance(TimeSpan.FromSeconds(
+                        firstAdvance && queued ? _settings.OutputDistillerWaitSeconds : 2));
+                    firstAdvance = false;
+                }
+            }
+            await Task.Delay(15);
+        }
+
+        if (!run.IsCompleted)
+            throw new TimeoutException("RequestAsync never finished waiting for its distillation.");
+
+        await run;
+    }
+
+    // The service passes this logger to its specialist runner. Serialize phase transitions
+    // with clock advances so a poll ending cannot race an advance into the cleanup phase.
+    private sealed class PollWaitLogger(OutputDistillationHarness harness) : ILogger<OutputDistillationService>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (state is not IEnumerable<KeyValuePair<string, object?>> properties)
+                return;
+            var operation = properties.FirstOrDefault(p => p.Key == "Operation").Value as string;
+            if (operation != "specialist.poll-wait")
+                return;
+            var phase = properties.FirstOrDefault(p => p.Key == "Phase").Value as string;
+            lock (harness._clockLock)
+                harness._waitingForPoll = phase == "start";
+        }
     }
 
     public async Task SettleDistillAsync(Guid id, string result)
