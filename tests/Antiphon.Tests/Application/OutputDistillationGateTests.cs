@@ -101,7 +101,9 @@ public class OutputDistillationGateTests
     }
 
     [Test]
-    public void dropping_next_or_handoff_from_a_present_block_is_over_compressed()
+    [Arguments("next")]
+    [Arguments("handoff")]
+    public void dropping_next_or_handoff_from_a_present_block_is_over_compressed(string missing)
     {
         var raw = LongRaw(body: """
             --- next stage ---
@@ -109,10 +111,13 @@ public class OutputDistillationGateTests
             handoff: the gate must keep this sentence
             artifact: docs/superpowers/plans/2026-09-03-card-0330-output-distiller-plan.md
             """);
-        var distilled = Pad(200, KeepAll() + " next: review");
+        const string next = "\nnext: review";
+        const string handoff = "\nhandoff: the gate must keep this sentence";
+        OutputDistillationGate.Evaluate(raw, Pad(250, KeepAll() + next + handoff)).Passed.ShouldBeTrue();
+        var distilled = Pad(250, KeepAll() + (missing == "next" ? handoff : next));
         var result = OutputDistillationGate.Evaluate(raw, distilled);
         result.Verdict.ShouldBe(DistillationGateVerdict.RejectedOverCompressed);
-        result.MissingAnchors.ShouldContain("handoff:");
+        result.MissingAnchors.ShouldContain(missing == "next" ? "next:review" : "handoff:");
     }
 
     [Test]
