@@ -4,6 +4,7 @@ using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Options;
 using Serilog;
 
+var managedEntryUtc = DateTime.UtcNow;
 var builder = WebApplication.CreateBuilder(args);
 
 // Structured logging with a bounded rolling file: one file per day, capped size, and retention by
@@ -42,6 +43,11 @@ builder.Services.PostConfigure<SessionRunnerSettings>(settings =>
 // explicitly separate Herdr backend slices opt a session in; HerdrSettings.Enabled defaults false.
 builder.Services.Configure<HerdrSettings>(builder.Configuration.GetSection("SessionRunner:Herdr"));
 builder.Services.AddSingleton<HerdrClient>();
+builder.Services.AddSingleton(sp => new RunnerStartupDiagnostics(
+    sp.GetRequiredService<ILogger<RunnerStartupDiagnostics>>(),
+    Environment.GetEnvironmentVariable("ANTIPHON_STARTUP_ATTEMPT"),
+    int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_STARTUP_SUPERVISOR_PID"), out var supervisorPid) ? supervisorPid : null,
+    Environment.GetEnvironmentVariable("ANTIPHON_STARTUP_SUPERVISOR_START")));
 builder.Services.AddSingleton<SessionRunnerRuntime>();
 builder.Services.AddHealthChecks();
 // Prune PTY-audit dumps on startup and periodically, keeping them within the configured age + count caps
@@ -79,6 +85,9 @@ builder.Services.AddHostedService<HerdrStatusPushService>();
 }
 
 var app = builder.Build();
+var startup = app.Services.GetRequiredService<RunnerStartupDiagnostics>();
+startup.Record("managed-entry", observedUtc: managedEntryUtc);
+app.Lifetime.ApplicationStarted.Register(() => startup.Record("application-started"));
 // The assembly stamp and process start cannot change during this process lifetime. Capture them
 // once; unlike the pty-backend flag there is no useful per-request re-resolution.
 var runnerBuild = RunnerBuildIdentity.Resolve();
@@ -137,7 +146,12 @@ async ValueTask<object?> HerdrUnreachableFilter(EndpointFilterInvocationContext 
 // runner must never answer /sessions with a half-adopted list — during the sweep the port is
 // simply down, which the reconciler already treats as "skip this cycle".
 {
-    var runtime = app.Services.GetRequiredService<SessionRunnerRuntime>();
+    SessionRunnerRuntime runtime;
+    using (var resolution = startup.Begin("runtime-resolution"))
+    {
+        runtime = app.Services.GetRequiredService<SessionRunnerRuntime>();
+        resolution.Complete();
+    }
     var probe = app.Services.GetRequiredService<IProcessLivenessProbe>();
     var adopted = await runtime.AdoptOrphanedHostsAsync(probe, CancellationToken.None);
     if (adopted > 0)

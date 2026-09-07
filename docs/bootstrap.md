@@ -1,5 +1,48 @@
 # Bootstrapping Antiphon
 
+## Runner restart observation (CARD-0420)
+
+`pwsh -NoProfile -File scripts/restart-session-runner.ps1` preserves detached
+sessions. Startup includes the supervisor delay, an incremental build, executable
+launch and the complete initial adoption sweep before HTTP. The default health
+wait is **180 seconds**, beginning after restart actions. `-TimeoutSec` accepts a
+positive integer override. This is headroom based on two measured restarts, not a
+latency percentile, guaranteed bound or startup speed improvement.
+
+The final `RUNNER RESTART RESULT:` line contains compact JSON. Outcomes are
+`healthy` (exit 0, a completed HTTP 200 from the verified runner), `wait-expired`
+(exit 2, readiness unconfirmed), and `action-failed` (exit 1, a concrete validation,
+stop or launch operation failed). A retrying build failure stays in the same wait.
+An expired wait stops observation only; supervision and adoption continue.
+Continue observing with no state writes, stops, PID deletion or Scheduled Task calls:
+
+```powershell
+pwsh -NoProfile -File scripts/restart-session-runner.ps1 -WaitOnly -TimeoutSec 180
+Get-Content logs\session-runner.log -Tail 30
+```
+
+`-WaitOnly` cannot be combined with `-Hard` or `-KillSessions`. A mere wait expiry
+does not call for another ordinary or hard restart. Also inspect dated Serilog
+files at `%TEMP%\antiphon-logs\session-runner-*.log` (or configured `Serilog:LogPath`).
+
+Version 1 `ANTIPHON_STARTUP` JSON milestones record UTC time, attempt ID, producer
+PID/start time, supervisor and wrapper identities, build duration/exit code and
+runner resolution/adoption phases. A service PID file identifies the cmd wrapper;
+it is distinct from the runner listener. Missing, stale or malformed milestones
+mean an unknown phase. Phase age is an observation, not proof of progress. Logs
+retain their existing bounded rotation. They contain no prompts, rules or
+environment dumps. The first health time is this observer's first completed 200,
+with up to two seconds between probes; it is not the endpoint's earliest possible
+response time. Requests use the remaining monotonic budget, capped at five seconds.
+
+For deployment, verify the commit is in the canonical checkout, then schedule one
+supervisor refresh (`-Hard`) to load these script changes if the supervisor is old.
+Do not re-register the task, create another supervisor or use `-KillSessions`.
+An old supervisor without milestones still supports health observation. Verify new
+supervisor records and the runner's `/capabilities` build identity after rollout;
+HTTP health alone does not prove the intended code loaded. Code-stage verification
+uses isolated fixtures and does not restart the live fleet.
+
 A brand-new Windows machine or a fresh clone. Aspire is the path. Every
 automatable step already has a tracked script — this file sequences them.
 Do not copy `appsettings.json.example` over the tracked

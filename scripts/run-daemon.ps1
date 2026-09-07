@@ -47,7 +47,28 @@ $exeArgList = if ($ExeArgs) { @($ExeArgs -split '\s+') } else { @() }
 
 function Write-Log([string]$msg) {
     $line = "$(Get-Date -Format 'HH:mm:ss') [$Name] $msg"
-    try { Add-Content -LiteralPath $LogFile -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue } catch {}
+    $stream = $null
+    try {
+        # Explicit sharing keeps a milestone append from denying cmd's stdout open
+        # during launch. Diagnostics must never turn a healthy launch into exit 1.
+        $stream = [IO.File]::Open($LogFile, [IO.FileMode]::Append, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
+        $bytes = [Text.Encoding]::UTF8.GetBytes($line + [Environment]::NewLine)
+        $stream.Write($bytes, 0, $bytes.Length)
+    } catch {} finally { if ($stream) { $stream.Dispose() } }
+}
+
+# These records are optional diagnostics; they must not alter supervision.
+$startupProducerStart = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o')
+$startupAttempt = $null
+function Write-Startup([string]$Event, $DurationMs = $null, $ExitCode = $null, $Wrapper = $null) {
+    try {
+        $record = [ordered]@{ version = 1; event = $Event; utc = [DateTime]::UtcNow.ToString('o');
+            producer = 'supervisor'; producerPid = $PID; producerStartTimeUtc = $startupProducerStart;
+            attemptId = $startupAttempt; elapsedMs = $DurationMs; exitCode = $ExitCode;
+            wrapperPid = $null; wrapperStartTimeUtc = $null }
+        if ($Wrapper) { $record.wrapperPid = $Wrapper.Id; $record.wrapperStartTimeUtc = $Wrapper.StartTime.ToUniversalTime().ToString('o') }
+        Write-Log ('ANTIPHON_STARTUP ' + ($record | ConvertTo-Json -Compress))
+    } catch { }
 }
 
 # Ensure directories exist
@@ -104,25 +125,32 @@ Write-Log "Supervisor started (PID $PID)"
 while ($true) {
     $desired = Get-DesiredState
     if ($desired -eq 'stopped') {
+        Write-Startup 'supervisor-stopping'
         Write-Log "Desired state is stopped - exiting."
         Remove-Item $ServicePidFile -ErrorAction SilentlyContinue
         exit 0
     }
 
     Invoke-LogRotation
+    $startupAttempt = [Guid]::NewGuid().ToString('N')
 
     # Build before launch so a soft restart (kill the service; the loop relaunches) picks up
     # new code, exactly as 'dotnet run' did - but we then launch the built exe directly so no
     # kill-on-close muxer job captures the pty-hosts. The old service is already dead here, so
     # its exe is unlocked and the build can overwrite it.
     if ($BuildProjectDir) {
+        Write-Startup 'build-start'
+        $buildClock = [Diagnostics.Stopwatch]::StartNew()
         Write-Log "Building $BuildProjectDir (Debug)..."
         $buildOut = & dotnet build $BuildProjectDir -c Debug --nologo 2>&1
+        $buildCode = $LASTEXITCODE
+        Write-Startup 'build-complete' $buildClock.Elapsed.TotalMilliseconds $buildCode
         foreach ($l in $buildOut) {
             Add-Content -LiteralPath $LogFile -Value $l -Encoding UTF8 -ErrorAction SilentlyContinue
         }
-        if ($LASTEXITCODE -ne 0) {
-            Write-Log "[ERR] Build failed (exit $LASTEXITCODE). Retrying in 5 s..."
+        if ($buildCode -ne 0) {
+            Write-Startup 'retry-scheduled' 5000 $buildCode
+            Write-Log "[ERR] Build failed (exit $buildCode). Retrying in 5 s..."
             Start-Sleep 5
             continue
         }
@@ -137,21 +165,30 @@ while ($true) {
     $psi.WorkingDirectory = $WorkDir
     $psi.UseShellExecute  = $false
     $psi.CreateNoWindow   = $true
+    if ($Name -eq 'session-runner') {
+        $psi.EnvironmentVariables['ANTIPHON_STARTUP_ATTEMPT'] = $startupAttempt
+        $psi.EnvironmentVariables['ANTIPHON_STARTUP_SUPERVISOR_PID'] = [string]$PID
+        $psi.EnvironmentVariables['ANTIPHON_STARTUP_SUPERVISOR_START'] = $startupProducerStart
+    }
     # /s /c strips outer quotes and runs as a shell command, so >> redirection works.
     # stdout+stderr are appended to the same log file the Aspire tailer reads.
     $innerCmd = if ($exeArgList.Count -gt 0) { "$Exe $($exeArgList -join ' ')" } else { $Exe }
     $psi.Arguments = "/s /c `"$innerCmd >> `"$LogFile`" 2>&1`""
 
     try {
+        Write-Startup 'launch-requested'
         $proc = [System.Diagnostics.Process]::Start($psi)
         if ($null -eq $proc) { throw "Process.Start returned null" }
+        Write-Startup 'wrapper-started' $null $null $proc
         $proc.Id | Set-Content -LiteralPath $ServicePidFile -Encoding UTF8
         Write-Log "Service PID $($proc.Id)"
 
         $proc.WaitForExit()
         $code = $proc.ExitCode
+        Write-Startup 'service-exit' $null $code
         Write-Log "Exited (code $code)"
     } catch {
+        Write-Startup 'launch-error' $null 1
         Write-Log "[ERR] Failed to start: $_"
     } finally {
         Remove-Item $ServicePidFile -ErrorAction SilentlyContinue
@@ -159,10 +196,12 @@ while ($true) {
 
     $desired = Get-DesiredState
     if ($desired -ne 'running') {
+        Write-Startup 'supervisor-stopping'
         Write-Log "Desired state is '$desired' - stopping."
         exit 0
     }
 
     Write-Log "Restarting in 3 s..."
+    Write-Startup 'retry-scheduled' 3000
     Start-Sleep 3
 }

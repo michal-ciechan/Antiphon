@@ -37,6 +37,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     private readonly HerdrClient? _herdrClient;
     private readonly IProcessLivenessProbe _processLiveness;
     private readonly ILogger<SessionRunnerRuntime> _logger;
+    private readonly RunnerStartupDiagnostics _startup;
     private readonly HerdrPlacementCoordinator _placement = new();
     private readonly HerdrNamedTabResolver _namedTabs = new(HerdrNamedTabResolver.HostLabelComparer);
 
@@ -50,10 +51,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         IOptions<SessionRunnerSettings> settings,
         ILogger<SessionRunnerRuntime> logger,
         HerdrClient? herdrClient = null,
-        IProcessLivenessProbe? processLiveness = null)
+        IProcessLivenessProbe? processLiveness = null,
+        RunnerStartupDiagnostics? startupDiagnostics = null)
     {
         _settings = settings.Value;
         _logger = logger;
+        _startup = startupDiagnostics ?? new RunnerStartupDiagnostics(logger);
         _herdrClient = herdrClient;
         _processLiveness = processLiveness ?? new SystemProcessLivenessProbe();
         _shadowStore = new ShadowCopyStore(_settings.PtyHostBinDir);
@@ -729,25 +732,38 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     /// </summary>
     public async Task<int> AdoptOrphanedHostsAsync(IProcessLivenessProbe probe, CancellationToken ct)
     {
+        using var sweep = _startup.Begin("adoption-sweep");
         // Rebuild transcript claims BEFORE any session is adopted. This sweep already has to
         // complete before the HTTP API starts listening, so restoring here means a freshly launched
         // session can never race the restore and discover a file a surviving session still owns.
-        RestoreTranscriptClaims();
+        using (var claims = _startup.Begin("claims"))
+        {
+            var restoredClaims = RestoreTranscriptClaims();
+            claims.Complete(restoredClaims);
+        }
 
         // CARD-0160: herdr adoption arm AFTER claims. Sidecar present + pane/pid/read evidence →
         // re-adopt; restored-but-empty or unknown pane → Exited(HerdrRestartPresumedDead);
         // herdr unreachable + OS-alive → Pending (S3); unreachable + OS-dead → ChildGone.
-        if (_herdrClient is not null)
+        using (var herdr = _startup.Begin("herdr"))
         {
-            var retentionDays = Math.Max(0, _herdrClient.Settings.LastPaneRetentionDays);
-            if (retentionDays > 0)
-                HerdrLastPane.DeleteOlderThan(_settings.SessionLogPath, TimeSpan.FromDays(retentionDays));
-            await AdoptHerdrSessionsAsync(probe, ct);
+            if (_herdrClient is not null)
+            {
+                var retentionDays = Math.Max(0, _herdrClient.Settings.LastPaneRetentionDays);
+                if (retentionDays > 0)
+                    HerdrLastPane.DeleteOlderThan(_settings.SessionLogPath, TimeSpan.FromDays(retentionDays));
+                await AdoptHerdrSessionsAsync(probe, ct);
+            }
+            herdr.Complete(_sessions.Values.Count(s => s.ToDto().Backend == SessionBackends.Herdr));
         }
 
+        using var pty = _startup.Begin("pty-manifests");
         var manifestDir = _settings.PtyHostManifestDir;
         if (!Directory.Exists(manifestDir))
+        {
+            pty.Complete(0); sweep.Complete(0);
             return 0;
+        }
 
         var adopted = 0;
         foreach (var file in Directory.EnumerateFiles(manifestDir, "*.json"))
@@ -763,6 +779,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (_sessions.ContainsKey(manifest.SessionId))
                 continue;
 
+            using var hostAttempt = _startup.Begin("pty-host-adoption", manifest.SessionId);
+
             if (manifest.HostPid > 0 && probe.IsAlive(manifest.HostPid, manifest.HostStartTimeUtc))
             {
                 var session = new RunnerSession(manifest.SessionId, _settings, _events, _logger, _transcriptClaims);
@@ -771,6 +789,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     var running = await session.AdoptAsync(manifest, ct);
                     _sessions.TryAdd(manifest.SessionId, session);
                     adopted++;
+                    hostAttempt.Complete(1, running ? "running" : "exited");
                     _logger.LogInformation(
                         "Adopted pty-host for session {SessionId} (host pid {HostPid}, {State})",
                         manifest.SessionId, manifest.HostPid, running ? "running" : "exited while runner was down");
@@ -791,12 +810,14 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             // sees a real exit instead of an unknown session.
             var exitedSession = RunnerSession.CreateAdoptedExited(manifest, _settings, _events, _logger);
             _sessions.TryAdd(manifest.SessionId, exitedSession);
+            hostAttempt.Complete(0, "terminal");
             TryDeleteFile(file);
             _logger.LogWarning(
                 "pty-host for session {SessionId} (pid {HostPid}) is gone; registered as Exited ({Reason})",
                 manifest.SessionId, manifest.HostPid, exitedSession.ToDto().ExitReason);
         }
 
+        pty.Complete(adopted); sweep.Complete(adopted);
         return adopted;
     }
 
@@ -815,6 +836,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (_sessions.ContainsKey(sidecar.SessionId))
                 continue;
 
+            using var attempt = _startup.Begin("herdr-adoption", sidecar.SessionId);
             var verdict = await EvaluateHerdrBarAsync(sidecar, probe, ct);
             switch (verdict)
             {
@@ -843,6 +865,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         sidecar.SessionId, HerdrPendingReasons.Unreachable);
                     break;
             }
+            attempt.Complete(1, verdict.ToString());
         }
     }
 
@@ -978,7 +1001,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     /// a relaunch of the SAME session id (which is what <c>--resume</c> does) re-claims it as the
     /// same owner. Sidecars are pruned on the 14-day cleanup pass, so this cannot grow without bound.
     /// </summary>
-    private void RestoreTranscriptClaims()
+    private int RestoreTranscriptClaims()
     {
         var restored = 0;
         var heuristic = 0;
@@ -1016,6 +1039,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             _logger.LogInformation(
                 "Restored {Count} transcript claim(s) from sidecars ({Heuristic} heuristic, {Exact} exact, {Suspect} on another session's file)",
                 restored, heuristic, exact, suspect);
+        return restored;
     }
 
     private static void TryDeleteFile(string path)

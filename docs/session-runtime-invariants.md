@@ -1,5 +1,14 @@
 # Session runtime invariants
 
+- **Startup diagnostics do not relax readiness (CARD-0420).** The runner restores
+  transcript claims, completes the existing Herdr pass (including Pending/terminal
+  representations), then completes the serial pty-host manifest pass before HTTP
+  starts. Both health and session lists remain unavailable during that sweep.
+  Milestone sink failures do not change adoption fate, cancellation or disposal.
+  The returned adopted count still counts successful pty-host adoptions, not the
+  fleet total or completed transcript catch-up. Restart-script wait expiry ends
+  only observation; it never cancels adoption or changes session desired state.
+
 - **A delivered boot prompt with no assistant row is a PROVIDER STALL, never a delivery
   re-attempt** (CARD-0353/CARD-0312). Once a prompt is transcript-confirmed, our bytes arrived —
   re-typing it, pressing Enter again or resending the brief can only double-submit. The next
