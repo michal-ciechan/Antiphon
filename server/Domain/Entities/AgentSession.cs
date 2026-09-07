@@ -87,6 +87,11 @@ public class AgentSession
     /// </summary>
     public DateTime? BootReplyDueAt { get; set; }
 
+    /// <summary>CARD-0412: accepted capacity-recovery launch receipt for this incarnation.</summary>
+    public Guid? CapacityWaitId { get; set; }
+    public string? CapacityRecoveryActionKey { get; set; }
+    public string? CapacityLaunchReceipt { get; set; }
+
     /// <summary>
     /// Highest transcript sequence for which compaction recovery has already run. The durable
     /// dedupe anchor: TranscriptTailer restarts at offset 0 on every runner restart/adoption and

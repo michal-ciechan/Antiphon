@@ -251,6 +251,13 @@ public enum AttentionKind
     /// </summary>
     DelegationCapability = 30,
     HerdrSupervisionHeld = 31,
+
+    /// <summary>
+    /// CARD-0412: a capacity-recovery episode exhausted its three admitted attempts. Error,
+    /// grouped as broken. Derived from the durable wait so incident pruning cannot hide it.
+    /// Appended after shipped 31; do not renumber.
+    /// </summary>
+    CapacityRecoveryExhausted = 32,
 }
 
 /// <summary>

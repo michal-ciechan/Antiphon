@@ -231,6 +231,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     icon: TbFlag,
     hint: 'A named delegation capability was issued, rotated, or revoked. Revoke is the withdrawal; the token is never shown here.',
   },
+  CapacityRecoveryExhausted: {
+    label: 'Capacity retries paused',
+    color: 'danger',
+    icon: TbClockPause,
+    hint: 'Inspect the latest wall and continue manually. Automatic capacity recovery will not retry this episode.',
+  },
 }
 
 export type AttentionGroupKey = 'now' | 'broken' | 'suspect' | 'failures'

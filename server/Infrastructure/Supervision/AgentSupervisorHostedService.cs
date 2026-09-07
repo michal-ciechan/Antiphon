@@ -50,6 +50,7 @@ public sealed class AgentSupervisorHostedService : BackgroundService
     private readonly ContextCompactionService _compaction;
     private readonly PolicyRefreshService _policyRefresh;
     private readonly ApiErrorRecoveryService _apiErrorRecovery;
+    private readonly CapacityRecoveryService _capacityRecovery;
     private readonly HerdrStatusCorroborationService _herdrCorroboration;
     private readonly OrchestratorInvestigationSweepService _investigation;
     private readonly QueuedInputWatchdogService _queuedInput;
@@ -72,6 +73,7 @@ public sealed class AgentSupervisorHostedService : BackgroundService
         ContextCompactionService compaction,
         PolicyRefreshService policyRefresh,
         ApiErrorRecoveryService apiErrorRecovery,
+        CapacityRecoveryService capacityRecovery,
         HerdrStatusCorroborationService herdrCorroboration,
         OrchestratorInvestigationSweepService investigation,
         QueuedInputWatchdogService queuedInput,
@@ -84,6 +86,7 @@ public sealed class AgentSupervisorHostedService : BackgroundService
         _compaction = compaction;
         _policyRefresh = policyRefresh;
         _apiErrorRecovery = apiErrorRecovery;
+        _capacityRecovery = capacityRecovery;
         _herdrCorroboration = herdrCorroboration;
         _investigation = investigation;
         _queuedInput = queuedInput;
@@ -123,6 +126,22 @@ public sealed class AgentSupervisorHostedService : BackgroundService
                                 "Policy-refresh relaunched {Count} standing agent(s)", refreshed);
                         }
                     }
+
+                    // CARD-0412: expiry, release consumption and sole-granter selection run
+                    // before supervisor starts on a tick.
+                    if (DateTime.UtcNow - _lastModelAvailabilitySweepUtc >= TimeSpan.FromMinutes(1))
+                    {
+                        _lastModelAvailabilitySweepUtc = DateTime.UtcNow;
+                        var availability = scope.ServiceProvider.GetRequiredService<ModelAvailability>();
+                        var cleared = await availability.SweepExpiredAsync(stoppingToken);
+                        if (cleared > 0)
+                        {
+                            _logger.LogInformation(
+                                "Cleared {Count} expired model-availability hold(s)", cleared);
+                        }
+                    }
+
+                    await _capacityRecovery.ReconcileAsync(stoppingToken);
 
                     await supervisor.TickAsync(stoppingToken);
 
@@ -223,18 +242,6 @@ public sealed class AgentSupervisorHostedService : BackgroundService
                         _logger.LogWarning(
                             "Raised {Count} LivenessProbeFailed incident(s): the boot prompt was "
                             + "delivered and the model never answered", boots);
-                    }
-
-                    if (DateTime.UtcNow - _lastModelAvailabilitySweepUtc >= TimeSpan.FromMinutes(1))
-                    {
-                        _lastModelAvailabilitySweepUtc = DateTime.UtcNow;
-                        var availability = scope.ServiceProvider.GetRequiredService<ModelAvailability>();
-                        var cleared = await availability.SweepExpiredAsync(stoppingToken);
-                        if (cleared > 0)
-                        {
-                            _logger.LogInformation(
-                                "Cleared {Count} expired model-availability hold(s)", cleared);
-                        }
                     }
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

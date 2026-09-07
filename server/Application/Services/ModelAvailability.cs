@@ -131,6 +131,20 @@ public sealed class ModelAvailability : IModelAvailability
         return cleared;
     }
 
+    /// <summary>CARD-0412: stamp ClearedAt, ClearCause and ReleasePendingAt exactly once.</summary>
+    internal static bool TryClear(
+        ModelAvailabilityHold row,
+        DateTime now,
+        ModelAvailabilityClearCause cause)
+    {
+        if (row.ClearedAt is not null)
+            return false;
+        row.ClearedAt = now;
+        row.ClearCause = cause;
+        row.ReleasePendingAt = now;
+        return true;
+    }
+
     /// <summary>
     /// CARD-0022 / CARD-0335 AutoDetected writer. Upserts the active row for <c>(kind, alias)</c>
     /// with a required <paramref name="disabledUntil"/>. If an active Manual hold exists, evidence
@@ -146,7 +160,9 @@ public sealed class ModelAvailability : IModelAvailability
         string? rawText,
         Guid? sourceSessionId,
         Guid? sourceTaskId,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool saveChanges = true,
+        Guid? evidenceRecoveryId = null)
     {
         if (alias == ModelAlias.KindWide)
             throw new InvalidOperationException("AutoDetected never writes a kind-wide '*' hold.");
@@ -173,9 +189,12 @@ public sealed class ModelAvailability : IModelAvailability
                 SourceSessionId = sourceSessionId,
                 SourceTaskId = sourceTaskId,
                 Reason = Cap(reason, ReasonCap) ?? reason,
+                Revision = 1,
+                EvidenceRecoveryId = evidenceRecoveryId,
             };
             _db.ModelAvailabilityHolds.Add(row);
-            await _db.SaveChangesAsync(ct);
+            if (saveChanges)
+                await _db.SaveChangesAsync(ct);
             _logger.LogInformation(
                 "Paused {Kind}/{Alias} until {Until} ({Reason})",
                 kind, canonical, disabledUntil, row.Reason);
@@ -187,6 +206,8 @@ public sealed class ModelAvailability : IModelAvailability
         existing.SourceSessionId = sourceSessionId;
         existing.SourceTaskId = sourceTaskId;
         existing.Reason = Cap(reason, ReasonCap) ?? existing.Reason;
+        existing.Revision++;
+        existing.EvidenceRecoveryId = evidenceRecoveryId ?? existing.EvidenceRecoveryId;
 
         // CARD-0309 outrank: Manual keeps its until and its source. AutoDetected may not shorten
         // a human DisabledUntil, including an open-ended null.
@@ -196,7 +217,8 @@ public sealed class ModelAvailability : IModelAvailability
             existing.Source = ModelAvailabilitySource.AutoDetected;
         }
 
-        await _db.SaveChangesAsync(ct);
+        if (saveChanges)
+            await _db.SaveChangesAsync(ct);
         return existing;
     }
 
@@ -275,6 +297,8 @@ public sealed class ModelAvailability : IModelAvailability
         existing.SourceSessionId = null;
         existing.SourceTaskId = null;
         existing.Reason = cappedReason;
+        existing.Revision++;
+        existing.EvidenceRecoveryId = null;
         await _db.SaveChangesAsync(ct);
         _logger.LogInformation(
             "Manual hold {Kind}/{Alias} until {Until} ({Reason}) — converted in place",
@@ -296,8 +320,8 @@ public sealed class ModelAvailability : IModelAvailability
         if (existing is null)
             return;
 
-        existing.ClearedAt = UtcNow();
-        await _db.SaveChangesAsync(ct);
+        if (TryClear(existing, UtcNow(), ModelAvailabilityClearCause.OperatorCleared))
+            await _db.SaveChangesAsync(ct);
         _logger.LogInformation("Cleared hold {Kind}/{Alias}", parsedKind, canonical);
     }
 
@@ -383,10 +407,7 @@ public sealed class ModelAvailability : IModelAvailability
 
         expired = row.DisabledUntil is { } until && until <= now;
         if (expired)
-        {
-            row.ClearedAt = now;
-            mutated = true;
-        }
+            mutated |= TryClear(row, now, ModelAvailabilityClearCause.Expired);
 
         return mutated;
     }

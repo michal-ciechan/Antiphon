@@ -47,4 +47,16 @@ public class ModelAvailabilityHold
     /// <c>Fable 5 per-model cap (no reset stated)</c>.
     /// </summary>
     public string Reason { get; set; } = string.Empty;
+
+    /// <summary>Active-row generation. Incremented on every active update. A cleared Id is never reopened.</summary>
+    public int Revision { get; set; } = 1;
+
+    /// <summary>The ApiErrorRecovery whose evidence last applied to this hold.</summary>
+    public Guid? EvidenceRecoveryId { get; set; }
+
+    /// <summary>Null while uncleared. Legacy already-cleared rows stay null (unknown cause, no pending replay).</summary>
+    public ModelAvailabilityClearCause? ClearCause { get; set; }
+
+    public DateTime? ReleasePendingAt { get; set; }
+    public DateTime? ReleaseConsumedAt { get; set; }
 }

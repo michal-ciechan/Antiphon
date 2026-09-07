@@ -479,13 +479,129 @@ public class ApiErrorRecoveryServiceTests
     }
 
     [Test]
+    public async Task Card0412_V02_production_null_turnend_hour_only_adopts_same_deadline()
+    {
+        await using var h = await CreateHarnessAsync();
+        var evidence = new DateTime(2026, 9, 6, 11, 53, 0, DateTimeKind.Utc);
+        await SeedProductionClaudeStubAsync(
+            h.SessionId,
+            UsageLimitWallParser.SessionLimitHourOnlyTwoPmText,
+            assistantTimestamp: evidence,
+            turnEndTimestamp: null,
+            createdAt: DateTime.UtcNow);
+
+        await SweepAsync(h);
+
+        await using var db = CreateContext();
+        var row = (await db.ApiErrorRecoveries.Where(r => r.AgentSessionId == h.SessionId).ToListAsync())
+            .ShouldHaveSingleItem();
+        row.EvidenceAt.ShouldBe(evidence);
+        row.EvidenceTimestampSource.ShouldBe(CapacityEvidenceTimestampSource.AssistantTextTimestamp);
+        var hold = await db.ModelAvailabilityHolds.SingleAsync(x => x.SourceSessionId == h.SessionId && x.ClearedAt == null);
+        hold.DisabledUntil.ShouldBe(new DateTime(2026, 9, 6, 13, 2, 0, DateTimeKind.Utc));
+        row.AppliedHoldId.ShouldBe(hold.Id);
+    }
+
+    [Test]
+    public async Task Card0412_V02_delayed_repair_clears_at_original_deadline()
+    {
+        await using var h = await CreateHarnessAsync();
+        var evidence = new DateTime(2026, 9, 6, 11, 53, 0, DateTimeKind.Utc);
+        var repairAt = new DateTime(2026, 9, 6, 14, 50, 0, DateTimeKind.Utc);
+        var time = new FakeTimeProvider(new DateTimeOffset(evidence, TimeSpan.Zero));
+        await SeedProductionClaudeStubAsync(
+            h.SessionId,
+            text: "",
+            assistantTimestamp: evidence,
+            turnEndTimestamp: null,
+            createdAt: evidence,
+            emptyAssistant: true);
+
+        await SweepAsync(h, time: time);
+
+        await using (var db = CreateContext())
+        {
+            var hold = await db.ModelAvailabilityHolds.SingleAsync(x => x.SourceSessionId == h.SessionId && x.ClearedAt == null);
+            hold.DisabledUntil.ShouldBe(evidence.AddHours(6));
+        }
+
+        await using (var db = CreateContext())
+        {
+            var turnEnd = await db.TranscriptEntries.SingleAsync(
+                t => t.AgentSessionId == h.SessionId && t.Kind == TranscriptKinds.TurnEnd);
+            var assistant = await db.TranscriptEntries.SingleAsync(
+                t => t.AgentSessionId == h.SessionId && t.Kind == TranscriptKinds.AssistantText);
+            assistant.Text = UsageLimitWallParser.SessionLimitHourOnlyTwoPmText;
+            assistant.Timestamp = evidence;
+            await db.SaveChangesAsync();
+
+            time.SetUtcNow(new DateTimeOffset(repairAt, TimeSpan.Zero));
+            var recovery = Recovery(h, time: time);
+            await recovery.EnsureAdoptedAsync(
+                h.SessionId, turnEnd.Sequence, turnEnd.Uuid, turnEnd.ApiErrorClass, turnEnd.ApiErrorStatus,
+                UsageLimitWallParser.SessionLimitHourOnlyTwoPmText, CancellationToken.None);
+        }
+
+        await using var verify = CreateContext();
+        var repaired = await verify.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == h.SessionId);
+        var live = await verify.ModelAvailabilityHolds
+            .Where(x => x.Id == repaired.AppliedHoldId)
+            .ToListAsync();
+        live.ShouldHaveSingleItem();
+        live[0].DisabledUntil.ShouldBe(new DateTime(2026, 9, 6, 13, 2, 0, DateTimeKind.Utc));
+        live[0].DisabledUntil.ShouldNotBe(repairAt.AddHours(6));
+        live[0].DisabledUntil.ShouldNotBe(new DateTime(2026, 9, 7, 13, 2, 0, DateTimeKind.Utc));
+    }
+
+    [Test]
+    public async Task Card0412_V02_evidence_source_improves_once()
+    {
+        await using var h = await CreateHarnessAsync();
+        var created = new DateTime(2026, 9, 6, 11, 53, 0, DateTimeKind.Utc);
+        var provider = new DateTime(2026, 9, 6, 11, 50, 0, DateTimeKind.Utc);
+        await SeedProductionClaudeStubAsync(
+            h.SessionId,
+            UsageLimitWallParser.SessionLimitHourOnlyTwoPmText,
+            assistantTimestamp: null,
+            turnEndTimestamp: null,
+            createdAt: DateTime.UtcNow);
+
+        await SweepAsync(h);
+        await using (var db = CreateContext())
+        {
+            var row = await db.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == h.SessionId);
+            row.EvidenceTimestampSource.ShouldBe(CapacityEvidenceTimestampSource.TurnEndCreatedAt);
+            var assistant = await db.TranscriptEntries.SingleAsync(
+                t => t.AgentSessionId == h.SessionId && t.Kind == TranscriptKinds.AssistantText);
+            assistant.Timestamp = provider;
+            await db.SaveChangesAsync();
+            await Recovery(h).EnsureAdoptedAsync(
+                h.SessionId, row.StubSequence, row.StubUuid, row.ApiErrorClass, row.ApiErrorStatus,
+                UsageLimitWallParser.SessionLimitHourOnlyTwoPmText, CancellationToken.None);
+        }
+
+        await SweepAsync(h);
+        await using var verify = CreateContext();
+        var after = await verify.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == h.SessionId);
+        after.EvidenceAt.ShouldBe(provider);
+        after.EvidenceTimestampSource.ShouldBe(CapacityEvidenceTimestampSource.AssistantTextTimestamp);
+        var stamp = after.EvidenceAt;
+        await SweepAsync(h);
+        await using var again = CreateContext();
+        (await again.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == h.SessionId))
+            .EvidenceAt.ShouldBe(stamp);
+    }
+
+    [Test]
     public async Task Wall_parks_after_three_deaths()
     {
         await using var h = await CreateHarnessAsync();
         for (var i = 0; i < 3; i++)
             await SeedStubAsync(h.SessionId, "rate_limit", 429, UsageLimitWallParser.SessionLimitFixtureText);
 
-        await SweepAsync(h);
+        await SweepAsync(h, new ApiErrorRecoverySettings { WallDeathCap = 3 },
+            time: null,
+            capacityEnabled: false);
 
         await using var db = CreateContext();
         var rows = await db.ApiErrorRecoveries
@@ -593,18 +709,29 @@ public class ApiErrorRecoveryServiceTests
     };
 
     private static async Task SweepAsync(
-        BridgeQueueHarness h, ApiErrorRecoverySettings? settings = null, TimeProvider? time = null) =>
-        await Recovery(h, settings, time).SweepAsync(CancellationToken.None);
+        BridgeQueueHarness h,
+        ApiErrorRecoverySettings? settings = null,
+        TimeProvider? time = null,
+        bool capacityEnabled = true) =>
+        await Recovery(h, settings, time, capacityEnabled).SweepAsync(CancellationToken.None);
 
     private static ApiErrorRecoveryService Recovery(
-        BridgeQueueHarness h, ApiErrorRecoverySettings? settings = null, TimeProvider? time = null) =>
+        BridgeQueueHarness h,
+        ApiErrorRecoverySettings? settings = null,
+        TimeProvider? time = null,
+        bool capacityEnabled = true) =>
         new(
             h.Provider.GetRequiredService<IServiceScopeFactory>(),
             h.Queue,
             h.Runtime,
-            Options.Create(new SupervisionSettings { ApiErrorRecovery = settings ?? FastSettings() }),
+            Options.Create(new SupervisionSettings
+            {
+                ApiErrorRecovery = settings ?? FastSettings(),
+                CapacityRecovery = new CapacityRecoverySettings { Enabled = capacityEnabled },
+            }),
             time ?? TimeProvider.System,
-            NullLogger<ApiErrorRecoveryService>.Instance);
+            NullLogger<ApiErrorRecoveryService>.Instance,
+            h.Provider.GetService<CapacityRecoveryService>());
 
     private static async Task<long> SeedTransientStubAsync(Guid sessionId) =>
         await SeedStubAsync(sessionId, "server_error", 529, "API Error: 529 Overloaded.");
@@ -642,13 +769,19 @@ public class ApiErrorRecoveryServiceTests
     /// both rows share a uuid and IsApiError=true.
     /// </summary>
     private static async Task<(long TurnEndSeq, string Uuid)> SeedProductionClaudeStubAsync(
-        Guid sessionId, string text)
+        Guid sessionId,
+        string text,
+        DateTime? assistantTimestamp = null,
+        DateTime? turnEndTimestamp = null,
+        DateTime? createdAt = null,
+        bool emptyAssistant = false)
     {
         await using var db = CreateContext();
         var seq = ((await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId)
             .MaxAsync(t => (long?)t.Sequence)) ?? 0) + 1;
         var uuid = Guid.NewGuid().ToString("D");
+        var created = createdAt ?? DateTime.UtcNow;
         db.TranscriptEntries.Add(new TranscriptEntry
         {
             Id = Guid.NewGuid(),
@@ -657,11 +790,12 @@ public class ApiErrorRecoveryServiceTests
             Kind = TranscriptKinds.AssistantText,
             Uuid = uuid,
             Role = "assistant",
-            Text = text,
+            Text = emptyAssistant ? null : text,
+            Timestamp = assistantTimestamp,
             IsApiError = true,
             ApiErrorClass = "rate_limit",
             ApiErrorStatus = 429,
-            CreatedAt = DateTime.UtcNow,
+            CreatedAt = created,
         });
         db.TranscriptEntries.Add(new TranscriptEntry
         {
@@ -672,11 +806,12 @@ public class ApiErrorRecoveryServiceTests
             Uuid = uuid,
             Role = "assistant",
             Text = null,
+            Timestamp = turnEndTimestamp,
             StopReason = "stop_sequence",
             IsApiError = true,
             ApiErrorClass = "rate_limit",
             ApiErrorStatus = 429,
-            CreatedAt = DateTime.UtcNow,
+            CreatedAt = created,
         });
         await db.SaveChangesAsync();
         return (seq + 1, uuid);

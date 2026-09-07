@@ -27,6 +27,7 @@
 ### Preserved Gotcha #76
 
 - **Usage-limit walls pause that model on that kind, not the fleet** (CARD-0022): `ModelAvailabilityHold` is keyed `(Kind, ModelAlias)`. CARD-0072's 30-minute `WallPrompt` is not recovery for a per-model cap (the 2026-09-01 Fable 5 incident died in 1.1 s). `/usage-credits` is not a remaining-quota readout. Session-limit text that names a reset gets one resume at that instant + 2 minutes.
+- **Capacity auto-resume is paced and transcript-confirmed (CARD-0412).** Supervisor reconciliation is the sole granter (one outstanding grant per execution kind, oldest BlockedAt then Id). Queue, standing start and dispatcher redeem that grant at the execution boundary with 60s spacing. A retained CapacityWait task stays Working on its lease, is excluded from MaxConcurrentTasks while waiting, and returns to a freed slot ahead of newly queued work. Confirmation is a matching UserPrompt, never enqueue or screen-only Delivered. Exhausted Attention (`CapacityRecoveryExhausted`) is derived from the durable wait.
 
 ### Preserved Gotcha #3
 

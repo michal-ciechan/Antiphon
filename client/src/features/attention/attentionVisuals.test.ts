@@ -51,6 +51,7 @@ const ALL_KINDS: AttentionKind[] = [
   'LivenessProbeFailed',
   'ImportedIssueNeedsReview',
   'DelegationCapability',
+  'CapacityRecoveryExhausted',
 ]
 
 function item(overrides: Partial<AttentionItemDto> & { kind: AttentionKind }): AttentionItemDto {
@@ -173,6 +174,7 @@ describe('attentionVisuals', () => {
     expect(homeBucketOf(item({ kind: 'RecentCriticalIncident', severity: 'Error' }))).toBe('broken')
     expect(homeBucketOf(item({ kind: 'FailureUnacknowledged', severity: 'Error' }))).toBe('broken')
     expect(homeBucketOf(item({ kind: 'ModelAvailabilityHold', severity: 'Error' }))).toBe('broken')
+    expect(homeBucketOf(item({ kind: 'CapacityRecoveryExhausted', severity: 'Error' }))).toBe('broken')
     expect(homeBucketOf(item({ kind: 'BriefUndelivered', severity: 'Error' }))).toBe('broken')
     expect(homeBucketOf(item({ kind: 'BriefUndelivered', severity: 'Warning' }))).toBe('review')
     expect(homeBucketOf(item({ kind: 'PastExpectedIdle', severity: 'Warning' }))).toBe('review')
@@ -202,5 +204,32 @@ describe('attentionVisuals', () => {
         item({ kind: 'ParkedMessage', severity: 'Error' }),
       ]),
     ).toEqual({ blocked: 1, broken: 2, review: 1 })
+  })
+
+  it('draws CapacityRecoveryExhausted and includes it in every-kind coverage', () => {
+    expect(ALL_KINDS).toContain('CapacityRecoveryExhausted')
+    const unique = [...new Set(ALL_KINDS)].sort()
+    const visualKeys = Object.keys(ATTENTION_VISUALS).sort()
+    expect(unique).toEqual(visualKeys)
+
+    const visual = ATTENTION_VISUALS['CapacityRecoveryExhausted']
+    expect(visual).toBeDefined()
+    expect(visual.color.length).toBeGreaterThan(0)
+    expect(visual.label).toBe('Capacity retries paused')
+    expect(visual.icon).toBeTypeOf('function')
+    expect(visual.hint.length).toBeGreaterThan(0)
+
+    const row = item({
+      kind: 'CapacityRecoveryExhausted',
+      severity: 'Error',
+      taskId: 'task-1',
+      agentId: 'agent-1',
+    })
+    expect(groupOf(row)).toBe('broken')
+    expect(homeBucketOf(row)).toBe('broken')
+    expect(targetOf(row)).toBe('/orchestrator?tab=delegations&task=task-1')
+    expect(targetOf(item({ kind: 'CapacityRecoveryExhausted', severity: 'Error', agentId: 'agent-1' }))).toBe(
+      '/agents?agent=agent-1',
+    )
   })
 })

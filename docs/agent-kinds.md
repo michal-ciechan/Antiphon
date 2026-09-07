@@ -39,6 +39,8 @@ guessing "no".
 | `OpenCode` | `opencode` / a wrapper | no | no | quiet-time only | **no** — refused |
 | `Raw` | any command (`pwsh.exe`, …) | no | no | quiet-time only | **no** — refused |
 
+Capacity auto-resume (CARD-0412) paces recovery **per execution kind**: supervisor reconciliation grants at most one outstanding slot per `AgentKind`, oldest blocked wait first. A Claude wait does not consume Grok's admission clock.
+
 "Delegatable" is `AgentTaskService.DelegatableKinds` — `[ClaudeCode, Grok, Codex]`. A task asking
 for `OpenCode` or `Raw` is **refused with a 422 naming the reason**, never silently substituted.
 An orchestrator is `ClaudeCode` only: its contract (the PreToolUse deny hook, `delegate.ps1`, the

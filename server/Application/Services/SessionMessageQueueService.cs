@@ -3600,9 +3600,31 @@ public sealed class SessionMessageQueueService
         if (!await HasTerminalCapacityHoldAsync(db, sessionId, ct))
             return pending;
 
+        var selectedKeys = held
+            .Where(m => !string.IsNullOrEmpty(m.CapacityRecoveryActionKey))
+            .Select(m => m.CapacityRecoveryActionKey!)
+            .Distinct()
+            .ToList();
+        var selected = new List<SessionQueuedMessage>();
+        if (selectedKeys.Count > 0)
+        {
+            var waits = await db.CapacityRecoveryWaits.AsNoTracking()
+                .Where(w => selectedKeys.Contains(w.ActionKey)
+                    && w.State != CapacityRecoveryWaitState.Exhausted
+                    && w.State != CapacityRecoveryWaitState.Canceled)
+                .ToListAsync(ct);
+            var granted = waits.Select(w => w.ActionKey).ToHashSet(StringComparer.Ordinal);
+            selected = held
+                .Where(m => m.CapacityRecoveryActionKey is { } key && granted.Contains(key))
+                .OrderBy(m => m.Sequence)
+                .ToList();
+        }
+
         var stamped = false;
         foreach (var message in held)
         {
+            if (selected.Any(s => s.Id == message.Id))
+                continue;
             if (string.IsNullOrEmpty(message.NoteHeader))
             {
                 message.NoteHeader = "Held";
@@ -3616,12 +3638,16 @@ public sealed class SessionMessageQueueService
             _logger.LogWarning(
                 "Holding {Count} Channel/Scheduled queue row(s) on session {SessionId}: "
                 + "terminal provider-capacity recovery is in effect",
-                held.Count, sessionId);
+                held.Count - selected.Count, sessionId);
         }
 
-        return pending
+        var others = pending
             .Where(m => m.Origin is not (QueuedMessageOrigin.Channel or QueuedMessageOrigin.Scheduled))
             .ToList();
+        if (selected.Count == 0)
+            return others;
+        others.AddRange(selected);
+        return others;
     }
 
     internal static async Task<bool> HasTerminalCapacityHoldAsync(

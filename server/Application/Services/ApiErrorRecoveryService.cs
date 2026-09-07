@@ -29,9 +29,11 @@ public sealed class ApiErrorRecoveryService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly SessionMessageQueueService _queue;
     private readonly AgentSessionRuntime _runtime;
+    private readonly SupervisionSettings _supervision;
     private readonly ApiErrorRecoverySettings _settings;
     private readonly TimeProvider _time;
     private readonly ILogger<ApiErrorRecoveryService> _logger;
+    private readonly CapacityRecoveryService? _capacityRecovery;
 
     public ApiErrorRecoveryService(
         IServiceScopeFactory scopeFactory,
@@ -39,14 +41,17 @@ public sealed class ApiErrorRecoveryService
         AgentSessionRuntime runtime,
         IOptions<SupervisionSettings> settings,
         TimeProvider time,
-        ILogger<ApiErrorRecoveryService> logger)
+        ILogger<ApiErrorRecoveryService> logger,
+        CapacityRecoveryService? capacityRecovery = null)
     {
         _scopeFactory = scopeFactory;
         _queue = queue;
         _runtime = runtime;
+        _supervision = settings.Value;
         _settings = settings.Value.ApiErrorRecovery;
         _time = time;
         _logger = logger;
+        _capacityRecovery = capacityRecovery;
     }
 
     /// <summary>
@@ -109,7 +114,7 @@ public sealed class ApiErrorRecoveryService
         {
             await db.SaveChangesAsync(ct);
         }
-        catch (DbUpdateException)
+        catch (DbUpdateException ex) when (IsUniqueAdoptionConflict(ex))
         {
             // Unique (AgentSessionId, StubSequence) — a concurrent sweep/turn-end already wrote it.
             db.ChangeTracker.Clear();
@@ -147,7 +152,8 @@ public sealed class ApiErrorRecoveryService
                 .OrderBy(t => t.AgentSessionId)
                 .ThenBy(t => t.Sequence)
                 .Select(t => new StubRow(
-                    t.AgentSessionId, t.Sequence, t.Uuid, t.ApiErrorClass, t.ApiErrorStatus, t.Text))
+                    t.AgentSessionId, t.Sequence, t.Uuid, t.ApiErrorClass, t.ApiErrorStatus, t.Text,
+                    t.Timestamp, t.CreatedAt))
                 .ToListAsync(ct);
 
             // CARD-0401: Claude puts the error string on the sibling AssistantText (same uuid);
@@ -319,6 +325,11 @@ public sealed class ApiErrorRecoveryService
         CancellationToken ct)
     {
         var classification = ApiErrorClassifier.Classify(apiErrorClass, apiErrorStatus, errorText);
+        var sibling = await CapacityEvidence.LoadSiblingAsync(db, sessionId, stubUuid, ct);
+        var turnEnd = await CapacityEvidence.LoadTurnEndAsync(db, sessionId, stubSequence, ct);
+        var evidence = CapacityEvidence.Resolve(
+            turnEnd.Timestamp, sibling.Timestamp, turnEnd.CreatedAt, now);
+        errorText = ApiErrorStubText.Prefer(sibling.Text, errorText);
         var row = new ApiErrorRecovery
         {
             Id = Guid.NewGuid(),
@@ -330,6 +341,11 @@ public sealed class ApiErrorRecoveryService
             ApiErrorStatus = apiErrorStatus,
             DetectedAt = now,
             AttemptCount = 0,
+            EvidenceAt = evidence.At,
+            EvidenceTimestampSource = evidence.Source,
+            ParseVersion = UsageLimitWallParser.ParseVersion,
+            EvidenceDigest = CapacityEvidence.Digest(errorText),
+            EvidenceStatus = string.IsNullOrWhiteSpace(errorText) ? "empty" : "text",
         };
 
         if (classification == ApiErrorClassification.NeedsHuman)
@@ -366,16 +382,18 @@ public sealed class ApiErrorRecoveryService
         CancellationToken ct,
         bool isNew = true)
     {
+        var evidenceAt = row.EvidenceAt ?? now;
         var fallback = await ResolveFallbackAliasAsync(db, sessionId, ct);
-        var wall = UsageLimitWallParser.Parse(now, errorText, fallback);
+        var wall = UsageLimitWallParser.Parse(evidenceAt, errorText, fallback);
 
         var wallDeaths = await db.ApiErrorRecoveries.CountAsync(
             r => r.AgentSessionId == sessionId
                 && r.Classification == ApiErrorClassification.Wall
                 && r.ResolvedReason != ApiErrorRecoveryReasons.Superseded, ct);
         // A new row is not in the count yet; a repair of an existing row already is.
-        var parked = ApiErrorRetrySchedule.WallIsParked(
-            isNew ? wallDeaths + 1 : wallDeaths, _settings.WallDeathCap);
+        var parked = !_supervision.CapacityRecovery.Enabled
+            && ApiErrorRetrySchedule.WallIsParked(
+                isNew ? wallDeaths + 1 : wallDeaths, _settings.WallDeathCap);
 
         if (wall is null)
         {
@@ -386,7 +404,12 @@ public sealed class ApiErrorRecoveryService
 
         var disabledUntil = wall.ResetAt is { } reset
             ? reset + ModelAvailability.SessionLimitResumePadding
-            : now + TimeSpan.FromHours(_settings.EffectiveModelCapFallbackHoldHours);
+            : evidenceAt + TimeSpan.FromHours(_settings.EffectiveModelCapFallbackHoldHours);
+        if (disabledUntil <= now && wall.ResetAt is not null)
+        {
+            // Delayed repair whose deadline is already past: still write the historical deadline;
+            // the hold clear primitive expires it immediately rather than rolling from repair time.
+        }
         var session = await db.AgentSessions.AsNoTracking()
             .FirstOrDefaultAsync(s => s.Id == sessionId, ct);
         var kind = session?.AgentKind ?? AgentKind.ClaudeCode;
@@ -396,7 +419,7 @@ public sealed class ApiErrorRecoveryService
             .Select(t => (Guid?)t.Id)
             .FirstOrDefaultAsync(ct);
 
-        await availability.UpsertAutoDetectedAsync(
+        var hold = await availability.UpsertAutoDetectedAsync(
             kind,
             wall.ModelAlias,
             disabledUntil,
@@ -404,7 +427,34 @@ public sealed class ApiErrorRecoveryService
             wall.RawText,
             sessionId,
             openTaskId,
-            ct);
+            ct,
+            saveChanges: false,
+            evidenceRecoveryId: row.Id);
+        row.AppliedHoldId = hold.Id;
+        row.AppliedHoldRevision = hold.Revision;
+        row.ParseVersion = UsageLimitWallParser.ParseVersion;
+        row.EvidenceDigest = CapacityEvidence.Digest(errorText);
+        row.EvidenceStatus = string.IsNullOrWhiteSpace(errorText) ? "empty" : "text";
+
+        if (_capacityRecovery is not null)
+        {
+            var wait = await _capacityRecovery.EnsureWaitOnAsync(db, new CapacityWaitRegistration
+            {
+                ConsumerKey = $"session:{sessionId:N}",
+                ConsumerKind = CapacityWaitConsumerKind.LiveSession,
+                ExecutionKind = kind,
+                RequestedKind = kind,
+                RequestedAlias = wall.ModelAlias,
+                BlockedAt = now,
+                SessionId = sessionId,
+                TaskId = openTaskId,
+                HoldId = hold.Id,
+                HoldRevision = hold.Revision,
+                HoldAlreadyCleared = hold.ClearedAt is not null,
+                ClearCause = hold.ClearCause,
+            }, ct);
+            row.CapacityWaitId = wait.Id;
+        }
 
         if (parked)
         {
@@ -425,9 +475,8 @@ public sealed class ApiErrorRecoveryService
     }
 
     /// <summary>
-    /// CARD-0401: a sweep that adopted with empty TurnEnd.Text writes a 6-hour ModelCap hold.
-    /// A later caller that has the real AssistantText re-runs the wall so the hold picks up
-    /// the provider-stated reset instead of staying stuck.
+    /// CARD-0412: exact, idempotent enrichment. Missing/cleared hold, revision mismatch,
+    /// changed source, no improvement or a second parse-version correction is a no-op.
     /// </summary>
     private async Task TryRepairEmptyWallAsync(
         AppDbContext db,
@@ -442,13 +491,65 @@ public sealed class ApiErrorRecoveryService
         if (string.IsNullOrWhiteSpace(errorText))
             return;
 
-        var hold = await db.ModelAvailabilityHolds
-            .FirstOrDefaultAsync(h => h.SourceSessionId == sessionId && h.ClearedAt == null, ct);
-        if (hold is not null && !string.IsNullOrWhiteSpace(hold.RawText))
+        var digest = CapacityEvidence.Digest(errorText);
+        var textImproved = existing.EvidenceStatus == "empty"
+            || string.IsNullOrWhiteSpace(existing.EvidenceDigest)
+            || existing.EvidenceDigest != digest;
+        var parseUpgrade = existing.ParseVersion is null or < UsageLimitWallParser.ParseVersion
+            && existing.EvidenceStatus != "parse-corrected";
+        var siblingEarly = await CapacityEvidence.LoadSiblingAsync(db, sessionId, existing.StubUuid, ct);
+        var turnEndEarly = await CapacityEvidence.LoadTurnEndAsync(db, sessionId, existing.StubSequence, ct);
+        var incomingEarly = CapacityEvidence.Resolve(
+            turnEndEarly.Timestamp, siblingEarly.Timestamp, turnEndEarly.CreatedAt, existing.DetectedAt);
+        var currentEarly = new CapacityEvidence.Facts(
+            existing.EvidenceAt ?? existing.DetectedAt,
+            existing.EvidenceTimestampSource ?? CapacityEvidenceTimestampSource.DetectedAt,
+            turnEndEarly.Timestamp, siblingEarly.Timestamp, turnEndEarly.CreatedAt);
+        var improvedEarly = CapacityEvidence.TryImprove(currentEarly, incomingEarly);
+        if (!textImproved && !parseUpgrade)
+        {
+            if (improvedEarly is { } onlyTime)
+            {
+                existing.EvidenceAt = onlyTime.At;
+                existing.EvidenceTimestampSource = onlyTime.Source;
+                await db.SaveChangesAsync(ct);
+            }
+
             return;
+        }
+
+        if (existing.AppliedHoldId is null)
+            return;
+
+        var hold = await db.ModelAvailabilityHolds
+            .FirstOrDefaultAsync(h => h.Id == existing.AppliedHoldId, ct);
+        if (hold is null || hold.ClearedAt is not null)
+            return;
+        if (existing.AppliedHoldRevision is { } expectedRev && hold.Revision != expectedRev)
+            return;
+        if (hold.EvidenceRecoveryId is { } latest && latest != existing.Id)
+            return;
+        if (hold.SourceSessionId is { } source && source != sessionId)
+            return;
+
+        var sibling = await CapacityEvidence.LoadSiblingAsync(db, sessionId, existing.StubUuid, ct);
+        var turnEnd = await CapacityEvidence.LoadTurnEndAsync(db, sessionId, existing.StubSequence, ct);
+        var incoming = CapacityEvidence.Resolve(
+            turnEnd.Timestamp, sibling.Timestamp, turnEnd.CreatedAt, existing.DetectedAt);
+        var current = new CapacityEvidence.Facts(
+            existing.EvidenceAt ?? existing.DetectedAt,
+            existing.EvidenceTimestampSource ?? CapacityEvidenceTimestampSource.DetectedAt,
+            turnEnd.Timestamp, sibling.Timestamp, turnEnd.CreatedAt);
+        if (CapacityEvidence.TryImprove(current, incoming) is { } improved)
+        {
+            existing.EvidenceAt = improved.At;
+            existing.EvidenceTimestampSource = improved.Source;
+        }
 
         var availability = services.GetRequiredService<ModelAvailability>();
         await ApplyWallAsync(db, availability, existing, sessionId, errorText, UtcNow(), ct, isNew: false);
+        if (parseUpgrade && !textImproved)
+            existing.EvidenceStatus = "parse-corrected";
         await db.SaveChangesAsync(ct);
         _logger.LogInformation(
             "Repaired API-error wall session {SessionId} seq {Sequence} from empty stub text ({Length} chars)",
@@ -655,6 +756,20 @@ public sealed class ApiErrorRecoveryService
 
     private DateTime UtcNow() => _time.GetUtcNow().UtcDateTime;
 
+    private static bool IsUniqueAdoptionConflict(DbUpdateException ex)
+    {
+        var message = ex.InnerException?.Message ?? ex.Message;
+        return message.Contains("IX_ApiErrorRecoveries_AgentSessionId_StubSequence", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("23505", StringComparison.Ordinal); // unique_violation
+    }
+
     private readonly record struct StubRow(
-        Guid AgentSessionId, long Sequence, string? Uuid, string? ApiErrorClass, int? ApiErrorStatus, string? Text);
+        Guid AgentSessionId,
+        long Sequence,
+        string? Uuid,
+        string? ApiErrorClass,
+        int? ApiErrorStatus,
+        string? Text,
+        DateTime? Timestamp,
+        DateTime CreatedAt);
 }

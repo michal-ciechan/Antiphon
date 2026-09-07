@@ -40,6 +40,30 @@ public sealed class SupervisionSettings
     /// files have drifted from the repo. S1 records the stamp and exposes the DTO; S2 sweeps.
     /// </summary>
     public PolicyRefreshSettings PolicyRefresh { get; set; } = new();
+
+    /// <summary>CARD-0412: paced capacity recovery. Enabled default true after all slices integrate.</summary>
+    public CapacityRecoverySettings CapacityRecovery { get; set; } = new();
+}
+
+/// <summary>CARD-0412 capacity-recovery pacing and episode budget.</summary>
+public sealed class CapacityRecoverySettings
+{
+    public bool Enabled { get; set; } = true;
+
+    public int AdmissionIntervalSeconds { get; set; } = 60;
+    public int JitterSeconds { get; set; } = 30;
+
+    /// <summary>Null means use <see cref="ApiErrorRecoverySettings.WallDeathCap"/> as the compatibility default.</summary>
+    public int? MaxEpisodeAttempts { get; set; }
+
+    public int ReconciliationBatchSize { get; set; } = 100;
+
+    public int EffectiveMaxEpisodeAttempts(int wallDeathCap)
+    {
+        if (MaxEpisodeAttempts is int explicitValue)
+            return explicitValue;
+        return wallDeathCap > 0 ? wallDeathCap : 3;
+    }
 }
 
 /// <summary>

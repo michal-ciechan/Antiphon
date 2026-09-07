@@ -534,4 +534,10 @@ public enum AgentIncidentKind
     OrchestratorWorkspaceUnconfigured = 53,
     HerdrSupervisionHeld = 54,
     HerdrSupervisionRetried = 55,
+
+    /// <summary>
+    /// CARD-0412: capacity auto-resume scheduled or confirmed. Timeline-only (<c>raiseAlert: false</c>).
+    /// Keyed per consumer episode, not deduped by session lifetime.
+    /// </summary>
+    CapacityRecovery = 56,
 }
