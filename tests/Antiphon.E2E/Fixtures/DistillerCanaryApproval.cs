@@ -68,6 +68,8 @@ internal sealed record DistillerCanaryEvidence(
             || LedgerSourceId != SourceId || LedgerNoteId != NoteId || TranscriptParentId != ParentId
             || RawDigest != Antiphon.Server.Application.Services.DelegationNoteDigest.Compute(Raw)
             || !Path.IsPathFullyQualified(FilePath) || FileRaw != Raw || Raw.Length is < 4000 or > 14400
+            || Path.GetFileName(FilePath) != hash + ".md"
+            || Path.GetFileName(Path.GetDirectoryName(FilePath)) != SourceId.ToString("D")
             || string.IsNullOrWhiteSpace(Summary) || Mode != "Apply" || Outcome != "Applied" || Decision >= Deadline
             || TranscriptKind != "UserPrompt" || Sequence <= 0 || PromptAt == default
             || DeliveryVerdict is not ("Delivered" or "LateConfirmed")

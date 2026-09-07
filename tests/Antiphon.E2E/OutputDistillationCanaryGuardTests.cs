@@ -42,10 +42,15 @@ public class OutputDistillationCanaryGuardTests
     [Arguments("path")] [Arguments("screen")] [Arguments("assistant")] [Arguments("clipped")] [Arguments("raw-middle")]
     [Arguments("api")] [Arguments("rejected")] [Arguments("late")] [Arguments("shadow")] [Arguments("model")]
     [Arguments("read")] [Arguments("tool")] [Arguments("teardown")] [Arguments("restart")]
+    [Arguments("file-identity")] [Arguments("file-name")]
     public void Evidence_rejects_missing_or_wrong_delivery_proof(string scenario)
     {
         var id = Guid.NewGuid(); var parent = Guid.NewGuid(); var note = Guid.NewGuid(); var now = DateTimeOffset.UtcNow;
-        var raw = new string('x', 5000); var path = Path.Combine(Path.GetTempPath(), "report.md");
+        var raw = new string('x', 5000);
+        var hash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw)));
+        var path = Path.Combine(Path.GetTempPath(), id.ToString("D"), hash + ".md");
+        var otherPath = Path.Combine(Path.GetTempPath(), scenario == "file-identity" ? Guid.NewGuid().ToString("D") : id.ToString("D"),
+            scenario == "file-name" ? "wrong.md" : hash + ".md");
         var header = "[task " + DelegationReportFormatter.Short(id) + " done] next=review";
         var evidence = new DistillerCanaryEvidence(id, parent, note, id, note, parent, raw, DelegationNoteDigest.Compute(raw),
             path, raw, "accepted summary", header, "Apply", "Applied", now.AddSeconds(45), now,
@@ -58,6 +63,7 @@ public class OutputDistillationCanaryGuardTests
             "source" => evidence with { LedgerSourceId = Guid.NewGuid() }, "parent" => evidence with { TranscriptParentId = Guid.NewGuid() },
             "note" => evidence with { LedgerNoteId = Guid.NewGuid() }, "digest" => evidence with { RawDigest = "wrong" },
             "path" => evidence with { FileRaw = "different" }, "screen" => evidence with { TranscriptKind = "Screen" },
+            "file-identity" or "file-name" => evidence with { FilePath = otherPath, Prompt = evidence.Prompt.Replace(path, otherPath) },
             "assistant" => evidence with { TranscriptKind = "AssistantText" }, "clipped" => evidence with { Prompt = header },
             "raw-middle" => evidence with { Prompt = evidence.Prompt + "distinctive middle" },
             "api" => evidence with { Prompt = header + "\naccepted summary\nGET /api/agent-tasks/" + id + "\nmarker" },

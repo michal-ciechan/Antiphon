@@ -239,6 +239,8 @@ public class OutputDistillationApplyCanaryTests
         task!.ReplyTo.ShouldBe(AgentTaskReplyTo.Session); task.ResultFilePath.ShouldNotBeNull();
         task.Result!.Length.ShouldBeGreaterThanOrEqualTo(longReport ? 20001 : 4000);
         if (!longReport) task.Result.Length.ShouldBeLessThanOrEqualTo(14400);
+        task.ResultFilePath.ShouldBe(Path.Combine(options.Repo, ".antiphon", "reports", task.Id.ToString("D"),
+            Hash(Encoding.UTF8.GetBytes(task.Result)) + ".md"));
         (await File.ReadAllTextAsync(task.ResultFilePath!, ct)).ShouldBe(task.Result);
         var transcript = await TranscriptAsync(app, parent, ct);
         var prompt = transcript.Where(t => t.Kind == TranscriptKinds.UserPrompt && t.Text == note!.Body).ShouldHaveSingleItem();

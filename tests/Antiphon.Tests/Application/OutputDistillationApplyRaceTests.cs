@@ -181,21 +181,40 @@ public class OutputDistillationApplyRaceTests
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var store = new ValidationGate(entered, release);
-        using var h = new OutputDistillationHarness(servicesOverride: s => s.AddSingleton<Antiphon.Server.Application.Interfaces.IAgentReportStore>(store));
+        using var h = new OutputDistillationHarness(servicesOverride: s => {
+            s.AddSingleton<Antiphon.Server.Application.Interfaces.IAgentReportStore>(store);
+            s.AddSingleton(TimeProvider.System);
+            s.AddSingleton(Options.Create(new SupervisionSettings
+            { DeliveryVerification = new DeliveryVerificationSettings { Enabled = false } }));
+        });
         var seed = await h.SeedSourceAsync();
+        var session = seed.Task.ParentSessionId!.Value;
+        await using (var db = OutputDistillationHarness.CreateContext())
+            await db.AgentSessions.Where(s => s.Id == session).ExecuteUpdateAsync(s => s.SetProperty(x => x.Cwd, h.Scratch));
+        var submitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var adapter = new FakeAgentProtocolAdapter();
+        adapter.OnSubmitted = _ => { submitted.TrySetResult(); return Task.CompletedTask; };
+        h.Provider.GetRequiredService<AgentSessionRuntime>().Register(session, adapter);
         var queue = h.Provider.GetRequiredService<SessionMessageQueueService>();
-        var now = h.Clock.GetUtcNow();
+        var now = DateTimeOffset.UtcNow;
         var apply = queue.TryApplyDistillationAsync(new(seed.Task.Id, seed.QueuedMessageId, now, now.AddSeconds(45), OutputDistillerMode.Apply),
             seed.Digest, h.PassingDistillation(), CancellationToken.None);
+        Task? send = null;
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            var sem = queue.GetLock(seed.Task.ParentSessionId!.Value);
-            var acquired = await sem.WaitAsync(0);
-            if (acquired) sem.Release();
-            acquired.ShouldBeTrue("disk validation must not own delivery");
+            send = queue.SendNowAsync(session, seed.QueuedMessageId, CancellationToken.None);
+            await Task.WhenAny(submitted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+            submitted.Task.IsCompleted.ShouldBeTrue("SendNow must reach real protocol submission while only file validation is held");
         }
-        finally { release.TrySetResult(); await apply; }
+        finally
+        {
+            release.TrySetResult();
+            if (send is not null) await send.WaitAsync(TimeSpan.FromSeconds(5));
+            await apply.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        (await apply).ShouldBe("delivery-claimed");
+        (await h.ReloadQueuedAsync(seed.QueuedMessageId)).DeliveryAttempts.ShouldBe(1);
     }
 
     [Test]
