@@ -32,7 +32,7 @@ Categories overlap; they are not six disjoint cohorts. Counts are Private / Note
 
 ## Holding rule and successor
 
-The Code brief explicitly requested `/docs/cards/*` plus `!/docs/cards/antiphon/`. That conflicts with the original D-4/V-6/PC-10 blanket `/docs/cards/` hold. The implementation follows the explicit brief and records the difference in the owner document: **Antiphon is unignored; other and future boards are ignored.** V-6's actual-board probe therefore expects Git exit 1, while future-board probes expect exit 0. PC-10 removes the selected `/docs/cards/*` rule in scratch Git and must turn those future-board assertions red. No claim is made that Git ignore protects the Antiphon directory from manual staging.
+The Code brief mistakenly requested `/docs/cards/*` plus `!/docs/cards/antiphon/`, conflicting with the original D-4/V-6/PC-10 blanket `/docs/cards/` hold. That was caught before Review and reverted at `2a99227a`: the shipped state is the blanket `/docs/cards/` hold from D-4/S-1, recorded in the owner document. **Antiphon and every other board are ignored**, with no exception. V-6's actual-board probe therefore expects Git exit **0**, matching future-board probes. PC-10 removes the blanket `/docs/cards/` rule in scratch Git and must turn all board assertions (Antiphon included) red. No claim is made that Git ignore protects the Antiphon directory from manual staging.
 
 The original `.gitignore` byte prefix, newline convention and `backups/` entry remain intact. Exactly one named holding/managed block is appended. Reinstallation and nonexistent card/INDEX probes verify repeatability without creating real export files.
 
@@ -65,7 +65,7 @@ All **524 timestamped policy samples**, from **2026-09-07T06:54:33.580650+00:00*
 | V-3 | Stale combined PATCH returns 409 with unchanged winner content/note/token/revisions. Local injections cover before submit, after server commit before acknowledgement, and after response before receipt. Exact persisted state recovers safely with one total write; missing/mismatching completion cases and live zero-write rerun are checked. | R-1, R-3 |
 | V-4 | Every candidate's proposed public fields reviewed; 54 reviewed Notes intents require source-slice/merged-note hashes and a semantic review hash. Recursively scan all public string fields for identified private values/variants. Remaining uneditable repeats select the four reported Private exceptions. | R-4 |
 | V-5 | Open-gate scratch Git/test-DB fixtures actually render a public sibling, exclude active and archived Private cards plus all metadata from file/INDEX/working tree/index/HEAD, and exclude public-sibling notes. Revocation and explicit Public versus board-off/Unknown/ignored gates pass. DTO/event/log note boundaries pass. | R-5 |
-| V-6 | Byte-prefix and repeated-install checks, actual/future card/INDEX Git probes and owner-document review. The brief-selected actual-board exception is the explicit adjustment described above. | R-6 |
+| V-6 | Byte-prefix and repeated-install checks, actual/future card/INDEX Git probes and owner-document review. The brief-selected exception grammar was reverted at 2a99227a; the blanket D-4/S-1 hold described above is what shipped. | R-6 |
 | V-7 | Strict policy checks before/after each edit and preview; dry-run counters/reason/error/commit checked explicitly; no generated markdown in working tree, index or current HEAD. Route trace excludes settings/lifecycle/tracker writes and non-dry synchronization. | R-7 |
 | V-8 | Per-GUID intent/receipt and authorized-field equality, exact migration revision metadata, unchanged original Accept/unflagged hashes/visibility/notes-presence, separate additions/concurrent-state accounting, exact-path staging and custody scan. | R-7, R-8 |
 
@@ -94,7 +94,7 @@ Every listed unsafe variant produced the named assertion failure, then passed wh
 | PC-7 | Second write/revision, duplicate section, mismatched persisted note, missing durable intent | 4 / 4 local |
 | PC-8 | Private becomes Inherit; public description contains note marker; active and archived variants | 4 / 4 API cases |
 | PC-9 | Open disabled board, classify Unknown as Public, remove target ignore; two fixture variants each | 6 / 6 API cases |
-| PC-10 | Remove the brief-selected wildcard holding rule in scratch Git | 1 / 1 local; adjusted expectation documented above |
+| PC-10 | Remove the blanket `/docs/cards/` holding rule (shipped grammar, post-2a99227a) in scratch Git | 1 / 1 local; adjusted expectation documented above |
 | PC-11 | Each unsafe policy/removal/null value, written/error/commit result, unavailable status | 14 / 14 local |
 | PC-12 | Working/index/HEAD residue, settings/lifecycle/tracker request, protected-field change, evidence sentinel | 8 / 8 local |
 

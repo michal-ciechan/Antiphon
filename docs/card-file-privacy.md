@@ -141,7 +141,7 @@ Review, no publication occurred either way since sync stayed off throughout):
 The Antiphon directory stays ignored, along with every other board. Its
 publication remains blocked by `syncCardFiles=false` and
 `RepositoryVisibility=Unknown`; `AutoCommit=false` and global `Enabled=true` remain
-unchanged. The ignore exception is not publication approval or protection against
+unchanged. The holding rule is not publication approval or protection against
 manually staging a file placed in the Antiphon directory. Verify current working
 tree, index and HEAD directly; an empty directory or null status `ignored` is
 insufficient evidence.
