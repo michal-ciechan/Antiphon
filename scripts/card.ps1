@@ -57,6 +57,10 @@
 # The tick will not pick that card up either (CARD-0087); -Spawn or POST /spawn starts it.
 # When it would have, the script says so instead of leaving you to find out later.
 # A reopen never starts an agent, even into an active column. Spawn separately if you want one.
+# new/edit: -CardFileVisibility Inherit|Private|Public and -PrivateNotesFile <UTF-8 file>.
+# edit: -ClearPrivateNotes explicitly clears; it cannot accompany -PrivateNotesFile.
+# Notes are never printed. Public title/description/outcome/archive fields may publish on sync.
+# Saving a card never syncs; new/edit report eligibility and cleanup from returned status.
 [CmdletBinding(DefaultParameterSetName = 'Verb')]
 param(
     [Parameter(ParameterSetName = 'Verb', Position = 0, Mandatory = $true)]
@@ -85,6 +89,17 @@ param(
 
     [Parameter(ParameterSetName = 'Verb')]
     [string]$DescriptionFile,
+
+    [Parameter(ParameterSetName = 'Verb')]
+    [ValidateSet('Inherit', 'Private', 'Public')]
+    [string]$CardFileVisibility,
+
+    # File-only input: never echo private text in diagnostics or summaries.
+    [Parameter(ParameterSetName = 'Verb')]
+    [string]$PrivateNotesFile,
+
+    [Parameter(ParameterSetName = 'Verb')]
+    [switch]$ClearPrivateNotes,
 
     [Parameter(ParameterSetName = 'Verb')]
     [string]$Reason,
@@ -200,6 +215,11 @@ function Invoke-Antiphon {
         if ($null -ne $parsed -and $parsed.detail) {
             $lines = @($parsed.detail)
             if ($parsed.code) { $lines += ("code {0}" -f $parsed.code) }
+            if ($parsed.errors) {
+                foreach ($field in $parsed.errors.PSObject.Properties) {
+                    $lines += ("{0}: {1}" -f $field.Name, ($field.Value -join '; '))
+                }
+            }
             foreach ($c in @($parsed.candidates)) {
                 $lines += ("  {0}  {1}  {2}  {3}" -f $c.boardName, $c.id, $c.status, $c.title)
             }
@@ -369,6 +389,42 @@ function Write-CardLine {
             $TheCard.identifier, $TheCard.status, $TheCard.importance, $TheCard.urgency, $rankBit, $prov, $TheCard.title, $labels)
 }
 
+function Write-CardFileStatus {
+    param($TheCard)
+    $s = $TheCard.cardFileStatus
+    if ($null -eq $s) {
+        Write-Output 'status unavailable; export safety not confirmed'
+        return
+    }
+    if ($s.eligible) {
+        $when = if ($s.intervalSeconds -eq 0) { 'manual sync' } else { "next sync ($($s.intervalSeconds)s)" }
+        Write-Output "card files  ELIGIBLE: $when"
+    }
+    else { Write-Output "card files  NOT WRITTEN: $($s.reason)" }
+    if ($s.repositoryPath -and $s.directory) {
+        $relative = if ($s.eligible -and $s.relativeFile) { $s.relativeFile } else { $s.directory }
+        $target = Join-Path $s.repositoryPath ($relative.Replace('/', [IO.Path]::DirectorySeparatorChar))
+        $visibility = if ($s.repositoryVisibility -eq 'Unknown') { 'Unknown repository visibility; not checked' } else { "configured $($s.repositoryVisibility) repository" }
+        Write-Output "target      $target ($visibility)"
+    }
+    else { Write-Output 'target      unavailable (no safe resolved card-file target)' }
+    $boardSync = if ($s.syncCardFiles) { 'on' } else { 'off' }
+    $autoCommit = if ($s.autoCommit) { 'on' } else { 'off' }
+    Write-Output "policy      $($s.cardFileVisibility); board sync $boardSync; AutoCommit $autoCommit"
+    Write-Output 'private     notes stored in Antiphon; excluded from card files'
+    if ($s.repositoryVisibility -eq 'Public') { Write-Output 'PUBLIC REPOSITORY: public card fields will be written on sync' }
+    if ($s.repositoryVisibility -eq 'Unknown') { Write-Output 'UNKNOWN REPOSITORY VISIBILITY: sync blocked' }
+    if ($null -eq $s.workingTreeRemovalPending -or $null -eq $s.gitRemovalPending) {
+        Write-Output 'removal     pending: cleanup state unavailable; erasure not confirmed'
+    }
+    elseif ($s.warnings -contains 'card_file_staged_private_residue') {
+        Write-Output 'removal     pending: staged private export; reconcile to unstage'
+    }
+    elseif ($s.workingTreeRemovalPending) { Write-Output 'removal     pending: reconcile previously exported working files' }
+    elseif ($s.gitRemovalPending) { Write-Output 'removal     pending: working files removed; Git index/HEAD cleanup required' }
+    if (-not $s.enabled) { Write-Output 'card-file sync disabled; existing exports are not erased' }
+}
+
 function Write-TrackerPushLine {
     param($Push)
     if ($null -eq $Push) { return }
@@ -393,6 +449,7 @@ if ($PSCmdlet.ParameterSetName -eq 'Limits') {
     $l = Get-CardLimits
     Write-Output ("title       {0}" -f $l.maxTitleLength)
     Write-Output ("description {0}" -f $l.maxDescriptionLength)
+    Write-Output ("privateNotes {0}" -f $l.maxPrivateNotesLength)
     Write-Output ("reason      {0}" -f $l.maxReasonLength)
     Write-Output ("actor       {0}" -f $l.maxActorLength)
     Write-Output ("alias       {0} ({1} words)" -f $l.maxAliasLength, $l.maxAliasWords)
@@ -407,6 +464,26 @@ if ($PSBoundParameters.ContainsKey('Priority')) {
 }
 
 $script:resolvedBoardId = $null
+$notesSupplied = $PSBoundParameters.ContainsKey('PrivateNotesFile')
+if (($notesSupplied -or $ClearPrivateNotes -or $PSBoundParameters.ContainsKey('CardFileVisibility')) -and $Verb -notin @('new', 'edit')) {
+    Write-Error 'Private-note and card-file visibility options apply only to new/edit.'
+    exit 1
+}
+if ($ClearPrivateNotes -and ($Verb -ne 'edit' -or $notesSupplied)) {
+    Write-Error '-ClearPrivateNotes applies only to edit and cannot be combined with -PrivateNotesFile.'
+    exit 1
+}
+$notesText = ''
+if ($notesSupplied) {
+    try { $notesText = [IO.File]::ReadAllText($PrivateNotesFile, [Text.Encoding]::UTF8) }
+    catch { Write-Error 'Private notes file could not be read.'; exit 1 }
+    $notesLimit = (Get-CardLimits).maxPrivateNotesLength
+    if (-not $notesLimit) { $notesLimit = 20000 }
+    if ($notesText.Length -gt $notesLimit) {
+        Write-Error ("Private notes length {0}; limit {1}." -f $notesText.Length, $notesLimit)
+        exit 1
+    }
+}
 if (-not [string]::IsNullOrWhiteSpace($Board)) {
     $script:resolvedBoardId = Resolve-BoardId $Board
 }
@@ -485,6 +562,8 @@ switch ($Verb) {
         if ($PSBoundParameters.ContainsKey('Alias')) { Assert-Alias -Value $Alias }
 
         $body = @{ title = $Title }
+        if ($notesSupplied) { $body['privateNotes'] = $notesText }
+        if ($PSBoundParameters.ContainsKey('CardFileVisibility')) { $body['cardFileVisibility'] = $CardFileVisibility }
         if (-not [string]::IsNullOrEmpty($desc)) { $body['description'] = $desc }
         if ($PSBoundParameters.ContainsKey('Alias') -and -not [string]::IsNullOrWhiteSpace($Alias)) {
             $body['alias'] = $Alias
@@ -495,8 +574,10 @@ switch ($Verb) {
         if ($Labels) { $body['labels'] = @($Labels) }
 
         $created = Invoke-Antiphon -Method POST -Path "/api/boards/$boardId/cards" -Body $body
+        if ($Json) { $created | ConvertTo-Json -Depth 8; return }
         Write-CardLine $created
         Write-Output ("id          {0}" -f $created.id)
+        Write-CardFileStatus $created
         return
     }
 
@@ -517,6 +598,8 @@ switch ($Verb) {
             reason           = $reasonText
         }
         if (-not [string]::IsNullOrWhiteSpace($Title)) { $body['title'] = $Title }
+        if ($notesSupplied -or $ClearPrivateNotes) { $body['privateNotes'] = $notesText }
+        if ($PSBoundParameters.ContainsKey('CardFileVisibility')) { $body['cardFileVisibility'] = $CardFileVisibility }
         if (-not [string]::IsNullOrEmpty($desc)) { $body['description'] = $desc }
         if ($PSBoundParameters.ContainsKey('Importance')) { $body['importance'] = $Importance }
         if ($PSBoundParameters.ContainsKey('ImportanceProvenance')) { $body['importanceProvenance'] = $ImportanceProvenance }
@@ -532,8 +615,10 @@ switch ($Verb) {
         }
 
         $updated = Invoke-Antiphon -Method PATCH -Path ("/api/cards/{0}/content" -f $theCard.id) -Body $body
+        if ($Json) { $updated | ConvertTo-Json -Depth 8; return }
         Write-CardLine $updated
         Write-Output ("revision    {0}" -f $updated.revisionCount)
+        Write-CardFileStatus $updated
         return
     }
 
