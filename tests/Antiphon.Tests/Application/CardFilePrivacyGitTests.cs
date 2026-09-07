@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -16,6 +17,33 @@ public class CardFilePrivacyGitTests
 {
     private static CardFileRepository Repository() => new(new GitProcessGate(),
         Options.Create(new GitSettings()), NullLogger<CardFileRepository>.Instance);
+
+    [Test]
+    public async Task Managed_file_symlink_refuses_sync_and_repository_IO_before_mutation()
+    {
+        await using var world = new CardFilePrivacyWorld(); await world.InitializeAsync(); await world.AddCardAsync();
+        Directory.CreateDirectory(world.DirectoryPath);
+        var outside = Path.Combine(world.Repo.WorktreeRoot, "outside.md");
+        var link = Path.Combine(world.DirectoryPath, "legacy.md");
+        await File.WriteAllTextAsync(outside, "C408_OUTSIDE_UNCHANGED");
+        var head = await world.Repo.GitReadAsync("rev-parse", "HEAD");
+        try
+        {
+            // Requires Windows file-symlink privilege. Failure to create the fixture is
+            // an explicit environmental failure, never a passing junction substitute.
+            File.CreateSymbolicLink(link, outside);
+            (await Should.ThrowAsync<ConflictException>(() => world.SyncAsync())).Code.ShouldBe("unsafe_card_file_path");
+            await using var db = world.Db();
+            (await db.Boards.AsNoTracking().SingleAsync(b => b.Id == world.BoardId)).CardFilesDirectorySlug.ShouldBeNull();
+            var repository = Repository();
+            (await Should.ThrowAsync<ConflictException>(() => repository.ReadAsync(world.Repo.Path, link, default))).Code.ShouldBe("unsafe_card_file_path");
+            (await Should.ThrowAsync<ConflictException>(() => repository.WriteAsync(world.Repo.Path, link, "public", world.BoardId, default))).Code.ShouldBe("unsafe_card_file_path");
+            Should.Throw<ConflictException>(() => repository.Delete(world.Repo.Path, link)).Code.ShouldBe("unsafe_card_file_path");
+            (await File.ReadAllTextAsync(outside)).ShouldBe("C408_OUTSIDE_UNCHANGED");
+            (await world.Repo.GitReadAsync("rev-parse", "HEAD")).ShouldBe(head);
+        }
+        finally { if (File.Exists(link)) File.Delete(link); }
+    }
 
     [Test]
     public async Task Unmerged_managed_path_has_named_guard_and_preserves_conflict_index()
