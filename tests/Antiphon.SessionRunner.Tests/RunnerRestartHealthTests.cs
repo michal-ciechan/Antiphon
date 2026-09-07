@@ -44,12 +44,47 @@ public partial class RunnerRestartHealthTests
         probes.Length.ShouldBe(2); probes[1].GetProperty("value").GetDouble().ShouldBe(remaining);
         r.Trace.Last().GetProperty("value").GetDouble().ShouldBe(remaining);
     }
-    [Test]
-    public async Task Late_200_is_not_in_budget_success()
+    [Test, Arguments(1001, 0), Arguments(0, 1001), Arguments(500, 501)]
+    public async Task Late_200_is_not_in_budget_success(int probeMs, int verifyMs)
     {
-        using var f = new RestartFixture(); f.Config["firstProbeMs"] = 1001;
+        using var f = new RestartFixture(); f.Config["firstProbeMs"] = probeMs; f.Config["verifyMs"] = verifyMs;
         var r = await f.Run("pwsh.exe", "-WaitOnly", "-TimeoutSec", "1"); r.Outcome.ShouldBe("wait-expired"); r.Exit.ShouldBe(2);
         r.Json.GetProperty("firstHealth200ObservedAtUtc").ValueKind.ShouldBe(System.Text.Json.JsonValueKind.Null);
+        r.Json.GetProperty("lastProbeResult").GetString().ShouldBe("http-200-late");
+        r.Json.GetProperty("runner").GetProperty("pid").GetInt32().ShouldBe(900001);
+        r.Output.ShouldContain("http-200-late");
+    }
+    [Test, Arguments(200, false), Arguments(503, false), Arguments(200, true), Arguments(503, true)]
+    public async Task Foreign_listener_expiry_names_actual_path_even_with_Hard(int status, bool hard)
+    {
+        using var f = new RestartFixture(); f.Config["foreign"] = true; f.Config["status"] = status;
+        var r = await f.Run("pwsh.exe", hard ? "-Hard" : "-WaitOnly", "-TimeoutSec", "1");
+        r.Outcome.ShouldBe("wait-expired"); r.Exit.ShouldBe(2);
+        r.Json.GetProperty("portOwner").GetProperty("pid").GetInt32().ShouldBe(900003);
+        r.Json.GetProperty("portOwner").GetProperty("path").GetString().ShouldBe(@"C:\fixture\other-build\Antiphon.SessionRunner.exe");
+        r.Output.ShouldContain(@"PID 900003; path: C:\fixture\other-build\Antiphon.SessionRunner.exe");
+        r.Output.ShouldContain("not stopped, even with -Hard");
+        if (status == 200) r.Json.GetProperty("lastProbeResult").GetString().ShouldBe("http-200-identity-unconfirmed");
+        r.Trace.SkipWhile(t => t.GetProperty("op").GetString() != "probe")
+            .All(t => t.GetProperty("op").GetString() is "probe" or "sleep").ShouldBeTrue();
+    }
+    [Test, Arguments("pwsh.exe", "probe"), Arguments("pwsh.exe", "clock"), Arguments("pwsh.exe", "utc"),
+        Arguments("powershell.exe", "probe"), Arguments("powershell.exe", "clock"), Arguments("powershell.exe", "utc")]
+    public async Task Wait_exception_still_emits_one_final_result_without_more_controls(string shell, string operation)
+    {
+        using var f = new RestartFixture(); f.Config["failWaitOperation"] = operation; f.Config["firstProbeMs"] = 123;
+        var r = await f.Run(shell, "-WaitOnly"); // Fixture requires exactly one final JSON line, last in output.
+        r.Exit.ShouldBe(1); r.Outcome.ShouldBe("wait-failed"); r.Mutations.ShouldBeEmpty();
+        r.Json.GetProperty("operation").GetString().ShouldBe("health-wait");
+        r.Json.GetProperty("error").GetString().ShouldBe("injected wait failure: " + operation);
+        r.Output.ShouldContain("Background startup has not been stopped");
+        if (operation == "clock")
+        {
+            r.Json.GetProperty("waitElapsedMs").ValueKind.ShouldBe(System.Text.Json.JsonValueKind.Null);
+            r.Json.GetProperty("commandElapsedMs").ValueKind.ShouldBe(System.Text.Json.JsonValueKind.Null);
+        }
+        else r.Wait.ShouldBe(123);
+        if (operation == "utc") r.Json.GetProperty("observedAtUtc").ValueKind.ShouldBe(System.Text.Json.JsonValueKind.Null);
     }
     [Test]
     public async Task Immediate_200_needs_no_initial_sleep()

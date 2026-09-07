@@ -87,6 +87,9 @@ public class AntiphonRestartTcpOwner {
             switch ($operation) {
                 'write-state' { New-Item -ItemType Directory -Force $logDir | Out-Null; Set-Content -LiteralPath (Join-Path $logDir 'session-runner.state') -Value 'running' -Encoding UTF8 }
                 'stop-service' {
+                    # Stop the recorded service wrapper and runners at this checkout's expected
+                    # Debug executable path. Unlike the old port-blind kill, a foreign listener
+                    # (including a worktree or Release runner) is left alone, even with -Hard.
                     & $stop (& $readPid 'session-runner.service.pid')
                     Get-Process Antiphon.SessionRunner -ErrorAction SilentlyContinue | ForEach-Object {
                         $owned = Get-RunnerProcessIdentity $_.Id
@@ -189,7 +192,7 @@ function Invoke-RunnerRestart($Platform, [switch]$Hard, [switch]$KillSessions, [
         timeoutSec = $TimeoutSec; waitElapsedMs = 0; commandElapsedMs = 0; observedAtUtc = $null; lastObservedPhase = 'unknown';
         phaseAgeMs = $null; attemptId = $null; supervisor = $null; wrapper = $null; runner = $null; firstHealth200ObservedAtUtc = $null;
         lastProbeResult = $null; errorCode = $null; operation = $null; error = $null; commandEnteredAtUtc = $CommandEnteredAtUtc;
-        supervisorAlive = $null; runnerAlive = $null;
+        supervisorAlive = $null; runnerAlive = $null; portOwner = $null;
         relaunchRequestedAtUtc = $null; waitStartedAtUtc = $null; pollingIntervalMs = 2000 }
     $waitStart = $null
     try {
@@ -230,14 +233,16 @@ function Invoke-RunnerRestart($Platform, [switch]$Hard, [switch]$KillSessions, [
             $completed = & $Platform.Now; $observed = & $Platform.Utc
             if ($probe.status -eq 200) {
                 $identity = & $Platform.Identity
+                $result.portOwner = $identity
                 $verified = & $Platform.Verify $identity
                 $completed = & $Platform.Now
+                if ($verified) { $result.runner = $identity }
                 if ($verified -and $completed - $waitStart -le $budget) {
                     $result.runner = $identity; $result.firstHealth200ObservedAtUtc = $observed
                     $result.outcome = 'healthy'; $result.exitCode = 0
                     break
                 }
-                $result.lastProbeResult = 'http-200-identity-unconfirmed'
+                $result.lastProbeResult = if ($verified) { 'http-200-late' } else { 'http-200-identity-unconfirmed' }
             }
             $remaining = $budget - ((& $Platform.Now) - $waitStart)
             if ($remaining -gt 0) { & $Platform.Sleep ([Math]::Min(2000, $remaining)) }
@@ -259,19 +264,28 @@ function Invoke-RunnerRestart($Platform, [switch]$Hard, [switch]$KillSessions, [
         }
         if ($result.outcome -eq 'healthy') { Write-Host "healthy: first completed HTTP 200 at $($result.firstHealth200ObservedAtUtc); wait $($result.waitElapsedMs) ms." }
         else {
+            try { $result.portOwner = & $Platform.Identity } catch { }
             Write-Host 'Health wait expired; runner readiness is unconfirmed. Startup may still be in progress.'
             Write-Host 'wait-expired: the script stopped waiting and has not stopped background startup.'
             Write-Host "Last observed phase: $($result.lastObservedPhase); age ms: $($result.phaseAgeMs); probe: $($result.lastProbeResult)."
             Write-Host "Identified supervisor alive: $($result.supervisorAlive); runner alive: $($result.runnerAlive) (blank means unknown)."
+            if ($result.portOwner) {
+                Write-Host "Last observed port 17204 owner: PID $($result.portOwner.pid); path: $($result.portOwner.path)."
+                Write-Host 'A runner at another executable path is not stopped, even with -Hard; establish its ownership before stopping it.'
+            }
             Write-Host 'Continue: pwsh -NoProfile -File scripts/restart-session-runner.ps1 -WaitOnly -TimeoutSec 180'
             Write-Host "Inspect: Get-Content '$($Platform.LogPath)' -Tail 30; also dated logs under %TEMP%\antiphon-logs\session-runner-*.log."
         }
     } catch {
-        if ($null -ne $waitStart) { throw }
         $result.error = $_.Exception.Message
-        Write-Host "action-failed: $($result.operation): $($result.error)"
+        if ($null -ne $waitStart) {
+            $result.outcome = 'wait-failed'; $result.exitCode = 1; $result.operation = 'health-wait'
+            try { $result.waitElapsedMs = [Math]::Round((& $Platform.Now) - $waitStart, 3) } catch { $result.waitElapsedMs = $null }
+            Write-Host "wait-failed: observation failed: $($result.error). Background startup has not been stopped."
+        } else { Write-Host "action-failed: $($result.operation): $($result.error)" }
     }
-    $result.observedAtUtc = & $Platform.Utc
-    $result.commandElapsedMs = [Math]::Round((& $Platform.Now) - $entry, 3)
+    # Clock/observation failures must not suppress the front door's stable final JSON line.
+    try { $result.observedAtUtc = & $Platform.Utc } catch { }
+    try { $result.commandElapsedMs = [Math]::Round((& $Platform.Now) - $entry, 3) } catch { $result.commandElapsedMs = $null }
     return [pscustomobject]$result
 }

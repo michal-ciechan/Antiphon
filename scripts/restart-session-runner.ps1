@@ -3,7 +3,10 @@
     Restart the runner, or continue observing without another restart.
 .DESCRIPTION
     Supervisor delay, incremental build, launch and complete adoption precede HTTP.
-    Detached sessions survive. Exit 0 healthy; 2 wait-expired; 1 action-failed.
+    Detached sessions survive. Exit 0 healthy; 2 wait-expired; 1 action-failed or wait-failed.
+    Stops the recorded service wrapper and runners at this checkout's Debug executable
+    path, not arbitrary port 17204 listeners. Other build paths remain untouched even
+    with -Hard; expiry output identifies the observed port owner's PID and path.
 .PARAMETER TimeoutSec
     Positive observation budget after restart actions, default 180 seconds.
 .PARAMETER WaitOnly

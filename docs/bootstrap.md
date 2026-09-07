@@ -14,8 +14,10 @@ latency percentile, guaranteed bound or startup speed improvement.
 
 The final `RUNNER RESTART RESULT:` line contains compact JSON. Outcomes are
 `healthy` (exit 0, a completed HTTP 200 from the verified runner), `wait-expired`
-(exit 2, readiness unconfirmed), and `action-failed` (exit 1, a concrete validation,
-stop or launch operation failed). A retrying build failure stays in the same wait.
+(exit 2, readiness unconfirmed), `action-failed` (exit 1, a concrete validation,
+stop or launch operation failed), and `wait-failed` (exit 1, observation threw after
+the wait began). A wait failure still emits the final JSON, including the error;
+unavailable clock fields are null. A retrying build failure stays in the same wait.
 An expired wait stops observation only; supervision and adoption continue.
 Continue observing with no state writes, stops, PID deletion or Scheduled Task calls:
 
@@ -37,6 +39,18 @@ retain their existing bounded rotation. They contain no prompts, rules or
 environment dumps. The first health time is this observer's first completed 200,
 with up to two seconds between probes; it is not the endpoint's earliest possible
 response time. Requests use the remaining monotonic budget, capped at five seconds.
+A verified 200 that completes after the budget, including identity verification,
+is labeled `http-200-late`; a genuinely unverified 200 is
+`http-200-identity-unconfirmed`. Neither is in-budget success.
+
+The restart stops the recorded service wrapper and runners at this checkout's
+`src\Antiphon.SessionRunner\bin\Debug\net9.0\Antiphon.SessionRunner.exe` path.
+Unlike the former port-blind kill, it leaves other port 17204 listeners alone,
+including worktree and Release builds, even with `-Hard`. Expiry output and the
+JSON `portOwner` field identify the observed listener's PID and actual executable
+path when available, including when health returned a non-200 status. Establish
+that process's ownership before stopping it; retrying `-Hard` cannot clear a
+foreign executable simply because it owns the port.
 
 For deployment, verify the commit is in the canonical checkout, then schedule one
 supervisor refresh (`-Hard`) to load these script changes if the supervisor is old.

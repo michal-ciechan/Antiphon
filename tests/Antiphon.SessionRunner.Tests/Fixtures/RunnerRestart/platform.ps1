@@ -13,14 +13,15 @@ function New-RunnerRestartPlatform($Root, $CommandClock) {
     }.GetNewClosure()
     $log = Join-Path $Root 'startup.log'
     return @{
-        Now = { $state.ms }.GetNewClosure()
-        Utc = { $origin.AddMilliseconds($state.ms + $(if ($state.ms -ge 1000) { [double]$cfg.utcJump } else { 0 })).ToString('o') }.GetNewClosure()
+        Now = { if ($cfg.failWaitOperation -eq 'clock' -and $state.probes -gt 0) { throw 'injected wait failure: clock' }; $state.ms }.GetNewClosure()
+        Utc = { if ($cfg.failWaitOperation -eq 'utc' -and $state.probes -gt 0) { throw 'injected wait failure: utc' }; $origin.AddMilliseconds($state.ms + $(if ($state.ms -ge 1000) { [double]$cfg.utcJump } else { 0 })).ToString('o') }.GetNewClosure()
         Sleep = { param($ms) & $trace 'sleep' $ms; $state.ms += $ms }.GetNewClosure()
         Probe = {
             param($ms)
             & $trace 'probe' $ms
             $state.probes++
             if ($state.probes -eq 1) { $state.ms += [double]$cfg.firstProbeMs }
+            if ($cfg.failWaitOperation -eq 'probe') { throw 'injected wait failure: probe' }
             foreach ($r in $cfg.records) {
                 if ($state.ms -ge $r.atMs -and -not $state.emitted.ContainsKey([string]$r.atMs)) {
                     [IO.File]::AppendAllText($log, ('ANTIPHON_STARTUP ' + ($r.record | ConvertTo-Json -Compress) + "`n"))
@@ -31,11 +32,11 @@ function New-RunnerRestartPlatform($Root, $CommandClock) {
             @{ status = $status; result = "fixture-$status" }
         }.GetNewClosure()
         Identity = {
-            if ($cfg.foreign) { return @{ pid = 900003; startTimeUtc = $identity.startTimeUtc; path = 'foreign.exe' } }
+            if ($cfg.foreign) { return @{ pid = 900003; startTimeUtc = $identity.startTimeUtc; path = 'C:\fixture\other-build\Antiphon.SessionRunner.exe' } }
             if ($cfg.reused) { return @{ pid = $identity.pid; startTimeUtc = '2026-09-07T09:57:00.0000000Z'; path = $identity.path } }
             $identity
         }.GetNewClosure()
-        Verify = { param($i) $i -and $i.pid -eq $identity.pid -and $i.startTimeUtc -eq $identity.startTimeUtc -and $i.path -eq $identity.path }.GetNewClosure()
+        Verify = { param($i) $state.ms += [double]$cfg.verifyMs; $i -and $i.pid -eq $identity.pid -and $i.startTimeUtc -eq $identity.startTimeUtc -and $i.path -eq $identity.path }.GetNewClosure()
         Process = { param($id) if ($id -eq $identity.pid) { $identity } elseif ($id -eq $supervisor.pid) { $supervisor } }.GetNewClosure()
         Census = { @{ supervisor = $(if (-not $cfg.noSupervisor) { $supervisor }); wrapper = $null } }.GetNewClosure()
         Control = {

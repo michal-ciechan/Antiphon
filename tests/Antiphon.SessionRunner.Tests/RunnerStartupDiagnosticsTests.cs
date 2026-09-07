@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Reflection;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.PtyHost.Protocol;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -41,6 +43,42 @@ public class RunnerStartupDiagnosticsTests
         runtime.Get(id).Status.ShouldBe("Exited"); runtime.Get(id).ExitCode.ShouldBe(17); log.Attempts.ShouldBeGreaterThan(0);
         SeedTerminal(settings);
         await Should.ThrowAsync<OperationCanceledException>(() => runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), new CancellationToken(true)));
+    }
+    [Test, Arguments(SessionBackends.PtyHost, 0), Arguments(SessionBackends.Herdr, 1)]
+    public async Task Backend_count_does_not_build_a_dto_or_interrupt_the_remaining_sweep(string backend, int expectedCount)
+    {
+        using var f = new RestartFixture(); var log = new MilestoneLogger(); var settings = new SessionRunnerSettings { SessionLogPath = f.Root };
+        var existingId = SeedTerminal(settings);
+        await using var runtime = new SessionRunnerRuntime(Options.Create(settings), log);
+        await runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
+        var sessions = (System.Collections.IDictionary)typeof(SessionRunnerRuntime).GetField("_sessions", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(runtime)!;
+        var session = sessions[existingId]!;
+        var tailer = session.GetType().GetField("_tailer", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var backendField = session.GetType().GetField("_backend", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var originalTailer = tailer.GetValue(session); var originalBackend = backendField.GetValue(session);
+        try
+        {
+            tailer.SetValue(session, new ThrowingTailer()); backendField.SetValue(session, backend);
+            Should.Throw<IOException>(() => runtime.Get(existingId)).Message.ShouldBe("synthetic DTO observation failure");
+            var nextId = SeedTerminal(settings); log.Records.Clear();
+            (await runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None)).ShouldBe(0);
+            runtime.Get(nextId).ExitCode.ShouldBe(17);
+            log.Records.Single(r => r.GetProperty("event").GetString() == "herdr-end").GetProperty("count").GetInt32().ShouldBe(expectedCount);
+            log.Records.Last().GetProperty("event").GetString().ShouldBe("adoption-sweep-end");
+            log.Records.Last().GetProperty("outcome").GetString().ShouldBe("completed");
+        }
+        finally { tailer.SetValue(session, originalTailer); backendField.SetValue(session, originalBackend); }
+    }
+    private sealed class ThrowingTailer : ITranscriptTailer
+    {
+        public string? BoundTranscriptPath => throw new IOException("synthetic DTO observation failure");
+        public string? BindHow => null;
+        public string? UnboundReason => null;
+        public void Start() { }
+        public void NotifyChildExited() { }
+        public void NotifyClaimRevoked(string path, Guid newOwner) { }
+        public RunnerTranscriptDto Snapshot() => throw new NotSupportedException();
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
     internal static Guid SeedTerminal(SessionRunnerSettings settings)
     {

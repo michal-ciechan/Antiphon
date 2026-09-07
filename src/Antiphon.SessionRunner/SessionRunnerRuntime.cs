@@ -754,7 +754,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     HerdrLastPane.DeleteOlderThan(_settings.SessionLogPath, TimeSpan.FromDays(retentionDays));
                 await AdoptHerdrSessionsAsync(probe, ct);
             }
-            herdr.Complete(_sessions.Values.Count(s => s.ToDto().Backend == SessionBackends.Herdr));
+            // DTO construction can consult a failing transcript tailer; this count needs only the backend.
+            herdr.Complete(_sessions.Values.Count(s => s.Backend == SessionBackends.Herdr));
         }
 
         using var pty = _startup.Begin("pty-manifests");
@@ -1179,6 +1180,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private string? _exitReasonOverride;
         private bool _adopted;
         private string _backend = SessionBackends.PtyHost;
+        public string Backend => _backend;
         private string? _pendingReason;
         private HerdrPaneSidecar? _pendingSidecar;
         private DateTime? _herdrVerifiedAtUtc;
