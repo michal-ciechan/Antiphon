@@ -142,6 +142,8 @@ public class OutputDistillationGateTests
     [Test]
     [Arguments("The HTTP/native transports now share the same behavior.")]
     [Arguments("Checked SE/dark and the Save/Cancel/Remove controls.")]
+    [Arguments("The input/output/error streams are wired.")]
+    [Arguments("The client/server/db layers and read/write/execute bits are configured.")]
     [Arguments("Task f1590e8a finished. [antiphon-report:f1590e8a done]")]
     public void weekly_review_false_positives_can_be_paraphrased(string report)
     {
@@ -156,6 +158,10 @@ public class OutputDistillationGateTests
     [Arguments("Incidental value f1590e8a was logged.")]
     [Arguments("Task f1590e8a-1234-5678-90ab-123456789abc finished.")]
     [Arguments("The identifier prefixf1590e8asuffix is incidental.")]
+    [Arguments("Commit discussion ended.\nIncidental value f1590e8a was logged.")]
+    [Arguments("Commit " + "........................................." + "f1590e8a")]
+    [Arguments("Commit task f1590e8a-1234-5678-90ab-123456789abc finished.")]
+    [Arguments("Incidental `abcdef` and `abcdef0123456` values were logged.")]
     public void incidental_hex_is_not_a_commit_anchor(string report)
     {
         var result = OutputDistillationGate.Evaluate(
@@ -185,6 +191,60 @@ public class OutputDistillationGateTests
         result.MissingAnchors.ShouldContain("sha:" + sha);
     }
 
+    // Verbatim probes from review task 72ca7d63. Keep their intervening prose intact.
+    [Test]
+    [Arguments("Pushed to origin/master at 2f7acb48.")]
+    [Arguments("Reverted to 2f7acb48.")]
+    [Arguments("Cherry-picked 2f7acb48 onto master.")]
+    [Arguments("Rebased onto 2f7acb48.")]
+    [Arguments("The commit hash is 2f7acb48.")]
+    [Arguments("Fixed in 2f7acb48.")]
+    [Arguments("origin/master is now 2f7acb48.")]
+    public void review_citation_probes_require_the_sha(string report)
+    {
+        AssertCitationRequiresSha(report, "2f7acb48");
+    }
+
+    // Corpus excerpts, not strings constructed to fit the regex:
+    // docs/orchestration-findings.md; docs/features/004-agent-screen-working-meaning/implementation-spec.md;
+    // docs/superpowers/specs/2026-08-11-card-0019-card-correction.md;
+    // docs/investigations/2026-09-07-card-0420-code-verification.md;
+    // docs/investigations/2026-09-06-card-0388-code-verification.md.
+    [Test]
+    [Arguments("shipped and closed.** `4bb65fb`", "4bb65fb")]
+    [Arguments("The investigation's recommended **Option A landed in commit `1ce1084`**", "1ce1084")]
+    [Arguments("investigation; fix landed in f078dd2", "f078dd2")]
+    [Arguments("its single documentation change was cherry-picked onto this checkout as 928f8b2f before implementation.", "928f8b2f")]
+    [Arguments("Code commits: `572c25f7`, `6d468ba8`, `3c8398a1`; subsequent verification-only updates are in this branch history.", "3c8398a1")]
+    [Arguments("R1 landed in `89f1262`, R2 in `e1a46d1` (server)", "e1a46d1")]
+    public void corpus_citations_require_the_sha_even_when_prose_is_preserved(string report, string sha)
+    {
+        AssertCitationRequiresSha(report, sha);
+    }
+
+    [Test]
+    [Arguments("Commits 2f7acb48 and bf642f16 both landed.", "bf642f16")]
+    [Arguments("Commits 2f7acb48, bf642f16, and 131872f2 both landed.", "131872f2")]
+    [Arguments("Commits `2f7acb48`, `bf642f16` and `131872f2` landed.", "bf642f16")]
+    [Arguments("git diff 2f7acb48...bf642f16", "bf642f16")]
+    [Arguments("See `2f7acb48`..`bf642f16`.", "bf642f16")]
+    public void dropping_only_one_sha_from_a_list_or_range_fails(string report, string sha)
+    {
+        AssertCitationRequiresSha(report, sha);
+    }
+
+    private static void AssertCitationRequiresSha(string report, string sha)
+    {
+        var raw = LongRaw(body: report);
+        var preserved = OutputDistillationGate.Evaluate(raw, Pad(200, KeepAll() + " " + report));
+        preserved.Verdict.ShouldBe(DistillationGateVerdict.Pass);
+
+        var omitted = report.Replace(sha, "omitted", StringComparison.Ordinal);
+        var result = OutputDistillationGate.Evaluate(raw, Pad(200, KeepAll() + " " + omitted));
+        result.Verdict.ShouldBe(DistillationGateVerdict.RejectedOverCompressed);
+        result.MissingAnchors.ShouldBe(new[] { "sha:" + sha });
+    }
+
     [Test]
     [Arguments("/var/log/antiphon")]
     [Arguments(@"\logs\antiphon")]
@@ -195,15 +255,24 @@ public class OutputDistillationGateTests
     [Arguments("docs/report.md")]
     [Arguments(@"docs\report.md")]
     [Arguments("server/Feature/Handlers")]
+    [Arguments("Server/Feature/Handlers")]
+    [Arguments("Application/Services/Foo")]
+    [Arguments("docs/cards")]
+    [Arguments("client/src")]
+    [Arguments("server/Application/Services/")]
+    [Arguments(@"Server\Application\Services\")]
+    [Arguments("Custom/Feature/Handlers/")]
+    [Arguments("custom/feature/handlers:42")]
     [Arguments("src/feature_name/output")]
     [Arguments("`docs/report.md`")]
     public void dropping_a_real_path_still_fails(string path)
     {
+        // Isolate the path: KeepAll's Foo.cs path contains directory prefixes under test.
         var result = OutputDistillationGate.Evaluate(
-            LongRaw(body: "Changed " + path), Pad(200, KeepAll()));
+            Pad(2_000, "Changed " + path), Pad(200, "The implementation is complete."));
 
         result.Verdict.ShouldBe(DistillationGateVerdict.RejectedOverCompressed);
-        result.MissingAnchors.ShouldContain("path:" + path.Trim('`'));
+        result.MissingAnchors.ShouldBe(new[] { "path:" + path.Trim('`') });
     }
 
     private static string KeepAll() =>

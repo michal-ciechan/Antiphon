@@ -161,15 +161,20 @@ public static class OutputDistillationGate
     }
 
     // CARD-0431: short hex runs alone are ambiguous (notably task/report IDs). Require
-    // Git context for abbreviations; full SHA-1s remain anchors without a label. Capture
-    // only the SHA so the distillation may paraphrase the label, and keep both range ends.
+    // Git context within 40 characters on the same line, or backticks, identifies short
+    // citations; full SHA-1s remain anchors without a label. Capture only the SHA so the
+    // distillation may paraphrase the prose, and keep every member of lists and ranges.
     // Word/hyphen boundaries prevent extracting a SHA from an identifier or UUID.
     private static readonly Regex ShaPattern = new(
-        @"(?:\b(?:sha(?:-?1)?|commits?|revision|head)\b[ \t]*(?:(?:is|at)\b[ \t]*)?[:=]?[ \t]*
-             |\b(?:landed|pushed|merged|committed|rebased)\b[ \t]+(?:CARD-\d{4}[ \t]+)?(?:at[ \t]+)?
-             |\bgit[ \t]+(?:show|revert|cherry-pick|checkout|diff)[ \t]+)
-          [`""']?(?<![\w-])(?<sha>[0-9a-f]{7,40})(?![\w-])
-          (?:\.{2,3}(?<sha>[0-9a-f]{7,40})(?![\w-]))?
+        @"(?:\b(?:sha(?:-?1)?|commits?|revision|head|landed|pushed|merged|committed
+                     |shipped|reverted|rebased|cherry-picked|tagged)\b
+             |\bgit[ \t]+(?:show|revert|cherry-pick|checkout|diff)\b
+             |\bfixed[ \t]+in\b
+             |\borigin/[\w./-]+[ \t]+is[ \t]+now\b)
+          [^\r\n]{0,40}?(?<![\w-])(?<sha>[0-9a-f]{7,40})(?![\w-])[`""']?
+          (?:[ \t]*(?:,(?:[ \t]*and\b)?|and\b|\.{2,3})[ \t]*
+             [`""']?(?<![\w-])(?<sha>[0-9a-f]{7,40})(?![\w-])[`""']?)*
+          |`(?<sha>[0-9a-f]{7,12})`
           |(?<![\w-])(?<sha>[0-9a-f]{40})(?![\w-])",
         RegexOptions.Compiled | RegexOptions.CultureInvariant
         | RegexOptions.IgnoreCase | RegexOptions.IgnorePatternWhitespace);
@@ -194,15 +199,18 @@ public static class OutputDistillationGate
         @"\b\d+\s*(passed|failed|skipped|tests?|files?|warnings?|errors?)\b",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
-    // CARD-0431: rooted paths, relative files with extensions, or at least three segments
-    // starting with a directory-like (lowercase/underscore) token. Plain word/word and
-    // UI label lists such as Save/Cancel/Remove are not paths. Boundaries allow Markdown
-    // quoting while preventing suffix matches inside a slash phrase or URL.
+    // CARD-0431: require a path signal, not just a segment count: an explicit root,
+    // extension, known repository directory (case-insensitive), trailing slash or line.
+    // Limit client to its source/public subtrees so client/server/db stays ordinary prose.
+    // Other extension-less directories can be made explicit with ./ or a trailing slash.
+    // Boundaries prevent suffix matches inside slash phrases and URLs.
     private static readonly Regex PathPattern = new(
         @"(?<![\w./\\:])(?:
             (?:[A-Za-z]:[\\/]|~[\\/]|\.{1,2}[\\/]|[\\/])[^\s`""'<>|]+
             |[\w.-]+(?:[\\/][\w.-]+)*[\\/][\w.-]+\.[A-Za-z0-9]+(?::\d+)?
-            |[a-z_][\w.-]*(?:[\\/][\w.-]+){2,}(?::\d+)?
+            |(?i:(?:server|src|docs|tests|scripts|Application|Domain|Infrastructure|Api)[\\/][\w.-]+
+                  |client[\\/](?:src|public))(?:[\\/][\w.-]+)*[\\/]?(?::\d+)?
+            |[\w.-]+(?:[\\/][\w.-]+)+(?:[\\/]|:\d+)
           )(?![\w/\\])",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnorePatternWhitespace);
 }
