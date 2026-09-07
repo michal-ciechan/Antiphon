@@ -453,3 +453,536 @@ evidence, verified fallbacks/file lifetime, the human's acceptance of D-4 and ro
 decision under CARD-0330, and CARD-0392's release dependency resolved or explicitly
 accepted as a narrower release on the card. Keep those pending items visible in
 the Code/Review/Deploy reports rather than converting them into passing checkboxes.
+
+## Verification design
+
+TestDesign appended 2026-09-07 against `c00a3a8e`. D-1 through D-6 above remain
+the fix design. This section specifies tests for Code to implement and execute;
+none of the proposed tests or live probes has run in this TestDesign stage.
+The next implementation stage is **Code**. The earlier Plan-stage handoff above
+is historical, not an instruction to dispatch TestDesign again.
+
+### Fixtures and execution boundaries
+
+**F-1: report data and filesystem.** Add `AgentReportStoreTests` and
+`OutputDistillationPolicyTests` under `tests/Antiphon.Tests/`, and shared helpers
+under `TestHelpers/`. Filesystem tests use the real Infrastructure store, actual
+files and a disposable Git repository with a committed seed file, plus a linked
+worktree and a nested working directory. Use a unique root under the checkout's
+gitignored `.antiphon/test-output/card-0419/<guid>/`; this allows a valid persistent
+configured root without placing it under the OS temp directory. Every delete or
+worktree removal must resolve within that fixture root and exclude the repository
+being built. No test touches the user's main `.antiphon/reports/` or Git excludes.
+Use the assembly-local `ProcessSpawnLimit` on Git/process-spawning classes.
+
+Supply `ReportOfLength(n, taskId)` with a known first outcome, a distinctive
+middle sentence made of words (not a hex/URL/path anchor), a final caveat and the
+correct report token. Adjust padding so the **settled Result** has the requested
+UTF-16 length; assert that precondition before asserting any threshold decision.
+No leading/trailing padding that `Trim` could silently discard. Store-byte tests
+call the store with explicit raw strings to exercise CRLF, LF, trailing spaces,
+non-ASCII and surrogate pairs without the settlement extractor masking them.
+
+Use an exact UTF-8 SHA-256 computed independently in the fixture for the filename
+and content oracle. The normalized `DelegationNoteDigest` is a separate assertion.
+For partial-publication tests, expose a per-store-instance internal barrier after
+the temporary file is closed and before publish; null in production. It may pause
+the real path, but must not replace the write/rename with a mock. Gate failures at
+filesystem/root-resolution I/O seams; do not simulate an I/O failure by returning
+a fabricated successful path. Permission-denied cases use an injected I/O refusal
+rather than changing Windows ACLs on shared directories.
+
+**F-2: settlement to parent delivery.** Add
+`tests/Antiphon.Tests/Application/OutputDistillationDeliveryTests.cs`. Extend the
+existing `AgentTaskSettlementRaceTests.BuildHarness` / `DelegationTestServices`
+graph, real PostgreSQL and `AgentTaskReplyService.OnTurnEndAsync`. Register the
+real report store, queue, output-distillation hosted worker and owned completion
+flush worker. Seed a marked source turn, not a pre-settled result. The specialist
+is the only scripted model boundary: observe its real Distill task creation and
+settle that task with a chosen result using the existing distillation helper.
+Do not seed a successful source `ResultFilePath` or replace the parent's body in
+the test; that would bypass the defect.
+
+Register a concrete `PtyDeliveryProfile` with the explicit backend override and
+controlled runner capability response, following `PtyDeliveryCeilingsTests`.
+Assert the effective reply ceiling is 3,000 or 14,400 before executing that row.
+The modern integration row needs the redistributable available on the Windows
+verification machine; silently falling back to inbox does not cover modern.
+Pure policy tests also call `DelegationSettings.CeilingsFor` for both backends so
+those boundaries are covered without native binaries. Do not emulate modern by
+only increasing `ReplyInlineMaxChars` while leaving the actual queue on inbox.
+
+Use `FakeAgentProtocolAdapter` with verification enabled. Seed the parent's
+transcript baseline and an idle TurnEnd. Its submit callback inserts the **actual
+submitted body**, never the expected body, as a UserPrompt through the established
+bridge fixture. Assert `Delivered` with complete matching UserPrompt text. For a
+final queue spill, read the actual inbox file and assert the complete inner
+message there as well. The callback is a deterministic transport simulation;
+only F-5 below is live acceptance. Capture the raw pending note before allowing
+the specialist to finish, then assert the same note ID after Apply/fallback.
+
+New delivery tests are `[Category("Integration")]`, global `[NotInParallel]`
+because they drive workers/sweeps, and `[ParallelLimiter<ProcessSpawnLimit>]`.
+All queries/assertions scope by fixture session/task/slug. No new hand-built git
+DI graph. Retain old helpers' explicit 1,200 override for legacy tests that need
+it; the new policy/producer tests must exercise the new default. Existing
+`OutputDistillationProducerTests` uses 1,400-character samples: set an explicit
+legacy minimum there or lengthen those samples when preserving busy/deadline
+coverage. Do not accidentally turn a busy-path test into a SkippedShort test.
+
+**F-3: time, claims and failures.** Extend `OutputDistillationApplyRaceTests`
+with barriers at file validation, source-row lock and guarded body update.
+Use `TaskCompletionSource` with asynchronous continuations and release every
+barrier in `finally`; await workers and operations before disposing their scopes.
+Use the existing poll-aware clock pump for the specialist, an offset-over-real
+clock for queue polling, and controlled `FakeTimeProvider` advances for pure
+deadline checks. Never advance fake time while ordinary DB I/O is pending just
+to make a test finish (`OutputDistillationCleanupTests` pins this).
+
+For ordinary PostgreSQL lock-expiry tests use system time and a fixture-owned
+transaction/interceptor with a one-second test request deadline. For the separate
+SQL-predicate control, invoke Apply directly with a `FakeTimeProvider` initialized
+to current UTC and `AutoAdvanceAmount=TimeSpan.FromTicks(1)`. Do not run queue poll
+loops in that cell. Pause immediately before executing the UPDATE, wait until
+PostgreSQL time is past D, then release: application UTC and its timer budget are
+still before D, so only the SQL predicate rejects the write. This distinguishes
+SQL protection from an already-canceled request token. These are test requests,
+not a change to shipped/live 45 seconds. A wall-clock watchdog detects broken
+fixtures; its timeout is not the expected red assertion.
+
+For the post-lock application check, use an offset-over-real clock: pause after
+row reads and change its offset past D while the real timer/DB clock remain
+before D. Assert **no UPDATE is attempted**, in addition to unchanged body. This
+makes that check observable even if a later expiry check would roll back a write.
+
+**F-4: evidence oracle and isolation controls.** Add
+`tests/Antiphon.E2E/OutputDistillationCanaryGuardTests.cs` (non-explicit, no model
+launch) and an evidence validator used by the real canary. Validate captured
+identities/content/delivery evidence, not just one success boolean. Negative
+fixtures remove or corrupt one item of an otherwise complete evidence record.
+These prove the acceptance harness cannot certify known bad evidence; they do
+not substitute for generating that evidence with the live system.
+
+**F-5: genuinely live isolated stack.** Add
+`tests/Antiphon.E2E/OutputDistillationApplyCanaryTests.cs` with the single method
+`Real_apply_and_long_fallback_reach_parent_and_files_survive_cleanup`. Mark it
+`[Explicit]`, `[Category("Headed")]`, `[Category("HeadedCanary")]`,
+`[NotInParallel("Headed")]` and use a one-wide E2E-local `ProcessSpawnLimit`
+(add `Fixtures/ProcessSpawnLimit.cs` if still absent). Require both
+`ANTIPHON_HEADED_TESTS=1` and the new dedicated opt-in
+`ANTIPHON_DISTILLER_APPLY_CANARY=1`. Without them ordinary suite runs skip without
+launching a model. Once explicitly requested, failed preflight is a failed/pending
+acceptance result, not a passing skipped canary.
+
+Read a non-secret approval record from
+`ANTIPHON_DISTILLER_CANARY_APPROVAL_FILE`, written by the rollout operator after
+the scoped human decision. Required fields: `approvalReference` (card revision or
+task/report reference), `approvedUtc`, `expiresUtc`, `expectedSourceRole` (`Review`),
+`expectedDistillerKind` (`ClaudeCode`), `expectedDistillerModelAlias` (the approved
+current Low alias), and `availabilityCheckedUtc` / `availabilityVerdict` (`allowed`).
+Require current time inside the approved window and the availability check no
+more than five minutes old before launching. This file records an existing
+decision; the test never creates its own approval or treats the opt-in flags as
+evidence of production rollout approval. Compare actual resolved model identity
+to the record before the source task; if a hold/refusal emerges later, stop.
+
+Extend `AntiphonAppFixture` with a narrow, internal canary-options seam, applied
+after its ordinary configuration defaults and before host startup. The default
+fixture continues to disable the distiller. Reuse its real Kestrel host,
+PostgreSQL testcontainer and `IsolatedSessionRunner`; retain access to the same
+container, runner and report root for a server-host-only restart. The new options
+must not allow callers to replace the owned DB, runner address or manifest root.
+This is test-harness work, not a new production Apply override API.
+
+Current `DelegationSequencingE2ETests.TestSessionRunner` seeds sessions and manually
+submits the dequeued note through `ClaudeHarness`. **Do not use that substitute**
+for this canary. Use normal `AgentControlService` launches, real runner client,
+hosted dispatch/settlement/distillation and `SessionMessageQueueService` delivery.
+No `TakeNoteForAsync`, fake CLI/API, transcript injection, direct PTY work-body
+typing, manual `DistilledResult` stamps or artificial Applied ledger rows.
+
+### Proves it works now
+
+All method names below not already present are the required new test names.
+Parameterized rows are part of the named item, not optional examples. Run every
+row and record its outcome; V-23 is explicitly a live probe.
+
+| ID | Behavior and layer | Test/command | Required assertions |
+|---|---|---|---|
+| V-1 | Defaults and units; unit | `OutputDistillationPolicyTests.Defaults_separate_usefulness_from_transport` | Default minimum 4,000, input cap 20,000, mode Shadow, wait 45 seconds; output gates 1,500 / 0.6; conservative and modern reply ceilings 3,000 / 14,400 and their existing byte envelopes unchanged. |
+| V-2 | Independent boundaries; integration | `OutputDistillationDeliveryTests.Report_boundaries` | Both profiles at lengths 2,999, 3,000, 3,001, 3,500, 3,999, 4,000, 4,001, 5,500, 14,399, 14,400, 14,401, 19,999, 20,000, 20,001. Check the F-6 truth table below, exact persisted raw length, file content, model-attempt count and actual note/body disposition. |
+| V-3 | Persistence independent of mode/status; integration | `OutputDistillationDeliveryTests.Mode_and_terminal_status_preserve_report` | A 5,500-char modern report for Succeeded/Failed crossed with enabled-Shadow, enabled-Apply, disabled-Shadow, disabled-Apply. All get a canonical file. Enabled Apply alone replaces; enabled Shadow records without replacement; disabled produces no Distill task/ledger/hold. Failed status/header never becomes success. |
+| V-4 | Explicit override and UTF-16 accounting; integration/unit | `OutputDistillationDeliveryTests.Legacy_minimum_and_unicode_boundaries`; `OutputDistillationPolicyTests.Unicode_length_is_not_utf8_bytes_or_tokens` | Minimum override 1,200 at 1,199/1,200/1,201 on modern. Non-ASCII/surrogate-pair samples exactly 3,999/4,000 UTF-16 units with larger UTF-8 size use character eligibility. No tokenizer or byte-based eligibility; final byte spill remains independent. |
+| V-5 | Ineligible reports and legacy spill; integration/unit | `OutputDistillationDeliveryTests.Ineligible_and_legacy_reports_keep_their_contract`; `OutputDistillationPolicyTests.Nonterminal_tasks_are_ineligible` | Specialist Check/Distill/Diagnose, Blocked and ReplyTo None at 5,500 below modern ceiling: no new canonical-usefulness/model path. Queued/Dispatched/Working fail the model eligibility predicate. A non-target oversized report still uses legacy backstop and preserves a delegate-authored file; a short final pointer is never recursively expanded. ReplyTo has only None/Session; no invented Channel enum. |
+| V-6 | Exact content identity; filesystem integration | `AgentReportStoreTests.Exact_content_and_full_ids_own_distinct_files` | CRLF/LF/trailing-space variants sharing a normalized note digest have distinct exact-byte hashes; non-ASCII round-trips without BOM/wrapper. Two GUIDs with the same first eight characters do not collide. Source report prose cannot supply destination path components. |
+| V-7 | Root custody; filesystem integration | `AgentReportStoreTests.Root_selection_requires_a_durable_owned_location` | Main, nested main, linked worktree and nested worktree map to the same canonical main root; parent repo/first unrelated AllowedRoot cannot win. Non-Git with valid explicit root succeeds; missing root, relative root, temp override, source-worktree override and unsupported Git layout without override return unavailable. Supported explicit override rescues the unsupported layout. |
+| V-8 | Never publish tracked report bytes; filesystem integration | `AgentReportStoreTests.Ignore_and_tracking_are_checked_before_writing` | Existing ignore; missing ignore with local exclude creation; tracked destination even with a matching ignore; inaccessible exclude; and an ignore negation. Verify `git check-ignore --no-index`, `git ls-files` and report write observations: either ignored/untracked before the first report byte, or no report bytes written. Tracked `.gitignore` is untouched. |
+| V-9 | Atomic/idempotent publication; filesystem integration | `AgentReportStoreTests.Publication_exposes_only_a_complete_verified_report` | Pause before publish: final path absent or previous complete content, no published ResultFilePath. Release: exact file becomes visible. Identical retry, simultaneous same-content retry and truncated/corrupt preexisting destination repair/refusal never return bad bytes. Cancellation before publish leaves no usable partial canonical pointer. Legacy author file stays byte-identical. |
+| V-10 | Lifetime beyond worktree/provider; integration | `OutputDistillationDeliveryTests.Canonical_file_survives_worktree_removal_and_provider_recreation` | Settle from an actual linked worktree; dispose provider; remove that fixture worktree through Git; rebuild provider against same DB/main root; reload ResultFilePath and read exact report. No re-settlement or test-side rewrite is allowed to restore the file. |
+| V-11 | Storage failure does not lose settlement; integration | `OutputDistillationDeliveryTests.Storage_failures_leave_a_recoverable_settled_report` | Root lookup/write/rename/readback IOException, access denied, path >1,000 chars and cooperative I/O-budget expiry: raw Result and terminal state persist; no bad path; actual parent fallback uses API when a pointer is needed. No model work under storage/queue locks; log metadata, not report text. Host cancellation propagates; retry with a fresh scope settles once without a partial pointer. |
+| V-12 | Real producer reaches Apply replacement; integration | `OutputDistillationDeliveryTests.Modern_report_below_transport_limit_applies_with_canonical_file` | Default 5,500-char report, no pre-spill. One source settlement, one canonical file, one request/Distill task, one original note ID. Accepted summary and exact path reach the simulated parent's complete UserPrompt; raw middle/payload absent. Result, NoteHeader, ContentDigest and source identity unchanged; hold cleared; Applied ledger corresponds to this request. |
+| V-13 | Only usable pointers; integration | `OutputDistillationDeliveryTests.Unusable_file_uses_api_recovery`; `OutputDistillationApplyRaceTests.Path_changed_after_validation_cannot_publish_stale_pointer` | Null, deleted, unreadable and corrupted canonical files give API fallback. Pause after validation, change persisted ResultFilePath on an otherwise identical source, then Apply: stale path absent, API present. Raw/source/header remain unchanged. No repair or awaited file read inside the queue/row lock. |
+| V-14 | Load-bearing metadata survives; integration | `OutputDistillationDeliveryTests.Apply_preserves_handoff_warnings_and_generated_deliverables` | Seed a stage report with exact next/handoff and artifact metadata, plus caller warning, git/scope header bits, two real attachable fixture files. At least one generated marker is absent from raw input. Applied body retains original header/warning, accepted next/handoff, deterministic markers exactly once and file pointer; it never marks the raw report as an attachment. Include Failed and empty-deliverable variants. |
+| V-15 | Honest fallbacks through delivery; integration | `OutputDistillationDeliveryTests.Fallback_delivers_original_raw_or_marked_excerpt` | Both profiles, 5,500-char target, for missing-path, missing-next and missing-handoff rejection, oversized-summary rejection, empty, failed, unavailable, held, backlog-full, request-queue-full/closed/missing, expired-before-run and run-timeout. Raw/excerpt inner note remains unchanged apart from existing delivery/poll transformations; canonical file readable; outcome/reason correct; no hidden raw truncation, no second note, no active specialist kill. |
+| V-16 | Application claim identity; integration | existing `OutputDistillationApplyRaceTests.Apply_eligibility_matrix`, extended with file-bearing source and `missing-source`/`missing-note` | Eligible row applies. Wrong note/source/digest/raw result/origin, Pending with attempts >0, Sent, Canceled, matching poll, captured Shadow and expiry all refuse replacement; inspect unrelated note as well as target. Exact source raw unchanged. |
+| V-17 | Competing operations serialize; integration | existing `Apply_and_SendNow_preserve_one_complete_body`, `Apply_owns_the_delivery_session_lock_until_commit`; new `File_validation_does_not_own_delivery_lock`; new `Parent_poll_and_apply_have_one_ordered_winner` in `OutputDistillationApplyRaceTests` | Both SendNow orders give one complete delivered body. Block file validation: SendNow can claim/send without waiting for disk. For both poll orders use real `AgentTaskService.GetAsync(..., pollingSessionId: parent)` and separate scopes: poll-first forbids Apply; Apply-first may subsequently be shrunk by the existing poll policy before delivery. No stale summary restoration or duplicate send. |
+| V-18 | Deadline remains absolute through new I/O; integration | `OutputDistillationApplyRaceTests.File_validation_consumes_original_deadline`, `Equality_and_postlock_expiry_never_apply`, `Database_clock_rejects_an_expired_body_update`; existing `Expired_lock_wait_never_applies`, `Expired_database_write_never_applies` | Consume request time in file validation and lock wait; equality is expired. Gate after source/note reads, expire application UTC, release: no UPDATE attempted. For the separate DB predicate row, hold the UPDATE past DB time D while application UTC and timer budget remain before D: zero changed rows/unchanged body. In all cases no fresh deadline or second completion; use F-3. |
+| V-19 | Finite raw fallback after lost wakeup; integration | `OutputDistillationDeliveryTests.Provider_recreation_releases_expired_raw_note_once` | Persist note+file+finite hold, stop before optional drain, reconstruct provider/flush worker against same DB and advance past original D. Actual parent receives raw/excerpt once without a new TurnEnd or test-side SendNow. File survives. Do not assert missing ledger as a desired invariant or claim interrupted distillation intent recovered; that is CARD-0392. |
+| V-20 | Last composed byte guard and metadata; integration | `OutputDistillationDeliveryTests.Composed_summary_and_metadata_obey_utf8_spill_guard` | Add large deterministic metadata and multi-byte text so complete composed bodies are at C-1/C/C+1 UTF-8 bytes, with C the actual caller-selected queue spill ceiling. At C+1 the typed pointer leads to the full composed body retaining summary, canonical report path and attachment block. At/below C inline behavior remains. Also cover a same-root batch crossing C; check each note/file association, no lost second completion. |
+| V-21 | Read metrics and API compatibility; integration | `OutputDistillationDeliveryTests.File_read_does_not_claim_a_parent_api_poll`; existing `DistillationEndpointTests.full_read_at_is_set_only_by_a_parent_poll_after_SentAt` | Reading file alone changes neither LastPolledResultHash nor FullReadAt. A subsequent actual parent API/service poll returns authoritative raw Result and ResultFilePath and stamps the existing API metric. A different session does not stamp it. |
+| V-22 | Canary cannot certify synthetic/unsafe success; unit in E2E | `OutputDistillationCanaryGuardTests.Configuration_refuses_unowned_resources_before_start`; `Evidence_rejects_missing_or_wrong_delivery_proof` | Invalid opt-in, absent/expired approval, stale/refused availability, model mismatch, non-owned DB/runner/manifest root, production runner 17204 or live broker configuration refuses before launch. Evidence negatives: wrong parent/task/note/digest/path, only screen/AssistantText, no or clipped UserPrompt, raw middle present, API-only pointer, rejected/late/Shadow ledger, wrong cheap model, missing parent read acknowledgement or failed teardown. No negative is accepted. |
+| V-23 | Mandatory live acceptance; live probe | `OutputDistillationApplyCanaryTests.Real_apply_and_long_fallback_reach_parent_and_files_survive_cleanup` using the command below | Execute the full F-5 procedure below, including genuine real-model Apply success, genuine >20,000-char fallback, parent file reads, worktree cleanup and host restart. Skipped, unavailable, rejected or incomplete evidence leaves live acceptance pending/failed. |
+
+**F-6: V-2 expected outcomes.** With enabled Apply and an otherwise valid source,
+`4,000 <= L <= 20,000` permits one specialist attempt. `L < 4,000` records
+SkippedShort and `L > 20,000` records SkippedLong, with no attempt. With no
+delegate-authored file, a canonical target file is required at `L >= 4,000`;
+transport backstop also requires a file whenever `L > T`, where T is the
+effective reply ceiling. Thus a conservative 3,500-char report has a spill file
+and no model attempt, whereas modern 5,500 has a canonical file and a model
+attempt even though no raw excerpt would be required. Equality `L == T` stays
+inline in `FitReport`; `L == 4,000` persists; `L == 20,000` remains model-eligible.
+For below-minimum transport-only files, retain the legacy contract rather than
+asserting the canonical-target filename. For skipped/rejected work, assert the
+raw body at `L <= T`, explicit excerpt at `L > T`, then separately account for
+the final composed queue byte guard. Do not equate a queue inbox file with the
+canonical full-report file.
+
+**F-7: fallback mechanics for V-15.** Produce a passing summary first as fixture
+data, with 120–1,500 characters and all required anchors, and assert the current
+gate passes it. For over-compression remove only one required path/next/handoff
+anchor; for under-compression use 1,501 characters retaining anchors. Script empty
+or failed specialist results separately. Availability, queue refusal and backlog
+use their actual seams as in `OutputDistillationAdmissionTests` and ProducerTests.
+Expiry-before-run creates no new model task; timeout-after-dispatch leaves the
+standing owner intact and follows its existing outcome. Seed 5,500-char reports,
+not the old 1,400-char samples, so every intended branch is reached. Capture body
+at admission; after bounded cleanup/finite hold expiry, drive only the real flush
+worker and compare the submitted inner body to that snapshot. Also read the
+canonical file. The applied-summary fixture must never appear in fallback input.
+
+### Real isolated Apply canary procedure (V-23)
+
+Code implements this recipe in the named F-5 method; it is not a request to run
+it during TestDesign or permission to enable production Apply. After code lands,
+the human authorizes this scoped canary under D-5. The command requires no
+credential argument and is independent of the operator's production mode.
+
+1. Before starting a host, validate the opt-ins, Windows/Claude availability,
+   modern ConPTY prerequisites, Docker availability and a fixture-owned persistent
+   root. Use the approved wrapper-managed Claude authentication path from
+   `docs/agent-credentials.md`; do not print/copy credential stores, introduce a
+   stub model endpoint or silently select another provider. Any known hold/quota
+   refusal must be carried into the isolated test's availability preflight rather
+   than evaded by its empty DB. Record a non-secret availability verdict and the
+   explicit approval reference, not account tokens. A fresh isolated DB is not
+   proof that the operator's model has no hold.
+2. Create `<checkout>\.antiphon\acceptance\card-0419\<run-guid>\` for retained
+   evidence and its own Git `repo\` with a harmless seed commit. Put descendant
+   worktrees under this run's `worktrees\`, outside that main repo. No remote is
+   configured, so source delegates cannot push to the real repository. Include
+   `docs/canary-evidence.md` and two benign source-report fixture inputs in the
+   seed commit; the canonical `.antiphon/reports/` tree starts absent.
+3. Start a new PostgreSQL testcontainer and the fixture's own runner with a new
+   random loopback port and per-run manifest root. Start the real app on a random
+   Kestrel port. Canary-only settings: distiller enabled, mode Apply, minimum
+   4,000, max input 20,000, wait 45, existing output gates, unique specialist slug
+   and cwd; CheckInterpreter and Diagnose disabled; GitHub and ChannelBridge
+   disabled. Replace external messaging producer/consumer with refusing test
+   adapters and set broker configuration to a non-live loopback endpoint so an
+   unexpected send fails. Do not replace the real runner, distiller, gate, queue,
+   transcript runtime or hosted completion workers. `UsePrebuiltFrontend=false`
+   and `UseMockExecutor=false`; no UI browser/Playwright or client build is needed.
+   The existing deliverable renderer may use its owned headless browser; keep its
+   normal failure/source-copy fallback and include its cleanup in fixture teardown.
+4. Before any agent starts, set this fixture's `Delegation.ApiBaseUrl` to its
+   Kestrel URL and its allowed root to its own canary repo; this changes only
+   the isolated host. Assert effective DB identity, runner URL/manifest root,
+   mode/thresholds, registered real runner client and absence of external
+   channels. Call `PtyDeliveryProfile.RefreshAsync` and require modern/14,400,
+   confirmed by the owned runner's capabilities. Record server assembly location,
+   informational version/MVID and file hash, runner binary hash/PID/start time
+   and candidate Git commit. Checking source HEAD or health alone is insufficient.
+5. Start one named real Claude parent through normal agent control with a unique
+   slug and the canary main repo as cwd. Give it a short canary-only instruction
+   to acknowledge incoming completions without quoting the report, polling task
+   status, dispatching follow-ups or reading files until instructed. Submit the
+   initial instruction through `/api/sessions/{id}/messages`; wait for an actual
+   initial UserPrompt and completed idle turn. This establishes a bound transcript
+   before the completion under test. Provision/start the actual cheap specialist
+   with `OutputDistillerProvisioner.EnsureAsync`, then wait for its real ready/idle
+   state before creating the source task; warming is outside any report deadline.
+   Assert its resolved kind/Low-tier model alias and unchanged output-distiller
+   bundle stamp, deny-tools contract and separate session identity.
+6. Create one real `Worker`/`Review` stage task in a new worktree, using
+   `AgentTaskService.CreateAsync` in fixture DI with
+   `Caller(Task: null, SessionId: parentId, WorkingDirectory: canaryRepo)`.
+   This is a fixture-local named-session caller, not a seeded fake parent or a
+   production capability. Request ClaudeCode explicitly, use the normal Review
+   tier, and assert the caller session made the created task `ReplyTo=Session`;
+   ReplyTo is derived by the service, not a CreateAgentTaskRequest parameter.
+   Let the normal dispatcher create/run the delegate.
+   Its narrow brief says to read the benign fixture, emit its complete approximately
+   5,500-character report as the final assistant response with the task's real
+   report token, retain the next/handoff/artifact lines, and perform no git writes,
+   additional dispatches or report pre-spill. The input fixture is not the output
+   artifact: assert the legacy task-report file and canonical report tree did not
+   exist for that task before settlement. Use outcome/caveat prose, a small anchor
+   set, and `artifact: docs/canary-evidence.md`; the Review task exercises stage
+   metadata without requiring a code change or an external push.
+7. Observe task/queue/ledger rows through fresh **read-only fixture DB scopes**
+   with AsNoTracking. Never call a parent-authenticated source-task GET or
+   `delegate.ps1 -Status` before parent delivery. Let the real specialist return
+   its own result and the real gates decide. Require the actual settled source
+   length to be 4,000–14,400, actual Applied ledger with a linked real Distill task,
+   one original source completion note and exact canonical file. If the source
+   shortened the report, if a gate rejected it or if Apply missed D, fail with that
+   reason; do not stamp results, alter prompts/gates or extend D to rescue the run.
+8. Capture parent transcript baseline and pull
+   `/api/sessions/{parentId}/transcript?since=<baseline>` from the fixture server.
+   Locate a complete UserPrompt carrying this task's completion header, accepted
+   summary, exact file path and generated deliverable block. Assert the distinctive
+   raw middle sentence and full raw report are absent from this completion prompt,
+   and exactly one matching completion prompt exists. Require queue verdict
+   Delivered or LateConfirmed **with** that complete matching transcript record;
+   neither enum alone is enough. Correlate note ID/source ID/raw digest and
+   request/deadline/decision times. Compare the exact UTF-8 file hash with Result.
+9. After that evidence is captured, queue a parent instruction to read the exact
+   canonical file through its normal tools and return only its UTF-16 length and
+   SHA-256. The instruction names the path but does **not** reveal the expected
+   length/hash. It may use `[IO.File]::ReadAllText` and `Get-FileHash`; inspect the
+   actual tool result plus the final acknowledgement. Compare with independently
+   computed values. Check no parent API-poll stamp arose from this file read.
+   Escape paths as data through the queue request, not shell interpolation.
+10. Repeat sequentially for one real source report about 21,000 characters,
+    using a separate fixture input and task. The source brief explicitly requests
+    the full final response to exercise the transport backstop, overriding the
+    normal advice to pre-spill. Require actual length >20,000, SkippedLong, no new
+    Distill task for this source, a canonical full file, and a parent UserPrompt
+    containing the marked raw excerpt and usable path. Validate head/tail and
+    omitted-middle behavior independently. Have the parent read/acknowledge this
+    file too. This live fallback cannot substitute for the successful Apply case.
+11. Export evidence outside both source worktrees. After both tasks and parent
+    reads finish, stop their owned delegate sessions through normal lifecycle
+    services, establish that no process owns those cwds, then remove only those
+    two canary worktrees through Git. Check canonical files still read from the
+    main canary repo. Restart **only the test server host**, retaining its actual
+    container, runner, files and database. Do not call fixture Dispose or restart
+    the production AppHost. Reload both source rows and parent transcript through
+    the new host, read the same files, and observe at least two completion-scan
+    intervals: no second completion prompt or new Distill task may appear. All
+    work was already settled before restart; interrupted intent is CARD-0392's test.
+12. In `finally`, first save task/note/ledger and relevant transcript evidence,
+    then stop the named test parent/specialist through agent control and use the
+    existing isolated-runner snapshot/kill/census teardown for any remaining owned
+    hosts. Verify PID/start-time identity before any process fallback. Dispose
+    the fixture host/container/runner while retaining the acceptance directory.
+    Unreachable cleanup or a leaked test process prevents a green canary; report
+    ownership/evidence for recovery without touching foreign sessions.
+
+The live evidence JSON must include schema version, approval reference, commit
+and loaded binary identities, settings, root/host/runner ownership, source/parent/
+note/Distill/ledger IDs, raw and summary lengths/bytes, raw normalized digest,
+exact file hashes/paths, deadline/decision times, original header, expected
+preserved anchors, confirming UserPrompt sequence/time/text, parent file-read
+tool result/ack, before/after restart counts, cost observations and teardown
+verdict. Keep full raw/transcript evidence gitignored; publish only the correlated
+sanitized record in `docs/investigations/<date>-card-0419-apply-acceptance.md`.
+Do not claim all full reads are observable or that file persistence fixes lost
+distillation requests. Record CARD-0392 dependency status separately.
+
+Approved live invocation after Code implements the named test:
+
+```powershell
+$env:ANTIPHON_HEADED_TESTS = '1'
+$env:ANTIPHON_DISTILLER_APPLY_CANARY = '1'
+$env:ANTIPHON_DISTILLER_CANARY_APPROVAL_FILE = 'C:\src\Antiphon\.antiphon\acceptance\card-0419\approval.json'
+dotnet run --project tests/Antiphon.E2E --property:OutputPath=bin-c419-live/ -- --treenode-filter "/*/*/OutputDistillationApplyCanaryTests/Real_apply_and_long_fallback_reach_parent_and_files_survive_cleanup" --report-trx --report-trx-filename card-0419-live.trx
+```
+
+Use the actual approved record path for another checkout. Restore the prior
+values of those three test-only environment variables afterward.
+The fixture has an outer 20-minute observation budget including startup and two
+source tasks, and reserved teardown time. It never changes the distiller's
+45-second request budget. At most two source tasks and one ordinary distillation
+attempt are intended per run; a failed success case stops before the second
+source. Parent boot/ack/file-read turns also use the real model. No automatic
+retry loop; a new run needs a concrete corrected cause or an available approved
+window. Record actual usage/cost and all failed attempts, not only the green one.
+
+### Guards the regression
+
+| ID | Future regression | Caught by |
+|---|---|---|
+| R-1 | File creation drifts back to transport-only or Apply-only | V-2/V-3/V-12: modern 5,500 and Shadow/disabled file assertions fail. |
+| R-2 | Cwd/short-ID/existence-only storage loses or substitutes reports | V-6 through V-10: independent exact bytes, collisions, publish barrier and post-removal read fail. |
+| R-3 | An applied result exists only in the ledger/UI, uses API instead of file, or drops generated metadata | V-12/V-14/V-23 assert submitted/completely transcribed text and generated markers, not a task DTO projection. |
+| R-4 | Failure hides the raw report or an expired result changes an attempted note | V-15 through V-19 plus existing OutputDistillationAdmission/Deadline/Cleanup/Dispatch tests preserve actual raw delivery, original deadline, cancel eligibility and one standing owner. |
+| R-5 | Parent poll loses its serialization/suppression or filesystem reads fake the metric | V-17/V-21 plus all `PolledCompletionNoteShrinkTests` and `DistillationEndpointTests` check real read behavior and queued output. |
+| R-6 | Formatter or batching changes drop text at the terminal boundary | V-20 plus `SessionMessageQueueSpillTests`, `PtyDeliveryCeilingsTests` and the selected delivery-verification tests below distinguish whole message, report file and inbox file. |
+| R-7 | Gates or bundle are weakened to make acceptance green | All `OutputDistillationGateTests`, existing `InstructionBundleTests.the_output_distiller_contract_forwards_to_its_bundle_with_the_pinned_invariants` and `the_distill_reporting_contract_never_offers_blocked_and_keeps_the_handoff_anchor`, plus V-15's actual refusal. |
+| R-8 | A live harness bypasses the production delivery path or touches the shared stack | V-22, F-5 configuration assertions and V-23's parent UserPrompt/file-read/census evidence refuse that run. |
+
+Retain these existing raw-spill/formatting cases with explicit legacy/non-target
+fixtures when their assertions depend on the old author-file path:
+`AgentTaskReplyIntegrationTests.an_oversized_report_is_backstopped_to_a_file_by_the_server`,
+`a_spill_file_the_delegate_wrote_itself_is_used_as_is`,
+`a_five_kilobyte_report_spills_and_the_caller_gets_a_marked_excerpt`,
+`the_completion_note_is_delivered_into_the_parents_session`;
+`DelegationUnitTests.a_report_within_the_ceiling_is_forwarded_whole`,
+`an_oversized_report_keeps_its_beginning_and_its_end`,
+`an_excerpt_points_at_the_spill_file_when_the_delegate_wrote_one`,
+`an_excerpt_falls_back_to_the_api_url_when_there_is_no_spill_file`, and
+`a_degenerate_excerpt_budget_never_produces_more_text_than_it_was_given`.
+
+Required transcript regressions in `SessionMessageQueueDeliveryVerificationTests`:
+`A_swallowed_first_enter_is_re_pressed_and_the_delivery_confirms`,
+`A_stale_record_alone_never_produces_delivered`,
+`Screen_output_advancing_without_a_record_is_no_longer_delivered`,
+`A_clipped_prefix_parks_as_truncated_not_sent`,
+`A_complete_long_body_still_marks_sent`,
+`Late_confirm_does_not_promote_a_truncated_body_to_sent`.
+Run `DeliverableBundleServiceTests` when extracting/reusing its metadata formatter,
+and `DelegationTestServicesTests`/`DelegationHarnessCensusTests` if their DI helper
+changes. No broad namespace filter is needed.
+
+### Positive controls
+
+Run controls only in a disposable verification worktree containing the candidate
+implementation commit, never by mutating shared `master` while the live stack can
+build from it. Each row specifies a narrow one-line defect; where alternatives
+are enumerated, each is a separate subcontrol. Report the exact diff/location,
+named failing assertion, restored diff and green result. New-store method names
+may follow implementation naming, but the predicate being broken and expected
+observable failure below are fixed. Do not weaken assertions or fixtures to make
+a mutation appear effective. Release barriers even after expected failure.
+
+| ID | One-line defect to introduce | Expected red |
+|---|---|---|
+| PC-1 | In the new artifact-eligibility predicate, remove the usefulness arm so only `L > replyCeiling` persists. | V-12: 5,500-char modern canonical path/file absent. |
+| PC-2 | Add `mode == Apply && enabled` to canonical persistence eligibility. | V-3 Shadow and disabled rows lose the file. |
+| PC-3 | Change lower comparison `L >= min` to `L > min`; separately change maximum eligibility `L <= max` to `L < max` (a/b). | V-2 exact 4,000 loses eligibility/persistence; exact 20,000 incorrectly skips model work. |
+| PC-4 | Compare UTF-8 byte count instead of `string.Length` at the minimum gate. | V-4 3,999-unit multi-byte report incorrectly creates model work. |
+| PC-5 | Resolve the destination from `task.WorkingDirectory` instead of canonical main root. | V-10: saved path unreadable after fixture worktree removal. |
+| PC-6 | Use `Short(task.Id)` instead of the full GUID as the task directory component. | V-6: two deliberately colliding short IDs share a destination. |
+| PC-7 | Use `DelegationNoteDigest.Compute(raw)` for filename identity instead of exact UTF-8 SHA-256. | V-6: whitespace/newline variants have the same destination rather than distinct immutable copies. |
+| PC-8 | Remove the tracked-destination refusal; separately force ignore/exclude failure to be treated as success (a/b). | V-8: tracked/nonignored fixture observes a report-byte write that must never happen. |
+| PC-9 | Remove configured-root containment/persistence validation (apply separately to worktree, temp and relative-root guards). | V-7: each explicitly unsafe override returns/publishes a path instead of unavailable. |
+| PC-10 | Return the existing destination immediately on `File.Exists`, bypassing content verification. | V-9: corrupt/truncated preexisting file is returned as a valid report. |
+| PC-11 | Direct the temporary write to the final filename instead of the unique sibling. | V-9 pre-publish barrier: incomplete/unpublished final content is visible. |
+| PC-12 | Pass `CancellationToken.None` to the report I/O seam instead of the shared write-budget token; separately omit the >1,000 path check (a/b). | V-11 token-observing storage gate fails cancellation/expiry propagation; path case fails to settle with a null pointer. Fixture watchdog exceptions do not qualify as red. |
+| PC-13 | Restore API-only `OutputDistillation.PointerLine` for a valid canonical path. | V-12: actual applied parent body lacks the canonical file path. |
+| PC-14 | Trust any nonempty ResultFilePath without usability validation; separately omit the path-identity recheck after validation (a/b). | V-13 missing/corrupt file advertises a bad path; path-change race publishes the stale verified path. |
+| PC-15 | Omit the deterministic deliverable-block append from applied composition. | V-14: generated marker absent from raw input disappears from delivered output. |
+| PC-16 | Set `source.Result = distilled` in the successful application branch before saving. | V-12/V-14 authoritative raw-result assertion fails. |
+| PC-17 | Bypass `if (!gate.Passed)` in `OutputDistillationService`. | V-15 missing-anchor/oversized-summary rows submit the rejected summary instead of the saved raw/excerpt. |
+| PC-18 | Omit source/note/digest/origin eligibility checks **one predicate per subcontrol**: SourceTaskId, ContentDigest, recomputed raw digest, Delegation origin. | V-16 corresponding wrong-source/digest/report/origin row is replaced. Wrong-note row must additionally leave the unrelated note untouched. |
+| PC-19 | Remove Pending-status guard; separately remove zero-attempt guard; separately remove captured-Apply-mode guard (a/b/c). | V-16 Sent/Canceled, attempted, or Shadow rows are wrongly replaced. |
+| PC-20 | Remove the matching full-report poll guard; separately remove the source-row `FOR UPDATE` while retaining the poll check (a/b). | V-17 poll-first row or V-16 polled row replaces an already-read report; row-lock subcontrol forces a poll commit between the application read and UPDATE and exposes a stale replacement. |
+| PC-21 | Bypass the application-side per-session semaphore acquisition/release in the test mutation while preserving runnable cleanup. | V-17 lock-owner assertion observes delivery enter before Apply commits; report the exact narrow lock-scope edit if two lines are required. |
+| PC-22 | Move the existing file-validation await inside the acquired delivery-lock scope. | V-17 file-validation barrier: competing SendNow cannot reach submission while only disk validation is held. |
+| PC-23 | Recompute `DeadlineAt` after file validation; separately change the shared expiry comparison so equality is allowed (a/b). | V-18 file-validation/equality cases apply after original D. If multiple local checks enforce equality, mutate the shared expiry helper or all duplicated equality checks as one documented equivalent subcontrol. |
+| PC-24 | Remove the final post-lock application deadline check; separately remove SQL `clock_timestamp() < deadline` from guarded update (a/b). | V-18 post-read gate case attempts an UPDATE after application expiry; the separate DB-clock case changes a row after DB expiry. F-3 keeps the other clock/token protections from masking the particular guard. |
+| PC-25 | Omit hold release on rejection; separately make normal flush ignore `HoldUntil` expiry (a/b). | V-15 rejected row retains a hold after cleanup; V-19 no parent input by two controlled scan opportunities despite original D passing. Neither red may rely on a generic test timeout. |
+| PC-26 | Bypass the composed-body byte spill call. | V-20 C+1/multi-byte/batched row types oversize body instead of a pointer to the intact message. |
+| PC-27 | Skip the current complete-prompt check while keeping the identity/head check. | R-6 `A_clipped_prefix_parks_as_truncated_not_sent` wrongly marks the clipped prompt Delivered. |
+| PC-28 | Make the canary configuration validator accept an unowned runner/DB; separately make its evidence validator accept missing UserPrompt or API-only pointer (a/b/c). | V-22 corresponding negative fixture is wrongly accepted. Run only the no-launch guard tests under these mutations, never the live canary. |
+| PC-29 | Drop required next/handoff retention in the gate, one subcontrol for each. | V-15 handoff-rejection rows deliver the lossy summary; `OutputDistillationGateTests.dropping_next_or_handoff_from_a_present_block_is_over_compressed` fails. |
+
+For guards with redundant checks, the control must actually reach the named
+production boundary. A mutation that remains protected by another check is not
+positive-control evidence: isolate that boundary with F-3's clocks/barriers and
+record the minimal equivalent edit. PC-24b specifically separates the database
+clock from the application clock. For PC-20b, gate the real source-row read and
+force the poll commit between application read and UPDATE only on the mutation
+arm; on the correct arm the poll must wait for the application transaction. The
+control must expose a stale replacement, not merely a different legal ordering.
+No production query behavior
+is changed outside the disposable mutation worktree.
+
+### Commands and evidence accounting
+
+Implement proposed methods before running these commands. A plan naming a test
+that has not been written is not an executed check. Use the same fixed `bin-c419/`
+output for all deterministic tests, and a new run stamp for each green or control
+run. Run classes sequentially; do not execute `Antiphon.Tests`, E2E or Pty test
+assemblies concurrently. The following PowerShell runner uses class filters and
+fresh TRX names, preserving each native exit code:
+
+```powershell
+$c419Run = Get-Date -Format 'yyyyMMdd-HHmmss'
+$c419Classes = @(
+    'OutputDistillationPolicyTests', 'AgentReportStoreTests',
+    'OutputDistillationDeliveryTests', 'OutputDistillationApplyRaceTests',
+    'OutputDistillationTests', 'OutputDistillationProducerTests',
+    'OutputDistillationAdmissionTests', 'OutputDistillationDeadlineTests',
+    'OutputDistillationCleanupTests', 'OutputDistillationDispatchTests',
+    'OutputDistillationQueueTests', 'OutputDistillationGateTests',
+    'PolledCompletionNoteShrinkTests', 'DistillationEndpointTests',
+    'SessionMessageQueueSpillTests', 'PtyDeliveryCeilingsTests'
+)
+foreach ($c419Class in $c419Classes) {
+    dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c419/ -- --treenode-filter "/*/*/$c419Class/*" --report-trx --report-trx-filename "$c419Run-$c419Class.trx"
+    if ($LASTEXITCODE -ne 0) { throw "$c419Class failed: exit $LASTEXITCODE" }
+}
+dotnet run --project tests/Antiphon.E2E --property:OutputPath=bin-c419-live/ -- --treenode-filter "/*/*/OutputDistillationCanaryGuardTests/*" --report-trx --report-trx-filename "$c419Run-canary-guards.trx"
+if ($LASTEXITCODE -ne 0) { throw "Canary guards failed: exit $LASTEXITCODE" }
+```
+
+Run the specifically named R-6/R-7 and legacy regression methods above with
+`/*/*/<Class>/<method>` filters, plus the conditional deliverable/DI classes when
+touched. For example:
+
+```powershell
+dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c419/ -- --treenode-filter "/*/*/SessionMessageQueueDeliveryVerificationTests/A_clipped_prefix_parks_as_truncated_not_sent" --report-trx --report-trx-filename card-0419-completeness.trx
+```
+
+For each PC use its exact method filter with distinct `pc-N-red.trx` and
+`pc-N-restored.trx` names; rebuild through `dotnet run` on both sides of the edit.
+Archive the first candidate green result too. Check fresh TRX executed method
+names and all argument rows, nonzero counters, expected assertion failures in
+red, and zero failures after restoration. `--list-tests`, a fixture/setup/build
+error, an empty selection or a missing canary is not verification. Do not run
+`dotnet test` or treat the exit code of an output-trimming pipeline as the verdict.
+
+Code reports one table containing V-1..V-23, R-1..R-8 and PC-1..PC-29 including
+subcontrols: implemented test, executed row count, pass/fail/skip, exact failure
+and evidence path. Keep distinct totals for deterministic checks, mutation reds,
+restored greens and the one live canary. Before approved live execution, V-23 is
+**pending mandatory live acceptance**, never pass/not-needed. Attach CARD-0392's
+reviewed recovery evidence or mark the release dependency pending; V-19/V-23 do
+not close that card's interrupted-request gap.
+
+### Out of scope
+
+- Production Apply changes, production restarts, real broker/channel sends,
+  capability/credential changes and provider rerouting. F-5 owns separate runtime
+  resources; normal settings and the weekly prompt-review schedule stay untouched.
+- CARD-0392's durable request-first ledger, bounded boot reconciliation and
+  duplicate outcome implementation. Its crash-window tests are a release
+  dependency, not an assertion that missing ledger rows are acceptable forever.
+- CARD-0432 S3 event-pump restructuring and S4 eventual-cost accounting. Existing
+  deadline/claim tests guard compatibility; this card does not claim those slices.
+- Retention/backup after deleting the main report root, hostile operating-system
+  administrators or external removal between file validation and delivery. Tests
+  prove the stated service-restart/worktree-cleanup lifetime and API fallback.
+- Exact model-token counting, model summarization of referenced files, or guaranteed
+  short summaries for gate-rejected/oversized inputs. These would change D-1/D-4.
+- Broad UI/Playwright, all-provider/Herdr matrices and a full test-suite rerun.
+  The new code is backend/file delivery; the live acceptance uses real Claude on
+  modern ConPTY, with conservative limits exercised deterministically.
+
+### Cost
+
+Forced suites: the named `Antiphon.Tests` classes/methods, no-launch E2E guard
+tests, and the explicit live E2E canary after approval. No model spend in
+deterministic or mutation runs. No client build with F-5's frontend-off fixture.
+
+Estimated verification floor after tests are implemented: approximately 15–25
+minutes for scoped deterministic runs/builds, another 30–60 minutes for all
+isolated red/restored controls, and 10–20 minutes for one approved live canary
+including teardown. These are planning estimates, not measured durations. The
+canary involves two real source tasks, one cheap distillation and the parent's
+boot/ack/read turns; report actual usage rather than an invented dollar estimate.
+Implementation time and waiting for human approval/model availability are
+additional. Record an unavailable canary honestly instead of dropping this floor.
