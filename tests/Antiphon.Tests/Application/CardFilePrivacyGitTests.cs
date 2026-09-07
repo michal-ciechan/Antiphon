@@ -18,6 +18,148 @@ public class CardFilePrivacyGitTests
         Options.Create(new GitSettings()), NullLogger<CardFileRepository>.Instance);
 
     [Test]
+    public async Task Unmerged_managed_path_has_named_guard_and_preserves_conflict_index()
+    {
+        using var repo = new ScratchGitRepo("c408");
+        const string path = "docs/cards/board/card.md";
+        Directory.CreateDirectory(Path.Combine(repo.Path, "docs/cards/board"));
+        await repo.CommitFileAsync(path, "base\n");
+        var branch = (await repo.GitReadAsync("symbolic-ref", "--short", "HEAD")).Trim();
+        await repo.GitAsync("checkout", "-b", "c408-side");
+        await repo.CommitFileAsync(path, "side\n");
+        await repo.GitAsync("checkout", branch);
+        await repo.CommitFileAsync(path, "main\n");
+        (await ScratchGitRepo.GitInAsync(repo.Path, "merge", "c408-side")).Ok.ShouldBeFalse();
+        var mergeHead = (await repo.GitReadAsync("rev-parse", "--git-path", "MERGE_HEAD")).Trim();
+        File.Delete(Path.IsPathRooted(mergeHead) ? mergeHead : Path.Combine(repo.Path, mergeHead));
+        var index = await repo.GitReadAsync("ls-files", "--stage", "-z");
+        var body = await File.ReadAllTextAsync(Path.Combine(repo.Path, path));
+        var result = await Repository().CommitAsync(repo.Path, Path.Combine(repo.Path, "docs/cards/board"),
+            new Dictionary<string, string?> { [path] = body }, "sync", default);
+        result.SkipReason.ShouldBe("conflicted_paths"); result.Sha.ShouldBeNull();
+        (await repo.GitReadAsync("ls-files", "--stage", "-z")).ShouldBe(index);
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, path), "C408_RESOLVED\n");
+        await repo.GitAsync("add", "--", path);
+        (await Repository().CommitAsync(repo.Path, Path.Combine(repo.Path, "docs/cards/board"),
+            new Dictionary<string, string?> { [path] = "C408_RESOLVED\n" }, "sync", default)).Sha.ShouldNotBeNull();
+    }
+
+    [Test]
+    [Arguments("root")]
+    [Arguments("cards")]
+    [Arguments("board")]
+    public async Task Junction_ancestors_refuse_root_and_managed_file_aliases(string placement)
+    {
+        using var repo = new ScratchGitRepo("c408");
+        var outside = Directory.CreateDirectory(Path.Combine(repo.Path, "outside")).FullName;
+        var sentinel = Path.Combine(outside, "sentinel.md");
+        await File.WriteAllTextAsync(sentinel, "C408_OUTSIDE_UNCHANGED");
+        var link = Path.Combine(repo.Path, placement switch { "root" => "alias", "cards" => "docs/cards", _ => "docs/cards/board" });
+        Directory.CreateDirectory(Path.GetDirectoryName(link)!);
+        var start = new System.Diagnostics.ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true };
+        start.ArgumentList.Add("-NoProfile"); start.ArgumentList.Add("-NonInteractive"); start.ArgumentList.Add("-Command");
+        start.ArgumentList.Add("New-Item -ItemType Junction -Path $env:C408_LINK -Target $env:C408_TARGET -ErrorAction Stop | Out-Null");
+        start.Environment["C408_LINK"] = link; start.Environment["C408_TARGET"] = outside;
+        using var process = System.Diagnostics.Process.Start(start)!;
+        var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        process.ExitCode.ShouldBe(0, await stdout + await stderr);
+        try
+        {
+            var root = placement == "root" ? link : repo.Path;
+            Should.Throw<ConflictException>(() => Repository().ValidatePath(root, Path.Combine(link, "sentinel.md")))
+                .Code.ShouldBe("unsafe_card_file_path");
+            (await File.ReadAllTextAsync(sentinel)).ShouldBe("C408_OUTSIDE_UNCHANGED");
+        }
+        finally { Directory.Delete(link); }
+    }
+
+    [Test]
+    public async Task Subdirectory_project_commits_and_removes_its_relative_paths()
+    {
+        using var repo = new ScratchGitRepo("c408");
+        await repo.CommitFileAsync("seed", "seed\n");
+        var root = Directory.CreateDirectory(Path.Combine(repo.Path, "component")).FullName;
+        var directory = Directory.CreateDirectory(Path.Combine(root, "docs/cards/board")).FullName;
+        const string path = "docs/cards/board/card.md";
+        await File.WriteAllTextAsync(Path.Combine(root, path), "C408_PUBLIC\n");
+        var repository = Repository();
+        var created = await repository.CommitAsync(root, directory, new Dictionary<string, string?> { [path] = "C408_PUBLIC\n" }, "sync", default);
+        created.Sha.ShouldNotBeNull();
+        (await repo.GitReadAsync("show", "HEAD:component/" + path)).ShouldBe("C408_PUBLIC\n");
+        File.Delete(Path.Combine(root, path));
+        var removed = await repository.CommitAsync(root, directory, new Dictionary<string, string?> { [path] = null }, "antiphon: remove unpublished card files", default);
+        removed.Sha.ShouldNotBeNull();
+        (await repo.GitReadAsync("ls-tree", "-r", "--name-only", "HEAD")).ShouldNotContain(path);
+    }
+
+    [Test]
+    [Arguments("rebase-merge", "rebase_in_progress")]
+    [Arguments("rebase-apply", "rebase_in_progress")]
+    [Arguments("MERGE_HEAD", "merge_in_progress")]
+    [Arguments("CHERRY_PICK_HEAD", "cherry_pick_in_progress")]
+    [Arguments("detached", "detached_head")]
+    public async Task Git_operation_guards_keep_index_and_HEAD_unchanged(string marker, string reason)
+    {
+        using var repo = new ScratchGitRepo("c408");
+        await repo.CommitFileAsync("seed", "seed\n");
+        var head = await repo.GitReadAsync("rev-parse", "HEAD");
+        var branch = (await repo.GitReadAsync("symbolic-ref", "--short", "HEAD")).Trim();
+        var directory = Path.Combine(repo.Path, "docs/cards/board");
+        Directory.CreateDirectory(directory);
+        const string path = "docs/cards/board/card.md";
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, path), "C408_PUBLIC\n");
+        if (marker == "detached") await repo.GitAsync("checkout", "--detach", "HEAD");
+        else
+        {
+            var gitPath = (await repo.GitReadAsync("rev-parse", "--git-path", marker)).Trim();
+            gitPath = Path.IsPathRooted(gitPath) ? gitPath : Path.Combine(repo.Path, gitPath);
+            if (marker.StartsWith("rebase")) Directory.CreateDirectory(gitPath);
+            else await File.WriteAllTextAsync(gitPath, head.Trim() + "\n");
+        }
+        var result = await Repository().CommitAsync(repo.Path, directory,
+            new Dictionary<string, string?> { [path] = "C408_PUBLIC\n" }, "sync", default);
+        result.SkipReason.ShouldBe(reason);
+        result.Sha.ShouldBeNull();
+        (await repo.GitReadAsync("rev-parse", "HEAD")).ShouldBe(head);
+        (await repo.GitReadAsync("diff", "--cached", "--name-only")).ShouldBeEmpty();
+        if (marker == "detached") await repo.GitAsync("checkout", branch);
+        else {
+            var owned = (await repo.GitReadAsync("rev-parse", "--git-path", marker)).Trim();
+            owned = Path.IsPathRooted(owned) ? owned : Path.Combine(repo.Path, owned);
+            if (marker.StartsWith("rebase")) Directory.Delete(owned); else File.Delete(owned);
+        }
+        var retry = await Repository().CommitAsync(repo.Path, directory,
+            new Dictionary<string, string?> { [path] = "C408_PUBLIC\n" }, "sync", default);
+        retry.Error.ShouldBeNull(); retry.Sha.ShouldNotBeNull();
+    }
+
+    [Test]
+    public async Task Literal_NUL_pathspec_batch_exceeds_Windows_argument_limit_without_overmatching()
+    {
+        using var repo = new ScratchGitRepo("c408");
+        await repo.CommitFileAsync("seed", "seed\n");
+        var directory = Path.Combine(repo.Path, "docs/cards/board");
+        Directory.CreateDirectory(directory);
+        var expected = new Dictionary<string, string?>();
+        for (var i = 0; i < 700; i++)
+        {
+            var path = $"docs/cards/board/CARD-{i:0000}-legacy[1]-sufficiently-long-path.md";
+            expected[path] = "C408_PUBLIC\n";
+            await File.WriteAllTextAsync(Path.Combine(repo.Path, path), expected[path]);
+        }
+        const string neighbor = "docs/cards/board/CARD-0000-legacy1-sufficiently-long-path.md";
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, neighbor), "C408_NEIGHBOR");
+        expected.Keys.Sum(p => p.Length + 1).ShouldBeGreaterThan(32768);
+        var result = await Repository().CommitAsync(repo.Path, directory, expected, "sync", default);
+        result.Error.ShouldBeNull();
+        result.Sha.ShouldNotBeNull();
+        var paths = (await repo.GitReadAsync("ls-tree", "-r", "--name-only", "HEAD")).Split('\n');
+        paths.ShouldNotContain(neighbor);
+        foreach (var path in expected.Keys) paths.ShouldContain(path);
+    }
+
+    [Test]
     public async Task AutoCommit_stages_and_commits_only_exact_generated_paths_never_directory()
     {
         using var repo = new ScratchGitRepo("c408");

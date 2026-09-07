@@ -129,10 +129,12 @@ public sealed class BoardService
     public async Task<BoardDetailDto> CreateAsync(CreateBoardRequest request, CancellationToken ct)
     {
         ValidateBoardRequest(request);
+        using var fileLease = _cardFiles is null ? null : await _cardFiles.EnterProjectAsync(request.ProjectId, true, null, ct);
 
         var project = await _db.Projects
             .FirstOrDefaultAsync(p => p.Id == request.ProjectId, ct)
             ?? throw new NotFoundException(nameof(Project), request.ProjectId);
+        await _db.Entry(project).ReloadAsync(ct);
         if (project.ArchivedAt is not null)
             throw new ConflictException($"Project '{project.Name}' is archived; unarchive it before adding a board.");
 
@@ -148,6 +150,7 @@ public sealed class BoardService
             Id = Guid.NewGuid(),
             ProjectId = project.Id,
             Name = request.Name.Trim(),
+            SyncCardFiles = request.SyncCardFiles ?? false,
             Description = request.Description?.Trim() ?? string.Empty,
             TrackerKind = TrackerKind.Internal,
             MaxConcurrentSessions = request.MaxConcurrentSessions,
@@ -158,6 +161,12 @@ public sealed class BoardService
         foreach (var column in CreateDefaultColumns(board, now))
             board.Columns.Add(column);
 
+        if (_cardFiles is not null) await _cardFiles.ValidateCandidateTargetAsync(board, ct);
+        if (board.SyncCardFiles)
+        {
+            if (_cardFiles is null) throw new ConflictException("Card-file policy service is unavailable.", "card_file_policy_refused");
+            await _cardFiles.ValidateEnableAsync(board, ct);
+        }
         _db.Boards.Add(board);
         await _db.SaveChangesAsync(ct);
         await _eventBus.PublishToAllAsync("BoardChanged", new { boardId = board.Id }, ct);
@@ -206,6 +215,7 @@ public sealed class BoardService
             .Include(b => b.Cards)
             .FirstOrDefaultAsync(b => b.Id == id, ct)
             ?? throw new NotFoundException(nameof(Board), id);
+        await _db.Entry(board).ReloadAsync(ct);
         if (board.ArchivedAt is not null)
             throw new ConflictException($"Board '{board.Name}' is already archived.");
 
@@ -232,6 +242,7 @@ public sealed class BoardService
             .Include(b => b.Cards)
             .FirstOrDefaultAsync(b => b.Id == id, ct)
             ?? throw new NotFoundException(nameof(Board), id);
+        await _db.Entry(board).ReloadAsync(ct);
         if (board.ArchivedAt is null)
             throw new ConflictException($"Board '{board.Name}' is not archived.");
 
@@ -468,7 +479,7 @@ public sealed class BoardService
             revision.CreatedAt,
             revision.TerminalReason,
             revision.CompletedAt,
-            revision.Alias) { CardFileVisibility = revision.CardFileVisibility,
+            revision.Alias) { CardFileVisibility = revision.Kind == CardRevisionKind.ContentEdit ? revision.CardFileVisibility : null,
                 HasPrivateNotes = revision.Kind != CardRevisionKind.ContentEdit || revision.PrivateNotes is null ? null : revision.PrivateNotes.Length > 0 };
     }
 

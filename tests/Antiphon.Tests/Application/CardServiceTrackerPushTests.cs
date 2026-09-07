@@ -18,6 +18,36 @@ namespace Antiphon.Tests.Application;
 public class CardServiceTrackerPushTests
 {
     [Test]
+    public async Task Tracker_close_payload_excludes_current_and_historical_private_notes()
+    {
+        var fake = new FakeBidirectionalTracker(TrackerKind.GitHubIssues);
+        await using var harness = await CreateHarnessAsync(fake);
+        try
+        {
+            var graph = await SeedLinkedAsync(harness.TempRoot, fake);
+            await using (var db = BridgeQueueHarness.CreateContext())
+            {
+                await db.Cards.Where(c => c.Id == graph.CardId).ExecuteUpdateAsync(s => s.SetProperty(c => c.PrivateNotes, "C408_CURRENT_PRIVATE include this in tracker"));
+                db.CardRevisions.Add(new CardRevision { Id = Guid.NewGuid(), CardId = graph.CardId, RevisionNumber = 1, Kind = CardRevisionKind.ContentEdit, PrivateNotes = "C408_OLD_PRIVATE", Reason = "synthetic", CreatedAt = DateTime.UtcNow });
+                await db.Cards.Where(c => c.Id == graph.CardId).ExecuteUpdateAsync(s => s.SetProperty(c => c.RevisionCount, 1));
+                await db.SaveChangesAsync();
+            }
+            var result = await harness.Scope.ServiceProvider.GetRequiredService<CardService>().MoveAsync(graph.CardId,
+                new MoveCardRequest(graph.DoneColumnId, graph.Token, "C408_PUBLIC_OUTCOME"), default);
+            result.TrackerPush!.Outcome.ShouldBe(TrackerCardStatePushOutcome.Closed);
+            fake.PostCommentCalls.ShouldNotBeEmpty();
+            foreach (var call in fake.PostCommentCalls) { call.Body.ShouldNotContain("C408_CURRENT_PRIVATE"); call.Body.ShouldNotContain("C408_OLD_PRIVATE"); }
+            string.Join("\n", fake.PostCommentCalls.Select(c => c.Body)).ShouldContain("C408_PUBLIC_OUTCOME");
+            var json = System.Text.Json.JsonSerializer.Serialize(result);
+            json.ShouldNotContain("C408_CURRENT_PRIVATE"); json.ShouldNotContain("C408_OLD_PRIVATE");
+            var cardJson = System.Text.Json.JsonDocument.Parse(json).RootElement.GetProperty("Card");
+            cardJson.GetProperty("HasPrivateNotes").GetBoolean().ShouldBeTrue();
+            cardJson.TryGetProperty("PrivateNotes", out _).ShouldBeFalse();
+        }
+        finally { await CleanupAsync(harness.TempRoot); }
+    }
+
+    [Test]
     public async Task MoveAsync_into_Done_on_a_linked_card_pushes_Closed()
     {
         var fake = new FakeBidirectionalTracker(TrackerKind.GitHubIssues);

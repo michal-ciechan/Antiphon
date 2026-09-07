@@ -53,6 +53,51 @@ public sealed partial class CardTaskFileService
 
     private static ConflictException Busy() => new("Card file sync is already running for this repository.", "card_file_sync_running");
 
+    public void ValidateProjectTarget(string? path)
+    {
+        if (!string.IsNullOrWhiteSpace(path)) _repository.ValidatePath(path, path);
+    }
+
+    // Caller owns the mutation lease. IO unavailability does not prevent an ordinary
+    // content save, but a positively identified unsafe/overlapping owner must refuse it.
+    public async Task ValidateMutationTargetAsync(Guid boardId, CancellationToken ct)
+    {
+        var board = await ReadBoardAsync(boardId, ct);
+        await ValidateCandidateTargetAsync(board, ct);
+    }
+
+    public async Task ValidateCandidateTargetAsync(Board board, CancellationToken ct)
+    {
+        try { await InspectBoardAsync(board, false, ct); }
+        catch (OperationCanceledException) { throw; }
+        catch (HttpException) { throw; }
+        catch (Exception) { }
+    }
+
+    // Caller holds the old and new repository leases. Compare prospective ownership
+    // before clearing stored pins, including legacy owners in other projects.
+    public async Task ValidateProjectTargetChangeAsync(Guid projectId, string? path, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        var root = Path.GetFullPath(path);
+        _repository.ValidatePath(root, root);
+        var boards = await _db.Boards.AsNoTracking().Include(b => b.Project).ToListAsync(ct);
+        foreach (var board in boards.Where(b => b.ProjectId == projectId))
+        {
+            var slug = await UniqueBoardSlugAsync(board, ct, ignorePins: true);
+            var target = Path.GetFullPath(Path.Combine(root, "docs", "cards", slug));
+            _repository.ValidatePath(root, target);
+            foreach (var other in boards.Where(b => b.ProjectId != projectId))
+            {
+                var otherRoot = other.CardFilesRepositoryPath ?? other.Project.LocalRepositoryPath;
+                if (string.IsNullOrWhiteSpace(otherRoot)) continue;
+                var otherSlug = other.CardFilesDirectorySlug ?? await UniqueBoardSlugAsync(other, ct);
+                if (string.Equals(target, Path.GetFullPath(Path.Combine(otherRoot, "docs", "cards", otherSlug)), StringComparison.OrdinalIgnoreCase))
+                    throw new ConflictException("Card-file directories have conflicting owners.", "card_file_directory_conflict");
+            }
+        }
+    }
+
     private sealed class CombinedLease(List<IDisposable> leases) : IDisposable
     {
         private List<IDisposable>? _leases = leases;
@@ -90,6 +135,7 @@ public sealed partial class CardTaskFileService
     {
         try { return (await InspectBoardAsync(board, false, ct)).Status; }
         catch (OperationCanceledException) { throw; }
+        catch (CardFileInspectionException ex) { return ex.Status; }
         catch (ConflictException ex) when (ex.Code is "unsafe_card_file_path" or "card_file_directory_conflict")
         { return BaseStatus(board) with { Reason = ex.Code, Warnings = Codes(BaseStatus(board).Warnings, [ex.Code]) }; }
         catch (Exception)
@@ -152,6 +198,8 @@ public sealed partial class CardTaskFileService
         var directory = $"docs/cards/{slug}";
         var absolute = Path.Combine(root, "docs", "cards", slug);
         _repository.ValidatePath(root, absolute);
+        try
+        {
         // Compare all project targets, including legacy unpinned owners, before pinning/mutating.
         var others = await _db.Boards.AsNoTracking().Include(b => b.Project).Where(b => b.Id != board.Id).ToListAsync(ct);
         foreach (var other in others)
@@ -192,7 +240,9 @@ public sealed partial class CardTaskFileService
         var gitPending = state.Index.Keys.Concat(state.Head.Keys).Any(removals.Contains);
         var stagedOnly = state.Index.Keys.Any(p => removals.Contains(p) && !state.Head.ContainsKey(p));
         var slugs = new List<string>();
-        foreach (var enabled in others.Append(board).Where(b => b.ProjectId == board.ProjectId && b.SyncCardFiles))
+        foreach (var enabled in others.Append(board).Where(b => b.SyncCardFiles
+            && !string.IsNullOrWhiteSpace(b.CardFilesRepositoryPath ?? b.Project.LocalRepositoryPath)
+            && string.Equals(Path.GetFullPath(b.CardFilesRepositoryPath ?? b.Project.LocalRepositoryPath!), root, StringComparison.OrdinalIgnoreCase)))
             slugs.Add(enabled.CardFilesDirectorySlug ?? await UniqueBoardSlugAsync(enabled, ct));
         var protectedByIgnore = await _repository.HasIgnoreProtectionAsync(root, slugs, ct);
         if (!protectedByIgnore) { warnings.Add("card_files_ignore_missing"); reason ??= "card_files_ignore_missing"; }
@@ -207,6 +257,22 @@ public sealed partial class CardTaskFileService
             Reason = reason, Warnings = Codes(warnings), Ignored = ignored,
             WorkingTreeRemovalPending = workPending, GitRemovalPending = gitPending };
         return new(board, status, root, absolute, slug, cards, total, desired, state, removals);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (HttpException) { throw; }
+        catch (Exception)
+        {
+            throw new CardFileInspectionException(status with {
+                RepositoryPath = root, Directory = directory, Eligible = false, Reason = "status_unavailable",
+                WorkingTreeRemovalPending = null, GitRemovalPending = null,
+                Warnings = Codes(status.Warnings, ["status_unavailable", "card_file_cleanup_status_unknown"])
+            });
+        }
+    }
+
+    private sealed class CardFileInspectionException(CardFileStatusDto status) : Exception("Card-file inspection unavailable.")
+    {
+        public CardFileStatusDto Status { get; } = status;
     }
 
     private static string[] Codes(params IEnumerable<string>[] sets) => sets.SelectMany(s => s).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
@@ -265,5 +331,40 @@ public sealed partial class CardTaskFileService
         }
         if (targets.Count > 0) throw new ConflictException("Drain the previous card-file targets before changing ownership.",
             "card_file_cleanup_required", new Dictionary<string, object?> { ["targets"] = targets });
+    }
+
+    public async Task<string[]> ProjectWarningsAsync(Guid projectId, bool install, CancellationToken ct)
+    {
+        using var lease = await EnterProjectAsync(projectId, true, null, ct);
+        var project = await _db.Projects.AsNoTracking().FirstOrDefaultAsync(p => p.Id == projectId, ct)
+            ?? throw new NotFoundException(nameof(Project), projectId);
+        var boards = await _db.Boards.AsNoTracking().Include(b => b.Project).Where(b => b.ProjectId == projectId).ToListAsync(ct);
+        var warnings = new HashSet<string>(StringComparer.Ordinal);
+        if (string.IsNullOrWhiteSpace(project.LocalRepositoryPath)) return [];
+        try
+        {
+            var root = Path.GetFullPath(project.LocalRepositoryPath);
+            _repository.ValidatePath(root, root);
+            if (!Directory.Exists(root) || !await _git.IsRepositoryAsync(root, ct)) return ["card_files_ignore_missing"];
+            var enabledOwners = (await _db.Boards.AsNoTracking().Include(b => b.Project)
+                .Where(b => b.SyncCardFiles).ToListAsync(ct)).Where(b =>
+                    !string.IsNullOrWhiteSpace(b.CardFilesRepositoryPath ?? b.Project.LocalRepositoryPath)
+                    && string.Equals(Path.GetFullPath(b.CardFilesRepositoryPath ?? b.Project.LocalRepositoryPath!), root, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (install && enabledOwners.Count == 0)
+                await _repository.InstallIgnoreAsync(root, ct);
+            var slugs = new List<string>();
+            foreach (var board in enabledOwners)
+                slugs.Add(board.CardFilesDirectorySlug ?? await UniqueBoardSlugAsync(board, ct));
+            if (!await _repository.HasIgnoreProtectionAsync(root, slugs, ct)) warnings.Add("card_files_ignore_missing");
+            foreach (var board in boards)
+            {
+                var status = await StatusUnderGateAsync(board, ct);
+                warnings.UnionWith(status.Warnings.Where(w => w is "card_files_ignore_missing" or "card_file_cleanup_required"
+                    or "card_file_cleanup_status_unknown" or "card_file_staged_private_residue" or "status_unavailable"));
+            }
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception) { warnings.Add(install ? "card_files_ignore_missing" : "status_unavailable"); }
+        return Codes(warnings);
     }
 }

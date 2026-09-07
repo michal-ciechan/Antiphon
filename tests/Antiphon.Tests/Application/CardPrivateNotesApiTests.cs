@@ -32,6 +32,45 @@ public class CardPrivateNotesApiTests(CardFileSyncEndpointWebAppFactory factory)
     }
 
     [Test]
+    [Arguments("0", 422)]
+    [Arguments("-1", 422)]
+    [Arguments("2147483648", 400)]
+    [Arguments("text", 400)]
+    [Arguments("1&revisionNumber=2", 400)]
+    public async Task Explicit_notes_revision_errors_are_no_store(string query, int expected)
+    {
+        var board = await BoardAsync();
+        using var client = factory.CreateClient();
+        var created = await client.PostAsJsonAsync($"/api/boards/{board}/cards", new { title = "public", privateNotes = "C408_DO_NOT_ECHO" });
+        var id = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+        var response = await client.GetAsync($"/api/cards/{id}/private-notes?revisionNumber={query}");
+        ((int)response.StatusCode).ShouldBe(expected);
+        response.Headers.CacheControl!.NoStore.ShouldBeTrue();
+        (await response.Content.ReadAsStringAsync()).ShouldNotContain("C408_DO_NOT_ECHO");
+    }
+
+    [Test]
+    public async Task Historical_note_read_rejects_move_revision_and_distinguishes_unknown_snapshot()
+    {
+        var board = await BoardAsync();
+        using var client = factory.CreateClient();
+        var created = await client.PostAsJsonAsync($"/api/boards/{board}/cards", new { title = "public" });
+        var id = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.CardRevisions.Add(new CardRevision { Id = Guid.NewGuid(), CardId = id, RevisionNumber = 1, Kind = CardRevisionKind.Move, Reason = "synthetic", CreatedAt = DateTime.UtcNow });
+            db.CardRevisions.Add(new CardRevision { Id = Guid.NewGuid(), CardId = id, RevisionNumber = 2, Kind = CardRevisionKind.ContentEdit, Reason = "synthetic", CreatedAt = DateTime.UtcNow });
+            await db.SaveChangesAsync();
+        }
+        var move = await client.GetAsync($"/api/cards/{id}/private-notes?revisionNumber=1");
+        move.StatusCode.ShouldBe(HttpStatusCode.NotFound);
+        move.Headers.CacheControl!.NoStore.ShouldBeTrue();
+        var old = await client.GetFromJsonAsync<JsonElement>($"/api/cards/{id}/private-notes?revisionNumber=2");
+        old.GetProperty("privateNotes").ValueKind.ShouldBe(JsonValueKind.Null);
+    }
+
+    [Test]
     public async Task Create_and_atomic_public_to_private_edit_preserve_notes_and_history()
     {
         var boardId = await BoardAsync();

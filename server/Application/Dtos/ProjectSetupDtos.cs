@@ -109,7 +109,11 @@ public sealed record ProjectSetupRequest(
     string? BoardName = null,
     int BoardMaxConcurrentSessions = 1,
     ProjectSetupAgentRequest? Agent = null,
-    bool StartAgent = false);
+    bool StartAgent = false)
+{
+    [System.Text.Json.Serialization.JsonConverter(typeof(RepositoryVisibilityConverter))]
+    public RepositoryVisibility? RepositoryVisibility { get; init; }
+}
 
 public sealed record ProjectSetupAgentRequest(
     string? Preset = null,

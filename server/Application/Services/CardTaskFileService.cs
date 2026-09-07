@@ -1,7 +1,4 @@
 using Antiphon.Server.Application.Interfaces;
-using Antiphon.Server.Infrastructure.Git;
-using Microsoft.Extensions.Logging.Abstractions;
-using System.Text;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Settings;
@@ -20,8 +17,6 @@ namespace Antiphon.Server.Application.Services;
 /// </summary>
 public sealed partial class CardTaskFileService
 {
-    private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
-
     private readonly AppDbContext _db;
     private readonly CardTaskFileSyncGate _gate;
     private readonly GitWorkspaceService _git;
@@ -34,199 +29,172 @@ public sealed partial class CardTaskFileService
         CardTaskFileSyncGate gate,
         GitWorkspaceService git,
         ILogger<CardTaskFileService> logger,
-        IOptions<CardFileSyncSettings>? settings = null,
-        GitProcessGate? processGate = null,
-        IOptions<GitSettings>? gitSettings = null,
-        ICardFileRepository? repository = null)
+        ICardFileRepository repository,
+        IOptions<CardFileSyncSettings>? settings = null)
     {
         _db = db;
         _gate = gate;
         _git = git;
         _logger = logger;
         _syncSettings = settings?.Value ?? new CardFileSyncSettings();
-        _repository = repository ?? new CardFileRepository(processGate ?? new GitProcessGate(),
-            gitSettings ?? Options.Create(new GitSettings()), NullLogger<CardFileRepository>.Instance);
+        _repository = repository;
     }
 
-    /// <summary>
-    /// Reconcile every non-archived board of every non-archived project. Path-less projects are
-    /// included so they report <c>no_repository_path</c>; archived projects and archived boards
-    /// are omitted. One try/catch per board so a single failure cannot stop the tick.
-    /// </summary>
     public async Task<IReadOnlyList<CardFileSyncBoardResult>> SyncAllAsync(
         bool dryRun = false, CancellationToken ct = default)
     {
-        var boardIds = await _db.Boards.AsNoTracking()
-            .Where(b => b.ArchivedAt == null && b.Project.ArchivedAt == null)
-            .OrderBy(b => b.ProjectId)
-            .ThenBy(b => b.CreatedAt)
-            .ThenBy(b => b.Id)
-            .Select(b => b.Id)
-            .ToListAsync(ct);
-
-        var results = new List<CardFileSyncBoardResult>(boardIds.Count);
-        foreach (var boardId in boardIds)
+        if (!_syncSettings.Enabled) return [];
+        var ids = await _db.Boards.AsNoTracking().OrderBy(b => b.ProjectId).ThenBy(b => b.Id).Select(b => b.Id).ToListAsync(ct);
+        var results = new List<CardFileSyncBoardResult>();
+        foreach (var id in ids)
         {
-            try
-            {
-                results.Add(await SyncBoardAsync(boardId, dryRun, ct));
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;
-            }
+            ct.ThrowIfCancellationRequested();
+            try { results.Add(await SyncBoardAsync(id, dryRun, ct)); }
+            catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Card file sync failed for board {BoardId}", boardId);
+                var board = await _db.Boards.AsNoTracking().Include(b => b.Project).FirstOrDefaultAsync(b => b.Id == id, ct);
+                var code = ex is HttpException http ? http.Code ?? "card_file_sync_error" : "card_file_sync_error";
+                var basis = board is null ? new CardFileStatusDto { BoardId = id, Enabled = _syncSettings.Enabled } : BaseStatus(board);
+                var policy = basis with { Reason = code, Warnings = Codes(basis.Warnings, [code]) };
+                results.Add(new(id, board?.Name ?? "Unavailable board", null, 0, 0, 0, null, code, code,
+                    "Card-file sync failed; retry reconciliation.", dryRun) { Policy = policy, Warnings = policy.Warnings });
+                if (!dryRun) _gate.NoteSkipReason(id, null, code);
             }
         }
-
         return results;
     }
 
-    public async Task<CardFileSyncBoardResult> SyncBoardAsync(
-        Guid boardId, bool dryRun = false, CancellationToken ct = default)
+    public async Task<CardFileSyncBoardResult> SyncBoardAsync(Guid boardId, bool dryRun = false, CancellationToken ct = default)
     {
-        if (!_syncSettings.Enabled)
-            throw new ConflictException("Card file sync is disabled.", "card_file_sync_disabled");
-
-        var board = await _db.Boards.AsNoTracking()
-            .Include(b => b.Project)
-            .FirstOrDefaultAsync(b => b.Id == boardId, ct)
-            ?? throw new NotFoundException(nameof(Board), boardId);
-
-        if (board.ArchivedAt is not null)
-            return Skip(board, "board_archived", dryRun, _logger);
-        if (board.Project.ArchivedAt is not null)
-            return Skip(board, "project_archived", dryRun, _logger);
-
-        var localPath = board.Project.LocalRepositoryPath;
-        if (string.IsNullOrWhiteSpace(localPath))
-            return Skip(board, "no_repository_path", dryRun, _logger);
-
-        var repoPath = Path.GetFullPath(localPath);
-        _repository.ValidatePath(repoPath, repoPath);
-        if (!Directory.Exists(repoPath) || !await _git.IsRepositoryAsync(repoPath, ct))
+        if (!_syncSettings.Enabled) throw new ConflictException("Card file sync is disabled.", "card_file_sync_disabled");
+        using var lease = await EnterBoardAsync(boardId, false, ct);
+        // Authoritative reads occur only after both the project and Git-root leases are owned.
+        var board = await ReadBoardAsync(boardId, ct);
+        BoardInspection inspection;
+        try { inspection = await InspectBoardAsync(board, false, ct); }
+        catch (OperationCanceledException) { throw; }
+        catch (HttpException) { throw; }
+        catch (Exception ex)
         {
-            _gate.NoteSkipReason(repoPath, "not_a_git_repository");
-            return Skip(board, "not_a_git_repository", dryRun, _logger);
+            var policy = ex is CardFileInspectionException unavailable ? unavailable.Status : BaseStatus(board) with { Reason = "status_unavailable", Warnings = ["git_error", "status_unavailable"] };
+            return new(board.Id, board.Name, null, 0, 0, 0, null, "git_error", "git_error",
+                "Card-file inspection failed; retry reconciliation.", dryRun) { Policy = policy, Warnings = policy.Warnings };
         }
-
-        // S1 fails closed before constructing filenames or selecting any private data.
-        if (!board.SyncCardFiles)
-            return Skip(board, "board_not_opted_in", dryRun, _logger);
-        if (board.Project.RepositoryVisibility == Antiphon.Server.Domain.Enums.RepositoryVisibility.Unknown)
-            return Skip(board, "repository_visibility_unknown", dryRun, _logger);
-        var cards = await _db.Cards.AsNoTracking()
-            .Where(c => c.BoardId == board.Id && (c.CardFileVisibility == Antiphon.Server.Domain.Enums.CardFileVisibility.Inherit || c.CardFileVisibility == Antiphon.Server.Domain.Enums.CardFileVisibility.Public))
-            .Select(CardFilePublicProjection.Select)
-            .ToListAsync(ct);
-        if (cards.Count == 0)
-            return Skip(board, "no_publishable_cards", dryRun, _logger);
-
-        var lease = await _gate.TryEnterAsync(repoPath, ct);
-        if (lease is null)
-            throw new ConflictException("Card file sync is already running for this repository.", "card_file_sync_running");
-
-        using (lease)
+        var status = inspection.Status;
+        var written = 0;
+        var deleted = 0;
+        var unchanged = 0;
+        string? sha = null, error = null;
+        var writeSkip = status.Reason;
+        string? commitSkip = dryRun ? "dry_run" : !_syncSettings.AutoCommit ? "autocommit_disabled" : "nothing_to_commit";
+        var operationWarnings = new List<string>();
+        var phase = "card_file_io_error";
+        if (inspection.Root is { } root && inspection.AbsoluteDirectory is { } directory && inspection.Repository is { } state)
         {
-            var slug = await UniqueBoardSlugAsync(board, ct);
-            var relativeDir = $"{CardTaskFileRenderer.CardsRoot}/{slug}";
-            var absoluteDir = Path.GetFullPath(Path.Combine(repoPath, "docs", "cards", slug));
-
-            _repository.ValidatePath(repoPath, absoluteDir);
-
-            var fileNames = cards.ToDictionary(
-                c => c.Id,
-                c => CardTaskFileRenderer.CardFileName(c.Identifier, c.Title));
-            var desired = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var card in cards)
-                desired[fileNames[card.Id]] = CardTaskFileRenderer.RenderCard(card);
-            desired[CardTaskFileRenderer.IndexFileName] =
-                CardTaskFileRenderer.RenderIndex(board.Name, cards, fileNames);
-
-            var existing = Directory.Exists(absoluteDir)
-                ? Directory.GetFiles(absoluteDir, "*.md", SearchOption.TopDirectoryOnly)
-                    .Select(Path.GetFileName)
-                    .Where(n => n is not null)
-                    .Cast<string>()
-                    .ToList()
-                : [];
-
-            foreach (var name in existing.Concat(desired.Keys))
-                _repository.ValidatePath(repoPath, Path.Combine(absoluteDir, name));
-            var gitPaths = await _repository.GetManagedGitPathsAsync(repoPath, absoluteDir, ct);
-
-            var written = 0;
-            var unchanged = 0;
-            var deleted = 0;
-
-            foreach (var (name, content) in desired)
+            // Database failures precede filesystem effects and remain ordinary request failures.
+            if (!dryRun && (board.CardFilesDirectorySlug is null || board.CardFilesRepositoryPath is null))
             {
-                var path = Path.Combine(absoluteDir, name);
-                if (File.Exists(path) && await File.ReadAllTextAsync(path, ct) == content)
+                await _db.Boards.Where(b => b.Id == board.Id).ExecuteUpdateAsync(setters => setters
+                    .SetProperty(b => b.CardFilesDirectorySlug, inspection.Slug)
+                    .SetProperty(b => b.CardFilesRepositoryPath, root), ct);
+                board.CardFilesDirectorySlug = inspection.Slug;
+                board.CardFilesRepositoryPath = root;
+            }
+            try
+            {
+                if (!dryRun)
                 {
-                    unchanged++;
-                    continue;
+                    _repository.RemoveTemporaryFiles(root, directory, board.Id);
                 }
-
-                written++;
-                if (dryRun)
-                    continue;
-                Directory.CreateDirectory(absoluteDir);
-                await File.WriteAllTextAsync(path, content, Utf8NoBom, ct);
+                // Privacy cleanup completes before any additions, including a refreshed INDEX.
+                foreach (var path in inspection.Removals.Order(StringComparer.Ordinal))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (!state.WorkingPaths.Contains(path)) continue;
+                    if (!dryRun) _repository.Delete(root, Path.Combine(root, path));
+                    deleted++;
+                }
+                var gitRemovals = inspection.Removals.Where(p => state.Index.ContainsKey(p) || state.Head.ContainsKey(p)).ToArray();
+                var stagedOnly = gitRemovals.Where(p => state.Index.ContainsKey(p) && !state.Head.ContainsKey(p)).ToArray();
+                phase = "git_error";
+                if (!dryRun && stagedOnly.Length > 0)
+                    await _repository.UnstageAsync(root, directory, stagedOnly, ct);
+                var headRemovals = gitRemovals.Where(state.Head.ContainsKey).ToArray();
+                var drained = headRemovals.Length == 0;
+                if (headRemovals.Length > 0 && _syncSettings.AutoCommit)
+                {
+                    if (dryRun) drained = true;
+                    else
+                    {
+                        var cleanup = await _repository.CommitAsync(root, directory,
+                            headRemovals.ToDictionary(p => p, _ => (string?)null),
+                            "antiphon: remove unpublished card files", ct);
+                        sha = cleanup.Sha;
+                        commitSkip = cleanup.SkipReason;
+                        error = cleanup.Error;
+                        drained = cleanup.Sha is not null || cleanup.SkipReason == "nothing_to_commit";
+                        if (!drained) operationWarnings.Add(cleanup.SkipReason ?? "git_error");
+                    }
+                }
+                var permission = inspection.Cards.Count > 0 && status.Reason is null or "card_file_cleanup_required" or "card_file_staged_private_residue";
+                if (!drained)
+                    writeSkip = permission ? error is not null ? "git_error" : "card_file_cleanup_required" : writeSkip;
+                else if (permission)
+                {
+                    writeSkip = null;
+                    phase = "card_file_io_error";
+                    foreach (var (relative, content) in inspection.Desired)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        var path = Path.Combine(root, relative);
+                        var old = dryRun && inspection.Removals.Contains(relative) ? null : await _repository.ReadAsync(root, path, ct);
+                        if (old is not null && Normalize(old) == content) { unchanged++; continue; }
+                        if (!dryRun) await _repository.WriteAsync(root, path, content, board.Id, ct);
+                        written++;
+                    }
+                    phase = "git_error";
+                    if (!dryRun && _syncSettings.AutoCommit)
+                    {
+                        var publication = await _repository.CommitAsync(root, directory,
+                            inspection.Desired.ToDictionary(p => p.Key, p => (string?)p.Value),
+                            $"antiphon: sync card files ({board.Name})", ct);
+                        sha = publication.Sha ?? sha;
+                        commitSkip = publication.SkipReason;
+                        error = publication.Error;
+                        if (publication.SkipReason is not null and not "nothing_to_commit") operationWarnings.Add(publication.SkipReason);
+                    }
+                }
+                if (!dryRun) status = await StatusUnderGateAsync(board, ct);
             }
-
-            foreach (var name in existing)
+            catch (OperationCanceledException) { throw; }
+            catch (HttpException) { throw; }
+            catch (CardFileGitGuardException ex)
             {
-                if (desired.ContainsKey(name))
-                    continue;
-                deleted++;
-                if (dryRun)
-                    continue;
-                File.Delete(Path.Combine(absoluteDir, name));
+                commitSkip = ex.Code;
+                operationWarnings.Add(ex.Code);
+                if (writeSkip is null or "card_file_cleanup_required" or "card_file_staged_private_residue") writeSkip = ex.Code;
+                if (!dryRun) status = await StatusUnderGateAsync(board, ct);
             }
-
-            string? commitSha = null;
-            string? commitSkip;
-            string? error = null;
-            if (dryRun)
+            catch (Exception)
             {
-                commitSkip = "dry_run";
+                writeSkip = commitSkip = phase;
+                error = phase == "git_error" ? "Card-file Git operation failed; retry reconciliation."
+                    : "Card-file filesystem operation failed; retry reconciliation.";
+                operationWarnings.Add(phase);
+                if (!dryRun) status = await StatusUnderGateAsync(board, ct);
             }
-            else
-            {
-                var expected = desired.ToDictionary(p => $"{relativeDir}/{p.Key}", p => (string?)p.Value, StringComparer.Ordinal);
-                foreach (var name in existing)
-                    expected.TryAdd($"{relativeDir}/{name}", null);
-                foreach (var path in gitPaths)
-                    expected.TryAdd(path, null);
-                var commit = !_syncSettings.AutoCommit
-                    ? new CardFileCommitResult(null, "autocommit_disabled", null)
-                    : await _repository.CommitAsync(repoPath, absoluteDir, expected,
-                        $"antiphon: sync card files ({board.Name})", ct);
-                commitSha = commit.Sha;
-                commitSkip = commit.SkipReason;
-                error = commit.Error;
-                _gate.NoteSkipReason(repoPath, commitSkip);
-            }
-
-            return new CardFileSyncBoardResult(
-                board.Id,
-                board.Name,
-                relativeDir,
-                written,
-                deleted,
-                unchanged,
-                commitSha,
-                WriteSkipReason: null,
-                commitSkip,
-                error,
-                dryRun);
         }
+        var warnings = Codes(status.Warnings, operationWarnings);
+        if (!dryRun) _gate.NoteSkipReason(board.Id, inspection.Root, writeSkip ?? (error is not null ? commitSkip : null));
+        return new(board.Id, board.Name, status.Directory, written, deleted, unchanged, sha, writeSkip, commitSkip, error, dryRun)
+        {
+            EligibleCards = inspection.Cards.Count, ExcludedCards = inspection.Total - inspection.Cards.Count,
+            Policy = status, Warnings = warnings
+        };
     }
 
-    private async Task<string> UniqueBoardSlugAsync(Board board, CancellationToken ct)
+    private async Task<string> UniqueBoardSlugAsync(Board board, CancellationToken ct, bool ignorePins = false)
     {
         var baseSlug = CardTaskFileRenderer.BoardSlug(board.Name);
         if (string.IsNullOrEmpty(baseSlug))
@@ -234,7 +202,7 @@ public sealed partial class CardTaskFileService
 
         var siblings = await _db.Boards.AsNoTracking()
             .Where(b => b.ProjectId == board.ProjectId)
-            .Select(b => new { b.Id, b.Name, b.CreatedAt })
+            .Select(b => new { b.Id, b.Name, b.CreatedAt, b.CardFilesDirectorySlug })
             .ToListAsync(ct);
 
         static string RawSlug(string name)
@@ -244,12 +212,12 @@ public sealed partial class CardTaskFileService
         }
 
         var colliding = siblings
-            .Where(b => string.Equals(RawSlug(b.Name), baseSlug, StringComparison.OrdinalIgnoreCase))
+            .Where(b => string.Equals((ignorePins ? null : b.CardFilesDirectorySlug) ?? RawSlug(b.Name), baseSlug, StringComparison.OrdinalIgnoreCase))
             .OrderBy(b => b.CreatedAt)
             .ThenBy(b => b.Id)
             .ToList();
 
-        if (colliding.Count <= 1 || colliding[0].Id == board.Id)
+        if (colliding.Count == 0 || colliding[0].Id == board.Id)
             return baseSlug;
 
         var suffix = $"-{board.Id.ToString("N")[..8]}";
@@ -258,21 +226,4 @@ public sealed partial class CardTaskFileService
         return trimmed + suffix;
     }
 
-    private static CardFileSyncBoardResult Skip(
-        Board board, string reason, bool dryRun, ILogger logger)
-    {
-        logger.LogDebug("Card file sync skipped for board {BoardId}: {Reason}", board.Id, reason);
-        return new(
-            board.Id,
-            board.Name,
-            Directory: null,
-            Written: 0,
-            Deleted: 0,
-            Unchanged: 0,
-            CommitSha: null,
-            WriteSkipReason: reason,
-            CommitSkipReason: null,
-            Error: null,
-            dryRun);
-    }
 }

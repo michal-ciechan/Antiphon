@@ -47,8 +47,23 @@ public class CardFilePolicyTests
     }
 
     [Test]
+    public void Warning_dedup_is_per_board_target_reason()
+    {
+        var gate = new CardTaskFileSyncGate();
+        var a = Guid.NewGuid(); var b = Guid.NewGuid();
+        gate.NoteSkipReason(a, "C:\\synthetic", "board_not_opted_in").ShouldBeTrue();
+        gate.NoteSkipReason(b, "C:\\synthetic", "board_not_opted_in").ShouldBeTrue();
+        gate.NoteSkipReason(a, "C:\\synthetic", "board_not_opted_in").ShouldBeFalse();
+        gate.NoteSkipReason(b, "C:\\synthetic", "board_not_opted_in").ShouldBeFalse();
+        gate.NoteSkipReason(a, "C:\\synthetic", null).ShouldBeFalse();
+        gate.NoteSkipReason(a, "C:\\synthetic", "board_not_opted_in").ShouldBeTrue();
+        gate.NoteSkipReason(a, "C:\\synthetic-new", "board_not_opted_in").ShouldBeTrue();
+    }
+
+    [Test]
     public void Public_projection_has_no_entity_or_private_note_input()
     {
+        CardFilePublicProjection.Select.ToString().ShouldNotContain("PrivateNotes");
         var projection = typeof(CardFilePublicCard);
         foreach (var property in projection.GetProperties())
         {
