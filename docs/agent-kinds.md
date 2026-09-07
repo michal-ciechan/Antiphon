@@ -454,7 +454,7 @@ they do not take attachments.
 
 | Slug | Job | Kill switch | Mode |
 |---|---|---|---|
-| `antiphon-check-interpreter` | Turn a running task's check probe into a 3-5 line reading | `Delegation:CheckInterpreterEnabled` | n/a |
+| `antiphon-check-interpreter` | Turn a running task's check probe into one reading line, at most 240 characters (contract v5) | `Delegation:CheckInterpreterEnabled` | n/a |
 | `antiphon-diagnose` | Title and labels for cards | `Delegation:DiagnoseEnabled` | `DiagnoseLabelMode` ships **Shadow** |
 | `antiphon-output-distiller` | Distil a finished delegate report after it is written | `Delegation:OutputDistillerEnabled` | `OutputDistillerMode` ships **Shadow** (record, never replace the note). Flip to **Apply** after a week of ledger. |
 
@@ -462,6 +462,22 @@ Scratch directories: `C:\logs\antiphon\check-interpreter`, `diagnose`, `output-d
 `[task … done]` note in Apply mode may be the distilled bullets plus a pointer to the task;
 the raw `Result` is never rewritten. `OutputDistillerEnabled=false` returns today's
 byte-for-byte completion note.
+
+**A manual kind swap does not establish a specialist fallback (CARD-0415).** The recorded
+2026-09-06 Codex mitigation answered only the liveness probe. Check task `7fa88286` was rejected
+before delivery: its requested kind was still ClaudeCode, while its pinned live session was
+Codex. The legacy `SpecialistTaskRunner.RunAsync` producer leaves `AgentKind` at that default;
+the newer deadline-policy path snapshots the seat kind. Preserve the standing dispatch mismatch
+guard when fixing the producer. The interpreter's instructions are reconciled into
+`SystemPromptAppend` and composed for Codex as `developer_instructions`; empty Details or no
+attachments is not evidence that those instructions were omitted.
+
+There are further acceptance gates beyond that identity fix: ordinary Codex briefs still spill
+to file pointers, incompatible with an interpreter that cannot read files, and the specialist's
+Claude deny-all hook does not enforce a Codex tool policy. A ready reply is not a valid
+interpretation. The [CARD-0415 plan](superpowers/plans/2026-09-07-card-0415-interpreter-fallback-plan.md)
+defines qualified candidate routing and durable Attention; those changes are planned, not
+implemented by this documentation update.
 
 ## See also
 
