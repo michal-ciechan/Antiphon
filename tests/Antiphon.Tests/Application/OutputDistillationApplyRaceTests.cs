@@ -19,6 +19,69 @@ namespace Antiphon.Tests.Application;
 public class OutputDistillationApplyRaceTests
 {
     [Test]
+    public async Task Source_row_lock_prevents_a_poll_commit_between_read_and_apply()
+    {
+        using var seedHarness = new OutputDistillationHarness();
+        var seed = await seedHarness.SeedSourceAsync();
+        var probe = new PollOrderingProbe();
+        await using var provider = AgentTaskSettlementRaceTests.BuildHarness(s =>
+            s.AddDbContext<Antiphon.Server.Infrastructure.Data.AppDbContext>(o => o.AddInterceptors(probe)));
+        var queue = provider.GetRequiredService<SessionMessageQueueService>();
+        Task? poll = null;
+        var committedBeforeApply = false;
+        queue.BeforeDistillationUpdateAsync = async ct =>
+        {
+            poll = Task.Run(async () => {
+                await using var scope = provider.CreateAsyncScope();
+                await scope.ServiceProvider.GetRequiredService<AgentTaskService>()
+                    .GetAsync(seed.Task.Id, ct, seed.Task.ParentSessionId);
+            }, ct);
+            await probe.PollEntered.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+            // The mutation arm removes only FOR UPDATE. Force its now-unblocked real
+            // parent poll to commit before Apply writes, exposing the stale snapshot.
+            if (!probe.SourceReadWasLocked)
+            {
+                await poll.WaitAsync(TimeSpan.FromSeconds(5), ct);
+                committedBeforeApply = true;
+            }
+            else poll.IsCompleted.ShouldBeFalse("the poll update must wait for the source row lock");
+        };
+        var now = DateTimeOffset.UtcNow;
+        string? outcome;
+        try
+        {
+            outcome = await queue.TryApplyDistillationAsync(new(seed.Task.Id, seed.QueuedMessageId,
+                now, now.AddSeconds(45), OutputDistillerMode.Apply), seed.Digest,
+                seedHarness.PassingDistillation(), CancellationToken.None);
+        }
+        finally { if (poll is not null) await poll.WaitAsync(TimeSpan.FromSeconds(5)); }
+        if (committedBeforeApply)
+            outcome.ShouldBe("full-report-read", "a committed full-report poll must never be followed by stale summary replacement");
+        else outcome.ShouldBeNull();
+        (await seedHarness.ReloadTaskAsync(seed.Task.Id)).LastPolledResultHash.ShouldBe(seed.Digest);
+    }
+
+    private sealed class PollOrderingProbe : DbCommandInterceptor
+    {
+        public bool SourceReadWasLocked { get; private set; }
+        public TaskCompletionSource PollEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command, CommandExecutedEventData eventData,
+            DbDataReader result, CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("SELECT * FROM \"AgentTasks\" WHERE", StringComparison.Ordinal))
+                SourceReadWasLocked = command.CommandText.Contains("FOR UPDATE", StringComparison.Ordinal);
+            return ValueTask.FromResult(result);
+        }
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.StartsWith("UPDATE \"AgentTasks\"", StringComparison.Ordinal)
+                && command.CommandText.Contains("LastPolledResultHash", StringComparison.Ordinal)) PollEntered.TrySetResult();
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    [Test]
     public async Task Equality_and_postlock_expiry_never_apply()
     {
         var clock = new OffsetClock(); var probe = new CountUpdates();
@@ -140,8 +203,9 @@ public class OutputDistillationApplyRaceTests
     public async Task File_validation_consumes_original_deadline(bool equality)
     {
         // Direct Apply only, no polling loops: UTC can hit equality while the real timer remains before D.
-        var clock = new OffsetClock();
-        using var h = new OutputDistillationHarness(servicesOverride: s => s.AddSingleton<TimeProvider>(clock));
+        var clock = new OffsetClock(); var probe = new CountUpdates();
+        using var h = new OutputDistillationHarness(servicesOverride: s => s.AddSingleton<TimeProvider>(clock),
+            configureDb: o => o.AddInterceptors(probe));
         var seed = await h.SeedSourceAsync();
         var queue = h.Provider.GetRequiredService<SessionMessageQueueService>();
         var now = clock.GetUtcNow();
@@ -149,6 +213,7 @@ public class OutputDistillationApplyRaceTests
         (await queue.TryApplyDistillationAsync(new(seed.Task.Id, seed.QueuedMessageId, now, now.AddSeconds(45), OutputDistillerMode.Apply),
             seed.Digest, h.PassingDistillation(), CancellationToken.None)).ShouldBe("deadline");
         (await h.ReloadQueuedAsync(seed.QueuedMessageId)).Body.ShouldBe(seed.RawBody);
+        probe.Count.ShouldBe(0, "equality at the original deadline must refuse before attempting an UPDATE");
     }
 
     private sealed class ValidationGate(TaskCompletionSource entered, TaskCompletionSource release)
@@ -284,13 +349,20 @@ public class OutputDistillationApplyRaceTests
     [Arguments("polled")]
     [Arguments("shadow")]
     [Arguments("expired")]
+    [Arguments("missing-source")]
+    [Arguments("missing-note")]
     public async Task Apply_eligibility_matrix(string scenario)
     {
-        using var h = new OutputDistillationHarness(s => s.OutputDistillerMode = OutputDistillerMode.Apply);
+        using var h = new OutputDistillationHarness(s => s.OutputDistillerMode = OutputDistillerMode.Apply,
+            servicesOverride: s => s.AddGitWorkspaceService());
         var seed = await h.SeedSourceAsync();
         var wrongNote = scenario == "wrong-note" ? (await h.SeedSourceAsync(report: "unrelated raw report")).QueuedMessageId : seed.QueuedMessageId;
+        var unrelatedBody = (await h.ReloadQueuedAsync(wrongNote)).Body;
+        var reportPath = Path.Combine(h.Scratch, "full-report.md");
+        await File.WriteAllTextAsync(reportPath, seed.Report);
         await using (var db = OutputDistillationHarness.CreateContext())
         {
+            (await db.AgentTasks.SingleAsync(t => t.Id == seed.Task.Id)).ResultFilePath = reportPath;
             var note = await db.SessionQueuedMessages.SingleAsync(m => m.Id == seed.QueuedMessageId);
             if (scenario == "wrong-source") note.SourceTaskId = null;
             if (scenario == "wrong-digest") note.ContentDigest = "different";
@@ -303,23 +375,32 @@ public class OutputDistillationApplyRaceTests
             if (scenario == "polled")
                 (await db.AgentTasks.SingleAsync(t => t.Id == seed.Task.Id)).LastPolledResultHash = seed.Digest;
             await db.SaveChangesAsync();
+            if (scenario == "missing-note") await db.SessionQueuedMessages.Where(t => t.Id == seed.QueuedMessageId).ExecuteDeleteAsync();
         }
         var now = h.Clock.GetUtcNow();
-        var request = new DistillRequest(seed.Task.Id, wrongNote,
+        var request = new DistillRequest(scenario == "missing-source" ? Guid.NewGuid() : seed.Task.Id, wrongNote,
             now, now.AddSeconds(scenario == "expired" ? -1 : 45),
             scenario == "shadow" ? OutputDistillerMode.Shadow : OutputDistillerMode.Apply);
         var result = await h.Provider.GetRequiredService<SessionMessageQueueService>().TryApplyDistillationAsync(
             request, seed.Digest, h.PassingDistillation(), CancellationToken.None);
+        if (scenario == "missing-note")
+        {
+            result.ShouldBe("note-missing");
+            (await h.ReloadTaskAsync(seed.Task.Id)).Result.ShouldBe(seed.Report);
+            return;
+        }
         var persisted = await h.ReloadQueuedAsync(seed.QueuedMessageId);
         if (scenario == "eligible")
         {
             result.ShouldBeNull();
             persisted.Body.ShouldContain(h.PassingDistillation());
             persisted.Body.ShouldContain("Full report:");
+            persisted.Body.ShouldContain(reportPath);
             persisted.NoteHeader.ShouldBe(seed.Header);
             persisted.ContentDigest.ShouldBe(seed.Digest);
         }
         else { result.ShouldNotBeNull(); persisted.Body.ShouldBe(seed.RawBody); }
+        if (scenario == "wrong-note") (await h.ReloadQueuedAsync(wrongNote)).Body.ShouldBe(unrelatedBody);
         (await h.ReloadTaskAsync(seed.Task.Id)).Result.ShouldBe(scenario == "wrong-report" ? "different authoritative report" : seed.Report);
     }
 

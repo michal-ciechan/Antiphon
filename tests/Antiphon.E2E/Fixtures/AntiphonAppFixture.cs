@@ -99,7 +99,7 @@ public class AntiphonAppFixture
             DiagnosticsDirectory = _diagnostics.Directory;
         }
 
-        _isolatedSessionRunner = new IsolatedSessionRunner(GetRandomAvailablePort, FindRepositoryRoot());
+        _isolatedSessionRunner = new IsolatedSessionRunner(GetRandomAvailablePort, FindRepositoryRoot(), modernPty: DistillerCanary is not null);
         var runnerStartup = _isolatedSessionRunner.StartAsync();
         var containerStartup = _container.StartAsync();
         try
@@ -639,6 +639,11 @@ public class AntiphonAppFixture
             {
                 if (_canary is not null)
                 {
+                    services.AddSingleton(p => new Antiphon.Server.Application.Services.PtyDeliveryProfile(
+                        p.GetRequiredService<IServiceScopeFactory>(),
+                        p.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Antiphon.Server.Application.Services.PtyDeliveryProfile>>(),
+                        p.GetRequiredService<Microsoft.Extensions.Options.IOptions<Antiphon.Server.Application.Settings.DelegationSettings>>(),
+                        p.GetRequiredService<TimeProvider>(), backendOverride: "modern"));
                     services.AddSingleton<Antiphon.Messaging.Client.IAntiphonMessagingProducer, RefusingCanaryMessaging>();
                     services.AddSingleton<Antiphon.Messaging.Client.IAntiphonMessagingConsumer, RefusingCanaryMessaging>();
                 }

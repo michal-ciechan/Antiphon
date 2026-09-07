@@ -60,7 +60,7 @@ public class OutputDistillationCanaryGuardTests
             "path" => evidence with { FileRaw = "different" }, "screen" => evidence with { TranscriptKind = "Screen" },
             "assistant" => evidence with { TranscriptKind = "AssistantText" }, "clipped" => evidence with { Prompt = header },
             "raw-middle" => evidence with { Prompt = evidence.Prompt + "distinctive middle" },
-            "api" => evidence with { Prompt = header + "\naccepted summary\nGET /api/agent-tasks/" + id },
+            "api" => evidence with { Prompt = header + "\naccepted summary\nGET /api/agent-tasks/" + id + "\nmarker" },
             "rejected" => evidence with { Outcome = "RejectedOverCompressed" }, "late" => evidence with { Decision = evidence.Deadline },
             "shadow" => evidence with { Mode = "Shadow" }, "model" => evidence with { ModelAlias = "opus" },
             "read" => evidence with { ParentReadHash = "wrong" }, "tool" => evidence with { ParentToolEvidence = false },

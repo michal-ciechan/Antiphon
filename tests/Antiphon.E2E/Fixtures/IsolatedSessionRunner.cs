@@ -21,10 +21,12 @@ internal sealed class IsolatedSessionRunner : IAsyncDisposable, IIsolatedSession
     private Process? _process;
     private Task? _stdoutCopy;
     private Task? _stderrCopy;
+    private readonly bool _modernPty;
 
-    public IsolatedSessionRunner(Func<int> getRandomAvailablePort, string repositoryRoot)
+    public IsolatedSessionRunner(Func<int> getRandomAvailablePort, string repositoryRoot, bool modernPty = false)
     {
         _getRandomAvailablePort = getRandomAvailablePort;
+        _modernPty = modernPty;
         RunDirectory = Path.Combine(
             repositoryRoot,
             "tests",
@@ -147,6 +149,7 @@ internal sealed class IsolatedSessionRunner : IAsyncDisposable, IIsolatedSession
         startInfo.Environment["ASPNETCORE_URLS"] = $"http://127.0.0.1:{port}";
         startInfo.Environment["SessionRunner__SessionLogPath"] = Path.Combine(RunDirectory, "logs");
         startInfo.Environment["SessionRunner__PtyHostLingerHours"] = "0.02";
+        if (_modernPty) startInfo.Environment["SessionRunner__PtyBackend"] = "modern";
         startInfo.Environment["Serilog__LogPath"] = RunDirectory;
 
         var process = Process.Start(startInfo)

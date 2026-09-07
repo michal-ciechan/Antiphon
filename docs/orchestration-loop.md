@@ -727,7 +727,7 @@ an exact UTF-8 copy, independent of mode, availability, gates and model input ca
 `<main-checkout>\\.antiphon\\reports\\<full-task-guid>\\<exact-sha256>.md`.
 Linked worktrees resolve to their persistent primary checkout. Unsupported or
 non-Git layouts may use an absolute `Delegation:ReportStorageRoot`, for example
-`C:\\Antiphon\\reports`; temporary directories and worktrees are refused. This
+`C:\Antiphon\reports`; temporary directories and worktrees are refused. This
 setting grants no access. Repository destinations must be ignored and untracked;
 the store may add a narrow local Git exclude, never edit tracked `.gitignore`.
 Reports survive service restart and delegate worktree removal while the main
@@ -757,7 +757,7 @@ closure/general Apply rollout still requires CARD-0392 reviewed recovery evidenc
 fallback, and CARD-0330 human rollout governance below. The isolated canary is
 `OutputDistillationApplyCanaryTests.Real_apply_and_long_fallback_reach_parent_and_files_survive_cleanup`.
 Its **operator** hand-writes
-`C:\\src\\Antiphon\\.antiphon\\acceptance\\card-0419\\approval.json` only after a
+`C:\src\Antiphon\.antiphon\acceptance\card-0419\approval.json` only after a
 scoped human decision, using the committed
 [approval example](examples/card-0419-canary-approval.example.json). That example
 is deliberately invalid approval. The operator replaces the example reference,

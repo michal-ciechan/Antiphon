@@ -36,7 +36,8 @@ internal sealed class ReportWorkspace : IAsyncDisposable
     {
         await GitAsync(Main, "init", "-b", "main");
         await File.WriteAllTextAsync(Path.Combine(Main, "seed.txt"), "benign fixture");
-        await GitAsync(Main, "add", "seed.txt");
+        await File.WriteAllTextAsync(Path.Combine(Main, ".gitignore"), ".antiphon/\n");
+        await GitAsync(Main, "add", "seed.txt", ".gitignore");
         await GitAsync(Main, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "seed");
         if (worktree) await GitAsync(Main, "worktree", "add", "-b", "delegate", Worktree);
     }

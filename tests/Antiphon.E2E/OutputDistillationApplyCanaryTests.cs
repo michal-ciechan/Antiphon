@@ -103,12 +103,14 @@ public class OutputDistillationApplyCanaryTests
             await WriteJsonAsync(Path.Combine(root, "loaded-identities.json"), new {
                 approval.ApprovalReference, commit = await GitAsync(AntiphonAppFixture.FindRepositoryRoot(), ct, "rev-parse", "HEAD"),
                 server = Binary(typeof(Program).Assembly.Location), runner = Binary(Path.Combine(AppContext.BaseDirectory, "Antiphon.SessionRunner.exe")),
+                loadedServerMvid = typeof(Program).Assembly.ManifestModule.ModuleVersionId,
                 runnerIdentity = await File.ReadAllTextAsync(Path.Combine(app.OwnedRunnerDirectory, "runner.json"), ct),
                 app.BaseAddress, app.OwnedRunnerUrl, app.OwnedRunnerDirectory,
                 mode = settings.OutputDistillerMode.ToString(), settings.DistillMinChars, settings.DistillMaxRawChars, settings.OutputDistillerWaitSeconds
             }, ct);
             samples.Add(await RunSourceAsync(app, options, parentId, false, ct));
             samples.Add(await RunSourceAsync(app, options, parentId, true, ct));
+            await AssertOneDistillTaskAsync(app, options.SpecialistSlug, ct);
             foreach (var sample in samples)
             {
                 if (sample.Task.AgentId is { } agentId)
@@ -125,6 +127,7 @@ public class OutputDistillationApplyCanaryTests
             await app.RestartCanaryHostAsync();
             // Two real completion scan opportunities after all work is settled; no interrupted-intent claim.
             await Task.Delay(TimeSpan.FromSeconds(3), ct);
+            await AssertOneDistillTaskAsync(app, options.SpecialistSlug, ct);
             var after = await TranscriptAsync(app, parentId, ct);
             foreach (var sample in samples)
             {
@@ -145,6 +148,17 @@ public class OutputDistillationApplyCanaryTests
             {
                 if (initialized)
                 {
+                    using (var evidenceScope = app.Services.CreateScope())
+                    {
+                        var evidenceDb = evidenceScope.ServiceProvider.GetRequiredService<AppDbContext>();
+                        await WriteJsonAsync(Path.Combine(root, "ledger.json"),
+                            await evidenceDb.OutputDistillations.AsNoTracking().ToListAsync(), CancellationToken.None);
+                        await WriteJsonAsync(Path.Combine(root, "task-results.json"),
+                            await evidenceDb.AgentTasks.AsNoTracking().Select(t => new {
+                                t.Id, t.Role, t.Status, t.ParentSessionId, t.AgentSessionId, t.Result,
+                                t.ResultFilePath, t.FailureCode, t.WorktreePath, t.CostUsd
+                            }).ToListAsync(), CancellationToken.None);
+                    }
                     // Never serialize task launch environments, tokens or provider configuration.
                     await WriteJsonAsync(Path.Combine(root, "samples.json"), samples.Select(s => new {
                         s.Task.Id, s.Task.ParentSessionId, s.Task.AgentSessionId, s.Task.WorktreePath,
@@ -164,7 +178,7 @@ public class OutputDistillationApplyCanaryTests
             {
                 try { await app.DisposeAsync(); }
                 finally { await WriteJsonAsync(Path.Combine(root, "teardown.json"), new { app.RunnerCensusCompleted, app.SessionLeakVerdict,
-                    failure = failure?.GetType().Name }, CancellationToken.None); }
+                    failure = failure?.Message }, CancellationToken.None); }
             }
         }
         app.RunnerCensusCompleted.ShouldBeTrue(); app.SessionLeakVerdict.ShouldBeNull();
@@ -178,6 +192,24 @@ public class OutputDistillationApplyCanaryTests
             positive.Ledger.AvailabilityKind!.Value.ToString(), positive.Ledger.AvailabilityAlias!, approval.ExpectedDistillerModelAlias,
             positive.ReadHash, positive.ReadLength, positive.ToolEvidence, true, 1, 1, app.RunnerCensusCompleted)
             .Validate(Middle, ["next: review", "handoff: Review the canary evidence.", "--- deliverable ---"]);
+        var evidencePath = Path.Combine(AntiphonAppFixture.FindRepositoryRoot(), "docs", "investigations",
+            $"{DateTimeOffset.UtcNow:yyyy-MM-dd}-card-0419-apply-acceptance.md");
+        await File.WriteAllTextAsync(evidencePath,
+            $"# CARD-0419 isolated Apply acceptance\n\nPassed at {DateTimeOffset.UtcNow:O}. Approval: {approval.ApprovalReference}.\n\n"
+            + $"Parent `{parentId}`; retained evidence `{root}` (loaded binary hashes/MVID, runner PID/start time, transcripts, ledger and teardown).\n\n"
+            + string.Join("\n", samples.Select(s => $"- Source `{s.Task.Id}`, note `{s.Note.Id}`, ledger `{s.Ledger.Id}`: {s.Ledger.Outcome}; "
+                + $"raw {s.Task.Result!.Length} UTF-16 characters / {Encoding.UTF8.GetByteCount(s.Task.Result)} UTF-8 bytes; "
+                + $"SHA-256 `{s.ReadHash}`; file `{s.Task.ResultFilePath}`; UserPrompt sequence {s.Prompt.Sequence}; "
+                + $"source cost ${s.Task.CostUsd}, distiller observed cost ${s.Ledger.CostUsd}."))
+            + "\n\nBoth parents' file-read acknowledgements matched. Files survived worktree removal and host restart; no duplicate completion or specialist task. "
+            + "Owned runner census completed without leaks. Production was not changed. CARD-0392 interrupted-request recovery and human rollout/fallback acceptance remain separate release gates.\n", ct);
+    }
+
+    private static async Task AssertOneDistillTaskAsync(AntiphonAppFixture app, string slug, CancellationToken ct)
+    {
+        using var scope = app.Services.CreateScope();
+        (await scope.ServiceProvider.GetRequiredService<AppDbContext>().AgentTasks.CountAsync(
+            t => t.Role == AgentTaskRole.Distill && t.AgentName == slug, ct)).ShouldBe(1);
     }
 
     private static async Task<Sample> RunSourceAsync(AntiphonAppFixture app, DistillerCanaryOptions options, Guid parent, bool longReport, CancellationToken ct)
@@ -227,8 +259,12 @@ public class OutputDistillationApplyCanaryTests
         }, ct);
         var hash = Hash(Encoding.UTF8.GetBytes(task.Result));
         ack!.Groups[1].Value.ShouldBe(task.Result.Length.ToString()); ack.Groups[2].Value.ToLowerInvariant().ShouldBe(hash);
-        var tool = read.Any(t => t.Kind == TranscriptKinds.ToolResult && (t.Text ?? "").Contains(hash, StringComparison.OrdinalIgnoreCase));
-        tool.ShouldBeTrue("actual tool result must independently show the file hash");
+        var fileCalls = read.Where(t => t.Kind == TranscriptKinds.ToolCall && t.ToolUseId is not null
+            && (t.ToolInput ?? "").Contains(Path.GetFileName(task.ResultFilePath!), StringComparison.OrdinalIgnoreCase))
+            .Select(t => t.ToolUseId).ToHashSet();
+        var tool = read.Any(t => t.Kind == TranscriptKinds.ToolResult && fileCalls.Contains(t.ToolUseId)
+            && t.ToolIsError != true && (t.Text ?? "").Contains(hash, StringComparison.OrdinalIgnoreCase));
+        tool.ShouldBeTrue("the file-naming tool call and its successful result must independently show the file hash");
         using (var scope = app.Services.CreateScope())
             (await scope.ServiceProvider.GetRequiredService<AppDbContext>().AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId, ct))
                 .LastPolledResultHash.ShouldBeNull();

@@ -54,7 +54,10 @@ public class AgentReportStoreTests
             task.WorkingDirectory = odd;
         }
         if (scenario is "configured" or "unsupported-rescued") settings.ReportStorageRoot = Path.Combine(w.Main, ".antiphon", "configured");
-        if (scenario == "relative") settings.ReportStorageRoot = "reports";
+        // Resolve to an otherwise-valid owned fixture root if the absolute-path guard is
+        // removed, so a surrounding verification worktree cannot mask that guard's control.
+        if (scenario == "relative") settings.ReportStorageRoot = Path.GetRelativePath(Environment.CurrentDirectory,
+            Path.Combine(w.Main, ".antiphon", "relative-reports"));
         if (scenario == "temp") settings.ReportStorageRoot = nonGit.Path;
         if (scenario == "worktree-override") settings.ReportStorageRoot = Path.Combine(w.Worktree, "reports");
         var result = await w.Store(settings).StoreAsync(task, CancellationToken.None);

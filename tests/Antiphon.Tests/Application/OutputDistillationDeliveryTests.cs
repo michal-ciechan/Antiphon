@@ -10,6 +10,7 @@ using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -22,6 +23,39 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public class OutputDistillationDeliveryTests
 {
+    [Test]
+    public async Task Public_goal_limit_is_preserved_when_internal_prompt_storage_is_widened()
+    {
+        await using var provider = AgentTaskSettlementRaceTests.BuildHarness();
+        await using var scope = provider.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<AgentTaskService>();
+        await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ValidationException>(() =>
+            service.CreateAsync(new(new string('x', 20_001)), new(null, null, null), CancellationToken.None));
+    }
+
+    [Test]
+    [Arguments("Check")] [Arguments("Distill")] [Arguments("Diagnose")]
+    [Arguments("Blocked")] [Arguments("None")]
+    public async Task Ineligible_reports_do_not_enter_canonical_or_model_work(string scenario)
+    {
+        await using var f = await DeliveryFixture.CreateAsync();
+        var parent = await AgentTaskSettlementRaceTests.SeedSessionAsync(f.Workspace.Main);
+        var (task, session) = await AgentTaskSettlementRaceTests.SeedSharedTaskAsync(f.Workspace.Main, parent);
+        await using var db = OutputDistillationHarness.CreateContext();
+        var row = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        row.Role = scenario is "Blocked" or "None" ? AgentTaskRole.Review : Enum.Parse<AgentTaskRole>(scenario);
+        if (scenario == "None") row.ReplyTo = AgentTaskReplyTo.None;
+        await db.SaveChangesAsync();
+        await AgentTaskSettlementRaceTests.SeedMarkedTurnAsync(session, task.Id, ReportOfLength(5500), scenario == "Blocked" ? "blocked" : "done");
+        await f.Provider.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(session, CancellationToken.None);
+        await db.Entry(row).ReloadAsync();
+        row.ResultFilePath.ShouldBeNull();
+        f.Provider.GetRequiredService<OutputDistillationQueue>().PendingCount.ShouldBe(0);
+        (await db.OutputDistillations.CountAsync(d => d.TaskId == task.Id)).ShouldBe(0);
+        await db.SessionQueuedMessages.Where(m => m.SourceTaskId == task.Id)
+            .ExecuteUpdateAsync(s => s.SetProperty(m => m.Status, QueuedMessageStatus.Canceled));
+    }
+
     internal const string Middle = "The violet lantern marks the distinctive middle of this report.";
     internal const string Summary = "- Completed the requested report with its conclusion and caveat preserved. The review found the documented behavior consistent and ready for further review; optional work remains bounded by the original deadline.";
     internal static string ReportOfLength(int length)
@@ -154,6 +188,7 @@ public class OutputDistillationDeliveryTests
     {
         await using var f = await DeliveryFixture.CreateAsync(enabled: false, worktree: true);
         var seed = await f.SettleAsync(ReportOfLength(5500), cwd: f.Workspace.Worktree);
+        seed.Task.ResultFilePath.ShouldNotBeNull("settlement must retain a canonical file before worktree removal");
         await f.Provider.DisposeAsync();
         await f.Workspace.RemoveWorktreeAsync();
         await using var recreated = AgentTaskSettlementRaceTests.BuildHarness();
@@ -161,6 +196,7 @@ public class OutputDistillationDeliveryTests
         var db = scope.ServiceProvider.GetRequiredService<Antiphon.Server.Infrastructure.Data.AppDbContext>();
         var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == seed.Task.Id);
         stored.ResultFilePath.ShouldBe(seed.Task.ResultFilePath);
+        File.Exists(stored.ResultFilePath).ShouldBeTrue("the retained report must outlive its delegate worktree");
         (await File.ReadAllTextAsync(stored.ResultFilePath!)).ShouldBe(seed.Task.Result);
     }
 
@@ -171,6 +207,11 @@ public class OutputDistillationDeliveryTests
         await using var f = await DeliveryFixture.CreateAsync();
         var anchors = "\n--- next stage ---\nnext: review\nhandoff: Verify the implementation.";
         var seed = await f.SettleAsync(ReportOfLength(5500 - anchors.Length) + anchors, failed: failed, deliverables: true);
+        var annotatedHeader = seed.Header + "\nCaller warning: inspect generated files. Git: fixture revision; scope: server/.";
+        await using (var db = OutputDistillationHarness.CreateContext())
+            await db.SessionQueuedMessages.Where(m => m.Id == seed.NoteId)
+                .ExecuteUpdateAsync(s => s.SetProperty(m => m.NoteHeader, annotatedHeader));
+        seed = seed with { Header = annotatedHeader };
         seed.Task.NextHandoff.ShouldBe("Verify the implementation.");
         var attachPaths = DeliverableBundleService.ListAttachableFiles(seed.Task);
         attachPaths.Count.ShouldBe(2);
@@ -205,21 +246,55 @@ public class OutputDistillationDeliveryTests
 
     [Test]
     [Arguments("root")] [Arguments("write")] [Arguments("publish")] [Arguments("readback")]
-    [Arguments("denied")] [Arguments("budget")]
+    [Arguments("denied")] [Arguments("budget")] [Arguments("path-too-long")]
     public async Task Storage_failures_leave_a_recoverable_settled_report(string scenario)
     {
         await using var f = await DeliveryFixture.CreateAsync();
+        using var nonGit = new ReportTempWorkspace();
+        if (scenario == "path-too-long") f.Settings.ReportStorageRoot = Path.Combine(f.Workspace.Main, ".antiphon",
+            string.Join(Path.DirectorySeparatorChar, Enumerable.Repeat(new string('x', 80), 12)));
         var store = (AgentReportStore)f.Provider.GetRequiredService<IAgentReportStore>();
         store.BeforeIoAsync = async (phase, ct) => {
             if (scenario == phase) throw new IOException("fixture");
             if (scenario == "denied" && phase == "write") throw new UnauthorizedAccessException();
             if (scenario == "budget" && phase == "write") await Task.Delay(Timeout.Infinite, ct);
         };
-        var seed = await f.SettleAsync(ReportOfLength(5500));
+        var seed = await f.SettleAsync(ReportOfLength(5500), cwd: scenario == "path-too-long" ? nonGit.Path : null);
         seed.Task.Status.ShouldBe(AgentTaskStatus.Succeeded); seed.Task.ResultFilePath.ShouldBeNull();
         await f.RunDistillerAsync(seed, Summary);
         var note = await f.DeliverAsync(seed);
         note.Body.ShouldContain("GET /api/agent-tasks/"); note.Body.ShouldContain(Summary);
+    }
+
+    [Test]
+    public async Task Host_cancellation_during_storage_can_retry_settlement_once()
+    {
+        await using var f = await DeliveryFixture.CreateAsync(enabled: false);
+        var parent = await AgentTaskSettlementRaceTests.SeedSessionAsync(f.Workspace.Main);
+        var (task, session) = await AgentTaskSettlementRaceTests.SeedSharedTaskAsync(f.Workspace.Main, parent);
+        var raw = ReportOfLength(5500);
+        await AgentTaskSettlementRaceTests.SeedMarkedTurnAsync(session, task.Id, raw, "done");
+        using var host = new CancellationTokenSource();
+        var store = (AgentReportStore)f.Provider.GetRequiredService<IAgentReportStore>();
+        store.BeforeIoAsync = (phase, ct) => {
+            if (phase == "publish") { host.Cancel(); ct.ThrowIfCancellationRequested(); }
+            return Task.CompletedTask;
+        };
+        await using (var canceled = f.Provider.CreateAsyncScope())
+            await Should.ThrowAsync<OperationCanceledException>(() => canceled.ServiceProvider
+                .GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(session, host.Token));
+        store.BeforeIoAsync = null;
+        await using (var retry = f.Provider.CreateAsyncScope())
+            await retry.ServiceProvider.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(session, CancellationToken.None);
+        await using var db = OutputDistillationHarness.CreateContext();
+        var settled = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded); settled.Result.ShouldBe(raw);
+        settled.ResultFilePath.ShouldNotBeNull();
+        (await File.ReadAllTextAsync(settled.ResultFilePath!)).ShouldBe(raw);
+        (await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == task.Id)).ShouldBe(1);
+        Directory.EnumerateFiles(f.Workspace.Main, "*.tmp", SearchOption.AllDirectories).ShouldBeEmpty();
+        await db.SessionQueuedMessages.Where(m => m.SourceTaskId == task.Id)
+            .ExecuteUpdateAsync(s => s.SetProperty(m => m.Status, QueuedMessageStatus.Canceled));
     }
 
     [Test]
@@ -241,11 +316,13 @@ public class OutputDistillationDeliveryTests
     }
 
     [Test]
-    [Arguments("missing-path")] [Arguments("missing-next")] [Arguments("missing-handoff")]
-    [Arguments("oversized")] [Arguments("empty")] [Arguments("failed")]
-    public async Task Fallback_delivers_original_raw_or_marked_excerpt(string scenario)
+    [Arguments("missing-path", true)] [Arguments("missing-next", true)] [Arguments("missing-handoff", true)]
+    [Arguments("oversized", true)] [Arguments("empty", true)] [Arguments("failed", true)]
+    [Arguments("missing-path", false)] [Arguments("missing-next", false)] [Arguments("missing-handoff", false)]
+    [Arguments("oversized", false)] [Arguments("empty", false)] [Arguments("failed", false)]
+    public async Task Fallback_delivers_original_raw_or_marked_excerpt(string scenario, bool modern)
     {
-        await using var f = await DeliveryFixture.CreateAsync();
+        await using var f = await DeliveryFixture.CreateAsync(modern: modern);
         var anchors = "\nserver/Program.cs\n--- next stage ---\nnext: review\nhandoff: Check the report carefully.";
         var report = ReportOfLength(5500 - anchors.Length) + anchors;
         var passing = Summary + anchors;
@@ -261,12 +338,75 @@ public class OutputDistillationDeliveryTests
         ledger.Outcome.ShouldBe(scenario switch {
             "empty" => DistillationOutcome.DegradedEmpty, "failed" => DistillationOutcome.DegradedFailed,
             "oversized" => DistillationOutcome.RejectedUnderCompressed, _ => DistillationOutcome.RejectedOverCompressed });
+        (await f.ReadNoteAsync(seed.NoteId)).HoldUntil.ShouldBeNull("rejection cleanup must release the original hold before delivery");
         var note = await f.DeliverAsync(seed);
         note.Body.ShouldBe(seed.RawBody); note.HoldUntil.ShouldBeNull();
         (await File.ReadAllTextAsync(seed.Task.ResultFilePath!)).ShouldBe(report);
     }
 
     internal sealed record Settled(AgentTask Task, Guid NoteId, string RawBody, string Header, string Digest, DateTime? HoldUntil);
+
+    [Test]
+    [Arguments("unavailable", true)] [Arguments("held", true)] [Arguments("backlog", true)]
+    [Arguments("full", true)] [Arguments("closed", true)] [Arguments("missing", true)]
+    [Arguments("expired", true)] [Arguments("timeout", true)]
+    [Arguments("unavailable", false)] [Arguments("held", false)] [Arguments("backlog", false)]
+    [Arguments("full", false)] [Arguments("closed", false)] [Arguments("missing", false)]
+    [Arguments("expired", false)] [Arguments("timeout", false)]
+    public async Task Admission_and_deadline_fallbacks_reach_parent(string scenario, bool modern)
+    {
+        await using var f = await DeliveryFixture.CreateAsync(modern: modern, configure: s => {
+            if (scenario == "missing") s.RemoveAll<OutputDistillationQueue>();
+            if (scenario == "unavailable") s.AddScoped<IModelAvailability>(_ => new UnavailableFixture());
+        });
+        var requests = f.Provider.GetService<OutputDistillationQueue>();
+        if (scenario == "closed") requests!.Complete();
+        if (scenario == "full")
+            for (var n = 0; n < 3; n++) requests!.TryEnqueue(new(Guid.NewGuid(), null,
+                DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddSeconds(45), OutputDistillerMode.Apply)).ShouldBeTrue();
+        if (scenario is "expired" or "timeout") f.Settings.OutputDistillerWaitSeconds = 2;
+        await using var db = OutputDistillationHarness.CreateContext();
+        var holdId = Guid.NewGuid();
+        if (scenario == "held")
+        {
+            db.ModelAvailabilityHolds.Add(new() { Id = holdId, Kind = AgentKind.ClaudeCode,
+                ModelAlias = "haiku", Source = ModelAvailabilitySource.Manual, HitAt = DateTime.UtcNow });
+            await db.SaveChangesAsync();
+        }
+        if (scenario == "backlog")
+        {
+            await using var scope = f.Provider.CreateAsyncScope();
+            var seat = await scope.ServiceProvider.GetRequiredService<OutputDistillerProvisioner>().EnsureAsync(CancellationToken.None);
+            seat.ShouldNotBeNull(); f.Settings.OutputDistillerMaxBacklog = 1;
+            var id = Guid.NewGuid();
+            db.AgentTasks.Add(new() { Id = id, RootTaskId = id, AgentId = seat.Id, AgentName = seat.Slug,
+                Title = "existing queued specialist", Goal = "fixture", WorkingDirectory = f.Workspace.Main,
+                Role = AgentTaskRole.Distill, Status = AgentTaskStatus.Queued, CreatedAt = DateTime.UtcNow });
+            await db.SaveChangesAsync();
+        }
+        try
+        {
+            var seed = await f.SettleAsync(ReportOfLength(5500));
+            if (scenario == "expired") await Task.Delay(2100);
+            var record = scenario is "full" or "closed" or "missing"
+                ? await db.OutputDistillations.AsNoTracking().SingleAsync(r => r.TaskId == seed.Task.Id)
+                : await f.RunDistillerAsync(seed, scenario == "timeout" ? "" : null, leaveWorking: scenario == "timeout");
+            record.Outcome.ShouldBe(scenario switch {
+                "unavailable" => DistillationOutcome.DegradedUnavailable, "held" => DistillationOutcome.DegradedHeld,
+                "expired" => DistillationOutcome.DegradedExpired, "timeout" => DistillationOutcome.DegradedTimeout,
+                _ => DistillationOutcome.DegradedBusy });
+            if (scenario != "timeout") record.DistillTaskId.ShouldBeNull();
+            (await f.ReadNoteAsync(seed.NoteId)).HoldUntil.ShouldBeNull();
+            (await f.DeliverAsync(seed)).Body.ShouldBe(seed.RawBody);
+            (await File.ReadAllTextAsync(seed.Task.ResultFilePath!)).ShouldBe(seed.Task.Result);
+        }
+        finally { await db.ModelAvailabilityHolds.Where(h => h.Id == holdId).ExecuteDeleteAsync(); }
+    }
+
+    private sealed class UnavailableFixture : IModelAvailability
+    {
+        public Task<bool> IsHeldAsync(AgentKind kind, string alias, CancellationToken ct) => throw new IOException("fixture availability refusal");
+    }
 
     [Test]
     public async Task Provider_recreation_releases_expired_raw_note_once()
@@ -284,6 +424,30 @@ public class OutputDistillationDeliveryTests
         // Normal worker recovery delivered without a new turn-end wakeup or SendNow.
         await using var db = OutputDistillationHarness.CreateContext();
         (await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == seed.Task.Id)).ShouldBe(1);
+    }
+
+    [Test]
+    public async Task Expired_hold_is_deliverable_at_two_normal_flush_opportunities()
+    {
+        await using var f = await DeliveryFixture.CreateAsync();
+        f.Settings.OutputDistillerWaitSeconds = 1;
+        var seed = await f.SettleAsync(ReportOfLength(5500));
+        var parent = seed.Task.ParentSessionId!.Value;
+        await BridgeQueueHarness.InsertEntryAsync(parent, TranscriptKinds.TurnEnd, null);
+        await f.RecreateForRawFallbackAsync();
+        var adapter = new FakeAgentProtocolAdapter();
+        adapter.OnSubmitted = body => BridgeQueueHarness.InsertEntryAsync(parent, TranscriptKinds.UserPrompt, body);
+        f.Provider.GetRequiredService<AgentSessionRuntime>().Register(parent, adapter);
+        await Task.Delay(1100);
+        seed.HoldUntil!.Value.ShouldBeLessThan(DateTime.UtcNow);
+        var queue = f.Provider.GetRequiredService<SessionMessageQueueService>();
+        await queue.FlushIfIdleAsync(parent, CancellationToken.None);
+        await queue.FlushIfIdleAsync(parent, CancellationToken.None);
+        var note = await f.ReadNoteAsync(seed.NoteId);
+        note.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered, "two completed normal flush opportunities must not strand an expired hold");
+        note.DeliveryAttempts.ShouldBe(1);
+        await using var db = OutputDistillationHarness.CreateContext();
+        (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == parent && t.Kind == TranscriptKinds.UserPrompt)).ShouldBe(1);
     }
 
     [Test]
@@ -308,6 +472,30 @@ public class OutputDistillationDeliveryTests
         wire.Body.Contains(TypedBodySpill.PointerHeadline, StringComparison.Ordinal).ShouldBe(delta == 1);
         delivered.Body.ShouldContain("--- deliverable ---"); delivered.Body.ShouldContain(seed.Task.ResultFilePath!);
     }
+
+    [Test]
+    public async Task Same_root_applied_notes_batch_into_one_intact_spill_file()
+    {
+        await using var f = await DeliveryFixture.CreateAsync(modern: false, configure: s =>
+            s.AddSingleton(Options.Create(new ChannelBridgeSettings { BatchingEnabled = true, DebounceWindowMs = 0 })));
+        var first = await f.SettleAsync(ReportOfLength(5500));
+        await f.RunDistillerAsync(first, Summary, keepWorker: true);
+        var second = await f.SettleAsync(ReportOfLength(5501), parentId: first.Task.ParentSessionId, rootId: first.Task.RootTaskId);
+        await f.RunDistillerAsync(second, Summary);
+        var a = await f.ReadNoteAsync(first.NoteId); var b = await f.ReadNoteAsync(second.NoteId);
+        a.ConversationKey.ShouldBe(b.ConversationKey);
+        var ceiling = f.Provider.GetRequiredService<PtyDeliveryProfile>().Ceilings.SingleWriteMaxBytes;
+        System.Text.Encoding.UTF8.GetByteCount(a.Body).ShouldBeLessThanOrEqualTo(ceiling);
+        System.Text.Encoding.UTF8.GetByteCount(b.Body).ShouldBeLessThanOrEqualTo(ceiling);
+        System.Text.Encoding.UTF8.GetByteCount(a.Body + b.Body).ShouldBeGreaterThan(ceiling);
+        var delivered = await f.DeliverAsync(first);
+        delivered.Body.ShouldContain(a.Body); delivered.Body.ShouldContain(b.Body);
+        (await f.ReadNoteAsync(first.NoteId)).Body.ShouldBe((await f.ReadNoteAsync(second.NoteId)).Body);
+        (await f.ReadNoteAsync(second.NoteId)).DeliveryAttempts.ShouldBe(1);
+        (await f.ReadNoteAsync(second.NoteId)).DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        foreach (var task in new[] { first.Task, second.Task })
+            (await File.ReadAllTextAsync(task.ResultFilePath!)).ShouldBe(task.Result);
+    }
     internal sealed class DeliveryFixture : IAsyncDisposable
     {
         public ReportWorkspace Workspace { get; } = new();
@@ -317,7 +505,7 @@ public class OutputDistillationDeliveryTests
         private CompletionNoteWorkHostedService? _flush;
         private readonly List<Guid> _parents = [];
         public static async Task<DeliveryFixture> CreateAsync(bool modern = true, OutputDistillerMode mode = OutputDistillerMode.Apply,
-            bool enabled = true, bool worktree = false)
+            bool enabled = true, bool worktree = false, Action<IServiceCollection>? configure = null)
         {
             var f = new DeliveryFixture(); await f.Workspace.InitializeAsync(worktree);
             f.Settings = new() { OutputDistillerEnabled = enabled, OutputDistillerMode = mode,
@@ -333,21 +521,23 @@ public class OutputDistillationDeliveryTests
                     claudeConfigJsonPath: Path.Combine(f.Workspace.Root, "test-claude.json")));
                 s.AddScoped<OutputDistillationService>(); s.AddSingleton<OutputDistillationQueue>();
                 s.AddSingleton<CompletionNoteFlushQueue>(); s.AddSingleton<SpecialistFailureQueue>();
+                configure?.Invoke(s);
             });
             (await f.Provider.GetRequiredService<PtyDeliveryProfile>().RefreshAsync(CancellationToken.None))
                 .ReplyInlineMaxChars.ShouldBe(modern ? 14400 : 3000);
             return f;
         }
         public async Task<Settled> SettleAsync(string report, bool failed = false, string? cwd = null, bool authorFile = false,
-            bool deliverables = false)
+            bool deliverables = false, Guid? parentId = null, Guid? rootId = null)
         {
             cwd ??= Workspace.Main;
-            var parent = await AgentTaskSettlementRaceTests.SeedSessionAsync(Workspace.Main); _parents.Add(parent);
+            var parent = parentId ?? await AgentTaskSettlementRaceTests.SeedSessionAsync(Workspace.Main); _parents.Add(parent);
             var (task, session) = await AgentTaskSettlementRaceTests.SeedSharedTaskAsync(cwd, parent);
             await using (var db = OutputDistillationHarness.CreateContext())
             {
                 var row = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
                 row.Role = AgentTaskRole.Review;
+                if (rootId is Guid root) row.RootTaskId = root;
                 row.RepoPath = cwd == Workspace.Worktree ? Workspace.Main : cwd;
                 row.WorktreePath = cwd == Workspace.Worktree ? Workspace.Worktree : null;
                 if (deliverables)
@@ -373,21 +563,31 @@ public class OutputDistillationDeliveryTests
             var note = (await read.SessionQueuedMessages.Where(m => m.SourceTaskId == task.Id).ToListAsync()).ShouldHaveSingleItem();
             return new(stored, note.Id, note.Body, note.NoteHeader!, note.ContentDigest!, note.HoldUntil);
         }
-        public async Task<OutputDistillationRecord> RunDistillerAsync(Settled seed, string? summary, bool failed = false)
+        public async Task<OutputDistillationRecord> RunDistillerAsync(Settled seed, string? summary, bool failed = false,
+            bool leaveWorking = false, bool keepWorker = false)
         {
-            _worker = new(Provider.GetRequiredService<OutputDistillationQueue>(), Provider.GetRequiredService<IServiceScopeFactory>(),
-                Options.Create(Settings), NullLogger<OutputDistillationHostedService>.Instance);
-            await _worker.StartAsync(CancellationToken.None);
+            if (_worker is null)
+            {
+                _worker = new(Provider.GetRequiredService<OutputDistillationQueue>(), Provider.GetRequiredService<IServiceScopeFactory>(),
+                    Options.Create(Settings), NullLogger<OutputDistillationHostedService>.Instance);
+                await _worker.StartAsync(CancellationToken.None);
+            }
             if (summary is not null)
             {
                 await UntilAsync(async () => {
                     await using var db = OutputDistillationHarness.CreateContext();
-                    var task = await db.AgentTasks.SingleOrDefaultAsync(t => t.AgentName == Settings.OutputDistillerAgentSlug && t.Role == AgentTaskRole.Distill);
+                    var task = await db.AgentTasks.SingleOrDefaultAsync(t => t.AgentName == Settings.OutputDistillerAgentSlug
+                        && t.Role == AgentTaskRole.Distill && t.Status == AgentTaskStatus.Queued);
                     if (task is null)
                     {
                         var early = await db.OutputDistillations.SingleOrDefaultAsync(d => d.TaskId == seed.Task.Id);
                         early.ShouldBeNull("an eligible source must create a specialist task; an early skip/refusal is not an attempt");
                         return false;
+                    }
+                    if (leaveWorking)
+                    {
+                        task.Status = AgentTaskStatus.Working; task.DispatchedAt = DateTime.UtcNow;
+                        await db.SaveChangesAsync(); return true;
                     }
                     task.Status = failed ? AgentTaskStatus.Failed : AgentTaskStatus.Succeeded; task.Result = summary;
                     task.CompletedAt = DateTime.UtcNow; await db.SaveChangesAsync(); return true;
@@ -399,7 +599,7 @@ public class OutputDistillationDeliveryTests
                 record = await db.OutputDistillations.AsNoTracking().SingleOrDefaultAsync(r => r.TaskId == seed.Task.Id);
                 return record is not null;
             });
-            await _worker.StopAsync(CancellationToken.None); _worker.Dispose(); _worker = null;
+            if (!keepWorker) { await _worker.StopAsync(CancellationToken.None); _worker.Dispose(); _worker = null; }
             return record!;
         }
         public async Task<SessionQueuedMessage> ReadNoteAsync(Guid id)
