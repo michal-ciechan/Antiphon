@@ -488,6 +488,258 @@ public sealed class CapacityRecoveryService
         return true;
     }
 
+    public async Task<CapacityRecoveryWait?> FindUnfinishedAsync(string consumerKey, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await db.Set<CapacityRecoveryWait>().FirstOrDefaultAsync(
+            w => w.ConsumerKey == consumerKey
+                && w.State != CapacityRecoveryWaitState.Progressed
+                && w.State != CapacityRecoveryWaitState.Canceled
+                && w.State != CapacityRecoveryWaitState.Superseded
+                && w.State != CapacityRecoveryWaitState.Exhausted,
+            ct);
+    }
+
+    public async Task ConfirmPromptAsync(Guid waitId, long sequence, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var wait = await db.Set<CapacityRecoveryWait>().FirstOrDefaultAsync(w => w.Id == waitId, ct);
+        if (wait is null)
+            return;
+        if (wait.State is CapacityRecoveryWaitState.Canceled
+            or CapacityRecoveryWaitState.Superseded
+            or CapacityRecoveryWaitState.Progressed)
+            return;
+        wait.ConfirmedPromptSequence = sequence;
+        wait.State = CapacityRecoveryWaitState.PromptConfirmed;
+        wait.Outcome = nameof(CapacityRecoveryWaitState.PromptConfirmed);
+        wait.UpdatedAt = UtcNow();
+        wait.Version++;
+        await RecordLifecycleOnAsync(db, wait, $"Auto-resumed after capacity recovery; prompt sequence {sequence} confirmed.", ct);
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task MarkProgressedAsync(Guid waitId, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var wait = await db.Set<CapacityRecoveryWait>().FirstOrDefaultAsync(w => w.Id == waitId, ct);
+        if (wait is null)
+            return;
+        if (wait.State is CapacityRecoveryWaitState.Canceled
+            or CapacityRecoveryWaitState.Superseded
+            or CapacityRecoveryWaitState.Progressed)
+            return;
+        wait.State = CapacityRecoveryWaitState.Progressed;
+        wait.Outcome = nameof(CapacityRecoveryWaitState.Progressed);
+        wait.UpdatedAt = UtcNow();
+        wait.Version++;
+        await RecordLifecycleOnAsync(db, wait, "Capacity recovery progressed after successful work turn.", ct);
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task RecordLifecycleAsync(Guid waitId, string message, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var wait = await db.Set<CapacityRecoveryWait>().FirstOrDefaultAsync(w => w.Id == waitId, ct);
+        if (wait is null)
+            return;
+        await RecordLifecycleOnAsync(db, wait, message, ct);
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task StampQueueActionAsync(Guid messageId, Guid waitId, string actionKey, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var message = await db.SessionQueuedMessages.FirstOrDefaultAsync(m => m.Id == messageId, ct);
+        var wait = await db.Set<CapacityRecoveryWait>().FirstOrDefaultAsync(w => w.Id == waitId, ct);
+        if (message is null || wait is null)
+            return;
+        var existing = await db.SessionQueuedMessages.FirstOrDefaultAsync(
+            m => m.CapacityRecoveryActionKey == actionKey && m.Id != messageId, ct);
+        if (existing is not null)
+            return;
+        message.CapacityRecoveryActionKey = actionKey;
+        message.CapacityWaitId = waitId;
+        message.CapacityWaitVersion = wait.Version;
+        wait.SelectedMessageId = message.Id;
+        wait.UpdatedAt = UtcNow();
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task<int> ReconcileCompatibilityAsync(CancellationToken ct)
+    {
+        var batch = Math.Clamp(Settings.ReconciliationBatchSize, 1, 1000);
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var cursor = await db.Set<CapacityRecoveryWait>().FirstOrDefaultAsync(
+            w => w.ConsumerKey == CompatibilityCursorKey, ct);
+        var afterKey = cursor?.OutcomeReason ?? "";
+        var now = UtcNow();
+
+        var sessionCandidates = await db.AgentSessions.AsNoTracking()
+            .Where(s => s.Status == SessionStatus.Running || s.Status == SessionStatus.Starting)
+            .OrderBy(s => s.Id)
+            .Select(s => "session:" + s.Id.ToString("N"))
+            .ToListAsync(ct);
+        var taskCandidates = await db.AgentTasks.AsNoTracking()
+            .Where(t => t.Status == AgentTaskStatus.Queued
+                || t.Status == AgentTaskStatus.Blocked
+                || (t.Status == AgentTaskStatus.Working && t.CapacityWaitRetained))
+            .OrderBy(t => t.Id)
+            .Select(t => "task:" + t.Id.ToString("N"))
+            .ToListAsync(ct);
+        var agentCandidates = await db.Agents.AsNoTracking()
+            .Where(a => a.AlwaysOn)
+            .OrderBy(a => a.Id)
+            .Select(a => "agent:" + a.Id.ToString("N"))
+            .ToListAsync(ct);
+
+        var keys = sessionCandidates.Concat(taskCandidates).Concat(agentCandidates)
+            .Distinct()
+            .OrderBy(k => k, StringComparer.Ordinal)
+            .Where(k => string.CompareOrdinal(k, afterKey) > 0)
+            .Take(batch)
+            .ToList();
+
+        var processed = 0;
+        foreach (var key in keys)
+        {
+            ct.ThrowIfCancellationRequested();
+            var existing = await db.Set<CapacityRecoveryWait>().FirstOrDefaultAsync(
+                w => w.ConsumerKey == key
+                    && w.State != CapacityRecoveryWaitState.Progressed
+                    && w.State != CapacityRecoveryWaitState.Canceled
+                    && w.State != CapacityRecoveryWaitState.Superseded
+                    && w.State != CapacityRecoveryWaitState.Exhausted, ct);
+            if (existing is not null)
+            {
+                existing.CompatibilityResult ??= CapacityRecoveryCompatibilityResult.Linked;
+                existing.CompatibilityVersion = Math.Max(existing.CompatibilityVersion, 1);
+                processed++;
+                continue;
+            }
+
+            if (key.StartsWith("session:", StringComparison.Ordinal)
+                && Guid.TryParse(key["session:".Length..], out var sessionId))
+            {
+                var wall = await db.ApiErrorRecoveries.AsNoTracking()
+                    .Where(r => r.AgentSessionId == sessionId
+                        && r.Classification == ApiErrorClassification.Wall
+                        && (r.ResolvedReason == ApiErrorRecoveryReasons.WallModelPaused
+                            || r.ResolvedReason == ApiErrorRecoveryReasons.WallParked
+                            || r.ResolvedAt == null))
+                    .OrderByDescending(r => r.StubSequence)
+                    .FirstOrDefaultAsync(ct);
+                var heldQueue = await db.SessionQueuedMessages.AsNoTracking()
+                    .AnyAsync(m => m.AgentSessionId == sessionId
+                        && m.Status == QueuedMessageStatus.Pending
+                        && m.NoteHeader == "Held"
+                        && (m.Origin == QueuedMessageOrigin.Channel || m.Origin == QueuedMessageOrigin.Scheduled), ct);
+                if (wall is null && !heldQueue)
+                {
+                    processed++;
+                    continue;
+                }
+
+                var session = await db.AgentSessions.AsNoTracking().FirstAsync(s => s.Id == sessionId, ct);
+                var wait = await EnsureWaitCoreAsync(db, new CapacityWaitRegistration
+                {
+                    ConsumerKey = key,
+                    ConsumerKind = CapacityWaitConsumerKind.LiveSession,
+                    ExecutionKind = session.AgentKind,
+                    RequestedKind = session.AgentKind,
+                    SessionId = sessionId,
+                    SessionStartedAt = session.StartedAt,
+                    HoldAlreadyCleared = true,
+                    BlockedAt = session.StartedAt,
+                }, now, ct);
+                wait.CompatibilityResult = CapacityRecoveryCompatibilityResult.LegacyAvailable;
+                wait.CompatibilityVersion = 1;
+                processed++;
+            }
+            else if (key.StartsWith("task:", StringComparison.Ordinal)
+                && Guid.TryParse(key["task:".Length..], out var taskId))
+            {
+                var task = await db.AgentTasks.AsNoTracking().FirstOrDefaultAsync(t => t.Id == taskId, ct);
+                if (task is null
+                    || task.Status is AgentTaskStatus.Failed or AgentTaskStatus.Succeeded or AgentTaskStatus.Canceled)
+                {
+                    processed++;
+                    continue;
+                }
+
+                var wait = await EnsureWaitCoreAsync(db, new CapacityWaitRegistration
+                {
+                    ConsumerKey = key,
+                    ConsumerKind = CapacityWaitConsumerKind.QueuedTask,
+                    ExecutionKind = task.AgentKind,
+                    RequestedKind = task.AgentKind,
+                    TaskId = task.Id,
+                    SessionId = task.AgentSessionId,
+                    HoldAlreadyCleared = true,
+                    BlockedAt = task.CreatedAt,
+                }, now, ct);
+                wait.CompatibilityResult = CapacityRecoveryCompatibilityResult.LegacyAvailable;
+                wait.CompatibilityVersion = 1;
+                processed++;
+            }
+            else
+            {
+                processed++;
+            }
+        }
+
+        if (cursor is null)
+        {
+            cursor = new CapacityRecoveryWait
+            {
+                Id = Guid.NewGuid(),
+                ConsumerKey = CompatibilityCursorKey,
+                ConsumerKind = CapacityWaitConsumerKind.LiveSession,
+                ExecutionKind = AgentKind.ClaudeCode,
+                State = CapacityRecoveryWaitState.Progressed,
+                BlockedAt = now,
+                ActionKey = CompatibilityCursorKey,
+                UpdatedAt = now,
+                Version = 1,
+            };
+            db.Set<CapacityRecoveryWait>().Add(cursor);
+        }
+
+        cursor.OutcomeReason = keys.Count == 0 ? afterKey : keys[^1];
+        cursor.CompatibilityVersion++;
+        cursor.UpdatedAt = now;
+        await db.SaveChangesAsync(ct);
+        return processed;
+    }
+
+    private static async Task RecordLifecycleOnAsync(
+        AppDbContext db, CapacityRecoveryWait wait, string message, CancellationToken ct)
+    {
+        var already = await db.AgentIncidents.AsNoTracking().AnyAsync(
+            i => i.Kind == AgentIncidentKind.CapacityRecovery
+                && i.Message == message
+                && i.SessionId == wait.SessionId
+                && i.AgentId == wait.AgentId, ct);
+        if (already)
+            return;
+        db.AgentIncidents.Add(new AgentIncident
+        {
+            Id = Guid.NewGuid(),
+            AgentId = wait.AgentId,
+            SessionId = wait.SessionId,
+            Kind = AgentIncidentKind.CapacityRecovery,
+            Severity = AlertSeverity.Warning,
+            Message = message,
+            CreatedAt = DateTime.UtcNow,
+        });
+    }
+
     private static bool StillHoldsGrant(CapacityRecoveryWait wait, CapacityRecoveryProviderState state, DateTime now)
     {
         if (wait.Version != state.ExpectedWaitVersion && !CapacityRecoveryPolicy.IsGrantCandidate(wait))

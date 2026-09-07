@@ -104,7 +104,10 @@ public class ModelAvailabilityDispatcherTests
         services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString));
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton(TimeProvider.System);
-        services.AddSingleton(Options.Create(new SupervisionSettings()));
+        services.AddSingleton(Options.Create(new SupervisionSettings
+        {
+            CapacityRecovery = new CapacityRecoverySettings { Enabled = false },
+        }));
         services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
         services.AddSingleton(Options.Create(new DelegationSettings
         {

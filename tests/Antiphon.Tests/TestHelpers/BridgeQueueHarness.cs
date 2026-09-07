@@ -63,6 +63,9 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         /// restating them. Ignored when <see cref="Supervision"/> is supplied whole.
         /// </summary>
         public Action<DeliveryVerificationSettings>? ConfigureDeliveryVerification { get; init; }
+
+        /// <summary>CARD-0412: isolated-schema tests must wire every DbContext to the clone.</summary>
+        public string? ConnectionString { get; init; }
     }
 
     public static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
@@ -76,7 +79,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(o =>
         {
-            o.UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
+            o.UseNpgsql(options.ConnectionString ?? TestDbFixture.ConnectionString, npgsql =>
             {
                 npgsql.MigrationsAssembly("Antiphon.Server");
                 npgsql.SetPostgresVersion(16, 0);
@@ -198,7 +201,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         var agentDto = await scope.ServiceProvider.GetRequiredService<AgentService>()
             .CreateAsync(new CreateAgentRequest("BridgeQueue", workspace), CancellationToken.None);
 
-        await using (var db = CreateContext())
+        await using (var db = scope.ServiceProvider.GetRequiredService<AppDbContext>())
         {
             var now = DateTime.UtcNow;
             db.AgentSessions.Add(new AgentSession

@@ -383,6 +383,12 @@ public sealed class ApiErrorRecoveryService
         bool isNew = true)
     {
         var evidenceAt = row.EvidenceAt ?? now;
+        if (await IsWallSupersededAsync(db, sessionId, row.StubSequence, ct))
+        {
+            Resolve(row, now, ApiErrorRecoveryReasons.Superseded);
+            return row;
+        }
+
         var fallback = await ResolveFallbackAliasAsync(db, sessionId, ct);
         var wall = UsageLimitWallParser.Parse(evidenceAt, errorText, fallback);
 
@@ -490,6 +496,18 @@ public sealed class ApiErrorRecoveryService
             return;
         if (string.IsNullOrWhiteSpace(errorText))
             return;
+        try
+        {
+            await _runtime.CatchUpTranscriptAsync(sessionId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Capacity repair catch-up failed for session {SessionId}; deferring", sessionId);
+            return;
+        }
+
+        if (await IsWallSupersededAsync(db, sessionId, existing.StubSequence, ct))
+            return;
 
         var digest = CapacityEvidence.Digest(errorText);
         var textImproved = existing.EvidenceStatus == "empty"
@@ -531,6 +549,14 @@ public sealed class ApiErrorRecoveryService
             return;
         if (hold.SourceSessionId is { } source && source != sessionId)
             return;
+        var session = await db.AgentSessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == sessionId, ct);
+        if (session is not null && hold.Kind != session.AgentKind)
+            return;
+        var parsed = UsageLimitWallParser.Parse(existing.EvidenceAt ?? existing.DetectedAt, errorText, hold.ModelAlias);
+        if (parsed is not null
+            && hold.ModelAlias != ModelAlias.KindWide
+            && !string.Equals(hold.ModelAlias, parsed.ModelAlias, StringComparison.OrdinalIgnoreCase))
+            return;
 
         var sibling = await CapacityEvidence.LoadSiblingAsync(db, sessionId, existing.StubUuid, ct);
         var turnEnd = await CapacityEvidence.LoadTurnEndAsync(db, sessionId, existing.StubSequence, ct);
@@ -554,6 +580,42 @@ public sealed class ApiErrorRecoveryService
         _logger.LogInformation(
             "Repaired API-error wall session {SessionId} seq {Sequence} from empty stub text ({Length} chars)",
             sessionId, existing.StubSequence, errorText.Trim().Length);
+    }
+
+    private static async Task<bool> IsWallSupersededAsync(
+        AppDbContext db, Guid sessionId, long stubSequence, CancellationToken ct)
+    {
+        var later = await db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId && t.Sequence > stubSequence)
+            .Select(t => new { t.Kind, t.Text, t.IsApiError, t.StopReason, t.Sequence })
+            .ToListAsync(ct);
+        foreach (var t in later)
+        {
+            if (t.Kind == TranscriptKinds.UserPrompt || t.Kind == TranscriptKinds.QueuedUserPrompt)
+            {
+                if (TranscriptKinds.IsLocalCommandRecord(t.Kind, t.Text))
+                    continue;
+                if (TranscriptKinds.IsCompactionContinuationPrompt(t.Kind, t.Text))
+                    continue;
+                return true;
+            }
+
+            if (t.Kind == TranscriptKinds.TurnEnd && t.IsApiError == true)
+                return true;
+            if (t.Kind == TranscriptKinds.TurnEnd
+                && t.IsApiError != true
+                && string.Equals(t.StopReason, "end_turn", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        var latestTask = await db.AgentTasks.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId)
+            .OrderByDescending(t => t.CreatedAt)
+            .Select(t => (AgentTaskStatus?)t.Status)
+            .FirstOrDefaultAsync(ct);
+        return latestTask is AgentTaskStatus.Failed
+            or AgentTaskStatus.Canceled
+            or AgentTaskStatus.Succeeded;
     }
 
     private static async Task<string?> ResolveFallbackAliasAsync(

@@ -148,12 +148,38 @@ public sealed class AgentControlService
         if (!alreadyLive && Guid.TryParse(agent.PersistentSessionId, out var pendingId) && _launchQueue.Owns(pendingId))
             return await _agentService.GetByIdAsync(agent.Id, ct);
 
-        // Any Start (human, bridge, supervisor) lifts the supervision suspend latch, cancels a
-        // pending scheduled restart, and clears CARD-0312's LivenessLatchedAt — a start IS the
-        // intent supervision waits for. The failure counter is deliberately NOT reset here (only
-        // sustained healthy uptime resets it), so a manual retry of a still-broken agent doesn't
-        // collapse the backoff ladder back to 5s.
-        await ClearSupervisionLatchAsync(agent, ct);
+        if (request.CapacityRecovery)
+        {
+            if (!agent.AlwaysOn)
+            {
+                throw new ConflictException(
+                    "Capacity recovery cannot start an unowned or ephemeral session.",
+                    "capacity_recovery_not_standing");
+            }
+
+            if (herdrState.Suspended)
+            {
+                throw new ConflictException(
+                    "Capacity recovery cannot start a suspended agent.",
+                    "capacity_recovery_suspended");
+            }
+
+            if (herdrState.LivenessLatchedAt is not null)
+            {
+                throw new ConflictException(
+                    "Capacity recovery cannot start a liveness-latched agent.",
+                    "capacity_recovery_liveness_latched");
+            }
+        }
+        else
+        {
+            // Any Start (human, bridge, supervisor) lifts the supervision suspend latch, cancels a
+            // pending scheduled restart, and clears CARD-0312's LivenessLatchedAt — a start IS the
+            // intent supervision waits for. The failure counter is deliberately NOT reset here (only
+            // sustained healthy uptime resets it), so a manual retry of a still-broken agent doesn't
+            // collapse the backoff ladder back to 5s.
+            await ClearSupervisionLatchAsync(agent, ct);
+        }
 
         // Already running — leave the existing process (and its remote-control state) untouched.
         if (await HasLiveSessionAsync(agent, ct))

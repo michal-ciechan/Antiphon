@@ -434,6 +434,108 @@ public class ModelAvailabilityTests
         await db.SaveChangesAsync();
     }
 
+    [Test]
+    public async Task Card0412_V06_clear_stamps_pending_once()
+    {
+        var id = Guid.NewGuid();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        await ReplaceHoldAsync(db, Hold(id, "opus", until: DateTime.UtcNow.AddHours(1)));
+        var availability = Service(db);
+        await availability.ClearAsync("ClaudeCode", "opus", CancellationToken.None);
+        await availability.ClearAsync("ClaudeCode", "opus", CancellationToken.None);
+
+        await using var verify = CreateContext(schema);
+        var row = await verify.ModelAvailabilityHolds.SingleAsync(h => h.Id == id);
+        row.ClearedAt.ShouldNotBeNull();
+        row.ClearCause.ShouldBe(ModelAvailabilityClearCause.OperatorCleared);
+        row.ReleasePendingAt.ShouldNotBeNull();
+        row.ReleasePendingAt.ShouldBe(row.ClearedAt);
+        row.ReleaseConsumedAt.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task Card0412_V06_sweep_lazy_and_list_stamp_expired()
+    {
+        var sweepId = Guid.NewGuid();
+        var lazyId = Guid.NewGuid();
+        var listId = Guid.NewGuid();
+        var manualOpen = Guid.NewGuid();
+        var manualTimed = Guid.NewGuid();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        await ReplaceHoldAsync(db, Hold(sweepId, "opus", until: DateTime.UtcNow.AddSeconds(-2)));
+        db.ModelAvailabilityHolds.Add(Hold(lazyId, "sonnet", until: DateTime.UtcNow.AddSeconds(-2)));
+        db.ModelAvailabilityHolds.Add(Hold(listId, "haiku", until: DateTime.UtcNow.AddSeconds(-2)));
+        db.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
+        {
+            Id = manualOpen,
+            Kind = AgentKind.ClaudeCode,
+            ModelAlias = "fable",
+            Source = ModelAvailabilitySource.Manual,
+            DisabledUntil = null,
+            HitAt = DateTime.UtcNow,
+            Reason = "open-ended",
+            Revision = 1,
+        });
+        db.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
+        {
+            Id = manualTimed,
+            Kind = AgentKind.ClaudeCode,
+            ModelAlias = "opusplan",
+            Source = ModelAvailabilitySource.Manual,
+            DisabledUntil = DateTime.UtcNow.AddSeconds(-2),
+            HitAt = DateTime.UtcNow.AddHours(-1),
+            Reason = "timed manual",
+            Revision = 1,
+        });
+        await db.SaveChangesAsync();
+
+        (await Service(db).SweepExpiredAsync(CancellationToken.None)).ShouldBeGreaterThanOrEqualTo(1);
+        (await Service(db).IsHeldAsync(AgentKind.ClaudeCode, "sonnet", CancellationToken.None)).ShouldBeFalse();
+        await Service(db).ListHeldAsync(CancellationToken.None);
+
+        await using var verify = CreateContext(schema);
+        (await verify.ModelAvailabilityHolds.SingleAsync(h => h.Id == sweepId)).ClearCause
+            .ShouldBe(ModelAvailabilityClearCause.Expired);
+        (await verify.ModelAvailabilityHolds.SingleAsync(h => h.Id == lazyId)).ReleasePendingAt.ShouldNotBeNull();
+        (await verify.ModelAvailabilityHolds.SingleAsync(h => h.Id == listId)).ClearCause
+            .ShouldBe(ModelAvailabilityClearCause.Expired);
+        var open = await verify.ModelAvailabilityHolds.SingleAsync(h => h.Id == manualOpen);
+        open.ClearedAt.ShouldBeNull();
+        var timed = await verify.ModelAvailabilityHolds.SingleAsync(h => h.Id == manualTimed);
+        timed.ClearedAt.ShouldNotBeNull();
+        timed.ClearCause.ShouldBe(ModelAvailabilityClearCause.Expired);
+    }
+
+    [Test]
+    public async Task Card0412_V06_legacy_autodetected_null_normalizes_and_expires()
+    {
+        var id = Guid.NewGuid();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        db.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
+        {
+            Id = id,
+            Kind = AgentKind.ClaudeCode,
+            ModelAlias = "opus",
+            Source = ModelAvailabilitySource.AutoDetected,
+            DisabledUntil = null,
+            HitAt = DateTime.UtcNow.AddHours(-7),
+            Reason = "legacy",
+            Revision = 1,
+        });
+        await db.SaveChangesAsync();
+
+        (await Service(db).IsHeldAsync(AgentKind.ClaudeCode, "opus", CancellationToken.None)).ShouldBeFalse();
+        await using var verify = CreateContext(schema);
+        var row = await verify.ModelAvailabilityHolds.SingleAsync(h => h.Id == id);
+        row.ClearedAt.ShouldNotBeNull();
+        row.ClearCause.ShouldBe(ModelAvailabilityClearCause.Expired);
+        row.ReleasePendingAt.ShouldNotBeNull();
+        row.DisabledUntil.ShouldNotBeNull();
+    }
+
     private static ModelAvailability Service(
         AppDbContext db, TimeProvider? time = null, IOptions<SupervisionSettings>? settings = null) =>
         new(db, time ?? TimeProvider.System, NullLogger<ModelAvailability>.Instance, settings);
