@@ -126,18 +126,19 @@ The [CARD-0409 disposition plan](superpowers/plans/2026-09-07-card-0409-privacy-
 owns the 428-card database review and the 153 finding dispositions. The old exports
 were already removed by CARD-0408; they must not be reconstructed for review.
 
-The Code brief explicitly selected this temporary managed grammar:
+The temporary managed grammar is the blanket holding rule from D-4/S-1
+(orchestrator correction, 2026-09-07: the Code stage's dispatch brief mistakenly
+pointed it at the end-state exception grammar instead; caught and reverted before
+Review, no publication occurred either way since sync stayed off throughout):
 
 ```gitignore
 # CARD-0409 HOLDING: reviewed card publication is not activated by the privacy cleanup.
 # BEGIN ANTIPHON CARD FILES
-/docs/cards/*
-!/docs/cards/antiphon/
+/docs/cards/
 # END ANTIPHON CARD FILES
 ```
 
-This protects other and future boards. **The Antiphon directory is deliberately
-unignored**, unlike the blanket holding rule originally proposed in D-4. Its
+The Antiphon directory stays ignored, along with every other board. Its
 publication remains blocked by `syncCardFiles=false` and
 `RepositoryVisibility=Unknown`; `AutoCommit=false` and global `Enabled=true` remain
 unchanged. The ignore exception is not publication approval or protection against

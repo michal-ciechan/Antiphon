@@ -54,6 +54,5 @@ bin-*/
 
 # CARD-0409 HOLDING: reviewed card publication is not activated by the privacy cleanup.
 # BEGIN ANTIPHON CARD FILES
-/docs/cards/*
-!/docs/cards/antiphon/
+/docs/cards/
 # END ANTIPHON CARD FILES
