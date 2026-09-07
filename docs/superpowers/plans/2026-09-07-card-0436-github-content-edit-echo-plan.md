@@ -243,3 +243,241 @@ The existing-row decision can be resolved independently; it does not block
 TestDesign or Code. Landing and any later canonical-stack deployment belong to
 the caller's subsequent stages. This Plan task runs no sync, tests/builds,
 database repair, restart or GitHub issue/comment write.
+
+## Verification design
+
+TestDesign, 2026-09-07, against `a5171a45`. This checkout contains the plan as
+`89c037af`; its plan file is byte-for-byte equivalent under `git diff` to the
+brief's pre-landing commit `e9ab7daa`. D-1 through D-5 and S-1/S-2 remain unchanged.
+This section specifies executable Code-stage work; TestDesign ran no tests or
+builds and claims no runtime result.
+
+### Proves it works now
+
+All new methods below belong to
+`tests/Antiphon.Tests/Application/TrackerBidirectionalSyncTests.cs`. Use real
+Postgres through `TestDbFixture`, public `RunAsync(graph.Board.Id, ct)`, the
+existing `NewSut`/`SeedLinkedBoardAsync`/`CleanupAsync`, and
+`FakeBidirectionalTracker`. Keep `[Category("Integration")]` and the unkeyed
+`[NotInParallel]`. Seven new, non-parameterized `[Test]` methods are specified;
+matrix rows are assertions within their named method. No new host or fake is
+needed. `TrackerSyncMarkers` calls in tests supplement, rather than replace,
+the integration observations.
+
+Fixture contract for all seven methods:
+
+- Start at `2026-09-07T12:00:00Z` with `FakeTimeProvider`. Save the graph before
+  constructing the SUT. Set card title/description to `Title`/`Body`, labels to
+  `[]`, importance to `Normal` with `Auto` provenance, and Backlog/open state.
+  Set `Candidates` to `Issue("acme/app#1", "open", "Title", "Body",
+  ["status:backlog"])`. This prevents the default `NewCard` text from creating
+  an unrelated external-tracker revision and prevents label writes. Keep
+  `sync_out_create: false` and the default import origin unless stated otherwise.
+- Add each revision with a fresh ID, `CardId`/`Card` set, a distinct incremented
+  `RevisionNumber`/`card.RevisionCount`, explicit `Kind`, `EditedBy = "operator"`,
+  reason `clarify acceptance`, and UTC `CreatedAt`. For a ContentEdit, snapshot
+  `Title = "Previous title"`, `Description = "Previous body"`. Advance the clock
+  one minute before each run. No real sleeps are needed: this graph has no queue
+  polling or provider-session dependencies.
+- For inbound-only cases set `LastRevisionSynced = card.RevisionCount` after
+  seeding revisions. Set `LastOutboundSyncedAt` to the seed time, at or after
+  `card.UpdatedAt` and any Move/Reopen revision. Do not change these cursors
+  between replay runs. Positive legacy cases must have no CardComment whose ID
+  equals the marker ID, except the deliberate discussion-precedence case V-7.
+- Give every inbound record its own numeric string remote ID, generated from
+  `Random.Shared.NextInt64(1_000_000_000_000, long.MaxValue)` and checked distinct
+  within the fixture; keep those IDs unchanged across passes. Set
+  `IssueExternalId = "acme/app#1"`, a distinct `github.test` URL, UTC created time
+  one minute before the seed time, and updated time equal to created time.
+  Use `michal-ciechan` in V-4 and V-6; otherwise use `alice`. Never use live IDs.
+- Preserve `CommentsSince` across replay passes. The fake ignores `since`, and
+  `ClearWriteCounters()` leaves this collection intact. Assert the expected
+  remote IDs and exact bodies are still in it before each replay. Fake echoes
+  use wall-clock timestamps and author `sync-bot`; neither is an identity guard.
+- On **every** run assert one result for the fixture board,
+  `ConcurrentRunSkipped == false`, `Error == null`, `Skips` empty, and the
+  expected `IssuesPulled == 1`. Assert counters and itemized changes separately.
+  Each change must name this card's identifier and external key `#1`. The result
+  can return zero counters after a caught exception; counts alone are unsafe.
+- Use a fresh `CreateContext()` for each persisted readback, with queries scoped
+  to this card (and the explicit foreign card where applicable). Assert exact
+  imported IDs and all scalar fields: `Id` stable across replay, `CardId`,
+  `Origin = External`, `Body`, `Author`, `ExternalCommentId`, `ExternalUrl`,
+  `CreatedAt`, and null `SyncedAt`. Assert `TrackerCommentsPulledAt` equals that
+  pass's clock time. For a zero-change pass require `Changes` empty,
+  `CommentsIn/CommentsOut/LabelsChanged/StateChanges/Creates/ExternalReopens = 0`
+  and `fake.WriteCallCount == 0` after clearing counters before the pass.
+- Keep `CleanupAsync(tempRoot)` in `finally`. Foreign cards live under the same
+  fixture project so existing cleanup covers them. No global row counts or
+  production database/runner access.
+
+| ID | Behavior / layer / executable method | Exact expected outcome |
+|---|---|---|
+| V-1 | New writer and two subsequent inbound passes; integration; `Content_edit_outbound_echo_and_repeated_pull_create_no_discussion_rows` | Seed one eligible local ContentEdit at revision 1 with cursor 0; enable `EchoPostedComments`, initially empty inbound list. Run 1 has one PostComment to `acme/app#1`, `CommentsOut=1`, `CommentsIn=0`, exactly one `CommentOut` change and no other changes/writes. Assert the exact generated body specified below, system parser succeeds with CardId, comment parser returns false. Fresh readback: no CardComments, revision cursor 1, `LastOutboundSyncedAt` equals pass 1 time. Retain the fake's exact posted record for runs 2 and 3. Both are successful zero-change/zero-write passes with no CardComments; cursor stays 1 and outbound timestamp stays at pass 1. Dispose the original context/SUT after run 1 and use fresh ones for runs 2 and 3 so cursor persistence is necessary. |
+| V-2 | Legacy identity survives repeated pulls and ref-origin changes; integration; `Legacy_content_edit_revision_marker_is_ignored_on_repeated_pulls` | Seed local ContentEdit revision 1, cursor 1 and no discussion row. Supply `AppendCommentMarker("Historical content edit", revision.Id)` with a fresh remote ID. First and second runs both have zero changes/writes/rows; use a fresh context/SUT for the second. Then, through a separate context, set the ref origin to `AntiphonExport`, set `LastOutboundSyncedAt` at or after current card.UpdatedAt, save, and run a third pass with another fresh context/SUT and the same inbound record. It is still ignored with no writes/changes/rows. Keep marker CreatedAt older than the advancing pull watermark; revision cursor remains 1. Compatibility depends on persisted revision identity, not current origin, a recent timestamp, pending outbound work, or tracked objects. |
+| V-3 | Card, kind and identity guards; integration; `Legacy_marker_requires_same_card_and_ContentEdit_kind` | Seed a target-card ContentEdit witness, target-card Move and Reopen revisions, plus a second card's ContentEdit. Give the foreign card a distinct identifier but no ExternalIssueRef. Advance target cursor past all its revisions. Supply four old-format bodies with distinct remote IDs: foreign ContentEdit ID, same-card Move ID, same-card Reopen ID, and an unknown GUID absent from both tables. First run imports all four to the target card, with exact original fields and four `CommentIn` changes, no writes. Check each remote ID individually before aggregate count assertions; foreign card gets zero comments. Second run with the same four records and a new SUT/context is successful with zero changes/writes and the same four stored IDs. The unused target ContentEdit witness makes removal of the marker-ID predicate observable. |
+| V-4 | Same-author human discussion beside both echo formats; integration; `Same_author_human_comment_imports_beside_content_edit_echo` | First produce one real new-format post from an eligible local ContentEdit as in V-1; assert the post and persisted cursor before clearing counters. Construct the inbound list explicitly from that captured body, a legacy marker for the same revision, and an unmarked human body `Antiphon content edit by michal-ciechan: I wrote this comment myself.` All three records have distinct remote IDs and author `michal-ciechan`. First mixed pull imports only the human row: `CommentsIn=1`, exactly one `CommentIn`, no posts or other writes. New SUT/context on replay: successful zero-change/zero-write pass, exactly the same one human row. This also rejects generated-prose-prefix filtering. |
+| V-5 | Unknown syntax remains visible; integration with parser preconditions; `Unrecognized_marker_shapes_remain_visible_and_deduplicate` | Use the nine-body matrix below with a same-card ContentEdit and advanced cursor. Assert each parser precondition, then pass the actual body through RunAsync. First run imports precisely seven invalid/unresolved bodies with exact fields and seven `CommentIn` changes, no writes; the two valid controls create no rows. Second run with all nine unchanged records and a fresh SUT/context has zero changes/writes, Error null, and the same seven rows. |
+| V-6 | Prevention leaves historical rows untouched; integration; `Existing_external_revision_echo_is_left_unchanged` | Seed an External CardComment with a fresh row ID distinct from the same-card ContentEdit ID, valid legacy body, matching remote ID/URL, author `michal-ciechan`, and null SyncedAt. Also seed an unrelated human External row on this card with its own remote ID. Snapshot every scalar field of both through a fresh context. Pull only the legacy record twice, using a fresh SUT/context on replay: zero changes/writes, exactly the same two row IDs and all original scalar fields, and the revision still present. No deletion, reclassification, link stamp or body rewrite. |
+| V-7 | Discussion link repair retains precedence; integration; `Known_discussion_marker_repairs_missing_link_before_legacy_lookup` | Seed a same-card Antiphon CardComment with SyncedAt already set and null ExternalCommentId/ExternalUrl, so it cannot post. Deliberately use the same GUID for a persisted same-card ContentEdit (IDs are unique within each table); advance the revision cursor. Pull a comment marker for that ID. Fresh readback: exactly the original Antiphon row, its original body/author/CreatedAt/SyncedAt, and the inbound remote ID/URL now filled. Both first pull and replay have zero counters/changes/writes and no External rows. Repeat with a fresh SUT/context. The existing discussion lookup must win even if the legacy predicate would also match. |
+| V-8 | Surrounding behavior remains covered; integration class execution plus static S-2 inspection | Run all existing methods in TrackerBidirectionalSyncTests, including the five named under Regression requirements. Inspect the final diff: external-ID AnyAsync and filtered unique index unchanged; no author/prefix exclusion; compatibility AnyAsync includes ID, card and ContentEdit predicates with ct; existing discussion branch retained before it; system-parser syntax unchanged; workflow owner documents generated and legacy comment identity and pending cleanup. Production scope is S-1/S-2, without row repair or migration. |
+
+V-1's expected body is constructed independently of the production append helper:
+
+```csharp
+$"Antiphon content edit by operator: clarify acceptance\n\n"
++ $"**Title:** {graph.Card.Title}\n\n{graph.Card.Description}\n\n"
++ "_The issue body remains authoritative on this import-origin link._\n\n"
++ $"<!-- antiphon:system-comment={graph.Card.Id:N} -->"
+```
+
+This exact suffix assertion must execute on pass 1, before any inbound pass.
+The PC-1 mutant can still be suppressed by legacy recognition; zero imported
+rows alone would not detect the writer defect. Do not regenerate or substitute
+an expected body in the fake during V-1's replay.
+
+V-5 matrix: `revId` is the same-card ContentEdit ID, `otherCardId` is an explicit
+different card ID, `badHex` is `revId.ToString("N")[..31] + "z"`, and `shortId`
+is `revId.ToString("N")[..31]`. Prefix all bodies with `Visible text\n\n`.
+Each row has a distinct remote ID. Out GUID values are checked only on success.
+
+| Row | Suffix after the visible text | Parser precondition | IN |
+|---|---|---|---|
+| wrong-card-system | `<!-- antiphon:system-comment={otherCardId:N} -->` | System true, otherCardId | import |
+| nonhex-revision | `<!-- antiphon:comment={badHex} -->` | Comment false | import |
+| hyphenated-revision | `<!-- antiphon:comment={revId:D} -->` | Comment false | import |
+| short-revision | `<!-- antiphon:comment={shortId} -->` | Comment false | import |
+| unclosed-revision | `<!-- antiphon:comment={revId:N}` | Comment false | import |
+| nontrailing-revision | `<!-- antiphon:comment={revId:N} -->\nHuman follow-up.` | Comment false | import |
+| nontrailing-system | `<!-- antiphon:system-comment={graph.Card.Id:N} -->\nHuman follow-up.` | System false | import |
+| valid-legacy-control | `<!-- antiphon:comment={revId.ToString("N").ToUpperInvariant()} -->\r\n \t` | Comment true, revId | ignore |
+| valid-system-control | `<!-- antiphon:system-comment={graph.Card.Id:N} -->\r\n \t` | System true, target CardId | ignore |
+
+Use interpolation/escape sequences to create actual bodies, not literal braces
+or backslash characters. Valid uppercase N-format and trailing whitespace are
+accepted today; hyphenated D-format and non-trailing markers are not. Bad-shape
+cases reference a real revision/card wherever possible: otherwise a loosened
+parser could still fail the identity lookup and yield a false-green test.
+
+### Guards the regression
+
+- R-1: writing a revision-ID comment marker again | caught by V-1's exact body,
+  successful system parse and failed discussion parse before replay; PC-1.
+- R-2: omitting legacy recognition, treating only unsynced/recent/import-origin
+  revisions as echoes, or keeping recognition only in tracked memory | caught
+  by V-2's unchanged legacy record, advanced cursor/watermark, recreated SUTs
+  and export-origin third pass; PC-2 exercises the missing recognition path.
+- R-3: accepting any revision/valid GUID without matching ID, card and kind |
+  caught by V-3's individually preserved foreign, Move, Reopen and unknown
+  records; PC-3/PC-4/PC-5 remove each predicate separately.
+- R-4: suppressing the PAT author or generated-looking prose | caught by
+  V-4's one exact human row beside both recognized echoes; PC-6.
+- R-5: losing external-ID replay dedup or hiding its database failure behind
+  zero counters | caught by V-3/V-4/V-5's stable IDs, null Error and empty changes
+  on replay; PC-7 leaves the unique index active and must fail on Error.
+- R-6: accepting a wrong-card system marker, widening accepted GUID format or
+  losing trailing anchoring | caught by V-5's matrix and parser preconditions;
+  PC-8/PC-9/PC-10/PC-11. Valid controls prevent a reject-all parser from passing.
+- R-7: turning prevention into cleanup or overwriting prior fields | caught by
+  V-6's full scalar snapshots and stable original IDs, plus V-8 scope inspection.
+- R-8: moving compatibility ahead of known discussion-marker link repair |
+  caught by V-7's repaired external fields on the original row and no new row;
+  PC-12. V-8 retains ordinary discussion, state/reopen, and outbound-order tests.
+
+### Positive controls
+
+After adding the seven tests and both production changes, establish green once.
+For each PC below, make only the specified temporary source edit, build and run
+the selected method, require its named assertion failure, undo only that edit,
+then rebuild/run the same method green. Never combine mutants. Keep final tests
+unchanged throughout. A build failure, zero tests, setup failure, or unrelated
+assertion does not qualify as the expected red. PC-7's deliberate replay save
+error is a service result checked by a test assertion, not a fixture failure.
+
+The method filter for each control is exactly
+`/*/Antiphon.Tests.Application/TrackerBidirectionalSyncTests/<method>`, where
+`<method>` is the full method name for the referenced V row above (V-8 is not
+a method). No wildcard/OR selection is needed for an individual control.
+
+| ID | One temporary edit / guard broken | Method / required red assertion |
+|---|---|---|
+| PC-1 | In PushContentEditCommentsAsync restore `var marked = TrackerSyncMarkers.AppendCommentMarker(body, edit.Id);` while retaining legacy support. | V-1: captured pass-1 body differs from the required system-marker body. Record this failure, not a later row count. |
+| PC-2 | Add `&& false` to the new legacy AnyAsync predicate so it cannot recognize a revision. | V-2: first pull imports the legacy comment, violating CommentsIn=0 / zero rows. |
+| PC-3 | Remove only `&& r.CardId == issueRef.CardId` from that predicate. | V-3: foreign ContentEdit remote ID has no imported row (three imports instead of four). |
+| PC-4 | Remove only `&& r.Kind == CardRevisionKind.ContentEdit`. | V-3: Move and Reopen remote IDs have no imported rows (two imports instead of four). |
+| PC-5 | Replace only `r.Id == markerId` with `true`. | V-3: unknown GUID is suppressed by the seeded same-card ContentEdit witness; its required row is missing (all four may be suppressed). |
+| PC-6 | After resolving issueRef in PullCommentsAsync insert `if (comment.Author == "michal-ciechan") continue;`. | V-4: first mixed pull imports zero instead of the one human row. |
+| PC-7 | Change only the external-ID gate from `if (exists)` to `if (exists && false)`; retain its query and the database index. | V-4: first mixed pull still succeeds, replay attempts the human insert again and returns non-null board Error. `Error.ShouldBeNull()` must fail, even if counters remain zero and the index preserves the one stored row. |
+| PC-8 | Remove only `&& cardId == issueRef.CardId` from the system-marker branch. | V-5: wrong-card-system row is missing (six imports instead of seven). |
+| PC-9 | In TryReadTrailingCommentMarker, after the whitespace-body check, insert `body = Regex.Replace(body, @"(?<=[0-9a-fA-F])-(?=[0-9a-fA-F])", "");`. This deliberately normalizes D-format to N-format without changing HTML delimiters. | V-5: hyphenated-revision parser precondition (false) fails because it now returns true; its real same-card revision would be incorrectly suppressible. |
+| PC-10 | Only in TrailingCommentMarkerRegex's GeneratedRegex line, replace final `\s*$` with `\s*`. | V-5: nontrailing-revision false-parser assertion fails; genuine trailing prose is no longer protective. |
+| PC-11 | Only in TrailingSystemCommentMarkerRegex's GeneratedRegex line, replace final `\s*$` with `\s*`. | V-5: nontrailing-system false-parser assertion fails. |
+| PC-12 | Change the existing discussion branch to `if (origin is not null && false)`. | V-7: the colliding revision is recognized instead, leaving ExternalCommentId/ExternalUrl null on the original Antiphon row; the fresh readback link assertions fail. |
+
+Command from the Code worktree root, with `<method>` expanded as above and
+`<n>` replaced by the control number. Change only `red` to `green` after revert:
+
+```powershell
+dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c436/ -- --treenode-filter "/*/Antiphon.Tests.Application/TrackerBidirectionalSyncTests/<method>" --report-trx --report-trx-filename card-0436-PC-<n>-red.trx
+```
+
+Run the class once green before controls with filename
+`card-0436-baseline.trx`, and after all controls with the final filename below:
+
+```powershell
+dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c436/ -- --treenode-filter "/*/Antiphon.Tests.Application/TrackerBidirectionalSyncTests/*" --report-trx --report-trx-filename card-0436-bisync.trx
+git diff --check
+```
+
+Evidence contract: each invocation needs a new TRX created by that invocation.
+If retrying, use an attempt suffix rather than reusing stale evidence. Locate
+the output under this worktree and report its absolute path; inspect execution
+`UnitTestResult` entries, `TestDefinitions` method names and `ResultSummary`
+counters. Expected at this base: **30 executed/passed, zero failed/skipped** for
+each class green (23 existing + 7 new); each PC red selects **one executed,
+one failed**, and each reverted green selects **one executed, one passed**.
+If upstream changes alter the class census, reconcile actual method names and
+counts explicitly, retaining all seven new methods and the existing five
+required regressions. Neither `--list-tests` nor exit zero is execution evidence.
+
+Code's report maps V-1..V-8, R-1..R-8 and PC-1..PC-12 to actual evidence. Each
+PC row records the edit, expected observed assertion, reverted line and green
+result, command/filter, counts and TRX path. Record actual elapsed time and
+final commit. Before committing, inspect the diff to confirm all mutants are
+gone, including temporary parser edits; only S-1/S-2 and their tests/docs remain.
+Preserve evidence outside disposable build directories. Once test processes
+have exited, remove only this worktree's `bin-c436` directories using the
+testing owner's cleanup procedure, first resolving each absolute target and
+verifying it is below the worktree root. Do not remove another checkout's output.
+
+### Out of scope
+
+- No cleanup choice is required for Code: V-6 pins the interim prevention-only
+  behavior. The live 43-row census, export/repair/hiding, public GitHub edits and
+  deployment validation belong to the separate operator decision/procedure.
+- No live sync, GitHub HTTP call, notification send, AppHost restart, browser,
+  runner or provider session is needed. Fake captured bodies plus real Postgres
+  establish this service's marker/replay contract without external writes.
+- No client/E2E, namespace-wide or full-assembly run: the implementation is
+  confined to one service and its integration class. Existing GitHub adapter
+  transport, scheduler, notification delivery and field-authority behavior are
+  not changed by this fix.
+- No exactly-once outbound/crash-retry claim, marker authentication claim,
+  comment edits/deletions or schema/index redesign. The guards recognize
+  existing structural identities, as specified by D-1/D-2.
+
+### Cost
+
+- Suites forced: `Antiphon.Tests`, only TrackerBidirectionalSyncTests, with the
+  two class greens and 12 separate red/revert/green method pairs above. At this
+  base that is 26 invocations, 84 executed test cases in aggregate: 72 expected
+  passes and 12 intentional assertion failures. These are expected counts,
+  not TestDesign execution results. No concurrent Pty assembly run.
+- Verification floor estimate: **about 30 minutes with warm caches**, allowing
+  repeated C# builds, Postgres startup/migration, controls and evidence review;
+  budget 45-60 minutes with cold caches. There are no deliberate wall-clock
+  waits in the new tests. Follow testing-and-build.md for slow-build or fixture
+  triage; do not weaken assertions or widen the suite to compensate.
+- Readiness: executable design complete. Land this documentation task before
+  dispatching Code from the updated target, then implement S-1/S-2 and execute
+  every V/R/PC item. The existing-row operator choice remains independent.
