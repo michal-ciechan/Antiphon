@@ -1,3 +1,6 @@
+import { useCardFileStatus, type CardFileVisibility } from '../../api/cardFiles'
+import { CardFileFields, CardFilePolicyText } from './CardFilePrivacy'
+import { BoardCardFileSettings } from './BoardCardFileSettings'
 import {
   ActionIcon,
   Alert,
@@ -261,6 +264,8 @@ export function BoardPage() {
             )}
         </Group>
       </Group>
+
+      {board && <BoardCardFileSettings key={board.id} boardId={board.id} />}
 
       {(boardsLoading || selectedBoardLoading) && (
         <Group justify="center" p="xl">
@@ -782,8 +787,11 @@ function CardCreateModal({
   onClose: () => void
 }) {
   const createCard = useCreateCard(boardId)
+  const fileStatus = useCardFileStatus(boardId)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
+  const [privateNotes, setPrivateNotes] = useState('')
+  const [visibility, setVisibility] = useState<CardFileVisibility>('Inherit')
   const [importance, setImportance] = useState<CardImportance>('Normal')
   const [urgency, setUrgency] = useState<CardUrgency>('Normal')
   const [dueAt, setDueAt] = useState('')
@@ -794,7 +802,7 @@ function CardCreateModal({
   // 422 is the backstop, whose message is shown verbatim on the input that caused it.
   const titleOverLimit = title.length > CARD_LIMITS.title
   const descriptionOverLimit = description.length > CARD_LIMITS.description
-  const canSubmit = !!title.trim() && !titleOverLimit && !descriptionOverLimit
+  const canSubmit = privateNotes.length <= 20000 && !!title.trim() && !titleOverLimit && !descriptionOverLimit
 
   const handleSubmit = () => {
     if (!canSubmit) return
@@ -803,6 +811,8 @@ function CardCreateModal({
       {
         title,
         description,
+        privateNotes,
+        cardFileVisibility: visibility,
         importance,
         urgency,
         dueAt: dueAt || null,
@@ -812,6 +822,8 @@ function CardCreateModal({
         onSuccess: () => {
           setTitle('')
           setDescription('')
+          setPrivateNotes('')
+          setVisibility('Inherit')
           setImportance('Normal')
           setUrgency('Normal')
           setDueAt('')
@@ -832,6 +844,8 @@ function CardCreateModal({
   return (
     <Modal opened={opened} onClose={onClose} title="New Card">
       <Stack>
+        <CardFilePolicyText status={fileStatus.data} />
+        <CardFileFields visibility={visibility} onVisibility={setVisibility} notes={privateNotes} onNotes={setPrivateNotes} error={fieldErrors.privateNotes} visibilityError={fieldErrors.cardFileVisibility} />
         <TextInput
           label="Title"
           value={title}

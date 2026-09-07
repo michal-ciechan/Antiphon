@@ -1,3 +1,5 @@
+import { useCardFileStatus, type CardFileVisibility } from '../../api/cardFiles'
+import { CardFileFields, CardFilePolicyText, PrivateNotesPanel } from './CardFilePrivacy'
 import { ActionIcon, Alert, Anchor, Badge, Box, Button, Group, Modal, ScrollArea, Select, Stack, Tabs, Text, TextInput, Textarea, Title } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
@@ -283,7 +285,7 @@ export function CardModal({ boardId, card: summaryCard, columns = [], opened, on
 
               <Tabs.Panel value="details" className="card-page__panel card-page__detailsPanel">
                 <ScrollArea h="100%" type="auto" offsetScrollbars>
-                  <CardDetails card={card} description={description} />
+                  <CardFilePolicyText status={card.cardFileStatus} /><PrivateNotesPanel key={card.id} cardId={card.id} /><CardDetails card={card} description={description} />
                 </ScrollArea>
               </Tabs.Panel>
             </Tabs>
@@ -291,7 +293,7 @@ export function CardModal({ boardId, card: summaryCard, columns = [], opened, on
 
           <Box component="aside" className="card-page__sidebar" data-testid="card-detail-sidebar">
             <ScrollArea h="100%" type="auto" offsetScrollbars>
-              <CardDetails card={card} description={description} />
+              <CardFilePolicyText status={card.cardFileStatus} /><PrivateNotesPanel key={card.id} cardId={card.id} /><CardDetails card={card} description={description} />
             </ScrollArea>
           </Box>
         </Box>
@@ -299,7 +301,7 @@ export function CardModal({ boardId, card: summaryCard, columns = [], opened, on
 
       {editing && (
         <SuspenseBoundary variant="card">
-          <CardEditModal boardId={boardId} card={card} onClose={() => setEditing(false)} />
+          <CardEditModal key={card.id} boardId={boardId} card={card} onClose={() => setEditing(false)} />
         </SuspenseBoundary>
       )}
     </Modal>
@@ -312,25 +314,30 @@ export function CardModal({ boardId, card: summaryCard, columns = [], opened, on
  */
 function CardCreateModal({ boardId, opened, onClose }: { boardId: string; opened: boolean; onClose: () => void }) {
   const createCard = useCreateCard(boardId)
+  const fileStatus = useCardFileStatus(boardId)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
+  const [privateNotes, setPrivateNotes] = useState('')
+  const [visibility, setVisibility] = useState<CardFileVisibility>('Inherit')
   const [importance, setImportance] = useState<CardImportance | null>(null)
   const [urgency, setUrgency] = useState<CardUrgency>('Normal')
   const [dueAt, setDueAt] = useState('')
   const [labels, setLabels] = useState('')
-  const canSubmit = !!title.trim() && title.length <= CARD_LIMITS.title && description.length <= CARD_LIMITS.description
+  const canSubmit = privateNotes.length <= 20000 && !!title.trim() && title.length <= CARD_LIMITS.title && description.length <= CARD_LIMITS.description
 
   const submit = () => {
     if (!canSubmit) return
     createCard.mutate({
       title: title.trim(),
       description,
+      privateNotes,
+      cardFileVisibility: visibility,
       importance,
       urgency,
       dueAt: dueAt || null,
       labels: labels.split(',').map((label) => label.trim()).filter(Boolean),
     }, {
-      onSuccess: onClose,
+      onSuccess: () => { setTitle(''); setDescription(''); setPrivateNotes(''); setVisibility('Inherit'); onClose() },
       onError: (error) => notifications.show({ color: 'red', message: error instanceof Error ? error.message : 'Create failed' }),
     })
   }
@@ -338,6 +345,8 @@ function CardCreateModal({ boardId, opened, onClose }: { boardId: string; opened
   return (
     <Modal opened={opened} onClose={onClose} title="New Card">
       <Stack>
+        <CardFilePolicyText status={fileStatus.data} />
+        <CardFileFields visibility={visibility} onVisibility={setVisibility} notes={privateNotes} onNotes={setPrivateNotes} />
         <TextInput label="Title" value={title} onChange={(event) => setTitle(event.currentTarget.value)} />
         <Textarea label="Description" value={description} onChange={(event) => setDescription(event.currentTarget.value)} autosize minRows={3} />
         <Select

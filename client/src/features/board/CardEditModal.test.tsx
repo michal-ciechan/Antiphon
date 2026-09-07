@@ -57,6 +57,35 @@ const reasonInput = () => screen.getByLabelText(/^Reason/) as HTMLTextAreaElemen
 const saveButton = () => screen.getByRole('button', { name: 'Save' })
 
 describe('CardEditModal', () => {
+  it('failed note read never clears saved notes on unrelated edit', async () => {
+    const patch = vi.fn()
+    server.use(http.get('/api/cards/card-1/private-notes', () => HttpResponse.json({ detail: 'unavailable' }, { status: 500 })),
+      http.patch('/api/cards/card-1/content', async ({ request }) => { patch(await request.json()); return HttpResponse.json(card()) }))
+    renderEdit({ hasPrivateNotes: true })
+    await userEvent.click(screen.getByRole('button', { name: 'Edit private notes' }))
+    expect(await screen.findByText(/Private notes could not be read/)).toBeInTheDocument()
+    await userEvent.type(titleInput(), ' corrected')
+    await userEvent.type(reasonInput(), 'public correction')
+    await userEvent.click(saveButton())
+    await waitFor(() => expect(patch).toHaveBeenCalled())
+    expect(patch.mock.calls[0][0]).not.toHaveProperty('privateNotes')
+  })
+
+  it('explicit notes edit preserves whitespace and empty text clears', async () => {
+    const patch = vi.fn()
+    server.use(http.get('/api/cards/card-1/private-notes', () => HttpResponse.json({ cardId: 'card-1', privateNotes: '  C408_OLD\n', concurrencyToken: 'token-1', revisionNumber: null })),
+      http.patch('/api/cards/card-1/content', async ({ request }) => { patch(await request.json()); return HttpResponse.json(card()) }))
+    renderEdit({ hasPrivateNotes: true })
+    await userEvent.click(screen.getByRole('button', { name: 'Edit private notes' }))
+    const notes = await screen.findByLabelText('Private notes (kept in Antiphon; excluded from card files)')
+    expect(notes).toHaveValue('  C408_OLD\n')
+    await userEvent.clear(notes)
+    await userEvent.type(reasonInput(), 'remove private detail')
+    await userEvent.click(saveButton())
+    await waitFor(() => expect(patch).toHaveBeenCalled())
+    expect(patch.mock.calls[0][0].privateNotes).toBe('')
+  })
+
   it('prefills the card as it stands', () => {
     renderEdit()
     expect(titleInput()).toHaveValue('Cards cannot be corrected')

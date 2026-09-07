@@ -1,9 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import type { RepositoryVisibility } from './cardFiles'
 import { apiGet, apiPost, apiPut, apiDelete } from './client'
 
 // --- Project types ---
 
 export interface ProjectDto {
+  repositoryVisibility?: RepositoryVisibility
+  cardFileWarnings?: string[]
   id: string
   name: string
   gitRepositoryUrl: string
@@ -18,6 +21,7 @@ export interface ProjectDto {
 }
 
 export interface CreateProjectRequest {
+  repositoryVisibility?: RepositoryVisibility
   name: string
   gitRepositoryUrl: string
   localRepositoryPath?: string
@@ -29,6 +33,7 @@ export interface CreateProjectRequest {
 }
 
 export interface UpdateProjectRequest {
+  repositoryVisibility?: RepositoryVisibility
   name: string
   gitRepositoryUrl: string
   localRepositoryPath?: string

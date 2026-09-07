@@ -501,6 +501,23 @@ describe('creating a card', () => {
     }
   }
 
+  it('creates with Inherit and sends private notes separately from the public description', async () => {
+    const post = vi.fn()
+    server.use(...boardHandlers(), http.post('/api/boards/board-1/cards', async ({ request }) => {
+      post(await request.json()); return HttpResponse.json(card({ id: 'created', identifier: 'CARD-0010', title: 'Public title' }))
+    }))
+    const { title, description } = await openCreateDialog()
+    expect(screen.getByRole('textbox', { name: 'Card-file visibility' })).toHaveValue('Inherit')
+    await userEvent.type(title, 'Public title')
+    await userEvent.type(description, 'Public description')
+    await userEvent.type(screen.getByLabelText('Private notes (kept in Antiphon; excluded from card files)'), '  C408_PRIVATE  ')
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith(expect.objectContaining({ description: 'Public description', privateNotes: '  C408_PRIVATE  ', cardFileVisibility: 'Inherit' })))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New Card' })).not.toBeInTheDocument())
+    await userEvent.click(screen.getByRole('button', { name: 'New Card' }))
+    expect(screen.getByLabelText('Private notes (kept in Antiphon; excluded from card files)')).toHaveValue('')
+  })
+
   it('counts the description against the shared limit and blocks an over-limit create', async () => {
     server.use(...boardHandlers())
     const { title, description } = await openCreateDialog()

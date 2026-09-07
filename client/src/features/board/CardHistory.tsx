@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { TbAlertCircle } from 'react-icons/tb'
 import type { BoardColumnDto, CardRevisionDto } from '../../api/boards'
 import { useCardRevisions } from '../../api/boards'
+import { PrivateNotesPanel } from './CardFilePrivacy'
 import { getApiErrorMessage } from '../../api/client'
 
 interface CardHistoryProps {
@@ -53,7 +54,7 @@ export function CardHistory({ cardId, columns = [] }: CardHistoryProps) {
   return (
     <Stack gap="xs" p="sm" data-testid="card-history">
       {data.map((revision) => (
-        <RevisionRow key={revision.id} revision={revision} columns={columns} />
+        <RevisionRow key={revision.id} cardId={cardId} revision={revision} columns={columns} />
       ))}
     </Stack>
   )
@@ -77,7 +78,7 @@ const KIND_COLOR: Record<CardRevisionDto['kind'], string> = {
   Reorder: 'blue',
 }
 
-function RevisionRow({ revision, columns }: { revision: CardRevisionDto; columns: BoardColumnDto[] }) {
+function RevisionRow({ cardId, revision, columns }: { cardId: string; revision: CardRevisionDto; columns: BoardColumnDto[] }) {
   return (
     <Paper withBorder p="xs" data-testid={`revision-${revision.revisionNumber}`}>
       <Group gap={6} wrap="wrap" align="baseline">
@@ -101,7 +102,7 @@ function RevisionRow({ revision, columns }: { revision: CardRevisionDto; columns
           // never presented as an authenticated actor.
           <Text size="xs" c="dimmed">by {revision.editedBy} (self-reported)</Text>
         )}
-        {revision.kind === 'ContentEdit' && <SupersededContent revision={revision} />}
+        {revision.kind === 'ContentEdit' && <><Text size="xs">Card-file visibility was {revision.cardFileVisibility ?? 'unknown'}</Text><SupersededContent revision={revision} /><PrivateNotesPanel key={`${cardId}:${revision.revisionNumber}`} cardId={cardId} revisionNumber={revision.revisionNumber} /></>}
         {revision.kind === 'Reorder' && <SupersededReorder revision={revision} />}
         {revision.kind === 'Reopen' && <SupersededClose revision={revision} />}
       </Stack>

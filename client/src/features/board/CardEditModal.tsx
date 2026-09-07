@@ -4,6 +4,8 @@ import { useState } from 'react'
 import { CARD_LIMITS, type CardDto, type CardImportance, type CardUrgency, useUpdateCardContent } from '../../api/boards'
 import { getApiErrorMessage, getApiFieldErrors } from '../../api/client'
 import { displayIdentifier } from '../../shared/cardIdentifier'
+import { usePrivateNotes, type CardFileVisibility } from '../../api/cardFiles'
+import { CardFilePolicyText, PRIVATE_NOTES_LABEL } from './CardFilePrivacy'
 import { LimitCounter } from './LimitCounter'
 
 interface CardEditModalProps {
@@ -13,7 +15,7 @@ interface CardEditModalProps {
 }
 
 /** Which 422 keys this dialog has an input for. Anything else falls through to a notification. */
-const EDITABLE_FIELDS = ['Title', 'Description', 'Alias', 'Importance', 'Urgency', 'DueAt', 'ClearDueAt', 'Labels', 'Reason']
+const EDITABLE_FIELDS = ['Title', 'Description', 'Alias', 'Importance', 'Urgency', 'DueAt', 'ClearDueAt', 'Labels', 'Reason', 'privateNotes', 'cardFileVisibility']
 
 /** The comma-separated labels field, both ways. Consistent with the create dialog, deliberately. */
 function parseLabels(value: string): string[] {
@@ -43,6 +45,10 @@ function sameLabels(a: string[], b: string[]): boolean {
  */
 export function CardEditModal({ boardId, card, onClose }: CardEditModalProps) {
   const updateContent = useUpdateCardContent(boardId)
+  const [visibility, setVisibility] = useState<CardFileVisibility>(card.cardFileVisibility ?? 'Inherit')
+  const [notesOpen, setNotesOpen] = useState(false)
+  const [notesDraft, setNotesDraft] = useState<string | undefined>(undefined)
+  const notes = usePrivateNotes(card.id, notesOpen)
   const [title, setTitle] = useState(card.title)
   const [alias, setAlias] = useState(card.alias ?? '')
   const [description, setDescription] = useState(card.description)
@@ -70,6 +76,7 @@ export function CardEditModal({ boardId, card, onClose }: CardEditModalProps) {
     && !aliasOverWords
     && !aliasOverLimit
     && !aliasHasNewline
+    && (notesDraft === undefined || notesDraft.length <= 20000)
 
   const submit = () => {
     if (!canSubmit) return
@@ -83,6 +90,8 @@ export function CardEditModal({ boardId, card, onClose }: CardEditModalProps) {
         request: {
           concurrencyToken: card.concurrencyToken,
           reason: reason.trim(),
+          ...(notesDraft === undefined ? {} : { privateNotes: notesDraft }),
+          ...(visibility === (card.cardFileVisibility ?? 'Inherit') ? {} : { cardFileVisibility: visibility }),
           title: title.trim() === card.title ? null : title.trim(),
           description: description.trim() === card.description ? null : description.trim(),
           alias: aliasTrimmed === (card.alias ?? '') ? null : aliasTrimmed,
@@ -102,7 +111,7 @@ export function CardEditModal({ boardId, card, onClose }: CardEditModalProps) {
           onClose()
         },
         onError: (error) => {
-          // 422 carries a PascalCase-keyed dict; hang each message on its own input, and keep the
+          // 422 retains existing PascalCase keys and uses camelCase for privacy fields; keep the
           // notification for what has nowhere to land — a 409, or a key with no field here.
           const fields = getApiFieldErrors(error)
           const mapped = Object.fromEntries(
@@ -125,6 +134,12 @@ export function CardEditModal({ boardId, card, onClose }: CardEditModalProps) {
       zIndex={400}
     >
       <Stack>
+        <CardFilePolicyText status={card.cardFileStatus} />
+        <Text size="xs">Title, description, outcome and archive reasons are public fields on eligible cards.</Text>
+        <Select label="Card-file visibility" data={['Inherit', 'Private', 'Public']} value={visibility} error={fieldErrors.cardFileVisibility} onChange={(v) => setVisibility((v as CardFileVisibility) ?? 'Inherit')} />
+        <Button variant="subtle" onClick={() => setNotesOpen(!notesOpen)}>{notesOpen ? 'Hide private notes' : 'Edit private notes'}</Button>
+        {notesOpen && (notes.isError ? <Text c="red">Private notes could not be read. An unrelated edit leaves them unchanged.</Text> : notes.isPending ? <Text>Loading private notes...</Text> :
+          <Textarea label={PRIVATE_NOTES_LABEL} value={notesDraft ?? notes.data.privateNotes ?? ''} onChange={(e) => setNotesDraft(e.currentTarget.value)} error={fieldErrors.privateNotes ?? ((notesDraft?.length ?? 0) > 20000 ? 'Private notes must be at most 20000 characters.' : undefined)} autosize minRows={3} />)}
         <TextInput
           label="Title"
           value={title}

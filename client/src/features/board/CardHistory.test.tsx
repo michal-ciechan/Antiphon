@@ -95,6 +95,29 @@ function renderHistory(payload: CardRevisionDto[], withColumns = columns) {
 }
 
 describe('CardHistory', () => {
+  it.each([
+    ['C408_PRIVATE_OLD', 'C408_PRIVATE_OLD'],
+    ['', 'No private notes'],
+    [null, 'Private-note history unknown'],
+  ] as Array<[string | null, string]>)('keeps the private snapshot explicit and separate (%s)', async (notes, display) => {
+    const requests: string[] = []
+    server.use(http.get('/api/cards/card-1/private-notes', ({ request }) => {
+      requests.push(new URL(request.url).search)
+      return HttpResponse.json({ cardId: 'card-1', privateNotes: notes, concurrencyToken: 'token', revisionNumber: 7 })
+    }))
+    renderHistory([revision({ id: 'r7', revisionNumber: 7, kind: 'ContentEdit', description: 'C408_PUBLIC_OLD' })])
+    await screen.findByTestId('revision-7')
+    expect(requests).toEqual([])
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Show superseded text' }))
+    expect(screen.getByTestId('superseded-description-7')).toHaveTextContent('C408_PUBLIC_OLD')
+    expect(requests).toEqual([])
+    await user.click(screen.getByRole('button', { name: 'Inspect private-note snapshot' }))
+    expect(await screen.findByText(display)).toBeInTheDocument()
+    expect(requests).toEqual(['?revisionNumber=7'])
+    expect(screen.getByTestId('superseded-description-7')).not.toHaveTextContent('C408_PRIVATE_OLD')
+  })
+
   it('renders every kind, in the order served, off one sequence', async () => {
     renderHistory(interleaved)
 
