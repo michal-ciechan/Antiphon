@@ -10,6 +10,7 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -26,7 +27,8 @@ namespace Antiphon.Tests.Application;
 /// a delegate's terminal can never be mistaken for that task finishing.
 /// </summary>
 [Category("Integration")]
-[NotInParallel("AgentQueue")]
+// Wall recovery upserts a global kind/alias hold; its snapshot/restore must exclude all writers.
+[NotInParallel]
 public class AgentTaskReplyIntegrationTests
 {
     [Test]
@@ -2990,8 +2992,8 @@ public class AgentTaskReplyIntegrationTests
     /// <summary>
     /// The 2026-08-17 live miss, replayed under S5a-3: tasks ee0a18a5 and 27e20988 were killed by
     /// the account session limit, and both settled <c>Succeeded</c> with "You've hit your usage
-    /// limit…" stored as their Result. The error text is still not a report. A retryable class
-    /// (Wall) now defers: the task stays Working, no parent failure note, the delegate is not
+    /// limit…" stored as their Result. The error text is still not a report. A parsed session-limit
+    /// Wall defers: the task stays Working, no parent failure note, the delegate is not
     /// released.
     /// </summary>
     [Test]
@@ -3005,7 +3007,10 @@ public class AgentTaskReplyIntegrationTests
 
         await SeedApiErrorStubTurnAsync(
             sessionId, DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.");
-        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        await using var wall = await WallRecoveryFixture.CreateAsync(task, sessionId);
+        var logger = new SettlementLogger();
+        await wall.OnTurnEndAsync(CreateService(logger: logger));
+        await wall.AssertDeferredAsync();
 
         await using var verify = CreateContext();
         var deferred = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
@@ -3025,6 +3030,7 @@ public class AgentTaskReplyIntegrationTests
 
         // The delegate still owns the session for the resumed turn.
         (await verify.Agents.SingleAsync(a => a.Id == agentId)).Status.ShouldBe(AgentStatus.Running);
+        logger.SettlementFailures.ShouldBeEmpty();
     }
 
     [Test]
@@ -3039,12 +3045,16 @@ public class AgentTaskReplyIntegrationTests
         await SeedApiErrorStubTurnAsync(
             sessionId, DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.",
             narration: "I'll start by reading the spec.");
-        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        await using var wall = await WallRecoveryFixture.CreateAsync(task, sessionId);
+        var logger = new SettlementLogger();
+        await wall.OnTurnEndAsync(CreateService(logger: logger));
+        await wall.AssertDeferredAsync();
 
         await using var verify = CreateContext();
         var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
         stored.Status.ShouldBe(AgentTaskStatus.Working);
         stored.Result.ShouldBeNull("neither the error text nor the narration is this turn's report");
+        logger.SettlementFailures.ShouldBeEmpty();
     }
 
     [Test]
@@ -3054,9 +3064,16 @@ public class AgentTaskReplyIntegrationTests
         var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
 
         await SeedApiErrorStubTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id));
-        var svc = CreateService();
-        await svc.OnTurnEndAsync(sessionId, CancellationToken.None);
-        await svc.OnTurnEndAsync(sessionId, CancellationToken.None);
+        await using var wall = await WallRecoveryFixture.CreateAsync(task, sessionId);
+        var logger = new SettlementLogger();
+        var svc = CreateService(logger: logger);
+        await wall.OnTurnEndAsync(svc);
+        var first = await wall.AssertDeferredAsync();
+        await wall.OnTurnEndAsync(svc);
+        var second = await wall.AssertDeferredAsync();
+        second.Recovery.Id.ShouldBe(first.Recovery.Id);
+        second.Recovery.NextAttemptAt.ShouldBe(first.Recovery.NextAttemptAt);
+        second.Event.Id.ShouldBe(first.Event.Id);
 
         await using var verify = CreateContext();
         (await verify.AgentTaskEvents.CountAsync(
@@ -3064,6 +3081,7 @@ public class AgentTaskReplyIntegrationTests
             .ShouldBe(1, "the recovery row is the idempotency marker; a second pass must not re-enter");
         (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
             .Status.ShouldBe(AgentTaskStatus.Working);
+        logger.SettlementFailures.ShouldBeEmpty();
     }
 
     [Test]
@@ -3075,7 +3093,10 @@ public class AgentTaskReplyIntegrationTests
             workspace.Path, configure: t => t.AgentId = agentId);
 
         await SeedApiErrorStubTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id));
-        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        await using var wall = await WallRecoveryFixture.CreateAsync(task, sessionId);
+        var logger = new SettlementLogger();
+        await wall.OnTurnEndAsync(CreateService(logger: logger));
+        await wall.AssertDeferredAsync();
 
         await using var verify = CreateContext();
         var incident = await verify.AgentIncidents.SingleAsync(
@@ -3084,6 +3105,7 @@ public class AgentTaskReplyIntegrationTests
             AlertSeverity.Warning, "a Wall death with nobody waiting on a channel is loud, not critical");
         incident.Message.ShouldContain(DelegationReportFormatter.Short(task.Id));
         incident.Message.ShouldContain("NOT stored", customMessage: "the incident says what did not happen");
+        logger.SettlementFailures.ShouldBeEmpty();
     }
 
     [Test]
@@ -3111,12 +3133,16 @@ public class AgentTaskReplyIntegrationTests
         }
 
         await SeedApiErrorStubTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id));
-        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        await using var wall = await WallRecoveryFixture.CreateAsync(task, sessionId);
+        var logger = new SettlementLogger();
+        await wall.OnTurnEndAsync(CreateService(logger: logger));
+        await wall.AssertDeferredAsync();
 
         await using var verify = CreateContext();
         var incident = await verify.AgentIncidents.SingleAsync(
             i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.ApiErrorTurnDied);
         incident.Severity.ShouldBe(AlertSeverity.Critical);
+        logger.SettlementFailures.ShouldBeEmpty();
     }
 
     [Test]
@@ -3171,16 +3197,33 @@ public class AgentTaskReplyIntegrationTests
                 });
             }
             await db.SaveChangesAsync();
+            (await db.ApiErrorRecoveries.CountAsync(r => r.AgentSessionId == sessionId
+                && r.ResolvedReason == ApiErrorRecoveryReasons.Replaced)).ShouldBe(2);
         }
 
         await SeedApiErrorStubTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id));
-        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        await using var wall = await WallRecoveryFixture.CreateAsync(task, sessionId);
+        var logger = new SettlementLogger();
+        await wall.OnTurnEndAsync(CreateService(logger: logger));
+        var recovery = await wall.AssertRecoveryAsync();
+        recovery.ResolvedReason.ShouldBe(ApiErrorRecoveryReasons.WallParked);
+        recovery.ResolvedAt.ShouldNotBeNull();
+        recovery.NextAttemptAt.ShouldBeNull();
 
         await using var verify = CreateContext();
         var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
         failed.Status.ShouldBe(AgentTaskStatus.Failed);
         failed.FailureReason!.ShouldContain("WallParked");
         failed.Result.ShouldBeNull();
+        failed.CompletedAt.ShouldNotBeNull();
+        (await verify.ApiErrorRecoveries.CountAsync(r => r.AgentSessionId == sessionId)).ShouldBe(3);
+        (await verify.ApiErrorRecoveries.CountAsync(r => r.AgentSessionId == sessionId
+            && r.ResolvedReason == ApiErrorRecoveryReasons.Replaced)).ShouldBe(2);
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id
+            && e.Type == AgentTaskEventType.Failed)).ShouldBe(1);
+        (await verify.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == task.Id
+            && e.Type == AgentTaskEventType.ApiErrorDeferred)).ShouldBeFalse();
+        logger.SettlementFailures.ShouldBeEmpty();
     }
 
     [Test]
@@ -3198,13 +3241,17 @@ public class AgentTaskReplyIntegrationTests
             repo.Path, configure: t => t.AgentId = agentId);
 
         await SeedApiErrorStubTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id));
-        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        await using var wall = await WallRecoveryFixture.CreateAsync(task, sessionId);
+        var logger = new SettlementLogger();
+        await wall.OnTurnEndAsync(CreateService(logger: logger));
+        await wall.AssertDeferredAsync();
 
         await using var verify = CreateContext();
         var incident = await verify.AgentIncidents.SingleAsync(
             i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.ApiErrorTurnDied);
         incident.Message.ShouldContain(
             "uncommitted-work.cs", customMessage: "git status --short of the shared checkout rides the incident");
+        logger.SettlementFailures.ShouldBeEmpty();
     }
 
     [Test]
@@ -3309,6 +3356,201 @@ public class AgentTaskReplyIntegrationTests
         stubEnd.ApiErrorStatus = apiErrorStatus;
         db.TranscriptEntries.Add(stubEnd);
         await db.SaveChangesAsync();
+    }
+
+    [Test]
+    public async Task an_unexpected_settlement_exception_is_logged_and_releases_the_settle_lock()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+        await SeedApiErrorStubTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id));
+        await using var wall = await WallRecoveryFixture.CreateAsync(task, sessionId);
+        var logger = new SettlementLogger();
+        var service = CreateService(logger: logger);
+        var sentinel = new InvalidOperationException("CARD-0403 settlement sentinel");
+        service.DelayAfterOpenTaskLoadedAsync = (observedSessionId, _) =>
+        {
+            observedSessionId.ShouldBe(sessionId);
+            service.IsSettleInFlight(sessionId).ShouldBeTrue();
+            return Task.FromException(sentinel);
+        };
+        try
+        {
+            await wall.OnTurnEndAsync(service);
+            var entry = logger.SettlementFailures.ShouldHaveSingleItem();
+            entry.Level.ShouldBe(LogLevel.Warning);
+            entry.Message.ShouldBe($"Failed to settle a delegated task for session {sessionId}");
+            ReferenceEquals(entry.Exception, sentinel).ShouldBeTrue();
+            service.IsSettleInFlight(sessionId).ShouldBeFalse();
+            await using (var verify = CreateContext())
+            {
+                var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+                stored.Status.ShouldBe(AgentTaskStatus.Dispatched);
+                stored.Result.ShouldBeNull();
+                stored.FailureReason.ShouldBeNull();
+                stored.CompletedAt.ShouldBeNull();
+                (await verify.ApiErrorRecoveries.AnyAsync(r => r.AgentSessionId == sessionId
+                    && r.StubSequence == wall.StubSequence)).ShouldBeFalse();
+                (await verify.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == task.Id
+                    && (e.Type == AgentTaskEventType.ApiErrorDeferred || e.Type == AgentTaskEventType.Failed)))
+                    .ShouldBeFalse();
+            }
+
+            service.DelayAfterOpenTaskLoadedAsync = null;
+            await wall.OnTurnEndAsync(service);
+            await wall.AssertDeferredAsync();
+            service.IsSettleInFlight(sessionId).ShouldBeFalse();
+            logger.SettlementFailures.ShouldHaveSingleItem();
+        }
+        finally
+        {
+            service.DelayAfterOpenTaskLoadedAsync = null;
+        }
+    }
+
+    private sealed class SettlementLogger : ILogger<AgentTaskReplyService>
+    {
+        private readonly object _gate = new();
+        private readonly List<LogEntry> _entries = [];
+
+        public LogEntry[] SettlementFailures
+        {
+            get
+            {
+                lock (_gate)
+                    return _entries.Where(e => e.Message.StartsWith(
+                        "Failed to settle a delegated task for session ", StringComparison.Ordinal)).ToArray();
+            }
+        }
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            lock (_gate)
+                _entries.Add(new LogEntry(logLevel, formatter(state, exception), exception));
+        }
+
+        public sealed record LogEntry(LogLevel Level, string Message, Exception? Exception);
+    }
+
+    // Used only under this class's unkeyed NotInParallel: an upsert can overwrite even a Manual
+    // row's provenance. Snapshot before the call, capture the persisted upsert ID immediately
+    // afterwards (the production caller discards its return value), and restore/delete by ID.
+    // await using guarantees cleanup in finally, including assertion and handler failures.
+    private sealed class WallRecoveryFixture(
+        Guid taskId, Guid sessionId, long stubSequence, AgentKind kind, string alias,
+        ModelAvailabilityHold? priorHold, Guid[] priorIds) : IAsyncDisposable
+    {
+        private Guid? _holdId;
+        public long StubSequence { get; } = stubSequence;
+
+        public static async Task<WallRecoveryFixture> CreateAsync(AgentTask task, Guid sessionId)
+        {
+            await using var db = CreateContext();
+            var sequence = await db.TranscriptEntries
+                .Where(t => t.AgentSessionId == sessionId
+                    && t.Kind == TranscriptKinds.TurnEnd && t.IsApiError == true)
+                .MaxAsync(t => t.Sequence);
+            (await db.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
+            (await db.ApiErrorRecoveries.AnyAsync(r => r.AgentSessionId == sessionId
+                && r.StubSequence == sequence)).ShouldBeFalse();
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            // These fixtures have no explicit model override; recovery falls back to the task tier.
+            session.EffectiveModelId.ShouldBeNull();
+            var alias = ModelLevelAliases.For(session.AgentKind, task.ModelLevel);
+            ModelAlias.Normalize(session.AgentKind, alias).ShouldBe(alias);
+            var holds = await db.ModelAvailabilityHolds.AsNoTracking()
+                .Where(h => h.Kind == session.AgentKind && h.ModelAlias == alias).ToListAsync();
+            return new WallRecoveryFixture(task.Id, sessionId, sequence, session.AgentKind, alias,
+                holds.SingleOrDefault(h => h.ClearedAt == null), holds.Select(h => h.Id).ToArray());
+        }
+
+        public async Task OnTurnEndAsync(AgentTaskReplyService service)
+        {
+            try
+            {
+                await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+            }
+            finally
+            {
+                await using var db = CreateContext();
+                _holdId = await db.ModelAvailabilityHolds
+                    .Where(h => h.Kind == kind && h.ModelAlias == alias && h.ClearedAt == null)
+                    .Select(h => (Guid?)h.Id).SingleOrDefaultAsync();
+            }
+        }
+
+        public async Task<ApiErrorRecovery> AssertRecoveryAsync()
+        {
+            await using var db = CreateContext();
+            var recovery = (await db.ApiErrorRecoveries.AsNoTracking()
+                .Where(r => r.AgentSessionId == sessionId && r.StubSequence == StubSequence)
+                .ToListAsync()).ShouldHaveSingleItem();
+            recovery.Classification.ShouldBe(ApiErrorClassification.Wall);
+            recovery.ApiErrorClass.ShouldBe("rate_limit");
+            recovery.ApiErrorStatus.ShouldBe(429);
+            _holdId.ShouldNotBeNull("the real wall handler writes a model hold before scheduling or parking");
+            return recovery;
+        }
+
+        public async Task<(ApiErrorRecovery Recovery, AgentTaskEvent Event)> AssertDeferredAsync()
+        {
+            var recovery = await AssertRecoveryAsync();
+            recovery.ResolvedAt.ShouldBeNull();
+            recovery.ResolvedReason.ShouldBeNull();
+            recovery.NextAttemptAt.ShouldNotBeNull();
+            await using var db = CreateContext();
+            (await db.ApiErrorRecoveries.CountAsync(r => r.AgentSessionId == sessionId)).ShouldBe(1);
+            var stored = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+            stored.Status.ShouldBe(AgentTaskStatus.Working);
+            stored.Result.ShouldBeNull();
+            stored.FailureReason.ShouldBeNull();
+            stored.CompletedAt.ShouldBeNull();
+            var ev = (await db.AgentTaskEvents.AsNoTracking()
+                .Where(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.ApiErrorDeferred)
+                .ToListAsync()).ShouldHaveSingleItem();
+            ev.Detail.ShouldContain("Wall");
+            ev.Detail.ShouldContain("resume scheduled");
+            ev.Detail.ShouldContain($"seq {StubSequence}");
+            return (recovery, ev);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await using (var cleanup = CreateContext())
+            {
+                if (priorHold is not null)
+                {
+                    // Update every mapped property from the detached pre-call snapshot, including
+                    // Manual source, expiry, raw text, hit time and both provenance IDs.
+                    cleanup.ModelAvailabilityHolds.Update(priorHold);
+                    await cleanup.SaveChangesAsync();
+                }
+                else if (_holdId is { } id)
+                {
+                    await cleanup.ModelAvailabilityHolds.Where(h => h.Id == id).ExecuteDeleteAsync();
+                }
+            }
+
+            await using var verify = CreateContext();
+            var remaining = await verify.ModelAvailabilityHolds.AsNoTracking()
+                .Where(h => h.Kind == kind && h.ModelAlias == alias).ToListAsync();
+            remaining.Select(h => h.Id).Order().ShouldBe(priorIds.Order());
+            if (priorHold is not null)
+            {
+                var restored = remaining.Single(h => h.Id == priorHold.Id);
+                var expected = verify.Entry(priorHold).CurrentValues;
+                var actual = verify.Entry(restored).CurrentValues;
+                foreach (var property in expected.Properties)
+                    actual[property].ShouldBe(expected[property], $"restored hold property {property.Name}");
+            }
+            // Fresh read after cleanup: zero rows in the ordinary fixtures, or exactly the
+            // untouched baseline if a pre-existing hold belonged to someone else.
+            Console.WriteLine($"CARD-0403 hold cleanup {kind}/{alias}: {remaining.Count} rows; "
+                + $"baseline {priorIds.Length}; residual fixture rows 0");
+        }
     }
 
     /// <summary>
@@ -3500,7 +3742,8 @@ public class AgentTaskReplyIntegrationTests
     private static AgentTaskReplyService CreateService(
         TestScopeFactory? factory = null,
         DelegationSettings? settings = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        ILogger<AgentTaskReplyService>? logger = null)
     {
         settings ??= new DelegationSettings { ReplyInlineMaxChars = 20_000 };
         return new AgentTaskReplyService(
@@ -3508,7 +3751,7 @@ public class AgentTaskReplyIntegrationTests
             Options.Create(settings),
             new MockEventBus(),
             timeProvider ?? TimeProvider.System,
-            NullLogger<AgentTaskReplyService>.Instance);
+            logger ?? NullLogger<AgentTaskReplyService>.Instance);
     }
 
     private static async Task<(AgentTask Task, Guid SessionId)> SeedDispatchedTaskAsync(
@@ -4045,6 +4288,7 @@ public class AgentTaskReplyIntegrationTests
             services.AddSingleton<AgentSessionRuntime>();
             services.AddSingleton<SessionMessageQueueService>();
             services.AddSingleton<ApiErrorRecoveryService>();
+            services.AddScoped<ModelAvailability>();
             // The settle path's collaborators: merge-back, the Merge-task spawner, ephemeral cleanup.
             services.AddSingleton<Antiphon.Server.Application.Interfaces.IDelegateSessionStopper>(Stopper);
             services.AddSingleton<DelegationWorkspaceResolver>();

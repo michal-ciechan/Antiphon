@@ -78,6 +78,22 @@ pwsh -File scripts/test-duration-tripwire.ps1 -Trx path\to\run.trx
 
 The allowlist is `tests/Antiphon.Tests/slow-tests-allowlist.txt`. Every test class is tagged `Unit` xor `Integration` (`TestLaneCategoryGuardTests`).
 
+## Combined class filters (CARD-0403)
+
+For one invocation covering several named classes on the pinned TUnit 1.44 runner, use
+`/*/Antiphon.Tests.Application/(ClassA*)|(ClassB*)/*` and verify each intended class in the
+fresh TRX. Each OR operand needs its own parentheses ([TUnit filter syntax](https://tunit.dev/docs/execution/test-filters/)).
+The trailing wildcards also prevent this version's source-generated discovery from treating
+the entire OR expression as one literal class name ([pinned hint extractor](https://github.com/thomhurst/TUnit/blob/42e3be6d99bb637d21e1dac711d76991a99e49c3/TUnit.Engine/Services/MetadataFilterMatcher.cs#L164)).
+Check that the suffix patterns selected only the intended classes; do not infer coverage from
+exit zero. A failed filter can produce a fresh TRX with zero tests (native exit 8).
+
+`--list-tests --treenode-filter ...` is not scoped-execution evidence on this runner: CARD-0403
+observed all 5389 discovery entries even with a single-class filter. Require actual executed
+method names, outcomes and nonzero counters in the execution TRX. A positive-control red run
+must contain the expected assertion failures; a build failure, fixture error or zero-test run
+does not satisfy it.
+
 ## Hand-built ServiceCollections and the delegation worktree graph
 
 - **A test harness that builds its own `ServiceCollection` and resolves `AgentTaskDispatcher`, `DelegationWorktreeService`, `AgentTaskReplyService`, `DelegateBindRefusalRecovery` or `AgentReviewCheckpointService` registers the git graph through `DelegationTestServices` (`tests/Antiphon.Tests/TestHelpers/DelegationTestServices.cs`), never by hand** (CARD-0297). `services.AddDelegationWorktreeGraph(new GitSettings { WorktreeBasePath = … })` is the one registration for `IOptions<GitSettings>`, the real `WorktreeManager` and `GitService`, `GitWorkspaceService` and the scoped `DelegationWorktreeService`; `services.AddGitWorkspaceService()` is the reply-only / card-service form. Both are `TryAdd`, so a harness that already holds a fake `IWorktreeManager` (as `BridgeQueueHarness` does) keeps it, and calling the helper twice is a no-op. Do not add `AddSingleton<GitWorkspaceService>()` next to a local `CreateDispatchHarness`, and do not register `GitSettings` separately when the helper is called — pass it in. The helper assumes `AddLogging()` and a `TimeProvider` are already registered, which every dispatcher harness has. Evidence: when `DelegationWorktreeService` gained a `GitWorkspaceService` constructor dependency (c4d7e0d, 2026-08-26), eight copied harnesses went red at `GetRequiredService<AgentTaskDispatcher>()` with `No service for type 'GitWorkspaceService' has been registered` — `PinnedAgentKindTests.T3` was the one that got noticed — and seventeen more each grew their own one-liner with a CARD-0230 comment. `DelegationTestServicesTests` pins the contract: logging + a clock + the helper resolve the whole graph, and a prior one-liner or fake is not duplicated. `DelegationHarnessCensusTests` fails a new dispatcher or reply harness that skips the helper, and names the file (CARD-0244).
