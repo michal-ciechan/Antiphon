@@ -69,6 +69,16 @@ only in `claude-home` / the user profile. Named so the absence is visible:
   Do not inline `pg_dump`. `.\dev-fresh.ps1` is the nuclear reset (volume +
   `C:\Antiphon\worktrees`), not a bootstrap step.
 
+## Card files and private-note custody
+
+CARD-0408 leaves fresh databases empty of cards: markdown is never an import or
+backup. Existing backup/restore preserves private notes and revisions; dumps now
+contain those notes. Keep `backups/` ignored. For fresh projects, setup installs
+safe deny-default ignore guidance; readonly readiness warns without repair.
+See [card-file-privacy.md](card-file-privacy.md) for the managed block, manual board
+exceptions and cleanup. CARD-0409 must finish Antiphon's existing export cleanup
+before any live opt-in; this card does not change Antiphon's root `.gitignore`.
+
 ## Machine steps
 
 Dependency order. Each step points at an existing script; do not reimplement

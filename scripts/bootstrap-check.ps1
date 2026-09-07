@@ -631,6 +631,20 @@ if ($NoStack) {
     Write-Host 'Phase B skipped (-NoStack): stack health was not checked.'
 } else {
     Write-Host 'Phase B: verify-dev-stack.ps1 -SkipBrowser'
+    try {
+        $privacyApi = if ($env:ANTIPHON_API) { $env:ANTIPHON_API.TrimEnd('/') } else { 'http://localhost:17202' }
+        $privacyProjects = Invoke-RestMethod -Uri "$privacyApi/api/projects" -TimeoutSec 10
+        $privacyWarnings = @($privacyProjects | ForEach-Object { $_.cardFileWarnings } | Where-Object { $_ })
+        if ($privacyWarnings.Count -gt 0) {
+            Write-Check 'card-files' 'WARN' ($privacyWarnings -join ', ') 'Review docs/card-file-privacy.md; this check does not repair ignores or publish files.'
+        } elseif (@($privacyProjects | Where-Object { $null -eq $_.cardFileWarnings }).Count -gt 0) {
+            Write-Check 'card-files' 'WARN' 'Publication status unavailable from this server.' 'Review docs/card-file-privacy.md.'
+        } else {
+            Write-Check 'card-files' 'PASS' 'No project card-file setup warnings; publication still requires explicit opt-in.'
+        }
+    } catch {
+        Write-Check 'card-files' 'WARN' 'Project card-file readiness could not be inspected.' 'Read-only warning; retry when the API is available.'
+    }
     $verifyScript = Join-Path $repoRoot 'verify-dev-stack.ps1'
     $pwshExe = Get-PwshExePath
     if (-not (Test-Path -LiteralPath $verifyScript)) {

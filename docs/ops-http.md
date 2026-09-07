@@ -47,7 +47,9 @@ While Claude aliases are on a usage hold, a capability caller that wants to keep
 | Boards | GET | `/api/boards` (`?includeArchived=true`) |
 | One board | GET | `/api/boards/{id}` (`?view=summary`, `?includeArchived=`) |
 | A board's columns, name to id | GET | `/api/boards/{id}/columns` |
-| Sync one board's cards onto disk (one-way) | POST | `/api/boards/{id}/card-files/sync` (`?dryRun=true`) |
+| Card-file policy and cleanup state | GET | `/api/boards/{id}/card-files/status` |
+| Explicit card-file policy update | PUT | `/api/boards/{id}/card-files/settings` (both policy and expected-policy booleans) |
+| Reconcile permitted card files and revoked exports | POST | `/api/boards/{id}/card-files/sync` (`?dryRun=true`; HTTP 200 may describe a refusal) |
 | A board's cards | GET | `/api/cards?boardId={guid}` |
 | One card | GET | `/api/cards/{id}` — `CARD-0296` resolves; prefer `card.ps1 get` |
 | Queue a card diagnosis (CARD-0352) | POST | `/api/cards/{id}/diagnose` — 202 `{ queued: true }`; `card.ps1 diagnose CARD-nnnn` (`-NoWait` skips the 120 s poll). 409 `diagnose_disabled` when the seat is off. Shipped `DiagnoseLabelMode` is **Shadow** (ledger only) until flipped to Apply. |
@@ -187,3 +189,12 @@ are `scripts/card.ps1`. There is deliberately **no `scripts/agents.ps1` wrapper*
 surface is almost all GET, and the one write that bites must go through the message queue rather
 than a script that could quietly reimplement it. If turning an agent name into a guid keeps
 hurting, that is a new card, not a helper smuggled in here.
+
+## Card-file publication (CARD-0408)
+
+[Card-file privacy](card-file-privacy.md) owns opt-in settings/status/sync, the
+explicit private-notes boundary, private snapshots, revocation and cleanup.
+Boards default off and Unknown repository visibility blocks publication. Private
+notes do not appear in ordinary DTOs or generated markdown. Outcome and archive
+reasons remain public fields on eligible cards. Cleanup pending is independent of
+card/session state; disabling the feature freezes existing exports.

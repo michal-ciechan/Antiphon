@@ -167,7 +167,9 @@ POST   /api/boards/{id}/cards                create a card on this board (import
 POST   /api/boards/{id}/card-order           bulk relative order (listed cards first per rank cell; required reason; skippedHumanRated when Human-rated axes are left alone)
 GET    /api/boards/{id}/workflow   PUT /api/boards/{id}/workflow    the board's workflow YAML
 POST   /api/boards/{id}/archive | /unarchive  hide/restore a board (reason body; not a delete)
-POST   /api/boards/{id}/card-files/sync      one-way card → docs/cards/<slug>/  (?dryRun=; CardFileSyncBoardResult; 409 card_file_sync_disabled | card_file_sync_running)
+GET    /api/boards/{id}/card-files/status    read-only policy and cleanup state
+PUT    /api/boards/{id}/card-files/settings  explicit opt-in CAS; requires syncCardFiles + expectedSyncCardFiles
+POST   /api/boards/{id}/card-files/sync      reconcile permitted public fields and revoked exports (?dryRun=; 200 may refuse writes; see card-file-privacy.md)
 
 GET    /api/projects  |  /api/projects/{id}
 POST   /api/projects   PUT /api/projects/{id}   DELETE /api/projects/{id}
@@ -690,3 +692,12 @@ reference.
   which is a contract rather than an HTTP API.
 - [orchestration-loop.md](orchestration-loop.md) — what to call, in what order, to get work done.
 - [project-context.md](project-context.md) — API naming conventions and layer boundaries.
+
+## Card-file publication (CARD-0408)
+
+[Card-file privacy](card-file-privacy.md) owns opt-in settings/status/sync, the
+explicit private-notes boundary, private snapshots, revocation and cleanup.
+Boards default off and Unknown repository visibility blocks publication. Private
+notes do not appear in ordinary DTOs or generated markdown. Outcome and archive
+reasons remain public fields on eligible cards. Cleanup pending is independent of
+card/session state; disabling the feature freezes existing exports.

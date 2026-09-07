@@ -1,5 +1,8 @@
 # CARD-0004 — Card → repo card files: one-way, project repo only, committed by pathspec
 
+> Publication defaults, staging scope and revocation are superseded by
+> [CARD-0408](../../card-file-privacy.md). The original design below is historical.
+
 **Date:** 2026-09-02 (Plan pass, task 9365320f — design only; no production code changed)
 **Card:** CARD-0004 "Card -> repo task file sync" (`86b6542a-5f1e-4107-b04b-46d81c636225`, Backlog, p2)
 **Supersedes:** `docs/superpowers/specs/2026-08-09-card-task-file-sync.md` (2026-08-09). Its three
