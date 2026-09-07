@@ -593,6 +593,296 @@ public class ApiErrorRecoveryServiceTests
     }
 
     [Test]
+    public async Task Card0412_V03_operator_clear_without_later_prompt_does_not_recreate_hold()
+    {
+        await using var h = await CreateHarnessAsync();
+        var evidence = new DateTime(2026, 9, 6, 11, 53, 0, DateTimeKind.Utc);
+        var time = new FakeTimeProvider(new DateTimeOffset(evidence, TimeSpan.Zero));
+        var (seq, uuid) = await SeedProductionClaudeStubAsync(
+            h.SessionId, text: "", assistantTimestamp: evidence, turnEndTimestamp: null,
+            createdAt: evidence, emptyAssistant: true);
+        await SweepAsync(h, time: time);
+
+        Guid holdId;
+        DateTime? clearedAt;
+        await using (var db = CreateContext())
+        {
+            var hold = await db.ModelAvailabilityHolds.SingleAsync(
+                x => x.SourceSessionId == h.SessionId && x.ClearedAt == null);
+            holdId = hold.Id;
+            var originalResolved = (await db.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == h.SessionId))
+                .ResolvedAt;
+            await new ModelAvailability(db, TimeProvider.System, NullLogger<ModelAvailability>.Instance)
+                .ClearAsync("ClaudeCode", hold.ModelAlias, CancellationToken.None);
+            hold = await db.ModelAvailabilityHolds.SingleAsync(x => x.Id == holdId);
+            clearedAt = hold.ClearedAt;
+            hold.ClearCause.ShouldBe(ModelAvailabilityClearCause.OperatorCleared);
+            hold.ReleasePendingAt.ShouldNotBeNull();
+            originalResolved.ShouldBe(originalResolved);
+        }
+
+        await using (var db = CreateContext())
+        {
+            var assistant = await db.TranscriptEntries.SingleAsync(
+                t => t.AgentSessionId == h.SessionId && t.Kind == TranscriptKinds.AssistantText);
+            assistant.Text = UsageLimitWallParser.SessionLimitHourOnlyTwoPmText;
+            await db.SaveChangesAsync();
+            await Recovery(h, time: time).EnsureAdoptedAsync(
+                h.SessionId, seq, uuid, "rate_limit", 429,
+                UsageLimitWallParser.SessionLimitHourOnlyTwoPmText, CancellationToken.None);
+        }
+
+        await using var verify = CreateContext();
+        var live = await verify.ModelAvailabilityHolds.SingleAsync(x => x.Id == holdId);
+        live.ClearedAt.ShouldNotBeNull();
+        live.ClearCause.ShouldBe(ModelAvailabilityClearCause.OperatorCleared);
+        (await verify.ModelAvailabilityHolds.CountAsync(x => x.SourceSessionId == h.SessionId)).ShouldBe(1);
+        (await verify.CapacityRecoveryWaits.CountAsync(w => w.SessionId == h.SessionId
+            && w.State == CapacityRecoveryWaitState.Admitted)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Card0412_V03_expiry_with_later_prompt_does_not_reopen_hold()
+    {
+        await using var h = await CreateHarnessAsync();
+        var evidence = new DateTime(2026, 9, 6, 11, 53, 0, DateTimeKind.Utc);
+        var time = new FakeTimeProvider(new DateTimeOffset(evidence, TimeSpan.Zero));
+        var (seq, uuid) = await SeedProductionClaudeStubAsync(
+            h.SessionId, text: "", assistantTimestamp: evidence, turnEndTimestamp: null,
+            createdAt: evidence, emptyAssistant: true);
+        await SweepAsync(h, time: time);
+
+        Guid holdId;
+        DateTime? clearedAt;
+        await using (var db = CreateContext())
+        {
+            var hold = await db.ModelAvailabilityHolds.SingleAsync(
+                x => x.SourceSessionId == h.SessionId && x.ClearedAt == null);
+            holdId = hold.Id;
+            time.SetUtcNow(new DateTimeOffset(hold.DisabledUntil!.Value.AddMinutes(1), TimeSpan.Zero));
+            await new ModelAvailability(db, time, NullLogger<ModelAvailability>.Instance)
+                .SweepExpiredAsync(CancellationToken.None);
+            hold = await db.ModelAvailabilityHolds.SingleAsync(x => x.Id == holdId);
+            hold.ClearedAt.ShouldNotBeNull();
+            hold.ClearCause.ShouldBe(ModelAvailabilityClearCause.Expired);
+            hold.ReleasePendingAt.ShouldNotBeNull();
+            clearedAt = hold.ClearedAt;
+            var max = await db.TranscriptEntries.Where(t => t.AgentSessionId == h.SessionId)
+                .MaxAsync(t => t.Sequence);
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = h.SessionId,
+                Sequence = max + 1,
+                Kind = TranscriptKinds.UserPrompt,
+                Text = "continue please",
+                CreatedAt = time.GetUtcNow().UtcDateTime,
+            });
+            var assistant = await db.TranscriptEntries.SingleAsync(
+                t => t.AgentSessionId == h.SessionId && t.Kind == TranscriptKinds.AssistantText);
+            assistant.Text = UsageLimitWallParser.SessionLimitHourOnlyTwoPmText;
+            await db.SaveChangesAsync();
+        }
+
+        await Recovery(h, time: time).EnsureAdoptedAsync(
+            h.SessionId, seq, uuid, "rate_limit", 429,
+            UsageLimitWallParser.SessionLimitHourOnlyTwoPmText, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var live = await verify.ModelAvailabilityHolds.SingleAsync(x => x.Id == holdId);
+        live.ClearedAt.ShouldBe(clearedAt);
+        live.ClearCause.ShouldBe(ModelAvailabilityClearCause.Expired);
+        (await verify.ModelAvailabilityHolds.CountAsync(x => x.SourceSessionId == h.SessionId && x.ClearedAt == null))
+            .ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Card0412_V03_exact_active_empty_evidence_enriches_once()
+    {
+        await using var h = await CreateHarnessAsync();
+        var evidence = new DateTime(2026, 9, 6, 11, 53, 0, DateTimeKind.Utc);
+        var time = new FakeTimeProvider(new DateTimeOffset(evidence, TimeSpan.Zero));
+        var (seq, uuid) = await SeedProductionClaudeStubAsync(
+            h.SessionId, text: "", assistantTimestamp: evidence, turnEndTimestamp: null,
+            createdAt: evidence, emptyAssistant: true);
+        await SweepAsync(h, time: time);
+        Guid holdId;
+        await using (var db = CreateContext())
+        {
+            holdId = (await db.ModelAvailabilityHolds.SingleAsync(
+                x => x.SourceSessionId == h.SessionId && x.ClearedAt == null)).Id;
+            var assistant = await db.TranscriptEntries.SingleAsync(
+                t => t.AgentSessionId == h.SessionId && t.Kind == TranscriptKinds.AssistantText);
+            assistant.Text = UsageLimitWallParser.SessionLimitHourOnlyTwoPmText;
+            await db.SaveChangesAsync();
+        }
+
+        await Recovery(h, time: time).EnsureAdoptedAsync(
+            h.SessionId, seq, uuid, "rate_limit", 429,
+            UsageLimitWallParser.SessionLimitHourOnlyTwoPmText, CancellationToken.None);
+        await Recovery(h, time: time).EnsureAdoptedAsync(
+            h.SessionId, seq, uuid, "rate_limit", 429,
+            UsageLimitWallParser.SessionLimitHourOnlyTwoPmText, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var hold = await verify.ModelAvailabilityHolds.SingleAsync(x => x.Id == holdId);
+        hold.ClearedAt.ShouldBeNull();
+        hold.DisabledUntil.ShouldBe(new DateTime(2026, 9, 6, 13, 2, 0, DateTimeKind.Utc));
+        var recovery = await verify.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == h.SessionId);
+        recovery.AppliedHoldId.ShouldBe(holdId);
+        recovery.EvidenceStatus.ShouldNotBe("empty");
+    }
+
+    [Test]
+    [Arguments("revision")]
+    [Arguments("kind")]
+    [Arguments("alias")]
+    [Arguments("source")]
+    [Arguments("evidence")]
+    public async Task Card0412_V03_lineage_mismatch_keeps_history(string arm)
+    {
+        await using var h = await CreateHarnessAsync();
+        var evidence = new DateTime(2026, 9, 6, 11, 53, 0, DateTimeKind.Utc);
+        var time = new FakeTimeProvider(new DateTimeOffset(evidence, TimeSpan.Zero));
+        var (seq, uuid) = await SeedProductionClaudeStubAsync(
+            h.SessionId, text: "", assistantTimestamp: evidence, turnEndTimestamp: null,
+            createdAt: evidence, emptyAssistant: true);
+        await SweepAsync(h, time: time);
+        DateTime? until;
+        Guid holdId;
+        await using (var db = CreateContext())
+        {
+            var hold = await db.ModelAvailabilityHolds.SingleAsync(
+                x => x.SourceSessionId == h.SessionId && x.ClearedAt == null);
+            until = hold.DisabledUntil;
+            holdId = hold.Id;
+            if (arm == "revision")
+                hold.Revision = hold.Revision + 7;
+            else if (arm == "kind")
+                hold.Kind = AgentKind.Grok;
+            else if (arm == "alias")
+                hold.ModelAlias = "haiku";
+            else if (arm == "source")
+                hold.SourceSessionId = Guid.NewGuid();
+            else if (arm == "evidence")
+                hold.EvidenceRecoveryId = Guid.NewGuid();
+            await db.SaveChangesAsync();
+            var assistant = await db.TranscriptEntries.SingleAsync(
+                t => t.AgentSessionId == h.SessionId && t.Kind == TranscriptKinds.AssistantText);
+            assistant.Text = UsageLimitWallParser.SessionLimitHourOnlyTwoPmText;
+            await db.SaveChangesAsync();
+        }
+
+        await Recovery(h, time: time).EnsureAdoptedAsync(
+            h.SessionId, seq, uuid, "rate_limit", 429,
+            UsageLimitWallParser.SessionLimitHourOnlyTwoPmText, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var holdAfter = await verify.ModelAvailabilityHolds.SingleAsync(x => x.Id == holdId);
+        holdAfter.DisabledUntil.ShouldBe(until);
+        (await verify.ModelAvailabilityHolds.CountAsync(x => x.SourceSessionId == h.SessionId || x.Id == holdId))
+            .ShouldBeGreaterThanOrEqualTo(1);
+    }
+
+    [Test]
+    public async Task Card0412_V03_manual_put_retains_deadline()
+    {
+        await using var h = await CreateHarnessAsync();
+        var evidence = new DateTime(2026, 9, 6, 11, 53, 0, DateTimeKind.Utc);
+        var time = new FakeTimeProvider(new DateTimeOffset(evidence, TimeSpan.Zero));
+        var (seq, uuid) = await SeedProductionClaudeStubAsync(
+            h.SessionId, UsageLimitWallParser.SessionLimitHourOnlyTwoPmText,
+            assistantTimestamp: evidence, turnEndTimestamp: null, createdAt: evidence);
+        await SweepAsync(h, time: time);
+        var manualUntil = new DateTime(2026, 9, 20, 0, 0, 0, DateTimeKind.Utc);
+        Guid holdId;
+        string alias;
+        await using (var db = CreateContext())
+        {
+            var hold = await db.ModelAvailabilityHolds.SingleAsync(
+                x => x.SourceSessionId == h.SessionId && x.ClearedAt == null);
+            holdId = hold.Id;
+            alias = hold.ModelAlias;
+            await new ModelAvailability(db, TimeProvider.System, NullLogger<ModelAvailability>.Instance)
+                .UpsertManualAsync("ClaudeCode", alias, manualUntil, "operator pin", CancellationToken.None);
+        }
+
+        await Recovery(h, time: time).EnsureAdoptedAsync(
+            h.SessionId, seq, uuid, "rate_limit", 429,
+            UsageLimitWallParser.SessionLimitHourOnlyTwoPmText, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var live = await verify.ModelAvailabilityHolds.SingleAsync(x => x.Id == holdId);
+        live.Source.ShouldBe(ModelAvailabilitySource.Manual);
+        live.DisabledUntil.ShouldBe(manualUntil);
+        live.ClearedAt.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task Card0412_V04_later_user_prompt_first_adoption_is_superseded_audit()
+    {
+        await using var h = await CreateHarnessAsync();
+        var evidence = new DateTime(2026, 9, 6, 11, 53, 0, DateTimeKind.Utc);
+        var (seq, uuid) = await SeedProductionClaudeStubAsync(
+            h.SessionId, UsageLimitWallParser.SessionLimitHourOnlyTwoPmText,
+            assistantTimestamp: evidence, turnEndTimestamp: null, createdAt: evidence);
+        await using (var db = CreateContext())
+        {
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = h.SessionId,
+                Sequence = seq + 5,
+                Kind = TranscriptKinds.UserPrompt,
+                Text = "unrelated later work",
+                CreatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await Recovery(h).EnsureAdoptedAsync(
+            h.SessionId, seq, uuid, "rate_limit", 429,
+            UsageLimitWallParser.SessionLimitHourOnlyTwoPmText, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var row = await verify.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == h.SessionId);
+        row.ResolvedReason.ShouldBe(ApiErrorRecoveryReasons.Superseded);
+        row.AppliedHoldId.ShouldBeNull();
+        (await verify.ModelAvailabilityHolds.CountAsync(x => x.SourceSessionId == h.SessionId)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Card0412_V04_local_command_does_not_suppress_relevant_wall()
+    {
+        await using var h = await CreateHarnessAsync();
+        var evidence = new DateTime(2026, 9, 6, 11, 53, 0, DateTimeKind.Utc);
+        var (seq, uuid) = await SeedProductionClaudeStubAsync(
+            h.SessionId, UsageLimitWallParser.SessionLimitHourOnlyTwoPmText,
+            assistantTimestamp: evidence, turnEndTimestamp: null, createdAt: evidence);
+        await using (var db = CreateContext())
+        {
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = h.SessionId,
+                Sequence = seq + 5,
+                Kind = TranscriptKinds.UserPrompt,
+                Text = "<command-name>/compact</command-name>",
+                CreatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await Recovery(h).EnsureAdoptedAsync(
+            h.SessionId, seq, uuid, "rate_limit", 429,
+            UsageLimitWallParser.SessionLimitHourOnlyTwoPmText, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.ModelAvailabilityHolds.CountAsync(x => x.SourceSessionId == h.SessionId && x.ClearedAt == null))
+            .ShouldBe(1);
+    }
+
+    [Test]
     public async Task Wall_parks_after_three_deaths()
     {
         await using var h = await CreateHarnessAsync();

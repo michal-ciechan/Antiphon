@@ -533,9 +533,9 @@ public class AgentSupervisionTests
             $"Agent {agentId} never got a persistent session: supervision did not boot it within 15s.");
     }
 
-    private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
+    internal static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
-    private static string NewTempRoot() =>
+    internal static string NewTempRoot() =>
         Path.Combine(Path.GetTempPath(), $"antiphon-supervision-tests-{Guid.NewGuid():N}");
 
     private static async Task<AgentDetailDto> CreateNamedAlwaysOnHerdrAgentAsync(Harness harness, string tempRoot)
@@ -561,7 +561,7 @@ public class AgentSupervisionTests
         return agent;
     }
 
-    private static async Task<AgentDetailDto> CreateAlwaysOnAgentAsync(Harness harness, string tempRoot)
+    internal static async Task<AgentDetailDto> CreateAlwaysOnAgentAsync(Harness harness, string tempRoot)
     {
         var workspace = Path.Combine(tempRoot, $"agent-{Guid.NewGuid():N}");
         Directory.CreateDirectory(workspace);
@@ -644,6 +644,7 @@ public class AgentSupervisionTests
         services.AddScoped<AgentService>();
         services.AddScoped<HerdrLaunchContextResolver>();
         services.AddScoped<AgentControlService>();
+        services.AddSingleton<CapacityRecoveryService>();
         services.AddScoped<AgentSupervisorService>();
         services.AddScoped<HerdrSupervisionStateService>();
         if (includeModelAvailability)

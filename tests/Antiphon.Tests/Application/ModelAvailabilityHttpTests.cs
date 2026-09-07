@@ -106,6 +106,33 @@ public sealed class ModelAvailabilityHttpTests
             await client.DeleteAsync("/api/model-availability/ClaudeCode/%2A");
         }
     }
+
+    [Test]
+    public async Task Card0412_V06_http_delete_is_204_and_repeat_is_204()
+    {
+        using var client = _factory.CreateClient();
+        var until = DateTime.UtcNow.AddDays(1);
+        try
+        {
+            var put = await client.PutAsJsonAsync(
+                "/api/model-availability/ClaudeCode/sonnet",
+                new { disabledUntil = until.ToString("yyyy-MM-ddTHH:mm:ssZ"), reason = "v06" });
+            put.StatusCode.ShouldBe(HttpStatusCode.OK);
+            var del = await client.DeleteAsync("/api/model-availability/ClaudeCode/sonnet");
+            del.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+            var delAgain = await client.DeleteAsync("/api/model-availability/ClaudeCode/sonnet");
+            delAgain.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+            var get = await client.GetAsync("/api/model-availability");
+            var snapshot = await get.Content.ReadFromJsonAsync<JsonElement>();
+            snapshot.GetProperty("holds").EnumerateArray()
+                .Select(h => h.GetProperty("modelAlias").GetString())
+                .ShouldNotContain("sonnet");
+        }
+        finally
+        {
+            await client.DeleteAsync("/api/model-availability/ClaudeCode/sonnet");
+        }
+    }
 }
 
 public sealed class ModelAvailabilityApiWebAppFactory : AntiphonWebAppFactory;

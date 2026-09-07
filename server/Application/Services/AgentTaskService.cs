@@ -53,6 +53,7 @@ public sealed class AgentTaskService
     // CARD-0147. Optional so every harness that predates this card keeps constructing this;
     // absent, create does not consult the fleet/role cap.
     private readonly DelegationOpenGate? _openGate;
+    private readonly CapacityRecoveryService? _capacityRecovery;
 
     public AgentTaskService(
         AppDbContext db,
@@ -71,7 +72,8 @@ public sealed class AgentTaskService
         IOptions<AgentRegistrySettings>? registrySettings = null,
         DelegateCheckProbe? checkProbe = null,
         DiagnoseQueue? diagnoseQueue = null,
-        DelegationOpenGate? openGate = null)
+        DelegationOpenGate? openGate = null,
+        CapacityRecoveryService? capacityRecovery = null)
     {
         _areas = areas;
         _db = db;
@@ -90,6 +92,7 @@ public sealed class AgentTaskService
         _checkProbe = checkProbe;
         _diagnoseQueue = diagnoseQueue;
         _openGate = openGate;
+        _capacityRecovery = capacityRecovery;
     }
 
     /// <summary>
@@ -632,6 +635,8 @@ public sealed class AgentTaskService
                     }
                     catch (ModelDisabledException ex)
                     {
+                        await RegisterCreateRefusalWaitAsync(
+                            caller, agentKind, alias, request, ex, ct);
                         throw ex.WithCoda(
                             $"this work is pinned to {alias} by {RoutingPinService.Describe(pinDecision.Pin, pinDecision.CardIdentifier)} "
                             + $"(\"{pinDecision.Pin.Reason}\") — the available list does not satisfy the pin. "
@@ -777,11 +782,19 @@ public sealed class AgentTaskService
                         when (pinDecision.Applied
                             && pinDecision.Pin!.Strength == RoutingPinStrength.Required)
                     {
+                        await RegisterCreateRefusalWaitAsync(
+                            caller, agentKind, alias, request, ex, ct);
                         throw ex.WithCoda(
                             $"this work is pinned to {alias} by {RoutingPinService.Describe(pinDecision.Pin, pinDecision.CardIdentifier)} "
                             + $"(\"{pinDecision.Pin.Reason}\") — the available list does not satisfy the pin. "
                             + "Wait for the hold to clear, pass ignoreModelDisabled to queue it anyway, or "
                             + "replace the pin.");
+                    }
+                    catch (ModelDisabledException ex)
+                    {
+                        await RegisterCreateRefusalWaitAsync(
+                            caller, agentKind, alias, request, ex, ct);
+                        throw;
                     }
                 }
             }
@@ -2381,6 +2394,42 @@ public sealed class AgentTaskService
             current = next;
         }
         return false;
+    }
+
+    private async Task RegisterCreateRefusalWaitAsync(
+        Caller caller,
+        AgentKind requestedKind,
+        string alias,
+        CreateAgentTaskRequest request,
+        ModelDisabledException ex,
+        CancellationToken ct)
+    {
+        if (_capacityRecovery is null || caller.CapabilityId is not null || caller.SessionId is not { } sessionId)
+            return;
+
+        var session = await _db.AgentSessions.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == sessionId, ct);
+        if (session is null)
+            return;
+
+        var digest = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(
+                $"{requestedKind}:{alias}:{request.Role}:{request.Goal}")));
+        var callerKind = caller.Task?.AgentKind ?? session.AgentKind;
+        await _capacityRecovery.EnsureWaitOnAsync(_db, new CapacityWaitRegistration
+        {
+            ConsumerKey = $"refusal:{sessionId:N}:{digest}",
+            ConsumerKind = CapacityWaitConsumerKind.CreateRefusal,
+            ExecutionKind = callerKind,
+            RequestedKind = requestedKind,
+            RequestedAlias = alias,
+            SessionId = sessionId,
+            HoldId = ex.Hold.Id,
+            HoldRevision = ex.Hold.Revision,
+            RefusalDigest = digest,
+            BlockedAt = UtcNow(),
+        }, ct);
+        await _db.SaveChangesAsync(ct);
     }
 
     private static string BuildTitle(CreateAgentTaskRequest request)

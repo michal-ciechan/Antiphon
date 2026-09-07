@@ -379,6 +379,9 @@ public sealed class AgentTaskDispatcher
             {
                 if (active + dispatchedAgainstCap >= _settings.MaxConcurrentTasks)
                     break;
+                if (_capacityRecovery.IsEnabled
+                    && !await TryRedeemCapacityWaitAsync(retained, CapacityRedemptionPath.Dispatch, ct))
+                    continue;
                 if (!await _capacityRecovery.TryClaimCountedSlotAsync(
                         _db, _settings.MaxConcurrentTasks, retainedReturn: true, ct))
                     break;
@@ -599,6 +602,11 @@ public sealed class AgentTaskDispatcher
 
             try
             {
+                if (_capacityRecovery is { IsEnabled: true }
+                    && await HasUnfinishedCapacityWaitAsync(task, ct)
+                    && !await TryRedeemCapacityWaitAsync(task, CapacityRedemptionPath.Dispatch, ct))
+                    continue;
+
                 if (await DispatchOneAsync(task, ct))
                 {
                     dispatched++;
@@ -744,6 +752,48 @@ public sealed class AgentTaskDispatcher
             "Task {ShortId} blocked: routing exhausted at dispatch",
             DelegationReportFormatter.Short(task.Id));
         return true;
+    }
+
+    private async Task<bool> HasUnfinishedCapacityWaitAsync(AgentTask task, CancellationToken ct)
+    {
+        if (_capacityRecovery is null)
+            return false;
+        var key = $"task:{task.Id:N}";
+        return await _db.CapacityRecoveryWaits.AnyAsync(
+            w => (w.TaskId == task.Id || w.ConsumerKey == key)
+                && w.State != CapacityRecoveryWaitState.Progressed
+                && w.State != CapacityRecoveryWaitState.Canceled
+                && w.State != CapacityRecoveryWaitState.Superseded
+                && w.State != CapacityRecoveryWaitState.Exhausted,
+            ct);
+    }
+
+    private async Task<bool> TryRedeemCapacityWaitAsync(
+        AgentTask task, CapacityRedemptionPath path, CancellationToken ct)
+    {
+        if (_capacityRecovery is null)
+            return true;
+        var key = $"task:{task.Id:N}";
+        var wait = await _db.CapacityRecoveryWaits.FirstOrDefaultAsync(
+            w => (w.TaskId == task.Id || w.ConsumerKey == key)
+                && w.State != CapacityRecoveryWaitState.Progressed
+                && w.State != CapacityRecoveryWaitState.Canceled
+                && w.State != CapacityRecoveryWaitState.Superseded
+                && w.State != CapacityRecoveryWaitState.Exhausted,
+            ct);
+        if (wait is null)
+            return true;
+        if (wait.State == CapacityRecoveryWaitState.WaitingForHold)
+            return false;
+        var provider = await _db.Set<CapacityRecoveryProviderState>()
+            .FirstOrDefaultAsync(s => s.Kind == wait.ExecutionKind, ct);
+        if (provider is null
+            || provider.GrantedWaitId != wait.Id
+            || provider.GrantedActionKey != wait.ActionKey)
+            return false;
+        var result = await _capacityRecovery.RedeemAsync(
+            wait.Id, wait.ActionKey, wait.ExecutionKind, path, ct);
+        return result.Ok;
     }
 
     private async Task<int> ResumeRoutingBlockedAsync(CancellationToken ct)

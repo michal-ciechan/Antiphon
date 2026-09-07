@@ -439,7 +439,12 @@ public sealed record StartAgentRequest(
     /// The sweep is the writer; a client that copies it onto a manual start just gets the note.
     /// </summary>
     string? PolicyRefreshDelta = null,
-    bool ResetHerdrFailureHold = false);
+    bool ResetHerdrFailureHold = false,
+    /// <summary>
+    /// CARD-0412 automatic standing recovery. Must not clear human latches, Herdr holds,
+    /// or the suspend flag, and must not set ResetHerdrFailureHold / AllowUnauthenticatedProvider.
+    /// </summary>
+    bool CapacityRecovery = false);
 
 /// <summary>CARD-0213: bind a standing Herdr agent to an existing operator pane.</summary>
 public sealed record AttachHerdrPaneRequest(string PaneId);

@@ -38,6 +38,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
     private readonly ILogger<AgentSupervisorService> _logger;
     private readonly AgentSessionLaunchQueue _launchQueue;
     private readonly HerdrSupervisionStateService _herdrSupervision;
+    private readonly CapacityRecoveryService? _capacityRecovery;
 
     public AgentSupervisorService(
         AppDbContext db,
@@ -49,7 +50,8 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         TimeProvider timeProvider,
         ILogger<AgentSupervisorService> logger,
         AgentSessionLaunchQueue launchQueue,
-        HerdrSupervisionStateService? herdrSupervision = null)
+        HerdrSupervisionStateService? herdrSupervision = null,
+        CapacityRecoveryService? capacityRecovery = null)
     {
         _db = db;
         _control = control;
@@ -61,6 +63,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         _logger = logger;
         _launchQueue = launchQueue;
         _herdrSupervision = herdrSupervision ?? new HerdrSupervisionStateService(db, settings, timeProvider, launchQueue, eventBus);
+        _capacityRecovery = capacityRecovery;
     }
 
     /// <summary>Runs one supervision sweep. Returns the number of actions taken (schedules + attempts).</summary>
@@ -173,6 +176,9 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             return await CompleteAsync(false);
         }
 
+        if (await TryHandleCapacityWaitAsync(agent, state, ct) is { } capacityHandled)
+            return await CompleteAsync(capacityHandled);
+
         // Not running. Schedule a restart if none is pending.
         if (state.NextRestartAt is null)
         {
@@ -253,14 +259,32 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             var refreshed = await GetOrCreateStateAsync(agent.Id, ct);
-            refreshed.ConsecutiveFailures++;
-            var delay = Backoff(refreshed.ConsecutiveFailures);
-            refreshed.NextRestartAt = UtcNow() + delay;
-            refreshed.LastAttemptAt = now;
-            refreshed.UpdatedAt = UtcNow();
-
             if (ex is ModelDisabledException held)
             {
+                if (_capacityRecovery is not null)
+                {
+                    await _capacityRecovery.EnsureWaitOnAsync(_db, new CapacityWaitRegistration
+                    {
+                        ConsumerKey = $"agent:{agent.Id:N}",
+                        ConsumerKind = CapacityWaitConsumerKind.StandingStart,
+                        ExecutionKind = agent.Kind,
+                        RequestedKind = agent.Kind,
+                        RequestedAlias = held.Hold.ModelAlias,
+                        AgentId = agent.Id,
+                        HoldId = held.Hold.Id,
+                        HoldRevision = held.Hold.Revision,
+                        BlockedAt = UtcNow(),
+                    }, ct);
+                    refreshed.UpdatedAt = UtcNow();
+                    await _db.SaveChangesAsync(ct);
+                    return true;
+                }
+
+                refreshed.ConsecutiveFailures++;
+                var heldDelay = Backoff(refreshed.ConsecutiveFailures);
+                refreshed.NextRestartAt = UtcNow() + heldDelay;
+                refreshed.LastAttemptAt = now;
+                refreshed.UpdatedAt = UtcNow();
                 var holdKey = held.Hold.Id.ToString("D");
                 var already = await _db.AgentIncidents.AsNoTracking().AnyAsync(
                     i => i.AgentId == agent.Id
@@ -270,23 +294,31 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
                 {
                     await RecordIncidentAsync(
                         agent.Id, null, AgentIncidentKind.StartFailure, AlertSeverity.Error,
-                        $"held: {held.Hold.ModelAlias} is disabled (per-model cap); no fallback declared — next retry {refreshed.NextRestartAt:u} (backing off {Describe(delay)}).",
+                        $"held: {held.Hold.ModelAlias} is disabled (per-model cap); no fallback declared — next retry {refreshed.NextRestartAt:u} (backing off {Describe(heldDelay)}).",
                         failureReason: holdKey,
                         ct: ct);
                 }
+
+                await EscalateIfTierCrossedAsync(agent, refreshed, heldDelay, ct);
             }
             else
             {
+                refreshed.ConsecutiveFailures++;
+                var delay = Backoff(refreshed.ConsecutiveFailures);
+                refreshed.NextRestartAt = UtcNow() + delay;
+                refreshed.LastAttemptAt = now;
+                refreshed.UpdatedAt = UtcNow();
                 await RecordIncidentAsync(
                     agent.Id, null, AgentIncidentKind.StartFailure, AlertSeverity.Error,
                     $"Start attempt {attemptNumber} failed: {ex.Message} — next retry {refreshed.NextRestartAt:u} (backing off {Describe(delay)}).",
                     ct: ct);
+                await EscalateIfTierCrossedAsync(agent, refreshed, delay, ct);
             }
-            await EscalateIfTierCrossedAsync(agent, refreshed, delay, ct);
 
             _logger.LogWarning(ex,
                 "Agent {AgentName}: start attempt {Attempt} failed; next retry {NextRestartAt:u} (backoff {Delay})",
-                agent.Name, attemptNumber, refreshed.NextRestartAt, Describe(delay));
+                agent.Name, attemptNumber, refreshed.NextRestartAt,
+                refreshed.NextRestartAt is { } next ? Describe(next - UtcNow()) : "none");
 
             await _db.SaveChangesAsync(ct);
             await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
@@ -301,6 +333,73 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
                 await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
             return result;
         }
+    }
+
+    /// <summary>
+    /// CARD-0412: a capacity-waiting dead session skips the NextRestartAt-null crash ladder
+    /// and only starts when the sole granter has issued a matching grant.
+    /// </summary>
+    private async Task<bool?> TryHandleCapacityWaitAsync(
+        Agent agent, AgentSupervisionState state, CancellationToken ct)
+    {
+        if (_capacityRecovery is null || !_capacityRecovery.IsEnabled)
+            return null;
+
+        var wait = await _db.CapacityRecoveryWaits.FirstOrDefaultAsync(
+            w => w.AgentId == agent.Id
+                && w.State != CapacityRecoveryWaitState.Progressed
+                && w.State != CapacityRecoveryWaitState.Canceled
+                && w.State != CapacityRecoveryWaitState.Superseded
+                && w.State != CapacityRecoveryWaitState.Exhausted,
+            ct);
+        if (wait is null)
+        {
+            wait = await _db.CapacityRecoveryWaits.FirstOrDefaultAsync(
+                w => w.ConsumerKey == $"agent:{agent.Id:N}"
+                    && w.State != CapacityRecoveryWaitState.Progressed
+                    && w.State != CapacityRecoveryWaitState.Canceled
+                    && w.State != CapacityRecoveryWaitState.Superseded
+                    && w.State != CapacityRecoveryWaitState.Exhausted,
+                ct);
+        }
+
+        if (wait is null)
+            return null;
+
+        if (wait.State == CapacityRecoveryWaitState.WaitingForHold)
+            return false;
+
+        if (!CapacityRecoveryPolicy.IsGrantCandidate(wait) && wait.State != CapacityRecoveryWaitState.ActionPending)
+            return false;
+
+        var provider = await _db.Set<CapacityRecoveryProviderState>()
+            .FirstOrDefaultAsync(s => s.Kind == wait.ExecutionKind, ct);
+        if (provider is null
+            || provider.GrantedWaitId != wait.Id
+            || provider.GrantedActionKey != wait.ActionKey)
+            return false;
+
+        var redemption = await _capacityRecovery.RedeemAsync(
+            wait.Id, wait.ActionKey, wait.ExecutionKind, CapacityRedemptionPath.Start, ct);
+        if (!redemption.Ok)
+            return false;
+
+        if (Guid.TryParse(agent.PersistentSessionId, out var sessionId))
+        {
+            var session = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct);
+            if (session is not null && session.CapacityRecoveryActionKey == wait.ActionKey)
+                return false;
+            if (session is not null)
+                session.CapacityRecoveryActionKey = wait.ActionKey;
+        }
+
+        state.CapacityRecoveryActionKey = wait.ActionKey;
+        await _db.SaveChangesAsync(ct);
+        await _control.StartAsync(
+            agent.Id,
+            new StartAgentRequest(Fresh: false, IgnoreSubscriptionQuota: true, CapacityRecovery: true),
+            ct);
+        return true;
     }
 
     /// <summary>min(base · 2ⁿ, cap) — the never-give-up ladder.</summary>

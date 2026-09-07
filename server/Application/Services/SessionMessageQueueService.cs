@@ -42,6 +42,7 @@ public sealed class SessionMessageQueueService
     private readonly PtyDeliveryProfile? _ptyProfile;
     private readonly SessionDeliveryProfile? _sessionProfile;
     private readonly ILogger<SessionMessageQueueService> _logger;
+    private readonly CapacityRecoveryService? _capacityRecovery;
 
     public SessionMessageQueueService(
         IServiceScopeFactory scopeFactory,
@@ -53,7 +54,8 @@ public sealed class SessionMessageQueueService
         IOptions<Settings.ChannelBridgeSettings>? bridgeSettings = null,
         IOptions<DelegationSettings>? delegationSettings = null,
         PtyDeliveryProfile? ptyProfile = null,
-        SessionDeliveryProfile? sessionProfile = null)
+        SessionDeliveryProfile? sessionProfile = null,
+        CapacityRecoveryService? capacityRecovery = null)
     {
         _ptyProfile = ptyProfile;
         _sessionProfile = sessionProfile;
@@ -65,6 +67,7 @@ public sealed class SessionMessageQueueService
         _bridgeSettings = bridgeSettings?.Value ?? new Settings.ChannelBridgeSettings();
         _delegationSettings = delegationSettings?.Value ?? new DelegationSettings();
         _logger = logger;
+        _capacityRecovery = capacityRecovery;
     }
 
     /// <summary>
@@ -172,7 +175,9 @@ public sealed class SessionMessageQueueService
         // session. Ignored by Mode.Now, which has no row at all.
         bool deliverIfIdle = true,
         DateTime? holdUntil = null,
-        DateTime? executionDeadlineAt = null, Guid? executionTaskId = null)
+        DateTime? executionDeadlineAt = null, Guid? executionTaskId = null,
+        string? capacityRecoveryActionKey = null,
+        Guid? capacityWaitId = null)
     {
         var trimmed = (body ?? string.Empty).Trim();
         if (trimmed.Length == 0)
@@ -325,6 +330,14 @@ public sealed class SessionMessageQueueService
                 return await GetQueueAsync(sessionId, ct);
             }
 
+            if (!string.IsNullOrEmpty(capacityRecoveryActionKey))
+            {
+                var existingKeyed = await db.SessionQueuedMessages
+                    .FirstOrDefaultAsync(m => m.CapacityRecoveryActionKey == capacityRecoveryActionKey, ct);
+                if (existingKeyed is not null)
+                    return await GetQueueAsync(sessionId, ct);
+            }
+
             var nextSequence = (await db.SessionQueuedMessages
                 .Where(m => m.AgentSessionId == sessionId)
                 .MaxAsync(m => (long?)m.Sequence, ct) ?? 0) + 1;
@@ -346,6 +359,8 @@ public sealed class SessionMessageQueueService
                 HoldUntil = holdUntil,
                 ExecutionDeadlineAt = executionDeadlineAt,
                 ExecutionTaskId = executionTaskId,
+                CapacityRecoveryActionKey = capacityRecoveryActionKey,
+                CapacityWaitId = capacityWaitId,
             };
             db.SessionQueuedMessages.Add(row);
             await db.SaveChangesAsync(ct);
@@ -1482,6 +1497,20 @@ public sealed class SessionMessageQueueService
         pending = await ApplyCapacityHoldAsync(db, sessionId, pending, ct);
         if (pending.Count == 0)
             return FlushResult.Nothing;
+
+        if (_capacityRecovery is { IsEnabled: true }
+            && pending[0].CapacityRecoveryActionKey is { } redeemKey
+            && pending[0].CapacityWaitId is { } redeemWaitId)
+        {
+            var wait = await db.CapacityRecoveryWaits.FirstOrDefaultAsync(w => w.Id == redeemWaitId, ct);
+            if (wait is not null)
+            {
+                var result = await _capacityRecovery.RedeemAsync(
+                    wait.Id, redeemKey, wait.ExecutionKind, CapacityRedemptionPath.Queue, ct);
+                if (!result.Ok)
+                    return FlushResult.Nothing;
+            }
+        }
 
         var head = pending[0];
         var run = new List<SessionQueuedMessage> { head };
@@ -3599,6 +3628,42 @@ public sealed class SessionMessageQueueService
 
         if (!await HasTerminalCapacityHoldAsync(db, sessionId, ct))
             return pending;
+
+        if (_capacityRecovery is { IsEnabled: true })
+        {
+            var wait = await db.CapacityRecoveryWaits
+                .FirstOrDefaultAsync(
+                    w => w.SessionId == sessionId
+                        && w.State != CapacityRecoveryWaitState.Progressed
+                        && w.State != CapacityRecoveryWaitState.Canceled
+                        && w.State != CapacityRecoveryWaitState.Superseded
+                        && w.State != CapacityRecoveryWaitState.Exhausted,
+                    ct);
+            if (wait is not null)
+            {
+                var grant = await db.Set<CapacityRecoveryProviderState>()
+                    .FirstOrDefaultAsync(s => s.Kind == wait.ExecutionKind, ct);
+                if (grant is { GrantedWaitId: { } grantedId, GrantedActionKey: { } grantedKey }
+                    && grantedId == wait.Id
+                    && grantedKey == wait.ActionKey)
+                {
+                    var chosen = held
+                        .Where(m => m.CapacityRecoveryActionKey == grantedKey
+                            || m.CapacityRecoveryActionKey == null)
+                        .OrderBy(m => m.CreatedAt)
+                        .ThenBy(m => m.Sequence)
+                        .FirstOrDefault();
+                    if (chosen is not null && chosen.CapacityRecoveryActionKey is null)
+                    {
+                        chosen.CapacityRecoveryActionKey = grantedKey;
+                        chosen.CapacityWaitId = wait.Id;
+                        chosen.CapacityWaitVersion = wait.Version;
+                        wait.SelectedMessageId = chosen.Id;
+                        await db.SaveChangesAsync(ct);
+                    }
+                }
+            }
+        }
 
         var selectedKeys = held
             .Where(m => !string.IsNullOrEmpty(m.CapacityRecoveryActionKey))
