@@ -1,0 +1,386 @@
+[
+  {
+    "id": "PC-1",
+    "file": "server/Application/Services/AgentReportPolicy.cs",
+    "from": "IsTarget(task) && task.Result",
+    "to": "false && IsTarget(task) && task.Result",
+    "filter": "/*/*/OutputDistillationDeliveryTests/Modern_report_below_transport_limit_applies_with_canonical_file",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-2",
+    "file": "server/Application/Services/AgentReportPolicy.cs",
+    "from": "IsTarget(task) && task.Result",
+    "to": "settings.OutputDistillerEnabled && settings.OutputDistillerMode == OutputDistillerMode.Apply && IsTarget(task) && task.Result",
+    "filter": "/*/*/OutputDistillationDeliveryTests/Mode_and_terminal_status_preserve_report",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-3a",
+    "file": "server/Application/Services/AgentReportPolicy.cs",
+    "from": "raw.Length >= settings.DistillMinChars",
+    "to": "raw.Length > settings.DistillMinChars",
+    "filter": "/*/*/OutputDistillationDeliveryTests/Report_boundaries",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-3b",
+    "file": "server/Application/Services/OutputDistillationService.cs",
+    "from": "report.Length > _settings.DistillMaxRawChars",
+    "to": "report.Length >= _settings.DistillMaxRawChars",
+    "filter": "/*/*/OutputDistillationDeliveryTests/Report_boundaries",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-4",
+    "file": "server/Application/Services/AgentReportPolicy.cs",
+    "from": "raw.Length >= settings.DistillMinChars",
+    "to": "System.Text.Encoding.UTF8.GetByteCount(raw) >= settings.DistillMinChars",
+    "filter": "/*/*/OutputDistillationPolicyTests/Unicode_length_is_not_utf8_bytes_or_tokens",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-5",
+    "file": "server/Infrastructure/Files/AgentReportStore.cs",
+    "from": "Path.Combine(main, \".antiphon\", \"reports\")",
+    "to": "Path.Combine(task.WorkingDirectory, \".antiphon\", \"reports\")",
+    "filter": "/*/*/OutputDistillationDeliveryTests/Canonical_file_survives_worktree_removal_and_provider_recreation",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-6",
+    "file": "server/Infrastructure/Files/AgentReportStore.cs",
+    "from": "task.Id.ToString(\"D\")",
+    "to": "DelegationReportFormatter.Short(task.Id)",
+    "filter": "/*/*/AgentReportStoreTests/Exact_content_and_full_ids_own_distinct_files",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-7",
+    "file": "server/Infrastructure/Files/AgentReportStore.cs",
+    "from": "Convert.ToHexStringLower(SHA256.HashData(bytes))",
+    "to": "DelegationNoteDigest.Compute(raw)",
+    "filter": "/*/*/AgentReportStoreTests/Exact_content_and_full_ids_own_distinct_files",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-8a",
+    "file": "server/Infrastructure/Files/AgentReportStore.cs",
+    "from": "trackedCode != 0 || tracked.Length != 0",
+    "to": "trackedCode != 0",
+    "filter": "/*/*/AgentReportStoreTests/Ignore_and_tracking_are_checked_before_writing",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-9b",
+    "file": "server/Infrastructure/Files/AgentReportStore.cs",
+    "from": "!Within(root, Path.GetTempPath())",
+    "to": "true",
+    "filter": "/*/*/AgentReportStoreTests/Root_selection_requires_a_durable_owned_location",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-10",
+    "file": "server/Infrastructure/Files/AgentReportStore.cs",
+    "from": "if (await IsUsableAsync(path, raw, token)) return new(path, null);",
+    "to": "if (File.Exists(path)) return new(path, null);",
+    "filter": "/*/*/AgentReportStoreTests/Publication_exposes_only_a_complete_verified_report",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-11",
+    "file": "server/Infrastructure/Files/AgentReportStore.cs",
+    "from": "temporary = path + \".\" + Guid.NewGuid().ToString(\"N\") + \".tmp\";",
+    "to": "temporary = path;",
+    "filter": "/*/*/AgentReportStoreTests/Publication_exposes_only_a_complete_verified_report",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-12a",
+    "file": "server/Infrastructure/Files/AgentReportStore.cs",
+    "from": "var token = budget.Token;",
+    "to": "var token = CancellationToken.None;",
+    "filter": "/*/*/AgentReportStoreTests/Failures_and_cancellation_never_publish_a_bad_pointer",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-12b",
+    "file": "server/Infrastructure/Files/AgentReportStore.cs",
+    "from": "if (path.Length > 1000) return Unavailable(\"path-too-long\");",
+    "to": "if (false) return Unavailable(\"path-too-long\");",
+    "filter": "/*/*/AgentReportStoreTests/Paths_over_the_persisted_limit_are_unavailable",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-13",
+    "file": "server/Application/Services/OutputDistillation.cs",
+    "from": "DelegationReportFormatter.FullReportPointer(source, usablePath)",
+    "to": "DelegationReportFormatter.FullReportPointer(source, null)",
+    "filter": "/*/*/OutputDistillationDeliveryTests/Modern_report_below_transport_limit_applies_with_canonical_file",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-14a",
+    "file": "server/Application/Services/SessionMessageQueueService.cs",
+    "from": "&& await store.IsUsableAsync(snapshot.ResultFilePath, snapshot.Result ?? \"\", token)",
+    "to": "&& (true || await store.IsUsableAsync(snapshot.ResultFilePath, snapshot.Result ?? \"\", token))",
+    "filter": "/*/*/OutputDistillationDeliveryTests/Unusable_file_uses_api_recovery",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-14b",
+    "file": "server/Application/Services/SessionMessageQueueService.cs",
+    "from": "source.ResultFilePath == usablePath && source.Result == snapshot?.Result",
+    "to": "true",
+    "filter": "/*/*/OutputDistillationApplyRaceTests/Path_changed_after_validation_cannot_publish_stale_pointer",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-15",
+    "file": "server/Application/Services/DelegationReportFormatter.cs",
+    "from": "if (attachments.Count > 0) body +=",
+    "to": "if (false) body +=",
+    "filter": "/*/*/OutputDistillationDeliveryTests/Apply_preserves_handoff_warnings_and_generated_deliverables",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-16",
+    "file": "server/Application/Services/SessionMessageQueueService.cs",
+    "from": "await transaction.CommitAsync(token);\n                return null;",
+    "to": "await db.AgentTasks.Where(t => t.Id == source.Id).ExecuteUpdateAsync(s => s.SetProperty(t => t.Result, distilled), token);\n                await transaction.CommitAsync(token);\n                return null;",
+    "filter": "/*/*/OutputDistillationDeliveryTests/Modern_report_below_transport_limit_applies_with_canonical_file",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-17",
+    "file": "server/Application/Services/OutputDistillationService.cs",
+    "from": "if (!gate.Passed)",
+    "to": "if (false && !gate.Passed)",
+    "filter": "/*/*/OutputDistillationDeliveryTests/Fallback_delivers_original_raw_or_marked_excerpt",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-18a",
+    "file": "server/Application/Services/SessionMessageQueueService.cs",
+    "from": "note.SourceTaskId != request.TaskId || note.ContentDigest != digest",
+    "to": "note.ContentDigest != digest",
+    "filter": "/*/*/OutputDistillationApplyRaceTests/Apply_eligibility_matrix",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-18b",
+    "file": "server/Application/Services/SessionMessageQueueService.cs",
+    "from": "note.SourceTaskId != request.TaskId || note.ContentDigest != digest",
+    "to": "note.SourceTaskId != request.TaskId",
+    "filter": "/*/*/OutputDistillationApplyRaceTests/Apply_eligibility_matrix",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-18c",
+    "file": "server/Application/Services/SessionMessageQueueService.cs",
+    "from": "|| DelegationNoteDigest.Compute(source.Result ?? source.FailureReason ?? \"\") != digest",
+    "to": "|| false",
+    "filter": "/*/*/OutputDistillationApplyRaceTests/Apply_eligibility_matrix",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-18d",
+    "file": "server/Application/Services/SessionMessageQueueService.cs",
+    "from": "|| note.Origin != QueuedMessageOrigin.Delegation",
+    "to": "|| false",
+    "filter": "/*/*/OutputDistillationApplyRaceTests/Apply_eligibility_matrix",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-19a",
+    "file": "server/Application/Services/SessionMessageQueueService.cs",
+    "from": "note.Status != QueuedMessageStatus.Pending || note.DeliveryAttempts != 0",
+    "to": "note.DeliveryAttempts != 0",
+    "filter": "/*/*/OutputDistillationApplyRaceTests/Apply_eligibility_matrix",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-19b",
+    "file": "server/Application/Services/SessionMessageQueueService.cs",
+    "from": "note.Status != QueuedMessageStatus.Pending || note.DeliveryAttempts != 0",
+    "to": "note.Status != QueuedMessageStatus.Pending",
+    "filter": "/*/*/OutputDistillationApplyRaceTests/Apply_eligibility_matrix",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-19c",
+    "file": "server/Application/Services/SessionMessageQueueService.cs",
+    "from": "if (request.Mode != OutputDistillerMode.Apply) return \"shadow\";",
+    "to": "if (false) return \"shadow\";",
+    "filter": "/*/*/OutputDistillationApplyRaceTests/Apply_eligibility_matrix",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-20a",
+    "file": "server/Application/Services/SessionMessageQueueService.cs",
+    "from": "if (source.LastPolledResultHash == digest) return \"full-report-read\";",
+    "to": "if (false) return \"full-report-read\";",
+    "filter": "/*/*/OutputDistillationApplyRaceTests/Apply_eligibility_matrix",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-23a",
+    "file": "server/Application/Services/SessionMessageQueueService.cs",
+    "from": "if (AfterReportValidationAsync is not null) await AfterReportValidationAsync(token);",
+    "to": "if (AfterReportValidationAsync is not null) await AfterReportValidationAsync(token);\n            request = request with { DeadlineAt = _timeProvider.GetUtcNow().AddSeconds(45) };",
+    "filter": "/*/*/OutputDistillationApplyRaceTests/File_validation_consumes_original_deadline",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-23b",
+    "file": "server/Application/Services/SessionMessageQueueService.cs",
+    "from": "_timeProvider.GetUtcNow() >= request.DeadlineAt",
+    "to": "_timeProvider.GetUtcNow() > request.DeadlineAt",
+    "filter": "/*/*/OutputDistillationApplyRaceTests/File_validation_consumes_original_deadline",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-24a",
+    "file": "server/Application/Services/SessionMessageQueueService.cs",
+    "from": "if (BeforeDistillationUpdateAsync is not null) await BeforeDistillationUpdateAsync(token);\n                if (_timeProvider.GetUtcNow() >= request.DeadlineAt) return \"deadline\";",
+    "to": "if (BeforeDistillationUpdateAsync is not null) await BeforeDistillationUpdateAsync(token);",
+    "filter": "/*/*/OutputDistillationApplyRaceTests/Equality_and_postlock_expiry_never_apply",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-24b",
+    "file": "server/Application/Services/SessionMessageQueueService.cs",
+    "from": "AND clock_timestamp() < {deadline}",
+    "to": "",
+    "filter": "/*/*/OutputDistillationApplyRaceTests/Database_clock_rejects_an_expired_body_update",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-27",
+    "file": "server/Application/Services/SessionMessageQueueService.cs",
+    "from": "PromptSubmissionMatch.IsCompleteIn(body, recordText)",
+    "to": "true",
+    "filter": "/*/*/SessionMessageQueueDeliveryVerificationTests/A_clipped_prefix_parks_as_truncated_not_sent",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-29a",
+    "file": "server/Application/Services/OutputDistillationGate.cs",
+    "from": "missing.Add(\"next:\" + parsed.RawToken.Trim());",
+    "to": "_ = parsed.RawToken;",
+    "filter": "/*/*/OutputDistillationGateTests/dropping_next_or_handoff_from_a_present_block_is_over_compressed",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-29b",
+    "file": "server/Application/Services/OutputDistillationGate.cs",
+    "from": "missing.Add(\"handoff:\");",
+    "to": "_ = parsed.Handoff;",
+    "filter": "/*/*/OutputDistillationGateTests/dropping_next_or_handoff_from_a_present_block_is_over_compressed",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-8b",
+    "file": "server/Infrastructure/Files/AgentReportStore.cs",
+    "from": "return await IgnoredAsync();",
+    "to": "return true;",
+    "filter": "/*/*/AgentReportStoreTests/Ignore_and_tracking_are_checked_before_writing",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-9a",
+    "file": "server/Infrastructure/Files/AgentReportStore.cs",
+    "from": "    private async Task<string?> ResolveRootAsync(AgentTask task, CancellationToken ct)\n    {\n        foreach (var candidate in new[] { task.RepoPath, task.WorkingDirectory }.Distinct())\n        {\n            if (string.IsNullOrWhiteSpace(candidate) || !Directory.Exists(candidate)) continue;\n            var info = await git.GetWorkspaceInfoAsync(candidate, ct);\n            if (!info.IsGitRepository || info.RepoRoot is null) continue;\n            var main = Path.GetFullPath(info.RepoRoot);\n            // GetWorkspaceInfo's odd-layout fallback is not evidence of a primary checkout.\n            if (!Directory.Exists(Path.Combine(main, \".git\"))) continue;\n            var (code, common, _) = await git.RunReadOnlyAsync(main, ct,\n                \"rev-parse\", \"--path-format=absolute\", \"--git-common-dir\");\n            if (code != 0 || !SamePath(common.Trim(), Path.Combine(main, \".git\"))) continue;\n            var root = Path.Combine(main, \".antiphon\", \"reports\");\n            if (IsPersistent(root, task)) return root;\n        }\n        var configured = settings.Value.ReportStorageRoot;\n        if (string.IsNullOrWhiteSpace(configured) || !Path.IsPathFullyQualified(configured)) return null;\n        var full = Path.GetFullPath(configured);\n        if (!IsPersistent(full, task)) return null;\n        var existing = ExistingAncestor(full);\n        if (existing is null) return null;\n        var top = await git.GetRepoToplevelAsync(existing, ct);\n        // Even an unrelated linked worktree is not a persistent override.\n        if (top is not null && !Directory.Exists(Path.Combine(top, \".git\"))) return null;\n        return full;\n    }\n\n    private static bool IsPersistent(string root, AgentTask task) =>\n        !Within(root, Path.GetTempPath())\n        && (string.IsNullOrWhiteSpace(task.WorktreePath) || !Within(root, task.WorktreePath))\n        && !HasReparseAncestor(root);\n\n",
+    "to": "    private async Task<string?> ResolveRootAsync(AgentTask task, CancellationToken ct)\n    {\n        foreach (var candidate in new[] { task.RepoPath, task.WorkingDirectory }.Distinct())\n        {\n            if (string.IsNullOrWhiteSpace(candidate) || !Directory.Exists(candidate)) continue;\n            var info = await git.GetWorkspaceInfoAsync(candidate, ct);\n            if (!info.IsGitRepository || info.RepoRoot is null) continue;\n            var main = Path.GetFullPath(info.RepoRoot);\n            // GetWorkspaceInfo's odd-layout fallback is not evidence of a primary checkout.\n            if (!Directory.Exists(Path.Combine(main, \".git\"))) continue;\n            var (code, common, _) = await git.RunReadOnlyAsync(main, ct,\n                \"rev-parse\", \"--path-format=absolute\", \"--git-common-dir\");\n            if (code != 0 || !SamePath(common.Trim(), Path.Combine(main, \".git\"))) continue;\n            var root = Path.Combine(main, \".antiphon\", \"reports\");\n            if (IsPersistent(root, task)) return root;\n        }\n        var configured = settings.Value.ReportStorageRoot;\n        if (string.IsNullOrWhiteSpace(configured) || !Path.IsPathFullyQualified(configured)) return null;\n        var full = Path.GetFullPath(configured);\n        if (!IsPersistent(full, task)) return null;\n        var existing = ExistingAncestor(full);\n        if (existing is null) return null;\n        var top = await git.GetRepoToplevelAsync(existing, ct);\n        // Even an unrelated linked worktree is not a persistent override.\n        // PC: omit redundant linked-worktree persistence refusal.\n        return full;\n    }\n\n    private static bool IsPersistent(string root, AgentTask task) =>\n        !Within(root, Path.GetTempPath())\n        && true\n        && !HasReparseAncestor(root);\n\n",
+    "filter": "/*/*/AgentReportStoreTests/Root_selection_requires_a_durable_owned_location",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-9c",
+    "file": "server/Infrastructure/Files/AgentReportStore.cs",
+    "from": "string.IsNullOrWhiteSpace(configured) || !Path.IsPathFullyQualified(configured)",
+    "to": "string.IsNullOrWhiteSpace(configured)",
+    "filter": "/*/*/AgentReportStoreTests/Root_selection_requires_a_durable_owned_location",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-20b",
+    "file": "server/Application/Services/SessionMessageQueueService.cs",
+    "from": "$\"SELECT * FROM \\\"AgentTasks\\\" WHERE \\\"Id\\\" = {request.TaskId} FOR UPDATE\"",
+    "to": "$\"SELECT * FROM \\\"AgentTasks\\\" WHERE \\\"Id\\\" = {request.TaskId}\"",
+    "filter": "/*/*/OutputDistillationApplyRaceTests/Source_row_lock_prevents_a_poll_commit_between_read_and_apply",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-21",
+    "file": "server/Application/Services/SessionMessageQueueService.cs",
+    "from": "    public async Task<string?> TryApplyDistillationAsync(\n        DistillRequest request, string digest, string distilled, CancellationToken ct)\n    {\n        if (request.Mode != OutputDistillerMode.Apply) return \"shadow\";\n        if (request.QueuedMessageId is not Guid noteId) return \"note-missing\";\n        if (_timeProvider.GetUtcNow() >= request.DeadlineAt) return \"deadline\";\n        using var budget = new ExecutionBudget(request.DeadlineAt, _timeProvider, ct);\n        try\n        {\n            var token = budget.Token;\n            await using var scope = _scopeFactory.CreateAsyncScope();\n            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();\n            var sessionId = await db.SessionQueuedMessages.Where(m => m.Id == noteId)\n                .Select(m => (Guid?)m.AgentSessionId).FirstOrDefaultAsync(token);\n            if (sessionId is not Guid session) return \"note-missing\";\n            // Disk validation consumes the original request budget, before the delivery/DB locks.\n            // Read an untracked snapshot so the locked read below actually observes a changed path.\n            var snapshot = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == request.TaskId, token);\n            var store = scope.ServiceProvider.GetService<IAgentReportStore>();\n            var usablePath = snapshot is not null && store is not null\n                && await store.IsUsableAsync(snapshot.ResultFilePath, snapshot.Result ?? \"\", token)\n                    ? snapshot.ResultFilePath : null;\n            IReadOnlyList<string> attachments;\n            try { attachments = snapshot is null ? [] : DeliverableBundleService.ListAttachableFiles(snapshot); }\n            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return \"metadata-unavailable\"; }\n            if (AfterReportValidationAsync is not null) await AfterReportValidationAsync(token);\n            var sem = GetLock(session);\n            await sem.WaitAsync(token);\n            try\n            {\n                if (_timeProvider.GetUtcNow() >= request.DeadlineAt) return \"deadline\";\n                await using var transaction = await db.Database.BeginTransactionAsync(token);\n                var milliseconds = Math.Max(1, (long)(request.DeadlineAt - _timeProvider.GetUtcNow()).TotalMilliseconds);\n                await db.Database.ExecuteSqlInterpolatedAsync(\n                    $\"SELECT set_config('statement_timeout', {milliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture)}, true)\", token);\n                // The source row lock also orders this decision against full-report polling.\n                var source = await db.AgentTasks.FromSqlInterpolated(\n                    $\"SELECT * FROM \\\"AgentTasks\\\" WHERE \\\"Id\\\" = {request.TaskId} FOR UPDATE\")\n                    .SingleOrDefaultAsync(token);\n                var note = await db.SessionQueuedMessages.FromSqlInterpolated(\n                    $\"SELECT * FROM \\\"SessionQueuedMessages\\\" WHERE \\\"Id\\\" = {noteId} FOR UPDATE\")\n                    .SingleOrDefaultAsync(token);\n                if (source is null || note is null) return \"note-missing\";\n                if (note.SourceTaskId != request.TaskId || note.ContentDigest != digest\n                    || note.Origin != QueuedMessageOrigin.Delegation\n                    || DelegationNoteDigest.Compute(source.Result ?? source.FailureReason ?? \"\") != digest)\n                    return \"identity\";\n                if (note.Status != QueuedMessageStatus.Pending || note.DeliveryAttempts != 0) return \"delivery-claimed\";\n                if (source.LastPolledResultHash == digest) return \"full-report-read\";\n                if (source.DeliverableBundleDir != snapshot?.DeliverableBundleDir\n                    || source.DeliverablePdfPath != snapshot?.DeliverablePdfPath) return \"metadata-changed\";\n                if (BeforeDistillationUpdateAsync is not null) await BeforeDistillationUpdateAsync(token);\n                if (_timeProvider.GetUtcNow() >= request.DeadlineAt) return \"deadline\";\n                var header = string.IsNullOrWhiteSpace(note.NoteHeader) ? \"\" : note.NoteHeader.TrimEnd();\n                var selectedPath = source.ResultFilePath == usablePath && source.Result == snapshot?.Result\n                    ? usablePath : null;\n                var body = DelegationReportFormatter.BuildDistilledNoteBody(header, distilled, source, selectedPath, attachments);\n                var deadline = request.DeadlineAt.UtcDateTime;\n                var changed = await db.Database.ExecuteSqlInterpolatedAsync(\n                    $\"UPDATE \\\"SessionQueuedMessages\\\" SET \\\"Body\\\" = {body}, \\\"HoldUntil\\\" = NULL WHERE \\\"Id\\\" = {noteId} AND clock_timestamp() < {deadline}\", token);\n                if (changed == 0 || _timeProvider.GetUtcNow() >= request.DeadlineAt) return \"deadline\";\n                await transaction.CommitAsync(token);\n                return null;\n            }\n            finally { sem.Release(); }\n        }\n        catch (OperationCanceledException) when (!ct.IsCancellationRequested && budget.Token.IsCancellationRequested) { return \"deadline\"; }\n        catch (Npgsql.PostgresException ex) when (ex.SqlState == \"57014\" && !ct.IsCancellationRequested)\n        { return \"deadline\"; }\n    }\n\n",
+    "to": "    public async Task<string?> TryApplyDistillationAsync(\n        DistillRequest request, string digest, string distilled, CancellationToken ct)\n    {\n        if (request.Mode != OutputDistillerMode.Apply) return \"shadow\";\n        if (request.QueuedMessageId is not Guid noteId) return \"note-missing\";\n        if (_timeProvider.GetUtcNow() >= request.DeadlineAt) return \"deadline\";\n        using var budget = new ExecutionBudget(request.DeadlineAt, _timeProvider, ct);\n        try\n        {\n            var token = budget.Token;\n            await using var scope = _scopeFactory.CreateAsyncScope();\n            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();\n            var sessionId = await db.SessionQueuedMessages.Where(m => m.Id == noteId)\n                .Select(m => (Guid?)m.AgentSessionId).FirstOrDefaultAsync(token);\n            if (sessionId is not Guid session) return \"note-missing\";\n            // Disk validation consumes the original request budget, before the delivery/DB locks.\n            // Read an untracked snapshot so the locked read below actually observes a changed path.\n            var snapshot = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == request.TaskId, token);\n            var store = scope.ServiceProvider.GetService<IAgentReportStore>();\n            var usablePath = snapshot is not null && store is not null\n                && await store.IsUsableAsync(snapshot.ResultFilePath, snapshot.Result ?? \"\", token)\n                    ? snapshot.ResultFilePath : null;\n            IReadOnlyList<string> attachments;\n            try { attachments = snapshot is null ? [] : DeliverableBundleService.ListAttachableFiles(snapshot); }\n            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return \"metadata-unavailable\"; }\n            if (AfterReportValidationAsync is not null) await AfterReportValidationAsync(token);\n            var sem = GetLock(session);\n            await Task.CompletedTask;\n            try\n            {\n                if (_timeProvider.GetUtcNow() >= request.DeadlineAt) return \"deadline\";\n                await using var transaction = await db.Database.BeginTransactionAsync(token);\n                var milliseconds = Math.Max(1, (long)(request.DeadlineAt - _timeProvider.GetUtcNow()).TotalMilliseconds);\n                await db.Database.ExecuteSqlInterpolatedAsync(\n                    $\"SELECT set_config('statement_timeout', {milliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture)}, true)\", token);\n                // The source row lock also orders this decision against full-report polling.\n                var source = await db.AgentTasks.FromSqlInterpolated(\n                    $\"SELECT * FROM \\\"AgentTasks\\\" WHERE \\\"Id\\\" = {request.TaskId} FOR UPDATE\")\n                    .SingleOrDefaultAsync(token);\n                var note = await db.SessionQueuedMessages.FromSqlInterpolated(\n                    $\"SELECT * FROM \\\"SessionQueuedMessages\\\" WHERE \\\"Id\\\" = {noteId} FOR UPDATE\")\n                    .SingleOrDefaultAsync(token);\n                if (source is null || note is null) return \"note-missing\";\n                if (note.SourceTaskId != request.TaskId || note.ContentDigest != digest\n                    || note.Origin != QueuedMessageOrigin.Delegation\n                    || DelegationNoteDigest.Compute(source.Result ?? source.FailureReason ?? \"\") != digest)\n                    return \"identity\";\n                if (note.Status != QueuedMessageStatus.Pending || note.DeliveryAttempts != 0) return \"delivery-claimed\";\n                if (source.LastPolledResultHash == digest) return \"full-report-read\";\n                if (source.DeliverableBundleDir != snapshot?.DeliverableBundleDir\n                    || source.DeliverablePdfPath != snapshot?.DeliverablePdfPath) return \"metadata-changed\";\n                if (BeforeDistillationUpdateAsync is not null) await BeforeDistillationUpdateAsync(token);\n                if (_timeProvider.GetUtcNow() >= request.DeadlineAt) return \"deadline\";\n                var header = string.IsNullOrWhiteSpace(note.NoteHeader) ? \"\" : note.NoteHeader.TrimEnd();\n                var selectedPath = source.ResultFilePath == usablePath && source.Result == snapshot?.Result\n                    ? usablePath : null;\n                var body = DelegationReportFormatter.BuildDistilledNoteBody(header, distilled, source, selectedPath, attachments);\n                var deadline = request.DeadlineAt.UtcDateTime;\n                var changed = await db.Database.ExecuteSqlInterpolatedAsync(\n                    $\"UPDATE \\\"SessionQueuedMessages\\\" SET \\\"Body\\\" = {body}, \\\"HoldUntil\\\" = NULL WHERE \\\"Id\\\" = {noteId} AND clock_timestamp() < {deadline}\", token);\n                if (changed == 0 || _timeProvider.GetUtcNow() >= request.DeadlineAt) return \"deadline\";\n                await transaction.CommitAsync(token);\n                return null;\n            }\n            finally { }\n        }\n        catch (OperationCanceledException) when (!ct.IsCancellationRequested && budget.Token.IsCancellationRequested) { return \"deadline\"; }\n        catch (Npgsql.PostgresException ex) when (ex.SqlState == \"57014\" && !ct.IsCancellationRequested)\n        { return \"deadline\"; }\n    }\n\n",
+    "filter": "/*/*/OutputDistillationApplyRaceTests/Apply_owns_the_delivery_session_lock_until_commit",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-22",
+    "file": "server/Application/Services/SessionMessageQueueService.cs",
+    "from": "    public async Task<string?> TryApplyDistillationAsync(\n        DistillRequest request, string digest, string distilled, CancellationToken ct)\n    {\n        if (request.Mode != OutputDistillerMode.Apply) return \"shadow\";\n        if (request.QueuedMessageId is not Guid noteId) return \"note-missing\";\n        if (_timeProvider.GetUtcNow() >= request.DeadlineAt) return \"deadline\";\n        using var budget = new ExecutionBudget(request.DeadlineAt, _timeProvider, ct);\n        try\n        {\n            var token = budget.Token;\n            await using var scope = _scopeFactory.CreateAsyncScope();\n            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();\n            var sessionId = await db.SessionQueuedMessages.Where(m => m.Id == noteId)\n                .Select(m => (Guid?)m.AgentSessionId).FirstOrDefaultAsync(token);\n            if (sessionId is not Guid session) return \"note-missing\";\n            // Disk validation consumes the original request budget, before the delivery/DB locks.\n            // Read an untracked snapshot so the locked read below actually observes a changed path.\n            var snapshot = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == request.TaskId, token);\n            var store = scope.ServiceProvider.GetService<IAgentReportStore>();\n            var usablePath = snapshot is not null && store is not null\n                && await store.IsUsableAsync(snapshot.ResultFilePath, snapshot.Result ?? \"\", token)\n                    ? snapshot.ResultFilePath : null;\n            IReadOnlyList<string> attachments;\n            try { attachments = snapshot is null ? [] : DeliverableBundleService.ListAttachableFiles(snapshot); }\n            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return \"metadata-unavailable\"; }\n            if (AfterReportValidationAsync is not null) await AfterReportValidationAsync(token);\n            var sem = GetLock(session);\n            await sem.WaitAsync(token);\n            try\n            {\n                if (_timeProvider.GetUtcNow() >= request.DeadlineAt) return \"deadline\";\n                await using var transaction = await db.Database.BeginTransactionAsync(token);\n                var milliseconds = Math.Max(1, (long)(request.DeadlineAt - _timeProvider.GetUtcNow()).TotalMilliseconds);\n                await db.Database.ExecuteSqlInterpolatedAsync(\n                    $\"SELECT set_config('statement_timeout', {milliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture)}, true)\", token);\n                // The source row lock also orders this decision against full-report polling.\n                var source = await db.AgentTasks.FromSqlInterpolated(\n                    $\"SELECT * FROM \\\"AgentTasks\\\" WHERE \\\"Id\\\" = {request.TaskId} FOR UPDATE\")\n                    .SingleOrDefaultAsync(token);\n                var note = await db.SessionQueuedMessages.FromSqlInterpolated(\n                    $\"SELECT * FROM \\\"SessionQueuedMessages\\\" WHERE \\\"Id\\\" = {noteId} FOR UPDATE\")\n                    .SingleOrDefaultAsync(token);\n                if (source is null || note is null) return \"note-missing\";\n                if (note.SourceTaskId != request.TaskId || note.ContentDigest != digest\n                    || note.Origin != QueuedMessageOrigin.Delegation\n                    || DelegationNoteDigest.Compute(source.Result ?? source.FailureReason ?? \"\") != digest)\n                    return \"identity\";\n                if (note.Status != QueuedMessageStatus.Pending || note.DeliveryAttempts != 0) return \"delivery-claimed\";\n                if (source.LastPolledResultHash == digest) return \"full-report-read\";\n                if (source.DeliverableBundleDir != snapshot?.DeliverableBundleDir\n                    || source.DeliverablePdfPath != snapshot?.DeliverablePdfPath) return \"metadata-changed\";\n                if (BeforeDistillationUpdateAsync is not null) await BeforeDistillationUpdateAsync(token);\n                if (_timeProvider.GetUtcNow() >= request.DeadlineAt) return \"deadline\";\n                var header = string.IsNullOrWhiteSpace(note.NoteHeader) ? \"\" : note.NoteHeader.TrimEnd();\n                var selectedPath = source.ResultFilePath == usablePath && source.Result == snapshot?.Result\n                    ? usablePath : null;\n                var body = DelegationReportFormatter.BuildDistilledNoteBody(header, distilled, source, selectedPath, attachments);\n                var deadline = request.DeadlineAt.UtcDateTime;\n                var changed = await db.Database.ExecuteSqlInterpolatedAsync(\n                    $\"UPDATE \\\"SessionQueuedMessages\\\" SET \\\"Body\\\" = {body}, \\\"HoldUntil\\\" = NULL WHERE \\\"Id\\\" = {noteId} AND clock_timestamp() < {deadline}\", token);\n                if (changed == 0 || _timeProvider.GetUtcNow() >= request.DeadlineAt) return \"deadline\";\n                await transaction.CommitAsync(token);\n                return null;\n            }\n            finally { sem.Release(); }\n        }\n        catch (OperationCanceledException) when (!ct.IsCancellationRequested && budget.Token.IsCancellationRequested) { return \"deadline\"; }\n        catch (Npgsql.PostgresException ex) when (ex.SqlState == \"57014\" && !ct.IsCancellationRequested)\n        { return \"deadline\"; }\n    }\n\n",
+    "to": "    public async Task<string?> TryApplyDistillationAsync(\n        DistillRequest request, string digest, string distilled, CancellationToken ct)\n    {\n        if (request.Mode != OutputDistillerMode.Apply) return \"shadow\";\n        if (request.QueuedMessageId is not Guid noteId) return \"note-missing\";\n        if (_timeProvider.GetUtcNow() >= request.DeadlineAt) return \"deadline\";\n        using var budget = new ExecutionBudget(request.DeadlineAt, _timeProvider, ct);\n        try\n        {\n            var token = budget.Token;\n            await using var scope = _scopeFactory.CreateAsyncScope();\n            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();\n            var sessionId = await db.SessionQueuedMessages.Where(m => m.Id == noteId)\n                .Select(m => (Guid?)m.AgentSessionId).FirstOrDefaultAsync(token);\n            if (sessionId is not Guid session) return \"note-missing\";\n            var sem = GetLock(session);\n            await sem.WaitAsync(token);\n            // Disk validation consumes the original request budget, before the delivery/DB locks.\n            // Read an untracked snapshot so the locked read below actually observes a changed path.\n            var snapshot = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == request.TaskId, token);\n            var store = scope.ServiceProvider.GetService<IAgentReportStore>();\n            var usablePath = snapshot is not null && store is not null\n                && await store.IsUsableAsync(snapshot.ResultFilePath, snapshot.Result ?? \"\", token)\n                    ? snapshot.ResultFilePath : null;\n            IReadOnlyList<string> attachments;\n            try { attachments = snapshot is null ? [] : DeliverableBundleService.ListAttachableFiles(snapshot); }\n            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return \"metadata-unavailable\"; }\n            if (AfterReportValidationAsync is not null) await AfterReportValidationAsync(token);\n            try\n            {\n                if (_timeProvider.GetUtcNow() >= request.DeadlineAt) return \"deadline\";\n                await using var transaction = await db.Database.BeginTransactionAsync(token);\n                var milliseconds = Math.Max(1, (long)(request.DeadlineAt - _timeProvider.GetUtcNow()).TotalMilliseconds);\n                await db.Database.ExecuteSqlInterpolatedAsync(\n                    $\"SELECT set_config('statement_timeout', {milliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture)}, true)\", token);\n                // The source row lock also orders this decision against full-report polling.\n                var source = await db.AgentTasks.FromSqlInterpolated(\n                    $\"SELECT * FROM \\\"AgentTasks\\\" WHERE \\\"Id\\\" = {request.TaskId} FOR UPDATE\")\n                    .SingleOrDefaultAsync(token);\n                var note = await db.SessionQueuedMessages.FromSqlInterpolated(\n                    $\"SELECT * FROM \\\"SessionQueuedMessages\\\" WHERE \\\"Id\\\" = {noteId} FOR UPDATE\")\n                    .SingleOrDefaultAsync(token);\n                if (source is null || note is null) return \"note-missing\";\n                if (note.SourceTaskId != request.TaskId || note.ContentDigest != digest\n                    || note.Origin != QueuedMessageOrigin.Delegation\n                    || DelegationNoteDigest.Compute(source.Result ?? source.FailureReason ?? \"\") != digest)\n                    return \"identity\";\n                if (note.Status != QueuedMessageStatus.Pending || note.DeliveryAttempts != 0) return \"delivery-claimed\";\n                if (source.LastPolledResultHash == digest) return \"full-report-read\";\n                if (source.DeliverableBundleDir != snapshot?.DeliverableBundleDir\n                    || source.DeliverablePdfPath != snapshot?.DeliverablePdfPath) return \"metadata-changed\";\n                if (BeforeDistillationUpdateAsync is not null) await BeforeDistillationUpdateAsync(token);\n                if (_timeProvider.GetUtcNow() >= request.DeadlineAt) return \"deadline\";\n                var header = string.IsNullOrWhiteSpace(note.NoteHeader) ? \"\" : note.NoteHeader.TrimEnd();\n                var selectedPath = source.ResultFilePath == usablePath && source.Result == snapshot?.Result\n                    ? usablePath : null;\n                var body = DelegationReportFormatter.BuildDistilledNoteBody(header, distilled, source, selectedPath, attachments);\n                var deadline = request.DeadlineAt.UtcDateTime;\n                var changed = await db.Database.ExecuteSqlInterpolatedAsync(\n                    $\"UPDATE \\\"SessionQueuedMessages\\\" SET \\\"Body\\\" = {body}, \\\"HoldUntil\\\" = NULL WHERE \\\"Id\\\" = {noteId} AND clock_timestamp() < {deadline}\", token);\n                if (changed == 0 || _timeProvider.GetUtcNow() >= request.DeadlineAt) return \"deadline\";\n                await transaction.CommitAsync(token);\n                return null;\n            }\n            finally { sem.Release(); }\n        }\n        catch (OperationCanceledException) when (!ct.IsCancellationRequested && budget.Token.IsCancellationRequested) { return \"deadline\"; }\n        catch (Npgsql.PostgresException ex) when (ex.SqlState == \"57014\" && !ct.IsCancellationRequested)\n        { return \"deadline\"; }\n    }\n\n",
+    "filter": "/*/*/OutputDistillationApplyRaceTests/File_validation_does_not_own_delivery_lock",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-25a",
+    "file": "server/Application/Services/OutputDistillationService.cs",
+    "from": "await ReleaseHoldAsync(request.QueuedMessageId, cleanup.Token);",
+    "to": "await Task.CompletedTask;",
+    "filter": "/*/*/OutputDistillationDeliveryTests/Fallback_delivers_original_raw_or_marked_excerpt",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-25b",
+    "file": "server/Application/Services/SessionMessageQueueService.cs",
+    "from": "m.HoldUntil is null || m.HoldUntil <= nowUtc",
+    "to": "m.HoldUntil is null",
+    "filter": "/*/*/OutputDistillationDeliveryTests/Expired_hold_is_deliverable_at_two_normal_flush_opportunities",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-26",
+    "file": "server/Application/Services/SessionMessageQueueService.cs",
+    "from": "if (System.Text.Encoding.UTF8.GetByteCount(body) <= ceilings.SingleWriteMaxBytes)",
+    "to": "if (true)",
+    "filter": "/*/*/OutputDistillationDeliveryTests/Composed_summary_and_metadata_obey_utf8_spill_guard",
+    "project": "Antiphon.Tests"
+  },
+  {
+    "id": "PC-28a",
+    "file": "tests/Antiphon.E2E/Fixtures/DistillerCanaryApproval.cs",
+    "from": "actualDb != ownedDb || string.IsNullOrWhiteSpace(ownedDb)",
+    "to": "string.IsNullOrWhiteSpace(ownedDb)",
+    "filter": "/*/*/OutputDistillationCanaryGuardTests/Configuration_refuses_unowned_resources_before_start",
+    "project": "Antiphon.E2E"
+  },
+  {
+    "id": "PC-28a-runner",
+    "file": "tests/Antiphon.E2E/Fixtures/DistillerCanaryApproval.cs",
+    "from": "runner != ownedRunner || !Uri.TryCreate",
+    "to": "!Uri.TryCreate",
+    "filter": "/*/*/OutputDistillationCanaryGuardTests/Configuration_refuses_unowned_resources_before_start",
+    "project": "Antiphon.E2E"
+  },
+  {
+    "id": "PC-28b",
+    "file": "tests/Antiphon.E2E/Fixtures/DistillerCanaryApproval.cs",
+    "from": "TranscriptKind != \"UserPrompt\" || Sequence <= 0 || PromptAt == default",
+    "to": "Sequence <= 0 || PromptAt == default",
+    "filter": "/*/*/OutputDistillationCanaryGuardTests/Evidence_rejects_missing_or_wrong_delivery_proof",
+    "project": "Antiphon.E2E"
+  },
+  {
+    "id": "PC-28c",
+    "file": "tests/Antiphon.E2E/Fixtures/DistillerCanaryApproval.cs",
+    "from": "|| !Prompt.Contains(\"Full report: \" + FilePath, StringComparison.Ordinal)",
+    "to": "|| false",
+    "filter": "/*/*/OutputDistillationCanaryGuardTests/Evidence_rejects_missing_or_wrong_delivery_proof",
+    "project": "Antiphon.E2E"
+  }
+]

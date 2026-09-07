@@ -1,0 +1,3762 @@
+[
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Configuration_refuses_unowned_resources_before_start",
+    "test": "Configuration_refuses_unowned_resources_before_start(absent)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Configuration_refuses_unowned_resources_before_start",
+    "test": "Configuration_refuses_unowned_resources_before_start(broker)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Configuration_refuses_unowned_resources_before_start",
+    "test": "Configuration_refuses_unowned_resources_before_start(db)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Configuration_refuses_unowned_resources_before_start",
+    "test": "Configuration_refuses_unowned_resources_before_start(expired)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Configuration_refuses_unowned_resources_before_start",
+    "test": "Configuration_refuses_unowned_resources_before_start(future)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Configuration_refuses_unowned_resources_before_start",
+    "test": "Configuration_refuses_unowned_resources_before_start(manifest)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Configuration_refuses_unowned_resources_before_start",
+    "test": "Configuration_refuses_unowned_resources_before_start(model)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Configuration_refuses_unowned_resources_before_start",
+    "test": "Configuration_refuses_unowned_resources_before_start(opt-in)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Configuration_refuses_unowned_resources_before_start",
+    "test": "Configuration_refuses_unowned_resources_before_start(production-runner)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Configuration_refuses_unowned_resources_before_start",
+    "test": "Configuration_refuses_unowned_resources_before_start(refused)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Configuration_refuses_unowned_resources_before_start",
+    "test": "Configuration_refuses_unowned_resources_before_start(runner)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Configuration_refuses_unowned_resources_before_start",
+    "test": "Configuration_refuses_unowned_resources_before_start(stale)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Evidence_rejects_missing_or_wrong_delivery_proof",
+    "test": "Evidence_rejects_missing_or_wrong_delivery_proof(api)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Evidence_rejects_missing_or_wrong_delivery_proof",
+    "test": "Evidence_rejects_missing_or_wrong_delivery_proof(assistant)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Evidence_rejects_missing_or_wrong_delivery_proof",
+    "test": "Evidence_rejects_missing_or_wrong_delivery_proof(clipped)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Evidence_rejects_missing_or_wrong_delivery_proof",
+    "test": "Evidence_rejects_missing_or_wrong_delivery_proof(digest)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Evidence_rejects_missing_or_wrong_delivery_proof",
+    "test": "Evidence_rejects_missing_or_wrong_delivery_proof(file-identity)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Evidence_rejects_missing_or_wrong_delivery_proof",
+    "test": "Evidence_rejects_missing_or_wrong_delivery_proof(file-name)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Evidence_rejects_missing_or_wrong_delivery_proof",
+    "test": "Evidence_rejects_missing_or_wrong_delivery_proof(late)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Evidence_rejects_missing_or_wrong_delivery_proof",
+    "test": "Evidence_rejects_missing_or_wrong_delivery_proof(model)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Evidence_rejects_missing_or_wrong_delivery_proof",
+    "test": "Evidence_rejects_missing_or_wrong_delivery_proof(note)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Evidence_rejects_missing_or_wrong_delivery_proof",
+    "test": "Evidence_rejects_missing_or_wrong_delivery_proof(parent)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Evidence_rejects_missing_or_wrong_delivery_proof",
+    "test": "Evidence_rejects_missing_or_wrong_delivery_proof(path)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Evidence_rejects_missing_or_wrong_delivery_proof",
+    "test": "Evidence_rejects_missing_or_wrong_delivery_proof(raw-middle)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Evidence_rejects_missing_or_wrong_delivery_proof",
+    "test": "Evidence_rejects_missing_or_wrong_delivery_proof(read)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Evidence_rejects_missing_or_wrong_delivery_proof",
+    "test": "Evidence_rejects_missing_or_wrong_delivery_proof(rejected)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Evidence_rejects_missing_or_wrong_delivery_proof",
+    "test": "Evidence_rejects_missing_or_wrong_delivery_proof(restart)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Evidence_rejects_missing_or_wrong_delivery_proof",
+    "test": "Evidence_rejects_missing_or_wrong_delivery_proof(screen)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Evidence_rejects_missing_or_wrong_delivery_proof",
+    "test": "Evidence_rejects_missing_or_wrong_delivery_proof(shadow)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Evidence_rejects_missing_or_wrong_delivery_proof",
+    "test": "Evidence_rejects_missing_or_wrong_delivery_proof(source)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Evidence_rejects_missing_or_wrong_delivery_proof",
+    "test": "Evidence_rejects_missing_or_wrong_delivery_proof(teardown)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Evidence_rejects_missing_or_wrong_delivery_proof",
+    "test": "Evidence_rejects_missing_or_wrong_delivery_proof(tool)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.E2E.OutputDistillationCanaryGuardTests",
+    "method": "Evidence_rejects_missing_or_wrong_delivery_proof",
+    "test": "Evidence_rejects_missing_or_wrong_delivery_proof(valid)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/e2e/c419-canary-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Exact_content_and_full_ids_own_distinct_files",
+    "test": "Exact_content_and_full_ids_own_distinct_files",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Failures_and_cancellation_never_publish_a_bad_pointer",
+    "test": "Failures_and_cancellation_never_publish_a_bad_pointer(budget)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Failures_and_cancellation_never_publish_a_bad_pointer",
+    "test": "Failures_and_cancellation_never_publish_a_bad_pointer(denied)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Failures_and_cancellation_never_publish_a_bad_pointer",
+    "test": "Failures_and_cancellation_never_publish_a_bad_pointer(host-cancel)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Failures_and_cancellation_never_publish_a_bad_pointer",
+    "test": "Failures_and_cancellation_never_publish_a_bad_pointer(publish)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Failures_and_cancellation_never_publish_a_bad_pointer",
+    "test": "Failures_and_cancellation_never_publish_a_bad_pointer(readback)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Failures_and_cancellation_never_publish_a_bad_pointer",
+    "test": "Failures_and_cancellation_never_publish_a_bad_pointer(root)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Failures_and_cancellation_never_publish_a_bad_pointer",
+    "test": "Failures_and_cancellation_never_publish_a_bad_pointer(write)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Ignore_and_tracking_are_checked_before_writing",
+    "test": "Ignore_and_tracking_are_checked_before_writing(exclude-refused)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Ignore_and_tracking_are_checked_before_writing",
+    "test": "Ignore_and_tracking_are_checked_before_writing(existing-ignore)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Ignore_and_tracking_are_checked_before_writing",
+    "test": "Ignore_and_tracking_are_checked_before_writing(local-exclude)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Ignore_and_tracking_are_checked_before_writing",
+    "test": "Ignore_and_tracking_are_checked_before_writing(negation)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Ignore_and_tracking_are_checked_before_writing",
+    "test": "Ignore_and_tracking_are_checked_before_writing(tracked)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Paths_over_the_persisted_limit_are_unavailable",
+    "test": "Paths_over_the_persisted_limit_are_unavailable",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Publication_exposes_only_a_complete_verified_report",
+    "test": "Publication_exposes_only_a_complete_verified_report",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Root_selection_requires_a_durable_owned_location",
+    "test": "Root_selection_requires_a_durable_owned_location(configured)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Root_selection_requires_a_durable_owned_location",
+    "test": "Root_selection_requires_a_durable_owned_location(main)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Root_selection_requires_a_durable_owned_location",
+    "test": "Root_selection_requires_a_durable_owned_location(missing)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Root_selection_requires_a_durable_owned_location",
+    "test": "Root_selection_requires_a_durable_owned_location(nested-main)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Root_selection_requires_a_durable_owned_location",
+    "test": "Root_selection_requires_a_durable_owned_location(nested-worktree)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Root_selection_requires_a_durable_owned_location",
+    "test": "Root_selection_requires_a_durable_owned_location(relative)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Root_selection_requires_a_durable_owned_location",
+    "test": "Root_selection_requires_a_durable_owned_location(temp)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Root_selection_requires_a_durable_owned_location",
+    "test": "Root_selection_requires_a_durable_owned_location(unsupported)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Root_selection_requires_a_durable_owned_location",
+    "test": "Root_selection_requires_a_durable_owned_location(unsupported-rescued)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Root_selection_requires_a_durable_owned_location",
+    "test": "Root_selection_requires_a_durable_owned_location(worktree)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentReportStoreTests",
+    "method": "Root_selection_requires_a_durable_owned_location",
+    "test": "Root_selection_requires_a_durable_owned_location(worktree-override)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-AgentReportStoreTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentTaskReplyIntegrationTests",
+    "method": "a_five_kilobyte_report_spills_and_the_caller_gets_a_marked_excerpt",
+    "test": "a_five_kilobyte_report_spills_and_the_caller_gets_a_marked_excerpt",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-retained-AgentTaskReplyIntegrationTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentTaskReplyIntegrationTests",
+    "method": "a_spill_file_the_delegate_wrote_itself_is_used_as_is",
+    "test": "a_spill_file_the_delegate_wrote_itself_is_used_as_is",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-retained-AgentTaskReplyIntegrationTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentTaskReplyIntegrationTests",
+    "method": "an_oversized_report_is_backstopped_to_a_file_by_the_server",
+    "test": "an_oversized_report_is_backstopped_to_a_file_by_the_server",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-retained-AgentTaskReplyIntegrationTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.AgentTaskReplyIntegrationTests",
+    "method": "the_completion_note_is_delivered_into_the_parents_session",
+    "test": "the_completion_note_is_delivered_into_the_parents_session",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-retained-AgentTaskReplyIntegrationTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "TryFindReportToken_requires_this_tasks_prefix_and_a_valid_last_line",
+    "test": "TryFindReportToken_requires_this_tasks_prefix_and_a_valid_last_line",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "TryReadFindingLine_absent_is_false_and_unreported",
+    "test": "TryReadFindingLine_absent_is_false_and_unreported",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "TryReadFindingLine_accepts_the_marker_mid_report",
+    "test": "TryReadFindingLine_accepts_the_marker_mid_report",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "TryReadFindingLine_both_markers_the_last_in_the_window_wins",
+    "test": "TryReadFindingLine_both_markers_the_last_in_the_window_wins",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "TryReadFindingLine_ignores_a_token_for_a_different_task",
+    "test": "TryReadFindingLine_ignores_a_token_for_a_different_task",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "TryReadFindingLine_reads_clean",
+    "test": "TryReadFindingLine_reads_clean",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "TryReadFindingLine_reads_found_with_the_detail",
+    "test": "TryReadFindingLine_reads_found_with_the_detail",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "TryReadReportVerdict_accepts_blocked_and_failed_case_insensitively",
+    "test": "TryReadReportVerdict_accepts_blocked_and_failed_case_insensitively",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "TryReadReportVerdict_ignores_a_token_for_a_different_task",
+    "test": "TryReadReportVerdict_ignores_a_token_for_a_different_task",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "TryReadReportVerdict_reads_the_last_line_and_strips_it",
+    "test": "TryReadReportVerdict_reads_the_last_line_and_strips_it",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_blocked_note_without_authority_names_reply_not_continue",
+    "test": "a_blocked_note_without_authority_names_reply_not_continue",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_blocked_question_note_puts_reason_asks_authority_and_next_outside_the_excerpt",
+    "test": "a_blocked_question_note_puts_reason_asks_authority_and_next_outside_the_excerpt",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_brief_at_a_size_that_stranded_a_real_task_is_not_typed_inline",
+    "test": "a_brief_at_a_size_that_stranded_a_real_task_is_not_typed_inline(1366)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_brief_at_a_size_that_stranded_a_real_task_is_not_typed_inline",
+    "test": "a_brief_at_a_size_that_stranded_a_real_task_is_not_typed_inline(1402)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_brief_at_a_size_that_stranded_a_real_task_is_not_typed_inline",
+    "test": "a_brief_at_a_size_that_stranded_a_real_task_is_not_typed_inline(1431)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_brief_at_a_size_that_stranded_a_real_task_is_not_typed_inline",
+    "test": "a_brief_at_a_size_that_stranded_a_real_task_is_not_typed_inline(2320)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_brief_carries_standing_authority_only_when_set",
+    "test": "a_brief_carries_standing_authority_only_when_set",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_brief_carries_the_task_marker_so_the_reply_can_be_correlated",
+    "test": "a_brief_carries_the_task_marker_so_the_reply_can_be_correlated",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_brief_pointer_does_not_carry_the_refocus_line",
+    "test": "a_brief_pointer_does_not_carry_the_refocus_line",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_brief_pointer_fits_in_one_transport_chunk",
+    "test": "a_brief_pointer_fits_in_one_transport_chunk",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_brief_pointer_names_the_spill_file_when_one_was_written",
+    "test": "a_brief_pointer_names_the_spill_file_when_one_was_written",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_brief_tells_the_delegate_to_spill_past_the_ceiling",
+    "test": "a_brief_tells_the_delegate_to_spill_past_the_ceiling",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_check_role_brief_asks_for_done_and_never_offers_blocked",
+    "test": "a_check_role_brief_asks_for_done_and_never_offers_blocked",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_check_role_pointer_does_not_reintroduce_the_blocked_token",
+    "test": "a_check_role_pointer_does_not_reintroduce_the_blocked_token",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_completion_note_carries_deliverable_header_bit_and_attach_block_after_the_report",
+    "test": "a_completion_note_carries_deliverable_header_bit_and_attach_block_after_the_report",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_completion_note_header_carries_next_after_deliverable",
+    "test": "a_completion_note_header_carries_next_after_deliverable",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_completion_note_header_carries_report_and_git",
+    "test": "a_completion_note_header_carries_report_and_git",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_completion_note_header_is_a_prefix_of_its_body",
+    "test": "a_completion_note_header_is_a_prefix_of_its_body",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_completion_note_header_is_a_prefix_of_its_body_with_a_warning",
+    "test": "a_completion_note_header_is_a_prefix_of_its_body_with_a_warning",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_degenerate_excerpt_budget_never_produces_more_text_than_it_was_given",
+    "test": "a_degenerate_excerpt_budget_never_produces_more_text_than_it_was_given",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_diagnose_role_brief_asks_for_done_and_never_offers_blocked",
+    "test": "a_diagnose_role_brief_asks_for_done_and_never_offers_blocked",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_diagnose_role_pointer_does_not_reintroduce_the_blocked_token",
+    "test": "a_diagnose_role_pointer_does_not_reintroduce_the_blocked_token",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_docs_brief_does_not_include_the_stage_handoff_block",
+    "test": "a_docs_brief_does_not_include_the_stage_handoff_block",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_non_shared_or_read_only_brief_does_not_request_a_commit",
+    "test": "a_non_shared_or_read_only_brief_does_not_request_a_commit",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_note_digest_normalizes_line_endings_trailing_whitespace_and_outer_blank_lines",
+    "test": "a_note_digest_normalizes_line_endings_trailing_whitespace_and_outer_blank_lines",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_note_digest_preserves_an_interior_word_difference",
+    "test": "a_note_digest_preserves_an_interior_word_difference",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_polled_note_body_names_the_short_id_and_withheld_character_count",
+    "test": "a_polled_note_body_names_the_short_id_and_withheld_character_count",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_read_only_brief_says_not_to_write",
+    "test": "a_read_only_brief_says_not_to_write",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_refocus_brief_carries_the_unrelated_work_line_after_the_marker",
+    "test": "a_refocus_brief_carries_the_unrelated_work_line_after_the_marker",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_refocus_spill_file_carries_the_line_the_pointer_does_not",
+    "test": "a_refocus_spill_file_carries_the_line_the_pointer_does_not",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_report_within_the_ceiling_is_forwarded_whole",
+    "test": "a_report_within_the_ceiling_is_forwarded_whole",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_shared_write_role_brief_explicitly_requires_a_commit",
+    "test": "a_shared_write_role_brief_explicitly_requires_a_commit(Code)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_shared_write_role_brief_explicitly_requires_a_commit",
+    "test": "a_shared_write_role_brief_explicitly_requires_a_commit(Docs)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_shared_write_role_brief_explicitly_requires_a_commit",
+    "test": "a_shared_write_role_brief_explicitly_requires_a_commit(Plan)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_stage_role_brief_pointer_still_fits_in_one_transport_chunk",
+    "test": "a_stage_role_brief_pointer_still_fits_in_one_transport_chunk",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_sub_orchestrator_brief_asks_for_a_rollup_not_a_relay",
+    "test": "a_sub_orchestrator_brief_asks_for_a_rollup_not_a_relay",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_worker_brief_does_not_ask_for_a_subtree_rollup",
+    "test": "a_worker_brief_does_not_ask_for_a_subtree_rollup",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "a_worker_brief_still_offers_all_three_verdict_tokens",
+    "test": "a_worker_brief_still_offers_all_three_verdict_tokens",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "an_excerpt_falls_back_to_the_api_url_when_there_is_no_spill_file",
+    "test": "an_excerpt_falls_back_to_the_api_url_when_there_is_no_spill_file",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "an_excerpt_never_cuts_mid_word",
+    "test": "an_excerpt_never_cuts_mid_word",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "an_excerpt_points_at_the_spill_file_when_the_delegate_wrote_one",
+    "test": "an_excerpt_points_at_the_spill_file_when_the_delegate_wrote_one",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "an_excerpt_says_plainly_that_it_is_not_the_whole_report",
+    "test": "an_excerpt_says_plainly_that_it_is_not_the_whole_report",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "an_oversized_brief_becomes_a_pointer_that_keeps_the_task_marker",
+    "test": "an_oversized_brief_becomes_a_pointer_that_keeps_the_task_marker",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "an_oversized_report_keeps_its_beginning_and_its_end",
+    "test": "an_oversized_report_keeps_its_beginning_and_its_end",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "reported_repository_paths_normalize_relative_and_absolute_windows_forms",
+    "test": "reported_repository_paths_normalize_relative_and_absolute_windows_forms",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "the_completion_note_identifies_the_agent_tier_duration_and_cost",
+    "test": "the_completion_note_identifies_the_agent_tier_duration_and_cost",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "the_completion_note_measures_duration_from_the_latest_reply",
+    "test": "the_completion_note_measures_duration_from_the_latest_reply",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "the_completion_note_uses_lf_endings_only",
+    "test": "the_completion_note_uses_lf_endings_only",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "the_deliverable_block_survives_an_excerpted_report",
+    "test": "the_deliverable_block_survives_an_excerpted_report",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "the_finding_contract_is_present_only_when_orchestration_stage_is_set",
+    "test": "the_finding_contract_is_present_only_when_orchestration_stage_is_set",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "the_handoff_block_paragraph_appears_for_every_stage_role",
+    "test": "the_handoff_block_paragraph_appears_for_every_stage_role(Code)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "the_handoff_block_paragraph_appears_for_every_stage_role",
+    "test": "the_handoff_block_paragraph_appears_for_every_stage_role(Investigate)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "the_handoff_block_paragraph_appears_for_every_stage_role",
+    "test": "the_handoff_block_paragraph_appears_for_every_stage_role(Plan)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "the_handoff_block_paragraph_appears_for_every_stage_role",
+    "test": "the_handoff_block_paragraph_appears_for_every_stage_role(Review)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "the_handoff_block_paragraph_appears_for_every_stage_role",
+    "test": "the_handoff_block_paragraph_appears_for_every_stage_role(TestDesign)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "the_handoff_block_paragraph_is_absent_for_helper_roles",
+    "test": "the_handoff_block_paragraph_is_absent_for_helper_roles(Commit)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "the_handoff_block_paragraph_is_absent_for_helper_roles",
+    "test": "the_handoff_block_paragraph_is_absent_for_helper_roles(Coverage)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "the_handoff_block_paragraph_is_absent_for_helper_roles",
+    "test": "the_handoff_block_paragraph_is_absent_for_helper_roles(Custom)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "the_handoff_block_paragraph_is_absent_for_helper_roles",
+    "test": "the_handoff_block_paragraph_is_absent_for_helper_roles(Debug)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "the_handoff_block_paragraph_is_absent_for_helper_roles",
+    "test": "the_handoff_block_paragraph_is_absent_for_helper_roles(Deploy)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "the_handoff_block_paragraph_is_absent_for_helper_roles",
+    "test": "the_handoff_block_paragraph_is_absent_for_helper_roles(Docs)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "the_handoff_block_paragraph_is_absent_for_helper_roles",
+    "test": "the_handoff_block_paragraph_is_absent_for_helper_roles(Merge)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "the_handoff_block_paragraph_is_absent_for_helper_roles",
+    "test": "the_handoff_block_paragraph_is_absent_for_helper_roles(Test)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "the_reporting_contract_asks_for_the_closing_verdict_line",
+    "test": "the_reporting_contract_asks_for_the_closing_verdict_line",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "the_shipped_ceiling_stays_below_the_measured_pty_cliff",
+    "test": "the_shipped_ceiling_stays_below_the_measured_pty_cliff",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DelegationReportFormatterTests",
+    "method": "the_stage_handoff_contract_is_at_most_700_characters",
+    "test": "the_stage_handoff_contract_is_at_most_700_characters",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-DelegationReportFormatterTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DeliverableBundleServiceTests",
+    "method": "A_code_task_whose_range_is_all_markdown_gets_a_bundle",
+    "test": "A_code_task_whose_range_is_all_markdown_gets_a_bundle",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DeliverableBundleServiceTests",
+    "method": "A_code_task_with_a_mixed_diff_and_no_named_doc_gets_no_bundle",
+    "test": "A_code_task_with_a_mixed_diff_and_no_named_doc_gets_no_bundle",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DeliverableBundleServiceTests",
+    "method": "A_custom_role_report_naming_four_docs_copies_them_and_records_a_render_error_without_a_browser",
+    "test": "A_custom_role_report_naming_four_docs_copies_them_and_records_a_render_error_without_a_browser",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DeliverableBundleServiceTests",
+    "method": "A_plan_role_reads_a_branch_only_path_via_git",
+    "test": "A_plan_role_reads_a_branch_only_path_via_git",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DeliverableBundleServiceTests",
+    "method": "Docs_cards_and_antiphon_paths_are_never_included",
+    "test": "Docs_cards_and_antiphon_paths_are_never_included",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DeliverableBundleServiceTests",
+    "method": "Enabled_false_is_a_no_op",
+    "test": "Enabled_false_is_a_no_op",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DeliverableBundleServiceTests",
+    "method": "More_than_five_sources_or_a_1mb_source_are_zipped",
+    "test": "More_than_five_sources_or_a_1mb_source_are_zipped",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DistillationEndpointTests",
+    "method": "feedback_on_a_task_without_a_row_is_409",
+    "test": "feedback_on_a_task_without_a_row_is_409",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DistillationEndpointTests",
+    "method": "full_read_at_is_set_only_by_a_parent_poll_after_SentAt",
+    "test": "full_read_at_is_set_only_by_a_parent_poll_after_SentAt",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DistillationEndpointTests",
+    "method": "second_feedback_overwrites_with_a_new_FeedbackAt",
+    "test": "second_feedback_overwrites_with_a_new_FeedbackAt",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DistillationEndpointTests",
+    "method": "since_window_excludes_older_rows",
+    "test": "since_window_excludes_older_rows",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.DistillationEndpointTests",
+    "method": "stats_counts_match_seeded_rows",
+    "test": "stats_counts_match_seeded_rows",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.InstructionBundleTests",
+    "method": "the_distill_reporting_contract_never_offers_blocked_and_keeps_the_handoff_anchor",
+    "test": "the_distill_reporting_contract_never_offers_blocked_and_keeps_the_handoff_anchor",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-retained-InstructionBundleTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.InstructionBundleTests",
+    "method": "the_output_distiller_contract_forwards_to_its_bundle_with_the_pinned_invariants",
+    "test": "the_output_distiller_contract_forwards_to_its_bundle_with_the_pinned_invariants",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-retained-InstructionBundleTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationAdmissionTests",
+    "method": "Availability_error_is_not_a_hold",
+    "test": "Availability_error_is_not_a_hold(False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationAdmissionTests",
+    "method": "Availability_error_is_not_a_hold",
+    "test": "Availability_error_is_not_a_hold(True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationAdmissionTests",
+    "method": "Held_preflight_never_creates_work",
+    "test": "Held_preflight_never_creates_work(False, *, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationAdmissionTests",
+    "method": "Held_preflight_never_creates_work",
+    "test": "Held_preflight_never_creates_work(False, haiku, False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationAdmissionTests",
+    "method": "Held_preflight_never_creates_work",
+    "test": "Held_preflight_never_creates_work(True, claude-haiku-4-5-20251001, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationAdmissionTests",
+    "method": "Held_preflight_never_creates_work",
+    "test": "Held_preflight_never_creates_work(True, haiku, False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationAdmissionTests",
+    "method": "Only_a_current_hold_on_the_pinned_alias_blocks_work",
+    "test": "Only_a_current_hold_on_the_pinned_alias_blocks_work(expired)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationAdmissionTests",
+    "method": "Only_a_current_hold_on_the_pinned_alias_blocks_work",
+    "test": "Only_a_current_hold_on_the_pinned_alias_blocks_work(other-alias)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationAdmissionTests",
+    "method": "Only_a_current_hold_on_the_pinned_alias_blocks_work",
+    "test": "Only_a_current_hold_on_the_pinned_alias_blocks_work(other-kind)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationAdmissionTests",
+    "method": "Only_a_current_hold_on_the_pinned_alias_blocks_work",
+    "test": "Only_a_current_hold_on_the_pinned_alias_blocks_work(removed)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationAdmissionTests",
+    "method": "Rejected_admission_releases_raw_hold",
+    "test": "Rejected_admission_releases_raw_hold(queue-full)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationAdmissionTests",
+    "method": "Rejected_admission_releases_raw_hold",
+    "test": "Rejected_admission_releases_raw_hold(worker-unavailable)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Apply_and_SendNow_preserve_one_complete_body",
+    "test": "Apply_and_SendNow_preserve_one_complete_body(False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Apply_and_SendNow_preserve_one_complete_body",
+    "test": "Apply_and_SendNow_preserve_one_complete_body(True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Apply_eligibility_matrix",
+    "test": "Apply_eligibility_matrix(attempted)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Apply_eligibility_matrix",
+    "test": "Apply_eligibility_matrix(canceled)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Apply_eligibility_matrix",
+    "test": "Apply_eligibility_matrix(eligible)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Apply_eligibility_matrix",
+    "test": "Apply_eligibility_matrix(expired)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Apply_eligibility_matrix",
+    "test": "Apply_eligibility_matrix(missing-note)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Apply_eligibility_matrix",
+    "test": "Apply_eligibility_matrix(missing-source)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Apply_eligibility_matrix",
+    "test": "Apply_eligibility_matrix(polled)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Apply_eligibility_matrix",
+    "test": "Apply_eligibility_matrix(sent)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Apply_eligibility_matrix",
+    "test": "Apply_eligibility_matrix(shadow)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Apply_eligibility_matrix",
+    "test": "Apply_eligibility_matrix(wrong-digest)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Apply_eligibility_matrix",
+    "test": "Apply_eligibility_matrix(wrong-note)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Apply_eligibility_matrix",
+    "test": "Apply_eligibility_matrix(wrong-origin)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Apply_eligibility_matrix",
+    "test": "Apply_eligibility_matrix(wrong-report)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Apply_eligibility_matrix",
+    "test": "Apply_eligibility_matrix(wrong-source)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Apply_owns_the_delivery_session_lock_until_commit",
+    "test": "Apply_owns_the_delivery_session_lock_until_commit",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Database_clock_rejects_an_expired_body_update",
+    "test": "Database_clock_rejects_an_expired_body_update",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Equality_and_postlock_expiry_never_apply",
+    "test": "Equality_and_postlock_expiry_never_apply",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Expired_database_write_never_applies",
+    "test": "Expired_database_write_never_applies",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Expired_lock_wait_never_applies",
+    "test": "Expired_lock_wait_never_applies",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "File_validation_consumes_original_deadline",
+    "test": "File_validation_consumes_original_deadline(False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "File_validation_consumes_original_deadline",
+    "test": "File_validation_consumes_original_deadline(True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "File_validation_does_not_own_delivery_lock",
+    "test": "File_validation_does_not_own_delivery_lock",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Parent_poll_and_apply_have_one_ordered_winner",
+    "test": "Parent_poll_and_apply_have_one_ordered_winner(False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Parent_poll_and_apply_have_one_ordered_winner",
+    "test": "Parent_poll_and_apply_have_one_ordered_winner(True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Path_changed_after_validation_cannot_publish_stale_pointer",
+    "test": "Path_changed_after_validation_cannot_publish_stale_pointer",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationApplyRaceTests",
+    "method": "Source_row_lock_prevents_a_poll_commit_between_read_and_apply",
+    "test": "Source_row_lock_prevents_a_poll_commit_between_read_and_apply",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationApplyRaceTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationCleanupTests",
+    "method": "A_canceled_never_typed_brief_is_expired_despite_its_dispatch_stamp",
+    "test": "A_canceled_never_typed_brief_is_expired_despite_its_dispatch_stamp",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationCleanupTests",
+    "method": "Blocked_alert_does_not_delay_the_next_request",
+    "test": "Blocked_alert_does_not_delay_the_next_request",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationCleanupTests",
+    "method": "Cleanup_has_one_separate_budget",
+    "test": "Cleanup_has_one_separate_budget(cancel)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationCleanupTests",
+    "method": "Cleanup_has_one_separate_budget",
+    "test": "Cleanup_has_one_separate_budget(hold)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationCleanupTests",
+    "method": "Cleanup_has_one_separate_budget",
+    "test": "Cleanup_has_one_separate_budget(ledger)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationCleanupTests",
+    "method": "Clock_pump_does_not_expire_a_ledger_write_while_real_io_is_blocked",
+    "test": "Clock_pump_does_not_expire_a_ledger_write_while_real_io_is_blocked",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationCleanupTests",
+    "method": "Earlier_cleanup_consumes_the_later_operations_allowance",
+    "test": "Earlier_cleanup_consumes_the_later_operations_allowance",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeadlineTests",
+    "method": "Expired_brief_is_rejected_before_first_input",
+    "test": "Expired_brief_is_rejected_before_first_input(0, already)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeadlineTests",
+    "method": "Expired_brief_is_rejected_before_first_input",
+    "test": "Expired_brief_is_rejected_before_first_input(0, claim)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeadlineTests",
+    "method": "Expired_brief_is_rejected_before_first_input",
+    "test": "Expired_brief_is_rejected_before_first_input(0, lock)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeadlineTests",
+    "method": "Expired_brief_is_rejected_before_first_input",
+    "test": "Expired_brief_is_rejected_before_first_input(1, already)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeadlineTests",
+    "method": "Expired_dequeue_does_not_provision_and_preserves_phase",
+    "test": "Expired_dequeue_does_not_provision_and_preserves_phase",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeadlineTests",
+    "method": "Queue_and_wait_share_one_deadline",
+    "test": "Queue_and_wait_share_one_deadline",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Admission_and_deadline_fallbacks_reach_parent",
+    "test": "Admission_and_deadline_fallbacks_reach_parent(backlog, False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Admission_and_deadline_fallbacks_reach_parent",
+    "test": "Admission_and_deadline_fallbacks_reach_parent(backlog, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Admission_and_deadline_fallbacks_reach_parent",
+    "test": "Admission_and_deadline_fallbacks_reach_parent(closed, False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Admission_and_deadline_fallbacks_reach_parent",
+    "test": "Admission_and_deadline_fallbacks_reach_parent(closed, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Admission_and_deadline_fallbacks_reach_parent",
+    "test": "Admission_and_deadline_fallbacks_reach_parent(expired, False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Admission_and_deadline_fallbacks_reach_parent",
+    "test": "Admission_and_deadline_fallbacks_reach_parent(expired, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Admission_and_deadline_fallbacks_reach_parent",
+    "test": "Admission_and_deadline_fallbacks_reach_parent(full, False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Admission_and_deadline_fallbacks_reach_parent",
+    "test": "Admission_and_deadline_fallbacks_reach_parent(full, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Admission_and_deadline_fallbacks_reach_parent",
+    "test": "Admission_and_deadline_fallbacks_reach_parent(held, False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Admission_and_deadline_fallbacks_reach_parent",
+    "test": "Admission_and_deadline_fallbacks_reach_parent(held, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Admission_and_deadline_fallbacks_reach_parent",
+    "test": "Admission_and_deadline_fallbacks_reach_parent(missing, False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Admission_and_deadline_fallbacks_reach_parent",
+    "test": "Admission_and_deadline_fallbacks_reach_parent(missing, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Admission_and_deadline_fallbacks_reach_parent",
+    "test": "Admission_and_deadline_fallbacks_reach_parent(timeout, False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Admission_and_deadline_fallbacks_reach_parent",
+    "test": "Admission_and_deadline_fallbacks_reach_parent(timeout, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Admission_and_deadline_fallbacks_reach_parent",
+    "test": "Admission_and_deadline_fallbacks_reach_parent(unavailable, False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Admission_and_deadline_fallbacks_reach_parent",
+    "test": "Admission_and_deadline_fallbacks_reach_parent(unavailable, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Apply_preserves_handoff_warnings_and_generated_deliverables",
+    "test": "Apply_preserves_handoff_warnings_and_generated_deliverables(False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Apply_preserves_handoff_warnings_and_generated_deliverables",
+    "test": "Apply_preserves_handoff_warnings_and_generated_deliverables(True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Canonical_file_survives_worktree_removal_and_provider_recreation",
+    "test": "Canonical_file_survives_worktree_removal_and_provider_recreation",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Canonical_selection_preserves_but_never_advertises_different_legacy_author_file",
+    "test": "Canonical_selection_preserves_but_never_advertises_different_legacy_author_file",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Composed_summary_and_metadata_obey_utf8_spill_guard",
+    "test": "Composed_summary_and_metadata_obey_utf8_spill_guard(-1)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Composed_summary_and_metadata_obey_utf8_spill_guard",
+    "test": "Composed_summary_and_metadata_obey_utf8_spill_guard(0)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Composed_summary_and_metadata_obey_utf8_spill_guard",
+    "test": "Composed_summary_and_metadata_obey_utf8_spill_guard(1)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Expired_hold_is_deliverable_at_two_normal_flush_opportunities",
+    "test": "Expired_hold_is_deliverable_at_two_normal_flush_opportunities",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Fallback_delivers_original_raw_or_marked_excerpt",
+    "test": "Fallback_delivers_original_raw_or_marked_excerpt(empty, False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Fallback_delivers_original_raw_or_marked_excerpt",
+    "test": "Fallback_delivers_original_raw_or_marked_excerpt(empty, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Fallback_delivers_original_raw_or_marked_excerpt",
+    "test": "Fallback_delivers_original_raw_or_marked_excerpt(failed, False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Fallback_delivers_original_raw_or_marked_excerpt",
+    "test": "Fallback_delivers_original_raw_or_marked_excerpt(failed, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Fallback_delivers_original_raw_or_marked_excerpt",
+    "test": "Fallback_delivers_original_raw_or_marked_excerpt(missing-handoff, False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Fallback_delivers_original_raw_or_marked_excerpt",
+    "test": "Fallback_delivers_original_raw_or_marked_excerpt(missing-handoff, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Fallback_delivers_original_raw_or_marked_excerpt",
+    "test": "Fallback_delivers_original_raw_or_marked_excerpt(missing-next, False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Fallback_delivers_original_raw_or_marked_excerpt",
+    "test": "Fallback_delivers_original_raw_or_marked_excerpt(missing-next, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Fallback_delivers_original_raw_or_marked_excerpt",
+    "test": "Fallback_delivers_original_raw_or_marked_excerpt(missing-path, False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Fallback_delivers_original_raw_or_marked_excerpt",
+    "test": "Fallback_delivers_original_raw_or_marked_excerpt(missing-path, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Fallback_delivers_original_raw_or_marked_excerpt",
+    "test": "Fallback_delivers_original_raw_or_marked_excerpt(oversized, False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Fallback_delivers_original_raw_or_marked_excerpt",
+    "test": "Fallback_delivers_original_raw_or_marked_excerpt(oversized, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "File_read_does_not_claim_a_parent_api_poll",
+    "test": "File_read_does_not_claim_a_parent_api_poll",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Host_cancellation_during_storage_can_retry_settlement_once",
+    "test": "Host_cancellation_during_storage_can_retry_settlement_once",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Ineligible_reports_do_not_enter_canonical_or_model_work",
+    "test": "Ineligible_reports_do_not_enter_canonical_or_model_work(Blocked)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Ineligible_reports_do_not_enter_canonical_or_model_work",
+    "test": "Ineligible_reports_do_not_enter_canonical_or_model_work(Check)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Ineligible_reports_do_not_enter_canonical_or_model_work",
+    "test": "Ineligible_reports_do_not_enter_canonical_or_model_work(Diagnose)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Ineligible_reports_do_not_enter_canonical_or_model_work",
+    "test": "Ineligible_reports_do_not_enter_canonical_or_model_work(Distill)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Ineligible_reports_do_not_enter_canonical_or_model_work",
+    "test": "Ineligible_reports_do_not_enter_canonical_or_model_work(None)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Legacy_minimum_and_unicode_boundaries",
+    "test": "Legacy_minimum_and_unicode_boundaries(1199)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Legacy_minimum_and_unicode_boundaries",
+    "test": "Legacy_minimum_and_unicode_boundaries(1200)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Legacy_minimum_and_unicode_boundaries",
+    "test": "Legacy_minimum_and_unicode_boundaries(1201)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Legacy_minimum_and_unicode_boundaries",
+    "test": "Legacy_minimum_and_unicode_boundaries(3999)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Legacy_minimum_and_unicode_boundaries",
+    "test": "Legacy_minimum_and_unicode_boundaries(4000)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Mode_and_terminal_status_preserve_report",
+    "test": "Mode_and_terminal_status_preserve_report(Apply, False, False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Mode_and_terminal_status_preserve_report",
+    "test": "Mode_and_terminal_status_preserve_report(Apply, False, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Mode_and_terminal_status_preserve_report",
+    "test": "Mode_and_terminal_status_preserve_report(Apply, True, False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Mode_and_terminal_status_preserve_report",
+    "test": "Mode_and_terminal_status_preserve_report(Apply, True, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Mode_and_terminal_status_preserve_report",
+    "test": "Mode_and_terminal_status_preserve_report(Shadow, False, False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Mode_and_terminal_status_preserve_report",
+    "test": "Mode_and_terminal_status_preserve_report(Shadow, False, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Mode_and_terminal_status_preserve_report",
+    "test": "Mode_and_terminal_status_preserve_report(Shadow, True, False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Mode_and_terminal_status_preserve_report",
+    "test": "Mode_and_terminal_status_preserve_report(Shadow, True, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Modern_report_below_transport_limit_applies_with_canonical_file",
+    "test": "Modern_report_below_transport_limit_applies_with_canonical_file",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Provider_recreation_releases_expired_raw_note_once",
+    "test": "Provider_recreation_releases_expired_raw_note_once",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Public_goal_limit_is_preserved_when_internal_prompt_storage_is_widened",
+    "test": "Public_goal_limit_is_preserved_when_internal_prompt_storage_is_widened",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Report_boundaries",
+    "test": "Report_boundaries(20000, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Report_boundaries",
+    "test": "Report_boundaries(20001, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Report_boundaries",
+    "test": "Report_boundaries(3500, False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Report_boundaries",
+    "test": "Report_boundaries(4000, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Report_boundaries",
+    "test": "Report_boundaries(5500, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Same_root_applied_notes_batch_into_one_intact_spill_file",
+    "test": "Same_root_applied_notes_batch_into_one_intact_spill_file",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-batch-restored.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Storage_failures_leave_a_recoverable_settled_report",
+    "test": "Storage_failures_leave_a_recoverable_settled_report(budget)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Storage_failures_leave_a_recoverable_settled_report",
+    "test": "Storage_failures_leave_a_recoverable_settled_report(denied)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Storage_failures_leave_a_recoverable_settled_report",
+    "test": "Storage_failures_leave_a_recoverable_settled_report(path-too-long)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Storage_failures_leave_a_recoverable_settled_report",
+    "test": "Storage_failures_leave_a_recoverable_settled_report(publish)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Storage_failures_leave_a_recoverable_settled_report",
+    "test": "Storage_failures_leave_a_recoverable_settled_report(readback)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Storage_failures_leave_a_recoverable_settled_report",
+    "test": "Storage_failures_leave_a_recoverable_settled_report(root)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Storage_failures_leave_a_recoverable_settled_report",
+    "test": "Storage_failures_leave_a_recoverable_settled_report(write)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Target_canonical_unavailable_retains_legacy_backstop_without_relabeling_author_file",
+    "test": "Target_canonical_unavailable_retains_legacy_backstop_without_relabeling_author_file(False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Target_canonical_unavailable_retains_legacy_backstop_without_relabeling_author_file",
+    "test": "Target_canonical_unavailable_retains_legacy_backstop_without_relabeling_author_file(True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Unusable_file_uses_api_recovery",
+    "test": "Unusable_file_uses_api_recovery(corrupt)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Unusable_file_uses_api_recovery",
+    "test": "Unusable_file_uses_api_recovery(deleted)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Unusable_file_uses_api_recovery",
+    "test": "Unusable_file_uses_api_recovery(null)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDeliveryTests",
+    "method": "Unusable_file_uses_api_recovery",
+    "test": "Unusable_file_uses_api_recovery(unreadable)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationDeliveryTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDispatchTests",
+    "method": "Dispatch_rechecks_expiry_under_claim",
+    "test": "Dispatch_rechecks_expiry_under_claim(False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationDispatchTests",
+    "method": "Dispatch_rechecks_expiry_under_claim",
+    "test": "Dispatch_rechecks_expiry_under_claim(True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "a_distillation_that_keeps_every_anchor_class_passes",
+    "test": "a_distillation_that_keeps_every_anchor_class_passes",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "a_git_list_does_not_extend_to_an_adjacent_task_id",
+    "test": "a_git_list_does_not_extend_to_an_adjacent_task_id",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "a_report_without_a_handoff_block_does_not_require_next",
+    "test": "a_report_without_a_handoff_block_does_not_require_next",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "copying_next_and_handoff_passes_even_if_artifact_is_dropped",
+    "test": "copying_next_and_handoff_passes_even_if_artifact_is_dropped",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "corpus_citations_require_the_sha_even_when_prose_is_preserved",
+    "test": "corpus_citations_require_the_sha_even_when_prose_is_preserved(Code commits: `572c25f7`, `6d468ba8`, `3c8398a1`; subsequent verification-only updates are in this branch history\u00b7, 3c8398a1)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "corpus_citations_require_the_sha_even_when_prose_is_preserved",
+    "test": "corpus_citations_require_the_sha_even_when_prose_is_preserved(R1 landed in `89f1262`, R2 in `e1a46d1` (server), e1a46d1)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "corpus_citations_require_the_sha_even_when_prose_is_preserved",
+    "test": "corpus_citations_require_the_sha_even_when_prose_is_preserved(The investigation's recommended **Option A landed in commit `1ce1084`**, 1ce1084)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "corpus_citations_require_the_sha_even_when_prose_is_preserved",
+    "test": "corpus_citations_require_the_sha_even_when_prose_is_preserved(investigation; fix landed in f078dd2, f078dd2)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "corpus_citations_require_the_sha_even_when_prose_is_preserved",
+    "test": "corpus_citations_require_the_sha_even_when_prose_is_preserved(its single documentation change was cherry-picked onto this checkout as 928f8b2f before implementation\u00b7, 928f8b2f)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "corpus_citations_require_the_sha_even_when_prose_is_preserved",
+    "test": "corpus_citations_require_the_sha_even_when_prose_is_preserved(shipped and closed\u00b7** `4bb65fb`, 4bb65fb)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "distilled_over_the_length_band_is_under_compressed",
+    "test": "distilled_over_the_length_band_is_under_compressed",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "distilled_shorter_than_120_is_degraded_empty",
+    "test": "distilled_shorter_than_120_is_degraded_empty",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_git_reference_still_fails",
+    "test": "dropping_a_git_reference_still_fails(0123456789abcdef0123456789abcdef01234567, 0123456789abcdef0123456789abcdef01234567)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_git_reference_still_fails",
+    "test": "dropping_a_git_reference_still_fails(Commit f1590e8a, f1590e8a)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_git_reference_still_fails",
+    "test": "dropping_a_git_reference_still_fails(Commit f1590e8a\u00b7\u00b7b1234567, b1234567)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_git_reference_still_fails",
+    "test": "dropping_a_git_reference_still_fails(HEAD=f1590e8a, f1590e8a)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_git_reference_still_fails",
+    "test": "dropping_a_git_reference_still_fails(Merged commit f1590e8a, f1590e8a)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_git_reference_still_fails",
+    "test": "dropping_a_git_reference_still_fails(Pushed f1590e8a, f1590e8a)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_git_reference_still_fails",
+    "test": "dropping_a_git_reference_still_fails(SHA: `f1590e8a`, f1590e8a)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_git_reference_still_fails",
+    "test": "dropping_a_git_reference_still_fails(Task f1590e8a finished; commit f1590e8a was pushed\u00b7, f1590e8a)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_git_reference_still_fails",
+    "test": "dropping_a_git_reference_still_fails(git show f1590e8a, f1590e8a)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_git_reference_still_fails",
+    "test": "dropping_a_git_reference_still_fails(revision F1590E8, F1590E8)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(/var/log/antiphon)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(Application/Services/Foo)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(C:\\src\\Antiphon\\README\u00b7md)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(Custom/Feature/Handlers/)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(Server/Feature/Handlers)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(Server\\Application\\Services\\)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(\\\\host\\share\\report)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(\\logs\\antiphon)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(`docs/report\u00b7md`)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(client/src/)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(client/src/features)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(client/src:42)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(custom/feature/handlers:42)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(docs/cards/)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(docs/cards:42)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(docs/report\u00b7md)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(docs\\report\u00b7md)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(server/Application/Services/)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(server/Feature/Handlers)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(server/client/)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(server/client/handlers)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(server/client:42)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(server/client\u00b7cs)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(src/feature_name/output)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(\u00b7/client/src)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(\u00b7/docs/cards)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(\u00b7/scripts)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_real_path_still_fails",
+    "test": "dropping_a_real_path_still_fails(\u00b7\u00b7/scripts)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_required_anchor_is_over_compressed",
+    "test": "dropping_a_required_anchor_is_over_compressed(amount:$12\u00b750, $12\u00b750)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_required_anchor_is_over_compressed",
+    "test": "dropping_a_required_anchor_is_over_compressed(attach:[[attach:, [[attach:)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_required_anchor_is_over_compressed",
+    "test": "dropping_a_required_anchor_is_over_compressed(card:CARD-0330, CARD-0330)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_required_anchor_is_over_compressed",
+    "test": "dropping_a_required_anchor_is_over_compressed(count:3 failed, 3 failed)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_required_anchor_is_over_compressed",
+    "test": "dropping_a_required_anchor_is_over_compressed(path:server/Application/Services/Foo\u00b7cs:40, server/Application/Services/Foo\u00b7cs:40)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_required_anchor_is_over_compressed",
+    "test": "dropping_a_required_anchor_is_over_compressed(sha:a1b2c3d4e5f6789, a1b2c3d4e5f6789)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_a_required_anchor_is_over_compressed",
+    "test": "dropping_a_required_anchor_is_over_compressed(url:https://example\u00b7com/x, https://example\u00b7com/x)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_next_or_handoff_from_a_present_block_is_over_compressed",
+    "test": "dropping_next_or_handoff_from_a_present_block_is_over_compressed(handoff)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_next_or_handoff_from_a_present_block_is_over_compressed",
+    "test": "dropping_next_or_handoff_from_a_present_block_is_over_compressed(next)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_only_one_sha_from_a_list_or_range_fails",
+    "test": "dropping_only_one_sha_from_a_list_or_range_fails(Commits 2f7acb48 and bf642f16 both landed\u00b7, bf642f16)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_only_one_sha_from_a_list_or_range_fails",
+    "test": "dropping_only_one_sha_from_a_list_or_range_fails(Commits 2f7acb48, bf642f16, and 131872f2 both landed\u00b7, 131872f2)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_only_one_sha_from_a_list_or_range_fails",
+    "test": "dropping_only_one_sha_from_a_list_or_range_fails(Commits `2f7acb48`, `bf642f16` and `131872f2` landed\u00b7, bf642f16)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_only_one_sha_from_a_list_or_range_fails",
+    "test": "dropping_only_one_sha_from_a_list_or_range_fails(See git diff `2f7acb48`\u00b7\u00b7`bf642f16`\u00b7, bf642f16)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "dropping_only_one_sha_from_a_list_or_range_fails",
+    "test": "dropping_only_one_sha_from_a_list_or_range_fails(git diff 2f7acb48\u00b7\u00b7\u00b7bf642f16, bf642f16)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "empty_distilled_is_degraded_empty",
+    "test": "empty_distilled_is_degraded_empty",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "incidental_hex_is_not_a_commit_anchor",
+    "test": "incidental_hex_is_not_a_commit_anchor(Commit discussion ended\u00b7\nIncidental value f1590e8a was logged\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "incidental_hex_is_not_a_commit_anchor",
+    "test": "incidental_hex_is_not_a_commit_anchor(Commit discussion ended\u00b7\nTask `72ca7d63` finished\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "incidental_hex_is_not_a_commit_anchor",
+    "test": "incidental_hex_is_not_a_commit_anchor(Commit task f1590e8a-1234-5678-90ab-123456789abc finished\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "incidental_hex_is_not_a_commit_anchor",
+    "test": "incidental_hex_is_not_a_commit_anchor(Commit \u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7\u00b7f1590e8a)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "incidental_hex_is_not_a_commit_anchor",
+    "test": "incidental_hex_is_not_a_commit_anchor(Incidental `abcdef` and `abcdef0123456` values were logged\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "incidental_hex_is_not_a_commit_anchor",
+    "test": "incidental_hex_is_not_a_commit_anchor(Incidental `f1590e8a` was logged\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "incidental_hex_is_not_a_commit_anchor",
+    "test": "incidental_hex_is_not_a_commit_anchor(Incidental value f1590e8a was logged\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "incidental_hex_is_not_a_commit_anchor",
+    "test": "incidental_hex_is_not_a_commit_anchor(See `2f7acb48`\u00b7\u00b7`bf642f16`\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "incidental_hex_is_not_a_commit_anchor",
+    "test": "incidental_hex_is_not_a_commit_anchor(Task `9dc47a55` finished\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "incidental_hex_is_not_a_commit_anchor",
+    "test": "incidental_hex_is_not_a_commit_anchor(Task f1590e8a-1234-5678-90ab-123456789abc finished\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "incidental_hex_is_not_a_commit_anchor",
+    "test": "incidental_hex_is_not_a_commit_anchor(The colour `ffeedd0` is used for the banner\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "incidental_hex_is_not_a_commit_anchor",
+    "test": "incidental_hex_is_not_a_commit_anchor(The identifier prefixf1590e8asuffix is incidental\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "incidental_hex_is_not_a_commit_anchor",
+    "test": "incidental_hex_is_not_a_commit_anchor(The prior review (task `72ca7d63`, no-ship) listed the defects\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "more_than_ten_paths_below_sixty_percent_is_over_compressed",
+    "test": "more_than_ten_paths_below_sixty_percent_is_over_compressed",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "more_than_ten_paths_need_sixty_percent",
+    "test": "more_than_ten_paths_need_sixty_percent",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "review_citation_probes_require_the_sha",
+    "test": "review_citation_probes_require_the_sha(Cherry-picked 2f7acb48 onto master\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "review_citation_probes_require_the_sha",
+    "test": "review_citation_probes_require_the_sha(Fixed in 2f7acb48\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "review_citation_probes_require_the_sha",
+    "test": "review_citation_probes_require_the_sha(Pushed to origin/master at 2f7acb48\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "review_citation_probes_require_the_sha",
+    "test": "review_citation_probes_require_the_sha(Rebased onto 2f7acb48\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "review_citation_probes_require_the_sha",
+    "test": "review_citation_probes_require_the_sha(Reverted to 2f7acb48\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "review_citation_probes_require_the_sha",
+    "test": "review_citation_probes_require_the_sha(The commit hash is 2f7acb48\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "review_citation_probes_require_the_sha",
+    "test": "review_citation_probes_require_the_sha(origin/master is now 2f7acb48\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "ten_or_fewer_paths_must_all_survive",
+    "test": "ten_or_fewer_paths_must_all_survive",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "weekly_review_false_positives_can_be_paraphrased",
+    "test": "weekly_review_false_positives_can_be_paraphrased(Checked SE/dark and the Save/Cancel/Remove controls\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "weekly_review_false_positives_can_be_paraphrased",
+    "test": "weekly_review_false_positives_can_be_paraphrased(Domain/Application separation was preserved\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "weekly_review_false_positives_can_be_paraphrased",
+    "test": "weekly_review_false_positives_can_be_paraphrased(Task f1590e8a finished\u00b7 [antiphon-report:f1590e8a done])",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "weekly_review_false_positives_can_be_paraphrased",
+    "test": "weekly_review_false_positives_can_be_paraphrased(The HTTP/native transports now share the same behavior\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "weekly_review_false_positives_can_be_paraphrased",
+    "test": "weekly_review_false_positives_can_be_paraphrased(The api/ui contract is stable\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "weekly_review_false_positives_can_be_paraphrased",
+    "test": "weekly_review_false_positives_can_be_paraphrased(The client/server/db layers and read/write/execute bits are configured\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "weekly_review_false_positives_can_be_paraphrased",
+    "test": "weekly_review_false_positives_can_be_paraphrased(The docs/cards and client/src pairs need explicit path notation\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "weekly_review_false_positives_can_be_paraphrased",
+    "test": "weekly_review_false_positives_can_be_paraphrased(The docs/spec disagreement was resolved\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "weekly_review_false_positives_can_be_paraphrased",
+    "test": "weekly_review_false_positives_can_be_paraphrased(The input/output/error streams are wired\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "weekly_review_false_positives_can_be_paraphrased",
+    "test": "weekly_review_false_positives_can_be_paraphrased(The scripts/tooling story is unchanged\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "weekly_review_false_positives_can_be_paraphrased",
+    "test": "weekly_review_false_positives_can_be_paraphrased(The server/client boundary is unchanged\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "weekly_review_false_positives_can_be_paraphrased",
+    "test": "weekly_review_false_positives_can_be_paraphrased(The server/runner split was respected\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "weekly_review_false_positives_can_be_paraphrased",
+    "test": "weekly_review_false_positives_can_be_paraphrased(The src/dest pair was swapped\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "weekly_review_false_positives_can_be_paraphrased",
+    "test": "weekly_review_false_positives_can_be_paraphrased(Unit tests/builds are slow on this machine\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationGateTests",
+    "method": "weekly_review_false_positives_can_be_paraphrased",
+    "test": "weekly_review_false_positives_can_be_paraphrased(We measured the server/database round-trip\u00b7)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-gate-final.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+    "method": "Defaults_separate_usefulness_from_transport",
+    "test": "Defaults_separate_usefulness_from_transport",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationPolicyTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+    "method": "Nonterminal_tasks_are_ineligible",
+    "test": "Nonterminal_tasks_are_ineligible(Blocked)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationPolicyTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+    "method": "Nonterminal_tasks_are_ineligible",
+    "test": "Nonterminal_tasks_are_ineligible(Dispatched)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationPolicyTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+    "method": "Nonterminal_tasks_are_ineligible",
+    "test": "Nonterminal_tasks_are_ineligible(Queued)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationPolicyTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+    "method": "Nonterminal_tasks_are_ineligible",
+    "test": "Nonterminal_tasks_are_ineligible(Working)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationPolicyTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+    "method": "Report_boundaries",
+    "test": "Report_boundaries(14399)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationPolicyTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+    "method": "Report_boundaries",
+    "test": "Report_boundaries(14400)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationPolicyTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+    "method": "Report_boundaries",
+    "test": "Report_boundaries(14401)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationPolicyTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+    "method": "Report_boundaries",
+    "test": "Report_boundaries(19999)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationPolicyTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+    "method": "Report_boundaries",
+    "test": "Report_boundaries(20000)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationPolicyTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+    "method": "Report_boundaries",
+    "test": "Report_boundaries(20001)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationPolicyTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+    "method": "Report_boundaries",
+    "test": "Report_boundaries(2999)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationPolicyTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+    "method": "Report_boundaries",
+    "test": "Report_boundaries(3000)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationPolicyTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+    "method": "Report_boundaries",
+    "test": "Report_boundaries(3001)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationPolicyTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+    "method": "Report_boundaries",
+    "test": "Report_boundaries(3500)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationPolicyTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+    "method": "Report_boundaries",
+    "test": "Report_boundaries(3999)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationPolicyTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+    "method": "Report_boundaries",
+    "test": "Report_boundaries(4000)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationPolicyTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+    "method": "Report_boundaries",
+    "test": "Report_boundaries(4001)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationPolicyTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+    "method": "Report_boundaries",
+    "test": "Report_boundaries(5500)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationPolicyTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+    "method": "Specialists_are_never_targets",
+    "test": "Specialists_are_never_targets(Check)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationPolicyTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+    "method": "Specialists_are_never_targets",
+    "test": "Specialists_are_never_targets(Diagnose)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationPolicyTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+    "method": "Specialists_are_never_targets",
+    "test": "Specialists_are_never_targets(Distill)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationPolicyTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+    "method": "Unicode_length_is_not_utf8_bytes_or_tokens",
+    "test": "Unicode_length_is_not_utf8_bytes_or_tokens(3999)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationPolicyTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationPolicyTests",
+    "method": "Unicode_length_is_not_utf8_bytes_or_tokens",
+    "test": "Unicode_length_is_not_utf8_bytes_or_tokens(4000)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-expanded-OutputDistillationPolicyTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationProducerTests",
+    "method": "Full_missing_and_closed_worker_keep_raw_fallback",
+    "test": "Full_missing_and_closed_worker_keep_raw_fallback(closed)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationProducerTests",
+    "method": "Full_missing_and_closed_worker_keep_raw_fallback",
+    "test": "Full_missing_and_closed_worker_keep_raw_fallback(full)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationProducerTests",
+    "method": "Full_missing_and_closed_worker_keep_raw_fallback",
+    "test": "Full_missing_and_closed_worker_keep_raw_fallback(missing)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationProducerTests",
+    "method": "Idle_parent_delivery_does_not_delay_admission",
+    "test": "Idle_parent_delivery_does_not_delay_admission(Apply, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationProducerTests",
+    "method": "Idle_parent_delivery_does_not_delay_admission",
+    "test": "Idle_parent_delivery_does_not_delay_admission(Shadow, False)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationProducerTests",
+    "method": "Idle_parent_delivery_does_not_delay_admission",
+    "test": "Idle_parent_delivery_does_not_delay_admission(Shadow, True)",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationQueueTests",
+    "method": "Capacity_rejects_without_dropping_an_accepted_request",
+    "test": "Capacity_rejects_without_dropping_an_accepted_request",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationQueueTests",
+    "method": "Defaults_and_legacy_contract_are_preserved",
+    "test": "Defaults_and_legacy_contract_are_preserved",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationTests",
+    "method": "a_blocked_task_is_never_requested",
+    "test": "a_blocked_task_is_never_requested",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationTests",
+    "method": "a_rejected_distillation_delivers_the_raw_body_and_records_missing_anchors",
+    "test": "a_rejected_distillation_delivers_the_raw_body_and_records_missing_anchors",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationTests",
+    "method": "a_row_already_delivered_records_applied_late",
+    "test": "a_row_already_delivered_records_applied_late",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationTests",
+    "method": "a_specialist_row_is_never_requested",
+    "test": "a_specialist_row_is_never_requested",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationTests",
+    "method": "apply_mode_replaces_a_held_pending_body_and_keeps_header_and_digest",
+    "test": "apply_mode_replaces_a_held_pending_body_and_keeps_header_and_digest",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationTests",
+    "method": "backlog_at_the_cap_degrades_without_creating",
+    "test": "backlog_at_the_cap_degrades_without_creating",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationTests",
+    "method": "disabled_writes_no_ledger_row",
+    "test": "disabled_writes_no_ledger_row",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationTests",
+    "method": "shadow_mode_records_without_replacing_the_note",
+    "test": "shadow_mode_records_without_replacing_the_note",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationTests",
+    "method": "short_and_long_reports_are_skipped_with_reasons",
+    "test": "short_and_long_reports_are_skipped_with_reasons",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationTests",
+    "method": "the_unavailable_incident_dedups_per_minute",
+    "test": "the_unavailable_incident_dedups_per_minute",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.OutputDistillationTests",
+    "method": "timeout_cancels_a_still_queued_distill_task_and_clears_the_hold",
+    "test": "timeout_cancels_a_still_queued_distill_task_and_clears_the_hold",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.PolledCompletionNoteShrinkTests",
+    "method": "a_check_origin_row_is_untouched_by_the_delegation_guard",
+    "test": "a_check_origin_row_is_untouched_by_the_delegation_guard",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.PolledCompletionNoteShrinkTests",
+    "method": "a_never_polled_task_delivers_its_note_in_full",
+    "test": "a_never_polled_task_delivers_its_note_in_full",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.PolledCompletionNoteShrinkTests",
+    "method": "a_note_already_typed_once_is_not_shrunk",
+    "test": "a_note_already_typed_once_is_not_shrunk",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.PolledCompletionNoteShrinkTests",
+    "method": "a_note_whose_content_differs_from_the_poll_is_delivered_in_full",
+    "test": "a_note_whose_content_differs_from_the_poll_is_delivered_in_full",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.PolledCompletionNoteShrinkTests",
+    "method": "a_note_whose_content_the_caller_already_polled_is_shrunk",
+    "test": "a_note_whose_content_the_caller_already_polled_is_shrunk",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.PolledCompletionNoteShrinkTests",
+    "method": "a_shrunk_note_keeps_the_caller_facing_warning",
+    "test": "a_shrunk_note_keeps_the_caller_facing_warning",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.PolledCompletionNoteShrinkTests",
+    "method": "an_excerpted_note_still_shrinks_on_a_matching_poll",
+    "test": "an_excerpted_note_still_shrinks_on_a_matching_poll",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.PolledCompletionNoteShrinkTests",
+    "method": "the_flag_off_delivers_in_full",
+    "test": "the_flag_off_delivers_in_full",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.PtyDeliveryCeilingsTests",
+    "method": "A_caller_with_no_profile_gets_the_conservative_ceilings",
+    "test": "A_caller_with_no_profile_gets_the_conservative_ceilings",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.PtyDeliveryCeilingsTests",
+    "method": "A_runner_on_the_inbox_conhost_downgrades_a_modern_server",
+    "test": "A_runner_on_the_inbox_conhost_downgrades_a_modern_server",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.PtyDeliveryCeilingsTests",
+    "method": "A_runner_on_the_modern_backend_confirms_the_raised_ceilings",
+    "test": "A_runner_on_the_modern_backend_confirms_the_raised_ceilings",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.PtyDeliveryCeilingsTests",
+    "method": "A_silent_runner_leaves_this_processes_own_decision_standing",
+    "test": "A_silent_runner_leaves_this_processes_own_decision_standing",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.PtyDeliveryCeilingsTests",
+    "method": "An_inbox_server_is_not_raised_by_a_modern_runner",
+    "test": "An_inbox_server_is_not_raised_by_a_modern_runner",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.PtyDeliveryCeilingsTests",
+    "method": "No_modern_ceiling_exceeds_the_measured_envelope",
+    "test": "No_modern_ceiling_exceeds_the_measured_envelope",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.PtyDeliveryCeilingsTests",
+    "method": "The_brief_quotes_the_report_ceiling_that_is_actually_in_force",
+    "test": "The_brief_quotes_the_report_ceiling_that_is_actually_in_force",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.PtyDeliveryCeilingsTests",
+    "method": "The_inbox_backend_keeps_exactly_the_ceilings_that_shipped",
+    "test": "The_inbox_backend_keeps_exactly_the_ceilings_that_shipped",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.PtyDeliveryCeilingsTests",
+    "method": "The_same_brief_spills_on_the_inbox_backend_and_is_typed_inline_on_the_modern_one",
+    "test": "The_same_brief_spills_on_the_inbox_backend_and_is_typed_inline_on_the_modern_one",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.SessionMessageQueueDeliveryVerificationTests",
+    "method": "A_clipped_prefix_parks_as_truncated_not_sent",
+    "test": "A_clipped_prefix_parks_as_truncated_not_sent",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-retained-SessionMessageQueueDeliveryVerificationTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.SessionMessageQueueDeliveryVerificationTests",
+    "method": "A_complete_long_body_still_marks_sent",
+    "test": "A_complete_long_body_still_marks_sent",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-retained-SessionMessageQueueDeliveryVerificationTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.SessionMessageQueueDeliveryVerificationTests",
+    "method": "A_stale_record_alone_never_produces_delivered",
+    "test": "A_stale_record_alone_never_produces_delivered",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-retained-SessionMessageQueueDeliveryVerificationTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.SessionMessageQueueDeliveryVerificationTests",
+    "method": "A_swallowed_first_enter_is_re_pressed_and_the_delivery_confirms",
+    "test": "A_swallowed_first_enter_is_re_pressed_and_the_delivery_confirms",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-retained-SessionMessageQueueDeliveryVerificationTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.SessionMessageQueueDeliveryVerificationTests",
+    "method": "Late_confirm_does_not_promote_a_truncated_body_to_sent",
+    "test": "Late_confirm_does_not_promote_a_truncated_body_to_sent",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-retained-SessionMessageQueueDeliveryVerificationTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.SessionMessageQueueDeliveryVerificationTests",
+    "method": "Screen_output_advancing_without_a_record_is_no_longer_delivered",
+    "test": "Screen_output_advancing_without_a_record_is_no_longer_delivered",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-retained-SessionMessageQueueDeliveryVerificationTests.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.SessionMessageQueueSpillTests",
+    "method": "A_large_channel_message_spills_and_the_pointer_still_settles_the_reply",
+    "test": "A_large_channel_message_spills_and_the_pointer_still_settles_the_reply",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.SessionMessageQueueSpillTests",
+    "method": "A_large_ui_whenidle_message_spills_and_the_row_stores_the_pointer",
+    "test": "A_large_ui_whenidle_message_spills_and_the_row_stores_the_pointer",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.SessionMessageQueueSpillTests",
+    "method": "A_small_now_mode_body_is_typed_whole_with_no_spill_file",
+    "test": "A_small_now_mode_body_is_typed_whole_with_no_spill_file",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.SessionMessageQueueSpillTests",
+    "method": "A_small_ui_body_is_typed_whole_with_no_spill_file",
+    "test": "A_small_ui_body_is_typed_whole_with_no_spill_file",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.SessionMessageQueueSpillTests",
+    "method": "File_write_failure_types_the_original_and_raises_oversize",
+    "test": "File_write_failure_types_the_original_and_raises_oversize",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.SessionMessageQueueSpillTests",
+    "method": "Now_mode_oversize_types_the_pointer_and_persists_no_queue_row",
+    "test": "Now_mode_oversize_types_the_pointer_and_persists_no_queue_row",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.Application.SessionMessageQueueSpillTests",
+    "method": "Two_channel_rows_batched_over_the_ceiling_share_one_file_and_one_pointer",
+    "test": "Two_channel_rows_batched_over_the_ceiling_share_one_file_and_one_pointer",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.TestHelpers.DelegationHarnessCensusTests",
+    "method": "RuleA_no_hand_rolled_DelegationWorktreeService_scoped_registration",
+    "test": "RuleA_no_hand_rolled_DelegationWorktreeService_scoped_registration",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.TestHelpers.DelegationHarnessCensusTests",
+    "method": "RuleB_dispatcher_harnesses_call_AddDelegationWorktreeGraph",
+    "test": "RuleB_dispatcher_harnesses_call_AddDelegationWorktreeGraph",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.TestHelpers.DelegationHarnessCensusTests",
+    "method": "RuleC_reply_harnesses_register_git_via_helper_or_BridgeQueueHarness",
+    "test": "RuleC_reply_harnesses_register_git_via_helper_or_BridgeQueueHarness",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.TestHelpers.DelegationHarnessCensusTests",
+    "method": "RuleD_GitWorkspaceService_one_liner_only_in_the_helper_and_its_pin",
+    "test": "RuleD_GitWorkspaceService_one_liner_only_in_the_helper_and_its_pin",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.TestHelpers.DelegationTestServicesTests",
+    "method": "Git_workspace_only_helper_registers_one_singleton_and_no_worktree_graph",
+    "test": "Git_workspace_only_helper_registers_one_singleton_and_no_worktree_graph",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.TestHelpers.DelegationTestServicesTests",
+    "method": "Helper_carries_the_suite_git_settings",
+    "test": "Helper_carries_the_suite_git_settings",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.TestHelpers.DelegationTestServicesTests",
+    "method": "Helper_is_TryAdd_so_a_fake_worktree_manager_and_a_prior_one_liner_stand",
+    "test": "Helper_is_TryAdd_so_a_fake_worktree_manager_and_a_prior_one_liner_stand",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  },
+  {
+    "className": "Antiphon.Tests.TestHelpers.DelegationTestServicesTests",
+    "method": "Logging_clock_and_helper_resolve_the_whole_worktree_graph",
+    "test": "Logging_clock_and_helper_resolve_the_whole_worktree_graph",
+    "outcome": "Passed",
+    "failure": null,
+    "evidence": ".antiphon/c419-deterministic-evidence/main/c419-regressions-green.trx"
+  }
+]
