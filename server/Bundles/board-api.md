@@ -21,8 +21,9 @@ unless the script genuinely can't do it. These are the shapes that bite either w
   conflict, which is the guard working, not a transient error to retry. `card.ps1` re-reads for you
   by default — see its header for the tradeoff and `-Token` for strict compare-and-swap.
 
-- VALIDATION FAILURES ARE 422, NOT 400, with a problem-details `errors` dictionary keyed by
-  PascalCase field name (`"Description"`, `"Reason"`) whose messages name the limit and the actual
+- VALIDATION FAILURES ARE 422, NOT 400, with a problem-details `errors` dictionary using existing
+  PascalCase field names (`"Description"`, `"Reason"`, `"ConcurrencyToken"`) alongside new
+  camelCase privacy fields (`"privateNotes"`, `"cardFileVisibility"`) whose messages name the limit and the actual
   length. Read the message rather than guessing from the status code.
 
 - SEND WRITE BODIES FROM A FILE, never inline on a shell command line: `-DescriptionFile` /
@@ -54,3 +55,15 @@ unless the script genuinely can't do it. These are the shapes that bite either w
   `boardColumnId` (defaults to the board's Backlog, then the lowest-order live column), optional
   `reopenedBy`. The Reopen revision keeps the superseded `terminalReason`/`completedAt`; the card
   surface is live again. Reopen never spawns — want an agent on the reopened card, `POST /spawn`.
+
+- CARD FILES ARE OPT-IN PUBLICATIONS: boards default off; locally configured Unknown
+  repository visibility blocks sync. Private card overrides suppress the whole card;
+  private notes never export. Title, description, outcome and archive reasons are public
+  on eligible cards. New/edit accept `-PrivateNotesFile` and `-CardFileVisibility`;
+  edit accepts `-ClearPrivateNotes`. Never echo notes. A saved card is not proof of publication.
+  Status is at `/api/boards/{id}/card-files/status`; settings require both syncCardFiles
+  and expectedSyncCardFiles. See docs/card-file-privacy.md for refusal/cleanup semantics.
+
+- PRIVATE NOTES READ PROHIBITION: agents must not read the notes route
+  (`GET /api/cards/{id}/private-notes`) unless the card's own brief explicitly instructs,
+  and must never quote note text into a report, card body, commit message, or chat message.
