@@ -73,6 +73,9 @@ public class AppDbContext : DbContext
     public DbSet<WorktreeHealthFinding> WorktreeHealthFindings => Set<WorktreeHealthFinding>();
     public DbSet<DelegationCapability> DelegationCapabilities => Set<DelegationCapability>();
     public DbSet<DelegationCapabilityEvent> DelegationCapabilityEvents => Set<DelegationCapabilityEvent>();
+    public DbSet<CapacityRecoveryWait> CapacityRecoveryWaits => Set<CapacityRecoveryWait>();
+    public DbSet<CapacityRecoveryWaitHold> CapacityRecoveryWaitHolds => Set<CapacityRecoveryWaitHold>();
+    public DbSet<CapacityRecoveryProviderState> CapacityRecoveryProviderStates => Set<CapacityRecoveryProviderState>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -1202,6 +1205,8 @@ public class AppDbContext : DbContext
                 .HasDatabaseName("IX_ApiErrorRecoveries_AgentSessionId_StubSequence");
             entity.HasIndex(r => r.NextAttemptAt)
                 .HasDatabaseName("IX_ApiErrorRecoveries_NextAttemptAt");
+            entity.Property(r => r.EvidenceStatus).HasMaxLength(80);
+            entity.Property(r => r.EvidenceDigest).HasMaxLength(64);
 
             entity.HasOne(r => r.AgentSession)
                 .WithMany()
@@ -1232,6 +1237,11 @@ public class AppDbContext : DbContext
 
             entity.HasIndex(m => m.SourceScheduleId)
                 .HasDatabaseName("IX_SessionQueuedMessages_SourceScheduleId");
+            entity.Property(m => m.CapacityRecoveryActionKey).HasMaxLength(80);
+            entity.HasIndex(m => m.CapacityRecoveryActionKey)
+                .IsUnique()
+                .HasFilter("\"CapacityRecoveryActionKey\" IS NOT NULL")
+                .HasDatabaseName("IX_SessionQueuedMessages_CapacityRecoveryActionKey");
 
             // CARD-0067: the channel-reply correlation sweep is a GLOBAL query over the handful of
             // rows still owed a reply, so it gets a partial index rather than a table scan.
@@ -1666,6 +1676,9 @@ public class AppDbContext : DbContext
                 .IsUnique()
                 .HasFilter("\"ClearedAt\" IS NULL")
                 .HasDatabaseName("IX_ModelAvailabilityHolds_Kind_ModelAlias_Active");
+            entity.HasIndex(h => h.ReleasePendingAt)
+                .HasFilter("\"ReleasePendingAt\" IS NOT NULL AND \"ReleaseConsumedAt\" IS NULL")
+                .HasDatabaseName("IX_ModelAvailabilityHolds_ReleasePending");
         });
 
         modelBuilder.Entity<RoutingPin>(entity =>
@@ -1920,6 +1933,53 @@ public class AppDbContext : DbContext
                 .WithMany(c => c.Events)
                 .HasForeignKey(e => e.CapabilityId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<CapacityRecoveryWait>(entity =>
+        {
+            entity.ToTable("CapacityRecoveryWaits");
+            entity.HasKey(w => w.Id);
+            entity.Property(w => w.ConsumerKey).IsRequired().HasMaxLength(200);
+            entity.Property(w => w.ActionKey).IsRequired().HasMaxLength(80);
+            entity.Property(w => w.RequestedAlias).HasMaxLength(64);
+            entity.Property(w => w.Outcome).HasMaxLength(40);
+            entity.Property(w => w.OutcomeReason).HasMaxLength(200);
+            entity.Property(w => w.RefusalDigest).HasMaxLength(64);
+            entity.Property(w => w.AuthorizationSnapshot).HasMaxLength(400);
+            entity.Property(w => w.ObservedClearCauses).HasMaxLength(80);
+            entity.Property(w => w.LaunchReceipt).HasMaxLength(80);
+            entity.HasIndex(w => w.ConsumerKey)
+                .IsUnique()
+                .HasFilter("\"State\" NOT IN (7, 9, 10, 12)")
+                .HasDatabaseName("IX_CapacityRecoveryWaits_ConsumerKey_Active");
+            entity.HasIndex(w => new { w.ExecutionKind, w.BlockedAt, w.Id })
+                .HasDatabaseName("IX_CapacityRecoveryWaits_Kind_BlockedAt");
+            entity.HasIndex(w => w.DueAt)
+                .HasDatabaseName("IX_CapacityRecoveryWaits_DueAt");
+        });
+
+        modelBuilder.Entity<CapacityRecoveryWaitHold>(entity =>
+        {
+            entity.ToTable("CapacityRecoveryWaitHolds");
+            entity.HasKey(l => new { l.WaitId, l.HoldId });
+            entity.HasOne(l => l.Wait)
+                .WithMany(w => w.Holds)
+                .HasForeignKey(l => l.WaitId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(l => l.Hold)
+                .WithMany()
+                .HasForeignKey(l => l.HoldId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(l => l.HoldId)
+                .HasDatabaseName("IX_CapacityRecoveryWaitHolds_HoldId");
+        });
+
+        modelBuilder.Entity<CapacityRecoveryProviderState>(entity =>
+        {
+            entity.ToTable("CapacityRecoveryProviderStates");
+            entity.HasKey(s => s.Kind);
+            entity.Property(s => s.LastActionKey).HasMaxLength(80);
+            entity.Property(s => s.GrantedActionKey).HasMaxLength(80);
         });
 
     }

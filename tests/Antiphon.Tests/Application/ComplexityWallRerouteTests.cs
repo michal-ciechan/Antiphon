@@ -700,6 +700,7 @@ public class ComplexityWallRerouteTests
             services.AddSingleton<AgentSessionRuntime>();
             services.AddSingleton<SessionMessageQueueService>();
             services.AddSingleton<ApiErrorRecoveryService>();
+            services.AddSingleton<CapacityRecoveryService>();
             services.AddSingleton<IDelegateSessionStopper>(Stopper);
             services.AddSingleton<DelegationWorkspaceResolver>();
             services.AddDelegationWorktreeGraph(new GitSettings

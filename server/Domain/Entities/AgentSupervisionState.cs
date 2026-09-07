@@ -43,5 +43,10 @@ public class AgentSupervisionState
 
     public DateTime UpdatedAt { get; set; }
 
+    /// <summary>CARD-0412: typed capacity wait for this standing owner, distinct from crash NextRestartAt.</summary>
+    public Guid? CapacityWaitId { get; set; }
+    public string? CapacityRecoveryActionKey { get; set; }
+    public DateTime? CapacityNextDueAt { get; set; }
+
     public Agent? Agent { get; set; }
 }

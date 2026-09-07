@@ -45,6 +45,16 @@ public sealed class SupervisionSettingsValidator : IValidateOptions<SupervisionS
             }
         }
 
+        var recovery = options.CapacityRecovery ?? new CapacityRecoverySettings();
+        if (recovery.AdmissionIntervalSeconds is < 1 or > 3600)
+            failures.Add("Supervision:CapacityRecovery:AdmissionIntervalSeconds must be between 1 and 3600.");
+        if (recovery.JitterSeconds is < 0 or > 300)
+            failures.Add("Supervision:CapacityRecovery:JitterSeconds must be between 0 and 300.");
+        if (recovery.MaxEpisodeAttempts is int attempts && attempts is < 1 or > 10)
+            failures.Add("Supervision:CapacityRecovery:MaxEpisodeAttempts must be between 1 and 10.");
+        if (recovery.ReconciliationBatchSize is < 1 or > 1000)
+            failures.Add("Supervision:CapacityRecovery:ReconciliationBatchSize must be between 1 and 1000.");
+
         return failures.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(failures);

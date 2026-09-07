@@ -80,6 +80,7 @@ public sealed class AgentTaskDispatcher
     private readonly bool _reconciliationEnabled;
     private readonly bool _launchResumeEnabled;
     private readonly OrchestratorWorkspaceWarningService? _workspaceWarning;
+    private readonly CapacityRecoveryService? _capacityRecovery;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -129,8 +130,10 @@ public sealed class AgentTaskDispatcher
         RoutingPinService? routingPins = null,
         ComplexityRoutingService? complexityRouting = null,
         IOptions<SessionReconciliationSettings>? reconciliation = null,
-        OrchestratorWorkspaceWarningService? workspaceWarning = null)
+        OrchestratorWorkspaceWarningService? workspaceWarning = null,
+        CapacityRecoveryService? capacityRecovery = null)
     {
+        _capacityRecovery = capacityRecovery;
         _complexityRouting = complexityRouting;
         _routingPins = routingPins;
         _bootWedgePending = bootWedgePending;
@@ -291,7 +294,10 @@ public sealed class AgentTaskDispatcher
 
         var active = await _db.AgentTasks
             .Where(AgentTaskRoles.NotSpecialist)
-            .CountAsync(t => t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working, ct);
+            .CountAsync(
+                t => (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
+                    && !t.CapacityWaitRetained,
+                ct);
 
         // Deadline is durable: recovery does not depend on the optional caller surviving.
         await _db.AgentTasks.Where(t => t.Status == AgentTaskStatus.Queued
@@ -358,6 +364,29 @@ public sealed class AgentTaskDispatcher
         var dispatched = 0;
         // Only process-spawning dispatches count against the cap — see the `active` query above.
         var dispatchedAgainstCap = 0;
+
+        // CARD-0412 N-1: a retained CapacityWait returning to counted execution takes the freed
+        // slot ahead of any newly Queued task, including an older CreatedAt queued row.
+        if (_capacityRecovery is not null)
+        {
+            var returning = await _db.AgentTasks
+                .Where(t => t.CapacityWaitRetained
+                    && t.Status == AgentTaskStatus.Working
+                    && t.CapacityWaitId != null)
+                .OrderBy(t => t.CreatedAt)
+                .ToListAsync(ct);
+            foreach (var retained in returning)
+            {
+                if (active + dispatchedAgainstCap >= _settings.MaxConcurrentTasks)
+                    break;
+                if (!await _capacityRecovery.TryClaimCountedSlotAsync(
+                        _db, _settings.MaxConcurrentTasks, retainedReturn: true, ct))
+                    break;
+                retained.CapacityWaitRetained = false;
+                dispatchedAgainstCap++;
+                active++;
+            }
+        }
         var skippedConcurrency = 0;
         var skippedScope = 0;
         var skippedModelAvailability = 0;
@@ -484,6 +513,25 @@ public sealed class AgentTaskDispatcher
                     else
                     {
                         skippedModelAvailability++;
+                        if (_capacityRecovery is not null)
+                        {
+                            var hold = await _modelAvailability.GetActiveHoldAsync(task.AgentKind, alias, ct);
+                            await _capacityRecovery.EnsureWaitOnAsync(_db, new CapacityWaitRegistration
+                            {
+                                ConsumerKey = $"task:{task.Id:N}",
+                                ConsumerKind = CapacityWaitConsumerKind.QueuedTask,
+                                ExecutionKind = task.AgentKind,
+                                RequestedKind = task.AgentKind,
+                                RequestedAlias = alias,
+                                BlockedAt = UtcNow(),
+                                TaskId = task.Id,
+                                SessionId = task.AgentSessionId,
+                                HoldId = hold?.Id,
+                                HoldRevision = hold?.Revision ?? 0,
+                                HoldAlreadyCleared = hold is null,
+                            }, ct);
+                        }
+
                         if (everHeld.Add(task.Id))
                         {
                             _db.AgentTaskEvents.Add(new AgentTaskEvent
@@ -731,6 +779,22 @@ public sealed class AgentTaskDispatcher
             if (ComplexityRoutingService.CascadeTriedEveryCandidate(
                     reroutedCounts.GetValueOrDefault(task.Id), walk.Outcomes.Count))
                 continue;
+
+            if (_capacityRecovery is not null)
+            {
+                await _capacityRecovery.EnsureWaitOnAsync(_db, new CapacityWaitRegistration
+                {
+                    ConsumerKey = $"task:{task.Id:N}",
+                    ConsumerKind = CapacityWaitConsumerKind.RoutingBlockedTask,
+                    ExecutionKind = chosen.Kind,
+                    RequestedKind = chosen.Kind,
+                    RequestedAlias = chosen.Alias,
+                    BlockedAt = UtcNow(),
+                    TaskId = task.Id,
+                    SessionId = task.AgentSessionId,
+                    HoldAlreadyCleared = true,
+                }, ct);
+            }
 
             task.Status = AgentTaskStatus.Queued;
             task.AgentKind = chosen.Kind;

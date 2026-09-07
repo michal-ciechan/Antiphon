@@ -197,6 +197,18 @@ public class AgentTask
 
     public Guid? AgentSessionId { get; set; }
 
+    /// <summary>CARD-0412: live retained capacity-wait episode, if this task is waiting for capacity.</summary>
+    public Guid? CapacityWaitId { get; set; }
+
+    /// <summary>Typed wait reason while Status remains Working during a capacity wait.</summary>
+    public string? CapacityWaitReason { get; set; }
+
+    /// <summary>
+    /// True while this Working task is the current quiescent retained CapacityWait (excluded from
+    /// MaxConcurrentTasks). Historical CapacityWaitId alone is not this flag.
+    /// </summary>
+    public bool CapacityWaitRetained { get; set; }
+
     /// <summary>Throwaway agent — hidden from the agents page and removed when the task settles.</summary>
     public bool Ephemeral { get; set; } = true;
 

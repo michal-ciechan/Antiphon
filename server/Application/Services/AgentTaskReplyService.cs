@@ -1036,7 +1036,8 @@ public sealed class AgentTaskReplyService
                 return;
 
             var fallbackAlias = ModelLevelAliases.For(task.AgentKind, task.ModelLevel);
-            var wall = UsageLimitWallParser.Parse(now, stub.ErrorText, fallbackAlias);
+            var evidenceAt = recovery?.EvidenceAt ?? now;
+            var wall = UsageLimitWallParser.Parse(evidenceAt, stub.ErrorText, fallbackAlias);
             var walledAlias = wall?.ModelAlias ?? fallbackAlias;
             var sessionLimitResume = recovery is { ResolvedAt: null, NextAttemptAt: not null };
             var decision = await tasks.RerouteOnWallAsync(
@@ -1053,6 +1054,29 @@ public sealed class AgentTaskReplyService
         {
             await DeferApiErrorTurnAsync(services, db, task, sessionId, stub, classification, recovery, errorText, now, ct);
             return;
+        }
+
+        if (classification == ApiErrorClassification.Wall
+            && recovery?.ResolvedReason is ApiErrorRecoveryReasons.WallModelPaused
+                or ApiErrorRecoveryReasons.WallParked
+            && recovery.CapacityWaitId is { } waitId)
+        {
+            var wait = await db.CapacityRecoveryWaits.AsNoTracking()
+                .FirstOrDefaultAsync(w => w.Id == waitId, ct);
+            if (wait is not { State: CapacityRecoveryWaitState.Exhausted })
+            {
+                task.Status = AgentTaskStatus.Working;
+                task.CapacityWaitId = waitId;
+                task.CapacityWaitRetained = true;
+                task.CapacityWaitReason = recovery.ResolvedReason;
+                db.AgentTaskEvents.Add(NewEvent(
+                    task.Id,
+                    AgentTaskEventType.CapacityRecovery,
+                    $"Waiting for capacity ({recovery.ResolvedReason}); next due {wait?.DueAt:u}.",
+                    now));
+                await db.SaveChangesAsync(ct);
+                return;
+            }
         }
 
         var terminalReason = recovery?.ResolvedReason;

@@ -226,6 +226,9 @@ public enum AgentTaskEventType
     /// <see cref="LandedWithResidue"/> occupied it. Do not renumber.
     /// </summary>
     FindingRecorded = 27,
+
+    /// <summary>CARD-0412: a capacity-recovery lifecycle event on this task. Not Failed and not a no-op Rerouted.</summary>
+    CapacityRecovery = 28,
 }
 
 /// <summary>

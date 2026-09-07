@@ -145,6 +145,11 @@ export type AttentionKind =
    * issue/rotate, Warning on revoke. Recency 24 h.
    */
   | 'DelegationCapability'
+  /**
+   * CARD-0412: capacity recovery exhausted its three admitted attempts. Error, broken group.
+   * Inspect the latest wall and continue manually.
+   */
+  | 'CapacityRecoveryExhausted'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =

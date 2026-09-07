@@ -33,6 +33,19 @@ public class ApiErrorRecovery
     public string? ResolvedReason { get; set; }
     public DateTime? LastEnqueuedAt { get; set; }
 
+    /// <summary>Evidence instant used to compute the reset. Never sweep-time now (CARD-0412).</summary>
+    public DateTime? EvidenceAt { get; set; }
+
+    public CapacityEvidenceTimestampSource? EvidenceTimestampSource { get; set; }
+
+    public int? ParseVersion { get; set; }
+    public string? EvidenceStatus { get; set; }
+    public string? EvidenceDigest { get; set; }
+
+    public Guid? AppliedHoldId { get; set; }
+    public int? AppliedHoldRevision { get; set; }
+    public Guid? CapacityWaitId { get; set; }
+
     public AgentSession AgentSession { get; set; } = null!;
 }
 

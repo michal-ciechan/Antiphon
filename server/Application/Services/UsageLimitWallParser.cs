@@ -21,6 +21,17 @@ public static partial class UsageLimitWallParser
     public const string SessionLimitProductionText =
         "You've hit your session limit · resets 5:20pm (Europe/London)";
 
+    /// <summary>CARD-0412 production hour-only form (TurnEnd.Text null; sibling AssistantText).</summary>
+    public const string SessionLimitHourOnlyNineAmText =
+        "You've hit your session limit · resets 9am (Europe/London)";
+
+    /// <summary>CARD-0412 production hour-only 2pm form.</summary>
+    public const string SessionLimitHourOnlyTwoPmText =
+        "You've hit your session limit · resets 2pm (Europe/London)";
+
+    /// <summary>CARD-0412 grammar. Existing rows parsed under the minute-required regex are version 1.</summary>
+    public const int ParseVersion = 2;
+
     public const string FableModelCapIncidentText =
         "You've reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model.";
 
@@ -30,17 +41,34 @@ public static partial class UsageLimitWallParser
     private static partial Regex NamedModelLimitRegex();
 
     [GeneratedRegex(
-        @"resets?(?:\s+at)?\s+(\d{1,2}):(\d{2})\s*(am|pm)?(?:\s*\(([^)]+)\))?",
+        @"\bresets?(?:\s+at)?\s+",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex ResetRegex();
+    private static partial Regex ResetLeadRegex();
+
+    /// <summary>Hour-only AM/PM. Omitted minutes mean zero only in this branch (CARD-0412).</summary>
+    [GeneratedRegex(
+        @"^(?<hour>\d{1,2})\s*(?<ampm>am|pm)(?!\w)",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex HourOnlyResetRegex();
+
+    [GeneratedRegex(
+        @"^(?<hour>\d{1,2}):(?<minute>\d{2})(?:\s*(?<ampm>am|pm))?(?!\w|:|\d)",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex HourMinuteResetRegex();
+
+    [GeneratedRegex(
+        @"^\s*\((?<zone>[^)]+)\)",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex ClosedZoneRegex();
 
     /// <summary>
-    /// Parse Wall stub text. Returns null when no model alias can be resolved (neither in the
+    /// Parse Wall stub text against the evidence instant rather than wall-clock now.
+    /// Returns null when no model alias can be resolved (neither in the
     /// text nor via <paramref name="fallbackAlias"/>) — the caller must not write a hold.
     /// Unparseable reset degrades to <see cref="UsageLimitWallKind.ModelCap"/>, never the
-    /// 30-minute ladder.
+    /// 30-minute ladder. A supplied-but-invalid reset is distinguished from no reset stated.
     /// </summary>
-    public static UsageLimitWall? Parse(DateTime nowUtc, string? text, string? fallbackAlias)
+    public static UsageLimitWall? Parse(DateTime evidenceAtUtc, string? text, string? fallbackAlias)
     {
         var raw = text ?? string.Empty;
         var fromText = ExtractModelAlias(raw);
@@ -48,17 +76,18 @@ public static partial class UsageLimitWallParser
         if (alias is null)
             return null;
 
-        var reset = TryParseReset(nowUtc, raw);
-        var kind = reset is { } parsed
+        var reset = TryParseReset(evidenceAtUtc, raw);
+        var kind = reset.Status == ResetParseStatus.Valid
             ? UsageLimitWallKind.SessionLimit
             : UsageLimitWallKind.ModelCap;
 
         return new UsageLimitWall(
             kind,
             alias,
-            reset?.AtUtc,
-            reset?.ZoneId,
-            raw);
+            reset.AtUtc,
+            reset.ZoneId,
+            raw,
+            reset.Status == ResetParseStatus.Invalid ? reset.Failure : null);
     }
 
     /// <summary>
@@ -91,18 +120,22 @@ public static partial class UsageLimitWallParser
             return $"session-limit resets {local:HH:mm} {zoneLabel}";
         }
 
+        var resetBit = wall.ResetParseFailure is { } failure
+            ? $"reset unparseable: {failure}"
+            : "no reset stated";
+
         if (TryReadApiErrorStatus(wall.RawText, out var status, out var phrase, out var detail)
             && (status is 402 or 403 || LooksLikeCapacity(wall.RawText)))
         {
             var statusBit = status is int s
                 ? $"HTTP {s}{(string.IsNullOrEmpty(phrase) ? "" : " " + phrase)}"
                 : "capacity";
-            var clipped = string.IsNullOrWhiteSpace(detail) ? "no reset stated" : $"{detail}; no reset stated";
+            var clipped = string.IsNullOrWhiteSpace(detail) ? resetBit : $"{detail}; {resetBit}";
             return $"{wall.ModelAlias} provider capacity ({statusBit}: {clipped})";
         }
 
         if (LooksLikeCapacity(wall.RawText))
-            return $"{wall.ModelAlias} provider capacity (no reset stated)";
+            return $"{wall.ModelAlias} provider capacity ({resetBit})";
 
         var label = wall.ModelAlias switch
         {
@@ -112,7 +145,7 @@ public static partial class UsageLimitWallParser
             ModelAlias.Haiku => "Haiku",
             _ => wall.ModelAlias,
         };
-        return $"{label} per-model cap (no reset stated)";
+        return $"{label} per-model cap ({resetBit})";
     }
 
     private static bool TryReadApiErrorStatus(
@@ -177,52 +210,165 @@ public static partial class UsageLimitWallParser
         return false;
     }
 
-    private static (DateTime AtUtc, string? ZoneId)? TryParseReset(DateTime nowUtc, string text)
+    private enum ResetParseStatus
     {
-        var match = ResetRegex().Match(text);
-        if (!match.Success)
-            return null;
+        Absent,
+        Valid,
+        Invalid,
+    }
 
-        if (!int.TryParse(match.Groups[1].Value, out var hour)
-            || !int.TryParse(match.Groups[2].Value, out var minute))
-            return null;
+    private readonly record struct ResetParse(
+        ResetParseStatus Status,
+        DateTime? AtUtc,
+        string? ZoneId,
+        string? Failure)
+    {
+        public static ResetParse Absent { get; } = new(ResetParseStatus.Absent, null, null, null);
+
+        public static ResetParse Invalid(string failure) =>
+            new(ResetParseStatus.Invalid, null, null, failure);
+
+        public static ResetParse Valid(DateTime atUtc, string? zoneId) =>
+            new(ResetParseStatus.Valid, atUtc, zoneId, null);
+    }
+
+    private static ResetParse TryParseReset(DateTime evidenceAtUtc, string text)
+    {
+        var lead = ResetLeadRegex().Match(text);
+        if (!lead.Success)
+            return ResetParse.Absent;
+
+        var rest = text[(lead.Index + lead.Length)..];
+        var hourOnly = HourOnlyResetRegex().Match(rest);
+        var hourMinute = HourMinuteResetRegex().Match(rest);
+        int hour;
+        int minute;
+        string ampm;
+        int consumed;
+        if (hourOnly.Success)
+        {
+            // Omitted minutes mean zero only in this valid hour-only AM/PM branch.
+            if (!int.TryParse(hourOnly.Groups["hour"].Value, out hour))
+                return ResetParse.Invalid("malformed reset hour");
+            minute = 0;
+            ampm = hourOnly.Groups["ampm"].Value;
+            consumed = hourOnly.Length;
+        }
+        else if (hourMinute.Success)
+        {
+            if (!int.TryParse(hourMinute.Groups["hour"].Value, out hour)
+                || !int.TryParse(hourMinute.Groups["minute"].Value, out minute))
+            {
+                return ResetParse.Invalid("malformed reset time");
+            }
+
+            ampm = hourMinute.Groups["ampm"].Value;
+            consumed = hourMinute.Length;
+        }
+        else
+        {
+            return ResetParse.Invalid("malformed reset time");
+        }
+
         if (minute is < 0 or > 59)
-            return null;
+            return ResetParse.Invalid("invalid reset minutes");
 
-        var ampm = match.Groups[3].Value;
         if (!string.IsNullOrEmpty(ampm))
         {
             if (hour is < 1 or > 12)
-                return null;
+                return ResetParse.Invalid("invalid 12-hour reset hour");
             var isPm = ampm.Equals("pm", StringComparison.OrdinalIgnoreCase);
             hour = (hour % 12) + (isPm ? 12 : 0);
         }
         else if (hour is < 0 or > 23)
         {
-            return null;
+            return ResetParse.Invalid("invalid 24-hour reset hour");
         }
 
-        var zoneId = match.Groups[4].Success ? match.Groups[4].Value.Trim() : null;
+        rest = rest[consumed..];
+        string? zoneId = null;
+        var zoneMatch = ClosedZoneRegex().Match(rest);
+        if (zoneMatch.Success)
+        {
+            zoneId = zoneMatch.Groups["zone"].Value.Trim();
+            if (string.IsNullOrWhiteSpace(zoneId))
+                return ResetParse.Invalid("empty reset zone");
+        }
+        else
+        {
+            var trimmed = rest.TrimStart();
+            if (trimmed.StartsWith('('))
+                return ResetParse.Invalid("unclosed or empty reset zone");
+        }
+
         if (!TryFindZone(zoneId, out var zone) || zone is null)
-            return null;
+            return ResetParse.Invalid(
+                string.IsNullOrWhiteSpace(zoneId)
+                    ? "invalid reset zone"
+                    : $"invalid zone '{zoneId}'");
 
-        var utc = DateTime.SpecifyKind(nowUtc, DateTimeKind.Utc);
-        var nowLocal = TimeZoneInfo.ConvertTimeFromUtc(utc, zone);
-        var candidate = new DateTime(
-            nowLocal.Year, nowLocal.Month, nowLocal.Day, hour, minute, 0, DateTimeKind.Unspecified);
-        // Next occurrence at-or-after now, in the named zone.
-        if (candidate < nowLocal)
-            candidate = candidate.AddDays(1);
+        var clock = ResolveResetUtc(evidenceAtUtc, zone, hour, minute);
+        if (clock.Failure is { } failure)
+            return ResetParse.Invalid(failure);
+        return ResetParse.Valid(clock.AtUtc!.Value, zoneId);
+    }
 
+    private static ResetParse ResolveResetUtc(
+        DateTime evidenceAtUtc, TimeZoneInfo zone, int hour, int minute)
+    {
+        var evidenceUtc = DateTime.SpecifyKind(evidenceAtUtc, DateTimeKind.Utc);
+        var evidenceLocal = TimeZoneInfo.ConvertTimeFromUtc(evidenceUtc, zone);
+        var day = evidenceLocal.Date;
+        var candidate = new DateTime(day.Year, day.Month, day.Day, hour, minute, 0, DateTimeKind.Unspecified);
+        if (zone.IsInvalidTime(candidate))
+            return ResetParse.Invalid("nonexistent local time");
+
+        for (var i = 0; i < 2; i++)
+        {
+            candidate = new DateTime(day.Year, day.Month, day.Day, hour, minute, 0, DateTimeKind.Unspecified);
+            if (zone.IsInvalidTime(candidate))
+            {
+                day = day.AddDays(1);
+                continue;
+            }
+
+            var options = UtcInterpretations(zone, candidate)
+                .Where(u => u >= evidenceUtc)
+                .ToList();
+            if (options.Count > 0)
+            {
+                // Ambiguous local times choose the later UTC occurrence among those at-or-after evidence.
+                return ResetParse.Valid(options.Max(), null);
+            }
+
+            day = day.AddDays(1);
+        }
+
+        return ResetParse.Invalid("reset not representable after evidence");
+    }
+
+    private static IEnumerable<DateTime> UtcInterpretations(TimeZoneInfo zone, DateTime localUnspecified)
+    {
+        if (zone.IsInvalidTime(localUnspecified))
+            yield break;
+        if (zone.IsAmbiguousTime(localUnspecified))
+        {
+            foreach (var offset in zone.GetAmbiguousTimeOffsets(localUnspecified))
+                yield return new DateTimeOffset(localUnspecified, offset).UtcDateTime;
+            yield break;
+        }
+
+        DateTime utc;
         try
         {
-            var asUtc = TimeZoneInfo.ConvertTimeToUtc(candidate, zone);
-            return (asUtc, zoneId);
+            utc = TimeZoneInfo.ConvertTimeToUtc(localUnspecified, zone);
         }
         catch (ArgumentException)
         {
-            return null;
+            yield break;
         }
+
+        yield return utc;
     }
 
     internal static bool TryFindZone(string? zoneId, out TimeZoneInfo? zone)
@@ -265,9 +411,14 @@ public static partial class UsageLimitWallParser
 }
 
 /// <param name="ResetAt">UTC. SessionLimit only; null means ModelCap.</param>
+/// <param name="ResetParseFailure">
+/// Set when a reset token was supplied but could not be parsed (invalid zone, DST gap,
+/// malformed time). Distinct from a genuinely absent reset.
+/// </param>
 public sealed record UsageLimitWall(
     UsageLimitWallKind Kind,
     string ModelAlias,
     DateTime? ResetAt,
     string? ResetZoneId,
-    string RawText);
+    string RawText,
+    string? ResetParseFailure = null);

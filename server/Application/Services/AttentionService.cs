@@ -209,6 +209,7 @@ public sealed class AttentionService
         items.AddRange(await BuildHerdrSupervisionHeldItemsAsync(ct));
         items.AddRange(await BuildAgentOutlivedTaskItemsAsync(now, ct));
         items.AddRange(await BuildModelAvailabilityHoldItemsAsync(now, ct));
+        items.AddRange(await BuildCapacityRecoveryExhaustedItemsAsync(now, ct));
         items.AddRange(await BuildScheduleMisfireItemsAsync(now, ct));
         items.AddRange(await BuildDelegationCapabilityItemsAsync(since, ct));
         items.AddRange(BuildRecentFailureItems(failed, costs, checkDigests));
@@ -1986,6 +1987,39 @@ public sealed class AttentionService
                 [AttentionAction.ClearHold],
                 ModelKind: hold.Kind.ToString(),
                 ModelAlias: alias));
+        }
+
+        return items;
+    }
+
+    /// <summary>
+    /// CARD-0412: exhausted capacity-recovery waits. Derived from the durable wait so incident
+    /// pruning cannot hide a still-blocked episode.
+    /// </summary>
+    private async Task<List<AttentionItemDto>> BuildCapacityRecoveryExhaustedItemsAsync(
+        DateTime now, CancellationToken ct)
+    {
+        var waits = await _db.CapacityRecoveryWaits.AsNoTracking()
+            .Where(w => w.State == CapacityRecoveryWaitState.Exhausted)
+            .ToListAsync(ct);
+        var items = new List<AttentionItemDto>();
+        foreach (var wait in waits)
+        {
+            items.Add(new AttentionItemDto(
+                AttentionKind.CapacityRecoveryExhausted,
+                AlertSeverity.Error,
+                wait.TaskId,
+                wait.SessionId,
+                wait.AgentId,
+                null,
+                "Capacity retries paused",
+                $"Capacity recovery paused after {wait.AdmissionCount} attempts; latest wall {wait.RequestedAlias ?? wait.RequestedKind.ToString()}; manual continuation required.",
+                $"wait {wait.Id:D}; action {wait.ActionKey}; due {wait.DueAt:u}",
+                wait.BlockedAt,
+                null,
+                wait.TaskId is null
+                    ? [AttentionAction.OpenAgent]
+                    : [AttentionAction.OpenDrawer, AttentionAction.OpenAgent]));
         }
 
         return items;

@@ -79,6 +79,12 @@ public class SessionQueuedMessage
     /// <summary>When the most recent attempt started typing.</summary>
     public DateTime? LastDeliveryStartedAt { get; set; }
 
+    /// <summary>CARD-0412: keyed recovery action that selected this row. Unique when non-null.</summary>
+    public string? CapacityRecoveryActionKey { get; set; }
+
+    public Guid? CapacityWaitId { get; set; }
+    public int? CapacityWaitVersion { get; set; }
+
     /// <summary>
     /// Durable outcome of the most recent attempt (CARD-0340 S3 / CARD-0342). Cleared when a
     /// fresh body is stamped <see cref="QueuedMessageStatus.Sent"/>; persisted before every
