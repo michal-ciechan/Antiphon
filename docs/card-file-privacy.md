@@ -120,7 +120,45 @@ All other boards remain protected, including future boards. Review preview and
 configured repository visibility before sync. An ignored target remains blocked
 even if files were previously tracked.
 
-CARD-0408 does not modify Antiphon's own root `.gitignore`. CARD-0409 owns its
-existing exported files and interim ignore disposition. Complete that cleanup
-before any live opt-in. Do not change live AutoCommit, enable boards, run a cleanup
-sweep or infer production migration from a healthy server as part of this card.
+## Antiphon publication hold (CARD-0409)
+
+The [CARD-0409 disposition plan](superpowers/plans/2026-09-07-card-0409-privacy-disposition-plan.md)
+owns the 428-card database review and the 153 finding dispositions. The old exports
+were already removed by CARD-0408; they must not be reconstructed for review.
+
+The Code brief explicitly selected this temporary managed grammar:
+
+```gitignore
+# CARD-0409 HOLDING: reviewed card publication is not activated by the privacy cleanup.
+# BEGIN ANTIPHON CARD FILES
+/docs/cards/*
+!/docs/cards/antiphon/
+# END ANTIPHON CARD FILES
+```
+
+This protects other and future boards. **The Antiphon directory is deliberately
+unignored**, unlike the blanket holding rule originally proposed in D-4. Its
+publication remains blocked by `syncCardFiles=false` and
+`RepositoryVisibility=Unknown`; `AutoCommit=false` and global `Enabled=true` remain
+unchanged. The ignore exception is not publication approval or protection against
+manually staging a file placed in the Antiphon directory. Verify current working
+tree, index and HEAD directly; an empty directory or null status `ignored` is
+insufficient evidence.
+
+**Holding exit conditions — owned by backlog CARD-0429, “Activate reviewed
+Antiphon card publication after full public-field review”.** The Antiphon
+repository operator owns the decision, with a review date of **2026-09-21**.
+Verify the 153 dispositions and resolve reported Private exceptions; freshly
+review every eligible card's public fields, including the 275 originally unflagged
+cards and all additions since the sweep. Mark unapproved cards Private. The owner
+then deliberately confirms the safe board exception, classifies the repository
+Public and explicitly opts this board in via `syncCardFiles`. Review the preview
+and first generated card/INDEX diff before the first exact-path manual commit and
+push. AutoCommit stays false. CARD-0429 is the durable successor for retiring this
+hold; a passing cleanup check does not retire it.
+
+The selected end state is reviewed engineering cards in `docs/cards/antiphon/`,
+with all other boards protected. Inherit is eligible on an opted-in board and new
+cards default to Inherit, so Public overrides are not an approval allowlist.
+Continue to review generated diffs before each publication. Private visibility
+and notes do not erase historical revisions, Git history or external copies.

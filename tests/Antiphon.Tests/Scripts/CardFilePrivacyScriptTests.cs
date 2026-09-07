@@ -15,6 +15,35 @@ public sealed class CardFilePrivacyScriptTests
 {
     private const string Board = "22222222-2222-2222-2222-222222222222";
     [Test]
+    public async Task Paired_disposition_edit_sends_one_pinned_patch()
+    {
+        using var api = new Api();
+        var descriptionFile = Path.GetTempFileName();
+        var notesFile = Path.GetTempFileName();
+        const string description = "Generalized incident\r\nTrigger, failure, fix and validation.\n雪 😀 ` $()";
+        const string notes = "  Previous note\r\n雪 😀 ` $()\n  \n\nC409_PRIVATE_EXCERPT\r\n ";
+        try
+        {
+            await File.WriteAllBytesAsync(descriptionFile, Encoding.UTF8.GetBytes(description));
+            await File.WriteAllBytesAsync(notesFile, Encoding.UTF8.GetBytes(notes));
+            var run = await Run(api, "edit", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "-Board", Board,
+                "-Title", "Review existing card privacy dispositions", "-DescriptionFile", descriptionFile,
+                "-PrivateNotesFile", notesFile, "-CardFileVisibility", "Inherit", "-Token", "pinned-token",
+                "-Reason", "CARD-0409 privacy disposition applied; technical meaning preserved", "-Json");
+            run.Code.ShouldBe(0, run.Text);
+            api.Writes.ShouldBe(1);
+            api.Body.GetProperty("description").GetString().ShouldBe(description);
+            api.Body.GetProperty("privateNotes").GetString().ShouldBe(notes);
+            api.Body.GetProperty("title").GetString().ShouldBe("Review existing card privacy dispositions");
+            api.Body.GetProperty("concurrencyToken").GetString().ShouldBe("pinned-token");
+            api.Body.GetProperty("cardFileVisibility").GetString().ShouldBe("Inherit");
+            api.Body.EnumerateObject().Select(p => p.Name).Order().ShouldBe(new[] {
+                "title", "description", "privateNotes", "cardFileVisibility", "concurrencyToken", "reason" }.Order());
+            run.Text.ShouldNotContain("C409_PRIVATE_EXCERPT");
+        }
+        finally { File.Delete(descriptionFile); File.Delete(notesFile); }
+    }
+    [Test]
     [Arguments("Unknown", false, "board_not_opted_in")]
     [Arguments("Public", false, "board_not_opted_in")]
     [Arguments("Private", true, null)]

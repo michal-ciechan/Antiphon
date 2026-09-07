@@ -51,3 +51,9 @@ bin-*/
 .pts-vibe/state.json
 .pts-vibe/implementation.json
 .pts-vibe/memsearch/
+
+# CARD-0409 HOLDING: reviewed card publication is not activated by the privacy cleanup.
+# BEGIN ANTIPHON CARD FILES
+/docs/cards/*
+!/docs/cards/antiphon/
+# END ANTIPHON CARD FILES

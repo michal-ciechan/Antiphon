@@ -75,10 +75,11 @@ public class CardPrivateNotesApiTests(CardFileSyncEndpointWebAppFactory factory)
     {
         var boardId = await BoardAsync();
         using var client = factory.CreateClient();
-        const string oldNotes = "  C408_NOTE_OLD\n雪 ` $()  ";
-        const string notes = "\n C408_NOTE_CURRENT\n";
+        const string oldNotes = "  C408_NOTE_OLD\r\n雪 😀 ` $()\n  ";
+        const string excerpt = " C409_PRIVATE_EXCERPT\r\n雪 😀 ` $()\n ";
+        const string notes = oldNotes + "\n\nCARD-0409 synthetic migration\n" + excerpt;
         var create = await client.PostAsJsonAsync($"/api/boards/{boardId}/cards",
-            new { title = "public", description = "old public", privateNotes = oldNotes });
+            new { title = "public", description = excerpt, privateNotes = oldNotes });
         create.StatusCode.ShouldBe(HttpStatusCode.Created);
         var raw = await create.Content.ReadAsStringAsync();
         raw.ShouldNotContain(oldNotes);
@@ -90,12 +91,26 @@ public class CardPrivateNotesApiTests(CardFileSyncEndpointWebAppFactory factory)
         var oldToken = created.GetProperty("concurrencyToken").GetGuid();
         var patch = await client.PatchAsJsonAsync($"/api/cards/{id}/content", new {
             concurrencyToken = oldToken, reason = "atomic correction", description = "C408_PUBLIC_BODY",
-            privateNotes = notes, cardFileVisibility = "Private" });
+            privateNotes = notes, cardFileVisibility = "Inherit" });
         patch.StatusCode.ShouldBe(HttpStatusCode.OK);
         var updated = await patch.Content.ReadFromJsonAsync<JsonElement>();
         updated.GetProperty("concurrencyToken").GetGuid().ShouldNotBe(oldToken);
         updated.GetProperty("revisionCount").GetInt32().ShouldBe(1);
         updated.GetProperty("description").GetString().ShouldBe("C408_PUBLIC_BODY");
+        updated.GetProperty("cardFileVisibility").GetString().ShouldBe("Inherit");
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var saved = await db.Cards.AsNoTracking().SingleAsync(c => c.Id == id);
+            saved.Description.ShouldBe("C408_PUBLIC_BODY");
+            saved.PrivateNotes.ShouldBe(notes);
+            saved.PrivateNotes!.Length.ShouldBe(notes.Length);
+            System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(saved.PrivateNotes))
+                .ShouldBe(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(notes)));
+            saved.Title.ShouldBe("public");
+            saved.BoardId.ShouldBe(boardId);
+            (await db.CardRevisions.CountAsync(r => r.CardId == id && r.Kind == CardRevisionKind.ContentEdit)).ShouldBe(1);
+        }
         var current = await client.GetAsync($"/api/cards/{id}/private-notes");
         current.Headers.CacheControl!.NoStore.ShouldBeTrue();
         var currentJson = await current.Content.ReadFromJsonAsync<JsonElement>();
@@ -112,9 +127,27 @@ public class CardPrivateNotesApiTests(CardFileSyncEndpointWebAppFactory factory)
             body.ShouldNotContain("\"privateNotes\"");
         }
         var stale = await client.PatchAsJsonAsync($"/api/cards/{id}/content", new {
-            concurrencyToken = oldToken, reason = "stale", privateNotes = "C408_LOSER" });
+            concurrencyToken = oldToken, reason = "stale", description = "C409_LOSER_BODY", privateNotes = "C408_LOSER", cardFileVisibility = "Private" });
         stale.StatusCode.ShouldBe(HttpStatusCode.Conflict);
         (await client.GetFromJsonAsync<JsonElement>($"/api/cards/{id}/private-notes")).GetProperty("privateNotes").GetString().ShouldBe(notes);
+        var afterStale = await client.GetFromJsonAsync<JsonElement>($"/api/cards/{id}");
+        foreach (var field in new[] { "description", "cardFileVisibility", "concurrencyToken", "revisionCount" })
+            afterStale.GetProperty(field).GetRawText().ShouldBe(updated.GetProperty(field).GetRawText());
+
+        var boundaryNote = new string('x', 19998) + "😀";
+        var boundary = await client.PatchAsJsonAsync($"/api/cards/{id}/content", new {
+            concurrencyToken = updated.GetProperty("concurrencyToken").GetGuid(), reason = "boundary",
+            description = "C409_BOUNDARY_BODY", privateNotes = boundaryNote, cardFileVisibility = "Inherit" });
+        boundary.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var boundaryCard = await boundary.Content.ReadFromJsonAsync<JsonElement>();
+        var overflow = await client.PatchAsJsonAsync($"/api/cards/{id}/content", new {
+            concurrencyToken = boundaryCard.GetProperty("concurrencyToken").GetGuid(), reason = "overflow",
+            description = "C409_OVERFLOW_BODY", privateNotes = boundaryNote + "x", cardFileVisibility = "Private" });
+        overflow.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
+        var afterOverflow = await client.GetFromJsonAsync<JsonElement>($"/api/cards/{id}");
+        foreach (var field in new[] { "description", "cardFileVisibility", "concurrencyToken", "revisionCount" })
+            afterOverflow.GetProperty(field).GetRawText().ShouldBe(boundaryCard.GetProperty(field).GetRawText());
+        (await client.GetFromJsonAsync<JsonElement>($"/api/cards/{id}/private-notes")).GetProperty("privateNotes").GetString().ShouldBe(boundaryNote);
     }
 
     [Test]

@@ -150,7 +150,7 @@ public class CardFilePrivacySyncTests
     {
         await using var world = new CardFilePrivacyWorld();
         await world.InitializeAsync();
-        var id = await world.AddCardAsync();
+        var id = await world.AddCardAsync(visibility: CardFileVisibility.Public);
         if (tracked) await world.SyncAsync(true);
         await File.WriteAllTextAsync(Path.Combine(world.Repo.Path, ".gitignore"), "/docs/cards/\n");
         var result = await world.SyncAsync(true);
@@ -167,12 +167,31 @@ public class CardFilePrivacySyncTests
     }
 
     [Test]
-    public async Task Private_card_contributes_no_filename_index_count_or_metadata()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Private_card_contributes_no_filename_index_count_or_metadata(bool archived)
     {
         await using var world = new CardFilePrivacyWorld();
         await world.InitializeAsync();
         await world.AddCardAsync();
-        await world.AddCardAsync("CARD-9999", "C408_PRIVATE_CARD_TITLE", visibility: CardFileVisibility.Private);
+        var privateId = await world.AddCardAsync("CARD-9999", "C408_PRIVATE_CARD_TITLE", visibility: CardFileVisibility.Private);
+        await using (var db = world.Db())
+        {
+            var card = await db.Cards.SingleAsync(c => c.Id == privateId);
+            card.Description = "C408_PRIVATE_CARD_DESCRIPTION";
+            card.Alias = "C408_PRIVATE_CARD_ALIAS";
+            card.LabelsJson = "[\"C408_PRIVATE_CARD_LABEL\"]";
+            card.ExternalIssueRef = new Antiphon.Server.Domain.Entities.ExternalIssueRef {
+                Id = Guid.NewGuid(), CardId = privateId, ExternalId = "C408_PRIVATE_CARD_ID",
+                ExternalKey = "C408_PRIVATE_CARD_KEY", Url = "https://example.invalid/C408_PRIVATE_CARD_URL",
+                Author = "C408_PRIVATE_CARD_AUTHOR" };
+            db.ExternalIssueRefs.Add(card.ExternalIssueRef);
+            card.TerminalReason = "C408_PRIVATE_CARD_TERMINAL";
+            card.ArchivedReason = "C408_PRIVATE_CARD_ARCHIVE";
+            card.ArchivedBy = "C408_PRIVATE_CARD_ACTOR";
+            if (archived) card.ArchivedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
         var result = await world.SyncAsync(true);
         result.Error.ShouldBeNull();
         result.EligibleCards.ShouldBe(1);
@@ -180,12 +199,26 @@ public class CardFilePrivacySyncTests
         var index = await File.ReadAllTextAsync(Path.Combine(world.DirectoryPath, "INDEX.md"));
         index.ShouldContain("1 card, 0 archived.");
         index.ShouldNotContain("CARD-9999");
+        index.ShouldContain("CARD-0001");
+        Directory.GetFiles(world.DirectoryPath, "CARD-0001-*.md").Length.ShouldBe(1);
         foreach (var path in Directory.GetFiles(world.DirectoryPath))
         {
             path.ShouldNotContain("PRIVATE_CARD");
             var body = await File.ReadAllTextAsync(path);
             body.ShouldNotContain("C408_NOTE");
             body.ShouldNotContain("C408_PRIVATE_CARD");
+        }
+        foreach (var path in (await world.Repo.GitReadAsync("ls-tree", "-r", "--name-only", "HEAD", "--", "docs/cards")).Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var body = await world.Repo.GitReadAsync("show", "HEAD:" + path.Trim());
+            body.ShouldNotContain("C408_PRIVATE_CARD");
+            body.ShouldNotContain("C408_NOTE");
+        }
+        foreach (var path in (await world.Repo.GitReadAsync("ls-files", "--", "docs/cards")).Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var body = await world.Repo.GitReadAsync("show", ":" + path.Trim());
+            body.ShouldNotContain("C408_PRIVATE_CARD");
+            body.ShouldNotContain("C408_NOTE");
         }
     }
 
