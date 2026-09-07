@@ -465,7 +465,7 @@ public sealed class GitWorkspaceService
     /// which matters when the caller has promised not to touch the workspace it is inspecting
     /// (CARD-0047 §1.6). It is a git-level option, so it goes BEFORE the subcommand.
     /// </summary>
-    private Task<(int Code, string Stdout, string Stderr)> RunReadOnlyAsync(
+    internal Task<(int Code, string Stdout, string Stderr)> RunReadOnlyAsync(
         string workingDirectory, CancellationToken ct, params string[] args) =>
         RunAsync(workingDirectory, ct, ["--no-optional-locks", .. args]);
 

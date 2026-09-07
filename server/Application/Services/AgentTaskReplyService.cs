@@ -659,7 +659,7 @@ public sealed class AgentTaskReplyService
 
         // The delegate was told to spill a long report to a file. Note it if it did — and if it
         // ignored the instruction, write the file ourselves so the excerpt has somewhere to point.
-        task.ResultFilePath = await ResolveSpillFileAsync(task, settledBody, ct);
+        task.ResultFilePath = await ResolveReportFileAsync(services, task, settledBody, ct);
         var handoff = PipelineHandoff.TryParse(settledBody);
         task.NextStage = handoff.Kind;
         task.NextHandoff = handoff.Handoff;
@@ -2171,6 +2171,23 @@ public sealed class AgentTaskReplyService
     /// write one; if it did and the path exists, use it. Otherwise the server writes it, so the
     /// head+tail excerpt always has something real to point at.
     /// </summary>
+    private async Task<string?> ResolveReportFileAsync(
+        IServiceProvider services, AgentTask task, string report, CancellationToken ct)
+    {
+        // Canonical storage wins when available. If unavailable, the independent legacy
+        // transport backstop still runs, including target reports in non-Git workspaces.
+        if (AgentReportPolicy.ShouldStore(task, _settings))
+        {
+            var store = services.GetService<IAgentReportStore>();
+            if (store is not null)
+            {
+                var stored = await store.StoreAsync(task, ct);
+                if (stored.Path is { Length: <= 1000 } path) return path;
+            }
+        }
+        return await ResolveSpillFileAsync(task, report, ct);
+    }
+
     private async Task<string?> ResolveSpillFileAsync(AgentTask task, string report, CancellationToken ct)
     {
         if (report.Length <= ReplyInlineMaxChars)
@@ -2178,6 +2195,7 @@ public sealed class AgentTaskReplyService
 
         var relative = Path.Combine(".antiphon", $"task-{DelegationReportFormatter.Short(task.Id)}.md");
         var absolute = Path.Combine(task.WorkingDirectory, relative);
+        if (absolute.Length > 1000) return null;
         try
         {
             if (File.Exists(absolute))

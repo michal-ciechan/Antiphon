@@ -572,6 +572,20 @@ public static class DelegationReportFormatter
         return sb.ToString().TrimEnd().ReplaceLineEndings("\n");
     }
 
+    /// <summary>Caller supplies a verified path (or null); this formatter performs no file I/O.</summary>
+    public static string FullReportPointer(AgentTask task, string? usablePath) =>
+        !string.IsNullOrWhiteSpace(usablePath)
+            ? $"Full report: {usablePath}"
+            : $"Full report: GET /api/agent-tasks/{task.Id}  (pwsh -File scripts/delegate.ps1 -Status {Short(task.Id)})";
+
+    public static string BuildDistilledNoteBody(string header, string distilled, AgentTask task, string? usablePath,
+        IReadOnlyList<string> attachments)
+    {
+        var body = $"{header}\n\n{distilled.Trim()}\n\n{OutputDistillation.PointerLine(task, usablePath)}";
+        if (attachments.Count > 0) body += "\n\n" + FormatDeliverableBlock(attachments);
+        return body.ReplaceLineEndings("\n");
+    }
+
     /// <summary>
     /// The short, lossless replacement for a completion report whose parent session already read
     /// that exact report through a status poll. The supplied header is preserved verbatim so a
@@ -608,9 +622,7 @@ public static class DelegationReportFormatter
         var headEnd = SnapBack(trimmed, head);
         var tailStart = SnapForward(trimmed, trimmed.Length - tail);
         var omitted = tailStart - headEnd;
-        var pointer = string.IsNullOrWhiteSpace(task.ResultFilePath)
-            ? $"read it with: GET /api/agent-tasks/{task.Id}"
-            : $"read it at: {task.ResultFilePath}";
+        var pointer = FullReportPointer(task, task.ResultFilePath);
 
         return ($"""
             {trimmed[..headEnd].TrimEnd()}

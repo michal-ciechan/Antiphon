@@ -521,6 +521,7 @@ try
     builder.Services.AddSingleton<GitProcessGate>(sp =>
         new GitProcessGate(Math.Max(1, sp.GetRequiredService<IOptions<GitSettings>>().Value.MaxConcurrentProcesses)));
     builder.Services.AddSingleton<GitWorkspaceService>();
+    builder.Services.AddSingleton<IAgentReportStore, Antiphon.Server.Infrastructure.Files.AgentReportStore>();
     builder.Services.AddSingleton<MarkdownPdfRenderer>();
     builder.Services.AddSingleton<DeliverableBundleService>();
     builder.Services.AddMemoryCache();

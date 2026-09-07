@@ -1,0 +1,10 @@
+{
+  "approvalReference": "EXAMPLE ONLY - replace with the human decision's card revision or report reference",
+  "approvedUtc": "2026-09-07T12:00:00Z",
+  "expiresUtc": "2026-09-07T12:30:00Z",
+  "expectedSourceRole": "Review",
+  "expectedDistillerKind": "ClaudeCode",
+  "expectedDistillerModelAlias": "haiku",
+  "availabilityCheckedUtc": "2026-09-07T12:00:00Z",
+  "availabilityVerdict": "allowed"
+}

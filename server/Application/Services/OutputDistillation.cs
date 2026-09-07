@@ -68,8 +68,8 @@ public static class OutputDistillation
         $"distill task {DelegationReportFormatter.Short(source.Id)}";
 
     /// <summary>One-line pointer that rides every applied distilled note so the full report stays findable.</summary>
-    public static string PointerLine(AgentTask source) =>
-        $"Full report: GET /api/agent-tasks/{source.Id}  (pwsh -File scripts/delegate.ps1 -Status {DelegationReportFormatter.Short(source.Id)})";
+    public static string PointerLine(AgentTask source, string? usablePath = null) =>
+        DelegationReportFormatter.FullReportPointer(source, usablePath);
 
     /// <summary>
     /// The per-request brief: one line naming the source, the scrubbed report, and the format

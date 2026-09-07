@@ -711,6 +711,67 @@ is worth its cost, not just when the card asks for a report.
 
 ## 10. Distiller prompt review (CARD-0330)
 
+**Report custody and delivery (CARD-0419).** Four limits have separate purposes:
+`DistillMinChars` defaults to 4,000 UTF-16 string characters (a rough reading
+preference, not tokenization); `DistillMaxRawChars` remains 20,000 inclusive for
+model work; the existing summary gates remain 1,500 characters / 0.6 ratio;
+transport retains its 3,000 / 14,400 character profiles and final UTF-8 byte guard.
+An explicit minimum override (including 1,200) still wins. Internal specialist
+goals need room for the prompt wrapper around 20,000 raw characters: the
+`AllowWrappedSpecialistGoal` migration widens task Goal storage to text; public
+create still accepts at most 20,000 characters. Downgrading this column requires
+review of retained wrapped goals; do not truncate them to make a rollback pass.
+
+Settled non-specialist Session replies at or above the configured minimum retain
+an exact UTF-8 copy, independent of mode, availability, gates and model input cap:
+`<main-checkout>\\.antiphon\\reports\\<full-task-guid>\\<exact-sha256>.md`.
+Linked worktrees resolve to their persistent primary checkout. Unsupported or
+non-Git layouts may use an absolute `Delegation:ReportStorageRoot`, for example
+`C:\\Antiphon\\reports`; temporary directories and worktrees are refused. This
+setting grants no access. Repository destinations must be ignored and untracked;
+the store may add a narrow local Git exclude, never edit tracked `.gitignore`.
+Reports survive service restart and delegate worktree removal while the main
+checkout/root is retained. They have no TTL, are not disk-loss backups, and must
+be excluded from generic scratch cleanup while task rows reference them.
+
+Canonical storage wins when available. When unavailable, an oversized report
+still runs the legacy transport backstop and populates `ResultFilePath`, including
+target Session replies. A pre-existing delegate-authored legacy file is preserved;
+Apply advertises it as the full report only if its exact bytes equal `Result`.
+Storage failure keeps settlement and its authoritative raw Result. No historical
+settled rows or sent notes are backfilled.
+
+Timely gate-approved Apply replaces the original pending, unattempted note with
+its header, summary, verified absolute report path and deterministic deliverable
+markers. File validation happens before delivery/DB locks; path and raw identity
+are rechecked inside them. An unavailable/corrupt/changed file gets the task API
+recovery pointer. Rejected, unavailable, busy, expired or lost optional work keeps
+the raw/marked-excerpt fallback and finite hold. Shadow leaves the raw note;
+disabled invokes no model. A matching parent API poll keeps its existing
+suppression semantics. File reads stamp neither `LastPolledResultHash` nor
+`FullReadAt`: the latter measures API reads, not total full-report readership.
+
+**Live acceptance is a separate gate.** Production remains Shadow. CARD-0419
+closure/general Apply rollout still requires CARD-0392 reviewed recovery evidence
+(or an explicit narrower release decision), acceptance of the optional raw
+fallback, and CARD-0330 human rollout governance below. The isolated canary is
+`OutputDistillationApplyCanaryTests.Real_apply_and_long_fallback_reach_parent_and_files_survive_cleanup`.
+Its **operator** hand-writes
+`C:\\src\\Antiphon\\.antiphon\\acceptance\\card-0419\\approval.json` only after a
+scoped human decision, using the committed
+[approval example](examples/card-0419-canary-approval.example.json). That example
+is deliberately invalid approval. The operator replaces the example reference,
+sets the approved UTC window, names Review/ClaudeCode/the approved current Low
+alias, and records an allowed availability check within five minutes of launch.
+Set `ANTIPHON_DISTILLER_CANARY_APPROVAL_FILE` to that absolute file and both
+`ANTIPHON_HEADED_TESTS=1` and `ANTIPHON_DISTILLER_APPLY_CANARY=1` for the explicit
+test. The test never writes its own approval, weakens a hold, or reroutes a model.
+The fixture owns its database, random runner and manifest directory, uses a
+refusing external-message adapter, and restarts only its own host. See the full
+[canary procedure and evidence requirements](superpowers/plans/2026-09-07-card-0419-distillation-delivery-plan.md#mandatory-real-apply-evidence).
+An unexecuted, skipped, rejected, expired or incomplete canary is pending/failed
+acceptance, never a passing deployment verdict.
+
 A second standing haiku seat, `antiphon-output-distiller`, distils finished delegate reports
 after they are written. It is furniture on the agents page beside `antiphon-check-interpreter`
 and `antiphon-diagnose`. The seat's prompt is `server/Bundles/output-distiller.md`. A human

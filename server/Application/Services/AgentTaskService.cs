@@ -180,6 +180,8 @@ public sealed class AgentTaskService
     {
         if (string.IsNullOrWhiteSpace(request.Goal))
             throw new ValidationException(nameof(request.Goal), "A goal is required.");
+        if (request.Goal.Length > 20_000)
+            throw new ValidationException(nameof(request.Goal), "A goal must not exceed 20,000 characters.");
 
         var standingAuthority = string.IsNullOrWhiteSpace(request.Authority)
             ? null

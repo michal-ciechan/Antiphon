@@ -49,6 +49,11 @@ public class AntiphonAppFixture
     /// need completed stages/artifacts.
     /// </summary>
     public bool UseMockExecutor { get; set; }
+    internal DistillerCanaryOptions? DistillerCanary { get; init; }
+    internal string OwnedRunnerUrl => _isolatedSessionRunner?.BaseUrl ?? throw new InvalidOperationException("Runner not started");
+    internal string OwnedRunnerDirectory => _isolatedSessionRunner?.RunDirectory ?? throw new InvalidOperationException("Runner not started");
+    internal string OwnedDatabase => _container.GetConnectionString();
+    internal bool RunnerCensusCompleted { get; private set; }
 
     /// <summary>
     /// Where the app writes its Serilog file sink. Defaults to the running test's
@@ -84,6 +89,7 @@ public class AntiphonAppFixture
 
     public async Task InitializeAsync()
     {
+        DistillerCanary?.Validate();
         // Opt-out, not opt-in: a test that never thought about diagnostics still gets them.
         // Only adopt the running test when the caller did not choose a directory — a fixture shared
         // across tests (SharedApp) must not file its log under whichever test happened to start it.
@@ -110,13 +116,20 @@ public class AntiphonAppFixture
         _workspacePath = Path.Combine(Path.GetTempPath(), "antiphon-e2e", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_workspacePath);
 
+        await StartHostAsync(connectionString);
+    }
+
+    private async Task StartHostAsync(string connectionString)
+    {
+
         _factory = new KestrelWebApplicationFactory(
             UsePrebuiltFrontend ? FindClientDistPath() : null,
             connectionString,
             UseMockExecutor,
-            _workspacePath,
+            _workspacePath!,
             DiagnosticsDirectory,
-            _isolatedSessionRunner.BaseUrl
+            _isolatedSessionRunner!.BaseUrl,
+            DistillerCanary
         );
 
         // Trigger host creation (WAF builds host on first access)
@@ -143,7 +156,24 @@ public class AntiphonAppFixture
         BaseAddress = $"http://127.0.0.1:{new Uri(address).Port}";
         HttpClient = CreateClient();
 
+        if (DistillerCanary is { } canary)
+        {
+            var delegation = Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<Antiphon.Server.Application.Settings.DelegationSettings>>().Value;
+            delegation.ApiBaseUrl = BaseAddress;
+            delegation.AllowedRoots = [canary.Repo];
+        }
+
         await RecordSessionRunnerReachabilityAsync();
+    }
+
+    internal async Task RestartCanaryHostAsync()
+    {
+        if (DistillerCanary is null) throw new InvalidOperationException("Only a canary may retain its resources for host restart.");
+        HttpClient.Dispose();
+        await _kestrelHost!.StopAsync();
+        _kestrelHost.Dispose();
+        await _factory!.DisposeAsync();
+        await StartHostAsync(_container.GetConnectionString());
     }
 
     /// <summary>
@@ -417,6 +447,7 @@ public class AntiphonAppFixture
                     censusStarted = true;
                     await AssertNoLeakedPtyHostsAsync(hosts);
                     censusCompleted = true;
+                    RunnerCensusCompleted = true;
                 },
                 ex => _diagnostics?.Note($"[session-cleanup] kill-all failed: {ex.Message}"),
                 CancellationToken.None);
@@ -533,6 +564,7 @@ public class AntiphonAppFixture
         private readonly string _workspacePath;
         private readonly string? _diagnosticsDirectory;
         private readonly string _sessionRunnerBaseUrl;
+        private readonly DistillerCanaryOptions? _canary;
 
         public IHost? KestrelHost { get; private set; }
 
@@ -542,7 +574,8 @@ public class AntiphonAppFixture
             bool useMockExecutor,
             string workspacePath,
             string? diagnosticsDirectory,
-            string sessionRunnerBaseUrl
+            string sessionRunnerBaseUrl,
+            DistillerCanaryOptions? canary = null
         )
         {
             _clientDistPath = clientDistPath;
@@ -551,6 +584,7 @@ public class AntiphonAppFixture
             _workspacePath = workspacePath;
             _diagnosticsDirectory = diagnosticsDirectory;
             _sessionRunnerBaseUrl = sessionRunnerBaseUrl;
+            _canary = canary;
         }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -597,11 +631,17 @@ public class AntiphonAppFixture
                     settings["Serilog:MinimumLevel:Override:System.Net.Http.HttpClient"] = "Information";
                 }
 
+                _canary?.Configure(settings);
                 config.AddInMemoryCollection(settings);
             });
 
             builder.ConfigureServices(services =>
             {
+                if (_canary is not null)
+                {
+                    services.AddSingleton<Antiphon.Messaging.Client.IAntiphonMessagingProducer, RefusingCanaryMessaging>();
+                    services.AddSingleton<Antiphon.Messaging.Client.IAntiphonMessagingConsumer, RefusingCanaryMessaging>();
+                }
                 services.Configure<HealthCheckServiceOptions>(options =>
                 {
                     options.Registrations.Clear();

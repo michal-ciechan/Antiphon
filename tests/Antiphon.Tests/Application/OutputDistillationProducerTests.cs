@@ -28,7 +28,7 @@ public class OutputDistillationProducerTests
         using var scratch = new TempWorkspace();
         await using var provider = AgentTaskSettlementRaceTests.BuildHarness(s =>
         {
-            s.AddSingleton(Options.Create(new DelegationSettings { OutputDistillerEnabled = true,
+            s.AddSingleton(Options.Create(new DelegationSettings { OutputDistillerEnabled = true, DistillMinChars = 1200,
                 OutputDistillerMode = OutputDistillerMode.Apply, OutputDistillerWorkingDirectory = scratch.Path,
                 ReplyInlineMaxChars = 20_000 }));
             if (scenario != "missing") s.AddSingleton<OutputDistillationQueue>();
@@ -64,7 +64,7 @@ public class OutputDistillationProducerTests
     public async Task Idle_parent_delivery_does_not_delay_admission(OutputDistillerMode mode, bool enabled)
     {
         using var scratch = new TempWorkspace();
-        var settings = new DelegationSettings { OutputDistillerEnabled = enabled, OutputDistillerMode = mode,
+        var settings = new DelegationSettings { OutputDistillerEnabled = enabled, OutputDistillerMode = mode, DistillMinChars = 1200,
             ReplyInlineMaxChars = 20_000, MaxConcurrentTasks = 512 };
         var clock = new ParentClock();
         await using var provider = AgentTaskSettlementRaceTests.BuildHarness(s =>

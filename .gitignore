@@ -44,7 +44,8 @@ bin-*/
 # TUnit's isolated build/test runs can leave disposable per-project temp output directories.
 **/.tmp/
 
-# Agent scratch: delegation brief/report spill files, regenerable from the task row
+# Agent briefs and retained reports. Do not scratch-clean .antiphon/reports/ while
+# task rows reference it; canonical reports survive delegate worktree cleanup.
 .antiphon/
 
 # pts-vibe-coding (managed by /pts-vibe-init)

@@ -1139,6 +1139,17 @@ public sealed class SessionMessageQueueService
             var sessionId = await db.SessionQueuedMessages.Where(m => m.Id == noteId)
                 .Select(m => (Guid?)m.AgentSessionId).FirstOrDefaultAsync(token);
             if (sessionId is not Guid session) return "note-missing";
+            // Disk validation consumes the original request budget, before the delivery/DB locks.
+            // Read an untracked snapshot so the locked read below actually observes a changed path.
+            var snapshot = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == request.TaskId, token);
+            var store = scope.ServiceProvider.GetService<IAgentReportStore>();
+            var usablePath = snapshot is not null && store is not null
+                && await store.IsUsableAsync(snapshot.ResultFilePath, snapshot.Result ?? "", token)
+                    ? snapshot.ResultFilePath : null;
+            IReadOnlyList<string> attachments;
+            try { attachments = snapshot is null ? [] : DeliverableBundleService.ListAttachableFiles(snapshot); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return "metadata-unavailable"; }
+            if (AfterReportValidationAsync is not null) await AfterReportValidationAsync(token);
             var sem = GetLock(session);
             await sem.WaitAsync(token);
             try
@@ -1162,9 +1173,14 @@ public sealed class SessionMessageQueueService
                     return "identity";
                 if (note.Status != QueuedMessageStatus.Pending || note.DeliveryAttempts != 0) return "delivery-claimed";
                 if (source.LastPolledResultHash == digest) return "full-report-read";
+                if (source.DeliverableBundleDir != snapshot?.DeliverableBundleDir
+                    || source.DeliverablePdfPath != snapshot?.DeliverablePdfPath) return "metadata-changed";
+                if (BeforeDistillationUpdateAsync is not null) await BeforeDistillationUpdateAsync(token);
                 if (_timeProvider.GetUtcNow() >= request.DeadlineAt) return "deadline";
                 var header = string.IsNullOrWhiteSpace(note.NoteHeader) ? "" : note.NoteHeader.TrimEnd();
-                var body = $"{header}\n\n{distilled.Trim()}\n\n{OutputDistillation.PointerLine(source)}".ReplaceLineEndings("\n");
+                var selectedPath = source.ResultFilePath == usablePath && source.Result == snapshot?.Result
+                    ? usablePath : null;
+                var body = DelegationReportFormatter.BuildDistilledNoteBody(header, distilled, source, selectedPath, attachments);
                 var deadline = request.DeadlineAt.UtcDateTime;
                 var changed = await db.Database.ExecuteSqlInterpolatedAsync(
                     $"UPDATE \"SessionQueuedMessages\" SET \"Body\" = {body}, \"HoldUntil\" = NULL WHERE \"Id\" = {noteId} AND clock_timestamp() < {deadline}", token);
@@ -1251,6 +1267,10 @@ public sealed class SessionMessageQueueService
         if (expired.Count > 0) await db.SaveChangesAsync(ct);
         return expired.Count > 0;
     }
+
+    /// <summary>Test barrier after disk validation, before taking delivery ownership.</summary>
+    internal Func<CancellationToken, Task>? AfterReportValidationAsync { get; set; }
+    internal Func<CancellationToken, Task>? BeforeDistillationUpdateAsync { get; set; }
 
     // Only this invocation knows the first claim has not typed anything yet. Recovered
     // attempts must never use this path: their first byte may already be in the composer.

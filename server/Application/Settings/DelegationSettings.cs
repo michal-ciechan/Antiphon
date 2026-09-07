@@ -766,7 +766,13 @@ public sealed class DelegationSettings
     public int OutputDistillerQueueCapacity { get; set; } = 3;
 
     /// <summary>Reports shorter than this are never distilled — nothing to gain, only latency to pay.</summary>
-    public int DistillMinChars { get; set; } = 1_200;
+    public int DistillMinChars { get; set; } = 4_000;
+
+    /// <summary>
+    /// Optional absolute persistent report directory for non-Git/unsupported workspaces.
+    /// Must be outside temporary directories and delegate worktrees. Grants no filesystem access.
+    /// </summary>
+    public string? ReportStorageRoot { get; set; }
 
     /// <summary>Reports longer than this are not distilled; the delegate was already told to spill.</summary>
     public int DistillMaxRawChars { get; set; } = 20_000;

@@ -55,11 +55,7 @@ public sealed class OutputDistillationService
     {
         if (!settings.OutputDistillerEnabled)
             return false;
-        if (task.ReplyTo != AgentTaskReplyTo.Session)
-            return false;
-        if (AgentTaskRoles.IsSpecialist(task.Role))
-            return false;
-        return task.Status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed;
+        return AgentReportPolicy.IsTarget(task);
     }
 
     // Compatibility front door for direct callers: admission is now, not after provisioning.

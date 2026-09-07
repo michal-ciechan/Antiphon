@@ -215,7 +215,12 @@ public class AgentTask
     /// </summary>
     public string? DistilledResult { get; set; }
 
-    /// <summary>Set when the delegate spilled a long report to a file — the report references it.</summary>
+    /// <summary>
+    /// Absolute full-report pointer: preferably the verified exact UTF-8 canonical copy retained
+    /// outside the delegate worktree. Legacy transport spills may point at delegate-authored
+    /// detail instead; Apply must verify exact Result content before advertising that file.
+    /// Null means recovery through Result/the task API. No historical rows are backfilled.
+    /// </summary>
     public string? ResultFilePath { get; set; }
 
     /// <summary>The first repository markdown deliverable named by the immutable final report.</summary>

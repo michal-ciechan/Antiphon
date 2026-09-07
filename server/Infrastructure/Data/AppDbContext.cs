@@ -1458,7 +1458,9 @@ public class AppDbContext : DbContext
             entity.Property(t => t.RootTaskId).IsRequired();
             entity.Property(t => t.Depth).IsRequired();
             entity.Property(t => t.Title).IsRequired().HasMaxLength(300);
-            entity.Property(t => t.Goal).IsRequired().HasMaxLength(20000);
+            // Internal specialist goals include a wrapper around an independently capped raw
+            // report. Public create validation remains 20,000; storage must fit the wrapper too.
+            entity.Property(t => t.Goal).IsRequired().HasColumnType("text");
             entity.Property(t => t.Kind).IsRequired();
             entity.Property(t => t.Role).IsRequired();
             entity.Property(t => t.ProjectId).IsRequired(false);

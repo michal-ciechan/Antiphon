@@ -52,7 +52,7 @@ public class OutputDistillationRecord
 
     /// <summary>
     /// When the parent session polled the full report after an Applied note was sent. Null until
-    /// then; a high rate is the cheapest "the summary was not enough" signal.
+    /// then; this is API-read evidence only. Direct canonical-file reads do not stamp this field.
     /// </summary>
     public DateTime? FullReadAt { get; set; }
 }
