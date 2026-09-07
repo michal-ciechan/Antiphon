@@ -1,5 +1,8 @@
 # Bootstrapping Antiphon
 
+For everyday operation, use the [canonical local restart runbook](apphost-runbook.md):
+first start, AppHost or runner restart, verification, locks, exits and Job Object caveats.
+
 ## Runner restart observation (CARD-0420)
 
 `pwsh -NoProfile -File scripts/restart-session-runner.ps1` preserves detached
@@ -228,33 +231,16 @@ Start-ScheduledTask -TaskName "Antiphon AppHost Watchdog State Observer"
 
 ### 7. Start the Aspire stack
 
-If an AppHost may already exist (including the logon task from step 6):
+Follow the [canonical local restart runbook](apphost-runbook.md#first-start-and-apphost-restart).
+For first start with no listener or launch in flight, use
+`Start-ScheduledTask -TaskName 'Antiphon AppHost'`. For an existing stack, use
+`pwsh -NoProfile -File scripts/restart-apphost.ps1` from an independent operator
+shell; read the runbook's current-checkout Job Object limitation first.
+Never launch a second bare `dev-aspire.ps1`.
 
-```
-pwsh -File scripts/restart-apphost.ps1
-```
-
-That kills the old AppHost tree, frees the ports, relaunches, and waits for
-health. It preserves the session-runner. **Never** launch a second bare
-`dev-aspire.ps1` — the old server keeps the ports and the new code never
-goes live.
-
-If you are certain nothing is listening yet, first launch only:
-
-```
-Start-Process pwsh -ArgumentList @('-NoLogo','-File','<repo>\dev-aspire.ps1') -WindowStyle Normal
-```
-
-Never `wt new-tab` (fails `0x80070002` when the title has a space). Never
-`-NoNewWindow` (attaches the AppHost to the tool session and kills it when
-the session ends). The script exits after ~60s; the AppHost continues in
-the background (`logs/apphost.pid`).
-
-Port 17203 serves the built bundle by default (CARD-0216) — the client
-resource's first start builds it itself via `client/scripts/serve.mjs`;
-nothing extra to run beyond step 5's `npm install`. See AGENTS.md's
-"Client serving mode" note if you want live HMR instead
-(`client-mode.ps1 -Mode dev`).
+Port 17203 serves the built bundle by default (CARD-0216). Wait for
+`pwsh -File scripts/client-mode.ps1 -Status` to show the latest rebuild before
+checking the browser; use `-Mode dev` when HMR is required.
 
 ### 8. Self-check
 
@@ -532,7 +518,7 @@ Start either without re-login: `Start-ScheduledTask -TaskName "Antiphon Session 
 
 - **Orphaned Aspire DCP conflict**: Check for a stale `dcpctrl.exe` from a different Aspire project holding port 17202: `Get-NetTCPConnection -LocalPort 17202 -State Listen`. Kill the owning PID if foreign. Restarting the AppHost respawns DCP. ### Preserved Gotcha #10
 
-- **Starting the AppHost**: Use `Start-Process pwsh -ArgumentList @('-NoLogo','-File','C:\src\antiphon\dev-aspire.ps1') -WindowStyle Normal`. Do NOT use `wt new-tab` — it fails with `0x80070002` (file not found) when the title contains a space. Do NOT use `-NoNewWindow` — that attaches the AppHost to the tool session and kills it when the session ends. The script exits after ~60s; the AppHost continues in background (`logs/apphost.pid`). ### Preserved Gotcha #11
+- **Starting the AppHost**: Use `Start-ScheduledTask -TaskName 'Antiphon AppHost'` when no listener or launch is present. See the [canonical local restart runbook](apphost-runbook.md#first-start-and-apphost-restart) for task registration and the current restart handoff limitation. Do not start AppHost from an agent's kill-on-close Job Object. ### Preserved Gotcha #11
 
 - **RESTARTING the AppHost**: `dev-aspire.ps1` does NOT stop a running AppHost — re-running it launches a second one that collides with the old (old server keeps its ports, code changes never go live). Use `pwsh -File scripts/restart-apphost.ps1` instead: it kills the old tree, frees the ports, relaunches, and waits for health, preserving the session-runner. Restarts and `deploy-local.ps1` normally originate from the main checkout: linked worktrees refuse by default (CARD-0273 — a delegate running these from its own task worktree once silently stole the canonical stack's root); `-AllowWorktree` deliberately controls the shared stack and is only for an explicit test. **A non-zero exit does not mean it stopped launching**: it spawns `dev-aspire.ps1` detached and polls its own `TimeoutSec` (150 s), while the child's real budget is longer (8 s network preflight + `dotnet restore`/`npm install` + 90 s dashboard wait + 45 s Postgres wait). **Exit 3 means REFUSED — another restart or launch is in flight and nothing was killed** (CARD-0075): it takes `logs/apphost.restart.lock` for the whole run and also honours `dev-aspire.ps1`'s `logs/apphost.launch.lock`. A lock **stamp** younger than 15 min is still in-flight even if the holding PID has exited (CARD-0310). TimeoutSec (exit 1, child may still be launching) and DCP timeout (exit 4) **leave** `apphost.restart.lock` for that window; deleting the file is how you force a retry. Exit 0 and a build failure still remove it. A successful `dev-aspire.ps1` still deletes `apphost.launch.lock` as soon as the dashboard is ready — that lock is not held for 15 min after a healthy start. Do not re-run on a plain failure without checking those two files first. ### Preserved Gotcha #12
 
