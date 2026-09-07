@@ -97,6 +97,8 @@ public sealed class CardFileRepository(
     public async Task UnstageAsync(string root, string directory, IReadOnlyList<string> paths, CancellationToken ct)
     {
         if (paths.Count == 0) return;
+        var guard = await MutationGuardAsync(root, paths, ct);
+        if (guard is not null) throw new CardFileGitGuardException(guard.SkipReason ?? "git_error");
         var state = await InspectAsync(root, directory, ct);
         foreach (var path in paths)
             if (!IsManagedPath(root, directory, path) || state.Head.ContainsKey(path)) throw UnsafePath();
@@ -160,8 +162,33 @@ public sealed class CardFileRepository(
         const string begin = "# BEGIN ANTIPHON CARD FILES", end = "# END ANTIPHON CARD FILES";
         if (lines.Count(l => l == begin) != lines.Count(l => l == end) || lines.Count(l => l == begin) > 1) return false;
         if (lines.Contains(begin) && Array.IndexOf(lines, begin) >= Array.IndexOf(lines, end)) return false;
+        if (lines.Contains(begin))
+        {
+            var block = lines[(Array.IndexOf(lines, begin) + 1)..Array.IndexOf(lines, end)].Where(l => l.Length > 0).ToArray();
+            if (block.Length == 0 || block[0] is not ("/docs/cards/" or "/docs/cards/*")) return false;
+            if (block[0] == "/docs/cards/" && block.Length != 1) return false;
+            if (block.Skip(1).Any(l => !l.StartsWith("!/docs/cards/", StringComparison.Ordinal))) return false;
+        }
         var hasBlanket = lines.Any(l => l is "/docs/cards/" or "docs/cards/" or "/docs/cards/*" or "docs/cards/*");
-        if (!hasBlanket) return false;
+        if (!hasBlanket)
+        {
+            // Effective info/global/user exclusions can provide the same deny-default structure.
+            var matched = await RunGitInputAsync(root, "docs/cards/c408-unused-probe/probe.md\0", ct,
+                "check-ignore", "--no-index", "-v", "-z", "--stdin");
+            if (matched.ExitCode != 0) return false;
+            var fields = matched.Stdout.Split('\0');
+            if (fields.Length < 4 || fields[2] is not ("/docs/cards/" or "docs/cards/" or "/docs/cards/*" or "docs/cards/*" or "**/docs/cards/")) return false;
+            var source = fields[0];
+            if (!Path.IsPathRooted(source))
+            {
+                var top = await RunGitAsync(root, ct, "rev-parse", "--show-toplevel");
+                if (top.ExitCode != 0) return false;
+                source = Path.Combine(top.Stdout.Trim(), source);
+            }
+            // This is the evaluated ignore configuration, never card content.
+            var sourceLines = (await File.ReadAllTextAsync(source, ct)).Replace("\r", "").Split('\n').Select(l => l.Trim());
+            lines = lines.Concat(sourceLines).ToArray();
+        }
         foreach (var line in lines.Where(l => l.StartsWith('!')))
         {
             var prefix = "!/docs/cards/";
@@ -210,27 +237,19 @@ public sealed class CardFileRepository(
         ValidatePath(root, directory);
         foreach (var path in expected.Keys)
             if (!IsManagedPath(root, directory, path)) throw UnsafePath();
-        foreach (var (marker, skip) in new[] { ("rebase-merge", "rebase_in_progress"),
-            ("rebase-apply", "rebase_in_progress"), ("MERGE_HEAD", "merge_in_progress"),
-            ("CHERRY_PICK_HEAD", "cherry_pick_in_progress") })
-        {
-            var check = await GitPathExistsAsync(root, marker, ct);
-            if (check.Error is not null) return new(null, "git_error", check.Error);
-            if (check.Exists) return new(null, skip, null);
-        }
-        if ((await RunGitAsync(root, ct, "symbolic-ref", "-q", "HEAD")).ExitCode != 0)
-            return new(null, "detached_head", null);
-        var unmerged = await RunGitAsync(root, ct, "diff", "--name-only", "-z", "--diff-filter=U");
-        if (unmerged.ExitCode != 0) return GitError(unmerged);
-        if (unmerged.Stdout.Split('\0').Any(expected.ContainsKey)) return new(null, "conflicted_paths", null);
+        var guard = await MutationGuardAsync(root, expected.Keys.ToArray(), ct);
+        if (guard is not null) return guard;
         if (!await MatchesAsync(root, expected, ct)) return new(null, "generated_files_changed", null);
         var state = await InspectAsync(root, directory, ct);
         var addPaths = expected.Keys.Where(p => state.Index.ContainsKey(p) || File.Exists(Path.Combine(root, p))).ToArray();
         var input = string.Concat(addPaths.Select(p => p + "\0"));
-        var add = addPaths.Length == 0 ? new GitCommandResult(0, "", "") : await RunGitInputAsync(root, input, ct, "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul");
+        // -u stages tracked removals even when their ancestor is now ignored. -A
+        // may stage the deletion but still exit 1 after rejecting that ignored ancestor.
+        var addMode = expected.Values.All(v => v is null) ? "-u" : "-A";
+        var add = addPaths.Length == 0 ? new GitCommandResult(0, "", "") : await RunGitInputAsync(root, input, ct, "add", addMode, "--pathspec-from-file=-", "--pathspec-file-nul");
         if (add.ExitCode != 0) return GitError(add);
         // Rebuild after staging: canceled index-only additions are no longer valid commit paths.
-        var changed = await RunGitAsync(root, ct, "diff", "--cached", "--name-only", "-z", "--no-renames", "HEAD");
+        var changed = await RunGitAsync(root, ct, "diff", "--cached", "--relative", "--name-only", "-z", "--no-renames", "HEAD");
         if (changed.ExitCode != 0) return GitError(changed);
         var commitPaths = changed.Stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries).Where(expected.ContainsKey).ToArray();
         if (commitPaths.Length == 0) return new(null, "nothing_to_commit", null);
@@ -241,6 +260,24 @@ public sealed class CardFileRepository(
         if (commit.ExitCode != 0) return GitError(commit);
         var head = await RunGitAsync(root, ct, "rev-parse", "HEAD");
         return head.ExitCode == 0 ? new(head.Stdout.Trim(), null, null) : GitError(head);
+    }
+
+    private async Task<CardFileCommitResult?> MutationGuardAsync(string root, IReadOnlyCollection<string> paths, CancellationToken ct)
+    {
+        foreach (var (marker, skip) in new[] { ("rebase-merge", "rebase_in_progress"),
+            ("rebase-apply", "rebase_in_progress"), ("MERGE_HEAD", "merge_in_progress"),
+            ("CHERRY_PICK_HEAD", "cherry_pick_in_progress") })
+        {
+            var check = await GitPathExistsAsync(root, marker, ct);
+            if (check.Error is not null) return new(null, "git_error", check.Error);
+            if (check.Exists) return new(null, skip, null);
+        }
+        if ((await RunGitAsync(root, ct, "symbolic-ref", "-q", "HEAD")).ExitCode != 0)
+            return new(null, "detached_head", null);
+        var unmerged = await RunGitAsync(root, ct, "diff", "--relative", "--name-only", "-z", "--diff-filter=U");
+        if (unmerged.ExitCode != 0) return GitError(unmerged);
+        if (unmerged.Stdout.Split('\0').Any(paths.Contains)) return new(null, "conflicted_paths", null);
+        return null;
     }
 
     private async Task<bool> MatchesAsync(string root, IReadOnlyDictionary<string, string?> expected, CancellationToken ct)
@@ -301,7 +338,8 @@ public sealed class CardFileRepository(
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8,
             };
-            psi.Environment["GIT_LITERAL_PATHSPECS"] = "1";
+            if (arguments.FirstOrDefault() == "check-ignore") psi.Environment.Remove("GIT_LITERAL_PATHSPECS");
+            else psi.Environment["GIT_LITERAL_PATHSPECS"] = "1";
             foreach (var argument in arguments)
                 psi.ArgumentList.Add(argument);
 

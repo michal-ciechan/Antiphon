@@ -19,6 +19,7 @@ namespace Antiphon.Tests.Application;
 /// directory and its own rows — the assembly shares one Postgres.
 /// </summary>
 [Category("Integration")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class CardTaskFileServiceTests
 {
     [Test]
@@ -28,6 +29,7 @@ public class CardTaskFileServiceTests
         var repo = world.CreateRepo();
         var project = await world.AddProjectAsync(repo.Path);
         var board = await world.AddBoardAsync(project.Id, "Antiphon");
+        await world.OptInAsync(board);
         await world.AddCardAsync(board, "CARD-0001", "First");
         await world.AddCardAsync(board, "CARD-0002", "Second");
 
@@ -61,6 +63,7 @@ public class CardTaskFileServiceTests
         var repo = world.CreateRepo();
         var project = await world.AddProjectAsync(repo.Path);
         var board = await world.AddBoardAsync(project.Id, "Edit Board");
+        await world.OptInAsync(board);
         var card = await world.AddCardAsync(board, "CARD-0001", "Old Title");
         await world.SyncAsync(board.Id);
 
@@ -85,6 +88,7 @@ public class CardTaskFileServiceTests
         var repo = world.CreateRepo();
         var project = await world.AddProjectAsync(repo.Path);
         var board = await world.AddBoardAsync(project.Id, "Archive Board");
+        await world.OptInAsync(board);
         var card = await world.AddCardAsync(board, "CARD-0001", "Keep me");
         await world.ArchiveCardAsync(card.Id, "operator", "duplicate");
 
@@ -107,6 +111,7 @@ public class CardTaskFileServiceTests
         await using var world = new World();
         var project = await world.AddProjectAsync(localPath: null);
         var board = await world.AddBoardAsync(project.Id, "No Path");
+        await world.OptInAsync(board);
         await world.AddCardAsync(board, "CARD-0001", "Ghost");
 
         var result = await world.SyncAsync(board.Id);
@@ -123,6 +128,7 @@ public class CardTaskFileServiceTests
         var dir = world.CreateNonRepoDir();
         var project = await world.AddProjectAsync(dir);
         var board = await world.AddBoardAsync(project.Id, "Not Git");
+        await world.OptInAsync(board);
         await world.AddCardAsync(board, "CARD-0001", "Ghost");
 
         var result = await world.SyncAsync(board.Id);
@@ -138,7 +144,9 @@ public class CardTaskFileServiceTests
         var repo = world.CreateRepo();
         var project = await world.AddProjectAsync(repo.Path);
         var a = await world.AddBoardAsync(project.Id, "Alpha");
+        await world.OptInAsync(a);
         var b = await world.AddBoardAsync(project.Id, "Beta");
+        await world.OptInAsync(b);
         await world.AddCardAsync(a, "CARD-0001", "From Alpha");
         await world.AddCardAsync(b, "CARD-0001", "From Beta");
 
@@ -156,6 +164,7 @@ public class CardTaskFileServiceTests
         var repo = world.CreateRepo();
         var project = await world.AddProjectAsync(repo.Path);
         var board = await world.AddBoardAsync(project.Id, "Stray");
+        await world.OptInAsync(board);
         await world.AddCardAsync(board, "CARD-0001", "Keep");
         var dir = world.BoardDir(repo, "stray");
         Directory.CreateDirectory(dir);
@@ -177,6 +186,7 @@ public class CardTaskFileServiceTests
         var repo = world.CreateRepo();
         var project = await world.AddProjectAsync(repo.Path);
         var board = await world.AddBoardAsync(project.Id, "Dry");
+        await world.OptInAsync(board);
         await world.AddCardAsync(board, "CARD-0001", "One");
 
         var result = await world.SyncAsync(board.Id, dryRun: true);
@@ -190,12 +200,13 @@ public class CardTaskFileServiceTests
     }
 
     [Test]
-    public async Task A_crlf_rewrite_on_disk_is_rewritten_lf_and_counts_as_written()
+    public async Task A_crlf_rewrite_on_disk_is_content_equivalent_and_does_not_commit()
     {
         await using var world = new World();
         var repo = world.CreateRepo();
         var project = await world.AddProjectAsync(repo.Path);
         var board = await world.AddBoardAsync(project.Id, "Crlf");
+        await world.OptInAsync(board);
         await world.AddCardAsync(board, "CARD-0001", "One");
         await world.SyncAsync(board.Id);
 
@@ -205,10 +216,9 @@ public class CardTaskFileServiceTests
 
         var result = await world.SyncAsync(board.Id);
 
-        result.Written.ShouldBe(1);
-        result.Unchanged.ShouldBe(1, "INDEX.md is untouched");
-        var bytes = await File.ReadAllBytesAsync(path);
-        AssertLfNoBom(bytes);
+        result.Written.ShouldBe(0);
+        result.Unchanged.ShouldBe(2);
+        (await File.ReadAllTextAsync(path)).Replace("\r\n", "\n").ShouldBe(lf);
     }
 
     [Test]
@@ -219,7 +229,9 @@ public class CardTaskFileServiceTests
         var liveProject = await world.AddProjectAsync(repo.Path);
         var archivedProject = await world.AddProjectAsync(repo.Path, archived: true);
         var archivedBoard = await world.AddBoardAsync(liveProject.Id, "Archived Board", archived: true);
+        await world.OptInAsync(archivedBoard);
         var boardOnArchivedProject = await world.AddBoardAsync(archivedProject.Id, "Orphan Board");
+        await world.OptInAsync(boardOnArchivedProject);
         await world.AddCardAsync(archivedBoard, "CARD-0001", "Hidden");
         await world.AddCardAsync(boardOnArchivedProject, "CARD-0001", "Hidden");
 
@@ -235,7 +247,9 @@ public class CardTaskFileServiceTests
         var repo = world.CreateRepo();
         var project = await world.AddProjectAsync(repo.Path);
         var first = await world.AddBoardAsync(project.Id, "Foo", createdAt: new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        await world.OptInAsync(first);
         var later = await world.AddBoardAsync(project.Id, "Foo!!", createdAt: new DateTime(2026, 2, 1, 0, 0, 0, DateTimeKind.Utc));
+        await world.OptInAsync(later);
         await world.AddCardAsync(first, "CARD-0001", "A");
         await world.AddCardAsync(later, "CARD-0001", "B");
 
@@ -253,6 +267,7 @@ public class CardTaskFileServiceTests
         var repo = world.CreateRepo();
         var project = await world.AddProjectAsync(repo.Path);
         var board = await world.AddBoardAsync(project.Id, "Sync Board");
+        await world.OptInAsync(board);
         await world.AddCardAsync(board, "CARD-0001", "First");
         await world.AddCardAsync(board, "CARD-0002", "Second");
         var headBefore = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
@@ -291,6 +306,7 @@ public class CardTaskFileServiceTests
         var repo = world.CreateRepo();
         var project = await world.AddProjectAsync(repo.Path);
         var board = await world.AddBoardAsync(project.Id, "Rename Board");
+        await world.OptInAsync(board);
         var card = await world.AddCardAsync(board, "CARD-0001", "Old Title");
         await world.SyncAsync(board.Id, autoCommit: true);
 
@@ -300,7 +316,7 @@ public class CardTaskFileServiceTests
         result.CommitSkipReason.ShouldBeNull();
         result.CommitSha.ShouldNotBeNull();
 
-        var status = await repo.GitReadAsync("diff", "--name-status", "--find-renames", "HEAD~1", "HEAD");
+        var status = await repo.GitReadAsync("diff", "--name-status", "--find-renames", "HEAD~2", "HEAD");
         var lines = SplitGitLines(status);
         lines.Count(l => l.StartsWith('R')).ShouldBe(1);
         lines.ShouldContain(l => l.Contains("CARD-0001-old-title.md", StringComparison.Ordinal)
@@ -318,6 +334,7 @@ public class CardTaskFileServiceTests
         var repo = world.CreateRepo();
         var project = await world.AddProjectAsync(repo.Path);
         var board = await world.AddBoardAsync(project.Id, "Staged Board");
+        await world.OptInAsync(board);
         await world.AddCardAsync(board, "CARD-0001", "Keep");
         await File.WriteAllTextAsync(Path.Combine(repo.Path, "sidecar.txt"), "stay staged");
         await repo.GitAsync("add", "sidecar.txt");
@@ -339,6 +356,7 @@ public class CardTaskFileServiceTests
         var repo = world.CreateRepo();
         var project = await world.AddProjectAsync(repo.Path);
         var board = await world.AddBoardAsync(project.Id, "Rebase Board");
+        await world.OptInAsync(board);
         await world.AddCardAsync(board, "CARD-0001", "One");
         var rebasePath = ResolveGitPath(repo.Path, (await repo.GitReadAsync("rev-parse", "--git-path", "rebase-merge")).Trim());
         Directory.CreateDirectory(rebasePath);
@@ -360,6 +378,7 @@ public class CardTaskFileServiceTests
         var repo = world.CreateRepo();
         var project = await world.AddProjectAsync(repo.Path);
         var board = await world.AddBoardAsync(project.Id, "Removed Board");
+        await world.OptInAsync(board);
         await world.AddCardAsync(board, "CARD-0001", "One");
         var first = await world.SyncAsync(board.Id, autoCommit: true);
         first.CommitSha.ShouldNotBeNull();
@@ -388,6 +407,7 @@ public class CardTaskFileServiceTests
         var repo = world.CreateRepo();
         var project = await world.AddProjectAsync(repo.Path);
         var board = await world.AddBoardAsync(project.Id, "Detach Board");
+        await world.OptInAsync(board);
         await world.AddCardAsync(board, "CARD-0001", "One");
         await repo.GitAsync("checkout", "--detach");
         var headBefore = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
@@ -411,6 +431,7 @@ public class CardTaskFileServiceTests
         var repo = world.CreateRepo();
         var project = await world.AddProjectAsync(repo.Path);
         var board = await world.AddBoardAsync(project.Id, "Dirty Board");
+        await world.OptInAsync(board);
         await world.AddCardAsync(board, "CARD-0001", "One");
         var headBefore = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
 
@@ -436,6 +457,7 @@ public class CardTaskFileServiceTests
 
         var project = await world.AddProjectAsync(repo.Path);
         var board = await world.AddBoardAsync(project.Id, "Crlf Pin");
+        await world.OptInAsync(board);
         await world.AddCardAsync(board, "CARD-0001", "One");
         var first = await world.SyncAsync(board.Id, autoCommit: true);
         first.CommitSha.ShouldNotBeNull();
@@ -462,9 +484,13 @@ public class CardTaskFileServiceTests
         var withoutPath = await world.AddProjectAsync(localPath: null);
         var archivedProject = await world.AddProjectAsync(repo.Path, archived: true);
         var liveBoard = await world.AddBoardAsync(withPath.Id, "Live Sweep");
+        await world.OptInAsync(liveBoard);
         var pathlessBoard = await world.AddBoardAsync(withoutPath.Id, "Pathless Sweep");
+        await world.OptInAsync(pathlessBoard);
         var archivedBoard = await world.AddBoardAsync(withPath.Id, "Archived Sweep", archived: true);
+        await world.OptInAsync(archivedBoard);
         var boardOnArchivedProject = await world.AddBoardAsync(archivedProject.Id, "Orphan Sweep");
+        await world.OptInAsync(boardOnArchivedProject);
         await world.AddCardAsync(liveBoard, "CARD-0001", "Live Card");
         await world.AddCardAsync(pathlessBoard, "CARD-0001", "Ghost");
         await world.AddCardAsync(archivedBoard, "CARD-0001", "Hidden");
@@ -472,7 +498,7 @@ public class CardTaskFileServiceTests
 
         var results = await world.SyncAllAsync();
 
-        results.Count.ShouldBe(2);
+        results.Count.ShouldBe(4);
         var live = results.Single(r => r.BoardId == liveBoard.Id);
         live.WriteSkipReason.ShouldBeNull();
         live.Written.ShouldBeGreaterThan(0);
@@ -485,8 +511,8 @@ public class CardTaskFileServiceTests
         pathless.Written.ShouldBe(0);
         pathless.Directory.ShouldBeNull();
 
-        results.ShouldNotContain(r => r.BoardId == archivedBoard.Id);
-        results.ShouldNotContain(r => r.BoardId == boardOnArchivedProject.Id);
+        results.Single(r => r.BoardId == archivedBoard.Id).WriteSkipReason.ShouldBe("board_archived");
+        results.Single(r => r.BoardId == boardOnArchivedProject.Id).WriteSkipReason.ShouldBe("project_archived");
         Directory.Exists(world.BoardDir(repo, "archived-sweep")).ShouldBeFalse();
         Directory.Exists(world.BoardDir(repo, "orphan-sweep")).ShouldBeFalse();
     }
@@ -498,6 +524,7 @@ public class CardTaskFileServiceTests
         var repo = world.CreateRepo();
         var project = await world.AddProjectAsync(repo.Path);
         var board = await world.AddBoardAsync(project.Id, "Lock Board");
+        await world.OptInAsync(board);
         await world.AddCardAsync(board, "CARD-0001", "One");
         var lockPath = ResolveGitPath(
             repo.Path,
@@ -636,6 +663,21 @@ public class CardTaskFileServiceTests
             return board;
         }
 
+        public async Task OptInAsync(Board board)
+        {
+            await using var db = CreateContext();
+            await db.Boards.Where(b => b.Id == board.Id).ExecuteUpdateAsync(s => s.SetProperty(b => b.SyncCardFiles, true));
+            await db.Projects.Where(p => p.Id == board.ProjectId).ExecuteUpdateAsync(s => s.SetProperty(p => p.RepositoryVisibility, RepositoryVisibility.Private));
+            var project = await db.Projects.FirstAsync(p => p.Id == board.ProjectId);
+            if (project.LocalRepositoryPath is null || !Directory.Exists(Path.Combine(project.LocalRepositoryPath, ".git"))) return;
+            // Read-only status supplies the stable collision-resolved slug without enabling a writer.
+            var status = await CreateService(db, false).GetStatusAsync(board.Id, default);
+            if (status.Directory is null) return;
+            var ignore = Path.Combine(project.LocalRepositoryPath, ".gitignore");
+            if (!File.Exists(ignore)) await File.WriteAllTextAsync(ignore, "/docs/cards/*\n");
+            await File.AppendAllTextAsync(ignore, "!/" + status.Directory + "/\n");
+        }
+
         public async Task<Card> AddCardAsync(Board board, string identifier, string title)
         {
             var columnId = board.Columns.Count > 0
@@ -706,6 +748,7 @@ public class CardTaskFileServiceTests
                 _gate,
                 new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance),
                 NullLogger<CardTaskFileService>.Instance,
+                new Antiphon.Server.Infrastructure.Git.CardFileRepository(new GitProcessGate(), Options.Create(new GitSettings()), NullLogger<Antiphon.Server.Infrastructure.Git.CardFileRepository>.Instance),
                 settings);
         }
 

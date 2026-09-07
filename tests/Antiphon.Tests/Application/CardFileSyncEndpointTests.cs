@@ -25,7 +25,8 @@ namespace Antiphon.Tests.Application;
 [ClassDataSource<CardFileSyncEndpointWebAppFactory>(Shared = SharedType.PerClass)]
 public class CardFileSyncEndpointTests
 {
-    private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };
+    private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true,
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } };
 
     private readonly CardFileSyncEndpointWebAppFactory _factory;
     private Guid _projectId;

@@ -150,7 +150,8 @@ public sealed record CreateBoardRequest(
     Guid ProjectId,
     string Name,
     string? Description = null,
-    int MaxConcurrentSessions = 1);
+    int MaxConcurrentSessions = 1,
+    bool? SyncCardFiles = null);
 
 /// <summary>
 /// Archive is what "delete" means for a board: the row stays, so cards and agents never dangle.

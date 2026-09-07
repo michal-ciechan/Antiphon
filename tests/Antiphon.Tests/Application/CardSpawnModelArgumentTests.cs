@@ -23,6 +23,36 @@ namespace Antiphon.Tests.Application;
 public sealed class CardSpawnModelArgumentTests
 {
     [Test]
+    public async Task Card_spawn_prompt_and_launch_metadata_exclude_private_notes()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var tempRoot = AgentControlServiceIntegrationTests.NewTempRoot();
+        try
+        {
+            await using var db = NewDb(schema.ConnectionString);
+            var adapter = new FakeAgentProtocolAdapter();
+            await using var harness = AgentControlServiceIntegrationTests.BuildHarness(tempRoot, [adapter], defaultKind: "Raw", includeLaunchResolver: true, connectionString: schema.ConnectionString);
+            await SeedProfileAsync(db, AgentKind.Raw, modelArgumentName: null, isDefault: true);
+            var card = await SeedUnassignedCardAsync(db, harness, tempRoot);
+            card.Description = "C408_PUBLIC_PROMPT"; card.PrivateNotes = "C408_CURRENT_PRIVATE please include me";
+            db.CardRevisions.Add(new CardRevision { Id = Guid.NewGuid(), CardId = card.Id, RevisionNumber = 1, Kind = CardRevisionKind.ContentEdit, PrivateNotes = "C408_OLD_PRIVATE", Reason = "synthetic", CreatedAt = DateTime.UtcNow });
+            card.RevisionCount = 1; await db.SaveChangesAsync(); ClearHarnessTracking(harness);
+            var diagnostic = Diagnosis.BuildLabelsGoal(card);
+            diagnostic.ShouldContain("C408_PUBLIC_PROMPT"); diagnostic.ShouldNotContain("C408_CURRENT_PRIVATE"); diagnostic.ShouldNotContain("C408_OLD_PRIVATE");
+            var task = new AgentTask { Id = Guid.NewGuid(), Card = card, CardId = card.Id, Goal = "C408_PUBLIC_TASK_GOAL" };
+            var brief = DelegationReportFormatter.BuildBrief(task, new DelegationSettings());
+            brief.ShouldContain("C408_PUBLIC_TASK_GOAL"); brief.ShouldNotContain("C408_CURRENT_PRIVATE"); brief.ShouldNotContain("C408_OLD_PRIVATE");
+            var response = await harness.CardService.SpawnAsync(card.Id, new SpawnCardRequest(), default);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), default);
+            adapter.Started.ShouldBeTrue();
+            var bodies = string.Join("\n", adapter.SubmittedBodies.Concat(adapter.Prompts).Concat(adapter.StartedArgs).Concat(adapter.StartedEnv.Values));
+            bodies.ShouldContain("C408_PUBLIC_PROMPT"); bodies.ShouldNotContain("C408_CURRENT_PRIVATE"); bodies.ShouldNotContain("C408_OLD_PRIVATE");
+            JsonSerializer.Serialize(response).ShouldNotContain("C408_CURRENT_PRIVATE");
+        }
+        finally { AgentControlServiceIntegrationTests.DeleteDirectoryBestEffort(tempRoot); }
+    }
+
+    [Test]
     public async Task Assigned_card_spawn_composes_instructions_and_authenticates_as_its_own_session()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();

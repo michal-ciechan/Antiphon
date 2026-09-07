@@ -19,6 +19,7 @@ namespace Antiphon.Server.Application.Services;
 public sealed class ProjectSetupService
 {
     private readonly AppDbContext _db;
+    private readonly CardTaskFileService? _cardFiles;
     private readonly DelegationWorkspaceResolver _resolver;
     private readonly GitWorkspaceService _git;
     private readonly ProjectReadinessCache _readinessCache;
@@ -45,9 +46,11 @@ public sealed class ProjectSetupService
         GitWorkspaceService? git = null,
         ProjectReadinessCache? readinessCache = null,
         IServiceScopeFactory? scopeFactory = null,
-        OrchestratorWorkspaceFactGatherer? workspaceGatherer = null)
+        OrchestratorWorkspaceFactGatherer? workspaceGatherer = null,
+        CardTaskFileService? cardFiles = null)
     {
         _db = db;
+        _cardFiles = cardFiles;
         _resolver = resolver;
         _git = git ?? new GitWorkspaceService(Microsoft.Extensions.Logging.Abstractions.NullLogger<GitWorkspaceService>.Instance);
         _readinessCache = readinessCache ?? new ProjectReadinessCache(
@@ -174,6 +177,15 @@ public sealed class ProjectSetupService
 
         var canDispatch = !checks.Any(c =>
             c.Level == ReadinessLevel.Required && c.Status == ReadinessStatus.Missing);
+        if (_cardFiles is not null)
+        {
+            var warnings = await _cardFiles.ProjectWarningsAsync(project.Id, false, ct);
+            checks.Add(new ReadinessCheckDto("card-files", ReadinessLevel.Recommended,
+                warnings.Length > 0 ? ReadinessStatus.Warning : project.LocalRepositoryPath is null ? ReadinessStatus.NotApplicable : ReadinessStatus.Ok,
+                warnings.Length > 0 ? "Card-file publication needs attention" : "Card-file default protection checked",
+                warnings.Length > 0 ? string.Join(", ", warnings) + ". Configure repository visibility and deny-default ignores; drain previous exports before changing targets." : null,
+                new ReadinessFixDto("Configure project", $"/settings/projects/{project.Id}", null)));
+        }
         return new ProjectReadinessDto(project.Id, canDispatch, checks);
     }
 
@@ -217,6 +229,9 @@ public sealed class ProjectSetupService
         var projectService = _projectService ?? throw new InvalidOperationException("Project setup write services are not configured.");
         var boardService = _boardService ?? throw new InvalidOperationException("Project setup write services are not configured.");
         var agentService = _agentService ?? throw new InvalidOperationException("Project setup write services are not configured.");
+
+        if (request.RepositoryVisibility is { } visibility && !Enum.IsDefined(visibility))
+            throw new ValidationException("repositoryVisibility", "Repository visibility must be Unknown, Private or Public.");
 
         if (string.IsNullOrWhiteSpace(request.Directory))
             throw new ValidationException("directory", "Directory is required.");
@@ -282,7 +297,7 @@ public sealed class ProjectSetupService
                     GitHubIntegrationEnabled: false,
                     NotificationsEnabled: false,
                     LocalRepositoryPath: directory,
-                    BaseBranch: request.BaseBranch),
+                    BaseBranch: request.BaseBranch) { RepositoryVisibility = request.RepositoryVisibility },
                 ct);
 
             var createdBoard = await boardService.CreateAsync(

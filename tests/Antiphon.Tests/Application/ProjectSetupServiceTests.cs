@@ -17,8 +17,27 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>CARD-0032 slice 3 — transactional project, board, and first-agent setup.</summary>
 [Category("Integration")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class ProjectSetupServiceTests
 {
+    [Test]
+    public async Task Fresh_git_setup_installs_ignore_without_enabling_board_and_readiness_stays_read_only()
+    {
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(isolated.ConnectionString));
+        using var repo = new ScratchGitRepo("c408-setup"); await repo.CommitFileAsync("seed", "seed");
+        await using var world = new CardFilePrivacyWorld(isolated.ConnectionString);
+        var service = CreateService(db, world.Service(db));
+        var result = await service.SetupAsync(new ProjectSetupRequest(repo.Path, Name: "C408 setup", CreateDirectory: false), default);
+        result.Board.SyncCardFiles.ShouldBeFalse(); result.Project.RepositoryVisibility.ShouldBe(RepositoryVisibility.Unknown);
+        var ignore = await File.ReadAllBytesAsync(Path.Combine(repo.Path, ".gitignore"));
+        System.Text.Encoding.UTF8.GetString(ignore).ShouldContain("/docs/cards/");
+        (await service.GetReadinessAsync(result.Project.Id, default)).CanDispatch.ShouldBe((await CreateService(db).GetReadinessAsync(result.Project.Id, default)).CanDispatch);
+        (await File.ReadAllBytesAsync(Path.Combine(repo.Path, ".gitignore"))).ShouldBe(ignore);
+        Directory.Exists(Path.Combine(repo.Path, "docs/cards")).ShouldBeFalse();
+        (await repo.GitReadAsync("diff", "--cached", "--name-only")).ShouldBeEmpty();
+    }
+
     [Test]
     public async Task setup_creates_one_project_board_and_agent_linked_to_that_board()
     {
@@ -31,6 +50,8 @@ public class ProjectSetupServiceTests
                 new ProjectSetupRequest(directory, Name: "Setup Happy", Agent: new ProjectSetupAgentRequest()),
                 CancellationToken.None);
 
+            result.Board.SyncCardFiles.ShouldBeFalse();
+            result.Project.RepositoryVisibility.ShouldBe(RepositoryVisibility.Unknown);
             result.Agent.ShouldNotBeNull();
             result.Agent!.BoardId.ShouldBe(result.Board.Id);
             (await db.Boards.CountAsync(b => b.ProjectId == result.Project.Id)).ShouldBe(1);
@@ -166,7 +187,7 @@ public class ProjectSetupServiceTests
         }
     }
 
-    private static ProjectSetupService CreateService(AppDbContext db)
+    private static ProjectSetupService CreateService(AppDbContext db, CardTaskFileService? cardFiles = null)
     {
         var eventBus = new MockEventBus();
         var agentService = new AgentService(
@@ -181,10 +202,10 @@ public class ProjectSetupServiceTests
             new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
             Options.Create(new DelegationSettings()),
             NullLogger<ProjectSetupService>.Instance,
-            new ProjectService(db, new StubHttpClientFactory(), Options.Create(new GithubSettings()), NullLogger<ProjectService>.Instance),
-            new BoardService(db, eventBus, TimeProvider.System),
+            new ProjectService(db, new StubHttpClientFactory(), Options.Create(new GithubSettings()), NullLogger<ProjectService>.Instance, cardFiles: cardFiles),
+            new BoardService(db, eventBus, TimeProvider.System, cardFiles: cardFiles),
             agentService,
-            directoryWriter: new NoOpDirectoryWriter());
+            directoryWriter: new NoOpDirectoryWriter(), cardFiles: cardFiles);
     }
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());

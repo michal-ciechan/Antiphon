@@ -50,7 +50,9 @@ public class ProjectService
             .OrderBy(p => p.Name)
             .ToListAsync(cancellationToken);
 
-        return projects.Select(ToDto).ToList();
+        var results = new List<ProjectDto>();
+        foreach (var project in projects) results.Add(await WithWarningsAsync(project, false, cancellationToken));
+        return results;
     }
 
     public async Task<ProjectDto> GetByIdAsync(Guid id, CancellationToken cancellationToken)
@@ -59,7 +61,7 @@ public class ProjectService
             .FirstOrDefaultAsync(p => p.Id == id, cancellationToken)
             ?? throw new NotFoundException(nameof(Project), id);
 
-        return ToDto(project);
+        return await WithWarningsAsync(project, false, cancellationToken);
     }
 
     public async Task<ProjectDto> CreateAsync(
@@ -67,6 +69,7 @@ public class ProjectService
     {
         ValidateRequest(request.Name, request.GitRepositoryUrl, request.LocalRepositoryPath);
         ValidateVisibility(request.RepositoryVisibility);
+        _cardFiles?.ValidateProjectTarget(request.LocalRepositoryPath);
 
         var project = new Project
         {
@@ -95,7 +98,7 @@ public class ProjectService
 
         _logger.LogInformation("Created project {ProjectName} ({ProjectId})", project.Name, project.Id);
 
-        return ToDto(project);
+        return await WithWarningsAsync(project, true, cancellationToken);
     }
 
     public async Task<ProjectDto> UpdateAsync(
@@ -110,9 +113,21 @@ public class ProjectService
         ValidateVisibility(request.RepositoryVisibility);
 
         await _db.Entry(project).ReloadAsync(cancellationToken);
+        _cardFiles?.ValidateProjectTarget(request.LocalRepositoryPath);
         var pathChanged = !SamePath(project.LocalRepositoryPath, request.LocalRepositoryPath);
         var targetChanged = pathChanged || !string.Equals(project.GitRepositoryUrl, request.GitRepositoryUrl, StringComparison.Ordinal);
+        if (pathChanged && _cardFiles is not null)
+            await _cardFiles.ValidateProjectTargetChangeAsync(id, request.LocalRepositoryPath, cancellationToken);
         if (pathChanged && _cardFiles is not null) await _cardFiles.EnsureDrainedAsync(id, null, cancellationToken);
+        if (pathChanged)
+        {
+            // Old ownership has been drained; the next reconciliation may pin the new target.
+            foreach (var board in await _db.Boards.Where(b => b.ProjectId == id).ToListAsync(cancellationToken))
+            {
+                board.CardFilesRepositoryPath = null;
+                board.CardFilesDirectorySlug = null;
+            }
+        }
         if (request.RepositoryVisibility is { } visibility) project.RepositoryVisibility = visibility;
         else if (targetChanged) project.RepositoryVisibility = RepositoryVisibility.Unknown;
         project.Name = request.Name;
@@ -138,7 +153,8 @@ public class ProjectService
         _logger.LogInformation("Updated project {ProjectName} ({ProjectId})", project.Name, project.Id);
 
         if (_eventBus is not null) await _eventBus.PublishToAllAsync("BoardChanged", new { projectId = id }, cancellationToken);
-        return ToDto(project);
+        fileLease?.Dispose();
+        return await WithWarningsAsync(project, pathChanged, cancellationToken);
     }
 
     /// <summary>
@@ -210,6 +226,7 @@ public class ProjectService
         var project = await _db.Projects
             .FirstOrDefaultAsync(p => p.Id == id, cancellationToken)
             ?? throw new NotFoundException(nameof(Project), id);
+        await _db.Entry(project).ReloadAsync(cancellationToken);
         if (project.ArchivedAt is not null)
             throw new ConflictException($"Project '{project.Name}' is already archived.");
 
@@ -226,7 +243,8 @@ public class ProjectService
             await _eventBus.PublishToAllAsync("BoardChanged", new { projectId = project.Id, archived = true }, cancellationToken);
 
         _logger.LogInformation("Archived project {ProjectName} ({ProjectId})", project.Name, project.Id);
-        return ToDto(project);
+        fileLease?.Dispose();
+        return await WithWarningsAsync(project, false, cancellationToken);
     }
 
     public async Task<ProjectDto> UnarchiveAsync(
@@ -238,6 +256,7 @@ public class ProjectService
         var project = await _db.Projects
             .FirstOrDefaultAsync(p => p.Id == id, cancellationToken)
             ?? throw new NotFoundException(nameof(Project), id);
+        await _db.Entry(project).ReloadAsync(cancellationToken);
         if (project.ArchivedAt is null)
             throw new ConflictException($"Project '{project.Name}' is not archived.");
 
@@ -251,7 +270,8 @@ public class ProjectService
             await _eventBus.PublishToAllAsync("BoardChanged", new { projectId = project.Id, archived = false }, cancellationToken);
 
         _logger.LogInformation("Unarchived project {ProjectName} ({ProjectId})", project.Name, project.Id);
-        return ToDto(project);
+        fileLease?.Dispose();
+        return await WithWarningsAsync(project, false, cancellationToken);
     }
 
     private static ProjectDeletionImpactDto ToImpactDto(Project project, ProjectImpactCounts counts) =>
@@ -426,6 +446,14 @@ public class ProjectService
         {
             throw new ValidationException(errors);
         }
+    }
+
+    private async Task<ProjectDto> WithWarningsAsync(Project project, bool install, CancellationToken ct)
+    {
+        if (_cardFiles is null) return ToDto(project);
+        try { return ToDto(project) with { CardFileWarnings = await _cardFiles.ProjectWarningsAsync(project.Id, install, ct) }; }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception) { return ToDto(project) with { CardFileWarnings = [install ? "card_files_ignore_missing" : "status_unavailable"] }; }
     }
 
     private static ProjectDto ToDto(Project entity) =>

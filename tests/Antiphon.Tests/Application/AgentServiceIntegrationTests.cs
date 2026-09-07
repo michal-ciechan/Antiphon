@@ -198,6 +198,8 @@ public class AgentServiceIntegrationTests
             .SingleAsync(b => b.Id == created.BoardId!.Value);
         board.Name.ShouldBe(Path.GetFileName(workingDirectory));
         board.Project.LocalRepositoryPath.ShouldBe(workingDirectory);
+        board.SyncCardFiles.ShouldBeFalse();
+        board.Project.RepositoryVisibility.ShouldBe(RepositoryVisibility.Unknown);
         board.Columns
             .Select(c => c.StateKey)
             .OrderBy(s => s)

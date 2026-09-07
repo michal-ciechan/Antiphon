@@ -139,6 +139,7 @@ public sealed class CardService : IScheduledCardActions
     {
         ValidateCreateRequest(request);
         using var fileLease = _cardFiles is null ? null : await _cardFiles.EnterBoardAsync(boardId, true, ct);
+        if (_cardFiles is not null) await _cardFiles.ValidateMutationTargetAsync(boardId, ct);
 
         var board = await _db.Boards
             .Include(b => b.Columns)
@@ -494,6 +495,7 @@ public sealed class CardService : IScheduledCardActions
 
         var card = await LoadCardForUpdateAsync(id, ct);
         await _db.Entry(card).ReloadAsync(ct);
+        if (_cardFiles is not null) await _cardFiles.ValidateMutationTargetAsync(card.BoardId, ct);
         if (request.ConcurrencyToken == Guid.Empty)
             throw new ValidationException(nameof(request.ConcurrencyToken), "Card concurrency token is required.");
         if (request.ConcurrencyToken != card.ConcurrencyToken)

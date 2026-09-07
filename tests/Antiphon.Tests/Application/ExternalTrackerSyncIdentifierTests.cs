@@ -39,6 +39,9 @@ public class ExternalTrackerSyncIdentifierTests
                 .Include(c => c.ExternalIssueRef)
                 .SingleAsync(c => c.BoardId == graph.Board.Id);
             card.Identifier.ShouldBe("CARD-0001");
+            card.PrivateNotes.ShouldBeEmpty(); card.CardFileVisibility.ShouldBe(CardFileVisibility.Inherit);
+            graph.Board.SyncCardFiles.ShouldBeFalse();
+            (await verify.Projects.SingleAsync(p => p.Id == graph.Board.ProjectId)).RepositoryVisibility.ShouldBe(RepositoryVisibility.Unknown);
             card.ExternalIssueRef.ShouldNotBeNull();
             card.ExternalIssueRef!.ExternalKey.ShouldBe("#3");
             Should.NotThrow(() => WorktreeManager.ValidateCardId(card.Identifier));

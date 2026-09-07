@@ -65,10 +65,11 @@ public static class ProjectEndpoints
         });
 
         projects.MapPost("/setup", async (
-            ProjectSetupRequest request,
+            HttpContext http,
             ProjectSetupService service,
             CancellationToken cancellationToken) =>
         {
+            var request = await CardFileRequestReader.ReadAsync<ProjectSetupRequest>(http, cancellationToken);
             var result = await service.SetupAsync(request, cancellationToken);
             return Results.Created($"/api/projects/{result.Project.Id}", result);
         });

@@ -42,10 +42,11 @@ public static class BoardEndpoints
         });
 
         boards.MapPost("/", async (
-            CreateBoardRequest request,
+            HttpContext http,
             BoardService service,
             CancellationToken cancellationToken) =>
         {
+            var request = await CardFileRequestReader.ReadAsync<CreateBoardRequest>(http, cancellationToken);
             var board = await service.CreateAsync(request, cancellationToken);
             return Results.Created($"/api/boards/{board.Id}", board);
         });
