@@ -144,6 +144,17 @@ public class OutputDistillationGateTests
     [Arguments("Checked SE/dark and the Save/Cancel/Remove controls.")]
     [Arguments("The input/output/error streams are wired.")]
     [Arguments("The client/server/db layers and read/write/execute bits are configured.")]
+    // Review 9dc47a55: known directory names must also be tested in the leading position.
+    [Arguments("The server/client boundary is unchanged.")]
+    [Arguments("The server/runner split was respected.")]
+    [Arguments("We measured the server/database round-trip.")]
+    [Arguments("The src/dest pair was swapped.")]
+    [Arguments("The api/ui contract is stable.")]
+    [Arguments("The docs/spec disagreement was resolved.")]
+    [Arguments("Unit tests/builds are slow on this machine.")]
+    [Arguments("The scripts/tooling story is unchanged.")]
+    [Arguments("Domain/Application separation was preserved.")]
+    [Arguments("The docs/cards and client/src pairs need explicit path notation.")]
     [Arguments("Task f1590e8a finished. [antiphon-report:f1590e8a done]")]
     public void weekly_review_false_positives_can_be_paraphrased(string report)
     {
@@ -162,10 +173,28 @@ public class OutputDistillationGateTests
     [Arguments("Commit " + "........................................." + "f1590e8a")]
     [Arguments("Commit task f1590e8a-1234-5678-90ab-123456789abc finished.")]
     [Arguments("Incidental `abcdef` and `abcdef0123456` values were logged.")]
+    // Review 9dc47a55: quotes do not distinguish task IDs from abbreviated commits.
+    [Arguments("The prior review (task `72ca7d63`, no-ship) listed the defects.")]
+    [Arguments("Task `9dc47a55` finished.")]
+    [Arguments("Incidental `f1590e8a` was logged.")]
+    [Arguments("The colour `ffeedd0` is used for the banner.")]
+    [Arguments("See `2f7acb48`..`bf642f16`.")]
+    [Arguments("Commit discussion ended.\nTask `72ca7d63` finished.")]
     public void incidental_hex_is_not_a_commit_anchor(string report)
     {
         var result = OutputDistillationGate.Evaluate(
             LongRaw(body: report), Pad(200, KeepAll()));
+
+        result.Verdict.ShouldBe(DistillationGateVerdict.Pass);
+        result.MissingAnchors.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void a_git_list_does_not_extend_to_an_adjacent_task_id()
+    {
+        var result = OutputDistillationGate.Evaluate(
+            LongRaw(body: "Landed `2f7acb48`, task `72ca7d63` reviewed it."),
+            Pad(200, KeepAll() + " 2f7acb48"));
 
         result.Verdict.ShouldBe(DistillationGateVerdict.Pass);
         result.MissingAnchors.ShouldBeEmpty();
@@ -227,7 +256,7 @@ public class OutputDistillationGateTests
     [Arguments("Commits 2f7acb48, bf642f16, and 131872f2 both landed.", "131872f2")]
     [Arguments("Commits `2f7acb48`, `bf642f16` and `131872f2` landed.", "bf642f16")]
     [Arguments("git diff 2f7acb48...bf642f16", "bf642f16")]
-    [Arguments("See `2f7acb48`..`bf642f16`.", "bf642f16")]
+    [Arguments("See git diff `2f7acb48`..`bf642f16`.", "bf642f16")]
     public void dropping_only_one_sha_from_a_list_or_range_fails(string report, string sha)
     {
         AssertCitationRequiresSha(report, sha);
@@ -257,8 +286,17 @@ public class OutputDistillationGateTests
     [Arguments("server/Feature/Handlers")]
     [Arguments("Server/Feature/Handlers")]
     [Arguments("Application/Services/Foo")]
-    [Arguments("docs/cards")]
-    [Arguments("client/src")]
+    [Arguments("docs/cards/")]
+    [Arguments("client/src/")]
+    [Arguments("docs/cards:42")]
+    [Arguments("client/src:42")]
+    [Arguments("./docs/cards")]
+    [Arguments("./client/src")]
+    [Arguments("server/client/")]
+    [Arguments("server/client:42")]
+    [Arguments("server/client.cs")]
+    [Arguments("server/client/handlers")]
+    [Arguments("client/src/features")]
     [Arguments("server/Application/Services/")]
     [Arguments(@"Server\Application\Services\")]
     [Arguments("Custom/Feature/Handlers/")]

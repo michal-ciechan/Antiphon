@@ -161,9 +161,10 @@ public static class OutputDistillationGate
     }
 
     // CARD-0431: short hex runs alone are ambiguous (notably task/report IDs). Require
-    // Git context within 40 characters on the same line, or backticks, identifies short
-    // citations; full SHA-1s remain anchors without a label. Capture only the SHA so the
+    // Git context within 40 characters on the same line, even for backticked citations;
+    // full SHA-1s remain anchors without a label. Capture only the SHA so the
     // distillation may paraphrase the prose, and keep every member of lists and ranges.
+    // Permit revision-labelled continuations (", R2 in"), not arbitrary intervening prose.
     // Word/hyphen boundaries prevent extracting a SHA from an identifier or UUID.
     private static readonly Regex ShaPattern = new(
         @"(?:\b(?:sha(?:-?1)?|commits?|revision|head|landed|pushed|merged|committed
@@ -172,9 +173,8 @@ public static class OutputDistillationGate
              |\bfixed[ \t]+in\b
              |\borigin/[\w./-]+[ \t]+is[ \t]+now\b)
           [^\r\n]{0,40}?(?<![\w-])(?<sha>[0-9a-f]{7,40})(?![\w-])[`""']?
-          (?:[ \t]*(?:,(?:[ \t]*and\b)?|and\b|\.{2,3})[ \t]*
+          (?:[ \t]*(?:,(?:[ \t]*and\b)?|and\b|\.{2,3})[ \t]*(?:R\d+[ \t]+in[ \t]+)?
              [`""']?(?<![\w-])(?<sha>[0-9a-f]{7,40})(?![\w-])[`""']?)*
-          |`(?<sha>[0-9a-f]{7,12})`
           |(?<![\w-])(?<sha>[0-9a-f]{40})(?![\w-])",
         RegexOptions.Compiled | RegexOptions.CultureInvariant
         | RegexOptions.IgnoreCase | RegexOptions.IgnorePatternWhitespace);
@@ -200,7 +200,7 @@ public static class OutputDistillationGate
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     // CARD-0431: require a path signal, not just a segment count: an explicit root,
-    // extension, known repository directory (case-insensitive), trailing slash or line.
+    // extension, known repository directory plus two segments, trailing slash or line.
     // Limit client to its source/public subtrees so client/server/db stays ordinary prose.
     // Other extension-less directories can be made explicit with ./ or a trailing slash.
     // Boundaries prevent suffix matches inside slash phrases and URLs.
@@ -209,7 +209,7 @@ public static class OutputDistillationGate
             (?:[A-Za-z]:[\\/]|~[\\/]|\.{1,2}[\\/]|[\\/])[^\s`""'<>|]+
             |[\w.-]+(?:[\\/][\w.-]+)*[\\/][\w.-]+\.[A-Za-z0-9]+(?::\d+)?
             |(?i:(?:server|src|docs|tests|scripts|Application|Domain|Infrastructure|Api)[\\/][\w.-]+
-                  |client[\\/](?:src|public))(?:[\\/][\w.-]+)*[\\/]?(?::\d+)?
+                  |client[\\/](?:src|public))(?:[\\/][\w.-]+)+[\\/]?(?::\d+)?
             |[\w.-]+(?:[\\/][\w.-]+)+(?:[\\/]|:\d+)
           )(?![\w/\\])",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnorePatternWhitespace);
