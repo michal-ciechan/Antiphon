@@ -73,7 +73,10 @@ public static class OutputDistillationGate
     private static void CollectRequiredMisses(string raw, string distilled, List<string> missing)
     {
         foreach (Match match in ShaPattern.Matches(raw))
-            Require(distilled, match.Value, missing, "sha:");
+        {
+            foreach (Capture sha in match.Groups["sha"].Captures)
+                Require(distilled, sha.Value, missing, "sha:");
+        }
         foreach (Match match in CardPattern.Matches(raw))
             Require(distilled, match.Value, missing, "card:");
         foreach (Match match in UrlPattern.Matches(raw))
@@ -157,10 +160,19 @@ public static class OutputDistillationGate
             missing.Add(prefix + token);
     }
 
-    // Hex runs of 7–40 chars bounded by non-hex — commit shas, not CARD digits or amounts.
+    // CARD-0431: short hex runs alone are ambiguous (notably task/report IDs). Require
+    // Git context for abbreviations; full SHA-1s remain anchors without a label. Capture
+    // only the SHA so the distillation may paraphrase the label, and keep both range ends.
+    // Word/hyphen boundaries prevent extracting a SHA from an identifier or UUID.
     private static readonly Regex ShaPattern = new(
-        @"(?<![0-9a-fA-F])[0-9a-fA-F]{7,40}(?![0-9a-fA-F])",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        @"(?:\b(?:sha(?:-?1)?|commits?|revision|head)\b[ \t]*(?:(?:is|at)\b[ \t]*)?[:=]?[ \t]*
+             |\b(?:landed|pushed|merged|committed|rebased)\b[ \t]+(?:CARD-\d{4}[ \t]+)?(?:at[ \t]+)?
+             |\bgit[ \t]+(?:show|revert|cherry-pick|checkout|diff)[ \t]+)
+          [`""']?(?<![\w-])(?<sha>[0-9a-f]{7,40})(?![\w-])
+          (?:\.{2,3}(?<sha>[0-9a-f]{7,40})(?![\w-]))?
+          |(?<![\w-])(?<sha>[0-9a-f]{40})(?![\w-])",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant
+        | RegexOptions.IgnoreCase | RegexOptions.IgnorePatternWhitespace);
 
     private static readonly Regex CardPattern = new(
         @"CARD-\d{4}",
@@ -182,9 +194,15 @@ public static class OutputDistillationGate
         @"\b\d+\s*(passed|failed|skipped|tests?|files?|warnings?|errors?)\b",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
-    // Drive, rooted, ./relative, or segment/segment. Lookbehind so /Application inside
-    // server/Application is not a separate path.
+    // CARD-0431: rooted paths, relative files with extensions, or at least three segments
+    // starting with a directory-like (lowercase/underscore) token. Plain word/word and
+    // UI label lists such as Save/Cancel/Remove are not paths. Boundaries allow Markdown
+    // quoting while preventing suffix matches inside a slash phrase or URL.
     private static readonly Regex PathPattern = new(
-        @"(?<=^|\s)(?:[A-Za-z]:[\\/][^\s]+|(?:~|\.)?/[^\s]+|[\w.-]+(?:/[\w.-]+)+(?::\d+)?)",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        @"(?<![\w./\\:])(?:
+            (?:[A-Za-z]:[\\/]|~[\\/]|\.{1,2}[\\/]|[\\/])[^\s`""'<>|]+
+            |[\w.-]+(?:[\\/][\w.-]+)*[\\/][\w.-]+\.[A-Za-z0-9]+(?::\d+)?
+            |[a-z_][\w.-]*(?:[\\/][\w.-]+){2,}(?::\d+)?
+          )(?![\w/\\])",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnorePatternWhitespace);
 }

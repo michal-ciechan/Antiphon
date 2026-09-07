@@ -139,6 +139,73 @@ public class OutputDistillationGateTests
         result.MissingAnchors.ShouldNotContain(a => a.StartsWith("next:", StringComparison.Ordinal));
     }
 
+    [Test]
+    [Arguments("The HTTP/native transports now share the same behavior.")]
+    [Arguments("Checked SE/dark and the Save/Cancel/Remove controls.")]
+    [Arguments("Task f1590e8a finished. [antiphon-report:f1590e8a done]")]
+    public void weekly_review_false_positives_can_be_paraphrased(string report)
+    {
+        var result = OutputDistillationGate.Evaluate(
+            LongRaw(body: report), Pad(200, KeepAll()));
+
+        result.Verdict.ShouldBe(DistillationGateVerdict.Pass);
+        result.MissingAnchors.ShouldBeEmpty();
+    }
+
+    [Test]
+    [Arguments("Incidental value f1590e8a was logged.")]
+    [Arguments("Task f1590e8a-1234-5678-90ab-123456789abc finished.")]
+    [Arguments("The identifier prefixf1590e8asuffix is incidental.")]
+    public void incidental_hex_is_not_a_commit_anchor(string report)
+    {
+        var result = OutputDistillationGate.Evaluate(
+            LongRaw(body: report), Pad(200, KeepAll()));
+
+        result.Verdict.ShouldBe(DistillationGateVerdict.Pass);
+        result.MissingAnchors.ShouldBeEmpty();
+    }
+
+    [Test]
+    [Arguments("Commit f1590e8a", "f1590e8a")]
+    [Arguments("SHA: `f1590e8a`", "f1590e8a")]
+    [Arguments("revision F1590E8", "F1590E8")]
+    [Arguments("HEAD=f1590e8a", "f1590e8a")]
+    [Arguments("Pushed f1590e8a", "f1590e8a")]
+    [Arguments("Merged commit f1590e8a", "f1590e8a")]
+    [Arguments("git show f1590e8a", "f1590e8a")]
+    [Arguments("Commit f1590e8a..b1234567", "b1234567")]
+    [Arguments("0123456789abcdef0123456789abcdef01234567", "0123456789abcdef0123456789abcdef01234567")]
+    [Arguments("Task f1590e8a finished; commit f1590e8a was pushed.", "f1590e8a")]
+    public void dropping_a_git_reference_still_fails(string report, string sha)
+    {
+        var result = OutputDistillationGate.Evaluate(
+            LongRaw(body: report), Pad(200, KeepAll()));
+
+        result.Verdict.ShouldBe(DistillationGateVerdict.RejectedOverCompressed);
+        result.MissingAnchors.ShouldContain("sha:" + sha);
+    }
+
+    [Test]
+    [Arguments("/var/log/antiphon")]
+    [Arguments(@"\logs\antiphon")]
+    [Arguments(@"\\host\share\report")]
+    [Arguments(@"C:\src\Antiphon\README.md")]
+    [Arguments("./scripts")]
+    [Arguments("../scripts")]
+    [Arguments("docs/report.md")]
+    [Arguments(@"docs\report.md")]
+    [Arguments("server/Feature/Handlers")]
+    [Arguments("src/feature_name/output")]
+    [Arguments("`docs/report.md`")]
+    public void dropping_a_real_path_still_fails(string path)
+    {
+        var result = OutputDistillationGate.Evaluate(
+            LongRaw(body: "Changed " + path), Pad(200, KeepAll()));
+
+        result.Verdict.ShouldBe(DistillationGateVerdict.RejectedOverCompressed);
+        result.MissingAnchors.ShouldContain("path:" + path.Trim('`'));
+    }
+
     private static string KeepAll() =>
         $"- done {Card} sha {Sha} {Url} {Amount} {Count} {Path} [[attach: {AttachPath}]] {AttachPath}";
 
