@@ -11,10 +11,12 @@ import {
   Stack,
   Stepper,
   Switch,
+  Select,
   Text,
   TextInput,
   Textarea,
 } from '@mantine/core'
+import type { RepositoryVisibility } from '../../api/cardFiles'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import type { AgentModelLevel, AgentReplyStyle } from '../../api/agents'
@@ -73,6 +75,7 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
   const [pathMissing, setPathMissing] = useState(false)
   const [name, setName] = useState('')
   const [nameEdited, setNameEdited] = useState(false)
+  const [repositoryVisibility, setRepositoryVisibility] = useState<RepositoryVisibility>('Unknown')
   const [gitRepositoryUrl, setGitRepositoryUrl] = useState('')
   const [baseBranch, setBaseBranch] = useState('master')
   const [boardName, setBoardName] = useState('')
@@ -148,6 +151,7 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
         createDirectory,
         name: name.trim() || null,
         gitRepositoryUrl: gitRepositoryUrl.trim() || null,
+        repositoryVisibility,
         baseBranch: baseBranch.trim() || 'master',
         boardName: boardName.trim() || null,
         agent: skipAgent
@@ -251,6 +255,7 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
                   onChange={(event) => setGitRepositoryUrl(event.currentTarget.value)}
                   error={fieldErrors.gitRepositoryUrl}
                 />
+                <Select label="Repository visibility" description="Configured locally; not checked. Unknown blocks card-file publication. Boards start with publishing off." data={['Unknown', 'Private', 'Public']} value={repositoryVisibility} onChange={(v) => setRepositoryVisibility((v as RepositoryVisibility) ?? 'Unknown')} error={fieldErrors.repositoryVisibility} />
                 <TextInput label="Base branch" value={baseBranch} onChange={(event) => setBaseBranch(event.currentTarget.value)} />
                 <TextInput label="Board name" value={boardName} onChange={(event) => { setBoardNameEdited(true); setBoardName(event.currentTarget.value) }} error={fieldErrors.boardName} />
                 <Paper withBorder p="sm">

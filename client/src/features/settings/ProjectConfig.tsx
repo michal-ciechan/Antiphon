@@ -1,3 +1,4 @@
+import type { RepositoryVisibility } from '../../api/cardFiles'
 import { useState, useMemo } from 'react'
 import {
   Button,
@@ -11,6 +12,7 @@ import {
   TextInput,
   Textarea,
   Switch,
+  Select,
   Badge,
   ActionIcon,
   Tooltip,
@@ -91,6 +93,8 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
     message: string
   } | null>(null)
 
+  const [formVisibility, setFormVisibility] = useState<RepositoryVisibility>('Unknown')
+  const [visibilityEdited, setVisibilityEdited] = useState(false)
   const [formName, setFormName] = useState('')
   const [formGitUrl, setFormGitUrl] = useState('')
   const [formLocalRepoPath, setFormLocalRepoPath] = useState('')
@@ -134,6 +138,8 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
 
   const openEditModal = (project: ProjectDto) => {
     setEditingProject(project)
+    setFormVisibility(project.repositoryVisibility ?? 'Unknown')
+    setVisibilityEdited(false)
     setFormName(project.name)
     setFormGitUrl(project.gitRepositoryUrl)
     setFormLocalRepoPath(project.localRepositoryPath ?? '')
@@ -183,6 +189,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
         id: editingProject.id,
         data: {
           name: formName,
+          ...(visibilityEdited ? { repositoryVisibility: formVisibility } : {}),
           gitRepositoryUrl: formGitUrl,
           localRepositoryPath: formLocalRepoPath || undefined,
           baseBranch: formBaseBranch || 'master',
@@ -439,6 +446,8 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
               {testResult.message}
             </Alert>
           )}
+          <Select label="Repository visibility" description="Configured locally; not checked with the provider. Unknown blocks publication." data={['Unknown', 'Private', 'Public']} value={formVisibility} onChange={(v) => { setFormVisibility((v as RepositoryVisibility) ?? 'Unknown'); setVisibilityEdited(true) }} />
+          {(editingProject?.cardFileWarnings ?? []).map((w) => <Text key={w} c="orange">{w}: review card-file ignore protection and pending cleanup.</Text>)}
           <TextInput
             label="Local Repository Path"
             placeholder="D:\src\MyProject"

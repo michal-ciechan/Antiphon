@@ -103,6 +103,7 @@ describe('ProjectSetupModal', () => {
       name: 'starter',
       boardName: 'starter',
       gitRepositoryUrl: null,
+      repositoryVisibility: 'Unknown',
       agent: null,
       startAgent: false,
     })

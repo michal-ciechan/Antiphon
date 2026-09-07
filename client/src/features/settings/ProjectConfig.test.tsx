@@ -1,11 +1,13 @@
 import { HttpResponse, http } from 'msw'
 import { fireEvent } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 import type { ProjectDto, UpdateProjectRequest } from '../../api/projects'
 import type { ProjectReadinessDto } from '../../api/projectSetup'
 import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { ProjectConfig } from './ProjectConfig'
+
+beforeAll(() => { Element.prototype.scrollIntoView = vi.fn() })
 
 const notificationMock = vi.hoisted(() => ({ show: vi.fn() }))
 
@@ -61,6 +63,7 @@ describe('ProjectConfig default launch environment', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Edit project' }))
     const environment = await screen.findByLabelText('Default launch environment (KEY=value per line)')
     expect(environment).toHaveValue('ANTHROPIC_BASE_URL=http://proxy:8080')
+    expect(screen.getByRole('textbox', { name: 'Repository visibility' })).toHaveValue('Unknown')
     expect(screen.getByText(/inherited by every agent and pool delegate/i)).toBeInTheDocument()
 
     fireEvent.change(environment, {
@@ -69,6 +72,7 @@ describe('ProjectConfig default launch environment', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
 
     await waitFor(() => expect(submitted).not.toBeNull())
+    expect(submitted).not.toHaveProperty('repositoryVisibility')
     expect(submitted!.defaultLaunchEnv).toEqual({
       ANTHROPIC_BASE_URL: 'http://proxy:9090',
       ANTHROPIC_API_KEY: '{{key:proxy-key}}',
@@ -78,6 +82,22 @@ describe('ProjectConfig default launch environment', () => {
       message: expect.stringContaining('Line 3 was ignored because it is not KEY=value.'),
     }))
   })
+})
+
+it('submits configured visibility only when the operator changes the repository select', async () => {
+  const put = vi.fn()
+  server.use(http.get('/api/projects', () => HttpResponse.json([{ ...project, repositoryVisibility: 'Private' }])),
+    http.get('/api/boards', () => HttpResponse.json([])), http.get('/api/github/repos', () => HttpResponse.json([])),
+    http.get('/api/projects/readiness', () => HttpResponse.json([emptyReadiness])), http.get('/api/projects/:id/api-keys', () => HttpResponse.json([])),
+    http.put('/api/projects/:id', async ({ request }) => { put(await request.json()); return HttpResponse.json(project) }))
+  renderWithProviders(<ProjectConfig />)
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit project' }))
+  const visibility = screen.getByRole('textbox', { name: 'Repository visibility' })
+  expect(visibility).toHaveValue('Private')
+  await userEvent.click(visibility)
+  await userEvent.click(await screen.findByRole('option', { name: 'Public' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() => expect(put).toHaveBeenCalledWith(expect.objectContaining({ repositoryVisibility: 'Public' })))
 })
 
 describe('ProjectConfig readiness column', () => {

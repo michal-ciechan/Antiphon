@@ -1,5 +1,6 @@
 import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { CardImportance, CardQuadrant, CardUrgency } from '../features/board/cardRanking'
+import type { CardFileStatus, CardFileVisibility } from './cardFiles'
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './client'
 
 export type { CardImportance, CardQuadrant, CardUrgency }
@@ -11,6 +12,7 @@ export type SessionStatus = 'Created' | 'Starting' | 'Running' | 'Stopping' | 'S
 export type CardWorkflowRunStatus = 'Queued' | 'Running' | 'WaitingForHumanReview' | 'Completed' | 'Failed' | 'Canceled'
 
 export interface BoardSummaryDto {
+  syncCardFiles?: boolean
   id: string
   projectId: string
   projectName: string
@@ -24,6 +26,7 @@ export interface BoardSummaryDto {
 }
 
 export interface BoardDetailDto {
+  syncCardFiles?: boolean
   id: string
   projectId: string
   projectName: string
@@ -49,6 +52,9 @@ export interface BoardColumnDto {
 }
 
 export interface CardDto {
+  cardFileVisibility?: CardFileVisibility
+  hasPrivateNotes?: boolean
+  cardFileStatus?: CardFileStatus | null
   id: string
   boardId: string
   boardColumnId: string
@@ -145,6 +151,8 @@ export type CardRevisionKind = 'ContentEdit' | 'Move' | 'Archive' | 'Unarchive' 
  * only their reason.
  */
 export interface CardRevisionDto {
+  cardFileVisibility?: CardFileVisibility | null
+  hasPrivateNotes?: boolean | null
   id: string
   cardId: string
   revisionNumber: number
@@ -249,6 +257,8 @@ export interface CreateBoardRequest {
 }
 
 export interface CreateCardRequest {
+  privateNotes?: string | null
+  cardFileVisibility?: CardFileVisibility | null
   boardColumnId?: string | null
   title: string
   description?: string | null
@@ -310,6 +320,8 @@ export interface MoveCardResult {
  * `"operator"`.
  */
 export interface UpdateCardContentRequest {
+  privateNotes?: string | null
+  cardFileVisibility?: CardFileVisibility | null
   concurrencyToken: string
   reason: string
   title?: string | null
@@ -723,6 +735,8 @@ export function useMoveCard(boardId: string) {
  * — the one `useMoveCard` never needed — that card's revision list.
  */
 function invalidateAfterCardWrite(queryClient: ReturnType<typeof useQueryClient>, boardId: string, cardId: string) {
+  queryClient.invalidateQueries({ queryKey: ['private-notes', cardId] })
+  queryClient.invalidateQueries({ queryKey: ['card-file-status', boardId] })
   queryClient.invalidateQueries({ queryKey: boardKeys.detail(boardId) })
   queryClient.invalidateQueries({ queryKey: boardKeys.all })
   queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })

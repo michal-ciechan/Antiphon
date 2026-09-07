@@ -96,6 +96,7 @@ export interface ProjectSetupAgentRequest {
 }
 
 export interface ProjectSetupRequest {
+  repositoryVisibility?: import('./cardFiles').RepositoryVisibility
   directory: string
   createDirectory?: boolean
   name?: string | null

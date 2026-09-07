@@ -88,6 +88,18 @@ beforeEach(() => {
 })
 
 describe('CardModal', () => {
+  it('creates with Inherit and stores private notes separately in the modal entry point', async () => {
+    const post = vi.fn()
+    server.use(http.post('/api/boards/board-1/cards', async ({ request }) => { post(await request.json()); return HttpResponse.json(card) }))
+    renderWithProviders(<CardModal boardId="board-1" card={null} opened onClose={() => undefined} />)
+    expect(screen.getByRole('textbox', { name: 'Card-file visibility' })).toHaveValue('Inherit')
+    await userEvent.type(screen.getByLabelText('Title'), 'Public title')
+    await userEvent.type(screen.getByLabelText('Description'), 'Public description')
+    await userEvent.type(screen.getByLabelText('Private notes (kept in Antiphon; excluded from card files)'), '  C408_PRIVATE  ')
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith(expect.objectContaining({ description: 'Public description', privateNotes: '  C408_PRIVATE  ', cardFileVisibility: 'Inherit' })))
+  })
+
   it('fetches the full card only after the modal opens', async () => {
     const getSpy = vi.fn()
     server.use(agentDefinitionsHandler(), discussionHandler(), http.get('/api/cards/card-1', () => {

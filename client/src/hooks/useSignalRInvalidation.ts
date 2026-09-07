@@ -57,7 +57,7 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
   },
   {
     event: 'BoardChanged',
-    getKeys: (p) => [['boards'], ...(p.boardId ? [['boards', p.boardId]] : []), ['homeTasks']],
+    getKeys: (p) => [['boards'], ['card-file-status'], ['projects'], ...(p.boardId ? [['boards', p.boardId]] : []), ['homeTasks']],
   },
   {
     event: 'WorkflowReloaded',
@@ -72,6 +72,8 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
     getKeys: (p) => [
       ['boards'],
       ...(p.boardId ? [['boards', p.boardId]] : []),
+      ['card-file-status'],
+      ...(p.cardId ? [['private-notes', p.cardId], ['cards', p.cardId]] : []),
       ['cards', 'list'],
       ['cards', 'thread'],
       // A card parked for (or moved out of) a human decision changes the same attention feed as
