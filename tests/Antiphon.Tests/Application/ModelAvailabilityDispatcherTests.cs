@@ -158,7 +158,7 @@ public class ModelAvailabilityDispatcherTests
         await db.SaveChangesAsync();
     }
 
-    private static async Task<AgentTask> SeedQueuedTaskAsync(
+    internal static async Task<AgentTask> SeedQueuedTaskAsync(
         string connectionString, string directory, Guid pinnedAgentId, AgentModelLevel level, string title)
     {
         var id = Guid.NewGuid();
@@ -184,7 +184,7 @@ public class ModelAvailabilityDispatcherTests
         return task;
     }
 
-    private static async Task<(Guid AgentId, Guid SessionId)> SeedWarmAgentAsync(
+    internal static async Task<(Guid AgentId, Guid SessionId)> SeedWarmAgentAsync(
         string connectionString, string directory)
     {
         var sessionId = Guid.NewGuid();

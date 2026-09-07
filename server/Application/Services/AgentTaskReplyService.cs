@@ -611,6 +611,8 @@ public sealed class AgentTaskReplyService
         IServiceProvider services, AppDbContext db, AgentTask task, string report, TurnOutcome turn,
         CancellationToken ct)
     {
+        using var observation = new RuntimePhase(_logger, _timeProvider, task.AgentSessionId ?? Guid.Empty,
+            "settlement.entry", task.Id);
         var now = UtcNow();
         if (!DelegationReportFormatter.TryReadReportVerdict(task.Id, report, out var verdict, out var body))
         {
@@ -1455,7 +1457,10 @@ public sealed class AgentTaskReplyService
     {
         try
         {
+            using var observation = new RuntimePhase(_logger, _timeProvider, task.AgentSessionId ?? Guid.Empty,
+                "settlement.save", task.Id);
             await db.SaveChangesAsync(ct);
+            observation.Completed();
         }
         catch (DbUpdateConcurrencyException ex)
         {
@@ -1624,6 +1629,7 @@ public sealed class AgentTaskReplyService
             warning = string.IsNullOrWhiteSpace(warning) ? bits : warning.Trim() + "\n\n" + bits;
         }
 
+        using var observation = new RuntimePhase(_logger, _timeProvider, parentSession, "settlement.parent-note-enqueue");
         var note = DelegationReportFormatter.BuildCompletionNote(
             task, _settings, report, workspaceNote, ReplyInlineMaxChars, warning,
             await DescribeOverlappingRunningAsync(task, ct), drift,
@@ -1639,24 +1645,37 @@ public sealed class AgentTaskReplyService
             // so five delegates landing together produce one note, not five turns. The queue's
             // size-aware batching stops before the combined body crosses the inline ceiling.
             Guid? queuedId = null;
-            DateTime? holdUntil = null;
+            var requestedAt = _timeProvider.GetUtcNow();
+            var deadlineAt = requestedAt.AddSeconds(Math.Max(1, _settings.OutputDistillerWaitSeconds));
+            var mode = _settings.OutputDistillerMode;
             var distill = OutputDistillationService.ShouldRequest(task, _settings);
-            if (distill && _settings.OutputDistillerMode == OutputDistillerMode.Apply)
-                holdUntil = _timeProvider.GetUtcNow().UtcDateTime
-                    + TimeSpan.FromSeconds(Math.Max(1, _settings.OutputDistillerWaitSeconds));
-
             await queue.EnqueueAsync(
                 parentSession, note.Body, MessageSendMode.WhenIdle, ct,
                 QueuedMessageOrigin.Delegation, $"task:{task.RootTaskId:N}",
                 task.Id, DelegationNoteDigest.Compute(report), note.Header,
-                onCreated: id => queuedId = id,
-                holdUntil: holdUntil);
-
-            if (distill)
+                onCreated: id => queuedId = id, deliverIfIdle: false,
+                holdUntil: distill && mode == OutputDistillerMode.Apply ? deadlineAt.UtcDateTime : null);
+            if (distill && queuedId is not null)
             {
+                var request = new DistillRequest(task.Id, queuedId, requestedAt, deadlineAt, mode);
                 var distillQueue = scope.ServiceProvider.GetService<OutputDistillationQueue>();
-                distillQueue?.TryEnqueue(new DistillRequest(task.Id, queuedId));
+                if (distillQueue?.TryEnqueue(request) != true)
+                {
+                    var distiller = scope.ServiceProvider.GetService<OutputDistillationService>();
+                    if (distiller is not null)
+                        await distiller.RejectAdmissionAsync(request,
+                            distillQueue is null || distillQueue.IsClosed ? "worker-unavailable" : "queue-full", ct);
+                    else
+                    {
+                        using var cleanup = new ExecutionBudget(_timeProvider.GetUtcNow().AddSeconds(2), _timeProvider, ct);
+                        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                        await db.SessionQueuedMessages.Where(m => m.Id == queuedId)
+                            .ExecuteUpdateAsync(s => s.SetProperty(m => m.HoldUntil, (DateTime?)null), cleanup.Token);
+                    }
+                }
             }
+            // The hosted owner also scans persisted raw completions after missed/full wakeups.
+            scope.ServiceProvider.GetService<CompletionNoteFlushQueue>()?.TryEnqueue(parentSession);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

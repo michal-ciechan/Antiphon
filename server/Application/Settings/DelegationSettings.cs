@@ -762,6 +762,8 @@ public sealed class DelegationSettings
     /// creating one. One specialist, serial drainer.
     /// </summary>
     public int OutputDistillerMaxBacklog { get; set; } = 3;
+    /// <summary>Waiting requests, independently of unfinished specialist task rows.</summary>
+    public int OutputDistillerQueueCapacity { get; set; } = 3;
 
     /// <summary>Reports shorter than this are never distilled — nothing to gain, only latency to pay.</summary>
     public int DistillMinChars { get; set; } = 1_200;

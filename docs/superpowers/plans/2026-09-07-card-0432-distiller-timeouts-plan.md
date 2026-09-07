@@ -373,3 +373,25 @@ Estimated verification floor after implementation is **about 45 minutes with war
 next: code
 handoff: Implement CARD-0432 S0-S5 with Shadow and 45 seconds unchanged; execute V-1..V-24, R-1..R-8 and PC-1..PC-33 including subedits. First record S0's blocked hosted-pump red, then prove isolation, deadline/application races, durable recovery including review correlations, and late-cost accounting with isolated fakes. Report counts/evidence and request Review.
 artifact: docs/superpowers/plans/2026-09-07-card-0432-distiller-timeouts-plan.md
+
+## Code dispatch 5e4516c6: S0-S2 only
+
+The subsequent Code brief limits this dispatch to S0 reproduction, S1 held-model fallback and
+S2's original admission deadline, including the application race guard. It explicitly excludes
+the durable runtime-action worker/review correlation and eventual-cost accounting. Those
+later stages and their V/PC cases are not acceptance claims for this implementation.
+
+S0 confirmed the blocking hypothesis using the actual hosted pump with gated SignalR and real
+queue-confirmation callbacks, including serial reconnect catch-up. S1-S2 are implemented with
+bounded admission, canonical held checks, durable task/brief deadlines, queue-owned application,
+one separate cleanup allowance and owned completion/incident work. Shadow, 45 seconds and the
+v2 content contract remain unchanged. Implementation evidence, the awaited-child inventory,
+test manifests, deliberate mutation results and remaining stage boundaries are recorded in
+[the S0-S2 evidence report](../../investigations/2026-09-07-card-0432-s0-s2-evidence.md).
+
+Review this slice before the separate S3 amendment/Code dispatch. S3 must carry the already
+authorized review target thread ID and owning prompt in durable work, and persist a review
+consume marker rather than relying on the in-memory `ReviewReplyDispatcher._pending` map.
+Natural Shadow cohort measurement is pending deployment/measurement. `DegradedExpired` will
+absorb formerly queued requests; a worse-looking headline degrade rate can be the intended
+fail-fast result, not a regression.

@@ -266,6 +266,7 @@ public sealed class AgentSessionRuntime
     /// <summary>Relays a structured transcript entry to the session's SignalR group and persists it (idempotently).</summary>
     public async Task ObserveTranscriptAsync(SessionRunnerTranscriptEvent entry, CancellationToken ct)
     {
+        using (new RuntimePhase(_logger, _timeProvider, entry.SessionId, "transcript.signalr-publish"))
         await _eventBus.PublishToGroupAsync(
             AgentSessionGroups.Session(entry.SessionId),
             "SessionTranscript",
@@ -458,9 +459,11 @@ public sealed class AgentSessionRuntime
             await using var scope = _scopeFactory.CreateAsyncScope();
             var channelReplies = scope.ServiceProvider.GetService<ChannelReplyDispatcher>();
             if (channelReplies is not null)
+                using (new RuntimePhase(_logger, _timeProvider, sessionId, "routing.channel"))
                 await channelReplies.OnTurnEndAsync(sessionId, ct);
             var reviewReplies = scope.ServiceProvider.GetService<ReviewReplyDispatcher>();
             if (reviewReplies is not null)
+                using (new RuntimePhase(_logger, _timeProvider, sessionId, "routing.review"))
                 await reviewReplies.OnTurnEndAsync(sessionId, ct);
 
             // Same reason as the channel dispatcher above: Claude can write the turn's stop marker
@@ -468,6 +471,7 @@ public sealed class AgentSessionRuntime
             // TurnEnd triggered settlement. The text's own arrival re-triggers it (no-op otherwise).
             var taskReplies = scope.ServiceProvider.GetService<AgentTaskReplyService>();
             if (taskReplies is not null)
+                using (new RuntimePhase(_logger, _timeProvider, sessionId, "routing.task-settlement"))
                 await taskReplies.OnTurnEndAsync(sessionId, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -489,24 +493,29 @@ public sealed class AgentSessionRuntime
 
             var channelReplies = scope.ServiceProvider.GetService<ChannelReplyDispatcher>();
             if (channelReplies is not null)
+                using (new RuntimePhase(_logger, _timeProvider, sessionId, "routing.channel"))
                 await channelReplies.OnTurnEndAsync(sessionId, ct);
 
             // Review-thread replies land the same way channel replies do — before the queue
             // injects the next prompt, so extraction sees the finished turn intact.
             var reviewReplies = scope.ServiceProvider.GetService<ReviewReplyDispatcher>();
             if (reviewReplies is not null)
+                using (new RuntimePhase(_logger, _timeProvider, sessionId, "routing.review"))
                 await reviewReplies.OnTurnEndAsync(sessionId, ct);
 
             // A delegate's finished turn IS its report — settle the task and deliver the note to
             // its parent before the queue injects anything else into this session.
             var taskReplies = scope.ServiceProvider.GetService<AgentTaskReplyService>();
             if (taskReplies is not null)
+                using (new RuntimePhase(_logger, _timeProvider, sessionId, "routing.task-settlement"))
                 await taskReplies.OnTurnEndAsync(sessionId, ct);
 
             var queue = scope.ServiceProvider.GetService<SessionMessageQueueService>();
             if (queue is not null)
             {
-                var queueResult = await queue.OnTurnEndAsync(sessionId, ct);
+                SessionQueueTurnEndResult queueResult;
+                using (new RuntimePhase(_logger, _timeProvider, sessionId, "queue.turn-end-confirm"))
+                    queueResult = await queue.OnTurnEndAsync(sessionId, ct);
                 if (channelReplies is not null && queueResult.LateConfirmedChannelMessageIds.Count > 0)
                 {
                     // The first pass intentionally runs before queue delivery. A row promoted from
@@ -661,7 +670,8 @@ public sealed class AgentSessionRuntime
             _logger.LogInformation(
                 "Catch-up settlement for session {SessionId} (AddedTurnBoundary={AddedTurnBoundary})",
                 sessionId, addedTurnBoundary);
-            await taskReplies.OnTurnEndAsync(sessionId, ct);
+            using (new RuntimePhase(_logger, _timeProvider, sessionId, "routing.task-settlement"))
+                await taskReplies.OnTurnEndAsync(sessionId, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -680,6 +690,7 @@ public sealed class AgentSessionRuntime
 
     private async Task<PersistResult> PersistTranscriptAsync(Guid sessionId, IReadOnlyList<SessionRunnerTranscriptEvent> entries)
     {
+        using var observation = new RuntimePhase(_logger, _timeProvider, sessionId, "transcript.persist");
         if (entries.Count == 0)
             return PersistResult.Empty;
 
@@ -781,7 +792,11 @@ public sealed class AgentSessionRuntime
             }
 
             if (added)
+            {
+                using var save = new RuntimePhase(_logger, _timeProvider, sessionId, "transcript.save", storedSequence: maxSeq);
                 await db.SaveChangesAsync();
+                save.Completed();
+            }
 
             return added
                 ? new PersistResult(maxSeq, addedTurnBoundary, addedAssistantText, addedManualCompactBoundary)

@@ -269,7 +269,7 @@ public class AgentTaskSettlementRaceTests
         queued[0].Body.ShouldContain($"[task {DelegationReportFormatter.Short(task.Id)} done]");
     }
 
-    private static ServiceProvider BuildHarness()
+    internal static ServiceProvider BuildHarness(Action<IServiceCollection>? configure = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -308,6 +308,7 @@ public class AgentTaskSettlementRaceTests
         // Production-shaped: real SaveChanges on the scoped AppDbContext, then the concurrent
         // RetireIdleWarmAgentsAsync tick (own scope, like the 5s hosted sweep).
         services.AddScoped<IDelegateSessionStopper, FlushingSessionStopper>();
+        configure?.Invoke(services);
         return services.BuildServiceProvider();
     }
 
@@ -358,7 +359,7 @@ public class AgentTaskSettlementRaceTests
         }
     }
 
-    private static async Task<(AgentTask Task, Guid SessionId)> SeedSharedTaskAsync(
+    internal static async Task<(AgentTask Task, Guid SessionId)> SeedSharedTaskAsync(
         string workingDirectory, Guid parentSessionId)
     {
         var sessionId = Guid.NewGuid();
@@ -485,7 +486,7 @@ public class AgentTaskSettlementRaceTests
         return (task, sessionId);
     }
 
-    private static async Task<Guid> SeedSessionAsync(string cwd)
+    internal static async Task<Guid> SeedSessionAsync(string cwd)
     {
         var sessionId = Guid.NewGuid();
         var now = DateTime.UtcNow;
@@ -551,7 +552,7 @@ public class AgentTaskSettlementRaceTests
         await db.SaveChangesAsync();
     }
 
-    private static async Task SeedMarkedTurnAsync(
+    internal static async Task SeedMarkedTurnAsync(
         Guid sessionId, Guid taskId, string report, string verdict = "done")
     {
         var prompt = DelegationReportFormatter.TaskMarker(taskId) + "\n\nDo the thing.";

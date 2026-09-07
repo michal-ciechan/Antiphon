@@ -45,6 +45,9 @@ public sealed class SessionRunnerEventPump : BackgroundService
 
                 await foreach (var evt in client.StreamEventsAsync(stoppingToken))
                 {
+                    using var phase = new RuntimePhase(_logger, TimeProvider.System,
+                        evt.SessionId, "pump.event", producerTimestamp: evt.Transcript?.Timestamp,
+                        producerSequence: evt.Transcript?.Sequence, transcriptUuid: evt.Transcript?.Uuid);
                     if (evt.Output is not null)
                         await runtime.ObserveOutputAsync(evt.Output.SessionId, evt.Output.Sequence, evt.Output.Text, stoppingToken);
                     else if (evt.Exited is not null)
@@ -121,6 +124,7 @@ public sealed class SessionRunnerEventPump : BackgroundService
         {
             ct.ThrowIfCancellationRequested();
             // Per-session failures are swallowed (logged) inside SyncTranscriptAsync.
+            using var phase = new RuntimePhase(_logger, TimeProvider.System, session.SessionId, "pump.catch-up");
             await runtime.SyncTranscriptAsync(session.SessionId, ct);
         }
 

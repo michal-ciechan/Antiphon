@@ -10,6 +10,9 @@ namespace Antiphon.Server.Domain.Entities;
 /// </summary>
 public class SessionQueuedMessage
 {
+    /// <summary>Deadline/identity of an optional specialist brief, never a completion note.</summary>
+    public DateTime? ExecutionDeadlineAt { get; set; }
+    public Guid? ExecutionTaskId { get; set; }
     public string? RulesRefreshKey { get; set; }
     public string? RulesReceiptJson { get; set; }
     public DateTime? RulesDeadlineAt { get; set; }

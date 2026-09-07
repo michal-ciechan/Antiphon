@@ -725,6 +725,31 @@ queued `[task … done]` note is left untouched. Flip to **Apply** only after a 
 distilled bullets + a pointer to the full report; `NoteHeader` and `ContentDigest` stay the
 raw report's. `OutputDistillerEnabled=false` returns today's note with no other change.
 
+**Optional-work deadline (CARD-0432 S1-S2).** Admission captures mode and one absolute
+deadline, normally 45 seconds after completion-note admission begins. The bounded request
+queue admits three waiting requests with explicit refusal; it never drops an accepted request
+to make room. Held-model preflight uses the same pinned model alias as dispatch, before
+provisioning and again afterward. Known held work immediately keeps the raw note without a
+new model turn or a per-report generic unavailable incident. Check and Diagnose retain their
+existing runner policies.
+
+Queueing, provisioning, dispatch waiting and application consume the original deadline.
+Expired queued Distill tasks and never-typed briefs are canceled; already-attempted input
+continues the existing confirmation/recovery contract. Apply takes the session delivery lock
+and validates the exact pending, unattempted note, source, raw digest and full-report-read
+marker under database row locks. Equality with the deadline is expired. A separate two-second
+cleanup allowance covers cancellation, hold release and ledger writes together; the finite raw
+hold remains authoritative if database cleanup cannot complete. Incident publication and idle
+parent-note confirmation run in owned workers, outside the serial optional-work reader.
+
+`DegradedHeld` and `DegradedExpired` are appended outcomes; historical values and nullable
+history remain compatible. `DegradedExpired` will absorb requests that previously waited in a
+queue and timed out later. The headline degrade rate may therefore look worse: that is intended
+fail-fast behavior, not evidence of a regression. Queue wait, specialist wait, decision/expiry
+phase and availability identity are recorded separately. `CleanupMs` records elapsed cleanup
+before the ledger save; the debug cleanup phase includes the final save. Eventual run-cost
+accounting and the fleet event-pump isolation change require their later implementation stages.
+
 **Weekly trigger.** One CARD-0057 `Prompt` schedule, Daily, Monday `09:00` `Europe/London`,
 target `Antiphon-Orchestrator`, `WhenTargetDown=Queue`. Live id
 `d687a6bf-e286-4592-92a7-799386235a68` (created 2026-09-05). Recreate with:

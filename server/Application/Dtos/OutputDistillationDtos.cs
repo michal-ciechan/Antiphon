@@ -23,7 +23,22 @@ public sealed record DistillationDto(
     DateTime? FeedbackAt,
     DateTime? FullReadAt,
     string? RawResult,
-    string? DistilledResult);
+    string? DistilledResult)
+{
+    public DateTime? RequestedAt { get; init; }
+    public DateTime? DeadlineAt { get; init; }
+    public DateTime? DequeuedAt { get; init; }
+    public DateTime? RunCreatedAt { get; init; }
+    public DateTime? DecisionAt { get; init; }
+    public int? QueueWaitMs { get; init; }
+    public int? SpecialistWaitMs { get; init; }
+    public int? CleanupMs { get; init; }
+    public string? Reason { get; init; }
+    public string? ExpiryPhase { get; init; }
+    public string? AvailabilityAlias { get; init; }
+    public AgentKind? AvailabilityKind { get; init; }
+    public DateTime? AvailabilityObservedAt { get; init; }
+}
 
 public sealed record DistillationStatsDto(
     DateTime? Since,

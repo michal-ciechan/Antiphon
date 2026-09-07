@@ -13,6 +13,8 @@ namespace Antiphon.Server.Domain.Entities;
 /// </summary>
 public class AgentTask
 {
+    /// <summary>Original optional-work deadline. Null preserves historical dispatch behavior.</summary>
+    public DateTime? ExecutionDeadlineAt { get; set; }
     public Guid Id { get; set; }
 
     /// <summary>Equals <see cref="Id"/> for roots. Denormalised so a whole run is one query.</summary>

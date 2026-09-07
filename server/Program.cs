@@ -335,6 +335,8 @@ try
     // substrate as the check interpreter. S3 wires the queue and hosted service.
     builder.Services.AddScoped<OutputDistillerProvisioner>();
     builder.Services.AddSingleton<OutputDistillationQueue>();
+    builder.Services.AddSingleton<CompletionNoteFlushQueue>();
+    builder.Services.AddSingleton<SpecialistFailureQueue>();
     builder.Services.AddScoped<OutputDistillationService>();
     builder.Services.AddScoped<DiagnoseService>();
     builder.Services.AddScoped<CardDiagnosisSweep>();
@@ -613,6 +615,7 @@ try
     builder.Services.AddHostedService<DiagnoseHostedService>();
     builder.Services.AddHostedService<DiagnoseSweepHostedService>();
     builder.Services.AddHostedService<OutputDistillationHostedService>();
+    builder.Services.AddHostedService<CompletionNoteWorkHostedService>();
     builder.Services.AddHostedService<ScheduleSweepHostedService>();
     builder.Services.AddHostedService<ScheduleFireHostedService>();
     // One-shot: re-prices tasks costed before CARD-0023, so the per-root ceiling stops reading

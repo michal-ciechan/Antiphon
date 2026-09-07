@@ -1,0 +1,222 @@
+using Antiphon.Server.Application.Services;
+using System.Data.Common;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Antiphon.Tests.Agents;
+using Antiphon.Server.Application.Settings;
+using Microsoft.Extensions.Options;
+using Antiphon.Server.Domain.Enums;
+using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Shouldly;
+using TUnit.Core;
+
+namespace Antiphon.Tests.Application;
+
+[Category("Integration")]
+[NotInParallel]
+public class OutputDistillationApplyRaceTests
+{
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Apply_and_SendNow_preserve_one_complete_body(bool applicationFirst)
+    {
+        var probe = new ApplyWriteGate();
+        using var h = new OutputDistillationHarness(servicesOverride: s =>
+        {
+            s.AddSingleton(TimeProvider.System);
+            s.AddSingleton(Options.Create(new SupervisionSettings
+            { DeliveryVerification = new DeliveryVerificationSettings { Enabled = false } }));
+        }, configureDb: o => o.AddInterceptors(probe));
+        var seed = await h.SeedSourceAsync();
+        var session = seed.Task.ParentSessionId!.Value;
+        await using (var edit = OutputDistillationHarness.CreateContext())
+            await edit.AgentSessions.Where(s => s.Id == session).ExecuteUpdateAsync(s => s.SetProperty(x => x.Cwd, h.Scratch));
+        var queue = h.Provider.GetRequiredService<SessionMessageQueueService>();
+        var adapter = new FakeAgentProtocolAdapter();
+        h.Provider.GetRequiredService<AgentSessionRuntime>().Register(session, adapter);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        adapter.OnSubmitted = async _ => { entered.TrySetResult(); await release.Task; };
+        var now = DateTimeOffset.UtcNow;
+        Task<string?> Apply() => queue.TryApplyDistillationAsync(new(seed.Task.Id, seed.QueuedMessageId,
+            now, now.AddSeconds(45), OutputDistillerMode.Apply), seed.Digest, h.PassingDistillation(), CancellationToken.None);
+        Task<string?>? apply = null;
+        Task? delivery = null;
+        try
+        {
+            if (applicationFirst)
+            {
+                apply = Apply();
+                await probe.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                delivery = queue.SendNowAsync(session, seed.QueuedMessageId, CancellationToken.None);
+                delivery.IsCompleted.ShouldBeFalse();
+                probe.Release.TrySetResult();
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            else
+            {
+                delivery = queue.SendNowAsync(session, seed.QueuedMessageId, CancellationToken.None);
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                apply = Apply();
+                probe.Release.TrySetResult();
+            }
+        }
+        finally
+        {
+            probe.Release.TrySetResult();
+            release.TrySetResult();
+            if (delivery is not null) await delivery.WaitAsync(TimeSpan.FromSeconds(5));
+            if (apply is not null) await apply.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        var result = await apply!;
+        if (applicationFirst) result.ShouldBeNull(); else result.ShouldBe("delivery-claimed");
+        var note = await h.ReloadQueuedAsync(seed.QueuedMessageId);
+        note.Status.ShouldBe(QueuedMessageStatus.Sent);
+        note.DeliveryAttempts.ShouldBe(1);
+        if (applicationFirst) note.Body.ShouldContain(h.PassingDistillation());
+        else
+        {
+            // The inbox backend's real size gate sends a pointer to the complete raw body.
+            note.Body.ShouldContain(TypedBodySpill.PointerHeadline);
+            (await File.ReadAllTextAsync(TypedBodySpill.InboxAbsolutePath(h.Scratch, seed.QueuedMessageId.ToString("D"))))
+                .ShouldBe(seed.RawBody);
+        }
+        adapter.Inputs.Count(i => i == "\r").ShouldBe(1);
+        adapter.KillCount.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Apply_owns_the_delivery_session_lock_until_commit()
+    {
+        var probe = new ApplyWriteGate();
+        using var h = new OutputDistillationHarness(configureDb: o => o.AddInterceptors(probe));
+        var seed = await h.SeedSourceAsync();
+        var queue = h.Provider.GetRequiredService<SessionMessageQueueService>();
+        var now = h.Clock.GetUtcNow();
+        var apply = queue.TryApplyDistillationAsync(new(seed.Task.Id, seed.QueuedMessageId,
+            now, now.AddSeconds(45), OutputDistillerMode.Apply), seed.Digest, h.PassingDistillation(), CancellationToken.None);
+        var sem = queue.GetLock(seed.Task.ParentSessionId!.Value);
+        var bypassed = false;
+        Exception? failure = null;
+        try
+        {
+            await probe.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            bypassed = await sem.WaitAsync(0);
+            if (bypassed) sem.Release();
+        }
+        finally
+        {
+            probe.Release.TrySetResult();
+            try { await apply.WaitAsync(TimeSpan.FromSeconds(5)); } catch (Exception ex) { failure = ex; }
+        }
+        bypassed.ShouldBeFalse("delivery must not enter the queue critical section while application owns its read/write decision");
+        failure.ShouldBeNull();
+        (await h.ReloadQueuedAsync(seed.QueuedMessageId)).Body.ShouldContain(h.PassingDistillation());
+    }
+
+    private sealed class ApplyWriteGate : DbCommandInterceptor
+    {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override async ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.StartsWith("UPDATE \"SessionQueuedMessages\" SET \"Body\""))
+            { Entered.TrySetResult(); await Release.Task.WaitAsync(cancellationToken); }
+            return result;
+        }
+    }
+
+    [Test]
+    [Arguments("eligible")]
+    [Arguments("wrong-note")]
+    [Arguments("wrong-source")]
+    [Arguments("wrong-digest")]
+    [Arguments("wrong-report")]
+    [Arguments("wrong-origin")]
+    [Arguments("canceled")]
+    [Arguments("sent")]
+    [Arguments("attempted")]
+    [Arguments("polled")]
+    [Arguments("shadow")]
+    [Arguments("expired")]
+    public async Task Apply_eligibility_matrix(string scenario)
+    {
+        using var h = new OutputDistillationHarness(s => s.OutputDistillerMode = OutputDistillerMode.Apply);
+        var seed = await h.SeedSourceAsync();
+        var wrongNote = scenario == "wrong-note" ? (await h.SeedSourceAsync(report: "unrelated raw report")).QueuedMessageId : seed.QueuedMessageId;
+        await using (var db = OutputDistillationHarness.CreateContext())
+        {
+            var note = await db.SessionQueuedMessages.SingleAsync(m => m.Id == seed.QueuedMessageId);
+            if (scenario == "wrong-source") note.SourceTaskId = null;
+            if (scenario == "wrong-digest") note.ContentDigest = "different";
+            if (scenario == "wrong-report")
+                (await db.AgentTasks.SingleAsync(t => t.Id == seed.Task.Id)).Result = "different authoritative report";
+            if (scenario == "wrong-origin") note.Origin = QueuedMessageOrigin.Ui;
+            if (scenario == "canceled") note.Status = QueuedMessageStatus.Canceled;
+            if (scenario == "sent") note.Status = QueuedMessageStatus.Sent;
+            if (scenario == "attempted") note.DeliveryAttempts = 1;
+            if (scenario == "polled")
+                (await db.AgentTasks.SingleAsync(t => t.Id == seed.Task.Id)).LastPolledResultHash = seed.Digest;
+            await db.SaveChangesAsync();
+        }
+        var now = h.Clock.GetUtcNow();
+        var request = new DistillRequest(seed.Task.Id, wrongNote,
+            now, now.AddSeconds(scenario == "expired" ? -1 : 45),
+            scenario == "shadow" ? OutputDistillerMode.Shadow : OutputDistillerMode.Apply);
+        var result = await h.Provider.GetRequiredService<SessionMessageQueueService>().TryApplyDistillationAsync(
+            request, seed.Digest, h.PassingDistillation(), CancellationToken.None);
+        var persisted = await h.ReloadQueuedAsync(seed.QueuedMessageId);
+        if (scenario == "eligible")
+        {
+            result.ShouldBeNull();
+            persisted.Body.ShouldContain(h.PassingDistillation());
+            persisted.Body.ShouldContain("Full report:");
+            persisted.NoteHeader.ShouldBe(seed.Header);
+            persisted.ContentDigest.ShouldBe(seed.Digest);
+        }
+        else { result.ShouldNotBeNull(); persisted.Body.ShouldBe(seed.RawBody); }
+        (await h.ReloadTaskAsync(seed.Task.Id)).Result.ShouldBe(scenario == "wrong-report" ? "different authoritative report" : seed.Report);
+    }
+
+    [Test]
+    public async Task Expired_lock_wait_never_applies()
+    {
+        using var h = new OutputDistillationHarness();
+        var seed = await h.SeedSourceAsync();
+        var queue = h.Provider.GetRequiredService<SessionMessageQueueService>();
+        var gate = queue.GetLock(seed.Task.ParentSessionId!.Value);
+        await gate.WaitAsync();
+        var now = h.Clock.GetUtcNow();
+        var apply = queue.TryApplyDistillationAsync(new(seed.Task.Id, seed.QueuedMessageId,
+            now, now.AddSeconds(45), OutputDistillerMode.Apply), seed.Digest, h.PassingDistillation(), CancellationToken.None);
+        try
+        {
+            h.Clock.Advance(TimeSpan.FromSeconds(45));
+        }
+        finally { gate.Release(); }
+        (await apply.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBe("deadline");
+        (await h.ReloadQueuedAsync(seed.QueuedMessageId)).Body.ShouldBe(seed.RawBody);
+    }
+
+    [Test]
+    public async Task Expired_database_write_never_applies()
+    {
+        using var h = new OutputDistillationHarness(servicesOverride: s => s.AddSingleton(TimeProvider.System));
+        var seed = await h.SeedSourceAsync();
+        await using var blocker = OutputDistillationHarness.CreateContext();
+        await using var transaction = await blocker.Database.BeginTransactionAsync();
+        await blocker.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT 1 FROM \"SessionQueuedMessages\" WHERE \"Id\" = {seed.QueuedMessageId} FOR UPDATE");
+        var now = DateTimeOffset.UtcNow;
+        var apply = h.Provider.GetRequiredService<SessionMessageQueueService>().TryApplyDistillationAsync(
+            new(seed.Task.Id, seed.QueuedMessageId, now, now.AddSeconds(1), OutputDistillerMode.Apply),
+            seed.Digest, h.PassingDistillation(), CancellationToken.None);
+        await Task.Delay(TimeSpan.FromMilliseconds(1100));
+        await transaction.RollbackAsync();
+        (await apply.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBe("deadline");
+        (await h.ReloadQueuedAsync(seed.QueuedMessageId)).Body.ShouldBe(seed.RawBody);
+    }
+}

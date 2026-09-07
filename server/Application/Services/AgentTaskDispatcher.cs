@@ -203,6 +203,7 @@ public sealed class AgentTaskDispatcher
 
     public async Task<TickResult> TickAsync(CancellationToken ct)
     {
+        using var observation = new RuntimePhase(_logger, _timeProvider, Guid.Empty, "dispatcher.sweep");
         if (!_settings.Enabled)
             return new TickResult(0, 0, 0, 0, 0);
 
@@ -292,6 +293,13 @@ public sealed class AgentTaskDispatcher
             .Where(AgentTaskRoles.NotSpecialist)
             .CountAsync(t => t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working, ct);
 
+        // Deadline is durable: recovery does not depend on the optional caller surviving.
+        await _db.AgentTasks.Where(t => t.Status == AgentTaskStatus.Queued
+                && t.Role == AgentTaskRole.Distill && t.ExecutionDeadlineAt <= UtcNow())
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, AgentTaskStatus.Canceled)
+                .SetProperty(t => t.CompletedAt, UtcNow())
+                .SetProperty(t => t.FailureReason, "Optional work expired before execution.")
+                .SetProperty(t => t.ConcurrencyToken, Guid.NewGuid()), ct);
         var queued = await _db.AgentTasks
             .Where(t => t.Status == AgentTaskStatus.Queued)
             .OrderBy(t => t.CreatedAt)
@@ -2822,14 +2830,28 @@ public sealed class AgentTaskDispatcher
         await _db.SaveChangesAsync(ct);
     }
 
+    private async Task<bool> ExpireClaimedOptionalWorkAsync(AgentTask task, CancellationToken ct)
+    {
+        using var observation = new RuntimePhase(_logger, _timeProvider, task.AgentSessionId ?? Guid.Empty,
+            "dispatcher.claim-expiry", task.Id);
+        if (task.Role != AgentTaskRole.Distill || task.ExecutionDeadlineAt is not DateTime deadline
+            || deadline > UtcNow()) return false;
+        task.Status = AgentTaskStatus.Canceled;
+        task.CompletedAt = UtcNow();
+        task.FailureReason = "Optional work expired before execution.";
+        task.ConcurrencyToken = Guid.NewGuid();
+        await _db.SaveChangesAsync(ct);
+        return true;
+    }
+
     private async Task<bool> DispatchOneAsync(AgentTask task, CancellationToken ct)
     {
         // Transactional claim: re-read under the concurrency token so a second tick (or another
         // server instance) racing this one loses cleanly instead of double-launching a delegate.
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
-        var claimed = await _db.AgentTasks.FirstOrDefaultAsync(
-            t => t.Id == task.Id
-                && t.Status == AgentTaskStatus.Queued
+        var claimed = await _db.AgentTasks.FromSqlInterpolated(
+            $"SELECT * FROM \"AgentTasks\" WHERE \"Id\" = {task.Id} FOR UPDATE")
+            .FirstOrDefaultAsync(t => t.Status == AgentTaskStatus.Queued
                 && t.ConcurrencyToken == task.ConcurrencyToken, ct);
         if (claimed is null)
         {
@@ -2837,6 +2859,11 @@ public sealed class AgentTaskDispatcher
             return false;
         }
 
+        if (await ExpireClaimedOptionalWorkAsync(claimed, ct))
+        {
+            await transaction.CommitAsync(ct);
+            return false;
+        }
         var now = UtcNow();
 
         // CARD-0136 / CARD-0336: a low reading warns on every dispatch path (reuse and spawn).
@@ -2875,6 +2902,9 @@ public sealed class AgentTaskDispatcher
                         "AgentTaskChanged", new { taskId = claimed.Id, rootId = claimed.RootTaskId }, ct);
                     return true;
 
+                case ReuseOutcome.Expired:
+                    await transaction.CommitAsync(ct);
+                    return false;
                 case ReuseOutcome.WaitForAgent:
                     // The pinned agent is mid-task. Delivering the follow-up now would land it
                     // BETWEEN the running task's turns and corrupt both correlations — wait for
@@ -2971,6 +3001,20 @@ public sealed class AgentTaskDispatcher
         // the board must keep naming who ran the work.
         claimed.AgentName = agent.Name;
         claimed.AgentSessionId = session.Id;
+        if (await ExpireClaimedOptionalWorkAsync(claimed, ct))
+        {
+            await transaction.RollbackAsync(ct);
+            _db.ChangeTracker.Clear();
+            // Rollback released the claim. A competing dispatcher may now own it, so the
+            // recovery cancellation must be conditional again rather than saving a stale row.
+            await _db.AgentTasks.Where(t => t.Id == claimed.Id && t.Status == AgentTaskStatus.Queued
+                    && t.Role == AgentTaskRole.Distill && t.ExecutionDeadlineAt <= UtcNow())
+                .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, AgentTaskStatus.Canceled)
+                    .SetProperty(t => t.CompletedAt, UtcNow())
+                    .SetProperty(t => t.FailureReason, "Optional work expired before execution.")
+                    .SetProperty(t => t.ConcurrencyToken, Guid.NewGuid()), ct);
+            return false;
+        }
         claimed.Status = AgentTaskStatus.Dispatched;
         claimed.DispatchedAt = now;
         claimed.ConcurrencyToken = Guid.NewGuid();
@@ -3033,7 +3077,8 @@ public sealed class AgentTaskDispatcher
         try
         {
             await _queue.EnqueueAsync(
-                session.Id, brief, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
+                session.Id, brief, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation,
+                executionDeadlineAt: claimed.ExecutionDeadlineAt, executionTaskId: claimed.Id);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -3186,7 +3231,8 @@ public sealed class AgentTaskDispatcher
         try
         {
             await _queue.EnqueueAsync(
-                session.Id, brief, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
+                session.Id, brief, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation,
+                executionDeadlineAt: task.ExecutionDeadlineAt, executionTaskId: task.Id);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -3663,12 +3709,10 @@ public sealed class AgentTaskDispatcher
                 .Where(a => a.Id == agentId)
                 .Select(a => new { a.ModelId, a.ModelLevel })
                 .FirstOrDefaultAsync(ct);
-            var fromId = ModelAlias.Normalize(task.AgentKind, agent?.ModelId);
-            if (fromId is not null)
-                return fromId;
+            return DispatchModelAlias.Resolve(task.AgentKind, task.ModelLevel, agent?.ModelId);
         }
 
-        return ModelLevelAliases.For(task.AgentKind, task.ModelLevel);
+        return DispatchModelAlias.Resolve(task.AgentKind, task.ModelLevel, null);
     }
 
     private static string ShippedModelDisplay(AgentTask task, Agent agent, DelegateProgram program)
@@ -3841,6 +3885,7 @@ public sealed class AgentTaskDispatcher
 
         /// <summary>The pinned agent is mid-task; leave the task queued until it goes warm.</summary>
         WaitForAgent = 2,
+        Expired = 3,
     }
 
     /// <summary>
@@ -3985,6 +4030,8 @@ public sealed class AgentTaskDispatcher
         claimed.AgentId = agent.Id;
         claimed.AgentName = agent.Name;
         claimed.AgentSessionId = session;
+        if (await ExpireClaimedOptionalWorkAsync(claimed, ct))
+            return ReuseOutcome.Expired;
         claimed.Status = AgentTaskStatus.Dispatched;
         claimed.DispatchedAt = now;
         claimed.ConcurrencyToken = Guid.NewGuid();
@@ -4136,6 +4183,8 @@ public sealed class AgentTaskDispatcher
 
         claimed.AgentName = standing.Name;
         claimed.AgentSessionId = session;
+        if (await ExpireClaimedOptionalWorkAsync(claimed, ct))
+            return ReuseOutcome.Expired;
         claimed.Status = AgentTaskStatus.Dispatched;
         claimed.DispatchedAt = now;
         claimed.ConcurrencyToken = Guid.NewGuid();
@@ -4246,7 +4295,8 @@ public sealed class AgentTaskDispatcher
                 await enqueue(session, body, ct);
             else
                 await _queue.EnqueueAsync(
-                    session, body, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
+                    session, body, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation,
+                    executionDeadlineAt: task.ExecutionDeadlineAt, executionTaskId: task.Id);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

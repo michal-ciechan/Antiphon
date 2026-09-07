@@ -28,6 +28,8 @@ public enum DistillationOutcome
     DegradedFailed = 9,
     SkippedShort = 10,
     SkippedLong = 11,
+    DegradedHeld = 12,
+    DegradedExpired = 13,
 }
 
 /// <summary>Explicit flag on a distillation (CARD-0330 D7). None is the column default.</summary>

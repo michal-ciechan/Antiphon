@@ -171,7 +171,8 @@ public sealed class SessionMessageQueueService
         // turn-end flush, or FlushStrandedQueuesAsync within StrandedAgeSeconds on an always-on
         // session. Ignored by Mode.Now, which has no row at all.
         bool deliverIfIdle = true,
-        DateTime? holdUntil = null)
+        DateTime? holdUntil = null,
+        DateTime? executionDeadlineAt = null, Guid? executionTaskId = null)
     {
         var trimmed = (body ?? string.Empty).Trim();
         if (trimmed.Length == 0)
@@ -343,6 +344,8 @@ public sealed class SessionMessageQueueService
                 ContentDigest = contentDigest,
                 NoteHeader = noteHeader,
                 HoldUntil = holdUntil,
+                ExecutionDeadlineAt = executionDeadlineAt,
+                ExecutionTaskId = executionTaskId,
             };
             db.SessionQueuedMessages.Add(row);
             await db.SaveChangesAsync(ct);
@@ -823,6 +826,8 @@ public sealed class SessionMessageQueueService
                 db, ct);
             if (sendNowBody != message.Body)
                 message.Body = sendNowBody;
+            if (await CancelExpiredBriefsAsync(db, [message], ct))
+                return await BuildQueueDtoAsync(db, sessionId, MaxAttempts, ct);
             message.Status = QueuedMessageStatus.Sent;
             message.SentAt = UtcNow();
             message.DeliveryAttempts++;
@@ -830,7 +835,19 @@ public sealed class SessionMessageQueueService
             message.LastDeliveryBaselineSequence = baseline.Observable ? baseline.MaxSequence : null;
             ClearAttemptVerdict(message);
             await db.SaveChangesAsync(ct);
-            var outcome = await DeliverAsync(sessionId, sendNowBody, ct, baseline);
+            if (await CancelJustClaimedExpiredBriefsAsync(db, [message], ct))
+                return await BuildQueueDtoAsync(db, sessionId, MaxAttempts, ct);
+            DeliveryOutcome outcome;
+            try
+            {
+                outcome = await DeliverAsync(sessionId, sendNowBody, ct, baseline,
+                    firstInputDeadlineAt: FirstInputDeadline([message]));
+            }
+            catch (OptionalBriefExpiredException)
+            {
+                await CancelJustClaimedExpiredBriefsAsync(db, [message], ct);
+                return await BuildQueueDtoAsync(db, sessionId, MaxAttempts, ct);
+            }
             if (outcome.Verdict == DeliveryVerdict.ForbiddenBody)
             {
                 await HandleForbiddenBodyAsync(sessionId, [message.Id], sendNowBody, outcome.RecordText, ct);
@@ -1106,6 +1123,62 @@ public sealed class SessionMessageQueueService
             await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
     }
 
+    /// <summary>Replace an optional completion only while it can still win the delivery claim.</summary>
+    public async Task<string?> TryApplyDistillationAsync(
+        DistillRequest request, string digest, string distilled, CancellationToken ct)
+    {
+        if (request.Mode != OutputDistillerMode.Apply) return "shadow";
+        if (request.QueuedMessageId is not Guid noteId) return "note-missing";
+        if (_timeProvider.GetUtcNow() >= request.DeadlineAt) return "deadline";
+        using var budget = new ExecutionBudget(request.DeadlineAt, _timeProvider, ct);
+        try
+        {
+            var token = budget.Token;
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var sessionId = await db.SessionQueuedMessages.Where(m => m.Id == noteId)
+                .Select(m => (Guid?)m.AgentSessionId).FirstOrDefaultAsync(token);
+            if (sessionId is not Guid session) return "note-missing";
+            var sem = GetLock(session);
+            await sem.WaitAsync(token);
+            try
+            {
+                if (_timeProvider.GetUtcNow() >= request.DeadlineAt) return "deadline";
+                await using var transaction = await db.Database.BeginTransactionAsync(token);
+                var milliseconds = Math.Max(1, (long)(request.DeadlineAt - _timeProvider.GetUtcNow()).TotalMilliseconds);
+                await db.Database.ExecuteSqlInterpolatedAsync(
+                    $"SELECT set_config('statement_timeout', {milliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture)}, true)", token);
+                // The source row lock also orders this decision against full-report polling.
+                var source = await db.AgentTasks.FromSqlInterpolated(
+                    $"SELECT * FROM \"AgentTasks\" WHERE \"Id\" = {request.TaskId} FOR UPDATE")
+                    .SingleOrDefaultAsync(token);
+                var note = await db.SessionQueuedMessages.FromSqlInterpolated(
+                    $"SELECT * FROM \"SessionQueuedMessages\" WHERE \"Id\" = {noteId} FOR UPDATE")
+                    .SingleOrDefaultAsync(token);
+                if (source is null || note is null) return "note-missing";
+                if (note.SourceTaskId != request.TaskId || note.ContentDigest != digest
+                    || note.Origin != QueuedMessageOrigin.Delegation
+                    || DelegationNoteDigest.Compute(source.Result ?? source.FailureReason ?? "") != digest)
+                    return "identity";
+                if (note.Status != QueuedMessageStatus.Pending || note.DeliveryAttempts != 0) return "delivery-claimed";
+                if (source.LastPolledResultHash == digest) return "full-report-read";
+                if (_timeProvider.GetUtcNow() >= request.DeadlineAt) return "deadline";
+                var header = string.IsNullOrWhiteSpace(note.NoteHeader) ? "" : note.NoteHeader.TrimEnd();
+                var body = $"{header}\n\n{distilled.Trim()}\n\n{OutputDistillation.PointerLine(source)}".ReplaceLineEndings("\n");
+                var deadline = request.DeadlineAt.UtcDateTime;
+                var changed = await db.Database.ExecuteSqlInterpolatedAsync(
+                    $"UPDATE \"SessionQueuedMessages\" SET \"Body\" = {body}, \"HoldUntil\" = NULL WHERE \"Id\" = {noteId} AND clock_timestamp() < {deadline}", token);
+                if (changed == 0 || _timeProvider.GetUtcNow() >= request.DeadlineAt) return "deadline";
+                await transaction.CommitAsync(token);
+                return null;
+            }
+            finally { sem.Release(); }
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested && budget.Token.IsCancellationRequested) { return "deadline"; }
+        catch (Npgsql.PostgresException ex) when (ex.SqlState == "57014" && !ct.IsCancellationRequested)
+        { return "deadline"; }
+    }
+
     private async Task CancelPendingSupervisionLockedAsync(
         AppDbContext db, Guid sessionId, string reason, CancellationToken ct)
     {
@@ -1158,6 +1231,50 @@ public sealed class SessionMessageQueueService
     // coalesces into one delivery under the batch markers (OpenClaw's 'collect' model): a run of 1
     // is literally today's behaviour; UI/System messages and conversation changes break the run, so
     // cross-origin FIFO order is preserved and operator messages keep 1:1 turns.
+    private async Task<bool> CancelExpiredBriefsAsync(AppDbContext db,
+        IEnumerable<SessionQueuedMessage> messages, CancellationToken ct)
+    {
+        var expired = messages.Where(m => m.Status == QueuedMessageStatus.Pending
+            && m.ExecutionDeadlineAt <= UtcNow() && m.DeliveryAttempts == 0
+            && m.ExecutionTaskId != null).ToList();
+        foreach (var message in expired)
+        {
+            message.Status = QueuedMessageStatus.Canceled;
+            message.CanceledAt = UtcNow();
+            await db.AgentTasks.Where(t => t.Id == message.ExecutionTaskId
+                    && t.Role == AgentTaskRole.Distill && t.Status == AgentTaskStatus.Dispatched)
+                .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, AgentTaskStatus.Canceled)
+                    .SetProperty(t => t.CompletedAt, UtcNow())
+                    .SetProperty(t => t.FailureReason, "Optional work expired before execution.")
+                    .SetProperty(t => t.ConcurrencyToken, Guid.NewGuid()), ct);
+        }
+        if (expired.Count > 0) await db.SaveChangesAsync(ct);
+        return expired.Count > 0;
+    }
+
+    // Only this invocation knows the first claim has not typed anything yet. Recovered
+    // attempts must never use this path: their first byte may already be in the composer.
+    private async Task<bool> CancelJustClaimedExpiredBriefsAsync(AppDbContext db,
+        IEnumerable<SessionQueuedMessage> messages, CancellationToken ct)
+    {
+        var expired = messages.Where(m => m.Status == QueuedMessageStatus.Sent
+            && m.DeliveryAttempts == 1 && m.ExecutionTaskId != null
+            && m.ExecutionDeadlineAt <= UtcNow()).ToList();
+        foreach (var message in expired)
+        {
+            message.Status = QueuedMessageStatus.Pending;
+            message.SentAt = null;
+            message.DeliveryAttempts = 0;
+        }
+        return await CancelExpiredBriefsAsync(db, expired, ct);
+    }
+
+    private sealed class OptionalBriefExpiredException : Exception;
+
+    private static DateTime? FirstInputDeadline(IEnumerable<SessionQueuedMessage> messages) =>
+        messages.Where(m => m.DeliveryAttempts == 1 && m.ExecutionTaskId != null)
+            .Select(m => m.ExecutionDeadlineAt).Min();
+
     private async Task<FlushResult> DeliverNextLockedAsync(
         AppDbContext db,
         Guid sessionId,
@@ -1226,6 +1343,10 @@ public sealed class SessionMessageQueueService
             .ToListAsync(ct);
         if (pending.Count == 0)
             return FlushResult.Nothing;
+
+        if (await CancelExpiredBriefsAsync(db, pending, ct))
+            pending = pending.Where(m => m.Status == QueuedMessageStatus.Pending).ToList();
+        if (pending.Count == 0) return FlushResult.Nothing;
 
         // CARD-0330: a completion note the distiller is still improving is not in the flush's
         // head run. SendNow ignores holds; a HoldUntil in the past is not a hold.
@@ -1412,6 +1533,7 @@ public sealed class SessionMessageQueueService
         // between here and the write costs one attempt, which is the safe direction to be wrong in.
         var now = UtcNow();
         var baseline = await CaptureTranscriptBaselineAsync(db, sessionId, ct);
+        if (await CancelExpiredBriefsAsync(db, run, ct)) return FlushResult.Nothing;
         foreach (var m in run)
         {
             if (m.RulesRefreshKey is not null && m.RulesDeadlineAt is null)
@@ -1434,7 +1556,14 @@ public sealed class SessionMessageQueueService
         DeliveryOutcome outcome;
         try
         {
-            outcome = await DeliverAsync(sessionId, body, ct, baseline, ceilings);
+            if (await CancelJustClaimedExpiredBriefsAsync(db, run, ct)) return FlushResult.Nothing;
+            using var observation = new RuntimePhase(_logger, _timeProvider, sessionId, "queue.delivery-confirm");
+            outcome = await DeliverAsync(sessionId, body, ct, baseline, ceilings, FirstInputDeadline(run));
+        }
+        catch (OptionalBriefExpiredException)
+        {
+            await CancelJustClaimedExpiredBriefsAsync(db, run, ct);
+            return FlushResult.Nothing;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -2085,7 +2214,7 @@ public sealed class SessionMessageQueueService
     // confirm loop reads identical. Callers with nothing to persist (Now-mode) pass none.
     private async Task<DeliveryOutcome> DeliverAsync(
         Guid sessionId, string body, CancellationToken ct, TranscriptBaseline? stampedBaseline = null,
-        PtyDeliveryCeilings? ceilings = null)
+        PtyDeliveryCeilings? ceilings = null, DateTime? firstInputDeadlineAt = null)
     {
         // Line endings are normalized to LF before anything touches the PTY. Measured against real
         // Claude (probe runs 2026-07-31): a \n in written input is ALWAYS a literal newline in the
@@ -2230,6 +2359,7 @@ public sealed class SessionMessageQueueService
         }
 
         var payload = Antiphon.Agents.Pty.PtyInputEncoding.WrapIfMultiline(trimmed);
+        if (firstInputDeadlineAt <= UtcNow()) throw new OptionalBriefExpiredException();
         try
         {
             await _runtime.SendInputAsync(sessionId, payload, ct);

@@ -31,6 +31,19 @@ public class OutputDistillationRecord
     public string? MissingAnchors { get; set; }
 
     public DateTime CreatedAt { get; set; }
+    public DateTime? RequestedAt { get; set; }
+    public DateTime? DeadlineAt { get; set; }
+    public DateTime? DequeuedAt { get; set; }
+    public DateTime? RunCreatedAt { get; set; }
+    public DateTime? DecisionAt { get; set; }
+    public int? QueueWaitMs { get; set; }
+    public int? SpecialistWaitMs { get; set; }
+    public int? CleanupMs { get; set; }
+    public string? Reason { get; set; }
+    public string? ExpiryPhase { get; set; }
+    public string? AvailabilityAlias { get; set; }
+    public AgentKind? AvailabilityKind { get; set; }
+    public DateTime? AvailabilityObservedAt { get; set; }
 
     public DistillationFeedback Feedback { get; set; } = DistillationFeedback.None;
     public string? FeedbackNote { get; set; }

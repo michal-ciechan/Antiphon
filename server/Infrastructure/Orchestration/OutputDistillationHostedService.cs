@@ -36,10 +36,9 @@ public sealed class OutputDistillationHostedService : BackgroundService
         if (!_settings.OutputDistillerEnabled)
         {
             _logger.LogInformation("Output distiller is disabled; the distiller worker will not run.");
+            _queue.Complete();
             return;
         }
-
-        await EnsureSeatAsync(stoppingToken);
 
         try
         {
@@ -49,7 +48,7 @@ public sealed class OutputDistillationHostedService : BackgroundService
                 {
                     await using var scope = _scopeFactory.CreateAsyncScope();
                     var distiller = scope.ServiceProvider.GetRequiredService<OutputDistillationService>();
-                    await distiller.RequestAsync(request.TaskId, request.QueuedMessageId, stoppingToken);
+                    await distiller.RequestAsync(request, stoppingToken);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -61,18 +60,8 @@ public sealed class OutputDistillationHostedService : BackgroundService
                         ex,
                         "Distillation of task {TaskId} queued={QueuedId} failed; the raw note stands",
                         request.TaskId, request.QueuedMessageId);
-                    try
-                    {
-                        await using var scope = _scopeFactory.CreateAsyncScope();
-                        var distiller = scope.ServiceProvider.GetRequiredService<OutputDistillationService>();
-                        await distiller.ReleaseHoldAsync(request.QueuedMessageId, stoppingToken);
-                    }
-                    catch (Exception releaseEx) when (releaseEx is not OperationCanceledException)
-                    {
-                        _logger.LogWarning(
-                            releaseEx, "Could not clear HoldUntil on queued message {QueuedId}",
-                            request.QueuedMessageId);
-                    }
+                    // RequestAsync owns its single bounded cleanup allowance. Do not start a
+                    // second database wait here; the persisted finite hold is the fallback.
                 }
             }
         }
@@ -82,23 +71,9 @@ public sealed class OutputDistillationHostedService : BackgroundService
         }
     }
 
-    private async Task EnsureSeatAsync(CancellationToken ct)
+    public override async Task StopAsync(CancellationToken cancellationToken)
     {
-        try
-        {
-            await using var scope = _scopeFactory.CreateAsyncScope();
-            var provisioner = scope.ServiceProvider.GetRequiredService<OutputDistillerProvisioner>();
-            await provisioner.EnsureAsync(ct);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            // Shutdown.
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(
-                ex,
-                "Could not provision the output distiller at startup; requests will retry Ensure per request");
-        }
+        _queue.Complete();
+        await base.StopAsync(cancellationToken);
     }
 }

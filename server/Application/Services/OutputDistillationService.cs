@@ -22,6 +22,8 @@ public sealed class OutputDistillationService
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<OutputDistillationService> _logger;
     private readonly SpecialistTaskRunner _runner;
+    private readonly SessionMessageQueueService? _messageQueue;
+    private readonly SpecialistFailureQueue? _failures;
 
     public OutputDistillationService(
         AppDbContext db,
@@ -30,14 +32,19 @@ public sealed class OutputDistillationService
         TimeProvider timeProvider,
         ILogger<OutputDistillationService> logger,
         IAlertService? alerts = null,
-        SpecialistTaskRunner? runner = null)
+        SpecialistTaskRunner? runner = null,
+        IModelAvailability? modelAvailability = null,
+        SessionMessageQueueService? messageQueue = null,
+        SpecialistFailureQueue? failures = null)
     {
         _db = db;
         _provisioner = provisioner;
         _settings = settings.Value;
         _timeProvider = timeProvider;
         _logger = logger;
-        _runner = runner ?? new SpecialistTaskRunner(db, timeProvider, logger, alerts);
+        _runner = runner ?? new SpecialistTaskRunner(db, timeProvider, logger, alerts, modelAvailability);
+        _messageQueue = messageQueue;
+        _failures = failures;
     }
 
     /// <summary>
@@ -55,127 +62,158 @@ public sealed class OutputDistillationService
         return task.Status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed;
     }
 
-    public async Task RequestAsync(Guid taskId, Guid? queuedMessageId, CancellationToken ct)
+    // Compatibility front door for direct callers: admission is now, not after provisioning.
+    public Task RequestAsync(Guid taskId, Guid? queuedMessageId, CancellationToken ct)
     {
-        var started = _timeProvider.GetUtcNow();
+        var now = _timeProvider.GetUtcNow();
+        return RequestAsync(new DistillRequest(taskId, queuedMessageId, now,
+            now.AddSeconds(Math.Max(1, _settings.OutputDistillerWaitSeconds)), _settings.OutputDistillerMode), ct);
+    }
 
-        if (!_settings.OutputDistillerEnabled)
+    public Task RejectAdmissionAsync(DistillRequest request, string reason, CancellationToken ct) =>
+        RequestCoreAsync(request, reason, ct);
+
+    public Task RequestAsync(DistillRequest request, CancellationToken ct) => RequestCoreAsync(request, null, ct);
+
+    private async Task RequestCoreAsync(DistillRequest request, string? admissionFailure, CancellationToken ct)
+    {
+        var dequeued = _timeProvider.GetUtcNow();
+        AgentTask? source = null;
+        SpecialistRun? run = null;
+        var distilled = "";
+        string? missing = null;
+        var reason = admissionFailure;
+        string? expiryPhase = null;
+        var outcome = DistillationOutcome.DegradedUnavailable;
+        var writeLedger = true;
+        // Expired/failed admission still gets bounded bookkeeping and preserves length skips.
+        var initialDeadline = request.DeadlineAt > dequeued && admissionFailure is null
+            ? request.DeadlineAt : dequeued.AddSeconds(2);
+        using var execution = new ExecutionBudget(initialDeadline, _timeProvider, ct);
+        try
         {
-            await ReleaseHoldAsync(queuedMessageId, ct);
-            return;
+            var token = execution.Token;
+            source = await _db.AgentTasks.FirstOrDefaultAsync(t => t.Id == request.TaskId, token);
+            if (source is null || !ShouldRequest(source, _settings)) { writeLedger = false; return; }
+            var report = source.Result ?? source.FailureReason ?? "";
+            if (report.Length < _settings.DistillMinChars) { outcome = DistillationOutcome.SkippedShort; return; }
+            if (report.Length > _settings.DistillMaxRawChars) { outcome = DistillationOutcome.SkippedLong; return; }
+            var digest = DelegationNoteDigest.Compute(report);
+            if (source.LastPolledResultHash == digest) { writeLedger = false; return; }
+            if (admissionFailure is not null) { outcome = DistillationOutcome.DegradedBusy; return; }
+            if (_timeProvider.GetUtcNow() >= request.DeadlineAt)
+            { outcome = DistillationOutcome.DegradedExpired; expiryPhase = "request-queue"; reason = "deadline"; return; }
+
+            run = await _runner.RunWithPolicyAsync(OutputDistillerProvisioner.Spec(_settings),
+                OutputDistillation.BuildTitle(source), OutputDistillation.BuildGoal(source, report),
+                _settings.OutputDistillerMaxBacklog, _provisioner.EnsureAsync,
+                new SpecialistExecutionPolicy(request.DeadlineAt), ct);
+            outcome = run.Outcome switch
+            {
+                SpecialistRunOutcome.Held => DistillationOutcome.DegradedHeld,
+                SpecialistRunOutcome.Expired => DistillationOutcome.DegradedExpired,
+                SpecialistRunOutcome.Timeout => DistillationOutcome.DegradedTimeout,
+                SpecialistRunOutcome.Busy => DistillationOutcome.DegradedBusy,
+                SpecialistRunOutcome.Failed => DistillationOutcome.DegradedFailed,
+                SpecialistRunOutcome.Empty => DistillationOutcome.DegradedEmpty,
+                SpecialistRunOutcome.Succeeded => DistillationOutcome.Applied,
+                _ => DistillationOutcome.DegradedUnavailable,
+            };
+            reason = run.Reason;
+            expiryPhase = run.ExpiryPhase;
+            if (outcome != DistillationOutcome.Applied) return;
+            if (_timeProvider.GetUtcNow() >= request.DeadlineAt)
+            { outcome = DistillationOutcome.DegradedTimeout; expiryPhase = "await-settlement"; reason = "deadline"; return; }
+            distilled = OutputDistillation.Scrub(run.Result);
+            var gate = OutputDistillationGate.Evaluate(report, distilled,
+                _settings.DistilledMaxChars, _settings.DistilledMaxRatio);
+            await StampDistilledAsync(source, distilled, run, token);
+            if (!gate.Passed) { outcome = gate.ToOutcome(); missing = gate.MissingAnchorsJson; return; }
+            if (request.Mode == OutputDistillerMode.Shadow) { outcome = DistillationOutcome.Shadowed; return; }
+            expiryPhase = "apply";
+            var applied = _messageQueue is not null
+                ? await _messageQueue.TryApplyDistillationAsync(request, digest, distilled, ct)
+                : "queue-unavailable";
+            outcome = applied is null ? DistillationOutcome.Applied : DistillationOutcome.AppliedLate;
+            reason = applied;
+            if (applied != "deadline") expiryPhase = null;
         }
-
-        var source = await _db.AgentTasks.FirstOrDefaultAsync(t => t.Id == taskId, ct);
-        if (source is null)
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested && execution.Token.IsCancellationRequested)
         {
-            await ReleaseHoldAsync(queuedMessageId, ct);
-            return;
+            outcome = run?.Outcome == SpecialistRunOutcome.Succeeded
+                ? DistillationOutcome.AppliedLate : DistillationOutcome.DegradedExpired;
+            reason = "deadline";
+            expiryPhase ??= run is null ? "request-queue" : "await-settlement";
         }
-
-        var report = source.Result ?? source.FailureReason ?? "";
-        var mode = _settings.OutputDistillerMode;
-        var stamp = InstructionBundles.Get(InstructionBundles.OutputDistiller).Stamp;
-
-        if (AgentTaskRoles.IsSpecialist(source.Role)
-            || source.Status is not (AgentTaskStatus.Succeeded or AgentTaskStatus.Failed)
-            || source.ReplyTo != AgentTaskReplyTo.Session)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
-            await ReleaseHoldAsync(queuedMessageId, ct);
-            return;
+            _logger.LogWarning(ex, "Distillation failed for {TaskId}; raw note stands", request.TaskId);
+            outcome = DistillationOutcome.DegradedUnavailable;
+            reason = "request-failed";
         }
-
-        if (report.Length < _settings.DistillMinChars)
+        finally
         {
-            await WriteLedgerAsync(
-                source, queuedMessageId, distillTaskId: null, stamp, mode,
-                report.Length, 0, 0, 0m, DistillationOutcome.SkippedShort, null, ct);
-            await ReleaseHoldAsync(queuedMessageId, ct);
-            return;
+            // Shutdown propagates; never leave a background DbContext operation unobserved.
+            if (!ct.IsCancellationRequested)
+            {
+                var decision = _timeProvider.GetUtcNow();
+                using var cleanupPhase = new RuntimePhase(_logger, _timeProvider,
+                    source?.ParentSessionId ?? Guid.Empty, "distiller.cleanup", request.TaskId);
+                _db.ChangeTracker.Clear();
+                var cleanupDeadline = request.DeadlineAt <= dequeued || admissionFailure is not null
+                    ? dequeued.AddSeconds(2) : decision.AddSeconds(2);
+                using var cleanup = new ExecutionBudget(cleanupDeadline, _timeProvider, ct);
+                try
+                {
+                    if (run?.RunTaskId is Guid runId && outcome is DistillationOutcome.DegradedExpired
+                        or DistillationOutcome.DegradedTimeout or DistillationOutcome.DegradedHeld
+                        or DistillationOutcome.DegradedUnavailable)
+                    {
+                        var canceled = await _runner.CancelQueuedAsync(runId,
+                            "Optional work expired before execution.", cleanup.Token);
+                        if (!canceled && outcome is (DistillationOutcome.DegradedExpired or DistillationOutcome.DegradedTimeout))
+                        {
+                            var current = await _db.AgentTasks.AsNoTracking().Where(t => t.Id == runId)
+                                .Select(t => new { t.Status, t.DispatchedAt, t.FailureReason }).SingleOrDefaultAsync(cleanup.Token);
+                            if (current?.Status == AgentTaskStatus.Canceled
+                                && current.FailureReason == "Optional work expired before execution.")
+                            { outcome = DistillationOutcome.DegradedExpired; expiryPhase = "dispatch-queue"; }
+                            else if (outcome == DistillationOutcome.DegradedExpired && current?.DispatchedAt is not null)
+                            { outcome = DistillationOutcome.DegradedTimeout; expiryPhase = "await-settlement"; }
+                        }
+                    }
+                    await ReleaseHoldAsync(request.QueuedMessageId, cleanup.Token);
+                    if (writeLedger && source is not null)
+                    {
+                        _db.OutputDistillations.Add(new OutputDistillationRecord
+                        {
+                            Id = Guid.NewGuid(), TaskId = source.Id, DistillTaskId = run?.RunTaskId,
+                            QueuedMessageId = request.QueuedMessageId,
+                            BundleStamp = InstructionBundles.Get(InstructionBundles.OutputDistiller).Stamp,
+                            Mode = request.Mode, RawChars = (source.Result ?? source.FailureReason ?? "").Length,
+                            DistilledChars = distilled.Length, WaitMs = run?.WaitMs ?? 0,
+                            CostUsd = run?.CostUsd ?? 0, Outcome = outcome, MissingAnchors = missing,
+                            CreatedAt = decision.UtcDateTime, RequestedAt = request.RequestedAt.UtcDateTime,
+                            DeadlineAt = request.DeadlineAt.UtcDateTime, DequeuedAt = dequeued.UtcDateTime,
+                            RunCreatedAt = run?.RunCreatedAt, DecisionAt = decision.UtcDateTime,
+                            QueueWaitMs = (int)Math.Max(0, (dequeued - request.RequestedAt).TotalMilliseconds),
+                            SpecialistWaitMs = run?.WaitMs,
+                            CleanupMs = (int)Math.Max(0, (_timeProvider.GetUtcNow() - decision).TotalMilliseconds),
+                            Reason = reason, ExpiryPhase = expiryPhase, AvailabilityAlias = run?.AvailabilityAlias,
+                            AvailabilityKind = run?.AvailabilityKind, AvailabilityObservedAt = run?.AvailabilityObservedAt,
+                        });
+                        await _db.SaveChangesAsync(cleanup.Token);
+                    }
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested)
+                {
+                    _logger.LogWarning(ex, "Distiller cleanup incomplete for {TaskId}; finite hold and dispatch expiry remain authoritative", request.TaskId);
+                }
+                if (writeLedger && source is not null && outcome is (DistillationOutcome.DegradedTimeout
+                    or DistillationOutcome.DegradedFailed or DistillationOutcome.DegradedUnavailable))
+                    _failures?.TryEnqueue(new SpecialistFailure(OutputDistillerProvisioner.Spec(_settings), reason ?? outcome.ToString()));
+            }
         }
-
-        if (report.Length > _settings.DistillMaxRawChars)
-        {
-            await WriteLedgerAsync(
-                source, queuedMessageId, distillTaskId: null, stamp, mode,
-                report.Length, 0, 0, 0m, DistillationOutcome.SkippedLong, null, ct);
-            await ReleaseHoldAsync(queuedMessageId, ct);
-            return;
-        }
-
-        var digest = DelegationNoteDigest.Compute(report);
-        if (!string.IsNullOrEmpty(source.LastPolledResultHash)
-            && string.Equals(source.LastPolledResultHash, digest, StringComparison.Ordinal))
-        {
-            await ReleaseHoldAsync(queuedMessageId, ct);
-            return;
-        }
-
-        var spec = OutputDistillerProvisioner.Spec(_settings);
-        var wait = TimeSpan.FromSeconds(Math.Max(1, _settings.OutputDistillerWaitSeconds));
-        var run = await _runner.RunAsync(
-            spec,
-            OutputDistillation.BuildTitle(source),
-            OutputDistillation.BuildGoal(source, report),
-            wait,
-            _settings.OutputDistillerMaxBacklog,
-            _provisioner.EnsureAsync,
-            ct,
-            createdDetail: $"Distill of task {DelegationReportFormatter.Short(source.Id)}.");
-
-        var outcome = run.Outcome switch
-        {
-            SpecialistRunOutcome.Busy => DistillationOutcome.DegradedBusy,
-            SpecialistRunOutcome.Timeout => DistillationOutcome.DegradedTimeout,
-            SpecialistRunOutcome.Failed => DistillationOutcome.DegradedFailed,
-            SpecialistRunOutcome.Empty => DistillationOutcome.DegradedEmpty,
-            SpecialistRunOutcome.ProvisionFailed or SpecialistRunOutcome.QueueFailed
-                or SpecialistRunOutcome.Disabled => DistillationOutcome.DegradedUnavailable,
-            SpecialistRunOutcome.Succeeded => DistillationOutcome.Applied,
-            _ => DistillationOutcome.DegradedUnavailable,
-        };
-
-        var distilled = OutputDistillation.Scrub(run.Result);
-        if (outcome != DistillationOutcome.Applied)
-        {
-            await WriteLedgerAsync(
-                source, queuedMessageId, run.RunTaskId, stamp, mode,
-                report.Length, distilled.Length, run.WaitMs, run.CostUsd, outcome, null, ct);
-            await ReleaseHoldAsync(queuedMessageId, ct);
-            return;
-        }
-
-        var gate = OutputDistillationGate.Evaluate(
-            report, distilled, _settings.DistilledMaxChars, _settings.DistilledMaxRatio);
-        if (!gate.Passed)
-        {
-            await StampDistilledAsync(source, distilled, run, ct);
-            await WriteLedgerAsync(
-                source, queuedMessageId, run.RunTaskId, stamp, mode,
-                report.Length, distilled.Length, run.WaitMs, run.CostUsd,
-                gate.ToOutcome(), gate.MissingAnchorsJson, ct);
-            await ReleaseHoldAsync(queuedMessageId, ct);
-            return;
-        }
-
-        await StampDistilledAsync(source, distilled, run, ct);
-
-        if (mode == OutputDistillerMode.Shadow)
-        {
-            await WriteLedgerAsync(
-                source, queuedMessageId, run.RunTaskId, stamp, mode,
-                report.Length, distilled.Length, run.WaitMs, run.CostUsd,
-                DistillationOutcome.Shadowed, null, ct);
-            await ReleaseHoldAsync(queuedMessageId, ct);
-            return;
-        }
-
-        var applied = await TryApplyAsync(source, queuedMessageId, distilled, digest, ct);
-        await WriteLedgerAsync(
-            source, queuedMessageId, run.RunTaskId, stamp, mode,
-            report.Length, distilled.Length, run.WaitMs, run.CostUsd,
-            applied ? DistillationOutcome.Applied : DistillationOutcome.AppliedLate, null, ct);
-        if (!applied)
-            await ReleaseHoldAsync(queuedMessageId, ct);
     }
 
     /// <summary>Clear HoldUntil so a held completion note can flush. Safe if the row is gone or already sent.</summary>
@@ -267,7 +305,14 @@ public sealed class OutputDistillationService
                 d.FeedbackAt,
                 d.FullReadAt,
                 task?.Result,
-                task?.DistilledResult);
+                task?.DistilledResult)
+            {
+                RequestedAt = d.RequestedAt, DeadlineAt = d.DeadlineAt, DequeuedAt = d.DequeuedAt,
+                RunCreatedAt = d.RunCreatedAt, DecisionAt = d.DecisionAt, QueueWaitMs = d.QueueWaitMs,
+                SpecialistWaitMs = d.SpecialistWaitMs, CleanupMs = d.CleanupMs, Reason = d.Reason,
+                ExpiryPhase = d.ExpiryPhase, AvailabilityAlias = d.AvailabilityAlias,
+                AvailabilityKind = d.AvailabilityKind, AvailabilityObservedAt = d.AvailabilityObservedAt,
+            };
         }).ToList();
     }
 
@@ -337,29 +382,6 @@ public sealed class OutputDistillationService
             .ExecuteUpdateAsync(s => s.SetProperty(d => d.FullReadAt, now), ct);
     }
 
-    private async Task<bool> TryApplyAsync(
-        AgentTask source, Guid? queuedMessageId, string distilled, string digest, CancellationToken ct)
-    {
-        if (queuedMessageId is not Guid id)
-            return false;
-
-        var queued = await _db.SessionQueuedMessages.FirstOrDefaultAsync(m => m.Id == id, ct);
-        if (queued is null)
-            return false;
-        if (queued.Status != QueuedMessageStatus.Pending || queued.DeliveryAttempts != 0)
-            return false;
-        if (!string.IsNullOrEmpty(source.LastPolledResultHash)
-            && string.Equals(source.LastPolledResultHash, digest, StringComparison.Ordinal))
-            return false;
-
-        var header = string.IsNullOrWhiteSpace(queued.NoteHeader) ? "" : queued.NoteHeader.TrimEnd();
-        queued.Body = $"{header}\n\n{distilled.Trim()}\n\n{OutputDistillation.PointerLine(source)}"
-            .ReplaceLineEndings("\n");
-        queued.HoldUntil = null;
-        await _db.SaveChangesAsync(ct);
-        return true;
-    }
-
     private async Task StampDistilledAsync(
         AgentTask source, string distilled, SpecialistRun run, CancellationToken ct)
     {
@@ -375,39 +397,6 @@ public sealed class OutputDistillationService
                 ? $"distiller: task {DelegationReportFormatter.Short(run.RunTaskId ?? Guid.Empty)} ${run.CostUsd:0.0000}"
                 : $"distiller: task {DelegationReportFormatter.Short(run.RunTaskId ?? Guid.Empty)}",
             At = now,
-        });
-        await _db.SaveChangesAsync(ct);
-    }
-
-    private async Task WriteLedgerAsync(
-        AgentTask source,
-        Guid? queuedMessageId,
-        Guid? distillTaskId,
-        string stamp,
-        OutputDistillerMode mode,
-        int rawChars,
-        int distilledChars,
-        int waitMs,
-        decimal costUsd,
-        DistillationOutcome outcome,
-        string? missingAnchors,
-        CancellationToken ct)
-    {
-        _db.OutputDistillations.Add(new OutputDistillationRecord
-        {
-            Id = Guid.NewGuid(),
-            TaskId = source.Id,
-            DistillTaskId = distillTaskId,
-            QueuedMessageId = queuedMessageId,
-            BundleStamp = stamp,
-            Mode = mode,
-            RawChars = rawChars,
-            DistilledChars = distilledChars,
-            WaitMs = waitMs,
-            CostUsd = costUsd,
-            Outcome = outcome,
-            MissingAnchors = missingAnchors,
-            CreatedAt = _timeProvider.GetUtcNow().UtcDateTime,
         });
         await _db.SaveChangesAsync(ct);
     }
