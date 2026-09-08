@@ -15,6 +15,13 @@ public class AgentTask
 {
     /// <summary>Original optional-work deadline. Null preserves historical dispatch behavior.</summary>
     public DateTime? ExecutionDeadlineAt { get; set; }
+    /// <summary>Internal specialist execution snapshot. Null preserves legacy/public pin behavior.</summary>
+    public string? SpecialistModelAlias { get; set; }
+    public string? SpecialistModelId { get; set; }
+    public string? SpecialistEffectiveModelId { get; set; }
+    public Guid? SpecialistSessionId { get; set; }
+    public DateTime? SpecialistSessionStartedAt { get; set; }
+    public Guid? SpecialistProfileRevisionId { get; set; }
     public Guid Id { get; set; }
 
     /// <summary>Equals <see cref="Id"/> for roots. Denormalised so a whole run is one query.</summary>

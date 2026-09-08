@@ -668,7 +668,7 @@ public sealed class AgentTaskDispatcher
                     task,
                     $"Dispatch failed before a session existed: {ex.Message}",
                     "dispatch",
-                    ct);
+                    ct, ex is SpecialistIdentityMismatchException ? AgentTaskFailureCode.SpecialistIdentityMismatch : null);
                 failures++;
             }
         }
@@ -3817,6 +3817,7 @@ public sealed class AgentTaskDispatcher
     /// </summary>
     private async Task<string> ResolveDispatchAliasAsync(AgentTask task, CancellationToken ct)
     {
+        if (task.SpecialistModelAlias is { } snapshot) return snapshot;
         if (task.AgentId is Guid agentId)
         {
             var agent = await _db.Agents.AsNoTracking()
@@ -4262,21 +4263,43 @@ public sealed class AgentTaskDispatcher
         // names the program that is actually running. Only when that session names a delegate
         // kind: a legacy or hand-seeded row carries the enum's zero (Raw), which is absence of
         // evidence and must not refuse a dispatch (CARD-0084 S3).
-        var sessionKind = await _db.AgentSessions.AsNoTracking()
+        var live = await _db.AgentSessions.AsNoTracking()
             .Where(s => s.Id == session)
-            .Select(s => (AgentKind?)s.AgentKind)
             .FirstOrDefaultAsync(ct);
+        var sessionKind = live?.AgentKind;
         if (sessionKind is { } running
             && running != claimed.AgentKind
             && AgentTaskService.DelegatableKinds.Contains(running))
         {
             // Loud, not queued: the pin names an agent that runs a different program, and no amount
             // of waiting changes that. Delivering anyway would type the brief into the wrong TUI.
-            throw new InvalidOperationException(
+            throw new SpecialistIdentityMismatchException(
                 $"Task {DelegationReportFormatter.Short(claimed.Id)} runs on {claimed.AgentKind}, but "
                 + $"it is pinned to agent '{standing.Name}' whose live session {session:D} is "
                 + $"{running}. Pin it to a {claimed.AgentKind} agent, or create the task without a "
                 + "kind so it runs on a fresh delegate.");
+        }
+
+        if (claimed.SpecialistModelAlias is { } expectedAlias)
+        {
+            var currentAlias = DispatchModelAlias.Resolve(standing.Kind, standing.ModelLevel, standing.ModelId);
+            if (standing.Kind != claimed.AgentKind || standing.ModelLevel != claimed.ModelLevel
+                || !string.Equals(standing.ModelId, claimed.SpecialistModelId, StringComparison.Ordinal)
+                || !string.Equals(live?.EffectiveModelId, claimed.SpecialistEffectiveModelId, StringComparison.Ordinal)
+                || !string.Equals(currentAlias, expectedAlias, StringComparison.Ordinal)
+                || (live?.EffectiveModelId is { } actualModel
+                    && DispatchModelAlias.Resolve(claimed.AgentKind, claimed.ModelLevel, actualModel) != expectedAlias))
+                throw new SpecialistIdentityMismatchException(
+                    $"Specialist task {DelegationReportFormatter.Short(claimed.Id)} selected "
+                    + $"{claimed.AgentKind}/{claimed.ModelLevel}/{expectedAlias}; current seat is "
+                    + $"{standing.Kind}/{standing.ModelLevel}/{currentAlias}, live model {live?.EffectiveModelId ?? "unrecorded"}.");
+            if (claimed.SpecialistSessionId is { } expectedSession
+                && (session != expectedSession || live?.StartedAt != claimed.SpecialistSessionStartedAt
+                    || live?.TuiProfileRevisionId != claimed.SpecialistProfileRevisionId))
+                throw new SpecialistIdentityMismatchException(
+                    $"Specialist task {DelegationReportFormatter.Short(claimed.Id)} selected session "
+                    + $"{expectedSession:D} at {claimed.SpecialistSessionStartedAt:O}; current session "
+                    + $"{session:D} at {live?.StartedAt:O} has a different execution generation/profile.");
         }
 
         // One task at a time on the LIVE composer. A brief delivered while the agent is mid-task
