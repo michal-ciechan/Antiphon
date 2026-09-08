@@ -98,6 +98,8 @@ public sealed class AgentTaskLandRemovalMatrixTests
         var removed = await h.Services.GetRequiredService<IWorktreeManager>().TryRemoveAsync(request, CancellationToken.None);
         fired.ShouldBeTrue();
         removed.IsClean.ShouldBeFalse();
+        if (change is ".antiphon/report.md" or ".claude/settings.json" or "bin-private/keep.txt")
+            seen.ShouldBe(reading, "each ignored-content guard must refuse at its own boundary, before another source status read");
         h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("remove") || a[0] == "update-ref" && a.Contains("-d"));
         Directory.Exists(h.Fixture.Source).ShouldBeTrue();
         h.Fixture.Git.BeforeCommand = null;

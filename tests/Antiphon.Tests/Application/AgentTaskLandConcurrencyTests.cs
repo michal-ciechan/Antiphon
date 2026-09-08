@@ -165,8 +165,11 @@ public sealed class AgentTaskLandConcurrencyTests
     [Arguments("source-dirty")]
     [Arguments("source-switch")]
     [Arguments("source-staged")]
+    [Arguments("source-untracked")]
+    [Arguments("source-registration")]
     [Arguments("target")]
     [Arguments("target-dirty")]
+    [Arguments("target-staged")]
     [Arguments("target-switch")]
     public async Task C448_V10_VerificationDoesNotAuthorizeChangedSourceOrTarget(string change)
     {
@@ -184,7 +187,11 @@ public sealed class AgentTaskLandConcurrencyTests
             var path = change.StartsWith("source", StringComparison.Ordinal) ? h.Fixture.Source : h.Fixture.Repository;
             if (change.EndsWith("switch", StringComparison.Ordinal))
                 await h.Fixture.RequiredAsync(path, "checkout", "-b", "same-sha-other-branch");
-            else if (change == "source-staged")
+            else if (change == "source-registration")
+                await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "lock", h.Fixture.Source);
+            else if (change == "source-untracked")
+                await File.WriteAllTextAsync(Path.Combine(path, "new-writer.txt"), "untracked writer\n");
+            else if (change.EndsWith("staged", StringComparison.Ordinal))
             {
                 await File.WriteAllTextAsync(Path.Combine(path, "keep.txt"), "staged writer\n");
                 await h.Fixture.RequiredAsync(path, "add", "keep.txt");
@@ -201,7 +208,8 @@ public sealed class AgentTaskLandConcurrencyTests
         op.Phase.ShouldBe(LandPhase.Refused, "invalid post-verification evidence must be rejected before committing Verified");
         op.LastReason.ShouldBe(change switch
         {
-            "source" => "source_changed", "source-dirty" or "source-staged" => "source_dirty",
+            "source" => "source_changed", "source-dirty" or "source-staged" or "source-untracked" => "source_dirty",
+            "source-registration" => "registration_unavailable",
             "source-switch" => "source_branch_mismatch", "target-switch" => "target_checkout_changed",
             "target" => "target_changed", _ => "target_dirty_or_unknown",
         });
