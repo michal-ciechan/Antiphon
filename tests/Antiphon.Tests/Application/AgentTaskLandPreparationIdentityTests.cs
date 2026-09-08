@@ -13,6 +13,62 @@ namespace Antiphon.Tests.Application;
 public sealed class AgentTaskLandPreparationIdentityTests
 {
     [Test]
+    [Arguments("source")]
+    [Arguments("target")]
+    [Arguments("target-checkout")]
+    [Arguments("verification-filter")]
+    public async Task C448_V15_ChangedVerifiedPreparationCanOpenAFreshExplicitOperation(string change)
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var original = await h.AddSourceAsync();
+        await using (var db = h.CreateContext())
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            task.LandVerifyFilter = "/*/*/NewPreparation/*";
+            await db.SaveChangesAsync();
+        }
+        h.Fault.Phase = LandPhase.Verified;
+        h.Fault.AfterCommit = true;
+        await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.RunAsync());
+        var previous = (await h.OperationAsync()).ShouldNotBeNull();
+        if (change is "source" or "target")
+            await h.Fixture.RequiredAsync(change == "source" ? h.Fixture.Source : h.Fixture.Repository,
+                "commit", "--allow-empty", "-m", "new work after verified checkpoint");
+        if (change == "target-checkout")
+            await h.Fixture.RequiredAsync(h.Fixture.Repository, "checkout", "-b", "another-target-checkout");
+        var currentSource = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim();
+        if (change != "verification-filter")
+        {
+            await h.RestartServicesAsync();
+            await h.RunAsync();
+            var refused = (await h.OperationAsync()).ShouldNotBeNull();
+            refused.Id.ShouldBe(previous.Id, "automatic recovery cannot replace changed preparation");
+            refused.RemoteConfirmedAt.ShouldBeNull();
+        }
+        Directory.Exists(h.Fixture.Source).ShouldBeTrue();
+        await h.RepostAsync();
+        await using (var db = h.CreateContext())
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            task.LandVerifyFilter = change == "verification-filter" ? "/*/*/NewSelectedFilter/*" : "/*/*/NewPreparation/*";
+            await db.SaveChangesAsync();
+        }
+        await h.RestartServicesAsync();
+        await h.RunAsync();
+        var completed = (await h.OperationAsync()).ShouldNotBeNull();
+        completed.Id.ShouldNotBe(previous.Id, "an explicit fresh request must not strand changed work behind an unadvanced Verified checkpoint");
+        completed.OriginalSourceSha.ShouldBe(currentSource);
+        completed.Cleanup.ShouldBe(LandCleanupStatus.Complete);
+        h.Verifier.Calls.ShouldBe(2, "the changed preparation must receive fresh verification");
+        await using (var db = h.CreateContext())
+            (await db.AgentTaskLandings.SingleAsync(o => o.Id == previous.Id)).Active.ShouldBeFalse();
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", previous.RecoveryRefPrefix + "/source")).Trim().ShouldBe(original);
+        (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(completed.VerifiedSourceSha);
+        await h.Fixture.AssertRemoteSourceAsync();
+    }
+
+    [Test]
     public async Task C448_V25_LocalMergeCannotAdoptACommitAfterItsRebase()
     {
         await using var h = new LandingSafetyHarness();
