@@ -324,6 +324,11 @@ public sealed class AgentControlService
             _apiKeyEnvResolver);
         var spec = resolved.Spec;
         var definitionName = spec.DefinitionName;
+        var isStandingSpecialist = string.Equals(
+            agent.Slug, CheckInterpreterProvisioner.Slug(_delegationSettings), StringComparison.OrdinalIgnoreCase);
+        if (isStandingSpecialist)
+            StandingSpecialistProvisioner.RequireCheckLaunchToolPolicy(
+                CheckInterpreterProvisioner.Spec(_delegationSettings) with { WorkingDirectory = cwd }, spec.Kind);
         GrokLaunchArgs.EnsureWindowsRulesArgv(spec.Args, spec.Kind, agent.SessionBackend, spec.Env, $"Agent '{agent.Name}'");
 
         // Bootstrap/restart notes ride on every launch of a preamble-configured agent; the launch
@@ -336,10 +341,6 @@ public sealed class AgentControlService
         // CLAUDE.md in its scratch directory and a deny-all PreToolUse hook that would refuse the
         // reads anyway. It is an impossible instruction, and obeying it costs a turn of the agent
         // explaining that. Its whole contract already rides --append-system-prompt.
-        var isStandingSpecialist = string.Equals(
-            agent.Slug,
-            CheckInterpreterProvisioner.Slug(_delegationSettings),
-            StringComparison.OrdinalIgnoreCase);
         var notes = isClaudeCode
                 && !isStandingSpecialist
                 && !string.IsNullOrWhiteSpace(agent.SystemPromptAppend)
