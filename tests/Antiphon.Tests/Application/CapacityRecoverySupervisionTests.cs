@@ -104,6 +104,35 @@ public class CapacityRecoverySupervisionTests
     }
 
     [Test]
+    public async Task Card0412_V16_capacity_start_requires_always_on()
+    {
+        var tempRoot = AgentSupervisionTests.NewTempRoot();
+        try
+        {
+            await using var harness = AgentSupervisionTests.BuildHarness(
+                tempRoot, [new FakeAgentProtocolAdapter()], includeModelAvailability: true);
+            var agent = await AgentSupervisionTests.CreateAlwaysOnAgentAsync(harness, tempRoot);
+            await using (var db = AgentSupervisionTests.CreateContext())
+            {
+                var row = await db.Agents.SingleAsync(a => a.Id == agent.Id);
+                row.AlwaysOn = false;
+                await db.SaveChangesAsync();
+            }
+
+            var ex = await Should.ThrowAsync<Exception>(() =>
+                harness.Control.StartAsync(
+                    agent.Id,
+                    new StartAgentRequest(CapacityRecovery: true, IgnoreSubscriptionQuota: true),
+                    CancellationToken.None));
+            ex.Message.ShouldContain("unowned or ephemeral");
+        }
+        finally
+        {
+            await AgentSupervisionTests.CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task Card0412_V16_capacity_start_does_not_clear_liveness_latch()
     {
         var tempRoot = AgentSupervisionTests.NewTempRoot();

@@ -174,6 +174,8 @@ public class CapacityRecoveryAcceptanceTests
         var grant = await verify.Set<CapacityRecoveryProviderState>()
             .SingleAsync(s => s.Kind == AgentKind.ClaudeCode);
         grant.GrantedWaitId.ShouldBe(older.Id);
+        (await verify.CapacityRecoveryWaits.SingleAsync(w => w.Id == older.Id))
+            .State.ShouldBe(CapacityRecoveryWaitState.ActionPending);
         (await verify.CapacityRecoveryWaits.SingleAsync(w => w.Id == younger.Id)).AdmissionCount.ShouldBe(0);
         (await service.RedeemAsync(
             younger.Id, younger.ActionKey, AgentKind.ClaudeCode, CapacityRedemptionPath.Queue,
