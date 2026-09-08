@@ -49,9 +49,12 @@ pending run is treated as passing evidence.
 - PC27 explicit-replacement subvariant: unmodified baseline 1/1 passed; widening replacement
   to TargetAdvanceStarted produced 1/1 intended assertion RED. Source bytes were restored
   exactly, then rebuilt for the three affected classes. Final restored execution is pending.
-- The inherited regression process and launcher later ceased to exist without a completed
-  `continuation2-protocol-regression-01.trx` or a verdict in their captured log. The cause was
-  not established. That invocation has no usable execution credit and must be rerun.
+- The prior session's [reconciliation](2026-09-08-card-0448-continuation2-reconciliation.md),
+  committed separately at `111da96a`, records its deliberate cancellation of the superseded
+  inherited run during the overlap. There is no completed
+  `continuation2-protocol-regression-01.trx` or verdict; the invocation has no execution credit.
+  Its concurrent commit changed documentation only. This pass's production source remained
+  unchanged, and its mutation control was restored byte-for-byte before the final regression.
 
 ## Remaining acceptance
 
@@ -73,3 +76,10 @@ the baseline incident reproduction; complete caller/barrier evidence; the per-va
 refresh; and the final unmutated combined regression across the required classes. A historical
 aggregate pass or a passing subset cannot satisfy these requirements. Continue Code, then
 request the safety review; no landing authorization is implied by this checkpoint.
+
+The reconciliation identifies concrete pending work: 24 prepared dispatcher admission cases;
+the second OS recovery worker for C24; expanded boundary/change variants; and installed
+`BeforeRebaseIntent`/`BeforePushIntent` selectors whose fixture callbacks are not implemented.
+The two alternative preparation/retry patch scripts are obsolete and must not overwrite this
+implementation. Adapt the pending policy/admission installers rather than running them blindly.
+Continue with a single production-code and mutation-test owner, or isolated checkouts.
