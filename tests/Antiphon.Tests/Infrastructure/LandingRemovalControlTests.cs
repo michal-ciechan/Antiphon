@@ -9,6 +9,40 @@ namespace Antiphon.Tests.Infrastructure;
 public sealed class LandingRemovalControlTests
 {
     [Test]
+    public Task C448_V20_RemoveError()
+        => new AgentTaskLandRemovalMatrixTests()
+            .C448_V20_LastRemovalBoundaryPreservesEveryRemainingComponent("remove-error");
+
+    [Test]
+    public Task C448_V20_RemoveTimeout()
+        => new AgentTaskLandRemovalMatrixTests()
+            .C448_V20_LastRemovalBoundaryPreservesEveryRemainingComponent("remove-timeout");
+
+    [Test]
+    public Task C448_V20_WindowsFileHandle()
+        => new AgentTaskLandRemovalMatrixTests()
+            .C448_V20_LastRemovalBoundaryPreservesEveryRemainingComponent("windows-file-handle");
+
+    [Test]
+    public Task C448_V20_BranchMoved()
+        => new AgentTaskLandRemovalMatrixTests()
+            .C448_V20_LastRemovalBoundaryPreservesEveryRemainingComponent("branch-moved");
+
+    [Test]
+    public Task C448_V20_NewCheckout()
+        => new AgentTaskLandRemovalMatrixTests()
+            .C448_V20_LastRemovalBoundaryPreservesEveryRemainingComponent("new-checkout");
+
+    [Test]
+    public Task C448_V20_RegistrationError()
+        => new AgentTaskLandRemovalMatrixTests()
+            .C448_V20_LastRemovalBoundaryPreservesEveryRemainingComponent("registration-error");
+
+    [Test]
+    public Task C448_V18_UnregisteredResidue()
+        => new AgentTaskLandCleanupSafetyTests().C448_V18_CleanupRetryPreservesChangedWork("unregistered");
+
+    [Test]
     [Arguments(".antiphon/report.md")]
     [Arguments(".claude/settings.json")]
     [Arguments("bin-private/keep.txt")]
