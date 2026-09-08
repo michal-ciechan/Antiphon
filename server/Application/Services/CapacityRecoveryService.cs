@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -499,6 +500,33 @@ public sealed class CapacityRecoveryService
                 && w.State != CapacityRecoveryWaitState.Superseded
                 && w.State != CapacityRecoveryWaitState.Exhausted,
             ct);
+    }
+
+    public async Task ObserveTranscriptAsync(
+        Guid sessionId, string kind, bool isApiError, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var wait = await db.Set<CapacityRecoveryWait>().FirstOrDefaultAsync(
+            w => w.SessionId == sessionId
+                && w.State != CapacityRecoveryWaitState.Progressed
+                && w.State != CapacityRecoveryWaitState.Canceled
+                && w.State != CapacityRecoveryWaitState.Superseded
+                && w.State != CapacityRecoveryWaitState.Exhausted,
+            ct);
+        if (wait is null)
+            return;
+        if (kind == TranscriptKinds.UserPrompt || kind == TranscriptKinds.QueuedUserPrompt)
+            return;
+        if (kind == TranscriptKinds.TurnEnd && !isApiError)
+        {
+            wait.State = CapacityRecoveryWaitState.Progressed;
+            wait.Outcome = nameof(CapacityRecoveryWaitState.Progressed);
+            wait.UpdatedAt = UtcNow();
+            wait.Version++;
+            await RecordLifecycleOnAsync(db, wait, "Capacity recovery progressed after successful work turn.", ct);
+            await db.SaveChangesAsync(ct);
+        }
     }
 
     public async Task ConfirmPromptAsync(Guid waitId, long sequence, CancellationToken ct)

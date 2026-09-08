@@ -541,7 +541,9 @@ public sealed class ApiErrorRecoveryService
 
         var hold = await db.ModelAvailabilityHolds
             .FirstOrDefaultAsync(h => h.Id == existing.AppliedHoldId, ct);
-        if (hold is null || hold.ClearedAt is not null)
+        if (hold is null)
+            return;
+        if (hold.ClearedAt is not null)
             return;
         if (existing.AppliedHoldRevision is { } expectedRev && hold.Revision != expectedRev)
             return;

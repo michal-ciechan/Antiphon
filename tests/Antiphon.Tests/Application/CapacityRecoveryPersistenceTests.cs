@@ -3,6 +3,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -107,6 +108,50 @@ public class CapacityRecoveryPersistenceTests
     }
 
     [Test]
+    public async Task Card0412_V07_late_register_without_flag_observes_consumed_hold()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var now = DateTime.UtcNow;
+        var holdId = Guid.NewGuid();
+        await using (var db = CreateContext(schema))
+        {
+            db.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
+            {
+                Id = holdId,
+                Kind = AgentKind.ClaudeCode,
+                ModelAlias = "opus",
+                Source = ModelAvailabilitySource.AutoDetected,
+                DisabledUntil = now.AddMinutes(-1),
+                HitAt = now.AddHours(-1),
+                ClearedAt = now,
+                ClearCause = ModelAvailabilityClearCause.Expired,
+                ReleasePendingAt = now,
+                ReleaseConsumedAt = now,
+                Reason = "expired",
+                Revision = 1,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var service = CreateService(schema).Service;
+        var wait = await service.EnsureWaitAsync(new CapacityWaitRegistration
+        {
+            ConsumerKey = $"session:{Guid.NewGuid():N}",
+            ConsumerKind = CapacityWaitConsumerKind.LiveSession,
+            ExecutionKind = AgentKind.ClaudeCode,
+            RequestedKind = AgentKind.ClaudeCode,
+            HoldId = holdId,
+            HoldRevision = 1,
+            HoldAlreadyCleared = false,
+            BlockedAt = now.AddHours(-1),
+        }, CancellationToken.None);
+
+        wait.State.ShouldBe(CapacityRecoveryWaitState.Ready);
+        wait.ObservedClearCauses.ShouldContain("Expired");
+        wait.LatestClearObservedAt.ShouldNotBeNull();
+    }
+
+    [Test]
     public async Task Card0412_V11_fourth_admission_is_exhausted()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -142,6 +187,81 @@ public class CapacityRecoveryPersistenceTests
         wait = await ReloadWait(schema, wait.Id);
         wait.State.ShouldBe(CapacityRecoveryWaitState.Exhausted);
         wait.AdmissionCount.ShouldBe(3);
+    }
+
+    [Test]
+    public async Task Card0412_V11_grant_ready_exhausts_at_max_attempts()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var (service, _) = CreateService(schema, attempts: 3);
+        var wait = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+            $"task:{Guid.NewGuid():N}",
+            CapacityWaitConsumerKind.QueuedTask,
+            holdAlreadyCleared: true), CancellationToken.None);
+        await using (var db = CreateContext(schema))
+        {
+            var row = await db.CapacityRecoveryWaits.SingleAsync(w => w.Id == wait.Id);
+            row.AdmissionCount = 3;
+            row.State = CapacityRecoveryWaitState.Ready;
+            await db.SaveChangesAsync();
+        }
+
+        await service.GrantReadyAsync(CancellationToken.None);
+        var exhausted = await ReloadWait(schema, wait.Id);
+        exhausted.State.ShouldBe(CapacityRecoveryWaitState.Exhausted);
+        exhausted.AdmissionCount.ShouldBe(3);
+        (await ReloadGrant(schema, AgentKind.ClaudeCode))?.GrantedWaitId.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task Card0412_V11_redeem_refuses_when_already_at_max_attempts()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var (service, _) = CreateService(schema, attempts: 3);
+        var wait = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+            $"task:{Guid.NewGuid():N}",
+            CapacityWaitConsumerKind.QueuedTask,
+            holdAlreadyCleared: true), CancellationToken.None);
+        await service.GrantReadyAsync(CancellationToken.None);
+        await using (var db = CreateContext(schema))
+        {
+            var row = await db.CapacityRecoveryWaits.SingleAsync(w => w.Id == wait.Id);
+            row.AdmissionCount = 3;
+            await db.SaveChangesAsync();
+        }
+
+        var grant = await ReloadGrant(schema, AgentKind.ClaudeCode);
+        grant.ShouldNotBeNull();
+        var result = await service.RedeemAsync(
+            wait.Id, grant!.GrantedActionKey!, AgentKind.ClaudeCode, CapacityRedemptionPath.Dispatch,
+            CancellationToken.None);
+        result.Ok.ShouldBeFalse();
+        result.Reason.ShouldBe("exhausted");
+        (await ReloadWait(schema, wait.Id)).AdmissionCount.ShouldBe(3);
+    }
+
+    [Test]
+    public async Task Card0412_V11_user_prompt_does_not_close_episode()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var (service, _) = CreateService(schema, attempts: 3);
+        var sessionId = Guid.NewGuid();
+        var wait = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+            $"session:{sessionId:N}",
+            CapacityWaitConsumerKind.LiveSession,
+            holdAlreadyCleared: true,
+            sessionId: sessionId), CancellationToken.None);
+        await service.GrantReadyAsync(CancellationToken.None);
+        var grant = await ReloadGrant(schema, AgentKind.ClaudeCode);
+        (await service.RedeemAsync(
+            wait.Id, grant!.GrantedActionKey!, AgentKind.ClaudeCode, CapacityRedemptionPath.Queue,
+            CancellationToken.None)).Ok.ShouldBeTrue();
+        await service.ObserveTranscriptAsync(
+            sessionId, TranscriptKinds.UserPrompt, isApiError: false, CancellationToken.None);
+        (await ReloadWait(schema, wait.Id)).State.ShouldBe(CapacityRecoveryWaitState.Admitted);
+        await service.ObserveTranscriptAsync(
+            sessionId, TranscriptKinds.TurnEnd, isApiError: false, CancellationToken.None);
+        (await ReloadWait(schema, wait.Id)).State.ShouldBe(CapacityRecoveryWaitState.Progressed);
     }
 
     [Test]
