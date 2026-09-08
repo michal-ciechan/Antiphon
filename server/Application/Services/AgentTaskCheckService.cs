@@ -404,7 +404,7 @@ public sealed class AgentTaskCheckService
                 $"interpreter unavailable: no reading within {_settings.CheckInterpreterWaitSeconds}s",
                 shortId is null ? null : $"interpreter: task {shortId}, timed out"),
             SpecialistRunOutcome.Failed => Interpretation.Degraded(
-                "interpreter unavailable: the interpretation failed", line),
+                $"interpreter unavailable: {run.Reason ?? "the interpretation failed"}", line),
             SpecialistRunOutcome.Empty => Interpretation.Degraded(
                 "interpreter unavailable: the interpretation was empty", line),
             SpecialistRunOutcome.Succeeded => new Interpretation(run.Result, null, line),
