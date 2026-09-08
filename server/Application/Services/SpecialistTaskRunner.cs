@@ -347,7 +347,9 @@ public sealed class SpecialistTaskRunner
             AgentTaskId = id,
             Type = AgentTaskEventType.Created,
             ModelLevel = specialist.ModelLevel,
-            Detail = createdDetail ?? $"{spec.DisplayName} run.",
+            Detail = (createdDetail ?? $"{spec.DisplayName} run.")
+                + $" Execution: {row.AgentKind}/{row.ModelLevel}/{row.SpecialistModelAlias}."
+                + $" Session: {row.SpecialistSessionId:D} at {row.SpecialistSessionStartedAt:O}.",
             At = now,
         });
         await _db.SaveChangesAsync(ct);
