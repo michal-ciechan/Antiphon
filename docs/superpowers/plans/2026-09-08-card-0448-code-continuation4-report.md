@@ -41,7 +41,9 @@ policy. The optional SaveFault predicate selects that subphase without moving it
 The sole failure, C24 killed-worker recovery, stopped before child-PID acknowledgement.
 It receives no C24 credit. The worker fixture now pins Git identity, signing and its blocking
 hook explicitly instead of inheriting global configuration, and reports worker startup errors.
-Its rerun is pending.
+The rebuilt `c4-c24-02.trx` passed 1/1 with no skips. Evidence records recovery worker
+14696/start ticks 639244966056988289 independently holding both main and source admission,
+separate from test process 24284. The original failed run remains recorded as a setup failure.
 The exact pre-change incident adapter also builds at `f202fcc1` in the independent
 `C:\Antiphon\worktrees\c448-4692ec26-baseline` checkout (0 errors, 132 warnings).
 `c4-incident-baseline.trx` executed 1 / passed 0 / failed 1 / skipped 0 with the intended
@@ -56,6 +58,21 @@ with exit 0. `npm run build` passed. The first expanded backend build found one 
 expression-tree compilation error (CS8122); the predicate was corrected to ordinary equality
 comparisons before rebuilding. The next build passed with 0 errors and 131 warnings.
 No execution credit is assigned to the failed build.
+
+The focused expanded-fixture sequence completed with 33/33 passing, no failures or skips:
+
+| TRX suffix under `bin-c448-c4-next/TestResults` | Executed / passed | Scope |
+|---|---:|---|
+| `c4-next-LandingRemovalControlTests.trx` | 6 / 6 | First/final ignored-content guards, three protected path classes each |
+| `c4-next-AgentTaskLandBoundaryTests.trx` | 4 / 4 | Target advance/switch/dirty/staged changes after real fast-forward |
+| `c4-next-AgentTaskLandConcurrencyTests.trx` | 10 / 10 | Source and target changes during verification |
+| `c4-next-AgentTaskLandCheckpointMatrixTests.trx` | 11 / 11 | Changed C02/C03/C07/C08/C09 state and C03 pin collision |
+| `c4-next-AgentTaskLandPersistenceFailureTests.trx` | 2 / 2 | Before/after-commit source-pin-result acknowledgement loss |
+
+The queue wrapper's foreign-process exit-code check prevented its automatic mutation step;
+the original tool completion was exit 0 and all five fresh TRX files passed. Mutation execution
+was started directly after those verdicts and the C24 rerun were checked. This was a queue
+bookkeeping failure, not a canceled run or a test failure.
 
 Local execution scripts, logs, TRX and command evidence are under this task's `.antiphon`
 and isolated `tests/Antiphon.Tests/bin-c448-*` outputs. The 86 adapted mutation definitions
