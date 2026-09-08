@@ -1,9 +1,10 @@
 # CARD-0262 - Durable per-agent instructions, antiphon.md, and queued rereads
 
 - Date: 2026-09-08.
-- Status: D3 amendment complete; operator released the build hold. Ready for separate TestDesign after this amendment lands.
+- Status: review defects D-1 through D-4 amended, with both non-blocking notes folded into design and verification. Ready for Code by slice after this amendment lands.
 - Code baseline: `b97003db` in task `00afd0a8`.
 - Amendment baseline: plan commit `4c230f5a`; explicit operator override in task `d4769008` on 2026-09-08 requires a per-agent file even in shared/Unverified workspaces and releases the build hold.
+- Review amendment: task `d7b7fce8`, full review `7b9d12b0`; D3 plan commit `4db2076b` plus TestDesign commit `4959b498` are present in this worktree.
 - Supersedes the design in [the 2026-08-31 plan](2026-08-31-card-0262-kb-preference-to-agent-instructions-plan.md), especially its managed-CLAUDE floor and next-launch-only decisions.
 - Evidence: full live CARD-0262 description, including both operator refinements dated 2026-08-31; full successful investigation report `2ad377d7` dated 2026-09-07; current sources named below.
 - This artifact changes no application behavior. No build, model probe, deployment, pin capture, or card mutation was performed for this re-plan.
@@ -20,20 +21,21 @@ to a foreign KB row; it is not PDF-specific.
 
 The operator's 2026-09-08 decision supersedes the card's earlier "do not dispatch a build until
 asked" language: that hold is released. This dispatch amends only this plan; the caller will
-update the card's own record separately. Land this amendment, then dispatch **TestDesign**, then
-Code using its verification design. Settle `next: test-design`; no further hold-release decision
-is needed. This planning dispatch itself performs no implementation or card-description edit.
+update the card's own record separately. TestDesign `8ef399b2` is now included below and amended
+with the review controls. Land this amendment, then dispatch **Code per slice, S1 -> S2 -> S3
+and onward**; S3 and S4 each warrant their own task. Settle `next: code`; no further hold-release
+decision is needed. This planning dispatch itself performs no implementation or card-description edit.
 
 ## Ground truth
 
 | Assumption or requirement | Evidence at the baseline | Design consequence |
 |---|---|---|
 | A KB row already feeds instructions | Investigation `2ad377d7` confirms no Antiphon pin entity, endpoint, or KB-to-instruction integration. The original KB is external. | Add a capture contract and store; do not invent a foreign database reader. No historic row becomes active merely through deployment. |
-| CARD-0059's generated file fixes the gap | `AgentWorkspaceProvisioner` renders a generic floor at Create/Start, and returns `LeftAlone` for ordinary unmarked files. | Keep the existing floor. Pin content goes in a different owned file and launch composition. |
+| CARD-0059's generated file fixes the gap | `AgentWorkspaceProvisioner.ProvisionCore` rewrites the whole managed file from static `Render(agent, directory, boundChannels)` at Create/Start; Render currently takes no pin state. Ordinary unmarked files return `LeftAlone`. | Pass explicit desired import state through Provision/Render. Only Render writes a managed-floor import; first capture schedules its first installation for the next Start, after projection reconciliation. |
 | CARD-0250 is the missing mechanism | Investigation confirms its attachment follow-up implementation is landed. `ChannelReplyDispatcher.DispatchMachineTurnFollowUpAsync` exists. | Do not reopen attachment routing. Exclude our internal reread turns from its existing machine-turn follow-up path. |
 | The operator still wants pins in the generated floor | The second 2026-08-31 refinement replaces that section with a lazy file, Claude import, and live rereads; task `d4769008` overrides the later dedicated-only restriction with mandatory per-agent file identity. | No pin list in the managed `CLAUDE.md` body, `AGENTS.md`, `SOUL.md`, or `MEMORY.md`. Always create the agent-specific projection after first use; native import eligibility is separate. The earlier optional MEMORY mirror is superseded. |
 | Antiphon can freely edit workspace files | `docs/agent-workspaces.md` reserves memory files to the agent; CARD-0059 says never touch an unmarked `CLAUDE.md`. | Document two narrow exceptions: the new whole owned file and a delimited import stanza. Do not relax floor adoption or take ownership of surrounding text. |
-| Composition only means adding one launch call | `AgentSessionLaunchComposer` is shared by AgentControlService, CardService's assigned-agent path, and OrchestratorService. `AgentService` and `PolicyRefreshService` recompute stamps separately. | One named-agent pin composition helper must serve all these paths; no pin inheritance into pool delegates or task-role composition. |
+| Composition only means adding one launch call | `ComposeForAgentAsync` serves AgentControlService, CardService's assigned-agent path and OrchestratorService, but PolicyRefreshService also calls it for Grok drift/resume preflight in `ActAsync` and `RelaunchAsync`. AgentService recomputes preview/list stamps. | One helper reports snapshot/projection state without a projection exception. Enforce verified projection only at actual Start seams; preserve drift/Notify/preview, and use identical implicit bundle inclusion across callers. |
 | Every provider takes the same append argument | Current composer uses Claude `--append-system-prompt`, Codex developer instructions, and a `GrokRulesPayload`. Raw/OpenCode do not enter that composition branch. | Support the three existing instruction-capable kinds. Show an explicit unsupported-runtime state for other kinds; a file alone is not runtime support. |
 | Grok resume accepts new inline rules | CARD-0395's current code uses runner-owned rules files, receipts and queued acknowledgements; legacy inline-rules resume is refused. | Retain that path and its refusal. Do not revert to `--rules <new text>` or claim new stamps prove adoption. |
 | Drift only raises a badge | CARD-0334's `PolicyRefreshService` can kill/resume at idle. Its default file list includes `CLAUDE.md`, but not `antiphon.md`. | Separate pin drift from restart-eligible bundle/file drift; pin changes use WhenIdle, not a restart. |
@@ -42,6 +44,7 @@ is needed. This planning dispatch itself performs no implementation or card-desc
 | A session token is a universal authorization scheme | `AgentTaskService.AuthenticateAsync` also accepts task and capability principals. `docs/antiphon-api.md` documents a seeded-admin, unauthenticated operator API. | Resolve session ownership explicitly. A headerless trusted-host UI call is not cryptographic proof of operator identity. Do not promise a hostile-agent security boundary. |
 | A cwd belongs to one agent | The runtime owner documents multiple agents and a human using the same cwd. Claude instruction files also load from ancestors. The operator's amendment explicitly retains this leak concern. | D3 uses immutable AgentId-specific files and exact per-session pointers. D4 never adds private imports to a shared discovery scope; unique filenames alone would not stop a shared CLAUDE from loading all imports. |
 | Gitignored runtime state cannot be a delivery artifact | This repo ignores `.antiphon/`; delegation briefs use `.antiphon/task-<short>-brief.md`, and retained reports use `.antiphon/reports/<full-task-guid>/<hash>.md` (orchestration owner). | Use `.antiphon/pins/<full-agent-guid>/antiphon.md`; ignored files remain explicit read targets, never depend on search/index discovery. |
+| An exclusive import remains local when its target is ignored | A tracked CLAUDE import is portable source text under the instruction-file contract; `git add -A` can commit an appended private pointer and spread it to clones/worktrees. | D4 refuses tracked import targets, even managed floors. Git-based installation also requires existing ignore coverage for an untracked CLAUDE; the mandatory file and pointer do not depend on installation. |
 
 Claude's current [memory documentation](https://code.claude.com/docs/en/memory) confirms relative
 `@` imports, expansion at launch, skipping imports inside code spans/fences, and project-root
@@ -123,6 +126,23 @@ a new/resumed pin-bearing launch must first obtain a current verified file or re
 Never claim to have created or read a file that is unavailable, or overwrite foreign content to
 satisfy "always". Reconciliation remains outstanding until the file is repaired.
 
+**Enforcement seam (review D-2):** the verified-projection gate belongs only to actual new/resumed
+Start paths: `AgentControlService.StartAsync`/`StartInteractiveSessionAsync`, the assigned-agent
+branch of `CardService.SpawnAsync`, and the assigned-agent orchestrator launch prepared by
+`OrchestratorService.ResolveDispatchLaunchAsync`. Resolve the actual execution host/cwd, reconcile,
+and require the latest verified projection before handing a launch to the session/runner service.
+Keep existing live-Start idempotency. A gate cannot be satisfied by a default-cwd projection when
+the card actually runs in a worktree.
+
+`AgentSessionLaunchComposer.ComposeForAgentAsync` and the snapshot/preview helper **report**
+projection availability, reason and candidate path; they never throw `pin_projection_unavailable`
+or its stale/conflict variants merely to compose. An unavailable path is not labelled verified.
+This restriction leaves existing provider/budget/legacy-Grok validation intact. Both Grok calls
+from `PolicyRefreshService` are composition/preflight, not the projection enforcement seam;
+drift checks, Notify, and AgentService list/detail/preview must still work with a broken pin file.
+A real policy replacement goes through Start and may refuse there as an explicit launch failure;
+it must not become a swallowed composer exception that disables the policy sweep for that agent.
+
 This prevents collisions and automatic cross-agent instruction delivery, not deliberate reads
 by another process with the same filesystem access. Gitignore and GUID paths are not ACLs;
 Antiphon cannot fence external/shared-directory access. Do not call these files confidential or
@@ -154,18 +174,57 @@ If it cannot be neutralized, surface
 `pin_import_scope_conflict` and refuse the affected launch instead of exposing the other set.
 External/unregistered launches cannot be fenced; Dedicated remains an assertion, not an ACL.
 
+**Anti-commit guard (review D-1):** before any pin-import installation or regeneration, use the
+execution host's Git seam to check the containing `CLAUDE.md`. If tracked (index entry, including
+a newly staged file), refuse the import operation with separate optional-import unavailable
+state `pin_import_target_tracked`; preserve its bytes and index. This applies equally to unmarked
+files and CARD-0059-managed floors, even under ignore coverage. Do not install and merely warn,
+unstage, set assume-unchanged/skip-worktree, or edit a tracked file to carry a runtime pointer.
+The mandatory projection and exact launch/queued file pointer continue unchanged; this optional
+import refusal alone does not fail a launch whose projection is current and discovery is safe.
+
+An untracked Git CLAUDE must already have effective ignore coverage before installing an import;
+otherwise return `pin_import_target_not_ignored`. This closes the same `git add -A` path for a new
+file without hiding the whole CLAUDE on the operator's behalf. Non-Git scopes need no Git ignore.
+Recheck tracking/ignore status immediately before publication, including managed-floor writes.
+An already-present private import in a tracked CLAUDE is not a safe user-equivalent import:
+use D4's unsafe-existing-import conflict/neutralization rule before publishing nonempty pins.
+Local checks cannot prevent a later deliberate force-add or external index edit; no such action
+is authorized by this feature.
+
 For an eligible Claude scope, install exactly one active direct
 `@.antiphon/pins/<agent-id>/antiphon.md` import, with the actual full AgentId substituted. Relative
 paths resolve from the containing CLAUDE, so verify the resolved target matches this projection.
-For a new or CARD-0059-managed CLAUDE floor, render the import as part of the floor's own hash and
-render cycle. It carries no pin text. For an unmarked `CLAUDE.md`, a separate import provisioner
-may append only this delimited, agent-keyed stanza; it must never mark/adopt/rewrite the entire file:
+For a new or CARD-0059-managed CLAUDE floor, **only `AgentWorkspaceProvisioner.Render()`** renders
+the import, as part of the floor's own body/hash. Extend `Provision`, `ProvisionCore`, `Render`
+and its body renderer to carry explicit desired import state (none, pending-next-Start, or the
+verified eligible AgentId/target); no DB lookup or pin text belongs in Render. Every caller must
+pass that state so a default/no-state call cannot erase an installed import. The separate import
+provisioner touches **only unmarked files**, never appends to or trims a managed floor. For an
+eligible unmarked `CLAUDE.md` it may append only this delimited, agent-keyed stanza; it must never
+mark/adopt/rewrite the entire file:
 
 ```markdown
 <!-- antiphon:pins-import begin v2 agent=<agent-id> -->
 @.antiphon/pins/<agent-id>/antiphon.md
 <!-- antiphon:pins-import end agent=<agent-id> -->
 ```
+
+**Ordering (review D-4):** at an actual Start, resolve its host/cwd and inspect unsafe existing
+imports, reconcile and verify the current pin file, derive eligible desired import state, then
+call Provision/Render, compose instructions, and recheck projection revision/scope before runner
+launch. Move the existing early Start Provision call behind pin reconciliation; apply the same
+ordering wherever a named-card/orchestrator Start provisions a floor in its actual cwd. Never
+render a new import before its target exists. Create with no history still renders no pin import.
+
+First capture while a managed-floor agent is already running writes its projection and queues
+the exact pointer, but leaves the managed floor unchanged with import state `pending_next_start`.
+An eligible Dedicated managed-floor agent first gains the import at the **next Start after first
+capture**. No automatic Start or out-of-band append closes that interval. Repeated pin mutations
+do not rewrite the floor. Safety removal on loss of eligibility/cleanup may run before another
+identity is admitted, but also goes solely through Render with desired import absent and verified
+ownership/current-byte checks; never through the unmarked append/cleanup provisioner. If this
+cannot safely remove a discoverable import, D4's scope conflict/refusal still applies.
 
 Preserve all original bytes outside that appended range, including BOM, encoding and newline
 style. A file with no trailing newline gets a tracked separator; cleanup removes only bytes
@@ -189,6 +248,10 @@ existing imports before publishing pin content, including first creation of a pr
 target; checking only when installing our stanza would expose the first snapshot. Never substitute
 writes to `AGENTS.md`, `SOUL.md`,
 `MEMORY.md`, `CLAUDE.local.md`, or provider homes. Codex/Grok get no `@` line.
+`CLAUDE.local.md` is deliberately deferred in v1, not claimed to be unsupported: adding a second
+automatic discovery surface would require its own ownership, cleanup, drift and scope coverage.
+The chosen tracked-case refusal already preserves mandatory delivery through the exact pointer,
+so this amendment does not need that additional fallback or its custody contract.
 
 ### D5 - Pin changes queue a reread; they do not restart a process
 
@@ -238,7 +301,7 @@ conventions. Proposed entities/fields (exact EF configuration lives in `AppDbCon
 | `AgentPinnedInstruction` | Guid Id, AgentId FK, Text (trimmed, nonempty, <=500 UTF-16 characters), Source (Operator/Agent, assigned by server), optional SourceNamespace (<=64) and SourceKey (<=200), optional SourceRef (<=200), CreatedAt, CreatedByUserId/CreatedBySessionId, nullable RevokedAt/RevokedByUserId/RevokedBySessionId, optional SupersedesPinId. Text/provenance immutable; replace revokes one row and inserts another in a single transaction. |
 | `AgentPinnedInstructionState` | One lazy row per AgentId; monotonic Revision, concurrency token, current full SHA-256, first-use time. At most 20 active pins per agent; count and writes serialized under the agent/state row lock. Exact no-ops do not rotate revision/hash. |
 | `AgentPinReconciliation` | One durable latest desired revision/hash per AgentId, pending/error state, and reconciliation progress. Pin mutation and dirty revision commit together. An API delivery receipt never clears pending file work; pin rows retain change history. |
-| `AgentPinProjection` / retained cleanup record | Child projection locations keyed uniquely by (AgentId, canonical execution host, canonical cwd), with unique canonical target path per host. Persist full owning AgentId, path-schema version, exact derived relative/absolute file path, location generation, desired/projected revision, last-written byte hash, marker version, pending/error state, and independent import scope/mode/target/ownership/range/separator/hash. Record current configured/live-session consumers and retain old-path cleanup until settled. Hard-delete cleanup survives the agent cascade. Different AgentIds in the same cwd never share a target or an ownership record. |
+| `AgentPinProjection` / retained cleanup record | Child projection locations keyed uniquely by (AgentId, canonical execution host, canonical cwd), with unique canonical target path per host. Persist full owning AgentId, path-schema version, exact derived relative/absolute file path, location generation, desired/projected revision, last-written byte hash, marker version, pending/error state, and independent import scope/mode/target/ownership/range/separator/hash. Persist exact intended before/after artifact hashes and owned ranges before I/O, independently of success. Record current configured/live-session consumers and cleanup/retirement settlement; an unused, confirmed-absent cwd retires without error. Hard-delete cleanup survives the agent cascade. Different AgentIds in the same cwd never share a target or an ownership record. |
 | `AgentPinOperation` | AgentId + client RequestId unique, operation fingerprint and result IDs/revision for repeat-safe create/replace/revoke. Reusing a RequestId with different content is 409. This prevents HTTP retry from duplicating replacement or its activity/queue work. |
 | Session/queue evidence | Persist owning named AgentId, projection location/generation and exact path for pin-bearing sessions, launch pin revision/hash, and last transcript-confirmed pin notification revision/hash/location generation. Add nullable `PinRefreshKey` plus requested revision/hash/location generation to queue rows, unique per (AgentSessionId, PinRefreshKey); keys cover change revision, path change, resume generation, or compaction sequence. Keep launch evidence separate from message evidence. |
 
@@ -373,16 +436,30 @@ sets for list projections (no per-agent query loop) and uses the same helper for
 `PolicyRefreshService` must use it too. Include named-agent card launches and fresh/resume paths,
 and resolve the actual profile kind consistently with the current composer.
 
+Use one shared implicit-bundle selector for launch composition, PolicyRefreshService drift
+composition and AgentService preview/list: include `standing-instructions.md` exactly for
+supported named agents (effective Claude/Codex/Grok kind, including never-used stores), never
+pool/task-role composition. The inclusion predicate, deduplication and resulting static StampLine
+must be identical between `AgentSessionLaunchComposer` and `PolicyRefreshService`; independently
+maintained predicates can cause permanent drift. Dynamic pin state does not control inclusion.
+Projection refusal remains at the D3 Start seams, not inside this shared composition work.
+
 For general policy refresh, compare bundle stamps excluding only the well-defined dynamic pin
-segment. For file drift, exclude only ownership-verified per-agent projections at their recorded
-paths, and normalize only the exact managed import stanza out of `CLAUDE.md` content before its
-policy hash; the pin reconciler tracks both separately.
+segment. For file drift, normalize only exact per-agent artifacts/ranges verified against recorded
+**intent**, written before I/O, at their canonical host/path and full AgentId; do not require the
+later persisted success flag. The intent records expected before/after bytes or hashes plus exact
+owned stanza/range/separator (and managed-floor marker effect). A crash after append/publication
+but before ownership-success persistence therefore still normalizes that exact intended result,
+including during a sweep before reconciliation resumes. Removal intent similarly covers both
+recorded before/after forms. The pin reconciler tracks pending work separately and success is not
+invented by normalization. A marker alone or a plausible unrecorded stanza never establishes intent.
 For a managed floor, derive the comparison from its body with the stanza omitted, including
 recomputing/omitting its generated hash marker so the marker alone cannot trigger a restart.
 Unrelated authored changes, other imports and the static capture-protocol bundle still count as
 policy drift. A user-configured InstructionFiles list must not accidentally restore the generated
 pin file to the restart lane. Never exclude every file named `antiphon.md` or all `.antiphon/`
-contents by name alone. Malformed/unowned stanzas are not stripped. Preserve legacy launch
+contents by name alone. Malformed stanzas or bytes not verified against recorded intent are not
+stripped; unrelated authored edits outside a verified owned range remain visible. Preserve legacy launch
 hash comparison until a compatible normalized baseline is established; do not manufacture a
 general-policy refresh solely because this hash representation changed.
 
@@ -404,15 +481,16 @@ KB source content out. Never read this file back as a database update.
 | Event | Required outcome |
 |---|---|
 | Agent create/start with no pin history | No new pin file/import. Existing CARD-0059 behavior remains. |
-| First capture in any existing valid cwd, including shared/Unverified | Persist pin and mandatory projection intent first; create validated `.antiphon\pins\<agent-id>` parents, project by same-directory temp + atomic replace/create; install D4 import only after file exists and native scope is eligible. Persist ownership and successful hashes separately from import state. |
+| First capture in any existing valid cwd, including shared/Unverified | Persist pin and mandatory projection intent first; create validated `.antiphon\pins\<agent-id>` parents, project by same-directory temp + atomic replace/create. Eligible unmarked CLAUDE may receive D4 append only after file verification and Git/scope checks. A managed floor stays unchanged with `pending_next_start`; only its next Start renders the first import after reconciliation. Persist intended import bytes before I/O, and ownership-success separately. |
 | Pin create/replace/revoke | Atomically rewrite the whole owned projection from the latest complete snapshot; compare identical bytes to avoid mtime churn. Queue the matching revision after reconcile. |
 | Last pin revoked | Retain a small agent-specific owned file saying no active pins in every still-used location, and retain our import only where eligible. Queue this empty revision with the owner's path. No dangling import or resurrection from a stale snapshot; other agents' files are untouched. |
-| Missing cwd, first-write failure, unowned/tracked target, unsafe path | Do not create the cwd, overwrite a foreign file, or point the agent at it as trusted content. Record mandatory projection failure and retry intent; existing-session API continuity does not settle it. Fresh/resumed pin-bearing launch requires repair under D3. |
-| Unsafe or uneditable CLAUDE import | File creation still proceeds where its path is safe. Deliver the verified exact file pointer without adding an import; known unsafe existing auto-imports require D4 neutralization/refusal. |
+| Still-required location has missing cwd, first-write failure, unowned/tracked target, unsafe path | Do not create the cwd, overwrite a foreign file, or point the agent at it as trusted content. Record mandatory projection failure and retry intent; existing-session API continuity does not settle it. Fresh/resumed pin-bearing launch requires repair at the D3 Start seam. |
+| Retired location: no configured/live consumer and cwd confirmed absent on its execution host | Settle location cleanup as complete/retired, clear its pending repair/attention and stop retrying. Worktree removal on land needs no nonexistent file/marker verification and never recreates the cwd. Host unavailable/access denied/unknown existence is not confirmed absence. Recheck consumers under the location lock; a new consumer requires fresh generation/reconciliation before launch. |
+| Unsafe, uneditable or Git-tracked CLAUDE import target | File creation still proceeds where its path is safe. Deliver the verified exact file pointer without adding an import; tracked target reports separate `pin_import_target_tracked` (untracked without existing ignore coverage: `pin_import_target_not_ignored`). Known unsafe existing auto-imports require D4 neutralization/refusal. |
 | Managed file removed | Recreate at reconcile/next launch in every still-required location, including shared/Unverified; never recreate another agent's file from this agent's snapshot. |
 | Removed ownership marker or unexpected contents | Treat as a conflict; do not adopt foreign/manual content. Operator repair regenerates from DB after checking the recorded ownership and current revision. |
 | Agent rename | Same full AgentId, same file identity; no rename, content revision or cleanup solely for a display-name change. |
-| Agent cwd/host changes or named-card launch uses another worktree | Persist new location and old-path cleanup intent before pointer changes. Create a current file in the new actual cwd after first use and supply that exact path. Continue reconciling an old projection while an owning live session still uses it. Once unused, remove only our exact import stanza and verified owned file. For a user-owned import, retain an empty owned tombstone with retained-for-import status. Never change another agent's path or delete shared parents/siblings. |
+| Agent cwd/host changes or named-card launch uses another worktree | Persist new location and old-path cleanup intent before pointer changes. Create a current file in the new actual cwd after first use and supply that exact path. Continue reconciling an old projection while a configured or owning live-session consumer still uses it. Once unused and cwd exists, remove only our exact import and verified owned file (managed-floor removal via Render). For a user-owned import, retain an empty owned tombstone with retained-for-import status. If the unused cwd is confirmed absent, settle retirement as above. Never change another agent's path or delete shared parents/siblings. |
 | Import mode Disabled/Unverified or workspace becomes shared | Retain/update the mandatory file; remove only our verified owned native-import stanza before another identity can discover it. Deliver exact per-session file pointers. User-owned imports and unsafe cleanup use D4's explicit conflict/repair rule. |
 | Kind changes | Pins and mandatory file survive, including unsupported kinds. Remove only our Claude-specific stanza when leaving Claude. Returning to Claude installs it idempotently only where D4 scope permits. |
 | Agent hard-delete | Queue ownership-checked cleanup durably outside cascaded pin rows; no model turn or automatic session start for cleanup. Keep pending/error visible through the existing attention mechanism. |
@@ -422,12 +500,18 @@ All file writes verify the resolved path, full owning AgentId, expected previous
 desired revision under a per-projection serialization seam. Shared CLAUDE append/cleanup and Git
 exclude changes have their own canonical file locks; lock ordering is consistent. Recheck before
 replacement; retries converge to the newest revision rather than letting a slow older writer win.
+These locks serialize Antiphon's own writers only. Read-compare-write retains a TOCTOU window
+against an external editor after the last comparison; this residual is accepted, not claimed
+closed by the canonical lock. Detect changes at comparison and refuse rather than overwrite;
+V-12 places its deterministic author edit before that final comparison.
 Use an infrastructure I/O
 interface for testable atomic file work; keep pure rendering in Application. Reconcile on pin
 mutation, workspace/kind/import-mode change, launch and a bounded background retry for dirty states.
 Record create intent before I/O so a crash after creation but before success persistence can
 recognize only that intended AgentId/path/revision/byte hash on retry. Never adopt an arbitrary
-file simply because its marker looks plausible. Cleanup has the same compare-before-write rules;
+file simply because its marker looks plausible. The same pre-I/O intent rule covers import append,
+managed-floor render and cleanup, so drift normalization does not depend on success persistence.
+Cleanup has the same compare-before-write rules for existing locations;
 remove only verified owned files and, if desired, empty owned leaf directories, never recursively
 remove `.antiphon`, `pins`, or another agent's subtree.
 
@@ -438,8 +522,10 @@ Resolve the effective exclude path with Git (`git rev-parse --git-path info/excl
 for linked worktrees/common Git metadata; do not assume cwd contains a `.git` directory. Preserve
 unrelated exclude bytes and serialize updates. Never stage/commit a projection or force-add it;
 refuse an already tracked target even if an ignore rule matches. Non-Git workspaces still get the
-file. Do not change the project's `.gitignore` or hide its entire CLAUDE file. An appended import
-in tracked unmarked CLAUDE remains a visible local diff; UI/docs explain its runtime-only target.
+file. Do not change the project's `.gitignore` or hide its entire CLAUDE file. D4 refuses native
+import installation into a tracked CLAUDE (managed or unmarked), and into an untracked Git CLAUDE
+without existing ignore coverage. Never treat a visible tracked import diff as an acceptable
+runtime artifact. UI/docs explain the separate import refusal and continuing exact-file delivery.
 
 A stale owned file after revocation is more serious than a never-created file. Queue an API-based
 current-set reread for the live session and show cleanup failure. Before a new/resumed launch,
@@ -543,8 +629,9 @@ to expose old launch snapshot resurrection, not just a single successful reread 
 
 ## Implementation slices and test ownership
 
-These are design slices for the later Code task, not work completed here. Separate TestDesign
-must turn the acceptance targets into V-n/R-n/PC-n cases, red controls, fixtures and exact commands.
+These are design slices for later Code tasks, not work completed here. The amended Verification
+design below supplies V-n/R-n/PC-n cases, red controls, fixtures and exact commands. Dispatch and
+verify by slice; in particular, do not combine S3 and S4 into one implementation dispatch.
 File names marked **new** are proposed, not existing mechanisms.
 
 | Slice | Concrete files/seams | Acceptance tests to extend or add |
@@ -557,9 +644,29 @@ File names marked **new** are proposed, not existing mechanisms.
 | S6 - Operator UI and owners | **New** `client/src/features/agents/AgentPinnedInstructions.tsx`; `AgentSettingsModal.tsx`, `client/src/api/agents.ts`, `useSignalRInvalidation.ts`; update docs/agent-workspaces.md, docs/agent-instruction-file-contract.md, docs/agent-kinds.md, docs/agent-credentials.md, docs/session-runtime-invariants.md, docs/antiphon-api.md and applicable orchestration/channel capture guidance. | **New** `AgentPinnedInstructions.test.tsx`; `AgentBundleAttachments.test.tsx`, invalidation tests. Add/replace/revoke/history, retain drafts on conflict/invalidation, mandatory file readiness in shared/Unverified, optional import setup as separate state, repair pending despite API receipt, unsupported kinds; no raw pin content in events/attention export. |
 | S7 - End-to-end acceptance | **New** isolated server/runner pin scenario and installed-CLI canary, using existing fake/real provider fixtures; no production runner, broker or workspace. | Persist source-tagged arbitrary instruction, fresh launch, mid-turn replace, last revoke, resume, two compactions; verify next actual behavior for Claude/Codex/Grok where supported. Claude native import to the unique target with unmarked file in exclusive scope; two same-cwd agents both receive files and only their own pins through exact pointers, with no shared pin import; shared/ancestor cross-load negative. Separate queue proof from model compliance. Real-provider prerequisites/remaining CARD-0395 limitations reported explicitly. |
 
+Amendment ownership within those slices:
+
+- **S2:** `AgentLaunchComposition` carries projection state without throwing; require verified
+  current file at the three D3 Start seams, including actual named-card cwd. Introduce the shared
+  implicit-bundle selector for composer, AgentService and PolicyRefreshService. V-4/V-13/V-22,
+  PC-58/PC-62 cover the seam boundary and predicate parity.
+- **S3:** D4 Git-tracking/ignore guards cover both import writers; pass desired import state
+  through every Provision/Render caller, move Start provisioning after pin reconciliation, and
+  restrict the append provisioner to unmarked files. Persist import intent before I/O. V-11/V-31,
+  PC-57/PC-60 cover tracked refusal and Render-only/next-Start ordering.
+- **S4:** reconcile location consumers before missing-cwd classification; settle confirmed-absent
+  unused locations and clear their attention, while required or unknown locations remain pending.
+  V-15/PC-59 cover removal-on-land, restart, consumer races and retained hard-delete cleanup.
+- **S5:** normalize on exact recorded intent, including publication-before-success crash windows;
+  preserve nonthrowing Grok policy preflight and static-bundle parity with S2. V-22/PC-61 plus
+  PC-58/PC-62 are required; test real unrelated policy drift as well as pin-only no-restart.
+- **S6/S7:** show optional tracked-target refusal and managed `pending_next_start` separately from
+  a ready mandatory file. V-26 includes both states; V-28 uses non-Git or already-ignored untracked
+  CLAUDE fixtures so its native-import success arm does not bypass the new guard.
+
 ### Verification handoff constraints
 
-The TestDesign stage must include meaningful negative controls: remove the pin segment from
+The Verification design includes meaningful negative controls: remove the pin segment from
 composition; remove the import stanza installation; omit the change/revoke trigger; allow raw
 pin text to be parsed as an import/template; compare only enqueue status; let policy refresh see
 pin-only drift; let the old Grok snapshot win after compaction. Import-installation controls apply
@@ -591,10 +698,16 @@ For the D3 amendment, add explicit acceptance cases and red controls for:
   session keeps its old location current until release. Simulate a stale writer, crash after file
   create, failed import cleanup and delete cascade. Sibling files and unrelated `.antiphon`
   content survive; equal content hashes do not suppress location-change rereads.
-- Read-only/missing cwd, a tracked target and unsafe reparse paths remain visible mandatory-file
+- Read-only/missing still-required cwd, a tracked projection target and unsafe reparse paths remain visible mandatory-file
   failures, with no foreign overwrite or false completion after API continuity. Repair converges
   to the latest revision and unblocks launch. Pin-only file/stanza changes never trigger restart;
   unrelated similarly named files still count in configured policy drift.
+
+Review amendments additionally require V-31's tracked-CLAUDE refusal, V-22's nonthrowing
+composition/policy-refresh and intent-crash coverage plus implicit-bundle parity, V-15's removed
+worktree retirement, and V-11's Render-only/next-Start ordering. Their PC-57 through PC-62 arms
+are mandatory alongside the original controls; the repaired design must not retain the prior
+tracked-diff, missing-cwd-always-fails or success-only-normalization assertions.
 
 Filesystem isolation assertions cover collisions, pointers and automatic loading, not an inability
 for a hostile same-user process to open a sibling file. Do not use filesystem ACL denial as the
@@ -616,11 +729,17 @@ only this revised plan. Code must not report S1-S7 as verified from this artifac
 ## Rollout, limitations and completion criteria
 
 1. The operator has required always-create-file and released the build hold in task `d4769008`.
-   Caller updates the card's standing hold language separately. Land this amendment before the
-   separate TestDesign dispatch, then Code; do not implement the superseded dedicated-only plan.
+   Caller updates the card's standing hold language separately. Land this review amendment, then
+   Code by S1-S7 using the included amended TestDesign; do not implement the superseded dedicated-only plan.
 2. Migration creates no pins and writes no files. Deploy the capture protocol with the feature;
    existing running sessions need their normal instruction refresh or an explicit explanatory
    note before autonomous capture can be expected. Do not mass-edit stored custom preambles.
+   The new static bundle changes every supported named agent's StampLine, even with no pins:
+   expect a fleet-wide one-time relaunch wave among eligible Auto/Relaunch seats at their next
+   idle windows under existing gates/cooldowns. Notify/Off/non-resumable seats keep their existing
+   lane behavior. Budget and observe that rollout explicitly. Shared inclusion-predicate parity
+   in composition and drift is a release requirement (V-22); otherwise the wave repeats forever.
+   Subsequent dynamic pin changes, including first import installation, must not cause relaunches.
 3. For the originating agent, read its actual AgentId, host, kind, session, cwd, instruction-file
    ownership and shared use through the owning deployment. That external workspace is not
    established by this checkout. Resolve its full-ID file path and create it after first capture
@@ -646,6 +765,8 @@ drop the pin tables or delete arbitrary workspace files as an implicit rollback 
 ## Verification design
 
 TestDesign: 2026-09-08, task `8ef399b2`, against landed plan/code HEAD `4db2076b`.
+Review amendment: task `d7b7fce8`, responding to full review `7b9d12b0`; updated V/R rows and
+PC-57 through PC-62 extend that TestDesign without claiming any implementation or execution.
 This section specifies executable acceptance for S1-S7; it does not implement or certify them.
 The D3 amendment is the baseline: a file is mandatory after first use in shared/Unverified
 workspaces, while native Claude imports require exclusive discovery scope. The build hold is
@@ -722,14 +843,15 @@ Existing classes are regression coverage to extend, not a claim that they alread
 | V-7 | Full identity and concurrent shared use / integration / **new** `AgentPinWorkspaceTests.V07_*` | A/B share cwd and short-ID prefix. Interleave first creates, replaces and A's last revoke using barriers; assert different target/ownership rows and independent latest bytes, B never loses its pin, A ends empty. Launch both and inspect their actual launch and change-note targets: each contains only its owning ID/path/canary, never a sibling path or directory-search recipe. Rename A, then delete/recreate its name as C: rename preserves identity/revision/path, C uses its own full ID and starts with no history. Same-agent sessions in one location share one projection; two hosts with the same cwd spelling do not. Repeat through case/separator/trailing-separator aliases to verify canonical locking, not just string equality. |
 | V-8 | Shared/ancestor automatic discovery / integration plus V-29 installed CLI / **new** `AgentPinWorkspaceTests.V08_*` | Snapshot an unmarked CLAUDE in shared cwd: after both captures/launches it is byte-identical, with neither import. Dedicated admission must detect same cwd, ancestor/descendant in both directions, case aliases, stopped registered agents and a live task worktree under the scope. Test root `work` versus unrelated `work-other` to prevent prefix over-rejection. Race two scope admissions while import installation is gated: both may proceed only after no foreign pin import can be discovered; they cannot both retain exclusive imports. Transition an already Dedicated A to sharing with B: remove only A's verified owned stanza before B is admitted, retain/update both files. Fail that removal: B's launch returns `pin_import_scope_conflict` and no runner start. |
 | V-9 | User-owned and dangling imports checked before publication / integration plus V-29 / **new** `AgentPinWorkspaceTests.V09_*` | In shared cwd and an ancestor CLAUDE, place a user-authored direct import to A's not-yet-created full-ID target. First capture commits intent but publishes no nonempty private snapshot into that discovery path: record scope conflict/mandatory file failure, refuse affected launch. Any newly created file is only an ownership-recorded empty tombstone. Repeat with an existing owned private target: neutralize only verified owned bytes, preserve user CLAUDE bytes, keep failure until its user import is removed; API receipt does not clear it. Remove the user import as a fixture operator action and reconcile: latest file becomes ready and launch unblocks. A foreign/unowned target is never emptied or adopted. An old root import, another agent's import and forged legacy-v1 markers never count as an equivalent owned import; unsafe legacy content remains a surfaced conflict. |
-| V-10 | Narrow unmarked CLAUDE append / integration / **new** `AgentPinWorkspaceTests.V10_*` | Dedicated, nonoverlapping scope with verified file. Test ASCII and strict UTF-8 (non-ASCII text, with/without BOM), LF/CRLF, empty file, one/multiple final newlines and no final newline. Record original bytes. Append exactly the D4 full-ID v2 stanza plus recorded necessary separator; prefix stays identical, no managed-floor marker is added, import resolves to this file. Reconcile/rewrite pins repeatedly: one active stanza, unchanged original bytes, no unnecessary mtime change. Disable native import: remove only recorded stanza/separator, restoring the original byte array. Preserve surrounding author edits made between completed operations; an edit during the compare/write window must instead fail safely under V-12. |
-| V-11 | Import recognition and managed-floor regression / integration / **new** `AgentPinWorkspaceTests.V11_*`; existing `AgentWorkspaceProvisionerTests` | Equivalent direct `@.antiphon/pins/<A>/antiphon.md` and `@./.antiphon/pins/<A>/antiphon.md` in an eligible scope suppress duplication but remain user-owned, including on cleanup. Inline-code and backtick/tilde fenced examples do not suppress installation. Wrong-ID/root imports do not satisfy A's requirement and are checked for unsafe discovery. Malformed, duplicate/nested/mismatched agent-keyed stanzas and unrecorded legacy-v1 markers produce separate import conflicts, never whole-file adoption. Existing provisioner still returns `LeftAlone` byte-for-byte for ordinary unmarked files. A newly generated/managed floor retains exactly its own import across job/channel/style refresh, accounts for it in its own hash, and contains no pin text. Codex/Grok and scope-ineligible Claude install no import; AGENTS/SOUL/MEMORY/CLAUDE.local/provider-home sentinel bytes never change. |
+| V-10 | Narrow unmarked CLAUDE append / integration / **new** `AgentPinWorkspaceTests.V10_*` | Dedicated, nonoverlapping non-Git scope (or untracked CLAUDE with existing Git ignore coverage), with verified file. Test ASCII and strict UTF-8 (non-ASCII text, with/without BOM), LF/CRLF, empty file, one/multiple final newlines and no final newline. Record original bytes. Append exactly the D4 full-ID v2 stanza plus recorded necessary separator; prefix stays identical, no managed-floor marker is added, import resolves to this file. Reconcile/rewrite pins repeatedly: one active stanza, unchanged original bytes, no unnecessary mtime change. Disable native import: remove only recorded stanza/separator, restoring the original byte array. Preserve surrounding author edits made between completed operations; an edit before the final comparison must fail safely under V-12. The residual external edit window after comparison is not claimed closed. |
+| V-11 | Import recognition and managed-floor regression / integration / **new** `AgentPinWorkspaceTests.V11_*`; existing `AgentWorkspaceProvisionerTests` | Equivalent direct `@.antiphon/pins/<A>/antiphon.md` and `@./.antiphon/pins/<A>/antiphon.md` in an eligible scope suppress duplication but remain user-owned, including on cleanup. Inline-code and backtick/tilde fenced examples do not suppress installation. Wrong-ID/root imports do not satisfy A's requirement and are checked for unsafe discovery. Malformed, duplicate/nested/mismatched agent-keyed stanzas and unrecorded legacy-v1 markers produce separate import conflicts, never whole-file adoption. Existing provisioner still returns `LeftAlone` byte-for-byte for ordinary unmarked files. Create/start a never-used managed-floor agent, then capture while live: verified pin file and queued exact pointer exist, floor bytes/mtime remain unchanged, import is `pending_next_start`, zero starts. Directly exercise the separate import provisioner on that managed file: no append/cleanup write. Remove only the fixture-owned projection to force repair; on next actual Start, gate its republication and assert no Render-installed import/runner start before verified file; then release and require one complete Render write with exactly one import and matching floor hash, no intermediate remove/reappend. Repeat job/channel/style refresh and no-op Start: import retained, no pin text, no mtime churn for identical output. Safety removal also uses Render only. Codex/Grok and scope-ineligible Claude install no import; AGENTS/SOUL/MEMORY/CLAUDE.local/provider-home sentinel bytes never change. Git cases obey V-31. |
 | V-12 | Append/cleanup edits and unsupported encoding / integration / **new** `AgentPinWorkspaceTests.V12_*` | Pause append after original-byte read; author writes new bytes; release: compare detects conflict, preserves the author's complete bytes and does not mark import success. Retry from a fresh read can append once. Pause cleanup similarly, including a user edit inside the stanza or tracked separator: no guessed removal/whole-file rewrite. Ordinary import-install failure leaves mandatory file and verified explicit launch/read working; unsafe sharing cleanup instead refuses admission per V-8. Minimum supported corpus is strict UTF-8/ASCII above; malformed UTF-8 and UTF-32 BOM fixtures must be explicitly refused with all bytes unchanged. For any additional encoding Code elects to support (e.g. UTF-16 LE/BE), add BOM/newline/no-final-newline byte-round-trip cases; otherwise assert explicit unsupported-encoding status. Never decode with replacement or silently transcode. A CLAUDE symlink is refused without changing its referent; safe projection still succeeds. |
 | V-13 | Foreign/tracked/unsafe target and I/O refusal / integration / **new** `AgentPinWorkspaceTests.V13_*` | Separate rows: unmarked target; plausible full-ID marker without persisted ownership/intent; marker owned by B; removed marker; manually altered bytes; Git-tracked target even with ignore coverage; parent component replaced by a file; junction/reparse at each directory component; file symlink; containment escape/unsafe canonical path; access denied; missing cwd; remote host unavailable. Capture remains saved, mandatory file work pending/failed; preserve foreign/referent/sentinel bytes and do not create missing cwd. Fresh and resumed pin-bearing launches return `pin_projection_unavailable`, with zero launch attempts and no trusted pointer to foreign bytes. Path components never come from pin/source/display name; callers cannot choose target paths. Repair fixture obstruction, reconcile current revision and assert real bytes, correct pointer and successful launch. Genuine NTFS reparse coverage is required; unavailable privileges are pending coverage, not a pass. |
 | V-14 | Atomic publication, crash recognition and newest writer / integration / **new** `AgentPinWorkspaceTests.V14_*` | Gate before atomic create/replace: target is either absent/old complete bytes, never partial new content. Release/fail at temp write, before publish, after publish before ownership-success save; recreate service and reconcile. Only the recorded intended AgentId/path/revision/byte hash can be recovered without adoption. A plausible but different artifact stays a conflict. Pause revision n, commit/reconcile n+1, release n through its stale-write guard: final file cannot regress. Pause cleanup, repin/change desired revision, release: current file cannot be deleted. Unchanged bytes preserve mtime. Temp files stay within owned ignored leaf and are not advertised as read targets. |
-| V-15 | Revoke, location and delete cleanup / integration / **new** `AgentPinWorkspaceTests.V15_*` | Last revoke writes/stamps empty set in every still-used location and retains eligible import. Change default cwd/host with old live A session and a named-card worktree: persist new location and cleanup intent, create new file and pointer, keep old session's file current through another mutation; equal content hash still advances location/read generation. On last consumer release, remove only verified owned file/stanza; user-owned import keeps an empty retained-for-import tombstone. Change Claude to Codex/Raw and back: file survives, own import removed/reinstalled only when eligible. Hard-delete after failed cleanup: reload after FK cascade and retry from retained cleanup record; B/C/sibling/.antiphon sentinel survive, never recursive parent deletion. Recreated same-name C cannot authorize A cleanup. |
+| V-15 | Revoke, location and delete cleanup / integration / **new** `AgentPinWorkspaceTests.V15_*` | Last revoke writes/stamps empty set in every still-used location and retains eligible import. Change default cwd/host with old live A session and a named-card worktree: persist new location and cleanup intent, create new file and pointer, keep old session's file current through another mutation; equal content hash still advances location/read generation. On last consumer release, remove only verified owned file/import (managed removal through Render); user-owned import keeps an empty retained-for-import tombstone while cwd exists. Release a fixture card worktree's last consumer, remove it using fixture Git cleanup as on land, recreate service and sweep twice: location settles cleanup-complete/retired, no repair attention/retries or recreated cwd, other locations stay current. Contrast missing cwd with a configured or live consumer: remains mandatory failure; host unavailable/access denied is not absence. Race consumer acquisition against retirement under the location lock: never retire a required location; later reuse needs a fresh generation and verified projection. Change Claude to Codex/Raw and back: file survives, own import removed/reinstalled only when eligible under D4 next-Start ordering. Hard-delete after failed cleanup: reload after FK cascade and retry from retained cleanup record, or settle confirmed-absent unused cwd; B/C/sibling/.antiphon sentinel survive, never recursive parent deletion. Recreated same-name C cannot authorize A cleanup. |
 | V-16 | Stale revocation refusal and emergency continuity / integration / **new** `AgentPinWorkspaceTests.V16_*` | Establish nonempty owned imported file, revoke last pin, then deny regeneration/empty/removal. Existing session is not killed; receives explicitly degraded current-set API recovery without an instruction to trust the stale file, and file cleanup remains failed. Fresh/resumed launch that could load known revoked content returns `pin_projection_stale`, not success with fresh inline pins. In shared explicit-read mode, a stale/unverified projection also cannot satisfy new/resumed launch. Repair and reconcile newest empty revision before launch succeeds. Simulated file read with wrong ID/revision invokes own-session API recovery, never sibling/root fallback; file plus API failure is visible, never invented empty success. |
-| V-17 | Git exclusion custody / integration / **new** `AgentPinWorkspaceTests.V17_*` | Real disposable repo, subdir cwd and linked worktree with common Git metadata: resolve effective `info/exclude` through Git; existing covering ignore causes no edit, otherwise add only root-relative owned ID subtree including temps. Concurrent A/B exclude appends preserve original exclude bytes and both rules. `git check-ignore` covers projection/temp, `git ls-files` never contains new projection, tracked `.gitignore` unchanged; tracked unmarked CLAUDE append remains visible in `git diff`. No hiding entire CLAUDE or `.antiphon` subtree. Tracked-file conflict is tested separately from ignore success. Non-Git requires no Git prerequisite. |
+| V-17 | Git exclusion custody / integration / **new** `AgentPinWorkspaceTests.V17_*` | Real disposable repo, subdir cwd and linked worktree with common Git metadata: resolve effective `info/exclude` through Git; existing covering ignore causes no edit, otherwise add only root-relative owned ID subtree including temps. Concurrent A/B exclude appends preserve original exclude bytes and both rules. `git check-ignore` covers projection/temp, `git ls-files` never contains new projection, tracked `.gitignore` unchanged; tracked CLAUDE has no new import or diff under V-31. No hiding entire CLAUDE or `.antiphon` subtree. Tracked-file conflict is tested separately from ignore success. Non-Git requires no Git prerequisite. |
+| V-31 | Import target cannot be committed by routine staging / integration / **new** `AgentPinWorkspaceTests.V31_*` | Real fixture repo and linked worktree; Dedicated, nonoverlapping scope; data rows for tracked unmarked and tracked CARD-0059-managed CLAUDE, including existing ignore coverage and staged-but-not-committed CLAUDE. Capture/reconcile/Start with a verified pin file: no stanza installed or tracked-byte/index change, separate `pin_import_target_tracked`, mandatory file and exact pointer ready, allowed launch carries A only. Run fixture `git add -A`: no Antiphon pin import enters index/diff; another fixture clone/worktree inherits no private pointer. Untracked/nonignored CLAUDE refuses with `pin_import_target_not_ignored` and no automatic whole-CLAUDE exclusion. Untracked/already-ignored CLAUDE and non-Git controls install normally under D4/next-Start rules. Gate before publication, stage the CLAUDE, release: final check refuses. A pre-existing tracked private import is unsafe before first nonempty projection publication, preserves user bytes and requires explicit repair under D4. |
 
 #### Delivery, policy and recovery coverage
 
@@ -739,18 +861,40 @@ Existing classes are regression coverage to extend, not a claim that they alread
 | V-19 | Ownership and exact pointer on every trigger / integration / **new** `AgentPinRefreshTests.V19_*` | A/B same cwd plus A default/live-card/old-live-location sessions: create/replace/revoke, resume and compaction target only persisted owning named sessions, each with its actual absolute path, full ID/revision/hash/location generation. Change host/cwd with equal hash: new obligation is queued. Persist an old session then reassign its card: its ownership is not reassigned by cwd/card lookup. Pre-feature ownership backfill accepts only exact unambiguous persisted link, otherwise reports unavailable live delivery. Session replacement cancels old pending work and creates a current new-session obligation, never retargets attempted bytes or broadcasts by cwd/channel. |
 | V-20 | Idle, coalescing and bounded failure / integration / **new** `AgentPinRefreshTests.V20_*` | While owner is working, replace then revoke: zero raw input/Enter/interrupt/stop/start; file may update but delivery waits for real TurnEnd. Two unattempted revisions coalesce to newest entire set with coverage. Gate after attempt begins, change revision: attempted message bytes remain immutable, later note survives and is sent at next eligible turn. Exhaust supported retry policy: parked/failed/canceled shows attention, receipt unchanged, repeated sweeps create no endless fresh keys. Explicit retry uses supported queue retry and eventually confirms. Already transcript-confirmed prompt with no assistant answer is not retyped. |
 | V-21 | Evidence ladder / integration / **new** `AgentPinRefreshTests.V21_*` | For an actual pin queue row inject separately: enqueue-only, screen echo, AssistantText containing header, wrong-session UserPrompt, wrong key/hash/location, unrelated user prompt, and exact owning UserPrompt via transcript sync/catch-up. Only the last advances pin `Reread requested` and only once; launch revision/hash remains unchanged. Read a later complete revision: do not downgrade to an older message. API continuity success while file I/O still fails leaves file pending/failed and visible repair; UI must not call transcript delivery a successful file read or pin compliance. |
-| V-22 | Pin-only policy drift never restarts / integration / **new** `AgentPinPolicyTests.V22_*`; existing `PolicyRefreshServiceTests`, `InstructionFileStampTests` | Under Auto/Relaunch/Off change pins, first install/remove an owned stanza and regenerate managed-floor hash: zero kill/start calls, pin queue still works. Explicitly include the owned path in InstructionFiles. Contrast a real bundle change, authored CLAUDE edit, unrelated root/sibling `antiphon.md`, unowned/malformed stanza and unrelated `.antiphon` file configured for drift: each still follows existing policy, and any real replacement launch includes current pins. Only exact ownership-verified paths/ranges are normalized; legacy hash baseline establishment alone causes no restart. |
+| V-22 | Pin drift isolation, nonthrowing preflight and bundle parity / integration / **new** `AgentPinPolicyTests.V22_*`; existing `PolicyRefreshServiceTests`, `InstructionFileStampTests` | Under Auto/Relaunch/Off change pins, first install/remove an eligible unmarked stanza and normalize a Render-generated managed-floor hash: policy makes zero kill/start calls, pin queue still works. Explicitly include owned path in InstructionFiles. Only exact intent-verified paths/ranges are normalized, even before persisted success. Contrast real bundle change, authored CLAUDE edit, unrelated root/sibling `antiphon.md`, unrecorded/malformed stanza and unrelated `.antiphon` file configured for drift: each follows existing policy; successful replacement includes current pins. Legacy normalized-baseline establishment alone causes no restart. Also execute every crash, unavailable-projection and inclusion-parity arm below. |
 | V-23 | Compaction/resume durable coverage / integration / **new** `AgentPinRecoveryTests.V23_*`; existing `CompactionRecoveryTests` | Claude/Codex named agent, pins used, no preamble and not AlwaysOn: compact boundary persists idempotent generation/sequence trigger and queues pin-only note. No pins/history preserves old no-note case. Test boundary replay, sync-only catch-up and service restart before enqueue; mid-turn auto compact remains held until TurnEnd. Combine workspace recovery where applicable without two turns; plain cwd gets no invented SOUL/MEMORY instructions. Resume of same hash produces a new generation obligation. Replace then last-revoke, resume and process two distinct compactions: every new request names current empty full set/own file, never resurrects historical launch pins. |
 | V-24 | Grok barrier, current pins and receipts / integration / **new** `AgentPinRecoveryTests.V24_*`; existing `GrokRulesCompactionRecoveryTests`, `GrokRulesQueueBarrierTests` | Seed real persisted CARD-0395 rules state and captured native compact event. Recovery carries current exact pin pointer in the single rules refresh row and links pin intent to it. Ordinary pin-change row cannot pass closed barrier through enqueue/flush/retry/sweep. A rules ACK alone is not a pin receipt/compliance claim. Keep hash/receipt refusal and legacy-inline resume refusal. After revoke and two compactions, inspect the actual combined recovery text and requested external snapshot as empty while runner-owned historical rules bytes are unchanged; pending current pin change is not lost to rules coverage. V-30 separately tests actual model behavior. |
 | V-25 | Internal-turn routing and redaction / integration / **new** `AgentPinInternalTurnTests.V25_*`; existing `ChannelMachineTurnTextTests`, `ChannelMachineTurnMatchTests` | Complete a persisted pin-refresh turn with arbitrary answer, attachment marker and even a valid-looking task report token, not just NO_REPLY. Assert zero outbound text/attachments, no task settlement or boot-ready evidence. A real human prompt with identical header wording still receives normal routing. Use persisted queue identity, not string prefix suppression. Scan captured IEventBus/log/attention/export payloads for synthetic text/source-ref canaries: semantic activity contains IDs/action only, one per actual change; no raw pins or credential values. Pin detail UI/API remains the intended text display. |
+
+V-22 additional named data arms (all required):
+
+- **Intent crash:** persist exact append intent, publish stanza, crash before ownership-success
+  persistence; recreate services and run Auto/Relaunch sweep before reconciliation. No process
+  action; then recover the same append exactly once. Cover managed Render and removal windows
+  too. A mismatching/unrecorded stanza and an authored edit outside the owned range must still
+  cause genuine drift, so success-only or blanket-regex normalization both fail.
+- **Projection-unavailable preflight:** a Grok session with valid CARD-0395 receipt, real unrelated
+  bundle drift and missing/failed pin file still permits `ComposeForAgentAsync` to return structured
+  unavailable state, and AgentService list/detail/preview to return status. Drive both `SweepAsync`
+  and manual `RefreshAgentAsync` in Notify lane through actual Grok preflight: normal policy note/
+  outcome, no swallowed pin exception or lost policy work. Direct fresh/resumed Start via all three
+  D3 seams still refuses with zero runner attempts (V-13). An actual Relaunch lane with a failed
+  projection reports its Start refusal as policy-refresh failure; the sweep continues to a healthy
+  second agent and subsequent repair restores normal refresh. Keep existing Grok resume refusals.
+- **Implicit inclusion parity/one-time deployment drift:** supported effective profile kinds,
+  mismatched stored Agent.Kind/profile kind, zero-pin and used/revoked named stores, custom/no
+  preamble, and excluded pool/task-role paths. Compare launch, preview and policy static stamps.
+  A pre-feature eligible Auto/Relaunch session drifts once from the new protocol; after that
+  replacement's stamps are persisted, another eligible sweep has no drift/relaunch. Notify and
+  Off retain their policy. Adding/changing/revoking pins later does not alter static inclusion.
 
 #### UI and provider acceptance
 
 | ID | Behaviour / layer / test | Setup, action and required assertions |
 |---|---|---|
-| V-26 | Review/repair UI without losing drafts / unit / **new** `AgentPinnedInstructions.test.tsx`; existing `AgentBundleAttachments.test.tsx`, `useSignalRInvalidation.test.ts` | Add, atomically replace, revoke, view history/provenance/capacity and render literal malicious-looking text. Interleave SystemPromptAppend draft and pin draft with event invalidation/409: both drafts survive, current revision reloads and retry is deliberate. Shared/Unverified/Disabled shows file-ready + exact explicit-read target, separate optional-import state. Test saved-but-file-failed with API receipt, import-only conflict with file ready, queued, screen-unverified, transcript-requested, unsupported kind and tool-disabled seat. Repair remains available until file recovered. No filesystem confidentiality claim or demand to stage runtime files. IDs/revision/status events invalidate pin/detail/list/attention queries without exposing text. |
+| V-26 | Review/repair UI without losing drafts / unit / **new** `AgentPinnedInstructions.test.tsx`; existing `AgentBundleAttachments.test.tsx`, `useSignalRInvalidation.test.ts` | Add, atomically replace, revoke, view history/provenance/capacity and render literal malicious-looking text. Interleave SystemPromptAppend draft and pin draft with event invalidation/409: both drafts survive, current revision reloads and retry is deliberate. Shared/Unverified/Disabled shows file-ready + exact explicit-read target, separate optional-import state. Test saved-but-file-failed with API receipt, import-only conflict with file ready, `pin_import_target_tracked`, `pin_import_target_not_ignored`, managed `pending_next_start`, queued, screen-unverified, transcript-requested, unsupported kind and tool-disabled seat. Retired absent location has no repair attention; still-required missing cwd does. Repair remains available until required file recovered. No filesystem confidentiality claim or demand to stage runtime files. IDs/revision/status events invalidate pin/detail/list/attention queries without exposing text. |
 | V-27 | Real API/UI-to-runtime journey / E2E / **new** `tests/Antiphon.E2E/AgentPinnedInstructionsE2ETests.cs`, methods `V27_*` | Use `AntiphonAppFixture` with fresh built client, own Postgres, random `IsolatedSessionRunner`, refusing external message producer and fake provider. Through UI capture source-tagged arbitrary standing instruction, launch, hold a turn, replace, last-revoke, resume and replay two captured compact boundaries. Inspect disk/session/queue/transcript and rendered status at each boundary; same-cwd A/B both get files with no shared import. Reload browser and restart only fixture server between commit and reconciliation to exercise startup repair. Fake scripted output proves wiring only. Use TestDiagnostics per owner and fixture-owned process teardown. |
-| V-28 | Installed Claude really expands the exclusive stanza / integration, installed CLI against stub / **new** `tests/Antiphon.Tests/Agents/AgentPinClaudeImportCanaryTests.cs`, methods `V28_*` | In an isolated exclusive repo create projection and append stanza through production service. Run installed Claude with a nonce prompt, no dynamic pin injection, no prompt containing the pin canary, and no scripted Read tool request. In recorded model request require A's file-only canary. Repeat equivalent direct import, fenced-example-plus-installed-import, non-ASCII/BOM/CRLF and after pin replacement. Include root payload file targeted by literal `@` pin: its secret-free canary must not appear. After cleanup the file-only canary must be absent on fresh launch. This isolates native expansion from launch injection; scripted assistant text is never the oracle. Record executable/version, cwd, file hashes, exact serialized context evidence and nonce/key receipts. |
+| V-28 | Installed Claude really expands the exclusive stanza / integration, installed CLI against stub / **new** `tests/Antiphon.Tests/Agents/AgentPinClaudeImportCanaryTests.cs`, methods `V28_*` | In an isolated exclusive repo with an already-ignored untracked CLAUDE, create projection and append stanza through production service. Run installed Claude with a nonce prompt, no dynamic pin injection, no prompt containing the pin canary, and no scripted Read tool request. In recorded model request require A's file-only canary. Repeat equivalent direct import, fenced-example-plus-installed-import, non-ASCII/BOM/CRLF and after pin replacement. Include root payload file targeted by literal `@` pin: its secret-free canary must not appear. After cleanup the file-only canary must be absent on fresh launch. This isolates native expansion from launch injection; scripted assistant text is never the oracle. Record executable/version, cwd, file hashes, exact serialized context evidence and nonce/key receipts. |
 | V-29 | Installed Claude cross-load negative / integration, installed CLI against stub / **new** `AgentPinClaudeImportCanaryTests.V29_*` | Drive production shared and ancestor/descendant cases from V-8/V-9, then start actual A/B sessions. On automatic-discovery-only arm (no pin injection/tool reads), neither canary occurs in any serialized system/message/tool context. On normal named-launch arm A's request has A only and B's has B only; their pointer read contract names only their file. Include owned-exclusive-to-shared transition and a newly dangling user import: before repair, no affected launch/no nonempty publication; after repair both normal arms are isolated. Exercise an ancestor inside a repo and above its root so the test does not assume discovery stops at `.git`. PC-12 intentionally adds both imports: foreign canary must become observable, establishing sensitivity of the request oracle. GUID paths are not tested as access denial. |
 | V-30 | Actual fresh/change/revoke/resume/two-compaction behavior / live probe / **new** `tests/Antiphon.Tests/Agents/AgentPinBehaviorAcceptanceTests.cs`, methods `V30_*` | Execute the challenge protocol below separately for Claude/Codex/Grok using isolated provider homes and fixture-owned runner/server. Pins originate through capture and files/notes through production paths. Require provider-native transcript read evidence for exact file plus behavioral challenge outputs after every stage; model compliance is not inferred from the stub canaries or queue receipts. Report each provider/version/phase separately, with skipped/refused/missing compaction explicitly pending. Grok uses the existing rules receipt/ACK/barrier; this does not close unrelated CARD-0395 acceptance. |
 
@@ -783,13 +927,13 @@ probe, model spend, production pin capture or shared-stack restart is performed 
 |---|---|---|
 | R-1 | Restore Dedicated-only/API-only files or claim ready without writing | V-6/V-13: first-use real bytes in each workspace; mandatory failure and zero launch attempts on I/O refusal. |
 | R-2 | Root/short/name-derived paths, last-writer alias or cwd identity | V-7/V-19: colliding short IDs, recreated names and same-cwd sessions retain disjoint full-ID files and exact pointers. |
-| R-3 | Treat unique files as sufficient shared native-import isolation | V-8/V-9/V-29: no foreign canary in installed Claude request; refuse admission/publication before unsafe dangling target resolves. |
-| R-4 | Adopt/rewrite unmarked CLAUDE, strip user imports or guess through edits | V-10/V-11/V-12: full original byte arrays and concurrent author edits survive, only recorded append bytes can be removed. |
+| R-3 | Treat unique files as sufficient shared native-import isolation or commit a private import | V-8/V-9/V-29/V-31: no foreign canary in installed Claude request; refuse unsafe publication and tracked import installation before a pointer spreads to another clone/worktree. |
+| R-4 | Adopt/rewrite unmarked CLAUDE, append out-of-band to managed floor, strip user imports or guess through edits | V-10/V-11/V-12: original bytes survive; managed import is Render-only after verified projection at next Start, with no remove/reappend churn. |
 | R-5 | Trust forged markers, unsafe paths, tracked targets or stale writes | V-13/V-14: foreign bytes preserved, latest desired file only, durable ownership intent distinguishes crash recovery from adoption. |
-| R-6 | Lose old-location/delete cleanup or erase sibling runtime state | V-15/V-16: live old location stays current, cleanup survives cascade, stale revoke refuses launch, all sentinels survive. |
+| R-6 | Lose old-location/delete cleanup, keep removed worktrees in permanent error or erase siblings | V-15/V-16: live/configured location remains required; absent unused cwd retires cleanly, cleanup survives cascade, stale revoke refuses launch, sentinels survive. |
 | R-7 | Omit a named launch path, inject delegates or parse pin syntax | V-4/V-5/V-28: actual request/file identity, pool exclusion, literal canary not imported, budgets and operator append retained. |
 | R-8 | Lose change/revoke/compact/resume intent in crash gaps | V-18/V-20/V-23: fresh service replay recovers one current obligation, empty sets are work and attempted bytes never change. |
-| R-9 | Mark receipt from enqueue/screen, redirect by cwd or restart to refresh | V-19/V-21/V-22: only owning UserPrompt stamps receipt, location-only changes notify, pin-only deltas cause zero process control. |
+| R-9 | Mark receipt from enqueue/screen, redirect by cwd, normalize only persisted success or poison shared policy composition | V-19/V-21/V-22: only owning UserPrompt stamps receipt, location changes notify, pin-only deltas/crash windows cause zero process control, broken files preserve drift/Notify/preview and launch gates, static protocol changes drift once with identical inclusion. |
 | R-10 | Restore historical Grok pins or bypass its queue barrier | V-24/V-30: one combined rules recovery, empty current set remains authoritative after resume/two compactions. |
 | R-11 | Route internal replies, forge caller authority or expose raw text in events | V-3/V-25: HTTP principal matrix refuses, typed internal turns send/settle nothing, canary-free events/attention. |
 | R-12 | UI hides mandatory repair or falsely claims compliance | V-26/V-27: separate persistence/file/import/queue/transcript status, drafts preserved, actual failed file remains actionable. |
@@ -864,6 +1008,12 @@ that exercises the weakened guard; do not remove a second guard to manufacture a
 | PC-54 | Include raw text/source ref in ordinary changed event/attention item. | V-25 captured event/export contains the synthetic canary. |
 | PC-55 | Mark UI file ready from queued/API success; separately clear drafts on invalidation/conflict. | V-26 missing-file repair disappears or user's draft is lost. |
 | PC-56 | Emit unconditional file/API tool-use instructions for a deny-all-tools seat. | V-4 tool-disabled protocol/request contains a forbidden read recipe or claims live read support. |
+| PC-57 | Remove the Git-tracked CLAUDE import-target refusal (managed and unmarked data rows); separately permit an untracked/nonignored CLAUDE import. | V-31 forbidden stanza/diff/index entry appears, refusal state absent; fixture `git add -A` can carry private pointer. V-13's tracked-projection guard stays intact so this specifically tests D4. |
+| PC-58 | Invoke the verified-projection refusal inside shared `ComposeForAgentAsync` instead of leaving composition nonthrowing. | V-22 broken-file Grok drift/Notify/manual-refresh or preview arm throws/loses its expected policy work; healthy second-agent processing and explicit Start refusal remain independently asserted. A swallowed/logged exception is still red. |
+| PC-59 | Classify every missing cwd as mandatory failure, ignoring unused-location retirement; separately retire a missing cwd without checking configured/live consumers. | V-15 removed fixture worktree leaves false repair attention/retry intent, or a still-required/racing location is incorrectly marked complete. |
+| PC-60 | Remove the separate append provisioner's managed-marker exclusion; separately run Start's Provision before projection reconciliation. | V-11 direct managed-file call writes an out-of-band stanza, or gated Start renders/launches before current target verification and misses the next-Start import. PC-23's managed Render omission arm additionally detects lost desired state on regeneration. |
+| PC-61 | Require persisted ownership-success rather than exact pre-I/O intent for drift normalization. | V-22 crash after append/Render/removal but before success save causes forbidden Auto/Relaunch action before reconciliation, despite matching intended bytes. |
+| PC-62 | Omit the static protocol from PolicyRefreshService's implicit selector; separately gate its inclusion there on nonempty pins instead of the shared supported-named predicate. | V-22 launch/preview/policy static stamps disagree or post-deployment sweep repeats drift; zero-pin/revoked/profile-kind cases fail parity. |
 
 Controls that deliberately expose synthetic pins or alter filesystem cleanup run only under
 fixture-owned temporary roots and isolated providers. Never mutate shared production workspace
@@ -983,7 +1133,9 @@ coverage and reasons. Check fresh TRX has nonzero execution and each expected cl
 row, with no accidental extra classes from wildcard suffixes. `--list-tests`, a skipped explicit
 class or exit zero alone is not evidence. Keep only synthetic pin content in retained fixtures.
 
-TestDesign validation is limited to append-only plan diff, case/PC references, named existing
-fixture paths and command conventions. No application behavior, tests, builds, CLI probes or
-live deployment were executed in this stage. Code implements this section and runs the controls;
+Original TestDesign validation covered its append-only plan diff, case/PC references, named
+existing fixture paths and command conventions. This review amendment also changes the earlier
+design/lifecycle/slice/rollout sections and their V/R/PC requirements; its validation is documentation
+consistency, case/reference coverage and diff whitespace only. No application behavior, tests,
+builds, CLI probes or live deployment were executed in these stages. Code implements this section and runs the controls;
 Review assesses its evidence before rollout/closure under the completion criteria above.
