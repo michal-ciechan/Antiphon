@@ -15,6 +15,13 @@ The original session observed commits `563e4b18`, `0798caf8`, `2ef363c0`, `b0f1d
 report confirms that it inherited and changed the preparation work. Do not reapply the
 original session's pending production patches over that implementation.
 
+The later-delivered refinement `task-347a3d88-refinement-20260908180418.md` identifies
+`563e4b18` specifically as the orchestrator's safety checkpoint of this session's 72 files,
+not a conflicting implementation change. Its 72-file count and ancestry of current HEAD
+were verified directly. Subsequent commits already build normally on that checkpoint;
+no reset, rebase, or patch reapplication is required. This clarification does not undo
+the earlier scope freeze or change the separately observed continuation 3 overlap.
+
 The original `continuation2-protocol-regression-01` ran an older `bin-c448-next` image,
 started at 18:12:14 on 8 September 2026. Its test PID was 57164, parent dotnet PID 50300.
 The process remained active after the original tool session became unavailable. At about
