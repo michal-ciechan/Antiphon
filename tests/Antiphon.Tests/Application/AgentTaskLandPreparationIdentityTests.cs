@@ -1,4 +1,5 @@
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -12,6 +13,35 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class AgentTaskLandPreparationIdentityTests
 {
+    [Test]
+    public async Task C448_V17_MissingRebaseResultRequiresFreshExplicitInspection()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var original = await h.AddSourceAsync();
+        h.Fixture.Git.BeforeCommand = (_, args) => Task.FromResult(
+            args.Contains("rebase") && !args.Contains("--abort")
+                ? new LandingGitResult(0, "", "") : null);
+        await h.RunAsync();
+        var refused = (await h.OperationAsync()).ShouldNotBeNull();
+        refused.Phase.ShouldBe(LandPhase.Refused);
+        refused.LastReason.ShouldBe("interrupted_rebase_requires_inspection");
+        refused.PreparedAt.ShouldBeNull();
+        refused.RemoteConfirmedAt.ShouldBeNull();
+        Directory.Exists(h.Fixture.Source).ShouldBeTrue();
+        h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("--ff-only") || a.Contains("remove"));
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(h.Fixture.SeedSha);
+        h.Fixture.Git.BeforeCommand = null;
+        await h.RepostAsync();
+        await h.RestartServicesAsync();
+        await h.RunAsync();
+        var completed = (await h.OperationAsync()).ShouldNotBeNull();
+        completed.Id.ShouldNotBe(refused.Id);
+        completed.Cleanup.ShouldBe(LandCleanupStatus.Complete);
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", refused.RecoveryRefPrefix + "/source")).Trim().ShouldBe(original);
+        await h.Fixture.AssertRemoteSourceAsync();
+    }
+
     [Test]
     public async Task C448_V15_ExplicitRepostCannotReplaceTargetAdvanceIntent()
     {
