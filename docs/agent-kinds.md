@@ -160,6 +160,24 @@ Antiphon dispatches at a *tier* (`Frontier` / `High` / `Medium` / `Low`), not a 
 | `Medium` | `sonnet` | `grok-4.6` | `gpt-5.6-terra` |
 | `Low` | `haiku` | `grok-4.6` | `gpt-5.6-luna` |
 
+**Model-tier names are not `AgentKind` values.** Fable (Frontier), Opus (High), Sonnet
+(Medium), and Haiku (Low) are tiers within `ClaudeCode`; Astra (Frontier), Sol (High),
+Terra (Medium), and Luna (Low) are tiers within `Codex`. `scripts/delegate.ps1` accepts
+`-Kind ClaudeCode|Grok|Codex` and `-Level Frontier|High|Medium|Low`; model-tier names
+are not accepted by either parameter. For example:
+
+```powershell
+# Fable review
+scripts/delegate.ps1 -Role Review -Kind ClaudeCode -Level Frontier -Goal "Review the change; Frontier requested"
+# Astra review
+scripts/delegate.ps1 -Role Review -Kind Codex -Level Frontier -Goal "Review the change; Frontier requested"
+```
+
+Use the corresponding `-Level` from the table for the other tiers, never `-Kind Fable`,
+`-Kind Opus`, or `-Kind Astra`. The [orchestrator bundle](../server/Bundles/orchestrator.md)
+carries the same dispatch rule. The mappings above come from `ModelLevelAliases.ForClaude`
+and `ForCodex`; Codex's short family names describe the tiers but are not CLI model IDs.
+
 Three things worth knowing about that table:
 
 - **Claude rides family aliases, never versioned ids**, so a launch picks up the family's current

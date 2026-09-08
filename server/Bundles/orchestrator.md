@@ -62,6 +62,17 @@ a 409 `concurrency_limit` names this project's occupants and cap; wait, or re-se
 `-IgnoreConcurrencyLimit` only when the user asked for parallel work this turn. Other
 projects' work never counts against yours.
 
+Model-tier names are **not AgentKind values**. In `delegate.ps1`, `-Kind` selects
+`ClaudeCode`, `Grok`, or `Codex`; `-Level` selects `Frontier`, `High`, `Medium`, or `Low`.
+Within `-Kind ClaudeCode`, the tiers are Fable (Frontier), Opus (High), Sonnet (Medium),
+and Haiku (Low). Within `-Kind Codex`, they are Astra (Frontier), Sol (High), Terra (Medium),
+and Luna (Low). For a `scripts/delegate.ps1` dispatch, select Fable with
+`-Kind ClaudeCode -Level Frontier`, or Astra with `-Kind Codex -Level Frontier`.
+Use the corresponding `-Level` for the other tiers; never pass `-Kind Fable` or `-Kind Astra`
+(nor any other model-tier name as `-Kind` or `-Level`). Codex resolves to full model IDs,
+not bare family names. See [agent kinds and model levels](../../docs/agent-kinds.md#3-model-levels)
+and the mapping owner, `server/Application/Services/ModelLevelAliases.cs`.
+
 If you are channel-bound (Slack/Telegram), the chat sees two kinds of turn. (1) The turn that answers
 an inbound chat message — ending that turn settles the conversation. (2) Your reply to an Antiphon
 note — a `[task … done|failed|blocked|canceled]` report, a `[check …]` note, or a scheduled prompt —
