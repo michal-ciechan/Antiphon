@@ -136,16 +136,7 @@ public sealed class StandingSpecialistProvisioner
     {
         try
         {
-            Directory.CreateDirectory(spec.WorkingDirectory);
-
-            var hookPath = Path.Combine(
-                spec.WorkingDirectory,
-                SpecialistSpec.DenyHookRelativePath.Replace('/', Path.DirectorySeparatorChar));
-            Directory.CreateDirectory(Path.GetDirectoryName(hookPath)!);
-
-            var current = File.Exists(hookPath) ? File.ReadAllText(hookPath) : null;
-            if (!string.Equals(current, spec.DenyAllToolsSettingsJson, StringComparison.Ordinal))
-                File.WriteAllText(hookPath, spec.DenyAllToolsSettingsJson);
+            WriteToolPolicy(spec);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -159,6 +150,43 @@ public sealed class StandingSpecialistProvisioner
         }
 
         SeedClaudeTrust(spec);
+    }
+
+    /// <summary>
+    /// Rearm at the actual Check launch boundary too: a persisted seat can be started by
+    /// supervision without passing through EnsureAsync. This is arming, not V-5 certification.
+    /// </summary>
+    internal static void RequireCheckLaunchToolPolicy(SpecialistSpec spec, AgentKind effectiveKind)
+    {
+        if (effectiveKind == AgentKind.Codex)
+            throw new ConflictException(
+                "Codex Check execution is pending CARD-0167 agent-path configuration injection and CARD-0415 no-tools certification.",
+                "specialist_tool_policy_pending_dependency");
+        if (effectiveKind != AgentKind.ClaudeCode)
+            throw new ConflictException(
+                "This provider has no supported Check interpreter tool policy.",
+                "specialist_tool_policy_unsupported");
+        try
+        {
+            WriteToolPolicy(spec);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new ConflictException(
+                "The check interpreter's deny-all tool policy could not be prepared; launch was refused.",
+                "specialist_tool_policy_unavailable");
+        }
+    }
+
+    private static void WriteToolPolicy(SpecialistSpec spec)
+    {
+        Directory.CreateDirectory(spec.WorkingDirectory);
+        var hookPath = Path.Combine(spec.WorkingDirectory,
+            SpecialistSpec.DenyHookRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(hookPath)!);
+        var current = File.Exists(hookPath) ? File.ReadAllText(hookPath) : null;
+        if (!string.Equals(current, spec.DenyAllToolsSettingsJson, StringComparison.Ordinal))
+            File.WriteAllText(hookPath, spec.DenyAllToolsSettingsJson);
     }
 
     private void SeedClaudeTrust(SpecialistSpec spec)
