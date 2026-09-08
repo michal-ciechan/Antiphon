@@ -1,5 +1,7 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -16,6 +18,84 @@ namespace Antiphon.Tests.Application;
 [NotInParallel]
 public class CapacityRecoverySupervisionTests
 {
+    [Test]
+    public async Task Card0412_D8_stalled_standing_start_rearms_and_actually_starts_again()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var tempRoot = AgentSupervisionTests.NewTempRoot();
+        try
+        {
+            var first = new FakeAgentProtocolAdapter();
+            var retry = new FakeAgentProtocolAdapter();
+            await using var harness = AgentSupervisionTests.BuildHarness(tempRoot, [first, retry],
+                definitionKind: "ClaudeCode",
+                configureDb: options => options.UseNpgsql(schema.ConnectionString),
+                supervision: new SupervisionSettings
+                {
+                    CapacityRecovery = new CapacityRecoverySettings { Enabled = true, JitterSeconds = 0 },
+                });
+            var agent = await AgentSupervisionTests.CreateAlwaysOnAgentAsync(harness, tempRoot);
+            var sessionId = Guid.NewGuid();
+            await using (var db = CapacityRecoveryTestSupport.CreateContext(schema))
+            {
+                var owner = await db.Agents.SingleAsync(a => a.Id == agent.Id);
+                owner.PersistentSessionId = sessionId.ToString("D");
+                owner.Kind = AgentKind.ClaudeCode;
+                db.AgentSessions.Add(new AgentSession
+                {
+                    Id = sessionId, AgentKind = AgentKind.ClaudeCode, DefinitionName = "fake",
+                    Cwd = owner.WorkingDirectory, Status = SessionStatus.Failed,
+                    CreatedAt = DateTime.UtcNow.AddMinutes(-10), StartedAt = DateTime.UtcNow.AddMinutes(-10),
+                });
+                await db.SaveChangesAsync();
+            }
+            var runtime = harness.Provider.GetRequiredService<AgentSessionRuntime>();
+
+            var recovery = harness.Provider.GetRequiredService<CapacityRecoveryService>();
+            var wait = await recovery.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+                $"agent:{agent.Id:N}", CapacityWaitConsumerKind.StandingStart,
+                holdAlreadyCleared: true, agentId: agent.Id, sessionId: sessionId), CancellationToken.None);
+            await recovery.ReconcileAsync(CancellationToken.None);
+            await using (var db = CapacityRecoveryTestSupport.CreateContext(schema))
+            {
+                (await db.CapacityRecoveryProviderStates.SingleAsync(s => s.Kind == AgentKind.ClaudeCode))
+                    .GrantedWaitId.ShouldBe(wait.Id);
+            }
+            await harness.Supervisor().TickAsync(CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            first.StartedSessionId.ShouldBe(sessionId, string.Join(Environment.NewLine, harness.SupervisorLog));
+            await using (var db = CapacityRecoveryTestSupport.CreateContext(schema))
+            {
+                (await db.AgentSessions.SingleAsync(s => s.Id == sessionId))
+                    .CapacityRecoveryActionKey.ShouldBe(wait.ActionKey);
+                var admitted = await db.CapacityRecoveryWaits.SingleAsync(w => w.Id == wait.Id);
+                admitted.AdmissionCount.ShouldBe(1);
+                CapacityRecoveryPolicy.HasExecutionReceipt(admitted).ShouldBeFalse();
+            }
+
+            // No transcript confirmation or launch receipt: the next action must launch again.
+            await runtime.ObserveExitAsync(sessionId, 1, AgentExitReason.ProcessExited, CancellationToken.None);
+            await runtime.DisposeSessionAsync(sessionId);
+            harness.Clock.Advance(TimeSpan.FromSeconds(121));
+            await recovery.ReconcileAsync(CancellationToken.None);
+            var rearmed = (await recovery.FindUnfinishedAsync(wait.ConsumerKey, CancellationToken.None))!;
+            rearmed.ActionKey.ShouldNotBe(wait.ActionKey);
+            await harness.Supervisor().TickAsync(CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            retry.StartedSessionId.ShouldBe(sessionId, string.Join(Environment.NewLine, harness.SupervisorLog));
+            await using (var db = CapacityRecoveryTestSupport.CreateContext(schema))
+            {
+                (await db.CapacityRecoveryWaits.SingleAsync(w => w.Id == wait.Id)).AdmissionCount.ShouldBe(2);
+                (await db.AgentSessions.SingleAsync(s => s.Id == sessionId))
+                    .CapacityRecoveryActionKey.ShouldBe(rearmed.ActionKey);
+            }
+        }
+        finally
+        {
+            await AgentSupervisionTests.CleanupAsync(tempRoot);
+        }
+    }
+
     [Test]
     public async Task Card0412_V17_capacity_wait_skips_crash_scheduling_branch()
     {

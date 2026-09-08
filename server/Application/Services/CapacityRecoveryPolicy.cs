@@ -63,9 +63,17 @@ public static class CapacityRecoveryPolicy
 
     public static int CompareGrantOrder(CapacityRecoveryWait a, CapacityRecoveryWait b)
     {
+        var rejoined = GrantOrderAt(a).CompareTo(GrantOrderAt(b));
+        if (rejoined != 0)
+            return rejoined;
         var blocked = a.BlockedAt.CompareTo(b.BlockedAt);
         return blocked != 0 ? blocked : a.Id.CompareTo(b.Id);
     }
+
+    private static DateTime GrantOrderAt(CapacityRecoveryWait wait) =>
+        wait.OutcomeReason is "grant-expired" or "new-wall-wave"
+            ? wait.DueAt ?? wait.BlockedAt
+            : wait.BlockedAt;
 
     public static bool AttemptWouldExhaust(int admissionCount, int maxAttempts) =>
         admissionCount >= maxAttempts;
