@@ -27,6 +27,25 @@ work itself: each one is here because ignoring it has already cost a real task.
   DO NOT EDIT SOURCE FILES WHILE A LONG TEST RUN IS IN FLIGHT. Wait for it to finish, or stop it
   before editing; source changes underneath a run make its result stale against the current source.
   Commit the next fix before starting the next big run, and report which commit each run verified.
+  Avoid tight loops polling the same log with an identical command. Space out status checks and
+  use the wait to read/investigate the next planned fix, without editing source under the run.
+
+- KEEP POSITIVE-CONTROL (PC) CYCLES METHOD-SCOPED. For each red-then-green cycle use a precise
+  `--treenode-filter "/*/*/ClassName/ExactTestMethod"`, never a whole class or suite. Batch
+  genuinely independent mutations only when they touch different files and methods: run just
+  their specific tests, confirm each expected assertion fails, restore all mutations, then run
+  those same tests green. Keep per-PC evidence; zero tests or build/fixture errors are not red.
+
+- SHARD LARGE PC PLANS (roughly >15-20 rows) across additional worktrees off the SAME task branch
+  when controls are independent. Use detached worktrees at the same committed branch tip or
+  temporary branches from it; do not force the same branch checked out twice. Scope and batch
+  within each shard. Own and await every concurrent run before ending your turn; this permits
+  supervised concurrent runs, not sub-delegation or orphaned background jobs. Keep each running
+  worktree's source frozen. Concurrent `Antiphon.Tests` shards require per-test DB schema
+  isolation and the assembly-local `ParallelLimiter<ProcessSpawnLimit>`; the limiter is not a
+  cross-process lock. Do not co-schedule `Antiphon.Agents.Pty.Tests`/FakeClaude with them.
+  Restore all PC mutations, merge/reconcile retained fixes onto the task branch, then run the
+  final combined regression there. See `docs/testing-and-build.md` for PC execution details.
 
 - BUILD TO AN ALTERNATE OUTPUT PATH while the daemons hold their bin directories:
   `--property:OutputPath=bin-<name>/` with a FORWARD slash, and delete the resulting `bin-<name>`
@@ -40,11 +59,11 @@ work itself: each one is here because ignoring it has already cost a real task.
   add a retry to make red go green — that is how a real defect stays hidden for weeks behind the
   word "flaky".
 
-- RUN THE FULL SUITE ONCE, THEN TARGET. `Antiphon.Tests` is ~12 minutes and does not reliably fit
+- RUN THE FULL SUITE ONCE, THEN TARGET. `Antiphon.Tests` is ~25.5 minutes (CARD-0110) and does not fit
   one 10-minute foreground window — chunk it by namespace (`--treenode-filter
   "/*/Antiphon.Tests.Application/*/*"`). After a fix, re-run only what you touched. When you verify
   that red is pre-existing, re-run the failing tests at the base commit, not the assembly —
-  confirming four known test names costs one minute targeted and twelve full.
+  confirming four known test names costs about one minute targeted and ~25.5 minutes full.
 
 - CLOSE THE REPORT WITH A VERDICT LINE. End your final message with one line, on its own:
   `[antiphon-report:<id> done]` if the work is complete, `[antiphon-report:<id> blocked]` if you
