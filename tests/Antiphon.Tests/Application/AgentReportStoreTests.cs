@@ -109,6 +109,36 @@ public class AgentReportStoreTests
         (await File.ReadAllTextAsync(Path.Combine(w.Main, ".gitignore"))).ShouldBe(ignore);
     }
     [Test]
+    [Arguments(false)] [Arguments(true)]
+    public async Task Ineffective_ignore_attempts_do_not_duplicate_the_exclude_rule(bool existingRule)
+    {
+        await using var w = new ReportWorkspace(); await w.InitializeAsync();
+        using var nonGit = new ReportTempWorkspace();
+        var task = w.Task("private report bytes");
+        task.RepoPath = null;
+        task.WorkingDirectory = nonGit.Path;
+        var settings = new DelegationSettings { ReportStorageRoot = Path.Combine(w.Main, ".antiphon", "reports") };
+        const string ignore = "!.antiphon/reports/\n!.antiphon/reports/**\n";
+        await File.WriteAllTextAsync(Path.Combine(w.Main, ".gitignore"), ignore);
+        var exclude = Path.Combine(w.Main, ".git", "info", "exclude");
+        const string pattern = "/.antiphon/reports/";
+        var original = "# unrelated local rule\r\n/local-only/\r\n" + (existingRule ? pattern : "");
+        await File.WriteAllTextAsync(exclude, original);
+        var expected = existingRule ? original : original + "\n" + pattern + "\n";
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var result = await w.Store(settings).StoreAsync(task, CancellationToken.None);
+            result.Succeeded.ShouldBeFalse();
+            result.Reason.ShouldBe("not-ignored-or-tracked");
+            File.Exists(w.Expected(task)).ShouldBeFalse();
+            (await File.ReadAllLinesAsync(exclude)).Count(line => line == pattern).ShouldBe(1);
+            (await File.ReadAllTextAsync(exclude)).ShouldBe(expected);
+        }
+        (await File.ReadAllTextAsync(Path.Combine(w.Main, ".gitignore"))).ShouldBe(ignore);
+    }
+
+    [Test]
     public async Task Publication_exposes_only_a_complete_verified_report()
     {
         await using var w = new ReportWorkspace(); await w.InitializeAsync();
