@@ -9,6 +9,13 @@ namespace Antiphon.Tests.Infrastructure;
 public sealed class LandingRemovalControlTests
 {
     [Test]
+    [Arguments("remote-rewrite")]
+    [Arguments("remote-delete")]
+    [Arguments("remote-error")]
+    public Task C448_V27_RemoteChangedBeforeRetry(string change)
+        => new AgentTaskLandCleanupSafetyTests().C448_V18_CleanupRetryPreservesChangedWork(change);
+
+    [Test]
     public Task C448_V20_RemoveError()
         => new AgentTaskLandRemovalMatrixTests()
             .C448_V20_LastRemovalBoundaryPreservesEveryRemainingComponent("remove-error");

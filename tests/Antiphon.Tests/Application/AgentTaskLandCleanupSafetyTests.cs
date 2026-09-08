@@ -95,6 +95,7 @@ public sealed class AgentTaskLandCleanupSafetyTests
     [Arguments("unregistered")]
     [Arguments("other-checkout")]
     [Arguments("remote-rewrite")]
+    [Arguments("remote-delete")]
     [Arguments("remote-error")]
     [Arguments("pin-missing")]
     public async Task C448_V18_CleanupRetryPreservesChangedWork(string change)
@@ -134,6 +135,9 @@ public sealed class AgentTaskLandCleanupSafetyTests
                 break;
             case "remote-rewrite":
                 await h.Fixture.RequiredAsync(h.Fixture.Remote, "update-ref", h.Fixture.TargetRef, h.Fixture.SeedSha);
+                break;
+            case "remote-delete":
+                await h.Fixture.RequiredAsync(h.Fixture.Remote, "update-ref", "--no-deref", "-d", h.Fixture.TargetRef, receipt.VerifiedSourceSha!);
                 break;
             case "remote-error":
                 h.Fixture.Git.BeforeCommand = (_, args) => Task.FromResult<LandingGitResult?>(args[0] == "ls-remote" ? new(128, "", "fixture error") : null);
