@@ -1,5 +1,6 @@
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -148,6 +149,10 @@ public sealed class StandingSpecialistProvisioner
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            if (spec.Role == AgentTaskRole.Check)
+                throw new ConflictException(
+                    "The check interpreter's deny-all tool policy could not be prepared; no Check may be admitted.",
+                    "specialist_tool_policy_unavailable");
             _logger.LogWarning(
                 ex, "Could not prepare the {DisplayName}'s workspace at {Directory}; "
                 + "the deny-all tool hook may not be armed", spec.DisplayName, spec.WorkingDirectory);
