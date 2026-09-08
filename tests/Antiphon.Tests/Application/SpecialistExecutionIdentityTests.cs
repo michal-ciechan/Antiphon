@@ -28,6 +28,8 @@ public class SpecialistExecutionIdentityTests
 
     [Test]
     [Arguments(AgentKind.ClaudeCode, false, "none")]
+    [Arguments(AgentKind.ClaudeCode, true, "none")]
+    [Arguments(AgentKind.Codex, false, "none")]
     [Arguments(AgentKind.Codex, true, "none")]
     [Arguments(AgentKind.Codex, false, "model")]
     [Arguments(AgentKind.Codex, true, "tier")]
