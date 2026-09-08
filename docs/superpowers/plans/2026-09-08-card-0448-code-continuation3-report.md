@@ -25,11 +25,13 @@ Branch: `feat/card-task-c86499fb`.
   This is an explicit command-completion fence, not a filesystem transaction against writers
   that ignore the repository lease.
 - The orchestration owner documents the new retry and preparation rules.
+- `111be4f1` keeps the new unavailable-rebase-result refusal on the existing
+  inspection-required recovery path, with a same-coordinate explicit-retry companion.
 
 ## Verification record
 
-Final execution counts and artifacts will be recorded here before handoff. No pending run is
-treated as passing evidence.
+Final restored-regression counts and artifacts will be recorded here before handoff. No
+pending run is treated as passing evidence.
 
 - Initial `bin-c448-next` attempt failed at build copying because inherited test PID 57164
   still owned those DLLs. Zero execution credit. Its executable and command line were checked;
@@ -38,6 +40,18 @@ treated as passing evidence.
   production changes. The RED invocation uses `--no-build` deliberately to execute that image.
 - Separate fixed `bin-c448-c3-green` build: 0 errors; one new nullable warning was corrected
   before the final rebuild.
+- `continuation3-preparation-red.trx`: 14 executed, 4 passed, 10 expected assertion failures,
+  0 skipped (21m17s). The failures are the four Verified retry variants, local child adoption,
+  and after-rebase source advance plus all four task-metadata variants. Same-SHA branch switch,
+  staged, dirty and untracked companions already passed. Every failure is a Shouldly assertion;
+  the old binary's source excerpts can refer to moved current source lines, so method names,
+  assertion messages, command evidence and the recorded DLL hash identify this baseline.
+- PC27 explicit-replacement subvariant: unmodified baseline 1/1 passed; widening replacement
+  to TargetAdvanceStarted produced 1/1 intended assertion RED. Source bytes were restored
+  exactly, then rebuilt for the three affected classes. Final restored execution is pending.
+- The inherited regression process and launcher later ceased to exist without a completed
+  `continuation2-protocol-regression-01.trx` or a verdict in their captured log. The cause was
+  not established. That invocation has no usable execution credit and must be rerun.
 
 ## Remaining acceptance
 
