@@ -11,6 +11,34 @@ namespace Antiphon.Tests.Application;
 public sealed class AgentTaskLandPersistenceFailureTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C448_F01_SourcePinResultMustBeAcknowledgedBeforeTheNextPin(bool afterCommit)
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var source = await h.AddSourceAsync();
+        h.Fault.Matches = op => op.Phase == LandPhase.Inspected && op.SourcePinned;
+        h.Fault.AfterCommit = afterCommit;
+        h.Fixture.Git.Trace.Clear();
+        await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.RunAsync());
+        h.Fault.Triggered.ShouldBeTrue();
+        var before = (await h.OperationAsync()).ShouldNotBeNull();
+        before.SourcePinned.ShouldBe(afterCommit);
+        before.TargetPinned.ShouldBeFalse();
+        h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase") || a.Contains("remove") || a[0] == "push"
+            || a[0] == "update-ref" && a.Any(x => x.EndsWith("/target-before", StringComparison.Ordinal)));
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", before.RecoveryRefPrefix + "/source")).Trim().ShouldBe(source);
+        await h.RestartServicesAsync();
+        await h.RunAsync();
+        var after = (await h.OperationAsync()).ShouldNotBeNull();
+        after.Id.ShouldBe(before.Id);
+        after.Cleanup.ShouldBe(LandCleanupStatus.Complete);
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", before.RecoveryRefPrefix + "/source")).Trim().ShouldBe(source);
+        await h.Fixture.AssertRemoteSourceAsync();
+    }
+
+    [Test]
     public async Task C448_V23_DeliveryFailureKeepsTheCommittedPublicationAndEvent()
     {
         await using var h = new LandingSafetyHarness();

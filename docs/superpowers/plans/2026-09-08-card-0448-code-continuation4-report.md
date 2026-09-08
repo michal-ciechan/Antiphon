@@ -26,6 +26,13 @@ Commit `1be12848` installs the reviewed pending fixtures from the previous conti
 
 The obsolete preparation/retry and replacement-policy installers were not applied.
 
+Subsequent fixture changes cover the named remaining variants: first/final ignored-content
+guards with immediate status-read-count assertions; source untracked/registration and target
+staged changes during verification; four post-fast-forward target changes; changed source/
+target at C02/C03/C07/C08/C09 and a C03 pin collision; and both acknowledgement outcomes
+at the individual source-pin-result save. These are pending execution, not new production
+policy. The optional SaveFault predicate selects that subphase without moving its boundary.
+
 ## Execution record
 
 `bin-c448-c4` builds with 0 errors and 133 warnings. The first fixture run is pending;
@@ -33,6 +40,11 @@ individual completed test messages are not a completed run verdict.
 The exact pre-change incident adapter also builds at `f202fcc1` in the independent
 `C:\Antiphon\worktrees\c448-4692ec26-baseline` checkout (0 errors, 132 warnings).
 It has not yet earned incident RED credit.
+
+Client: TaskDrawer 18/18 and pipelineStageModel 34/34 passed in separate wrapper invocations
+with exit 0. `npm run build` passed. The first expanded backend build found one fixture
+expression-tree compilation error (CS8122); the predicate was corrected to ordinary equality
+comparisons before rebuilding. No execution credit is assigned to that failed build.
 
 Local execution scripts, logs, TRX and command evidence are under this task's `.antiphon`
 and isolated `tests/Antiphon.Tests/bin-c448-*` outputs. The 86 adapted mutation definitions

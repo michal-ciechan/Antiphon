@@ -12,6 +12,69 @@ namespace Antiphon.Tests.Application;
 public sealed class AgentTaskLandCheckpointMatrixTests
 {
     [Test]
+    [Arguments("C02", "source")]
+    [Arguments("C02", "target")]
+    [Arguments("C03", "source")]
+    [Arguments("C03", "target")]
+    [Arguments("C03", "pin")]
+    [Arguments("C07", "source")]
+    [Arguments("C07", "target")]
+    [Arguments("C08", "source")]
+    [Arguments("C08", "target")]
+    [Arguments("C09", "source")]
+    [Arguments("C09", "target")]
+    public async Task C448_V15_ChangedRecoveryPreparationNeverAdoptsNewWork(string cut, string change)
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        if (cut == "C03")
+        {
+            var fired = false;
+            h.Fixture.Git.AfterCommand = (_, args, result) =>
+            {
+                if (!fired && result.Succeeded && args[0] == "update-ref"
+                    && args.Any(a => a.EndsWith("/source", StringComparison.Ordinal)))
+                { fired = true; throw new InterruptedBoundary(); }
+                return Task.CompletedTask;
+            };
+            await Should.ThrowAsync<InterruptedBoundary>(() => h.RunAsync());
+            fired.ShouldBeTrue();
+            h.Fixture.Git.AfterCommand = null;
+        }
+        else
+        {
+            h.Fault.Phase = cut switch { "C02" => LandPhase.Inspected, "C07" => LandPhase.Prepared,
+                "C08" => LandPhase.Verified, _ => LandPhase.TargetAdvanceStarted };
+            h.Fault.AfterCommit = true;
+            await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.RunAsync());
+        }
+        var before = (await h.OperationAsync()).ShouldNotBeNull();
+        if (change == "pin")
+            await h.Fixture.RequiredAsync(h.Fixture.Repository, "update-ref", before.RecoveryRefPrefix + "/source", h.Fixture.SeedSha);
+        else
+            await h.Fixture.RequiredAsync(change == "source" ? h.Fixture.Source : h.Fixture.Repository,
+                "commit", "--allow-empty", "-m", "new recovery writer");
+        var source = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim();
+        var target = (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim();
+        var calls = h.Verifier.Calls;
+        h.Fixture.Git.Trace.Clear();
+        await h.RestartServicesAsync();
+        await h.RunAsync();
+        var after = (await h.OperationAsync()).ShouldNotBeNull();
+        after.Id.ShouldBe(before.Id);
+        after.RemoteConfirmedAt.ShouldBeNull();
+        after.LastReason.ShouldBe(change switch { "source" => "source_changed", "target" => "target_changed", _ => "recovery_pin_failed" });
+        h.Verifier.Calls.ShouldBe(calls);
+        h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase") || a.Contains("--ff-only") || a[0] == "push" || a.Contains("remove"));
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim().ShouldBe(source);
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(target);
+        if (change == "pin")
+            (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", before.RecoveryRefPrefix + "/source")).Trim().ShouldBe(h.Fixture.SeedSha);
+        await h.Fixture.AssertRemoteSourceAsync();
+    }
+
+    [Test]
     [Arguments("C02", LandPhase.Inspected, true)]
     [Arguments("C04", LandPhase.RecoveryPinned, true)]
     [Arguments("C06", LandPhase.Prepared, false)]

@@ -48,7 +48,7 @@ public sealed class AgentTaskLandBoundaryTests
         op.Phase.ShouldBe(LandPhase.TargetAdvanceStarted);
         op.LocalTargetAfterSha.ShouldBeNull("the post-FF fence must reject the new target before acknowledging local advance");
         op.RemoteConfirmedAt.ShouldBeNull();
-        h.Fixture.Git.Trace.Skip(afterBoundary).ShouldNotContain(a => a[0] is "fetch" or "push" || a.Contains("remove"));
+        h.Fixture.Git.Trace.Skip(afterBoundary).ShouldNotContain(a => a[0] == "fetch" || a[0] == "push" || a.Contains("remove"));
         (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", "HEAD")).Trim().ShouldBe(retainedHead);
         if (change is "dirty" or "staged")
             (await File.ReadAllTextAsync(Path.Combine(h.Fixture.Repository, "keep.txt"))).ShouldBe("new target bytes\n");
