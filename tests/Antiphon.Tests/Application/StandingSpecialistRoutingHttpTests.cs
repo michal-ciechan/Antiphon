@@ -27,6 +27,38 @@ namespace Antiphon.Tests.Application;
 public class StandingSpecialistRoutingHttpTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Card0415_V09_changed_primary_does_not_reuse_its_process_as_an_alternate(bool disableFirst)
+    {
+        await using var h = await Harness.CreateAsync();
+        var current = await h.PutAsync(null, h.Pairs);
+        var oldPrimary = current.CandidateStates.Single(c => c.PhysicalAgentId == h.AgentId).Id;
+        if (disableFirst) current = await h.PutAsync(current.ConcurrencyToken, h.Pairs, false);
+        await using (var db = h.Context())
+        {
+            // Simulate a separately committed primary identity edit. Routing must reconcile its
+            // own physical relation; it cannot carry a prior certificate into the replacement.
+            var owner = await db.Agents.SingleAsync();
+            owner.Kind = AgentKind.Codex;
+            owner.ModelLevel = AgentModelLevel.Low;
+            owner.ModelId = null;
+            await db.SaveChangesAsync();
+        }
+        var after = await h.PutAsync(current.ConcurrencyToken, [h.Pairs[1], h.Pairs[0]]);
+        var primary = after.CandidateStates.Single(c => c.PhysicalAgentId == h.AgentId);
+        primary.AgentKind.ShouldBe(AgentKind.Codex);
+        primary.Status.ShouldBe(StandingSpecialistCandidateStatus.PendingDependency);
+        var alternate = after.CandidateStates.Single(c => c.Id == oldPrimary);
+        alternate.PhysicalAgentId.ShouldBeNull();
+        alternate.Status.ShouldBe(StandingSpecialistCandidateStatus.DeclaredButUnprovisioned);
+        alternate.UnprovisionedAt.ShouldNotBeNull();
+        await using var stored = h.Context();
+        (await stored.Agents.CountAsync()).ShouldBe(1);
+        (await stored.AgentTasks.CountAsync()).ShouldBe(0);
+    }
+
+    [Test]
     public async Task Card0415_V09_null_configuration_preserves_exact_primary_and_declared_pairs_round_trip()
     {
         await using var h = await Harness.CreateAsync();
