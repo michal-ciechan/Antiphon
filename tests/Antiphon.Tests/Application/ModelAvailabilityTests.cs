@@ -435,23 +435,49 @@ public class ModelAvailabilityTests
     }
 
     [Test]
+    public void Card0412_V06_try_clear_does_not_restamp_an_already_cleared_row()
+    {
+        var row = Hold(Guid.NewGuid(), "opus", until: DateTime.UtcNow.AddHours(1));
+        var first = new DateTime(2026, 9, 6, 12, 0, 0, DateTimeKind.Utc);
+        ModelAvailability.TryClear(row, first, ModelAvailabilityClearCause.OperatorCleared).ShouldBeTrue();
+        row.ClearedAt.ShouldBe(first);
+        row.ReleasePendingAt.ShouldBe(first);
+        ModelAvailability.TryClear(row, first.AddMinutes(5), ModelAvailabilityClearCause.Expired).ShouldBeFalse();
+        row.ClearedAt.ShouldBe(first);
+        row.ClearCause.ShouldBe(ModelAvailabilityClearCause.OperatorCleared);
+        row.ReleasePendingAt.ShouldBe(first);
+    }
+
+    [Test]
     public async Task Card0412_V06_clear_stamps_pending_once()
     {
         var id = Guid.NewGuid();
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
         await ReplaceHoldAsync(db, Hold(id, "opus", until: DateTime.UtcNow.AddHours(1)));
-        var availability = Service(db);
+        var time = new FakeTimeProvider(new DateTimeOffset(2026, 9, 6, 12, 0, 0, TimeSpan.Zero));
+        var availability = Service(db, time);
         await availability.ClearAsync("ClaudeCode", "opus", CancellationToken.None);
+        DateTime? firstCleared;
+        DateTime? firstPending;
+        await using (var mid = CreateContext(schema))
+        {
+            var stamped = await mid.ModelAvailabilityHolds.SingleAsync(h => h.Id == id);
+            firstCleared = stamped.ClearedAt;
+            firstPending = stamped.ReleasePendingAt;
+        }
+
+        time.Advance(TimeSpan.FromMinutes(5));
         await availability.ClearAsync("ClaudeCode", "opus", CancellationToken.None);
 
         await using var verify = CreateContext(schema);
         var row = await verify.ModelAvailabilityHolds.SingleAsync(h => h.Id == id);
-        row.ClearedAt.ShouldNotBeNull();
+        row.ClearedAt.ShouldBe(firstCleared);
         row.ClearCause.ShouldBe(ModelAvailabilityClearCause.OperatorCleared);
-        row.ReleasePendingAt.ShouldNotBeNull();
+        row.ReleasePendingAt.ShouldBe(firstPending);
         row.ReleasePendingAt.ShouldBe(row.ClearedAt);
         row.ReleaseConsumedAt.ShouldBeNull();
+        row.ClearedAt.ShouldBe(new DateTime(2026, 9, 6, 12, 0, 0, DateTimeKind.Utc));
     }
 
     [Test]
