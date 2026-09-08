@@ -13,6 +13,51 @@ namespace Antiphon.Tests.Application;
 public sealed class AgentTaskLandBoundaryTests
 {
     [Test]
+    [Arguments("advance")]
+    [Arguments("switch")]
+    [Arguments("dirty")]
+    [Arguments("staged")]
+    public async Task C448_V11_TargetMutationAfterFastForwardCannotBeAcknowledged(string change)
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        var fired = false;
+        string? retainedHead = null;
+        var afterBoundary = 0;
+        h.Fixture.Git.AfterCommand = async (_, args, result) =>
+        {
+            if (fired || !result.Succeeded || !args.Contains("--ff-only")) return;
+            fired = true;
+            if (change == "advance")
+                await h.Fixture.RequiredAsync(h.Fixture.Repository, "commit", "--allow-empty", "-m", "new target writer");
+            else if (change == "switch")
+                await h.Fixture.RequiredAsync(h.Fixture.Repository, "checkout", "-b", "new-target-owner");
+            else
+            {
+                await File.WriteAllTextAsync(Path.Combine(h.Fixture.Repository, "keep.txt"), "new target bytes\n");
+                if (change == "staged") await h.Fixture.RequiredAsync(h.Fixture.Repository, "add", "keep.txt");
+            }
+            retainedHead = (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", "HEAD")).Trim();
+            afterBoundary = h.Fixture.Git.Trace.Count;
+        };
+        h.Fixture.Git.Trace.Clear();
+        await h.RunAsync();
+        fired.ShouldBeTrue("the mutation must follow the real checked-out target fast-forward");
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.Phase.ShouldBe(LandPhase.TargetAdvanceStarted);
+        op.LocalTargetAfterSha.ShouldBeNull("the post-FF fence must reject the new target before acknowledging local advance");
+        op.RemoteConfirmedAt.ShouldBeNull();
+        h.Fixture.Git.Trace.Skip(afterBoundary).ShouldNotContain(a => a[0] is "fetch" or "push" || a.Contains("remove"));
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", "HEAD")).Trim().ShouldBe(retainedHead);
+        if (change is "dirty" or "staged")
+            (await File.ReadAllTextAsync(Path.Combine(h.Fixture.Repository, "keep.txt"))).ShouldBe("new target bytes\n");
+        if (change == "staged") (await h.Fixture.RequiredAsync(h.Fixture.Repository, "diff", "--cached")).ShouldContain("new target bytes");
+        Directory.Exists(h.Fixture.Source).ShouldBeTrue();
+        await h.Fixture.AssertRemoteSourceAsync();
+    }
+
+    [Test]
     [Arguments("source", false)]
     [Arguments("source", true)]
     [Arguments("target-before", false)]

@@ -9,6 +9,22 @@ namespace Antiphon.Tests.Infrastructure;
 public sealed class LandingRemovalControlTests
 {
     [Test]
+    [Arguments(".antiphon/report.md")]
+    [Arguments(".claude/settings.json")]
+    [Arguments("bin-private/keep.txt")]
+    public Task C448_V18_FirstIgnoredContentGuard(string path)
+        => new AgentTaskLandRemovalMatrixTests()
+            .C448_V18_LowLevelRemovalRechecksAtBothContentBoundaries(1, path);
+
+    [Test]
+    [Arguments(".antiphon/report.md")]
+    [Arguments(".claude/settings.json")]
+    [Arguments("bin-private/keep.txt")]
+    public Task C448_V18_FinalIgnoredContentGuard(string path)
+        => new AgentTaskLandRemovalMatrixTests()
+            .C448_V18_LowLevelRemovalRechecksAtBothContentBoundaries(2, path);
+
+    [Test]
     public Task C448_V36_Authority_valid()
         => new AgentTaskLandRemovalMatrixTests()
             .C448_V36_DirectRemovalRequiresEveryAuthorityCoordinate("valid");
