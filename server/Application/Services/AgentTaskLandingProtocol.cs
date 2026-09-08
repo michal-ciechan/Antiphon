@@ -159,7 +159,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     _state.Transition(op, LandPhase.Refused, Now());
                     return new(op, op.LastReason, files);
                 }
-                Require(rebase.RebaseHeadSha is not null, "rebase_result_unknown");
+                Require(rebase.RebaseHeadSha is not null, "interrupted_rebase_requires_inspection");
                 await RecheckSourceAsync(op, rebase.RebaseHeadSha!, ct);
                 var prepared = await git.InspectAsync(Coordinates(op), ct);
                 Require(prepared.Accepted && prepared.Snapshot!.GitDirectory == op.GitDirectory,
