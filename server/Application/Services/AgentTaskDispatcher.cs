@@ -4311,14 +4311,14 @@ public sealed class AgentTaskDispatcher
                 || (live?.EffectiveModelId is { } actualModel
                     && DispatchModelAlias.Resolve(claimed.AgentKind, claimed.ModelLevel, actualModel) != expectedAlias))
                 throw new SpecialistIdentityMismatchException(
-                    $"Specialist task {DelegationReportFormatter.Short(claimed.Id)} selected "
+                    $"Specialist task {DelegationReportFormatter.Short(claimed.Id)} on '{standing.Name}' selected "
                     + $"{claimed.AgentKind}/{claimed.ModelLevel}/{expectedAlias}; current seat is "
                     + $"{standing.Kind}/{standing.ModelLevel}/{currentAlias}, live model {live?.EffectiveModelId ?? "unrecorded"}.");
             if (claimed.SpecialistSessionId is { } expectedSession
                 && (session != expectedSession || live?.StartedAt != claimed.SpecialistSessionStartedAt
                     || live?.TuiProfileRevisionId != claimed.SpecialistProfileRevisionId))
                 throw new SpecialistIdentityMismatchException(
-                    $"Specialist task {DelegationReportFormatter.Short(claimed.Id)} selected session "
+                    $"Specialist task {DelegationReportFormatter.Short(claimed.Id)} on '{standing.Name}' selected session "
                     + $"{expectedSession:D} at {claimed.SpecialistSessionStartedAt:O}; current session "
                     + $"{session:D} at {live?.StartedAt:O} has a different execution generation/profile.");
         }
