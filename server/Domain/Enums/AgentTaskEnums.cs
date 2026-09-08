@@ -330,6 +330,8 @@ public enum AgentTaskFailureCode
     /// the retry block itself.</para>
     /// </summary>
     ProviderUnresponsive = 3,
+    /// <summary>The selected standing specialist identity changed before dispatch.</summary>
+    SpecialistIdentityMismatch = 4,
 }
 
 /// <summary>
