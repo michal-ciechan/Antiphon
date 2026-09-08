@@ -150,7 +150,7 @@ public sealed class CapacityRecoveryService
                     .FirstOrDefaultAsync(w => w.Id == outstanding, ct);
                 if (current is null || !StillHoldsGrant(current, state, now))
                 {
-                    RecordRevokedGrant(current, state, now);
+                    await RecordRevokedGrantAsync(db, current, state, now, ct);
                     state.GrantedWaitId = null;
                     state.GrantedActionKey = null;
                     state.GrantedAt = null;
@@ -177,8 +177,8 @@ public sealed class CapacityRecoveryService
                 CapacityRecoveryWait? winner = null;
                 foreach (var wait in candidates)
                 {
-                    // The query can return the tracked wait just revoked above: its Deferred
-                    // state has not been saved yet, so the database still sees a candidate.
+                    // The query can return the tracked wait just revoked above. Check its
+                    // current state and future due time before considering it again.
                     if (!CapacityRecoveryPolicy.IsGrantCandidate(wait))
                         continue;
                     if (wait.DueAt is { } waitDue && waitDue > now)
@@ -390,7 +390,7 @@ public sealed class CapacityRecoveryService
         var wait = await db.Set<CapacityRecoveryWait>().FirstOrDefaultAsync(w => w.Id == waitId, ct);
         if (wait is null)
             return;
-        PrepareNextAttemptOn(wait);
+        await PrepareNextAttemptOnAsync(db, wait, ct);
         await db.SaveChangesAsync(ct);
     }
 
@@ -463,14 +463,9 @@ public sealed class CapacityRecoveryService
             if (state.GrantedWaitId is { } grantedId)
             {
                 var wait = await db.Set<CapacityRecoveryWait>().FirstOrDefaultAsync(w => w.Id == grantedId, ct);
-                if (wait is not null && wait.State is CapacityRecoveryWaitState.Ready
-                    or CapacityRecoveryWaitState.ActionPending)
+                if (wait is not null && CapacityRecoveryPolicy.IsGrantCandidate(wait))
                 {
-                    wait.State = CapacityRecoveryWaitState.Reheld;
-                    wait.Outcome = nameof(CapacityRecoveryWaitState.Reheld);
-                    wait.OutcomeReason = "new-wall-wave";
-                    wait.UpdatedAt = now;
-                    wait.Version++;
+                    await RearmRevokedGrantOnAsync(db, wait, "new-wall-wave", now, ct);
                 }
 
                 ClearGrant(state, now);
@@ -802,8 +797,7 @@ public sealed class CapacityRecoveryService
     {
         // A disappeared consumer cannot redeem or release its grant. Bound that handoff
         // even for receipt-backed revalidation, which deliberately spends no new attempt.
-        if (state.GrantedAt is not { } grantedAt
-            || now - grantedAt >= CapacityRecoveryPolicy.StalledAdmissionTimeout(Settings.AdmissionIntervalSeconds))
+        if (GrantExpired(state, now))
             return false;
         if (wait.Version != state.ExpectedWaitVersion && !CapacityRecoveryPolicy.IsGrantCandidate(wait))
             return false;
@@ -818,11 +812,21 @@ public sealed class CapacityRecoveryService
         return CapacityRecoveryPolicy.IsGrantCandidate(wait) || wait.State == CapacityRecoveryWaitState.ActionPending;
     }
 
-    private static void RecordRevokedGrant(CapacityRecoveryWait? wait, CapacityRecoveryProviderState state, DateTime now)
+    private bool GrantExpired(CapacityRecoveryProviderState state, DateTime now) =>
+        state.GrantedAt is not { } grantedAt
+        || now - grantedAt >= CapacityRecoveryPolicy.StalledAdmissionTimeout(Settings.AdmissionIntervalSeconds);
+
+    private async Task RecordRevokedGrantAsync(
+        AppDbContext db, CapacityRecoveryWait? wait, CapacityRecoveryProviderState state,
+        DateTime now, CancellationToken ct)
     {
         if (wait is null)
             return;
-        if (wait.State is CapacityRecoveryWaitState.ActionPending or CapacityRecoveryWaitState.Ready
+        if (GrantExpired(state, now) && CapacityRecoveryPolicy.IsGrantCandidate(wait))
+        {
+            await RearmRevokedGrantOnAsync(db, wait, "grant-expired", now, ct);
+        }
+        else if (wait.State is CapacityRecoveryWaitState.ActionPending or CapacityRecoveryWaitState.Ready
             or CapacityRecoveryWaitState.Admitted)
         {
             wait.State = CapacityRecoveryWaitState.Deferred;
@@ -833,6 +837,28 @@ public sealed class CapacityRecoveryService
         }
 
         ClearGrant(state, now);
+    }
+
+    private async Task RearmRevokedGrantOnAsync(
+        AppDbContext db, CapacityRecoveryWait wait, string reason, DateTime now, CancellationToken ct)
+    {
+        // An expired handoff did not execute anything and spends no admission. Keep an
+        // already admitted action's receipts/key for revalidation, never replay its work.
+        if (wait.NeedsRevalidationGrant)
+        {
+            wait.UpdatedAt = now;
+            wait.Version++;
+        }
+        else
+        {
+            await PrepareNextAttemptOnAsync(db, wait, ct);
+        }
+
+        if (wait.State == CapacityRecoveryWaitState.Exhausted)
+            return;
+        wait.DueAt = now + CapacityRecoveryPolicy.StalledAdmissionTimeout(Settings.AdmissionIntervalSeconds);
+        wait.Outcome = wait.State.ToString();
+        wait.OutcomeReason = reason;
     }
 
     private static void ClearGrant(CapacityRecoveryProviderState state, DateTime now)
@@ -969,7 +995,7 @@ public sealed class CapacityRecoveryService
             }
             else
             {
-                PrepareNextAttemptOn(wait);
+                await PrepareNextAttemptOnAsync(db, wait, ct);
                 _logger.LogInformation(
                     "Capacity recovery re-arm next attempt wait {WaitId} action {ActionKey}",
                     wait.Id, wait.ActionKey);
@@ -980,7 +1006,7 @@ public sealed class CapacityRecoveryService
         }
     }
 
-    private void PrepareNextAttemptOn(CapacityRecoveryWait wait)
+    private async Task PrepareNextAttemptOnAsync(AppDbContext db, CapacityRecoveryWait wait, CancellationToken ct)
     {
         if (wait.State == CapacityRecoveryWaitState.Exhausted)
             return;
@@ -995,6 +1021,7 @@ public sealed class CapacityRecoveryService
             return;
         }
 
+        var previousActionKey = wait.ActionKey;
         wait.ActionOrdinal++;
         wait.ActionKey = CapacityRecoveryPolicy.ActionKey(wait.Id, wait.ActionOrdinal);
         wait.State = CapacityRecoveryWaitState.Ready;
@@ -1006,6 +1033,19 @@ public sealed class CapacityRecoveryService
             wait.Id,
             wait.ActionOrdinal,
             Settings.JitterSeconds);
+
+        // Cached consumer stamps must move with the action in the same transaction.
+        var sessions = await db.AgentSessions
+            .Where(s => s.CapacityRecoveryActionKey == previousActionKey).ToListAsync(ct);
+        foreach (var session in sessions)
+            session.CapacityRecoveryActionKey = wait.ActionKey;
+        var messages = await db.SessionQueuedMessages
+            .Where(m => m.CapacityRecoveryActionKey == previousActionKey).ToListAsync(ct);
+        foreach (var message in messages)
+        {
+            message.CapacityRecoveryActionKey = wait.ActionKey;
+            message.CapacityWaitVersion = wait.Version;
+        }
     }
 
     private DateTime UtcNow() => _time.GetUtcNow().UtcDateTime;
