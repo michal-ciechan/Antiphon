@@ -104,6 +104,12 @@ the retained explicit workflow deletion is not task-worktree cleanup.
 
 ## Remaining work
 
+The S6 manual documentation review checked orchestration sections 0/5/8, the HTTP/API
+landing entries, `delegate.ps1` and server bundles against current structured outcomes.
+The current contract distinguishes confirmed publication, AlreadyPresent and cleanup retry,
+and warns that refusal can follow local advancement. The preserved CARD-0220 forced-rollback
+paragraph now explicitly identifies its instructions as historical and superseded.
+
 Complete the new fixture run and fix any failures, execute the baseline incident adapter,
 finish the required independent mutation variants, refresh the per-variant ledger, and run
 the final unmutated combined regression. The canceled prior combined run receives no credit.
