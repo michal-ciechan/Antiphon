@@ -486,9 +486,12 @@ byte-for-byte completion note.
 **A manual kind swap does not establish a specialist fallback (CARD-0415).** The recorded
 2026-09-06 Codex mitigation answered only the liveness probe. Check task `7fa88286` was rejected
 before delivery: its requested kind was still ClaudeCode, while its pinned live session was
-Codex. The legacy `SpecialistTaskRunner.RunAsync` producer leaves `AgentKind` at that default;
-the newer deadline-policy path snapshots the seat kind. Preserve the standing dispatch mismatch
-guard when fixing the producer. The interpreter's instructions are reconciled into
+Codex. CARD-0415's identity slice now snapshots the seat's kind, tier, exact model,
+availability alias and existing session generation on both specialist runner paths.
+Standing dispatch preserves its public kind-mismatch guard and rejects a changed specialist
+model or session generation before enqueue. Existing tasks without a snapshot retain legacy
+pin behavior. Failure digests retain the bounded original reason. These changes do not qualify
+or activate a fallback candidate. The interpreter's instructions are reconciled into
 `SystemPromptAppend` and composed for Codex as `developer_instructions`; empty Details or no
 attachments is not evidence that those instructions were omitted.
 
