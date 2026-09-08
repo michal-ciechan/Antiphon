@@ -1,8 +1,11 @@
 # CARD-0442: continue a card's unlanded work across Worktree tasks
 
-Date: 2026-09-08. Stage: Plan. Recommended complexity: medium; TestDesign is a separate stage.
+Date: 2026-09-08. Stage: Plan amendment. Recommended complexity: medium; the separate TestDesign
+stage's verification section is included and amended below.
 Source: full live CARD-0442, id `d181aef8-47ff-41bc-882b-1707d9ca9fe7`.
 Code inspected at `ccb48b2ca88f96e8845ac2d6e818ec2cb6a8a4b3`.
+Amended after full design review `057585a3` (B-1/B-2, S-1/S-2/S-3); Plan and the existing
+TestDesign below are updated together. Amendment baseline: `3b7efe32` (includes `45b91a9b`).
 
 ## Outcome and scope
 
@@ -29,6 +32,7 @@ Unrelated cards remain isolated. This plan changes no production behavior itself
 | Starting from a prior branch requires checking it out or fetching it into the main checkout. | Linked worktrees share Git refs/objects. `WorktreeManager.CreateAsync:39` already supports `git worktree add -b <new-branch> <new-dir> <baseRef>`. | Resolve a local source to a full SHA and create a NEW task branch there. Never checkout/reset the predecessor or main checkout. |
 | Repository path containment proves shared Git history. | `DelegationWorktreeService.SharesRepo:233` uses equal-or-contained paths. Linked sibling directories can be disjoint; nested repos can satisfy containment while having separate refs. `GitWorkspaceService.GetWorkspaceInfoAsync:597` already demonstrates `--git-common-dir` resolution. | For the new selector, compare canonical absolute Git common directories. Do not broaden the existing global path helper as a side effect. |
 | Another field is needed for the actual starting SHA. | `AgentTask.WorktreeBaseSha` already records worktree creation HEAD and feeds no-target completion/check Git facts. | Reuse it, preserve it on adoption, and add only source/mode provenance. |
+| The land probe already recognizes inherited work after rebase. | `AgentTaskLandService.CollectUnlandedSiblingsAsync` uses ancestry only against rebased HEAD; successful land writes durable Landed/LandedWithResidue events. | Reuse strict patch-aware containment in S3 and consume completion events before Git inference. |
 
 ## Decisions
 
@@ -47,6 +51,8 @@ needs explicit selection, with candidate task ids/branches/full SHAs and reasons
 refs are resolved to immutable commit SHAs before being passed to worktree creation.
 `MergeTargetRef`, `ParentTaskId`, `RootTaskId`, card binding, and session ownership remain
 unchanged. An inherited parent destination is still the destination.
+Expose the strict containment observation separately from Auto eligibility so the land-time
+sibling diagnostic can reuse it against the rebased HEAD (D-7), without invoking source selection.
 
 ### D-2. Expose two narrow overrides
 
@@ -62,6 +68,9 @@ default `master` for this comparison). A mismatch is 422, not implicit rebinding
 `-FreshWorktree` chooses the pre-change `MergeTargetRef ?? HEAD` behavior, with an immediate
 warning listing any omitted same-card work. Neither accepts an arbitrary ref/path.
 Reject combination with `-OnAgent` so its Shared rewrite cannot silently discard the request.
+`AgentTaskService` resolves a child's destination as `parent.WorktreeBranch ?? parent.MergeTargetRef`:
+siblings created before/after the parent's worktree exists can therefore differ in destination;
+Auto excludes the mismatched sibling with a destination warning, while Task refuses 422.
 
 Persist requested mode (`Auto=0`, `Target`, `Task`) and `RequestedWorktreeBaseTaskId` on
 `AgentTask`; retain the explicit intent over queueing/restarts/retries. Record resolved
@@ -70,15 +79,16 @@ the existing `WorktreeBaseSha`. Add these fields to task detail, with null sourc
 base. New enum values/defaults and nullable columns need one CLI-generated EF migration.
 Persist the typed create-time preview as `WorktreeBasePreviewJson`, including its observation
 time, so launch can compare with what the caller actually saw after a server restart. Bound
-its size to the card's candidate summaries; do not store Git command output. This snapshot is
-advisory evidence, never a substitute for launch-time resolution. Do not guess source
+its size to D-5's capped candidate summaries and aggregate counts; do not store Git command output.
+This snapshot is advisory evidence, never a substitute for launch-time resolution. Do not guess source
 provenance for historical rows.
 
 ### D-3. Automatic selection uses Git containment, not creation time
 
 Inventory existing Worktree task branches for the resolved card GUID, excluding the new task.
-Validate repository identity using canonical absolute Git common directories, with the OS
-path comparison rules. A missing original worktree can still have an available local branch
+Read completed-land metadata first as below; for remaining candidates validate repository identity
+using canonical absolute Git common directories, with OS path comparison rules. A missing original
+worktree can still have an available local branch
 in the same common repository. Do not scan every remote `feat/*` branch or infer a card from
 a branch's short id. Do not mix histories from clones merely because their origin URLs match.
 
@@ -88,25 +98,41 @@ a Shared `-OnAgent` follow-up). If the branch is checked out, inspect that check
 staged, untracked changes or an in-progress rebase/merge make it unsuitable for automatic
 continuation. An unregistered but resolvable branch has no working files to copy.
 
-Determine whether source work is absent from the current default base. Exclude ancestors of
-that base. For linear ranges, also exclude branches whose entire range is patch-equivalent
-(`git cherry` has no `+` entries), so a rebased-and-landed branch is not resurrected. Do not
-claim patch equivalence for merge-containing ranges: treat those as uncertain and report
-them for explicit selection. Git errors are distinct from "no unlanded work".
+Before candidate-specific Git inspection, batch-read durable completion evidence: existence of
+an `AgentTaskEventType.Landed` OR `LandedWithResidue` event for that task is authoritative
+already-landed exclusion from Auto, even with a retained branch, a merge-containing range, or
+unavailable Git. Do not require both events or parse event prose. `LandRequested`, `LandRefused`
+and Succeeded status alone are not completion evidence. This read does not write events on
+predecessors. Explicit Task mode still honors a valid requested landed source as described below.
+
+For rows without completion evidence, determine containment against the current default base.
+Exclude ancestors of that base. For linear ranges, also exclude branches whose entire range is
+patch-equivalent (`git cherry` has no `+` entries), so rebased-and-landed work is not resurrected.
+The strict Git result distinguishes contained, not contained, and unknown. An off-target range
+containing a merge is unknown (`merge_range`), regardless of cherry output: exclude it from
+automatic selection AND maximal-tip counting, and report its branch/SHA for explicit selection.
+It is not an eligible-but-unresolvable maximum. With only uncertain sources Auto uses the warned
+target fallback; with one remaining unambiguous tip Auto continues it with the uncertainty warning;
+with two remaining maxima Auto refuses for those two. Never label uncertainty as already landed.
+Git errors are likewise unknown, never proof of containment; global inspection exhaustion has
+the stricter incomplete-inventory behavior in D-5.
 
 Collapse equal tips, then eliminate tips that are ancestors of another eligible tip. If one
 tip contains every eligible unlanded tip, use it. Several task rows at the same SHA are one
 source snapshot; prefer the most recently completed row only to label identical content,
-with task id as a deterministic tie-break. A newer read-only Review at A must not override
-a Code branch at B when A is an ancestor of B.
+with ascending ordinal task GUID (`ToString("D")`) as the final tie-break. A newer read-only
+Review at A must not override a Code branch at B when A is an ancestor of B.
 
-If two distinct maximal tips remain, the source is ambiguous: return a conflict before task
-creation, naming both and suggesting `-BaseTask` or `-FreshWorktree`. Do not merge them or pick
-the newest task. This prevents an apparently successful launch that quietly omits a fix.
+If two or more distinct eligible maximal tips remain, refuse before task creation with
+`ConflictException` and Problem Details `code: worktree_base_ambiguous`, naming the competing
+task IDs/branches/full SHAs and suggesting `-BaseTask` or `-FreshWorktree`. Use the existing coded
+exception/middleware contract; this code differs from ambiguous short-ID lookup and all provider
+409s. The script prints the code and recovery choices, exits nonzero, and makes no retry/reroute
+POST. Do not merge histories or pick the newest task.
 
 Other same-card kept branches (active, Blocked, Failed, Canceled, dirty, missing/unverifiable,
-or with a different destination) are visible warnings, not automatic sources. With no eligible
-source, retain the normal target base and explicitly name these omissions in the create
+uncertain merge ranges, or with a different destination) are visible warnings, not automatic
+sources. With no eligible source, retain the normal target base and name these omissions in the create
 response. This is the card's permitted warning fallback for cases that cannot safely be
 inferred. With an eligible source, still name any excluded branch it does not contain.
 
@@ -117,11 +143,14 @@ in the target; do not replace an explicit source with the target silently.
 
 ### D-4. Keep the dispatch-time land guard and handle races explicitly
 
-Read the durable `LandRequestedAt` column, not historic LandRequested events. Preserve the
-existing hold for relevant same-card kept work that is not yet in the target. A task waiting
+Read the durable `LandRequestedAt` column, not historic LandRequested events. First apply D-3's
+completed-land exclusion: a residue cleanup retry is not unlanded integration. Preserve the
+existing hold for relevant same-card kept work not proven contained/completed. An uncertain
+pending-land source still holds, even though it is excluded from Auto maxima. A task waiting
 for land remains Queued, creates no worktree/session, and retains the existing
-`siblingLandInFlight` pipeline explanation. A completed land is re-evaluated against the
-current target; a lingering branch name alone is not proof of unlanded work.
+`siblingLandInFlight` pipeline explanation. Completion events authoritatively release that
+source; without them, re-evaluate containment against the current target. A lingering branch
+name alone is not proof of unlanded work.
 The land hold takes precedence over ambiguous-source refusal while the histories are being
 integrated. Apply the same ordering in preview and dispatch. Only Auto without a card falls
 straight through to legacy behavior; explicit Task mode requires a bound card.
@@ -133,8 +162,9 @@ descendant may be chosen; a branch landed meanwhile may reduce Auto to the targe
 the actual choice and, when changed, why it differs from the preview.
 
 If explicit input becomes invalid or Auto becomes ambiguous after queueing, use the existing
-durable Blocked/error-reporting path before any session/worktree is created. The message
-names the branches and the available actions: resolve the histories then retry, or cancel
+durable Blocked/error-reporting path before any session/worktree is created. The message and
+persisted reason retain `worktree_base_ambiguous` for Auto divergence (there is no second HTTP
+create response at launch). Name the branches and available actions: resolve histories then retry, or cancel
 and recreate with `-BaseTask` / `-FreshWorktree`. Do not reinterpret an ordinary question reply
 as a Git ref or silently revert explicit Task mode to the target.
 
@@ -154,6 +184,45 @@ decision, fallback ref, source task/branch/full SHA when known, and candidate wa
 it after directory authorization/card binding but before saving a runnable row. Preserve all
 existing routing/quota/scope warnings; do not overload or replace their singular `Warning`.
 An inspection failure produces an explicit unknown/fallback warning, not "no prior branch".
+
+Bound every preview and launch resolution with the same policy. Add typed `GitSettings` defaults
+`WorktreeBaseInspectionTimeoutSeconds=2`, `WorktreeBaseMaxCandidates=16`, and
+`WorktreeBaseMaxGitCommands=128` (positive values; tests may inject smaller limits). These are
+inspection limits, not worktree-add, land-build, or request-wide timeouts. One monotonic deadline
+starts before the first Git observation; process-gate waiting, process start/output/exit and all
+candidate/pairwise queries consume it. Pass the remaining budget through linked cancellation to
+the infrastructure runner; cancel/terminate and reap only the owned inspection process on expiry,
+with no detached continued scan or automatic retry. Caller cancellation propagates as cancellation,
+not successful fallback. Do not claim the entire HTTP request, DB query, or process teardown has a
+hard two-second wall-clock bound.
+
+Apply card/status/destination/completed-event metadata filters first, read pending-land evidence
+before truncation, and count remaining branches needing Git inspection (including warning-only
+branches). Collapse identical branch references, then admit at most 16 for inspection, ordered by
+task ID solely for reproducible diagnostics. Cache identity/ref/containment observations within
+one resolution and batch where supported. Reserve a command slot at infrastructure runner
+admission, before waiting for the gate; identity checks, ancestry comparisons and retries each
+consume slots. Count actual process starts too, not merely high-level seam methods. Neither
+admissions nor starts may exceed the ceiling, and no process may start at/after the deadline.
+Never fetch.
+
+Exceeding the candidate cap, exhausting the command budget before a decision is complete, or
+reaching the deadline (equality is expired) returns `unknown` with reason `candidate_limit`,
+`git_command_limit`, or `inspection_timeout`. Auto must not select a tip or emit ambiguity based
+on the partially inspected subset: use the legacy target with an explicit incomplete-inspection
+warning, candidate summaries capped by the configured limit (default 16), total/inspected/omitted
+counts, elapsed time and command count.
+Candidate-local hard errors may still warn/exclude while other fully inspected candidates proceed
+per D-3. Target mode retains its explicit target and the same incomplete-omissions warning. Task
+mode inspects the authorized requested source first; if it cannot fully validate it, refuse 422
+at create or Blocked before launch, never substitute the target. Completed validation of Task
+intent may proceed with warned incomplete inspection of other omissions.
+
+These limits cannot bypass a pending land: if a same-card, matching-destination pending source
+without completed-land evidence cannot be ruled out as relevant/contained within the budget,
+return wait for land in every mode. Preserve known hold evidence even if Git-gate waiting times
+out. No-card Auto still skips sibling inspection entirely. The preview persists these bounded
+diagnostics; the script reports the specific reason and suggests retry or explicit selection.
 
 The real script prints, for example:
 
@@ -182,13 +251,33 @@ fetch because every task's branch is in the same Git repository.
 Starting from predecessor A does not mean landing A. Review can make zero commits at A, and
 the following Code task can start there and produce B. Explicitly landing B uses the existing
 rebase/verify/fast-forward/push machinery and includes the inherited work. Do not delete or
-mark the older tasks landed merely because B contains them; existing containment-aware cleanup
-and land residue handling remain responsible for their branches. Do not weaken conflict,
+mark the older tasks landed merely because B contains them; existing cleanup and land residue
+handling remain responsible for their branches (their ancestry-only deletion policy is unchanged).
+The diagnostic correction in D-7 does not delete a retained predecessor. Do not weaken conflict,
 push-failure, or verification-refusal behavior.
 
 Keep `WorktreeBaseSha` as the actual creation snapshot for no-target Git facts. The existing
 explicit-target Git-facts behavior is target-relative; do not rename it as task-only change
 count or change it as part of this card. Source provenance makes the inherited range visible.
+
+### D-7. Land diagnostics use the same containment evidence
+
+Change `AgentTaskLandService.CollectUnlandedSiblingsAsync` in S3. Before finalization removes the
+landing worktree, compare eligible same-card/same-common-repository kept sibling commits against
+its immutable rebased HEAD, using the strict D-3 ancestry + linear patch-equivalence observation.
+Apply durable Landed/LandedWithResidue exclusion first. Reuse the observation, not Auto's
+Succeeded-only/clean-checkout eligibility: a Blocked sibling can still have omitted committed work.
+
+A contained original A must produce neither its `unlanded-sibling=<shortid>:<branch>` token nor
+the corresponding stranded-work Warning, even when rebase rewrote A's SHA. A proven uncontained
+sibling still produces the existing token/list syntax and Warning in both Landed and
+LandedWithResidue outcomes. An uncertain merge/error/expired diagnostic emits an explicit
+inspection-unknown Warning, without asserting that sibling is stranded or already landed; it
+does not become an `unlanded-sibling=` token. Use the D-5 bounded inspection policy for this
+diagnostic pass too. If no token exists, preserve independent unknown warnings rather than
+returning `(null, [])`. Diagnostics never refuse a successful land or change cleanup ownership.
+Update the orchestration owner so the marker means proven omitted committed work, and an unknown
+warning means inspect/select explicitly, not a standing instruction to land already-contained A.
 
 ## Rejected alternatives
 
@@ -204,14 +293,14 @@ count or change it as part of this card. Source provenance makes the inherited r
 
 ## Implementation slices and test ownership
 
-TestDesign should turn these obligations into numbered verification and positive-control cases.
-The separate stage is intentional; this document does not claim executable verification is done.
+The verification section maps these obligations to numbered cases and positive controls; its
+amendment preserves the separate TestDesign stage's structure. No executable verification is claimed.
 
 | Slice | Files / change | Required evidence |
 |---|---|---|
-| S1: selection and strict Git observations | New `server/Application/Services/AgentTaskWorktreeBaseResolver.cs`; extend `server/Application/Interfaces/IGitService.cs` and `server/Infrastructure/Git/GitService.cs` with narrowly typed identity/ref/ancestry/clean-state observations; register in `server/Program.cs` and `tests/Antiphon.Tests/TestHelpers/DelegationTestServices.cs`. Reuse existing worktree/Git infrastructure instead of duplicating process wrappers. | New `AgentTaskWorktreeBaseResolverTests`: same-card GUID and canonical common-dir isolation, nested repo negative, unique linear chain, equal tips, divergence, patch-equivalent linear history, missing/error/dirty/active sources, and explicit destination mismatch. Use scratch real Git for Git-dependent results. |
+| S1: selection and strict Git observations | New `server/Application/Services/AgentTaskWorktreeBaseResolver.cs`; extend `server/Application/Interfaces/IGitService.cs` and `server/Infrastructure/Git/GitService.cs` with narrowly typed identity/ref/ancestry/clean-state and shared tri-state containment observations. Add inspection limits to `server/Application/Settings/GitSettings.cs`; register in `server/Program.cs` and `tests/Antiphon.Tests/TestHelpers/DelegationTestServices.cs`. Reuse existing process/gate infrastructure and propagate the resolution deadline. | New `AgentTaskWorktreeBaseResolverTests`: identity, linear/equal/divergent tips, durable completed-land exclusion, merge uncertainty excluded from maxima, missing/error/dirty/active sources, destination mismatch and bounded inspection. Use scratch real Git for Git-dependent results and a command-recording/controlled-time seam for budget boundaries. |
 | S2: request, persistence, immediate output | `server/Domain/Entities/AgentTask.cs`, `server/Domain/Enums/AgentTaskEnums.cs`, `server/Infrastructure/Data/AppDbContext.cs`, CLI-generated `server/Migrations/*`; `server/Application/Dtos/AgentTaskDtos.cs`, `AgentTaskService.cs`, `scripts/delegate.ps1`, `client/src/api/agentTasks.ts`. Endpoint remains thin. | New `AgentTaskWorktreeBaseCreateTests` and `DelegateScriptWorktreeBaseTests` using the real script/stub API pattern in `DelegateScriptKindTests` / `DelegateScriptRunner`: omitted/default modes, overrides, invalid combination, unauthorized/cross-card sources, warning composition, preview available before launch, migration round trip/defaults. Preserve capability and kind behavior. |
-| S3: dispatch and recovery | `AgentTaskDispatcher.cs`, `DelegationWorktreeService.cs`, `DelegationReportFormatter.BuildBrief`, DTO projection and retry handling in `AgentTaskService.cs`. `AgentTaskPipelineStatusService.cs` only if needed to preserve accurate existing land holds. | Extend `AgentTaskDispatchBaseGuardTests` for automatic continuation, source changes between create/dispatch, land start/completion races, ambiguous-before-launch blocking, and non-session callers. Extend `DelegationWorktreeTests` for explicit SHA starts, merge target unchanged, distinct directories/branches, retry/adoption without base reset, and creation failure preserving source work. Update the old "both branch from HEAD" test to describe explicit Target/low-level fallback, and add a real server-selection regression for default Auto. |
+| S3: dispatch, land diagnostics and recovery | `AgentTaskDispatcher.cs`, `DelegationWorktreeService.cs`, `AgentTaskLandService.cs` (`CollectUnlandedSiblingsAsync`), `DelegationReportFormatter.BuildBrief`, DTO projection and retry handling in `AgentTaskService.cs`. `AgentTaskPipelineStatusService.cs` only if needed to preserve accurate existing land holds. | Extend `AgentTaskDispatchBaseGuardTests` for continuation, preview changes, land races, coded prelaunch ambiguity, completed-land residue, budget fallback/hold and non-session callers. Extend `DelegationWorktreeTests` for SHA starts, unchanged destination, distinct workspaces, adoption and creation failure. V01/V31 exercise the real land probe: rebased contained predecessors have no marker/Warning; truly omitted work retains the marker and uncertainty remains a separate warning. Update the old HEAD-only test to explicit Target/legacy fallback and add real Auto regression coverage. |
 | S4: full multi-round behavior and owner docs | `docs/orchestration-loop.md` replaces the blanket sibling ban and mandatory Plan land prerequisite; `docs/antiphon-api.md`, `docs/ops-http.md`, `.claude/skills/antiphon-delegate/SKILL.md` document preview, overrides, and recovery. Amend only relevant bundle wording after reading its owner. | Scratch-repo Code A -> no-change Review A -> Code B -> explicit land B; verify HEAD/file contents at every start, target unchanged until land, combined content lands, and old branches are not falsely reported as omitted. Retain `AgentTaskLandStageOutcomeTests`, `AgentTaskPipelineStatusTests`, `DelegationWorktreeTests`, and existing follow-up/capability regressions. |
 
 Update copied/manual test registrations through `DelegationTestServices` as the testing owner
@@ -247,15 +336,15 @@ than recreated. Deploy server and script together for the new flags; an old scri
 automatic server continuity, while its older output will not show the structured preview.
 No AppHost restart, deployment, board mutation, merge, or production dispatch is part of Plan.
 
-Until the fix is landed, follow the current orchestration contract: land this plan before
-starting TestDesign, or explicitly arrange for TestDesign to contain this branch. Do not rely
+Until the fix is landed, follow the current orchestration contract: land this amended plan before
+starting Code, or explicitly arrange for the next stage to contain this branch. Do not rely
 on the not-yet-implemented automatic continuation to deliver this plan to its next stage.
 
 ## Verification design
 
-Date: 2026-09-08. Stage: TestDesign. The decisions above are unchanged. This section specifies
+Date: 2026-09-08. Stage: TestDesign, amended with Plan after review `057585a3`. This section specifies
 executable tests for Code to implement and run; it does not claim that those tests exist or pass.
-Inspection baseline: `d9f772a1` in the TestDesign worktree. All references below are repository
+Original inspection baseline: `d9f772a1`; amendment baseline: `3b7efe32`. All references below are repository
 paths. No live CARD-0412 branches, production tasks, paid agents or shared stack are test fixtures.
 
 ### Proves it works now
@@ -268,14 +357,14 @@ per case). The class key determines its file under `tests/Antiphon.Tests/Applica
 
 | Key | Class | Methods | Planned invocations |
 |---|---|---|---:|
-| C | new `AgentTaskWorktreeContinuityTests` | V01, V27 | 5 |
-| R | new `AgentTaskWorktreeBaseResolverTests` | V02-V10 | 35 |
+| C | new `AgentTaskWorktreeContinuityTests` | V01, V27, V31 | 8 |
+| R | new `AgentTaskWorktreeBaseResolverTests` | V02-V10, V29 | 46 |
 | A | new `AgentTaskWorktreeBaseCreateTests` | V11-V14, V17 | 23 |
-| P | new `DelegateScriptWorktreeBaseTests` | V15-V16 | 12 |
+| P | new `DelegateScriptWorktreeBaseTests` | V15-V16 | 13 |
 | M | new `AgentTaskWorktreeBaseMigrationTests` | V18 | 1 |
-| D | extend `AgentTaskDispatchBaseGuardTests` | V19-V22, V26, V28 | 19 |
+| D | extend `AgentTaskDispatchBaseGuardTests` | V19-V22, V26, V28, V30 | 24 |
 | W | extend `DelegationWorktreeTests` | V23-V25 | 5 |
-| Total | 28 methods | V01-V28 | 100 |
+| Total | 31 methods | V01-V31 | 120 |
 
 Use `[Category("Integration")]` for these fixtures. Add the assembly-local
 `[ParallelLimiter<ProcessSpawnLimit>]` to classes that run Git or pwsh, including extended
@@ -289,6 +378,9 @@ classes missing it today. A fixture that calls a global dispatcher/reply sweep g
   `WorktreeManager`; keep main checkout and source checkout HEAD/status snapshots before each
   operation. Local origin URLs point only to fixture-owned directories. No fetch is needed for
   dispatch; a recording Git seam must detect any attempted fetch in resolver/create tests.
+  Record actual infrastructure command starts/arguments as well as seam calls, so one batched
+  observation hiding multiple process spawns cannot evade V29's limit. Reset counters after
+  fixture setup and before each resolution; setup Git and worktree-add do not consume that budget.
 - **Database:** `TestDbFixture.CreateIsolatedSchemaAsync()` and its connection string for every
   service/relay context. Seed distinct board/card/task GUIDs. Scope assertions to those IDs,
   including absence assertions; clear the change tracker or reopen the context between phases.
@@ -298,6 +390,10 @@ classes missing it today. A fixture that calls a global dispatcher/reply sweep g
   Use a fake/recording runner and owned launch queue with no real provider executable; retain
   real resolver, create, dispatcher, worktree and land services. `TimeProvider.System` or an
   offset over real time is sufficient. Never use a frozen queue clock.
+  For V29/V30 and V15's timeout arm, give the resolver/inspection runner a separate controlled monotonic clock
+  and cancellable process/gate seam; the queue retains its advancing clock. Advance observation
+  time at barriers to test exact expiry without sleeps. Keep real Git fixtures for containment;
+  do not replace their Git results with the resolver's own expected answers.
 - **Settlement:** for V01, feed task-scoped assistant report/TurnEnd evidence ending with
   `DelegationReportFormatter.ReportToken(id, "done")` into the established
   `AgentTaskReplyService.OnTurnEndAsync` harness. Assert Succeeded before creating the next task;
@@ -335,7 +431,7 @@ asserts the relevant reason/branch identity, not just a nonzero exit or an excep
 | V-1 / C | Full cycle; `implicit_master`, `explicit_master`, `inherited_parent` (3) | integration / `T0442_V01` | Execute the sequence below. Independent HEAD/marker, persisted destination, detail/event/brief and final bare-origin assertions all pass. |
 | V-2 / R | Tip ordering; `newer_review_at_ancestor`, `equal_tip_completion`, `equal_tip_id_tie` (3) | integration / `T0442_V02` | A newer Review at A cannot beat Code B. Equal tips collapse to one snapshot, latest completion labels it, and equal completion timestamps use a fixed task-ID tie-break. Repeat each resolution after reversing row insertion order. No ambiguity or omitted-work warning for ancestors/equal content. |
 | V-3 / R | Repository/card identity; `disjoint_linked_worktree`, `nested_repository`, `same_origin_clone`, `other_card_guid`, `same_identifier_other_board` (5) | integration / `T0442_V03` | Only the linked-worktree positive is eligible. Compare canonical absolute common directories with platform path rules; Windows case/trailing-separator aliases of the positive resolve identically. Nested repo and same-origin clone remain distinct even when branch names/SHA objects are available locally. Card equality uses GUID, never display identifier/short branch text. |
-| V-4 / R | Landed/uncertain history; `ancestor`, `linear_patch_equivalent`, `merge_range` (3) | integration / `T0442_V04` | Ancestor of current fallback is omitted as already contained. For patch equivalence, cherry-pick A onto a changed target: hashes differ and real `git cherry` contains only `-`; Auto selects target. A merge-containing off-target range is reported as uncertain, not declared landed from empty cherry output or chosen automatically. Explicit quiescent Task selection retains the exact requested SHA in all three cases. |
+| V-4 / R | Landed/uncertain history; `ancestor`, `linear_patch_equivalent`, `merge_range`, `merge_plus_one_tip`, `merge_plus_two_tips`, `landed_event`, `landed_with_residue_event` (7) | integration / `T0442_V04` | Ancestor and patch-only equivalence select target. Without completion events, uncertain merge alone gives warned target, merge plus A continues A with warning and no conflict, and merge plus A/X refuses `worktree_base_ambiguous` with only A/X as maxima. Merge is never called landed from cherry output. For each completed-event type, the retained merge branch is excluded before candidate-specific Git calls; make those calls fail if reached, and assert no uncertainty warning/409 with target alone or A as companion. Explicit quiescent Task retains the requested SHA, including contained/completed sources, after its normal Git validation. |
 | V-5 / R | Non-success sources; `blocked`, `failed`, `canceled` (3) | integration / `T0442_V05` | With only that kept branch, Auto returns the legacy fallback and names the omitted branch/status. Explicit Task inherits its committed A when quiescent. It does not recover uncommitted content. |
 | V-6 / R | Active writers; `queued_original`, `dispatched_original`, `working_original`, `queued_shared_followup`, `dispatched_shared_followup`, `working_shared_followup` (6) | integration / `T0442_V06` | Auto warns and excludes; Task refuses with 422. For Shared cases the source row itself stays Succeeded; the separate open follow-up owns its checkout. Thus filtering source status alone cannot pass. Settling/removing the writer restores eligibility on re-resolution. |
 | V-7 / R | Unsafe checkout; `tracked_unstaged`, `staged`, `untracked`, `merge_in_progress`, `rebase_in_progress` (5) | integration / `T0442_V07` | Auto excludes with precise warning; explicit Task refuses 422. Commit/clean ordinary changes or finish/abort the scratch merge/rebase, then the same branch becomes eligible. Preserve file bytes/index and in-progress state during every refused observation. |
@@ -345,27 +441,34 @@ asserts the relevant reason/branch identity, not just a nonzero exit or an excep
 | V-11 / A | Invalid overrides; `both_flags`, `shared`, `readonly`, `onagent_task`, `onagent_fresh`, `task_without_card` (6) | integration / `T0442_V11` | Real create refuses 422 before a runnable row or worktree. Exercise the OnAgent cases with a live prior agent so the existing Shared rewrite cannot discard the flag. Error names the invalid combination; explicit Task is never silently changed to Auto. |
 | V-12 / A | Explicit boundaries; `cross_card`, `cross_board`, `nested_repo`, `separate_clone`, `destination_mismatch` (5) | integration / `T0442_V12` | Authorized caller cannot use BaseTask to cross card/common-repo/destination boundaries; 422, no new task/source mutation. Destination mismatch fixture uses source `release` and requested `master`; also show null and explicit `master` compare equal in its accepted control. Parent/root/card/session routing fields are unchanged by accepted selection. |
 | V-13 / A | Source identifier; `full_guid`, `unique_short`, `missing`, `ambiguous_short` (4) | integration / `T0442_V13` | Full and unique 8-hex short IDs resolve to the same persisted GUID. Missing ID is the existing 404; seed two same-prefix GUIDs for existing 409 ambiguity. No arbitrary ref/path interpretation. Refused responses cannot expose an unauthorized card's candidates. |
-| V-14 / A | Divergence before creation; `two_tips`, `four_tips` (2) | integration / `T0442_V14` | Use graph fixtures below. Auto returns Conflict/409 with candidate IDs, branches/full SHAs and both recovery switches, before inserting a runnable row. Choosing each maximal tip by BaseTask works independently with unchanged landing target and omitted-other-history feedback. Fresh succeeds with all omitted work named; no automatic merge or newest-task selection. |
-| V-15 / P | Immediate actual-script feedback; `continue`, `wait`, `fresh`, `unknown_fallback` (4) | integration / `T0442_V15` | Run real `delegate.ps1 -Role Code -Worktree -Card <fixture-card> -Goal ...` through the real-create relay. Capture POST response and process output before any tick. Continue prints source task/branch/full SHA, isolated-new-branch intent and landing destination; other cases print waiting or exact omission/inspection reason and fallback. `noReplyRouting=true`; queue remains untouched. Preserve an independent singular Warning and routing/scope output in the same response. No later event or session interruption can satisfy this test. |
-| V-16 / P | Real-script payload/validation; `omitted`, `base_task`, `fresh`, `both_flags`, `shared`, `readonly`, `onagent_task`, `onagent_fresh` (8) | integration / `T0442_V16` | Stub captures actual JSON: omitted emits neither override, Task sends the caller's short ID as `worktreeBaseTask`, Fresh sends `freshWorktree=true`. Illegal combinations exit nonzero before POST. For valid Worktree input exercise both `-Worktree` and `-Workspace Worktree` within the case. An older response without `worktreeBase` is still printable. |
+| V-14 / A | Divergence before creation; `two_tips`, `four_tips` (2) | integration / `T0442_V14` | Use graph fixtures below. Real create and guarded HTTP API return Conflict/409 with exact Problem Details `code=worktree_base_ambiguous`, candidate IDs, branches/full SHAs and both recovery switches, before inserting a runnable row. Choosing each maximal tip by BaseTask works independently with unchanged destination and omitted-other-history feedback. Fresh succeeds with omissions named; no automatic merge or newest-task selection. Short-ID and provider conflicts keep their distinct existing codes. |
+| V-15 / P | Immediate actual-script feedback; `continue`, `wait`, `fresh`, `unknown_fallback` (4) | integration / `T0442_V15` | Run real `delegate.ps1 -Role Code -Worktree -Card <fixture-card> -Goal ...` through the real-create relay. Capture response/output before any tick. Continue prints source task/branch/full SHA, isolated-new-branch intent and destination; others print wait or exact omission/inspection reason and fallback. Within unknown_fallback, repeat hard Git error and controlled inspection timeout: output names `inspection_timeout`, limits/counts and retry/selection choices. `noReplyRouting=true`; queue untouched. Preserve independent singular Warning and routing/scope output. Later events/session interruption cannot satisfy it. |
+| V-16 / P | Real-script payload/validation; `omitted`, `base_task`, `fresh`, `both_flags`, `shared`, `readonly`, `onagent_task`, `onagent_fresh`, `ambiguous_response` (9) | integration / `T0442_V16` | Stub captures actual JSON: omitted emits neither override, Task sends the caller's short ID as `worktreeBaseTask`, Fresh sends `freshWorktree=true`. Illegal combinations exit nonzero before POST. For valid input exercise both `-Worktree` and `-Workspace Worktree`; older responses without `worktreeBase` remain printable. `ambiguous_response` supplies the V14-shaped 409: actual output includes `worktree_base_ambiguous`, candidate identities and both recovery switches, exits nonzero after exactly one POST, and neither retries nor changes provider/mode. |
 | V-17 / A | Earlier access/launch guards; `revoked_capability`, `directory_denied`, `quota`, `provider_signin`, `concurrency`, `routing_pin` (6) | integration / `T0442_V17` | Combine an otherwise selectable A/BaseTask with the existing refusal fixtures. Preserve 403 revoked capability, 422 directory boundary, and their established 409 quota/sign-in/concurrency/pin refusals. No new runnable task, runner/worktree start or silent reroute. Unauthorized caller/directory cases perform no source Git observation and disclose no source preview. Use synthetic registry/usage/hold state, never live availability. |
 | V-18 / M | Persistence upgrade; `upgrade_and_roundtrip` (1) | integration / `T0442_V18` | In an isolated schema, migrate to the immediate predecessor of the new migration, insert a historical task with existing branch/base SHA, then migrate up. New mode defaults to Auto=0; nullable requested/resolved/preview fields stay null; historical SHA/destination survive without guessed source. Save/reload Auto, Target and Task rows with preview observation time/candidates, then recreate the service provider and project detail. Values survive exactly; preview stores summaries, not raw Git output. Locate the new migration by name, not `migrations[^1]`. |
 | V-19 / D | Launch re-evaluation; `new_descendant`, `landed_in_queue`, `unchanged` (3) | integration / `T0442_V19` | Preview A, persist, dispose provider. Add B, land A onto target, or change nothing. New provider's tick chooses B, target, or A respectively and records actual SHA/source/destination. Changed decisions retain the original preview/time, explain the difference in durable Warning/event/detail and a routed parent WhenIdle note. Unchanged continuation needs no late omitted-A warning. Repeat the changed case without reply routing: persisted evidence still exists and no parent message is needed. |
 | V-20 / D | Land precedence; `auto_two`, `task_two`, `fresh_two`, `auto_four`, `task_four`, `fresh_four` (6) | integration / `T0442_V20` | For graphs below set one relevant uncontained sibling's durable `LandRequestedAt`, including when it is not the explicitly chosen source. Preview is wait (not ambiguity refusal). Create succeeds Queued; repeated ticks create no worktree/session and pipeline says `siblingLandInFlight`, without duplicate hold spam. Also create with a valid preview first, then start land before tick: same hold. Fresh/BaseTask cannot bypass it. |
-| V-21 / D | Land completion and remaining tips; `all_contained`, `still_divergent` (2) | integration / `T0442_V21` | Clear durable pending land only after scratch integration into target, then tick from a fresh scope. Fully integrated four-branch graph releases Auto onto current target despite retained branch names. Partial land leaving two maximal uncontained tips makes Auto durably Blocked before launch, naming both and resolve/retry or cancel/recreate choices. Historic LandRequested event with null column must not hold. Resolving remaining histories then `RetryAsync` releases the same Auto task. |
-| V-22 / D | Inputs worsen after preview; `auto_diverges`, `task_deleted`, `task_dirty`, `task_active` (4) | integration / `T0442_V22` | Create from valid A, then introduce X or invalidate the explicit source before tick. Durable Blocked/error evidence and no-launch oracle; no fallback to master. Detail survives provider restart and names branches/actions. For the active case source row stays Succeeded and a new Shared follow-up is the writer. |
+| V-21 / D | Land completion and remaining tips; `all_contained`, `still_divergent`, `landed_merge`, `landed_residue_merge` (4) | integration / `T0442_V21` | Clear pending land after scratch integration, then tick from a fresh scope. Fully contained graph releases onto target; partial integration with two maxima becomes durably Blocked with `worktree_base_ambiguous` and recovery choices. Historic LandRequested alone must not hold. Merge cases persist respectively Landed/LandedWithResidue while retaining a non-ancestor merge branch: next preview/tick excludes it without candidate Git/uncertainty and selects target or remaining A. A residue cleanup retry with LandRequestedAt set also does not hold. LandRefused-only negative still warns/holds according to current evidence. Integrate remaining histories and RetryAsync to release the same Auto task. |
+| V-22 / D | Inputs worsen after preview; `auto_diverges`, `task_deleted`, `task_dirty`, `task_active` (4) | integration / `T0442_V22` | Create from valid A, then introduce X or invalidate explicit source before tick. Durable Blocked/error evidence and no-launch oracle; no fallback to master. Detail survives restart and names branches/actions; Auto divergence retains `worktree_base_ambiguous`. For the active case source stays Succeeded and a new Shared follow-up is the writer. |
 | V-23 / W | Immutable snapshot; `ref_moves_after_observation` (1) | integration / `T0442_V23` | Capture full A SHA passed to worktree creation, move source to B behind the barrier, then create. New HEAD and WorktreeBaseSha are A, A marker exists, B marker absent, source still at B. Event/brief/detail identify inherited A; no checkout/reset of the source or main repository. |
 | V-24 / W | Failed SHA creation; `creation_fails` (1) | integration / `T0442_V24` | Fail the worktree add at selected A through the I/O seam. Assert the existing failed-creation path, zero runner starts, one attempted full-SHA base and no second attempt from HEAD/master. Source A/ref/files survive. Reuse existing rollback tests for partial directory/registration cleanup. |
 | V-25 / W | Adoption wins; `persisted_coordinates`, `crash_before_coordinates`, `registered_missing_directory` (3) | integration / `T0442_V25` | Existing task branch contains A plus task-owned C. Before retry, add divergent sibling X and invalidate any former explicit source. Adopt/heal this task branch instead of blocking/reselecting/recreating from the new preview. C survives; branch/directory ownership is the same task. For persisted data retain its original WorktreeBaseSha=A and source provenance, even though HEAD=C. Unsaved provenance stays unknown rather than invented; if no base SHA was recorded, do not assert a reconstructed historical A. Missing-directory arm preserves C while using the existing locked-registration heal path. |
 | V-26 / D | Retry with no worktree yet; `auto`, `target`, `task` (3) | integration / `T0442_V26` | Prelaunch-block a task, reload and call real `RetryAsync`. Requested mode/source GUID and original preview survive, attempt increments, and destination/parent/root/card stay unchanged. At next tick Auto may re-resolve to B, Target still uses target despite B, Task still uses chosen A despite B. If Task remains invalid it blocks again rather than defaulting. |
 | V-27 / C | Existing Git-facts semantics; `no_target`, `explicit_target` (2) | integration / `T0442_V27` | Start at inherited A, add B. With null target, existing completion/check Git facts use WorktreeBaseSha=A and count only the task's new range. With explicit target M, retain target-relative A+B facts. In both cases provenance identifies inherited A. Re-adopt after B and recheck: recorded creation base must not change to B and make the new range disappear. |
 | V-28 / D | Recovery is explicit; `question_is_not_source_selection` (1) | integration / `T0442_V28` | After V22-shaped Blocked, submit an ordinary reply containing a branch/task ID through the established reply path. It may follow its existing no-session refusal/handling, but cannot change requested mode/source or create a worktree/session. Only the named retry-after-integration or cancel/recreate override paths select history. |
+| V-29 / R | Inspection limits; `six_kept`, `candidate_cap`, `git_call_cap`, `deadline`, `gate_deadline`, `explicit_deadline`, `caller_canceled` (7) | integration / `T0442_V29` | Record commands/time separately from setup. Six clean kept branches in a linear chain resolve to its tip within 128 starts and no fetch; pin shipped limits 16/128/2 seconds. More than 16 candidates produces incomplete target warning even if first admitted tip looks unique; completed-event rows do not consume slots. At an injected small command ceiling, no N+1 start occurs. Advance the separate clock to just before/exactly at two seconds, including while waiting for the Git gate: expiry cancels the owned operation, prevents later starts, and reports `inspection_timeout` without selecting a partial winner. Task timeout refuses, caller cancellation propagates with no success preview. All branches remain unchanged. |
+| V-30 / D | Budget propagation; `deadline`, `candidate_cap`, `pending_land_budget` (3) | integration / `T0442_V30` | Drive real create and new-provider dispatch with V29's controlled seam. Auto incomplete preview/tick retains legacy target, null source, reason/counts and durable changed-preview warning; repeat Target and explicit-source invalidation to prove Target warning and Task 422/prelaunch Blocked. No ambiguity from partial inspection. Pending source with no completion evidence gives Queued/wait and `siblingLandInFlight` in all modes despite exhaustion; after completed-land evidence it no longer holds. Initial script timeout output is also checked in V15's unknown_fallback case. |
+| V-31 / C | Land diagnostic distinctions; `uncontained_sibling`, `uncertain_sibling`, `inspection_failure` (3) | integration / `T0442_V31` | After Code 2 settles, add same-card sibling X, the V04 merge, or an inspection fault. Run real land against a scratch target and inspect fresh events/outcome. Proven omitted X retains exact `unlanded-sibling=<shortid>:<branch>` plus Warning; uncertain/error emits its own unknown Warning without that token. Repeat with the existing scratch `git worktree lock` residue recipe so both Landed and LandedWithResidue preserve diagnostics. Successful push/land is not refused by uncertainty. Unlock/remove only fixture residue in teardown. |
 
 **V01 sequence and independent oracle.** The null-target and explicit-master cases use M as
 destination; the inherited-parent case has a parent task on `feat/parent`, with matching effective
 destination for each same-card stage. Retain the same parent relationship across those requests.
 Record each created row's `MergeTargetRef`, `ParentTaskId`, `RootTaskId`, `CardId` and reply routing
 as resolved normally by create; source resolution must not rewrite them.
+Seed M with the small buildable `LandProbe.csproj`/`Marker.cs` recipe from
+`AgentTaskLandStageOutcomeTests.SeedBuildableAsync`, plus ignores for fixture build outputs, so
+the real land verification can succeed after a forced rebase. No verification stub or skipping
+the BaseMoved path is acceptable for V01.
 
 1. Create/dispatch Code 1 without overrides. Commit A in its new directory and settle normally.
    Main/destination and bare-origin destination are still M. A exists only on the kept task tip.
@@ -378,12 +481,18 @@ as resolved normally by create; source resolution must not rewrite them.
    settle normally and verify A+B remain in Code 2. Destination has not advanced during any
    create/dispatch/settlement. Brief, worktree-created event and task detail agree on actual
    inherited SHA and effective destination; null is labelled master for explicit land, not HEAD.
-4. Explicitly land Code 2 using `AgentTaskLandService.RunAsync`, with scratch origin only. Assert
-   successful existing land outcome, both marker bytes on local target and bare-origin target,
-   and ancestry/patch evidence for the inherited and new commits (do not assume SHA survives a
-   rebase). Parent-target case leaves master at M. Older tasks are not marked landed/deleted by
-   source selection; existing cleanup owns their eventual residue. There is no warning that
-   contained A/Review work was omitted. A subsequent Auto preview offers the current target.
+4. After those assertions, deliberately advance the destination and its scratch-origin ref with
+   an unrelated committed file T, leaving the predecessor at original A and Code 2 at original B.
+   Request/explicitly land Code 2 using `AgentTaskLandService.RequestAsync`/`RunAsync`. Assert the
+   real rebase/verify/fast-forward/push succeeds, and both marker bytes reach local and bare-origin
+   targets alongside T. Assert A/B were rewritten, original A is NOT an ancestor of the final
+   target, and its linear range has no `+` cherry entries. The Code 1 branch must remain at old A
+   for the probe; no completed-land event may be seeded for it, which would mask the Git defect.
+   Parent-target case leaves master at M. Inspect the final Landed/LandedWithResidue detail and
+   land-delivery body (where routed): no `unlanded-sibling=` token names Code 1 or any retained
+   Review-at-A branch, and no Warning calls their contained commits omitted/stranded. In the pure
+   cycle there is no such marker at all. Older tasks are not marked landed/deleted by source
+   selection; existing cleanup owns their residue. A subsequent Auto preview offers current target.
 
 **Divergence and CARD-0412-shaped fixtures.** These are synthetic reproductions of the stated
 four-unlanded-branch situation, not a claim to have inspected tonight's live DAG.
@@ -407,6 +516,10 @@ leaving B and Y both uncontained. If only one maximal tip remains after any inte
 continues that tip; cover this intermediate state in `still_divergent` after its initial Blocked
 assertion, before finishing integration/retry. Never “fix” this test by accepting newest-tip
 fallback or allowing Fresh to ignore an outstanding land.
+For V21's two completed-merge cases, use V04's merge fixture, seed the named completed event only
+after integration and reload from a new context. Keep LandRequested history and retained branch
+coordinates. Repeat with a cleanup-only pending request and with remaining unlanded A. A separate
+LandRefused-only control has no completed event and must not acquire authoritative exclusion.
 
 **V04 patch/merge recipes.** For `linear_patch_equivalent`, create A off M, advance master with
 an unrelated file, then cherry-pick A onto master; assert distinct SHAs, non-ancestry of A, and
@@ -417,6 +530,14 @@ Assert the source range contains a merge, is not an ancestor of master, and real
 master <source>` has no `+` entries. This forces the uncertainty check to matter even though
 linear patch checks would call the individual commits applied. Use argument-list Git helpers,
 not shell-expanded command strings. All branches remain confined to disposable fixtures.
+`merge_range` has no completion event and no other candidate: expect target plus uncertainty.
+`merge_plus_one_tip` adds unrelated unlanded A: expect A plus uncertainty, never 409.
+`merge_plus_two_tips` adds A/X: expect coded 409 for A/X only; the merge appears in uncertain
+diagnostics, never the competing-maxima list. The two completed-event cases reuse the merge
+recipe but add exactly the named durable event; Auto must not issue candidate Git calls at all
+for it. Disable that observation fault for the explicit-Task positive, which still validates
+the intentionally chosen SHA. Reverse row order to ensure uncertainty handling is not scan-order
+dependent. These separate outcomes make both erroneous readings of D-3 observably fail.
 
 ### Guards the regression
 
@@ -426,13 +547,16 @@ not shell-expanded command strings. All branches remain confined to disposable f
 | R-2 | Last-created/stage-based choice, silent divergent merge/pick | V02, V14, V22: ancestry wins; 2/4 maxima refuse before create or block before launch. |
 | R-3 | Path containment, origin URL or card display label becomes identity | V03, V12, V17: foreign fixture is excluded/refused and unauthorized source is never inspected/disclosed. |
 | R-4 | Active/dirty/failed sources enter Auto or explicit override bypasses custody checks | V05-V08: required fallback/refusal and unchanged source state; Shared follow-up closes the source-status loophole. |
-| R-5 | Landed rebased work is resurrected, or merge ranges are guessed equivalent | V04, V21: real patch-only range is excluded; uncertain merge is reported; retained landed branch names do not hold. |
+| R-5 | Landed work is resurrected or uncertain merges create permanent ambiguity | V04, V21: completed events exclude before Git; patch-only range is excluded; uncertain alone/plus-one/plus-two yields target/continue/coded conflict with uncertainty absent from maxima. |
 | R-6 | Preview exists only in a late Warning/WhenIdle message, or replaces existing warnings | V15: real process output and POST response are asserted with no dispatcher/reply route; independent Warning/routing/scope text survives. |
 | R-7 | Preview freezes selection across restarts, live ref redirects creation, or add failure retries master | V19, V22-V24: new provider observes current state, add receives full immutable SHA, failure never changes base. |
 | R-8 | Continuation changes the landing destination or task/session identity | V01, V12, V26: persisted identities unchanged, scratch master/parent/origin advance only at explicit land. |
-| R-9 | Fresh/BaseTask bypass land, or historical event holds forever | V20-V21 plus existing pipeline hold tests: Queued and `siblingLandInFlight` while durable flag applies, actual containment releases it. |
+| R-9 | Fresh/BaseTask bypass pending integration, or historic request/residue retry holds forever | V20-V21/V30 plus pipeline tests: pending uncontained/unknown integration holds even on budget expiry; completed event or proven containment releases it. |
 | R-10 | Retry forgets intent or adoption overwrites commits/base SHA | V25-V28: same task retains C and original A base, explicit intent survives fresh provider/retry, question text is never a Git selector. |
 | R-11 | New dependencies break unrelated callers or weaken land refusals | Run the existing class/method set below; retain conflict, push-failure, verification-refusal, capability and OnAgent behavior. |
+| R-12 | Land-time ancestry-only probe falsely brands inherited A stranded, or all markers/warnings are suppressed | V01 forced rebase has old-A non-ancestry but no false marker/Warning; V31 preserves real omitted-X marker and independent unknown warnings, including residue outcomes. |
+| R-13 | Create/launch inspection grows without bound, scans on after cancellation, or chooses from a truncated inventory | V29/V30: command/candidate/deadline boundaries, no later process start, explicit unknown/counts, Task refusal and pending-land precedence; V15 exposes timeout immediately. |
+| R-14 | Worktree ambiguity is confused with provider/ID 409s or retried/rerouted | V14/V16 exact `worktree_base_ambiguous` JSON/output, one POST and no row/start; V21/V22 retain the same reason after queueing. |
 
 Deliberately update these old assertions in `AgentTaskDispatchBaseGuardTests`: clean eligible
 `a_kept_sibling_with_no_land_dispatches_with_a_warning_and_whenidle_note` now continues and needs
@@ -470,7 +594,7 @@ are no subsequent relevant edits.
 | PC-9 | Change local-head lookup to accept the matching remote-tracking ref when local lookup fails. | V08 `remote_only` incorrectly continues; it has a real remote-tracking ref/object. |
 | PC-10 | Map strict Git inspection failure to an empty-success/no-candidates result. | V08 `git_error` loses its unknown warning or explicit-source refusal. |
 | PC-11 | Disable linear patch-equivalent exclusion (its predicate becomes `false`). | V04 `linear_patch_equivalent` resurrects A instead of selecting target. |
-| PC-12 | Disable the merge-containing-range uncertainty guard (predicate becomes `false`). | V04 `merge_range` ceases reporting uncertainty; fixture has no `+` cherry entries to expose false equivalence. |
+| PC-12 | Two separate one-line arms: disable the merge-range uncertainty guard; restore, then include `merge_range` unknowns in the eligible-maxima set. | V04: first arm loses required uncertainty by falsely declaring the merge contained; second arm makes `merge_plus_one_tip` conflict instead of continuing A (and/or adds merge to V04's exact maxima list). `merge_range` must remain warned target, plus-one warned A, plus-two coded refusal for A/X only. Merely asserting warning presence is insufficient. |
 | PC-13 | Disable the durable pending-land hold predicate. | V20: either premature create conflict instead of wait, or premature launch; all override modes must enforce the hold. |
 | PC-14 | Change the pending-land test from the durable column to historic LandRequested-event existence. | V21: completion remains held even after the column clears and integration is proven. |
 | PC-15 | Use persisted create preview as the dispatch decision instead of re-resolving. | V19 `new_descendant` starts A instead of B; V22 `auto_diverges` launches instead of becoming Blocked. Run both methods for this PC. |
@@ -487,11 +611,21 @@ are no subsequent relevant edits.
 | PC-26 | Change the launch-time invalid/ambiguous decision branch from durable Blocked to target fallback. | V22: invalid explicit input or new Auto divergence starts a worktree/session instead of retaining actionable Blocked evidence. |
 | PC-27 | Replace ancestry-based winner selection with the most recently completed eligible task row. | V02 `newer_review_at_ancestor` chooses A instead of B despite B containing the complete eligible history. |
 | PC-28 | In explicit Task selection, replace its source decision with target fallback when that source is already an ancestor of target. | V04 `ancestor`: explicit source SHA/provenance differs even if file content happens to match, so silent reinterpretation is detected. |
+| PC-29 | In `AgentTaskLandService.CollectUnlandedSiblingsAsync`, replace shared containment with ancestry-only against rebased HEAD. | V01: forced rebase emits the old-A `unlanded-sibling=` token and stranded Warning; both explicit absence assertions fail. Original A must remain non-ancestor with no completed event throughout this control. |
+| PC-30 | Suppress the land probe's proven-uncontained marker accumulation. | V31 `uncontained_sibling`: required exact X token is absent in Landed and residue outcomes; suppressing all diagnostics cannot pass the V01 negative oracle. |
+| PC-31 | Replace the durable Landed/LandedWithResidue exclusion predicate with `false`. | V04 completed-event cases issue forbidden candidate Git observations or acquire uncertainty; V21 merge/residue fails release without Git. Run both methods. LandRequested/LandRefused negatives remain distinct. |
+| PC-32 | Disable the candidate-limit incomplete-inventory predicate. | V29 `candidate_cap`: over-limit inventory is scanned or an apparent partial winner is selected instead of explicit incomplete target warning/counts. |
+| PC-33 | Disable the infrastructure command-slot ceiling guard. | V29 `git_call_cap`: command N+1 is admitted/started; the fixture needs further inspection past its injected ceiling, so it cannot finish before the guard matters. |
+| PC-34 | Replace construction of the two-second absolute inspection deadline with `now + TimeSpan.FromDays(1)`; leave settings and caller cancellation unchanged. | V29 `deadline`/`gate_deadline`/`explicit_deadline`: controlled operation completes after advancing beyond the configured deadline, producing late starts or a selected source instead of timeout/refusal. Release the barrier deterministically; a hung test/timeout is not a valid red. Caller cancellation remains separately asserted. |
+| PC-35 | Replace create ambiguity's code with generic `conflict`. | V14 fails exact JSON `worktree_base_ambiguous` even though status remains 409. V16 independently pins script handling of the correct coded response. |
+| PC-36 | Change equal-tip grouping key from full SHA to task ID formatted as a string. | V02 `equal_tip_completion`/`equal_tip_id_tie`: identical content is no longer one source snapshot; required no-conflict/deterministic source assertions fail. |
+| PC-37 | Reverse the final task-ID ordering used only to label equal tips with equal completion times. | V02 `equal_tip_id_tie`: exact expected task GUID changes in both row insertion orders. |
+| PC-38 | Disable explicit Target/Fresh selection so it falls through to Auto. | V10 `fresh_target`: eligible A is inherited instead of the independent topic HEAD/explicit release fallback, or source provenance ceases being null. |
 
 For PC-25, keep every other gate satisfied and retain the valid caller control. A red status
 alone without proof of the forbidden source access does not validate the custody assertion.
-Its two arms and PC-24's two language arms mean
-**30 mutation arms across 28 numbered controls**. Do not weaken authorization in a running host;
+Its two arms, PC-24's two language arms and PC-12's two semantic arms mean
+**41 mutation arms across 38 numbered controls**. Do not weaken authorization in a running host;
 all mutations run exclusively in the isolated test process and are reverted before commit.
 
 ### Out of scope
@@ -511,9 +645,9 @@ all mutations run exclusively in the isolated test process and are reverted befo
 ### Cost
 
 Suites forced: `Antiphon.Tests` only, the named classes/methods below; no concurrent second TUnit
-assembly. Planned new coverage is **28 methods / 100 invocations**, plus retained regressions and
-**30 isolated positive-control mutation arms**. These are planned counts, not measured results.
-Budget approximately **45-75 minutes** for Code's verification after implementation: initial
+assembly. Planned new coverage is **31 methods / 120 invocations**, plus retained regressions and
+**41 isolated positive-control mutation arms**. These are planned counts, not measured results.
+Budget approximately **60-100 minutes** for Code's verification after implementation: initial
 build/schema setup, real Git/pwsh scenarios, retained land tests and sequential red/rebuild/green
 arms dominate. Warm scoped-green runs should be substantially shorter; report actual elapsed
 times instead of claiming this estimate was measured. Test implementation time is additional.
@@ -578,7 +712,8 @@ check the intended class and case names actually executed. Require the planned p
 above and zero failed/skipped/not-executed V cases on final green. A data-row split/rename during
 implementation must update this manifest with a reason; never lower a count just to accept a
 filter that matched nothing. `--list-tests` and exit zero alone are not execution evidence.
-Use unique filenames/paths for every PC arm and restoration, including PC15's two methods.
+Use unique filenames/paths for every PC arm and restoration, including PC15/PC31's two methods
+and PC12's two independently restored mutations.
 
 Code's final report includes a V/R/PC table with executed counts, failures, restored outcomes,
 fresh TRX artifact paths, actual mutation diffs and unresolved items. A pre-existing failure is
