@@ -350,6 +350,9 @@ public class AgentTask
     /// </summary>
     public int LandAttempt { get; set; }
 
+    /// <summary>Durable landing evidence; scheduling retries never clear this association.</summary>
+    public Guid? ActiveLandingId { get; set; }
+
     /// <summary>
     /// UNCACHED input tokens only. The three input counters are kept apart because they are priced
     /// apart — a cache read is ~0.1x this, a cache write 1.25x (CARD-0023). Anything showing a

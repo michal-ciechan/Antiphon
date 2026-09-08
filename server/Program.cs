@@ -309,6 +309,9 @@ try
     builder.Services.AddScoped<AgentTaskService>();
     builder.Services.AddScoped<AgentTaskPipelineStatusService>();
     builder.Services.AddSingleton<AgentTaskLandQueue>();
+    builder.Services.AddSingleton<ILandingGit, LandingGit>();
+    builder.Services.AddSingleton<IRepositoryMutationLease, RepositoryMutationLease>();
+    builder.Services.AddScoped<AgentTaskLandingState>();
     builder.Services.AddScoped<AgentTaskLandService>();
     builder.Services.AddScoped<StageOutcomeService>();
     // CARD-0140 S3: AgentTuiLaunchResolver is already AddScoped below; the dispatcher's optional
@@ -623,7 +626,7 @@ try
     // One-shot: re-prices tasks costed before CARD-0023, so the per-root ceiling stops reading
     // ~10x-inflated history. No-ops once every row carries the current pricing version.
     builder.Services.AddHostedService<DelegationCostBackfillService>();
-    builder.Services.AddHostedService<StageOutcomeBackfillService>();
+    // CARD-0448 F2: prose-based landing stage backfill is retired.
     builder.Services.AddHostedService<WorkflowFileWatcherHostedService>();
     builder.Services.AddHostedService<SessionRunnerEventPump>();
 

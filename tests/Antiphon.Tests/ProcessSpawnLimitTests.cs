@@ -23,6 +23,9 @@ public class ProcessSpawnLimitTests
     {
         Type[] types =
         [
+            typeof(LandSourceIdentityTests),
+            typeof(Antiphon.Tests.Infrastructure.LandingGitTests),
+            typeof(Antiphon.Tests.Infrastructure.RepositoryMutationLeaseTests),
             typeof(SessionRunnerRuntimeTests),
             typeof(RawPtyAdapterTests),
             typeof(CodexAdapterLocalShellTests),

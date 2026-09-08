@@ -54,6 +54,7 @@ public class AppDbContext : DbContext
     public DbSet<ReviewComment> ReviewComments => Set<ReviewComment>();
     public DbSet<Alert> Alerts => Set<Alert>();
     public DbSet<AgentTask> AgentTasks => Set<AgentTask>();
+    public DbSet<AgentTaskLanding> AgentTaskLandings => Set<AgentTaskLanding>();
     public DbSet<AgentTaskEvent> AgentTaskEvents => Set<AgentTaskEvent>();
     public DbSet<StageOutcome> StageOutcomes => Set<StageOutcome>();
     public DbSet<AgentTuiProfile> AgentTuiProfiles => Set<AgentTuiProfile>();
@@ -1461,6 +1462,17 @@ public class AppDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
+        modelBuilder.Entity<AgentTaskLanding>(entity =>
+        {
+            entity.HasKey(l => l.Id);
+            entity.Property(l => l.ConcurrencyToken).IsConcurrencyToken();
+            entity.HasIndex(l => l.TaskId).IsUnique().HasFilter("\"Active\" = TRUE");
+            entity.HasOne<AgentTask>().WithMany().HasForeignKey(l => l.TaskId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.Property(l => l.LastReason).HasMaxLength(400);
+            entity.Property(l => l.VerificationFilter).HasMaxLength(400);
+        });
+
         modelBuilder.Entity<AgentTask>(entity =>
         {
             entity.ToTable("AgentTasks");
@@ -1520,6 +1532,8 @@ public class AppDbContext : DbContext
             entity.Property(t => t.CostPricingVersion).IsRequired().HasDefaultValue(0);
             entity.Property(t => t.CreatedAt).IsRequired();
             entity.Property(t => t.ConcurrencyToken).IsRequired();
+            entity.HasOne<AgentTaskLanding>().WithMany().HasForeignKey(t => t.ActiveLandingId)
+                .OnDelete(DeleteBehavior.Restrict);
             // CARD-0047. Pre-existing rows get the shipped default expectation and no schedule:
             // a task dispatched before this migration is never retro-armed.
             entity.Property(t => t.ExpectedDurationMinutes).IsRequired().HasDefaultValue(10);
