@@ -170,6 +170,66 @@ public class CapacityRecoveryTaskTests
     }
 
     [Test]
+    public async Task Card0412_V19_try_claim_ignores_retained_waits()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var (service, _, _) = CapacityRecoveryTestSupport.CreateService(schema);
+        await using var db = CapacityRecoveryTestSupport.CreateContext(schema);
+        var now = DateTime.UtcNow;
+        for (var i = 0; i < 6; i++)
+        {
+            var id = Guid.NewGuid();
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = id,
+                RootTaskId = id,
+                Title = $"claude-wait-{i}",
+                Goal = "wait",
+                Status = AgentTaskStatus.Working,
+                AgentKind = AgentKind.ClaudeCode,
+                CapacityWaitRetained = true,
+                CapacityWaitId = Guid.NewGuid(),
+                CreatedAt = now,
+                ConcurrencyToken = Guid.NewGuid(),
+            });
+        }
+
+        await db.SaveChangesAsync();
+        (await service.TryClaimCountedSlotAsync(db, 6, retainedReturn: false, CancellationToken.None))
+            .ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task Card0412_V19_try_claim_counts_historical_capacity_wait_id()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var (service, _, _) = CapacityRecoveryTestSupport.CreateService(schema);
+        await using var db = CapacityRecoveryTestSupport.CreateContext(schema);
+        var now = DateTime.UtcNow;
+        for (var i = 0; i < 6; i++)
+        {
+            var id = Guid.NewGuid();
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = id,
+                RootTaskId = id,
+                Title = $"admitted-{i}",
+                Goal = "busy",
+                Status = AgentTaskStatus.Working,
+                AgentKind = AgentKind.ClaudeCode,
+                CapacityWaitId = Guid.NewGuid(),
+                CapacityWaitRetained = false,
+                CreatedAt = now,
+                ConcurrencyToken = Guid.NewGuid(),
+            });
+        }
+
+        await db.SaveChangesAsync();
+        (await service.TryClaimCountedSlotAsync(db, 6, retainedReturn: false, CancellationToken.None))
+            .ShouldBeFalse();
+    }
+
+    [Test]
     public async Task Card0412_V20_missing_wait_is_registered_on_hold_skip()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();

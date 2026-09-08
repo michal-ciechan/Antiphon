@@ -720,6 +720,12 @@ public class ApiErrorRecoveryServiceTests
         await Recovery(h, time: time).EnsureAdoptedAsync(
             h.SessionId, seq, uuid, "rate_limit", 429,
             UsageLimitWallParser.SessionLimitHourOnlyTwoPmText, CancellationToken.None);
+        int revisionAfterFirst;
+        await using (var mid = CreateContext())
+        {
+            revisionAfterFirst = (await mid.ModelAvailabilityHolds.SingleAsync(x => x.Id == holdId)).Revision;
+        }
+
         await Recovery(h, time: time).EnsureAdoptedAsync(
             h.SessionId, seq, uuid, "rate_limit", 429,
             UsageLimitWallParser.SessionLimitHourOnlyTwoPmText, CancellationToken.None);
@@ -728,6 +734,7 @@ public class ApiErrorRecoveryServiceTests
         var hold = await verify.ModelAvailabilityHolds.SingleAsync(x => x.Id == holdId);
         hold.ClearedAt.ShouldBeNull();
         hold.DisabledUntil.ShouldBe(new DateTime(2026, 9, 6, 13, 2, 0, DateTimeKind.Utc));
+        hold.Revision.ShouldBe(revisionAfterFirst);
         var recovery = await verify.ApiErrorRecoveries.SingleAsync(r => r.AgentSessionId == h.SessionId);
         recovery.AppliedHoldId.ShouldBe(holdId);
         recovery.EvidenceStatus.ShouldNotBe("empty");
