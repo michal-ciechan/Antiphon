@@ -227,7 +227,9 @@ public class GitService : IGitService
             return false;
         }
 
-        await RunGitAsync(worktreePath, "add -A", ct);
+        var owned = new LandingGit();
+        var added = await owned.RunAsync(worktreePath, ["add", "-A"], ct);
+        if (!added.Succeeded) throw new InvalidOperationException(added.Diagnostic);
         var staged = await RunGitAsync(worktreePath, "diff --cached --name-only", ct);
         if (string.IsNullOrWhiteSpace(staged))
         {
@@ -235,7 +237,8 @@ public class GitService : IGitService
             return false;
         }
 
-        await RunGitAsync(worktreePath, BuildCommitArgs(message), ct);
+        var committed = await owned.RunAsync(worktreePath, ["commit", "-m", message, "--trailer", "antiphon=true"], ct);
+        if (!committed.Succeeded) throw new InvalidOperationException(committed.Diagnostic);
         return true;
     }
 

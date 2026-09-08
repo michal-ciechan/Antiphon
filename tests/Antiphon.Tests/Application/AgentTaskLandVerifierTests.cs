@@ -45,9 +45,11 @@ public sealed class AgentTaskLandVerifierTests
         var protectedPath = Path.Combine(fixture.Path, "bin-land", "keep.txt");
         Directory.CreateDirectory(Path.GetDirectoryName(protectedPath)!);
         await File.WriteAllTextAsync(protectedPath, "pre-existing private bytes");
-        var result = await AgentTaskLandService.VerifyAsync(fixture.Path,
+        var result = await new Antiphon.Server.Infrastructure.Git.LandingVerifier().VerifyAsync(fixture.Path,
             $"/*/*/VerificationProbe/{method}", CancellationToken.None);
-        result.Ok.ShouldBe(expected, result.Tail);
+        result.Passed.ShouldBe(expected, result.Description);
+        var common = await new Antiphon.Server.Infrastructure.Git.LandingGit().CommonDirectoryAsync(fixture.Path, CancellationToken.None);
+        Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children")).ShouldBeEmpty("both real verifier children must be acknowledged exited");
         File.Exists(marker).ShouldBe(expected);
         if (expected) result.Description.ShouldContain("tests 1/1");
         (await File.ReadAllTextAsync(protectedPath)).ShouldBe("pre-existing private bytes");

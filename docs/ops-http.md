@@ -10,6 +10,10 @@ API); nothing here replaces that.
 **Do not grep `MapGet` to find a route.** The one route this page cannot give you is a route this
 page says does not exist.
 
+Landing timeline events carry nullable `landingOperationId`, `landingPublication`,
+`landingCleanup` and `landingMode` snapshots. `LandingCleanup` updates an existing publication
+without counting another one. Legacy events have null snapshots and grant no cleanup authority.
+
 ## Two processes, two prefixes
 
 Mixing them is how sessions get 404s that look like a broken server.

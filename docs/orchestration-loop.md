@@ -58,10 +58,11 @@ restart.
 **Also delegated: the landing mechanics.** For a delegated Worktree task, the orchestrator orders
 the landing with `delegate.ps1 -Land <id>` (optionally `-Verify <filter>`); the server fetches,
 rebases, verifies when required, fast-forwards, pushes, and cleans up. The resulting
-`Landed` / `LandedWithResidue` / `LandRefused` outcome line is the confirmation. `Landed` means
-the target advanced and cleanup finished; `LandedWithResidue` means the target advanced and
-cleanup left a branch or directory (re-run `-Land` to retry cleanup); `LandRefused` means the
-target did not advance. A request survives a server restart. A 409 means a land is running in
+`Landed` / `AlreadyPresent` / `LandedWithResidue` outcome records confirmed remote containment.
+Publication and cleanup have separate durable statuses. `LandRefused` leaves publication
+unconfirmed and can follow local target advancement. A cleanup retry emits `LandingCleanup`
+for the same operation, without another publication. A request survives a server restart.
+A 409 means a land is running in
 this server now — wait for its outcome event. A `Warning` "did not finish (server restarted);
 re-running" is informational. The orchestrator decides the order and what a refusal means, but
 does none of those git operations itself.
@@ -563,12 +564,14 @@ wait for the outcome event; it never fires for a request no process holds. Three
 attempts refuse (`LandRefused`); `-Land` again starts a new request. A `Warning` "did not
 finish (server restarted); re-running" is informational.
 
-Read the resulting `Landed`, `LandedWithResidue`, or `LandRefused` event and its outcome line.
-`Landed` reports the merged SHA, pushed remote ref, verification result, and `worktree removed`.
-`LandedWithResidue` keeps the `landed …` prefix and ends `cleanup incomplete: <what remains>` —
-the target advanced; re-run `-Land` to retry cleanup. `LandRefused` means the target did not
-advance (fetch, remote-ahead, rebase, verify, fast-forward, or push failed) and leaves the
-branch and worktree in place naming why. A `Landed` line that also carries
+Read the task's structured `landing` evidence and the outcome's operation ID, original source,
+verified commit, observed remote commit, confirmation time, mode and cleanup status.
+`AlreadyPresent` records independent containment without claiming a successful push.
+`LandedWithResidue` records publication with incomplete cleanup. Re-POST retries guarded cleanup;
+its `LandingCleanup` event updates the same publication rather than counting another one.
+`LandRefused` can follow local target advancement or an unconfirmed push; its evidence names
+the last acknowledged checkpoint. Missing source components alone never prove success.
+A `Landed` line that also carries
 `unlanded-sibling=<id>:<branch>` (comma-separated if several) means a same-card kept branch is
 not an ancestor of the rebased HEAD — land or drop that sibling; the server warns rather than
 refusing.
@@ -587,12 +590,10 @@ landing, or drop the branch.
 `AgentTaskLandService.DeliverAsync`). Wait for it; do not run a manual `GET /api/agent-tasks/{id}`
 poll loop after `-Land` — that only produces a duplicate delivery of the same outcome (CARD-0386).
 
-**Each land outcome is also three `StageOutcome` rows (CARD-0272)** — Rebase, Verify, Cleanup —
-because those are three different questions even though one land op answers all three. `Landed`
-"build OK…" writes Rebase Clean, Verify Clean (with the verify detail), Cleanup Clean.
-`LandedWithResidue` writes the same Rebase/Verify but Cleanup Failed, naming what remains — the
-target still advanced, only cleanup did not finish. A bare `LandRefused` (fetch/rebase/push
-failed before any build ran) writes Rebase Failed alone. Historically, before CARD-0328 shipped
+**Landing records stage outcomes (CARD-0272)** for Rebase, Verify and Cleanup as applicable.
+Skipped verification names its reason. Cleanup retries add no second Rebase/Verify result.
+Publication with residue records Cleanup Failed while retaining confirmed publication.
+Historically, before CARD-0328 shipped
 `LandedWithResidue` as its own event (2026-09-03), a "could not delete branch/worktree" cleanup
 failure was reported under `LandRefused` too, which read as "did not land" even though the target
 had advanced — the plan behind this card flagged that as 9 of 47 backfilled runs misclassified.
@@ -679,9 +680,10 @@ Split by what each part actually is:
 
 For delegated Worktree tasks, worktree removal and branch deletion are the `-Land` operation's own
 job. Do not run them as a manual orchestrator step after a `Landed` outcome. A
-`LandedWithResidue` outcome is the cleanup-retry verb: re-run `-Land` (it short-circuits
-prepare/verify and only retries removal). A `LandRefused` outcome deliberately keeps both so a
-follow-up delegate can work from the failure.
+`LandedWithResidue`, or `AlreadyPresent` with incomplete cleanup, can be retried with `-Land`.
+The retry refreshes remote proof and validates every surviving component before removal,
+then emits `LandingCleanup`. Refusal preserves remaining components and recovery pins;
+it never restores components that were already absent or independently removed.
 
 ```powershell
 Get-ChildItem C:\src\Antiphon -Recurse -Depth 3 -Directory |
@@ -908,6 +910,21 @@ Automatic removal now refuses opaque ignored files, dirty/mismatched sources, un
 leftovers and unknown receipts. The janitor and residue sweep retain legacy work. Failed-add
 rollback and stale-registration healing retain uncertain state for inspection. They no longer
 force-remove or recursively erase a directory. This increases residue intentionally.
+
+Repository mutation exclusion uses the canonical Git common directory. Mutating Git,
+worktree-creation and verifier children write an atomic standing journal under
+`<git-common-dir>/antiphon/children/` before launch. The owning invocation clears its exact
+journal only after awaiting its child and draining output. An unacknowledged journal after
+worker death keeps admission held, including a dead or reused root PID: that PID alone cannot
+prove all descendants exited. Malformed/torn records also hold. Do not unlink `landing.lock`,
+Git locks or uncertain child records to force admission; inspect the recorded process identity
+and surviving work first. Recovery never kills an unrelated process by PID alone.
+
+Creation records now distinguish unfinished intent from a completed/reused checkout. An
+owned missing checkout can be reconstructed from its recorded Git admin/index without
+forcing checkout over surviving files. Failed-add rollback requires unchanged initial SHA,
+registration and an empty status including ignored contents; unknown hook output is retained.
+Local child cleanup also rechecks its captured parent SHA, checkout and sequencer state.
 
 The CARD-0448 continuation is not rollout-ready until its complete verification matrix and
 creation-recovery/admission coverage are accepted. Do not deploy a checkpoint independently.

@@ -231,6 +231,8 @@ public enum AgentTaskEventType
     CapacityRecovery = 28,
     /// <summary>Exact remote containment confirmed; cleanup has its own durable status.</summary>
     AlreadyPresent = 29,
+    /// <summary>Cleanup retry/update for an existing publication; never another publication.</summary>
+    LandingCleanup = 30,
 }
 
 /// <summary>

@@ -352,7 +352,11 @@ public sealed record AgentTaskEventDto(
     AgentTaskEventType Type,
     AgentModelLevel? ModelLevel,
     string Detail,
-    DateTime At);
+    DateTime At,
+    Guid? LandingOperationId = null,
+    LandPublicationOutcome? LandingPublication = null,
+    LandCleanupStatus? LandingCleanup = null,
+    LandOperationMode? LandingMode = null);
 
 /// <summary>
 /// What the delegate script gets back — enough to print, not enough to poll with. The warning is

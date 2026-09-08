@@ -87,7 +87,7 @@ internal static class DelegationTestServices
         var leases = new RepositoryMutationLease(git);
         var guarded = new GuardedWorktreeRemoval(git, leases, new TestRemovalEvidence(db));
         var manager = new WorktreeManager(Options.Create(settings), TimeProvider.System,
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<WorktreeManager>.Instance, guarded);
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<WorktreeManager>.Instance, guarded, leases, git);
         var worktrees = new DelegationWorktreeService(manager,
             new GitService(Microsoft.Extensions.Logging.Abstractions.NullLogger<GitService>.Instance),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<DelegationWorktreeService>.Instance,

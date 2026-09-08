@@ -399,7 +399,8 @@ public sealed class AgentTaskReplyService
         var events = await db.AgentTaskEvents.AsNoTracking()
             .Where(e => e.AgentTaskId == taskId)
             .OrderBy(e => e.At)
-            .Select(e => new AgentTaskEventDto(e.Type, e.ModelLevel, e.Detail, e.At))
+            .Select(e => new AgentTaskEventDto(e.Type, e.ModelLevel, e.Detail, e.At,
+                e.LandingOperationId, e.LandingPublication, e.LandingCleanup, e.LandingMode))
             .ToListAsync(ct);
         var kind = BlockedContextBuilder.Classify(task, events);
         if (kind != BlockedKind.Question)

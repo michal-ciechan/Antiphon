@@ -12,8 +12,18 @@ public sealed class RepositoryMutationLease(ILandingGit git) : IRepositoryMutati
         ct.ThrowIfCancellationRequested();
         try
         {
-            return new OwnedLease(this, common, new FileStream(Path.Combine(directory, "landing.lock"),
-                FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None));
+            var stream = new FileStream(Path.Combine(directory, "landing.lock"),
+                FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            try
+            {
+                if (await RepositoryChildJournal.HasUnfinishedAsync(common, git, ct))
+                {
+                    await stream.DisposeAsync();
+                    return null;
+                }
+                return new OwnedLease(this, common, stream);
+            }
+            catch { await stream.DisposeAsync(); throw; }
         }
         catch (IOException) { return null; }
     }

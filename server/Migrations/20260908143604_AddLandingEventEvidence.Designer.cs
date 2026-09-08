@@ -3,6 +3,7 @@ using System;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Antiphon.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260908143604_AddLandingEventEvidence")]
+    partial class AddLandingEventEvidence
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -905,9 +908,6 @@ namespace Antiphon.Server.Migrations
                     b.Property<int>("Cleanup")
                         .HasColumnType("integer");
 
-                    b.Property<DateTime?>("CleanupCompletedAt")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<DateTime?>("CleanupStartedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -959,9 +959,6 @@ namespace Antiphon.Server.Migrations
                     b.Property<int>("Phase")
                         .HasColumnType("integer");
 
-                    b.Property<DateTime?>("PreparedAt")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<bool>("PreparedPinned")
                         .HasColumnType("boolean");
 
@@ -972,9 +969,6 @@ namespace Antiphon.Server.Migrations
                         .HasColumnType("integer");
 
                     b.Property<DateTime?>("PushStartedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("RebaseStartedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("RebasedSourceSha")
@@ -1019,12 +1013,6 @@ namespace Antiphon.Server.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<string>("TargetCheckoutPath")
-                        .HasColumnType("text");
-
-                    b.Property<bool>("TargetCheckoutRecorded")
-                        .HasColumnType("boolean");
-
                     b.Property<string>("TargetFullRef")
                         .IsRequired()
                         .HasColumnType("text");
@@ -1050,9 +1038,6 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<string>("VerificationSkipReason")
                         .HasColumnType("text");
-
-                    b.Property<DateTime?>("VerificationStartedAt")
-                        .HasColumnType("timestamp with time zone");
 
                     b.Property<DateTime?>("VerifiedAt")
                         .HasColumnType("timestamp with time zone");

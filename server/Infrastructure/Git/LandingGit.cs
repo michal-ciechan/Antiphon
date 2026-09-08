@@ -46,11 +46,15 @@ public class LandingGit : ILandingGit
         start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         ConfigureProcess(start);
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        var mutating = arguments.Any(a => a is "rebase" or "merge" or "push" or "fetch" or "update-ref"
+            or "add" or "remove" or "commit" or "checkout" or "checkout-index" or "restore" or "reset");
+        var journal = mutating ? await RepositoryChildJournal.BeginAsync(repository, ct) : null;
         using var process = Process.Start(start) ?? throw new IOException("git_start_failed");
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
         try
         {
+            if (journal is not null) await journal.StartedAsync(process, ct);
             if (started is not null) await started(process.Id, process.StartTime.ToUniversalTime().Ticks, ct);
             await process.WaitForExitAsync(budget.Token);
         }
@@ -60,10 +64,14 @@ public class LandingGit : ILandingGit
             if (!process.HasExited) process.Kill(entireProcessTree: true);
             await process.WaitForExitAsync(CancellationToken.None);
             await Task.WhenAll(output, error);
+            journal?.Exited(process);
             if (!ct.IsCancellationRequested && budget.IsCancellationRequested) throw new TimeoutException("git_timeout");
             throw;
         }
-        await error; // Never expose Git's stderr: endpoint URLs and hooks can contain secrets.
+        // Descendants may retain redirected handles after the root exits. Keep the standing
+        // journal until both streams drain; worker death in that interval must still fence admission.
+        await Task.WhenAll(output, error); // Never expose Git stderr (endpoints/hooks may contain secrets).
+        journal?.Exited(process);
         return new(process.ExitCode, await output,
             process.ExitCode == 0 ? "" : $"git_exit_{process.ExitCode}");
     }
@@ -93,6 +101,24 @@ public class LandingGit : ILandingGit
         return await CanonicalDirectoryAsync(result.Trim(), ct);
     }
 
+    public async Task<IReadOnlyList<LandingRegistration>> RegistrationsAsync(string repository, CancellationToken ct)
+        => ParseRegistrations(await RequiredAsync(repository, ["worktree", "list", "--porcelain", "-z"], ct));
+
+    public async Task<bool> HasActiveSequencerAsync(string repository, CancellationToken ct)
+        => HasSequencerAt(await CanonicalDirectoryAsync((await RequiredAsync(repository,
+            ["rev-parse", "--absolute-git-dir"], ct)).Trim(), ct));
+
+    private static bool HasSequencerAt(string admin)
+    {
+        foreach (var name in new[] { "rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "sequencer" })
+        {
+            try { _ = File.GetAttributes(Path.Combine(admin, name)); return true; }
+            catch (FileNotFoundException) { }
+            catch (DirectoryNotFoundException) { }
+        }
+        return false;
+    }
+
     public async Task<LandSourceInspection> InspectAsync(LandSourceCoordinates coordinates, CancellationToken ct)
     {
         try
@@ -103,11 +129,7 @@ public class LandingGit : ILandingGit
             var before = await IdentityAsync(coordinates, ct);
             if (before.Reason is not null) return before;
             var snapshot = before.Snapshot!;
-            foreach (var name in new[] { "rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "sequencer" })
-            {
-                var state = Path.Combine(snapshot.GitDirectory, name);
-                if (Path.Exists(state)) return new(null, "active_sequencer");
-            }
+            if (HasSequencerAt(snapshot.GitDirectory)) return new(null, "active_sequencer");
             var status = await RunAsync(snapshot.RegisteredPath,
                 ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], ct);
             if (!status.Succeeded) return new(null, "status_error");
@@ -286,15 +308,28 @@ public class LandingGit : ILandingGit
         string? path = null, branch = null, head = null;
         var locked = false;
         var prunable = false;
+        var fieldsSeen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var field in text.Split('\0'))
         {
             if (field.Length == 0)
             {
-                if (path is not null) rows.Add(new(path, branch, head, locked, prunable));
+                if (fieldsSeen.Count != 0)
+                {
+                    if (string.IsNullOrEmpty(path) || (fieldsSeen.Contains("bare")
+                        ? head is not null || branch is not null || fieldsSeen.Contains("detached")
+                        : head is null || !IsOid(head) || (branch is null) == !fieldsSeen.Contains("detached")))
+                        throw new IOException("registration_parse_error");
+                    rows.Add(new(path, branch, head, locked, prunable));
+                }
                 path = branch = head = null;
                 locked = prunable = false;
+                fieldsSeen.Clear();
+                continue;
             }
-            else if (field.StartsWith("worktree ", StringComparison.Ordinal)) path = field[9..];
+            var key = field.Split(' ', 2)[0];
+            if (!fieldsSeen.Add(key) || (key != "worktree" && path is null))
+                throw new IOException("registration_parse_error");
+            if (field.StartsWith("worktree ", StringComparison.Ordinal)) path = field[9..];
             else if (field.StartsWith("branch ", StringComparison.Ordinal)) branch = field[7..];
             else if (field.StartsWith("HEAD ", StringComparison.Ordinal)) head = field[5..];
             else if (field == "locked" || field.StartsWith("locked ", StringComparison.Ordinal)) locked = true;

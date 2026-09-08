@@ -1,68 +1,37 @@
 <#
 .SYNOPSIS
-    Delete regenerable alternate build outputs (any bin-*/ directory) across the repo. These
-    are created by "build while daemons lock bin/" workarounds (dotnet build
-    --property:OutputPath=bin-verify\) and are never referenced afterwards, but they bloat the
-    tree and slow MSBuild evaluation when left to accumulate. The pattern is a wildcard rather
-    than a list of known names so a new one-off output dir is covered the first time it is used.
+    Inventory alternate build outputs; preserve directories without producer ownership evidence.
 
-    Deliberately NOT touched:
-      - bin/ and obj/           (live build outputs; the running daemons lock them)
-      - workspace/              (live session-runner state: session logs, pty-host shadow
-                                 copies that RUNNING pty-hosts execute from, manifests)
+    CARD-0448: a bin-* name, ignored status, or age does not prove that its contents are
+    regenerable. This entry point previously erased arbitrary ignored files with robocopy /MIR.
+    Existing build producers do not issue deletion receipts, so this script retains all matches.
+    It neither traverses directory links nor invokes a second shell to delete paths.
 
-    Dirs modified in the last hour are skipped so an in-flight test run is never pulled
-    out from under itself. Uses robocopy empty-mirror for deletion so paths longer than
-    MAX_PATH cannot break it.
-
-    Recurring cleanup runs via Windmill on server2 (u/lndcobra/antiphon_build_junk_cleanup,
-    Mon 09:00 Europe/London), not a local Windows Scheduled Task - do not re-add one.
-    The Windmill job (tag "desktop") SSHes from the desktop worker container into Windows
-    and runs this file. Safe to run manually at any time.
+    The existing Windmill schedule may still invoke this inventory. No schedule is created here.
 #>
 param(
     [string]$RepoRoot = (Split-Path $PSScriptRoot -Parent),
     [int]$SkipIfModifiedWithinMinutes = 60
 )
 
-$ErrorActionPreference = 'Continue'
-$patterns = @('bin-*')
+$ErrorActionPreference = 'Stop'
+$root = (Get-Item -LiteralPath $RepoRoot -Force).FullName
 $cutoff = (Get-Date).AddMinutes(-$SkipIfModifiedWithinMinutes)
-
-$empty = Join-Path $env:TEMP ("antiphon-empty-" + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Force $empty | Out-Null
-
-$removed = 0
-try {
-    foreach ($pattern in $patterns) {
-        $dirs = Get-ChildItem -Path $RepoRoot -Directory -Recurse -Filter $pattern -Depth 3 -ErrorAction SilentlyContinue
-        foreach ($d in $dirs) {
-            try {
-                if (-not (Test-Path -LiteralPath $d.FullName)) {
-                    # Already removed as a nested match of a parent directory this same run.
-                    continue
-                }
-                if ($d.LastWriteTime -gt $cutoff) {
-                    Write-Host "skip (recently modified): $($d.FullName)"
-                    continue
-                }
-                & robocopy $empty $d.FullName /MIR /NFL /NDL /NJH /NJS /W:0 /R:0 | Out-Null
-                Remove-Item -LiteralPath $d.FullName -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
-                if (-not (Test-Path -LiteralPath $d.FullName)) {
-                    Write-Host "removed: $($d.FullName)"
-                    $removed++
-                } else {
-                    Write-Host "partial (locked?): $($d.FullName)"
-                }
-            } catch {
-                # A single directory failing to delete (already-removed nested match, locked
-                # file, etc.) must not abort the whole sweep - later patterns still need to run.
-                Write-Host "error (skipped): $($d.FullName) - $($_.Exception.Message)"
-            }
+$retained = 0
+$pending = [System.Collections.Generic.Queue[object]]::new()
+$pending.Enqueue(@{ Path = $root; Depth = 0 })
+while ($pending.Count -gt 0) {
+    $entry = $pending.Dequeue()
+    foreach ($directory in Get-ChildItem -LiteralPath $entry.Path -Directory -Force -ErrorAction Stop) {
+        if (($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
+        if ($directory.Name -like 'bin-*') {
+            $reason = if ($directory.LastWriteTime -gt $cutoff) { 'recently modified' } else { 'ownership evidence required' }
+            Write-Output "retained ($reason): $($directory.FullName)"
+            $retained++
+        }
+        if ($entry.Depth -lt 3 -and $directory.Name -notin @('.git', 'node_modules', 'workspace')) {
+            $pending.Enqueue(@{ Path = $directory.FullName; Depth = $entry.Depth + 1 })
         }
     }
-} finally {
-    Remove-Item -LiteralPath $empty -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
 }
-
-Write-Host "cleanup-build-junk: $removed dir(s) removed."
+Write-Output "cleanup-build-junk: 0 dir(s) removed; $retained retained."

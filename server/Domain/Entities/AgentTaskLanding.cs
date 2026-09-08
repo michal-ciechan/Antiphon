@@ -32,6 +32,12 @@ public sealed class AgentTaskLanding
     public DateTime? VerifiedAt { get; set; }
     public string TargetFullRef { get; set; } = "";
     public string TargetBeforeSha { get; set; } = "";
+    public bool TargetCheckoutRecorded { get; set; }
+    public string? TargetCheckoutPath { get; set; }
+    public DateTime? RebaseStartedAt { get; set; }
+    public DateTime? PreparedAt { get; set; }
+    public DateTime? VerificationStartedAt { get; set; }
+    public DateTime? CleanupCompletedAt { get; set; }
     public string? LocalTargetAfterSha { get; set; }
     public string RemoteName { get; set; } = "origin";
     public string DestinationFullRef { get; set; } = "";

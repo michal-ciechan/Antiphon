@@ -83,6 +83,32 @@ public sealed class LandingGitTests
     }
 
     [Test]
+    [Arguments("duplicate-path")]
+    [Arguments("duplicate-head")]
+    [Arguments("duplicate-branch")]
+    [Arguments("missing-head")]
+    [Arguments("branch-and-detached")]
+    [Arguments("orphan-field")]
+    [Arguments("truncated")]
+    public void C448_V30_MalformedRegistrationCannotHideAmbiguousIdentity(string variant)
+    {
+        var oid = new string('a', 40);
+        var row = $"worktree C:/fixture\0HEAD {oid}\0branch refs/heads/source\0";
+        var malformed = variant switch
+        {
+            "duplicate-path" => row + "worktree C:/other\0\0",
+            "duplicate-head" => row + $"HEAD {oid}\0\0",
+            "duplicate-branch" => row + "branch refs/heads/other\0\0",
+            "missing-head" => "worktree C:/fixture\0branch refs/heads/source\0\0",
+            "branch-and-detached" => row + "detached\0\0",
+            "orphan-field" => $"HEAD {oid}\0\0",
+            _ => row.TrimEnd('\0'),
+        };
+        Should.Throw<IOException>(() => LandingGit.ParseRegistrations(malformed));
+        LandingGit.ParseRegistrations(row + "\0").ShouldHaveSingleItem();
+    }
+
+    [Test]
     [Arguments("--all")]
     [Arguments("HEAD~1")]
     [Arguments("refs/tags/tag")]
