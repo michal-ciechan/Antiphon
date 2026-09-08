@@ -25,6 +25,7 @@ public class SpecialistExecutionIdentityTests
     [Arguments(AgentKind.Codex, true, "session")]
     [Arguments(AgentKind.Codex, false, "kind")]
     [Arguments(AgentKind.Codex, true, "live-model")]
+    [Arguments(AgentKind.Codex, false, "public-kind")]
     public async Task Card0415_V01_execution_snapshot_and_dispatch_drift(
         AgentKind kind, bool deadlinePolicy, string drift)
     {
@@ -90,6 +91,9 @@ public class SpecialistExecutionIdentityTests
                     .ExecuteUpdateAsync(s => s.SetProperty(a => a.StartedAt, session.StartedAt.AddSeconds(1)));
                 if (drift == "live-model") await edit.AgentSessions.Where(s => s.Id == session.Id)
                     .ExecuteUpdateAsync(s => s.SetProperty(a => a.EffectiveModelId, "gpt-5.6-sol"));
+                if (drift == "public-kind") await edit.AgentTasks.Where(t => t.Id == task.Id)
+                    .ExecuteUpdateAsync(s => s.SetProperty(t => t.AgentKind, AgentKind.ClaudeCode)
+                        .SetProperty(t => t.SpecialistModelAlias, (string?)null));
                 if (drift == "session")
                 {
                     var replacement = new AgentSession
@@ -105,12 +109,12 @@ public class SpecialistExecutionIdentityTests
                 }
             }
             if (deadlinePolicy)
-                availability.Calls.ShouldContain(c => c == (kind, exact));
+                availability.Calls.ShouldContain(c => c.Kind == kind && c.Alias == exact);
             var (dispatcher, provider) = AgentTaskStandingAgentDispatchTests.CreateHarness(connectionString: database.ConnectionString);
             using (provider) await dispatcher.TickAsync(stop.Token);
             await using var verify = new AppDbContext(options);
             var result = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
-            result.AgentKind.ShouldBe(kind);
+            result.AgentKind.ShouldBe(drift == "public-kind" ? AgentKind.ClaudeCode : kind);
             result.ModelLevel.ShouldBe(AgentModelLevel.High);
             if (drift == "none")
             {
