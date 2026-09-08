@@ -482,12 +482,12 @@ public class AgentTaskStandingAgentDispatchTests
         return reply.TrimEnd() + "\n" + DelegationReportFormatter.ReportToken(shortId, "done");
     }
 
-    private static (AgentTaskDispatcher Dispatcher, ServiceProvider Provider) CreateHarness(
-        string? worktreeBasePath = null)
+    internal static (AgentTaskDispatcher Dispatcher, ServiceProvider Provider) CreateHarness(
+        string? worktreeBasePath = null, string? connectionString = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
+        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString ?? TestDbFixture.ConnectionString));
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton(Options.Create(new SupervisionSettings()));
