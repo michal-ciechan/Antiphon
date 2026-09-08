@@ -14,6 +14,70 @@ namespace Antiphon.Tests.Application;
 public class CapacityRecoveryGrantLivenessTests
 {
     [Test]
+    [Arguments(false, 100)]
+    [Arguments(true, 100)]
+    [Arguments(false, 1)]
+    [Arguments(true, 1)]
+    public async Task Card0412_D7_two_dead_older_consumers_do_not_starve_a_healthy_newer_wait(bool hasReceipt, int batch)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var (service, time, provider) = CapacityRecoveryTestSupport.CreateService(schema, batch: batch);
+        await using var services = provider;
+        var now = time.GetUtcNow().UtcDateTime;
+        var deadWaits = new List<CapacityRecoveryWait>();
+        for (var index = 0; index < 2; index++)
+        {
+            var wait = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+                $"session:{Guid.NewGuid():N}", CapacityWaitConsumerKind.LiveSession,
+                holdAlreadyCleared: true, blockedAt: now.AddMinutes(-30 + index)), CancellationToken.None);
+            deadWaits.Add(wait);
+            if (hasReceipt)
+            {
+                await using var db = CapacityRecoveryTestSupport.CreateContext(schema);
+                var row = await db.CapacityRecoveryWaits.SingleAsync(w => w.Id == wait.Id);
+                row.State = CapacityRecoveryWaitState.Admitted;
+                row.AdmissionCount = 1;
+                row.SelectedMessageId = Guid.NewGuid();
+                row.UpdatedAt = now.AddMinutes(-10);
+                await db.SaveChangesAsync();
+            }
+        }
+        var healthy = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+            $"task:{Guid.NewGuid():N}", CapacityWaitConsumerKind.QueuedTask,
+            holdAlreadyCleared: true, blockedAt: now.AddMinutes(-1)), CancellationToken.None);
+
+        int? admittedTick = null;
+        for (var tick = 0; tick <= 6; tick++)
+        {
+            await service.ReconcileAsync(CancellationToken.None);
+            await using var db = CapacityRecoveryTestSupport.CreateContext(schema);
+            var grant = await db.CapacityRecoveryProviderStates.SingleAsync(s => s.Kind == AgentKind.ClaudeCode);
+            if (grant.GrantedWaitId == healthy.Id)
+            {
+                var accepted = await service.RedeemAsync(healthy.Id, grant.GrantedActionKey!,
+                    AgentKind.ClaudeCode, CapacityRedemptionPath.Dispatch, CancellationToken.None);
+                accepted.Ok.ShouldBeTrue(accepted.Reason);
+                accepted.AdmissionCount.ShouldBe(1);
+                await service.MarkProgressedAsync(healthy.Id, CancellationToken.None);
+                admittedTick = tick;
+                break;
+            }
+            // Only the healthy consumer redeems; the two orphan consumers never do.
+            time.Advance(TimeSpan.FromSeconds(60));
+        }
+
+        admittedTick.ShouldNotBeNull("two expired older grants must not ping-pong forever");
+        admittedTick.Value.ShouldBeLessThanOrEqualTo(6);
+        await using var verify = CapacityRecoveryTestSupport.CreateContext(schema);
+        var deadIds = deadWaits.Select(w => w.Id).ToArray();
+        var deadRows = await verify.CapacityRecoveryWaits.Where(w => deadIds.Contains(w.Id)).ToListAsync();
+        deadRows.ShouldAllBe(w => w.AdmissionCount == (hasReceipt ? 1 : 0));
+        deadRows.ShouldAllBe(w => w.State != CapacityRecoveryWaitState.Exhausted);
+        if (hasReceipt)
+            deadRows.ShouldAllBe(w => w.ActionOrdinal == 0 && w.SelectedMessageId != null);
+    }
+
+    [Test]
     [Arguments(true)]
     [Arguments(false)]
     public async Task Card0412_D4_abandoned_grant_expires_and_younger_task_advances(bool hasReceipt)
@@ -200,7 +264,7 @@ public class CapacityRecoveryGrantLivenessTests
         await using (var db = CapacityRecoveryTestSupport.CreateContext(schema))
         {
             (await db.AgentSessions.SingleAsync(s => s.Id == sessionId))
-                .CapacityRecoveryActionKey.ShouldBe(rearmed.ActionKey);
+                .CapacityRecoveryActionKey.ShouldBe(wait.ActionKey);
             var message = await db.SessionQueuedMessages.SingleAsync(m => m.Id == messageId);
             message.CapacityRecoveryActionKey.ShouldBe(rearmed.ActionKey);
             message.CapacityWaitVersion.ShouldBe(rearmed.Version);

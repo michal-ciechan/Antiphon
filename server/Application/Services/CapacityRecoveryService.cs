@@ -169,7 +169,14 @@ public sealed class CapacityRecoveryService
                         && (w.State == CapacityRecoveryWaitState.Ready
                             || w.State == CapacityRecoveryWaitState.ActionPending
                             || (w.State == CapacityRecoveryWaitState.Admitted && w.NeedsRevalidationGrant)))
-                    .OrderBy(w => w.BlockedAt)
+                    // A revoked handoff rejoins at its re-arm due time. Pure BlockedAt
+                    // FIFO lets two dead consumers alternate expiries forever, including
+                    // receipt-backed waits whose ActionOrdinal must not change.
+                    // Keep this key aligned with CapacityRecoveryPolicy.CompareGrantOrder.
+                    .OrderBy(w => w.OutcomeReason == "grant-expired" || w.OutcomeReason == "new-wall-wave"
+                        ? w.DueAt ?? w.BlockedAt
+                        : w.BlockedAt)
+                    .ThenBy(w => w.BlockedAt)
                     .ThenBy(w => w.Id)
                     .Take(batch)
                     .ToListAsync(ct);
@@ -1034,11 +1041,9 @@ public sealed class CapacityRecoveryService
             wait.ActionOrdinal,
             Settings.JitterSeconds);
 
-        // Cached consumer stamps must move with the action in the same transaction.
-        var sessions = await db.AgentSessions
-            .Where(s => s.CapacityRecoveryActionKey == previousActionKey).ToListAsync(ct);
-        foreach (var session in sessions)
-            session.CapacityRecoveryActionKey = wait.ActionKey;
+        // Queue keys redeem the next action and must move atomically with it. Session
+        // keys instead record the last launch: leave them stale so the supervisor's
+        // duplicate-launch guard permits this new action.
         var messages = await db.SessionQueuedMessages
             .Where(m => m.CapacityRecoveryActionKey == previousActionKey).ToListAsync(ct);
         foreach (var message in messages)
