@@ -44,7 +44,16 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 }
                 if (op.Phase == LandPhase.RebaseStarted)
                     throw new LandingRefusal("interrupted_rebase_requires_inspection");
-                if (op.Phase == LandPhase.Refused)
+                if (op.Phase == LandPhase.Verified && !_state.HasPublication(op)
+                    && task.LandRequestedAt > op.UpdatedAt
+                    && await PreparationChangedAsync(op, coordinates, task.LandVerifyFilter, ct))
+                {
+                    // No target-advance intent has been saved yet. An explicit request may
+                    // prepare changed work afresh, retaining the old verification and pins.
+                    previousToReplace = op;
+                    op = null;
+                }
+                else if (op.Phase == LandPhase.Refused)
                 {
                     var fresh = await git.InspectAsync(coordinates, ct);
                     Require(_state.CanReplaceRefused(op, fresh, task.LandRequestedAt > op.UpdatedAt, true),
@@ -150,10 +159,13 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     _state.Transition(op, LandPhase.Refused, Now());
                     return new(op, op.LastReason, files);
                 }
+                Require(rebase.RebaseHeadSha is not null, "rebase_result_unknown");
+                await RecheckSourceAsync(op, rebase.RebaseHeadSha!, ct);
                 var prepared = await git.InspectAsync(Coordinates(op), ct);
                 Require(prepared.Accepted && prepared.Snapshot!.GitDirectory == op.GitDirectory,
                     prepared.Reason ?? "source_changed");
-                op.RebasedSourceSha = prepared.Snapshot!.HeadSha;
+                Require(prepared.Snapshot!.HeadSha == rebase.RebaseHeadSha, "source_changed");
+                op.RebasedSourceSha = rebase.RebaseHeadSha;
                 await PinAsync(op, "prepared", op.RebasedSourceSha, ct);
                 op.PreparedPinned = true;
                 op.PreparedAt = Now();
@@ -317,6 +329,8 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             && currentTask.WorktreePath is not null && SamePath(currentTask.WorktreePath, op.WorktreePath)
             && currentTask.WorktreeBranch is not null && FullRef(currentTask.WorktreeBranch) == op.SourceFullRef
             && FullRef(currentTask.MergeTargetRef ?? "master") == op.TargetFullRef, "task_coordinates_changed");
+        if (!_state.HasPublication(op))
+            Require(currentTask!.LandVerifyFilter == op.VerificationFilter, "verification_filter_changed");
         var pins = new List<(string Name, string Sha)>();
         if (op.SourcePinned) pins.Add(("source", op.OriginalSourceSha));
         if (op.TargetPinned) pins.Add(("target-before", op.TargetBeforeSha));
@@ -329,6 +343,25 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         }
         var inspected = await git.InspectAsync(Coordinates(op), ct);
         Require(inspected.Accepted && Matches(inspected.Snapshot!, op, sha), inspected.Reason ?? "source_changed");
+    }
+
+    private async Task<bool> PreparationChangedAsync(AgentTaskLanding op, LandSourceCoordinates coordinates,
+        string? verificationFilter, CancellationToken ct)
+    {
+        var fresh = await git.InspectAsync(coordinates, ct);
+        Require(fresh.Accepted, fresh.Reason ?? "source_unknown");
+        if (!Matches(fresh.Snapshot!, op, op.VerifiedSourceSha!)
+            || coordinates.SourceFullRef != op.SourceFullRef
+            || coordinates.TargetFullRef != op.TargetFullRef
+            || !SamePath(coordinates.RepositoryPath, op.RepositoryPath)
+            || verificationFilter != op.VerificationFilter)
+            return true;
+        if (await git.DestinationAsync(coordinates.RepositoryPath, coordinates.TargetFullRef, ct) != Destination(op)
+            || await CommitAsync(op.RepositoryPath, op.TargetFullRef, ct) != op.TargetBeforeSha)
+            return true;
+        var checkout = await TargetCheckoutAsync(op, ct);
+        return !op.TargetCheckoutRecorded || (checkout is null ? op.TargetCheckoutPath is not null
+            : op.TargetCheckoutPath is null || !SamePath(checkout, op.TargetCheckoutPath));
     }
 
     private async Task CheckTargetAsync(AgentTaskLanding op, string expected, CancellationToken ct)

@@ -72,8 +72,14 @@ public class LandingGit : ILandingGit
         // journal until both streams drain; worker death in that interval must still fence admission.
         await Task.WhenAll(output, error); // Never expose Git stderr (endpoints/hooks may contain secrets).
         journal?.Exited(process);
+        string? rebaseHead = null;
+        if (process.ExitCode == 0 && arguments.Contains("rebase") && !arguments.Contains("--abort"))
+        {
+            var head = await ExecuteAsync(repository, ["rev-parse", "--verify", "HEAD^{commit}"], null, ct);
+            if (head.Succeeded) rebaseHead = head.Output.Trim();
+        }
         return new(process.ExitCode, await output,
-            process.ExitCode == 0 ? "" : $"git_exit_{process.ExitCode}");
+            process.ExitCode == 0 ? "" : $"git_exit_{process.ExitCode}") { RebaseHeadSha = rebaseHead };
     }
 
     public Task<string> CanonicalDirectoryAsync(string path, CancellationToken ct)
