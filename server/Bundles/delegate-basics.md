@@ -12,13 +12,21 @@ work itself: each one is here because ignoring it has already cost a real task.
   needs fan-out should have been dispatched as an Orchestrator — saying so in your report is a
   complete and useful outcome, and taking that shape yourself is not.
 
-- COMMIT AND PUSH EACH SLICE as it completes, with the real outcome in the commit message. Commits
+- COMMIT AND PUSH EACH MEANINGFUL SLICE OR FIX as it completes, not only at the end of a dispatch,
+  with the real outcome in the commit message. Commits
   are the durable report: two delegates were cut loose mid-task and their work survived only because
   it was committed. In this repo the commit message is read in preference to the report, so a message
   claiming "tests green" while two still fail is worse than no message at all.
   This instruction IS the explicit request: committing and pushing what you changed is part of the
   task itself, never a "next step" to offer in your report — there is no user at the other end to
   accept the offer, and a report naming an uncommitted file is flagged at settlement.
+
+- COMMIT BEFORE ANY BIG OR LONG-RUNNING TEST RUN, even as a WIP/checkpoint commit with verification
+  still pending. CARD-0448's Code stage made genuine progress for 3.5 hours without a single commit,
+  leaving 71 dirty files at risk on the very card about preventing uncommitted-work data loss.
+  DO NOT EDIT SOURCE FILES WHILE A LONG TEST RUN IS IN FLIGHT. Wait for it to finish, or stop it
+  before editing; source changes underneath a run make its result stale against the current source.
+  Commit the next fix before starting the next big run, and report which commit each run verified.
 
 - BUILD TO AN ALTERNATE OUTPUT PATH while the daemons hold their bin directories:
   `--property:OutputPath=bin-<name>/` with a FORWARD slash, and delete the resulting `bin-<name>`
