@@ -258,3 +258,14 @@ Do not land this as a completed CARD-0415 or activate a chain from these receipt
 Landing and deployment remain the caller's operation. This migration/runtime
 slice requires a server restart after authorized landing; no runner restart is
 needed for this slice alone.
+
+## Cleanup residue
+
+Automatic approval review rejected removal of the generated build outputs with
+the reason `blocked by policy`. Both the checked, worktree-bounded batch and a
+retry naming the exact `tests/Antiphon.Tests/bin-c415` directory were refused.
+No deletion occurred. Nineteen generated `bin-c415` / `bin/c415` directories
+remain under this worktree. All verification processes have finished; the TRX
+receipts were copied to the separate evidence directory before cleanup was
+attempted. Source is restored and committed. No broader deletion or alternate
+deletion mechanism was attempted after the literal-path refusal.
