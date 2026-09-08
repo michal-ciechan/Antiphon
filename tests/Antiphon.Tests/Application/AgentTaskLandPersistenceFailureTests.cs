@@ -39,6 +39,37 @@ public sealed class AgentTaskLandPersistenceFailureTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C448_F04_PushResultAcknowledgementCannotAuthorizeCleanup(bool afterCommit)
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var source = await h.AddSourceAsync();
+        h.Fault.Matches = op => op.Phase == LandPhase.PushStarted && op.PushExitCode is not null;
+        h.Fault.AfterCommit = afterCommit;
+        h.Fixture.Git.Trace.Clear();
+        await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.RunAsync());
+        h.Fault.Triggered.ShouldBeTrue();
+        var before = (await h.OperationAsync()).ShouldNotBeNull();
+        before.PushExitCode.HasValue.ShouldBe(afterCommit);
+        before.RemoteConfirmedAt.ShouldBeNull();
+        h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("remove"));
+        Directory.Exists(h.Fixture.Source).ShouldBeTrue();
+        (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(source);
+        h.Fixture.Git.Trace.Clear();
+        await h.RestartServicesAsync();
+        await h.RunAsync();
+        var after = (await h.OperationAsync()).ShouldNotBeNull();
+        after.Id.ShouldBe(before.Id);
+        after.RemoteConfirmedAt.ShouldNotBeNull();
+        after.Cleanup.ShouldBe(LandCleanupStatus.Complete);
+        h.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "push");
+        h.Fixture.Git.Trace.ShouldContain(a => a[0] == "ls-remote");
+        await h.Fixture.AssertRemoteSourceAsync();
+    }
+
+    [Test]
     public async Task C448_V23_DeliveryFailureKeepsTheCommittedPublicationAndEvent()
     {
         await using var h = new LandingSafetyHarness();

@@ -501,12 +501,16 @@ public sealed class AgentTaskLandService
         if (reports.Length != 1) return LandVerification.Failure("tests", "fresh_test_report_missing_or_ambiguous");
         var report = System.Xml.Linq.XDocument.Load(reports[0]);
         var counters = report.Descendants().SingleOrDefault(e => e.Name.LocalName == "Counters");
-        if (!int.TryParse(counters?.Attribute("executed")?.Value, out var executed) || executed == 0
-            || counters?.Attribute("passed")?.Value != executed.ToString()
-            || counters?.Attribute("failed")?.Value != "0")
+        if (!HasPassingTestCounters(counters, out var executed))
             return LandVerification.Failure("tests", "no_confirmed_passing_tests");
         return LandVerification.Success($"build OK, tests {executed}/{executed}");
     }
+
+    // Keep report interpretation independently testable from the child exit-code guard.
+    internal static bool HasPassingTestCounters(System.Xml.Linq.XElement? counters, out int executed)
+        => int.TryParse(counters?.Attribute("executed")?.Value, out executed) && executed != 0
+            && counters?.Attribute("passed")?.Value == executed.ToString()
+            && counters?.Attribute("failed")?.Value == "0";
 
     private static async Task<ProcessResult> RunProcessAsync(string cwd, ILandingChildObserver? observer, CancellationToken ct, string file, params string[] args)
     {

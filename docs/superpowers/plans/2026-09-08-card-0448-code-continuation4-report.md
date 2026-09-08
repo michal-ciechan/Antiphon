@@ -30,8 +30,8 @@ Subsequent fixture changes cover the named remaining variants: first/final ignor
 guards with immediate status-read-count assertions; source untracked/registration and target
 staged changes during verification; four post-fast-forward target changes; changed source/
 target at C02/C03/C07/C08/C09 and a C03 pin collision; and both acknowledgement outcomes
-at the individual source-pin-result save. These are pending execution, not new production
-policy. The optional SaveFault predicate selects that subphase without moving its boundary.
+at the individual source-pin-result save. Their execution is recorded below. The optional
+SaveFault predicate selects that subphase without moving its boundary.
 
 ## Execution record
 
@@ -74,8 +74,17 @@ the original tool completion was exit 0 and all five fresh TRX files passed. Mut
 was started directly after those verdicts and the C24 rerun were checked. This was a queue
 bookkeeping failure, not a canceled run or a test failure.
 
+The policy fixture build and `c4-policy-01.trx` passed 92/92 with no skips: 26 identity
+decisions, 38 cleanup/local-parent/target decisions, 19 state-policy cases and 9 TRX counter
+cases. These call production decisions with controlled replies and mutation-capable downstream
+fakes; the real-Git matrices remain required companions. Target-decision controls invoke the
+existing private decision through reflection, avoiding a new production public test API.
+The TRX counter predicate was extracted verbatim into an internal helper; its boolean policy
+and production caller behavior are unchanged. Individual controls replace the earlier broad
+verification-policy mutation as independent-clause evidence.
+
 Local execution scripts, logs, TRX and command evidence are under this task's `.antiphon`
-and isolated `tests/Antiphon.Tests/bin-c448-*` outputs. The 86 adapted mutation definitions
+and isolated `tests/Antiphon.Tests/bin-c448-*` outputs. The adapted mutation definitions
 have unique anchors against the current source; definitions are not execution evidence.
 
 ## Destructive caller census
@@ -110,6 +119,5 @@ The current contract distinguishes confirmed publication, AlreadyPresent and cle
 and warns that refusal can follow local advancement. The preserved CARD-0220 forced-rollback
 paragraph now explicitly identifies its instructions as historical and superseded.
 
-Complete the new fixture run and fix any failures, execute the baseline incident adapter,
-finish the required independent mutation variants, refresh the per-variant ledger, and run
+Finish the required independent mutation variants, refresh the per-variant ledger, and run
 the final unmutated combined regression. The canceled prior combined run receives no credit.

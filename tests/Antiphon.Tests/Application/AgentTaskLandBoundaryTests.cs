@@ -414,8 +414,8 @@ public sealed class AgentTaskLandBoundaryTests
         h.Fixture.Git.Trace.Clear();
         await h.RunAsync();
         h.Verifier.Calls.ShouldBe(1);
-        (await h.OperationAsync())!.LastReason.ShouldBe("task_coordinates_changed");
         h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("--ff-only") || a[0] == "push" || a.Contains("remove"));
+        (await h.OperationAsync())!.LastReason.ShouldBe("task_coordinates_changed");
         Directory.Exists(h.Fixture.Source).ShouldBeTrue();
         await h.Fixture.AssertRemoteSourceAsync();
     }

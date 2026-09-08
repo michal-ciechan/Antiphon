@@ -22,6 +22,8 @@ public sealed class AgentTaskLandingStateTests
     [Arguments("containment-after-rebase", false)]
     [Arguments("unknown-skip", false)]
     [Arguments("no-verification", false)]
+    [Arguments("wrong-verified-sha", false)]
+    [Arguments("no-verified-time", false)]
     public void C448_V31_VerificationEvidenceMustDescribeTheExactCommit(string variant, bool accepted)
     {
         var op = new AgentTaskLanding { Id = Guid.NewGuid(), TaskId = Guid.NewGuid(),
@@ -46,6 +48,8 @@ public sealed class AgentTaskLandingStateTests
             case "containment-after-rebase": op.VerificationSkipReason = "exact_remote_containment"; break;
             case "unknown-skip": op.VerificationSkipReason = "report says passed"; break;
             case "no-verification": op.VerificationSkipReason = null; break;
+            case "wrong-verified-sha": op.VerifiedSourceSha = new string('d', 40); break;
+            case "no-verified-time": op.VerifiedAt = null; break;
         }
         var policy = new AgentTaskLandingState();
         policy.HasPublication(op).ShouldBe(accepted, "a skip label alone cannot establish verification of changed/unpinned commits or an omitted selected filter");
