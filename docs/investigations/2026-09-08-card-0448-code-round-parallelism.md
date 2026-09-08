@@ -135,3 +135,15 @@ Fix ideas, not designs: (a) reword `delegate-basics.md` rule 1 to "never *end yo
 run in the background — while one runs, keep reading/patching the next item"; (b) add a
 Code-role line permitting a second worktree to shard red-then-green PC controls when a plan has
 more than about ten of them; (c) correct the `~12 minutes` figure to ~25.5 min.
+
+## Late note: delegate-basics.md changed mid-investigation
+
+While this was being written, CARD-0450 landed a new `delegate-basics.md` rule (`432d8779`):
+
+> DO NOT EDIT SOURCE FILES WHILE A LONG TEST RUN IS IN FLIGHT. Wait for it to finish, or stop it
+> before editing; source changes underneath a run make its result stale against the current source.
+
+That is correct and it narrows fix idea (a) above: the slack in a long run can only be filled
+with **reading, investigating and drafting**, never with edits to source the run is compiled
+against. It does not affect (b) — sharding controls across separate worktrees is exactly the
+shape that keeps each run's source stable — or (c).
