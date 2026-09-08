@@ -177,6 +177,10 @@ public sealed class CapacityRecoveryService
                 CapacityRecoveryWait? winner = null;
                 foreach (var wait in candidates)
                 {
+                    // The query can return the tracked wait just revoked above: its Deferred
+                    // state has not been saved yet, so the database still sees a candidate.
+                    if (!CapacityRecoveryPolicy.IsGrantCandidate(wait))
+                        continue;
                     if (wait.DueAt is { } waitDue && waitDue > now)
                         continue;
                     if (CapacityRecoveryPolicy.AttemptWouldExhaust(wait.AdmissionCount, MaxAttempts)
@@ -794,8 +798,13 @@ public sealed class CapacityRecoveryService
         });
     }
 
-    private static bool StillHoldsGrant(CapacityRecoveryWait wait, CapacityRecoveryProviderState state, DateTime now)
+    private bool StillHoldsGrant(CapacityRecoveryWait wait, CapacityRecoveryProviderState state, DateTime now)
     {
+        // A disappeared consumer cannot redeem or release its grant. Bound that handoff
+        // even for receipt-backed revalidation, which deliberately spends no new attempt.
+        if (state.GrantedAt is not { } grantedAt
+            || now - grantedAt >= CapacityRecoveryPolicy.StalledAdmissionTimeout(Settings.AdmissionIntervalSeconds))
+            return false;
         if (wait.Version != state.ExpectedWaitVersion && !CapacityRecoveryPolicy.IsGrantCandidate(wait))
             return false;
         if (wait.State is CapacityRecoveryWaitState.Canceled
@@ -928,16 +937,26 @@ public sealed class CapacityRecoveryService
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var stalled = await db.Set<CapacityRecoveryWait>()
+            .AsNoTracking()
             .Where(w => w.State == CapacityRecoveryWaitState.Admitted
                 && !w.NeedsRevalidationGrant
                 && w.UpdatedAt <= cutoff)
             .OrderBy(w => w.UpdatedAt)
             .ThenBy(w => w.Id)
             .Take(batch)
+            .Select(w => new { w.Id, w.ExecutionKind })
             .ToListAsync(ct);
-        foreach (var wait in stalled)
+        foreach (var candidate in stalled)
         {
             ct.ThrowIfCancellationRequested();
+            // Discovery is only a hint. Re-read under the same provider transaction as
+            // grant/redeem/wave so a concurrent sweep cannot re-arm a stale admission.
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            await TakeProviderLockAsync(db, candidate.ExecutionKind, ct);
+            var wait = await db.Set<CapacityRecoveryWait>().FirstOrDefaultAsync(w => w.Id == candidate.Id, ct);
+            if (wait is null || wait.State != CapacityRecoveryWaitState.Admitted
+                || wait.NeedsRevalidationGrant || wait.UpdatedAt > cutoff)
+                continue;
             if (CapacityRecoveryPolicy.HasExecutionReceipt(wait))
             {
                 wait.NeedsRevalidationGrant = true;
@@ -955,10 +974,10 @@ public sealed class CapacityRecoveryService
                     "Capacity recovery re-arm next attempt wait {WaitId} action {ActionKey}",
                     wait.Id, wait.ActionKey);
             }
-        }
 
-        if (stalled.Count > 0)
             await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+        }
     }
 
     private void PrepareNextAttemptOn(CapacityRecoveryWait wait)
