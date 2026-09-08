@@ -15,6 +15,56 @@ namespace Antiphon.Tests.Infrastructure;
 public sealed class LandingRemovalPolicyControlTests
 {
     [Test]
+    [Arguments(1, ".antiphon/report.md")]
+    [Arguments(1, ".claude/settings.json")]
+    [Arguments(1, "bin-private/keep.txt")]
+    [Arguments(2, ".antiphon/report.md")]
+    [Arguments(2, ".claude/settings.json")]
+    [Arguments(2, "bin-private/keep.txt")]
+    [Arguments(1, "head")]
+    [Arguments(2, "head")]
+    public async Task C448_V18_EachContentReadingRefusesBeforeItsNextCommand(int reading, string change)
+    {
+        using var f = new RemovalFixture();
+        f.AfterInspection = count =>
+        {
+            if (count < reading) return;
+            if (change == "head") f.InspectedSha = RemovalFixture.Other;
+            else
+            {
+                f.IgnoredPath = change;
+                var path = Path.Combine(f.Source, change);
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, "new private bytes");
+            }
+        };
+        var result = await f.RemoveAsync();
+        f.Mutations.ShouldBeEmpty("each content/identity reading must refuse before deletion");
+        f.InspectionCount.ShouldBe(reading, "a later guard cannot replace the refusal at this reading");
+        result.IsClean.ShouldBeFalse();
+        if (change != "head") File.ReadAllText(Path.Combine(f.Source, change)).ShouldBe("new private bytes");
+        f.BranchPresent.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task C448_V18_DurableAuthorityIsReadAfterTheFinalInspection()
+    {
+        using var f = new RemovalFixture();
+        f.AfterInspection = count =>
+        {
+            if (count != 2) return;
+            f.Operation.TaskId = Guid.NewGuid();
+            f.Operation.RecoveryRefPrefix = $"refs/antiphon/land/{f.Operation.TaskId:N}/{f.Operation.Id:N}";
+        };
+        var result = await f.RemoveAsync();
+        f.InspectionCount.ShouldBe(2);
+        f.Mutations.ShouldBeEmpty("a receipt change during final inspection must prevent directory deletion");
+        result.IsClean.ShouldBeFalse();
+        File.ReadAllText(Path.Combine(f.Source, "keep.txt")).ShouldBe("private work");
+        f.BranchPresent.ShouldBeTrue();
+    }
+
+    [Test]
     [Arguments("valid")]
     [Arguments("head")]
     [Arguments("target")]
@@ -96,6 +146,9 @@ public sealed class LandingRemovalPolicyControlTests
     [Arguments("unconfirmed")]
     [Arguments("operation-namespace")]
     [Arguments("destination")]
+    [Arguments("fingerprint")]
+    [Arguments("confirmation-method")]
+    [Arguments("observed-sha")]
     [Arguments("lease")]
     public async Task C448_V36_EachAuthorityCoordinatePrecedesMutation(string change)
     {
@@ -127,6 +180,9 @@ public sealed class LandingRemovalPolicyControlTests
             case "unconfirmed": op.RemoteConfirmedAt = null; break;
             case "operation-namespace": op.RecoveryRefPrefix += "/crossed"; break;
             case "destination": op.DestinationFullRef = "refs/heads/other"; break;
+            case "fingerprint": op.RemoteFingerprint = "malformed"; break;
+            case "confirmation-method": op.ConfirmationMethod = "report says pushed"; break;
+            case "observed-sha": op.ObservedRemoteTargetSha = "unknown"; break;
             case "lease": f.ValidLease = false; break;
         }
         var result = await f.RemoveAsync();
@@ -157,6 +213,10 @@ public sealed class LandingRemovalPolicyControlTests
         public List<string[]> Mutations { get; } = [];
         public bool BranchPresent { get; set; } = true;
         public bool ValidLease { get; set; } = true;
+        public Action<int>? AfterInspection { get; set; }
+        public int InspectionCount { get; private set; }
+        public string InspectedSha { get; set; } = Sha;
+        public string? IgnoredPath { get; set; }
         public RemovalFixture()
         {
             Directory.CreateDirectory(Source);
@@ -182,8 +242,12 @@ public sealed class LandingRemovalPolicyControlTests
         public Task<LandingRemoteObservation> ObserveAsync(string repository, LandingDestination destination, string sourceSha, string observationRef, CancellationToken ct)
             => Task.FromResult(new LandingRemoteObservation(Sha, true, null));
         public Task<LandSourceInspection> InspectAsync(LandSourceCoordinates coordinates, CancellationToken ct)
-            => Task.FromResult(new LandSourceInspection(new(coordinates, Root, Source, Request.GitDirectory,
-                coordinates.SourceFullRef, Sha, Sha, "", []), null));
+        {
+            InspectionCount++;
+            AfterInspection?.Invoke(InspectionCount);
+            return Task.FromResult(new LandSourceInspection(new(coordinates, Root, Source, Request.GitDirectory,
+                coordinates.SourceFullRef, InspectedSha, InspectedSha, "", IgnoredPath is null ? [] : [IgnoredPath]), null));
+        }
         public Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> args, CancellationToken ct)
         {
             LandingGitResult result;

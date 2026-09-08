@@ -99,6 +99,29 @@ Individual mutation results, including pending variants, are tracked in
 [the control ledger](2026-09-08-card-0448-code-continuation4-controls.md). A broad policy
 mutation or the existence of a definition is not independent-variant acceptance.
 
+The first linked-policy batch completed all 70 independent controls. Every control has a
+passing complete selection, an intended assertion RED, and a passing rebuilt restoration;
+all 70 RED oracles were inspected individually (`c4-oracle-review.json`). Identity/status
+omissions accepted invalid snapshots, crossed receipt/local-parent omissions issued the
+forbidden destructive commands, and target/verification omissions accepted invalid evidence.
+The separate normal-project controls plus this batch total 84 current-filter triples; the
+old classification-only PC2 run is superseded and the broad verification-label control remains
+supporting evidence only. These totals do not close the still-pending real-Git controls.
+
+The next fixture build passed with 0 errors and 133 warnings. Its first normal-assembly
+selection passed 50/50 cleanup-policy rows. Added fixtures cover each final content reading,
+durable authority changed during inspection, save acknowledgement prerequisites, exact stored
+target recovery, settlement's first mutation under a held lease, nested acquisition requests,
+multiple destinations, and verifier pass/fail/cancel/throw outcomes. Their remaining selected
+runs are in progress, so compilation is not credited as execution.
+
+The destination, namespace and fingerprint predicates are duplicated in identity and publication
+policy. The prepared controls omit both copies of one identical predicate while preserving the
+other decisions; omitting only one copy is intentionally redundant. The implementation has no
+archive-based deletion exception: opaque reports and verifier output are retained, regardless of
+archive existence. The planned output control restores deletion of pre-existing `bin-land`
+and checks actual verifier pass/fail/cancel retention; no archive-deletion feature is added.
+
 Local execution scripts, logs, TRX and command evidence are under this task's `.antiphon`
 and isolated `tests/Antiphon.Tests/bin-c448-*` outputs. The adapted mutation definitions
 have unique anchors against the current source; definitions are not execution evidence.

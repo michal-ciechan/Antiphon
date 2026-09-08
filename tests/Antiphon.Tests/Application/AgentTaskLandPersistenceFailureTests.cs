@@ -13,6 +13,36 @@ public sealed class AgentTaskLandPersistenceFailureTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public Task C448_F07_PublicationSettlementIsAtomic(bool committed)
+        => C448_V16_AcknowledgedCheckpointsGateDependentMutations(LandPhase.Complete, committed);
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public Task C448_F03_TargetIntentAcknowledgement(bool committed)
+        => C448_V16_AcknowledgedCheckpointsGateDependentMutations(LandPhase.TargetAdvanceStarted, committed);
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public Task C448_F04_PushIntentAcknowledgement(bool committed)
+        => C448_V16_AcknowledgedCheckpointsGateDependentMutations(LandPhase.PushStarted, committed);
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public Task C448_F05_PublicationReceiptAcknowledgement(bool committed)
+        => C448_V16_AcknowledgedCheckpointsGateDependentMutations(LandPhase.PublicationConfirmed, committed);
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public Task C448_F06_CleanupIntentAcknowledgement(bool committed)
+        => C448_V16_AcknowledgedCheckpointsGateDependentMutations(LandPhase.CleanupStarted, committed);
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task C448_F01_SourcePinResultMustBeAcknowledgedBeforeTheNextPin(bool afterCommit)
     {
         await using var h = new LandingSafetyHarness();
@@ -21,7 +51,9 @@ public sealed class AgentTaskLandPersistenceFailureTests
         h.Fault.Matches = op => op.Phase == LandPhase.Inspected && op.SourcePinned;
         h.Fault.AfterCommit = afterCommit;
         h.Fixture.Git.Trace.Clear();
-        await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.RunAsync());
+        var interrupted = false;
+        try { await h.RunAsync(); }
+        catch (LandingSafetyHarness.InjectedSaveFailure) { interrupted = true; }
         h.Fault.Triggered.ShouldBeTrue();
         var before = (await h.OperationAsync()).ShouldNotBeNull();
         before.SourcePinned.ShouldBe(afterCommit);
@@ -29,6 +61,7 @@ public sealed class AgentTaskLandPersistenceFailureTests
         h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase") || a.Contains("remove") || a[0] == "push"
             || a[0] == "update-ref" && a.Any(x => x.EndsWith("/target-before", StringComparison.Ordinal)));
         (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", before.RecoveryRefPrefix + "/source")).Trim().ShouldBe(source);
+        interrupted.ShouldBeTrue("save acknowledgement failure must end this invocation");
         await h.RestartServicesAsync();
         await h.RunAsync();
         var after = (await h.OperationAsync()).ShouldNotBeNull();
@@ -202,7 +235,9 @@ public sealed class AgentTaskLandPersistenceFailureTests
         var sha = await h.AddSourceAsync();
         h.Fault.Phase = phase;
         h.Fault.AfterCommit = afterCommit;
-        await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.RunAsync());
+        var interrupted = false;
+        try { await h.RunAsync(); }
+        catch (LandingSafetyHarness.InjectedSaveFailure) { interrupted = true; }
         h.Fault.Triggered.ShouldBeTrue();
         if (phase != LandPhase.Complete)
         {
@@ -224,6 +259,16 @@ public sealed class AgentTaskLandPersistenceFailureTests
             (task.LandRequestedAt is null).ShouldBe(afterCommit);
             (await observer.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Landed)).ShouldBe(afterCommit);
         }
+        if (phase != LandPhase.Complete)
+        {
+            await using var observer = h.CreateContext();
+            (await observer.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId)).LandRequestedAt
+                .ShouldNotBeNull("an unacknowledged checkpoint cannot settle the pending request");
+            (await observer.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Fixture.TaskId
+                && (e.Type == AgentTaskEventType.Landed || e.Type == AgentTaskEventType.AlreadyPresent
+                    || e.Type == AgentTaskEventType.LandedWithResidue))).ShouldBe(0);
+        }
+        interrupted.ShouldBeTrue("save acknowledgement failure must end this invocation");
         await h.RestartServicesAsync();
         await h.RunAsync();
         var recovered = (await h.OperationAsync()).ShouldNotBeNull();

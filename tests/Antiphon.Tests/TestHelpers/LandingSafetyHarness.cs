@@ -123,12 +123,14 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     public AppDbContext CreateContext() => new(new DbContextOptionsBuilder<AppDbContext>(
         TestDbFixture.CreateDbContextOptions(Schema.ConnectionString)).AddInterceptors(Fault).Options);
 
-    public async Task<LandRunResult> RunAsync()
+    public Task<LandRunResult> RunAsync() => RunAsync(CancellationToken.None);
+
+    public async Task<LandRunResult> RunAsync(CancellationToken ct)
     {
         await using var scope = Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await Fixture.CaptureAsync("before_service");
-        try { return await CreateLand(db, scope.ServiceProvider).RunAsync(Fixture.TaskId, null, CancellationToken.None); }
+        try { return await CreateLand(db, scope.ServiceProvider).RunAsync(Fixture.TaskId, null, ct); }
         finally
         {
             await Fixture.CaptureAsync("after_service");
