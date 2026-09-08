@@ -77,6 +77,11 @@ public sealed class StandingSpecialistRoutingService(
                 var reason = request.Enabled
                     ? (index == 0 ? "Awaiting qualification of the current primary." : "Awaiting standing-start admission; next eligibility is unknown.")
                     : "Routing is disabled.";
+                if (request.Enabled && pair.AgentKind == AgentKind.Codex)
+                {
+                    status = StandingSpecialistCandidateStatus.PendingDependency;
+                    reason = "Pending CARD-0167 agent-path injection and CARD-0415 capability certification.";
+                }
                 if (state is null)
                 {
                     state = new StandingSpecialistCandidateState
@@ -95,7 +100,8 @@ public sealed class StandingSpecialistRoutingService(
                 {
                     var authorization = Guid.NewGuid();
                     var physical = index == 0 ? owner.Id : state.PhysicalAgentId;
-                    if (physical is not null) status = StandingSpecialistCandidateStatus.Unqualified;
+                    if (physical is not null && status != StandingSpecialistCandidateStatus.PendingDependency)
+                        status = StandingSpecialistCandidateStatus.Unqualified;
                     await db.StandingSpecialistCandidateStates.Where(c => c.Id == state.Id).ExecuteUpdateAsync(s =>
                         s.SetProperty(c => c.Enabled, true).SetProperty(c => c.ModelAlias, alias)
                             .SetProperty(c => c.PhysicalAgentId, physical).SetProperty(c => c.Status, status)
