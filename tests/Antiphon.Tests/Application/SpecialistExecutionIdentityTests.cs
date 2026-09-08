@@ -17,6 +17,16 @@ namespace Antiphon.Tests.Application;
 public class SpecialistExecutionIdentityTests
 {
     [Test]
+    public Task Card0415_V01_non_low_exact_model() =>
+        Card0415_V01_execution_snapshot_and_dispatch_drift(AgentKind.Codex, true, "none");
+
+    [Test]
+    [Arguments("started")]
+    [Arguments("public-kind")]
+    public Task Card0415_V01_generation_and_public_pin_guards(string drift) =>
+        Card0415_V01_execution_snapshot_and_dispatch_drift(AgentKind.Codex, false, drift);
+
+    [Test]
     [Arguments(AgentKind.ClaudeCode, false, "none")]
     [Arguments(AgentKind.Codex, true, "none")]
     [Arguments(AgentKind.Codex, false, "model")]
