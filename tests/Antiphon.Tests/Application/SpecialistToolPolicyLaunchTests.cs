@@ -19,6 +19,11 @@ namespace Antiphon.Tests.Application;
 public class SpecialistToolPolicyLaunchTests
 {
     [Test]
+    public Task Card0415_V03_launch_refuses_failed_arming() =>
+        Card0415_V03_actual_Check_start_requires_effective_provider_policy(
+            AgentKind.ClaudeCode, true, "specialist_tool_policy_unavailable");
+
+    [Test]
     [Arguments(AgentKind.ClaudeCode, false, null)]
     [Arguments(AgentKind.ClaudeCode, true, "specialist_tool_policy_unavailable")]
     [Arguments(AgentKind.Codex, false, "specialist_tool_policy_pending_dependency")]
