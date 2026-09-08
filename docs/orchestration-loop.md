@@ -596,10 +596,11 @@ failed before any build ran) writes Rebase Failed alone. Historically, before CA
 `LandedWithResidue` as its own event (2026-09-03), a "could not delete branch/worktree" cleanup
 failure was reported under `LandRefused` too, which read as "did not land" even though the target
 had advanced — the plan behind this card flagged that as 9 of 47 backfilled runs misclassified.
-The backfill that derives `StageOutcome` rows from that older history still recognizes a
-`LandRefused` whose detail says "could not delete" and correctly writes Rebase Clean / Verify
-Unreported / Cleanup Failed for it, so the mapping is accurate even for pre-0328 rows; it is not
-an open problem, just a shape worth knowing when reading old rows. `GET /api/stage-outcomes` (via
+CARD-0448 F2 retires the background backfill from that older event prose: historical `Landed`,
+`LandedWithResidue` and `LandRefused` text cannot prove which steps succeeded. Existing backfill
+rows remain historical projections and are not landing receipts or deletion authority. The
+landing operation owns new structured stage rows; no event prose is reparsed into green rows.
+`GET /api/stage-outcomes` (via
 `scripts/stage-value-report.ps1`, §9) is where these land automatically alongside delegate
 self-reported and orchestrator-overridden stage rows for Review/Test/Merge/Deploy passes.
 

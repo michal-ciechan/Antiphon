@@ -31,6 +31,9 @@ public sealed class DelegationTestServicesTests
 
         scope.ServiceProvider.GetRequiredService<GitWorkspaceService>().ShouldNotBeNull();
         scope.ServiceProvider.GetRequiredService<DelegationWorktreeService>().ShouldNotBeNull();
+        scope.ServiceProvider.GetRequiredService<ILandingGit>().ShouldNotBeNull();
+        scope.ServiceProvider.GetRequiredService<IRepositoryMutationLease>().ShouldNotBeNull();
+        scope.ServiceProvider.GetRequiredService<AgentTaskLandingState>().ShouldNotBeNull();
         scope.ServiceProvider.GetRequiredService<IWorktreeManager>()
             .ShouldBeOfType<Antiphon.Server.Infrastructure.Git.WorktreeManager>();
         scope.ServiceProvider.GetRequiredService<IGitService>()

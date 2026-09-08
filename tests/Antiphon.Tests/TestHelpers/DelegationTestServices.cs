@@ -67,6 +67,9 @@ internal static class DelegationTestServices
         services.TryAddSingleton(Options.Create(gitSettings ?? new GitSettings()));
         services.TryAddSingleton<IWorktreeManager, WorktreeManager>();
         services.TryAddSingleton<IGitService, GitService>();
+        services.TryAddSingleton<ILandingGit, LandingGit>();
+        services.TryAddSingleton<IRepositoryMutationLease, RepositoryMutationLease>();
+        services.TryAddScoped<AgentTaskLandingState>();
         services.AddGitWorkspaceService();
         services.TryAddScoped<DelegationWorktreeService>();
         return services;
