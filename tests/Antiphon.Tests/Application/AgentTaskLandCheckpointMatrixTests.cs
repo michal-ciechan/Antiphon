@@ -12,6 +12,35 @@ namespace Antiphon.Tests.Application;
 public sealed class AgentTaskLandCheckpointMatrixTests
 {
     [Test]
+    public async Task C448_C09_ResumedTargetCannotAdoptAnEarlierAncestor()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "commit", "--allow-empty", "-m", "recorded target before");
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "push", "origin", h.Fixture.TargetRef);
+        h.Fault.Phase = LandPhase.TargetAdvanceStarted;
+        h.Fault.AfterCommit = true;
+        await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.RunAsync());
+        var before = (await h.OperationAsync()).ShouldNotBeNull();
+        before.TargetBeforeSha.ShouldNotBe(h.Fixture.SeedSha);
+        // This target is an ancestor of P, so a generic fast-forward guard cannot mask
+        // omission of the stored T0/P boundary. Only fixture-owned target state is reset.
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "reset", "--hard", h.Fixture.SeedSha);
+        await h.RestartServicesAsync();
+        h.Fixture.Git.Trace.Clear();
+        await h.RunAsync();
+        h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("--ff-only") || a[0] == "push" || a.Contains("remove"));
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(h.Fixture.SeedSha);
+        var after = (await h.OperationAsync()).ShouldNotBeNull();
+        after.Id.ShouldBe(before.Id);
+        after.LastReason.ShouldBe("target_changed");
+        after.RemoteConfirmedAt.ShouldBeNull();
+        Directory.Exists(h.Fixture.Source).ShouldBeTrue();
+        await h.Fixture.AssertRemoteSourceAsync();
+    }
+
+    [Test]
     [Arguments("C02", "source")]
     [Arguments("C02", "target")]
     [Arguments("C03", "source")]

@@ -82,6 +82,12 @@ public sealed class AgentTaskLandPublicationTests
         await h.Fixture.RequiredAsync(h.Fixture.Repository, "update-ref", otherPrefix + "/source", h.Fixture.SeedSha);
         await h.RunAsync();
         var op = (await h.OperationAsync())!;
+        foreach (var required in new[] { "source", "target-before", "prepared" })
+        {
+            var requiredPin = await h.Fixture.Git.RunAsync(h.Fixture.Repository,
+                ["show-ref", "--verify", "--hash", op.RecoveryRefPrefix + "/" + required], CancellationToken.None);
+            requiredPin.Succeeded.ShouldBeTrue("normal publication must retain its required " + required + " recovery pin");
+        }
         op.Cleanup.ShouldBe(LandCleanupStatus.Complete);
         op.VerifiedSourceSha.ShouldNotBe(source);
         h.Verifier.Calls.ShouldBe(1);

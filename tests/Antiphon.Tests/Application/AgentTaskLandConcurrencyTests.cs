@@ -15,6 +15,42 @@ namespace Antiphon.Tests.Application;
 public sealed class AgentTaskLandConcurrencyTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C448_V36_SettlementLeasePrecedesItsFirstMutation(bool localMerge)
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        await using var scope = h.Services.CreateAsyncScope();
+        await using var db = h.CreateContext();
+        var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == h.Fixture.TaskId);
+        if (!localMerge) task.MergeTargetRef = null;
+        // Force a settlement commit as the first prohibited mutation in both variants.
+        var sentinel = Path.Combine(h.Fixture.Source, "keep.txt");
+        await File.WriteAllTextAsync(sentinel, "uncommitted settlement bytes");
+        var originalHead = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim();
+        var service = scope.ServiceProvider.GetRequiredService<DelegationWorktreeService>();
+        await using var lease = await h.Services.GetRequiredService<IRepositoryMutationLease>()
+            .TryAcquireAsync(h.Fixture.Repository, CancellationToken.None);
+        lease.ShouldNotBeNull();
+        h.Fixture.Git.Trace.Clear();
+        DelegationWorktreeService.MergeOutcome? result = null;
+        Exception? failure = null;
+        try { result = await service.TryMergeBackAsync(task, CancellationToken.None); }
+        catch (Exception ex) { failure = ex; }
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim().ShouldBe(originalHead,
+            "no settlement commit may occur while another caller owns the repository lease");
+        h.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "add" || a[0] == "commit"
+            || a.Contains("rebase") || a.Contains("--ff-only") || a.Contains("remove") || a[0] == "update-ref",
+            "settlement and merge-back must acquire the lease before their first mutation");
+        File.ReadAllText(sentinel).ShouldBe("uncommitted settlement bytes");
+        failure.ShouldBeNull();
+        result.ShouldNotBeNull().Detail.ShouldBe("repository_busy");
+        await h.Fixture.AssertRemoteSourceAsync();
+    }
+
+    [Test]
     [Arguments(true, false)]
     [Arguments(true, true)]
     [Arguments(false, false)]

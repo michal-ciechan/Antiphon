@@ -11,6 +11,28 @@ namespace Antiphon.Tests.Infrastructure;
 public sealed class LandingGitTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C448_V30_MultiplePushDestinationsCannotBeSelectedImplicitly(bool multiple)
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var other = Path.Combine(fixture.Root, "other-endpoint.git");
+        await fixture.RequiredAsync(fixture.Root, "clone", "--bare", fixture.Remote, other);
+        await fixture.RequiredAsync(fixture.Repository, "config", "--add", "remote.origin.pushurl", fixture.Remote);
+        if (multiple) await fixture.RequiredAsync(fixture.Repository, "config", "--add", "remote.origin.pushurl", other);
+        fixture.Git.Trace.Clear();
+        Exception? refusal = null;
+        try { await fixture.Git.DestinationAsync(fixture.Repository, fixture.TargetRef, CancellationToken.None); }
+        catch (IOException ex) { refusal = ex; }
+        if (multiple) refusal.ShouldNotBeNull("multiple push destinations must be refused, never selected implicitly");
+        else refusal.ShouldBeNull();
+        fixture.Git.Trace.ShouldNotContain(a => a[0] == "push" || a[0] == "fetch" || a.Contains("remove"));
+        (await fixture.RequiredAsync(other, "rev-parse", fixture.TargetRef)).Trim().ShouldBe(fixture.SeedSha);
+        await fixture.AssertRemoteSourceAsync();
+    }
+
+    [Test]
     [Arguments(0)]
     [Arguments(1)]
     [Arguments(2)]

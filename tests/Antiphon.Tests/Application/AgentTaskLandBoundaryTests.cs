@@ -169,7 +169,7 @@ public sealed class AgentTaskLandBoundaryTests
     {
         await using var fixture = new LandingGitFixture();
         await fixture.InitializeAsync();
-        var provider = new Antiphon.Server.Infrastructure.Git.RepositoryMutationLease(fixture.Git);
+        var provider = new CountingCreationLease(new Antiphon.Server.Infrastructure.Git.RepositoryMutationLease(fixture.Git));
         var manager = new Antiphon.Server.Infrastructure.Git.WorktreeManager(
             Microsoft.Extensions.Options.Options.Create(new Antiphon.Server.Application.Settings.GitSettings { WorktreeBasePath = Path.Combine(fixture.Root, "trees") }),
             TimeProvider.System, Microsoft.Extensions.Logging.Abstractions.NullLogger<Antiphon.Server.Infrastructure.Git.WorktreeManager>.Instance,
@@ -180,10 +180,26 @@ public sealed class AgentTaskLandBoundaryTests
             () => manager.CreateAsync(fixture.Repository, "other", "master", CancellationToken.None));
         error.Message.ShouldBe("repository_busy_or_child_recovery_required");
         Directory.Exists(Path.Combine(fixture.Root, "trees", "card-other")).ShouldBeFalse();
-        var created = await manager.CreateAsync(fixture.Repository, "other", "master", lease, CancellationToken.None);
-        File.Exists(Path.Combine(created.Path, "keep.txt")).ShouldBeTrue("nested creation with the original lease must make progress");
+        var beforeNested = provider.Acquisitions;
+        Antiphon.Server.Application.Dtos.WorktreeInfo? created = null;
+        Exception? nestedFailure = null;
+        try { created = await manager.CreateAsync(fixture.Repository, "other", "master", lease, CancellationToken.None); }
+        catch (Exception ex) { nestedFailure = ex; }
+        provider.Acquisitions.ShouldBe(beforeNested, "nested creation must thread the existing lease without a second acquisition request");
+        nestedFailure.ShouldBeNull();
+        File.Exists(Path.Combine(created.ShouldNotBeNull().Path, "keep.txt")).ShouldBeTrue("nested creation with the original lease must make progress");
         provider.Owns(lease, lease.CommonDirectory).ShouldBeTrue();
         await fixture.AssertRemoteSourceAsync();
+    }
+
+    private sealed class CountingCreationLease(Antiphon.Server.Application.Interfaces.IRepositoryMutationLease inner)
+        : Antiphon.Server.Application.Interfaces.IRepositoryMutationLease
+    {
+        public int Acquisitions { get; private set; }
+        public Task<Antiphon.Server.Application.Interfaces.RepositoryLease?> TryAcquireAsync(string repository, CancellationToken ct)
+        { Acquisitions++; return inner.TryAcquireAsync(repository, ct); }
+        public bool Owns(Antiphon.Server.Application.Interfaces.RepositoryLease lease, string commonDirectory)
+            => inner.Owns(lease, commonDirectory);
     }
 
     [Test]
