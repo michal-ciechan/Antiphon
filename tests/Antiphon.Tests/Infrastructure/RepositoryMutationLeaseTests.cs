@@ -271,6 +271,29 @@ public sealed class RepositoryMutationLeaseTests
             process.Kill(entireProcessTree: false); // Actual OS worker death, not an in-process exception.
             await process.WaitForExitAsync();
             child.HasExited.ShouldBeFalse();
+            var recoveryWorker = Path.Combine(fixture.Root, "recovery-worker.ps1");
+            var recoveryEvidence = Path.Combine(fixture.Root, "recovery-admission.json");
+            await File.WriteAllTextAsync(recoveryWorker, """
+                $ErrorActionPreference = 'Stop'
+                [Reflection.Assembly]::LoadFrom($args[0]) | Out-Null
+                $git = [Antiphon.Server.Infrastructure.Git.LandingGit]::new()
+                $leases = [Antiphon.Server.Infrastructure.Git.RepositoryMutationLease]::new($git)
+                foreach ($repository in @($args[1], $args[2])) {
+                    $lease = $leases.TryAcquireAsync($repository, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
+                    if ($null -ne $lease) { $lease.DisposeAsync().GetAwaiter().GetResult(); exit 10 }
+                }
+                $ownedProcess = [Diagnostics.Process]::GetCurrentProcess()
+                [IO.File]::WriteAllText($args[3], (@{ Worker = $ownedProcess.Id; StartTicks = $ownedProcess.StartTime.ToUniversalTime().Ticks; HeldSource = $true; HeldMain = $true } | ConvertTo-Json -Compress))
+                """);
+            await RunChildAsync("pwsh", ["-NoProfile", "-File", recoveryWorker,
+                typeof(LandingGit).Assembly.Location, fixture.Source, fixture.Repository, recoveryEvidence], expectedExit: 0);
+            using (var recovery = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(recoveryEvidence)))
+            {
+                recovery.RootElement.GetProperty("Worker").GetInt32().ShouldNotBe(Environment.ProcessId);
+                recovery.RootElement.GetProperty("HeldSource").GetBoolean().ShouldBeTrue();
+                recovery.RootElement.GetProperty("HeldMain").GetBoolean().ShouldBeTrue();
+                LandingEvidence.Write(fixture.TaskId, "C24_recovery_worker", recovery.RootElement);
+            }
             var provider = new RepositoryMutationLease(fixture.Git);
             await using (var sourceAdmission = await provider.TryAcquireAsync(fixture.Source, CancellationToken.None))
                 sourceAdmission.ShouldBeNull();
