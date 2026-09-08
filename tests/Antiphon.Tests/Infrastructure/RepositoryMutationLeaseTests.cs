@@ -237,12 +237,28 @@ public sealed class RepositoryMutationLeaseTests
             [Reflection.Assembly]::LoadFrom($args[0]) | Out-Null
             $git = [Antiphon.Server.Infrastructure.Git.LandingGit]::new()
             $operation = $git.RunAsync($args[1], [string[]]@('commit', '--allow-empty', '-m', 'owned child'), [Threading.CancellationToken]::None)
-            $operation.GetAwaiter().GetResult() | Out-Null
+            $result = $operation.GetAwaiter().GetResult()
+            if (-not $result.Succeeded) { throw ('fixture_' + $result.Diagnostic) }
             """);
         var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var arg in new[] { "-NoProfile", "-File", worker, typeof(LandingGit).Assembly.Location, fixture.Source })
             start.ArgumentList.Add(arg);
+        // This worker uses the real LandingGit, so it does not inherit FixtureGit's process
+        // overrides. Pin its identity and blocking hook instead of borrowing global Git config.
+        start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
+        start.Environment["GIT_CONFIG_GLOBAL"] = Path.Combine(fixture.Root, "home", "empty-config");
+        start.Environment["GIT_AUTHOR_NAME"] = "C448 Fixture";
+        start.Environment["GIT_AUTHOR_EMAIL"] = "fixture@example.invalid";
+        start.Environment["GIT_COMMITTER_NAME"] = "C448 Fixture";
+        start.Environment["GIT_COMMITTER_EMAIL"] = "fixture@example.invalid";
+        start.Environment["GIT_CONFIG_COUNT"] = "3";
+        start.Environment["GIT_CONFIG_KEY_0"] = "commit.gpgSign";
+        start.Environment["GIT_CONFIG_VALUE_0"] = "false";
+        start.Environment["GIT_CONFIG_KEY_1"] = "credential.helper";
+        start.Environment["GIT_CONFIG_VALUE_1"] = "";
+        start.Environment["GIT_CONFIG_KEY_2"] = "core.hooksPath";
+        start.Environment["GIT_CONFIG_VALUE_2"] = hooks;
         using var process = Process.Start(start)!;
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
@@ -265,7 +281,7 @@ public sealed class RepositoryMutationLeaseTests
                 if (record?.ProcessId is null) await Task.Delay(50, budget.Token);
             }
             record.ShouldNotBeNull(process.HasExited ? await error : "child start must be acknowledged");
-            record.ProcessId.ShouldNotBeNull();
+            record.ProcessId.ShouldNotBeNull(process.HasExited ? await error : "child start must be acknowledged");
             child = Process.GetProcessById(record.ProcessId.Value);
             child.StartTime.ToUniversalTime().Ticks.ShouldBe(record.StartTicks!.Value);
             process.Kill(entireProcessTree: false); // Actual OS worker death, not an in-process exception.
@@ -369,7 +385,7 @@ public sealed class RepositoryMutationLeaseTests
             throw;
         }
         await Task.WhenAll(output, error);
-        child.ExitCode.ShouldBe(expectedExit);
+        child.ExitCode.ShouldBe(expectedExit, await error);
     }
 
     [Test]
