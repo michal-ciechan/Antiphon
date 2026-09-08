@@ -486,6 +486,7 @@ try
     builder.Services.AddScoped<IModelAvailability>(sp => sp.GetRequiredService<ModelAvailability>());
     // CARD-0305: per-card/stage routing pins. Scoped like the availability reader it hands off to.
     builder.Services.AddScoped<RoutingPinService>();
+    builder.Services.AddScoped<StandingSpecialistRoutingService>();
     // CARD-0090: complexity chains. Scoped like the pin/availability readers the walker consumes.
     builder.Services.AddScoped<ComplexityRoutingService>();
     builder.Services.AddScoped<ComplexityChainService>();
@@ -815,6 +816,7 @@ try
     app.MapModelAvailabilityEndpoints();
     app.MapSubscriptionUsageEndpoints();
     app.MapRoutingPinEndpoints();
+    app.MapStandingSpecialistRoutingEndpoints();
     app.MapStageOutcomeEndpoints();
     app.MapComplexityChainEndpoints();
     app.MapScheduleEndpoints();
