@@ -40,6 +40,8 @@ public class ProcessSpawnLimitTests
             typeof(AgentTaskLandRemovalMatrixTests),
             typeof(AgentTaskLandPreparationIdentityTests),
             typeof(AgentTaskLocalMergeSafetyTests),
+            typeof(AgentTaskLandAdmissionTests),
+            typeof(Antiphon.Tests.Infrastructure.LandingAdmissionControlTests),
             typeof(Antiphon.Tests.Infrastructure.LandingRemovalControlTests),
             typeof(Antiphon.Tests.Infrastructure.LandingSourceBoundaryControlTests),
             typeof(AgentTaskLandStageOutcomeTests),

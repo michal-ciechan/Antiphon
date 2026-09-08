@@ -22,6 +22,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     public ControlledVerifier Verifier { get; } = new();
     public SaveFault Fault { get; } = new();
     public IEventBus Events { get; set; } = new MockEventBus();
+    public Action<IServiceCollection>? ConfigureServices { get; set; }
     public SessionMessageQueueService? Messages { get; set; }
     public Microsoft.Extensions.Logging.ILogger<AgentTaskLandService> Logger { get; set; } = NullLogger<AgentTaskLandService>.Instance;
 
@@ -57,6 +58,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         services.AddScoped(_ => CreateContext());
         services.AddDelegationWorktreeGraph(new GitSettings { WorktreeBasePath = Path.Combine(Fixture.Root, "trees") });
         services.AddScoped<AgentTaskLandingProtocol>();
+        ConfigureServices?.Invoke(services);
         Services = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
     }
 
