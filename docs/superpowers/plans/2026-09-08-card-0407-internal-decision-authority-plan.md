@@ -1,7 +1,10 @@
 # CARD-0407: resolve scoped internal questions without a human round trip
 
 Date: 2026-09-08. Plan task: `31740fa8`. Code baseline: `4db2076b`.
-Status: ready for TestDesign; implementation and acceptance have not run.
+Amendment task: `ccc876ce`, following the full `cff67ab5` design review.
+Amendment baseline: `33d906a7`, including TestDesign commit `ccb48b2c`.
+Status: Plan and TestDesign amended for D1-D5; ready for sequential Code slices.
+Implementation and acceptance have not run.
 
 ## Outcome
 
@@ -9,10 +12,12 @@ Add caller-declared internal decision grants to an AgentTask's dispatch and a
 synchronous structured question check that consumes those grants. A matching
 internal question receives a concrete continue answer in the worker's current
 turn. It neither opens a human popup nor settles the task Blocked. A question
-outside that grant goes through AskUserQuestion, or the existing structured
-Blocked fallback when the provider cannot ask in-turn.
+outside that grant uses Grok's server-answerable `ask_user_question`, or the
+existing structured Blocked report for every other provider, including ClaudeCode
+and Codex. An absent policy preserves today's permission-question behavior.
 
-Change the actual generated brief and delegate bundle together. This is a
+Change the policy-bearing generated brief and orchestrator guidance. Keep the
+static delegate bundle and unconditional reporting contract unchanged. This is a
 dispatch contract plus a deterministic mechanism, not a prose classifier over
 blocked reports. The server does not infer authorization from an English goal,
 the word "internal", a file extension, or the question's recommended option.
@@ -26,14 +31,17 @@ the Gym Stat checkout and production backup were not inspected or executed.
 | Card assumption / requirement | What this checkout does | Consequence |
 |---|---|---|
 | A Grok worker parked on a mechanical deploy fix | CARD-0407 records task `42bb5ffb`, CRLF in a bash here-string, a blocked go-ahead, and eventual `.gitattributes` commit `142de00` | Reproduce the question/continuation behavior in an isolated fixture; do not repeat a production backup as the test |
-| The report instruction is too broad | `server/Application/Services/DelegationReportFormatter.cs`, `ReportingContract`, says blocked "if you need a decision or an answer to continue"; `server/Bundles/delegate-basics.md` repeats it | Both executable instruction sources must change |
+| The report instruction is too broad | `server/Application/Services/DelegationReportFormatter.cs`, `ReportingContract`, says blocked "if you need a decision or an answer to continue"; `server/Bundles/delegate-basics.md` repeats it | Retain both unconditional sentences. Only the validated-policy block adds an exception for a question actually resolved by Continue |
 | Existing authority might already solve this | `BlockedNote.StandingAuthorityBlock` embeds free text; `ContinueWithAuthorityAsync` replays it only on an already Blocked question | Useful compatibility path, but no bounded internal scope or synchronous decision check |
 | CARD-0294's explicit once-only auto-continue exists | At this baseline, API DTO/entity accept/store `AutoContinue`/`AutoContinueOnWait` and expose `AutoContinuedAt`. Entity/DTO comments explicitly call firing a follow-on. There is no runtime consumer/writer of the once-only flag/stamp, and `scripts/delegate.ps1` has Authority/Continue but no AutoContinue parameter | The card's shipped claim exceeds this checkout. Preserve the specified once-only contract; do not make CARD-0407 depend on CARD-0294 S3 or silently implement it here |
 | Grok supports an in-turn question | `GrokQuestionTool` and `AgentTaskReplyService.HasOpenQuestionToolAsync` identify an unclosed `ask_user_question`; `AnswerAsync` can answer a Working/Dispatched task without changing its status | Retain this human-question path; the new automatic path answers synchronously before opening a popup |
+| Any native question tool can use that answer path | `AnswerAsync` refuses Working/Dispatched replies without an open Grok-named question. Claude's `AskUserQuestion` passes through verbatim, with no matching server answer route | Only Grok receives the native-wait instruction; ClaudeCode/Codex report the question and settle Blocked |
+| `ReportingContract` already takes provider kind | Its current `kind` parameter is `AgentTaskKind` (Worker/Orchestrator), not `AgentKind`. `FitBriefForTyping` has the actual session's `AgentKind`, but does not pass it to `BuildBrief` | Thread resolved provider kind explicitly into conditional contract composition; do not branch on the existing task-kind parameter |
 | A generic typed "continue" is safe | `AgentTaskReplyOverlayTests` and CARD-0159/0241 distinguish a popup ToolResult from a new UserPrompt. `GrokQuestionPopup` still has empty measured chrome literals | Do not build a new popup selector, blind Now send, Esc action, or screen heuristic |
 | CARD-0033 avoids the wait | `BlockedContextBuilder` projects only Blocked tasks; `BlockedQuestionCard.tsx` provides question, context and reply/continue actions | It reduces the cost of answering but still needs a human. Reuse it for real blockers |
 | NeedsDecision could carry this | `docs/agent-card-lifecycle.md` separates card state from AgentTask state; CARD-0122/0123 concern card decisions | No card status, board column, or tracker transition is needed |
 | Scope is an authorization boundary | Existing `AgentTask.Scope`/area leases warn about collisions and record drift; AGENTS explicitly says writes are not enforced | Add a separate grant field. Never reinterpret `-Scope`, unknown area names, or scope drift as permission |
+| Scope observation already audits grants against all actual edits | `RecordScopeDriftAsync` uses `AgentFilesService.GetFilesAsync(..., since: null)`, a HEAD/worktree plus transcript view. It neither compares grants nor reliably captures shell-made, already-committed changes | Add a dispatch-baselined Git observation and separate grant-path Warning at settlement; reuse the warning surface, not the advisory matcher or HEAD-only evidence |
 | All workers have a fresh task token | `AgentTaskDispatcher` transfers the prior token hash on warm reuse; pinned standing dispatch discards the new task token. `AuthenticateAsync` also recognizes session-scoped tokens | Accept the current worker task binding or the exact current worker session binding; detect a standing seat without either before promising the helper |
 | Every final question is structured | `ClassifyReportAsync` accepts explicit tokens, then `LooksLikeAQuestion`, then the existing nudge rules | Keep these settlement rules. Do not auto-answer a report by parsing its wording |
 
@@ -75,6 +83,15 @@ of a deploy script is distinguishable from permission to deploy it: this grant
 does not itself authorize production execution, data changes, secrets access,
 messages, destructive operations, landing, or restarting shared services.
 
+Role eligibility is explicit: Code, Debug, Custom, Deploy, Plan, TestDesign,
+**Coverage**, Docs, Commit and Merge may carry grants in Shared or Worktree.
+Coverage writes tests and supporting harness code, so it has the same bounded
+mechanical eligibility as Code; it gains no right to weaken verification.
+Review, Investigate, Test, Check, Distill and Diagnose reject nonempty grants;
+ReadOnly rejects them for every role. Unknown/future roles default to rejection
+until deliberately classified. This accounts for every current AgentTaskRole;
+role eligibility never supplies a grant by itself.
+
 **D-3 — A structured question answered before a human tool opens.** Introduce
 `scripts/task-question.ps1 -Task <id> -QuestionFile <path>`, backed by
 `POST /api/agent-tasks/{id}/decision-questions`. It returns JSON immediately:
@@ -84,11 +101,15 @@ The delegate calls it only for an actual uncertainty/go-ahead, not for every
 edit. Routine already-authorized work continues as usual.
 
 For `Continue`, the delegate performs the named local repair and verification in
-the same turn. For `NeedsHuman`, it uses its available AskUserQuestion/equivalent
-and waits for the answer before dependent work. If there is no usable native
-question tool, it gives the question, proposed action, impact and missing
-authority in the final report and settles Blocked through today's path.
-Independent work can continue while a native asynchronous question is pending.
+the same turn. For `NeedsHuman`, branch on the resolved **AgentKind**: Grok uses
+`ask_user_question` and waits for an explicit answer through the existing server
+reply path before dependent work. Every other kind, explicitly ClaudeCode and
+Codex, gives the question, proposed action, impact and missing authority in its
+final report and ends with the blocked token. Having a native tool named
+`AskUserQuestion` or another structured-question tool is insufficient: Antiphon
+must be able to detect and answer it. Unknown kinds use Blocked too. If Grok's
+documented tool is unavailable, it also uses this Blocked fallback. Independent
+work can continue while a supported asynchronous Grok question is pending.
 
 Rejected: opening a Grok popup and then trying to dismiss/answer it automatically.
 The current question transport is provider-specific and CARD-0159 demonstrates
@@ -108,6 +129,9 @@ trusted to implement and report work. The concrete improvement over inferred
 judgment is that the dispatcher fixes the allowed decisions before the worker
 asks, and the server refuses missing categories, paths, mixed/unknown impacts
 and self-expanded grants. Filename-only approval is specifically insufficient.
+Both grant author and worker can be LLMs; the caller's preserve text and the
+worker's preservationEvidence are claims, not human approval or semantic proof.
+D-8 adds detection of actual changed paths outside the grants used for Continue.
 
 **D-5 — Preserve CARD-0294 as a separate authority.** Do not set, consume, reset,
 or inherit `AutoContinueOnWait`/`AutoContinuedAt` when resolving an internal
@@ -135,6 +159,62 @@ the current attempt and session. New tasks, `-OnAgent` follow-ups, stage changes
 specialists and auto-created Merge children do not inherit it. A worker cannot
 edit its grant using Refine, a report marker or a repository file. Fresh dispatch
 is the v1 route for a materially different authorization.
+
+**D-8 — Audit actual changed paths at settlement (review D4).** Add detection;
+do not defer it. For an attempt with one or more persisted Continue decisions,
+compare the actual changed-file set with the union of `paths` from the immutable
+grants referenced by **those Continue rows**. Do not include unused grants,
+NeedsHuman rows, previous attempts, request prose or advisory `Scope`. Evaluate
+each decision against one grant at admission as before; this later union is
+observation, never a way to authorize a mixed question. Use the same exact path
+normalization/comparison rules as D-2.
+
+Capture a server-owned `InternalDecisionAuditBaselineJson` on grant-bearing
+dispatch before the brief can reach the worker: attempt/session, resolved Git
+root, HEAD SHA, capture time, dirty-at-start flag and explicit unavailable reason.
+It is nullable for old/no-policy tasks, immutable within the attempt and replaced
+only for a new dispatch attempt; retained warning details preserve their baseline.
+No worker field or policy-file edit can supply or refresh it. Collect committed
+changes since that SHA plus index/worktree changes and untracked nonignored files;
+include both old and new rename paths and deleted paths. Capture observation
+**before MergeBackAsync or any worktree cleanup/release** can remove the evidence.
+Repeat it on subsequent report settlements after Blocked replies; never use a
+decision response itself as a settlement trigger.
+S2b must cover normal, deferred/unmarked and recovery settlement writers that
+can encounter Continue rows, and the explicit Cancel path before it disposes of
+workspace evidence. Reuse one audit service rather than inventing another state
+transition. If cancellation or a missing workspace prevents observation, retain
+an unavailable warning; cancellation/release still follows its existing contract.
+
+Use a typed success/unavailable Git observation seam, with infrastructure-owned
+process I/O. The current best-effort `GetChangesSinceAsync` returns an empty list
+on Git failure and cannot prove a clean audit. A missing baseline/repository,
+unreadable diff, truncated observation or changed repository identity must yield
+`Warning` detail code `internal_decision_audit_unavailable`, never a clean result.
+For mismatches emit the existing `AgentTaskEventType.Warning` with detail code
+`internal_decision_path_drift`, affected paths, used grant/question IDs,
+attempt/session and baseline/observed HEAD. Carry its compact warning through
+the existing caller-warning note and task event display; leave `ObservedScope`
+and the existing `ScopeDrift` event/header meanings untouched. Deduplicate the
+same attempt, report boundary and observation across settlement retries using
+the existing serialized settlement/persistence boundary; a later changed
+observation after an answered blocker gets a new audit.
+
+This warning says files fell outside **internal-decision grants**, not that the
+whole assignment was unauthorized. A task can also contain separately assigned
+product work. Shared workspaces and a dirty starting tree may include other work:
+report that attribution limit and conservatively include the observed paths
+rather than silently subtracting a dirty path the worker might also change.
+An explicit empty diff is clean only when observation succeeded; grants absent
+or no Continue rows mean not applicable, with no new observation/warning.
+
+Warnings do not block, kill, roll back, auto-reply, change the reported verdict,
+consume legacy continuation, or authorize a land. Observation failure cannot
+prevent normal settlement. This detects visible path drift, including a
+shell-made committed edit, but cannot establish semantic equivalence, detect
+every reverted/ignored temporary write, attribute every shared-tree edit, or
+validate `.gitattributes` contents and preservationEvidence. Those limits remain
+explicit; V-19/PC-35 pin the detection that v1 does promise.
 
 ## Dispatch and question contracts
 
@@ -175,10 +255,9 @@ Limits: at most 16 grants, 64 distinct paths per policy, 1,000 characters per
 `preserve`, and 20,000 characters for the canonical policy JSON. Empty policy
 normalizes to absent. A grant needs categories, paths and preserve; unsupported
 categories or an invalid grant yield 422 before task creation. Reject nonempty
-grants on ReadOnly workspaces and roles whose contract forbids edits (Review,
-Investigate, Test and specialists). Code/Debug/Custom/Deploy and writing
-Plan/TestDesign/Docs/Commit/Merge roles may carry grants within their own brief;
-role eligibility never gives permission by itself.
+grants on ReadOnly workspaces and the explicitly ineligible roles in D-2.
+Code/Debug/Custom/Deploy/Plan/TestDesign/Coverage/Docs/Commit/Merge may carry grants
+within their own brief; role eligibility never gives permission by itself.
 
 Example internal question:
 
@@ -250,7 +329,11 @@ entry; client enum totality and API type tests must cover the addition.
 
 ## Actual instruction changes
 
-`BuildBrief` must place the validated grant and helper's absolute path/usage in
+`BuildBrief` emits the entire internal-decision instruction block **only when
+that dispatch has a validated, nonempty stored policy**. Omitted, null and
+empty-to-absent policies emit none of the helper instructions, grant exception
+or discouragement text. Neither StandingAuthority nor role eligibility activates
+this block. It places the validated grant and helper's absolute path/usage in
 every applicable dispatch, including spill-file briefs and warm/standing-session
 reuse. Resolve the helper from the Antiphon installation/checkout that owns it,
 not from the target project: the incident runs in Gym Stat, which has no Antiphon
@@ -268,31 +351,48 @@ brief, command argument, question file or transcript. This check does not change
 ordinary grant-free standing dispatch. Pin cold, warm-rebound, authenticated
 standing and credential-less standing cases independently.
 
-Proposed shared question instruction, included in the generated generic contract
-and kept consistent with `delegate-basics.md`:
+Leave `server/Bundles/delegate-basics.md` unchanged. Leave the unconditional
+generic `ReportingContract` verdict text unchanged, including the exact meaning
+and sentence "blocked ... if you need a decision or an answer to continue".
+Thus a grant-free worker with a pending permission question still reports it and
+ends Blocked. Do not replace this with "must be handed back", tell that worker
+not to block for implementation details, or send it to an absent helper.
+
+Proposed question instruction **inside the conditional policy block only**:
 
 > Do not end the task merely to ask permission for an implementation detail.
-> For a pending internal go-ahead, use the supplied structured task-question
+> This dispatch has the validated grants listed here. For a pending internal
+> go-ahead, use the supplied structured task-question
 > helper with the dispatch grant, affected paths, proposed action and impact.
 > If it returns Continue, make the scoped repair and keep working in this turn;
 > record the decision and verification in your final report. Do not open a human
-> approval popup for that resolved choice. If it returns NeedsHuman, or coverage
-> or impact is unknown, ask through AskUserQuestion or your available structured
-> question tool. Wait for that answer before dependent work. When no usable
-> in-turn question path exists, report the precise question, proposed action,
-> impact and missing authority and end with the blocked token. Never turn a
-> product, data, UX or public-contract choice into an internal repair to continue.
+> approval popup for that resolved choice. Only a recorded Continue resolves
+> that permission question; an error, NeedsHuman or unknown coverage/impact does
+> not. Use the human-question route below for an unresolved choice. Never turn
+> a product, data, UX or public-contract choice into an internal repair to continue.
 
-Replace the generic verdict sentence with:
+Append exactly one human-question branch to that policy block:
 
-> End with done when the assigned work is complete, blocked when unresolved
-> input or an external dependency prevents further work and must be handed back,
-> or failed when you could not do the work. A grant-resolved internal question is
-> not a blocker. An unanswered human question is not completion.
+| Resolved provider kind | Instruction |
+|---|---|
+| Grok | Ask using `ask_user_question` and wait for an explicit answer before dependent work. Antiphon can detect and answer this tool. If it is unavailable, report the precise question, proposed action, impact and missing authority and end with the blocked token. |
+| ClaudeCode, Codex and every other/unknown kind | Report the precise question, proposed action, impact and missing authority in your final report and end with the blocked token. This is Antiphon's supported answer route for this kind; do not open a native question tool and wait on it. |
 
-Also revise `BlockedNote.StandingAuthorityBlock` and `ContinueMessage` so their
-"not covered => blocked" wording points to structured questioning first. Do not
-change the meaning of explicit authority replay. Keep specialist report
+Thread the resolved session `AgentKind` from `FitBriefForTyping` into `BuildBrief`
+and its conditional-block renderer. Keep `AgentTaskKind`'s Worker/Orchestrator
+rollup separate. If conditional text is factored through `ReportingContract`,
+add an explicitly named provider argument; its existing `kind` is not that value.
+An unknown/unresolved provider never selects Grok. Cover cold, warm, standing and
+direct/spill composition with the actual resolved kind, not a default constant.
+
+The conditional block also says: a grant-resolved question is no longer missing
+input under the ordinary verdict rule; an unanswered human question is not
+completion. These qualifications must not leak into the unconditional text.
+
+Keep `BlockedNote.StandingAuthorityBlock` and `ContinueMessage` unchanged,
+including their existing "not covered => blocked" fallback. The new dispatch
+block supplies the narrow grant check without rewriting legacy explicit authority
+replay; an explicit `-Continue` remains a caller action. Keep specialist report
 vocabularies and stage/finding/report tokens unchanged. The stage handoff's
 `next: decide` remains a completed artifact under defaults; unresolved necessary
 human input still justifies blocked.
@@ -308,16 +408,41 @@ acceptance dispatch; merely publishing a policy schema would not fix this wait.
 
 | Slice | Files / work | Named test owners |
 |---|---|---|
-| S1: immutable grant contract | `server/Domain/Entities/AgentTask.cs`; new domain policy/category types; `server/Application/Dtos/AgentTaskDtos.cs`; `AgentTaskService.cs` create/retry/escalation/follow-up/merge paths; new pure `InternalDecisionPolicy.cs`; `server/Infrastructure/Data/AppDbContext.cs`; CLI-generated migration and snapshot | `InternalDecisionPolicyTests` (new), `AgentTaskServiceIntegrationTests`, `AgentTaskCallerResolutionTests` |
-| S2: structured check | New `AgentTaskDecisionQuestion` entity, DTOs and `AgentTaskDecisionQuestionService`; new self-only route in `AgentTaskEndpoints.cs`; DI in `server/Program.cs`; append event enum; transactional/idempotent storage from S1 migration if implemented together | `AgentTaskDecisionQuestionTests` and `AgentTaskDecisionQuestionIntegrationTests` (new), API authentication tests using the existing refusing runner |
-| S3: delivery and operator front door | `scripts/delegate.ps1` file-form policy flag; new ASCII-only `scripts/task-question.ps1`; `AgentTaskDispatcher.cs` standing identity preflight and helper location; `DelegationReportFormatter.cs`; `BlockedNote.cs`; `server/Bundles/delegate-basics.md` and `orchestrator.md`; keep Check/Distill/Diagnose contracts separate | `DelegateScriptInternalDecisionTests` (new), `DelegationUnitTests`, `DelegateBundleLaunchTests`, `AgentTaskStandingAgentDispatchTests`, `AgentTaskPoolTests`, `CodexDelegateDispatchTests`, `GrokDelegateDispatchTests`, `DelegationBriefCeilingPtyTests` |
-| S4: visible evidence and end-to-end acceptance | `client/src/api/agentTasks.ts`, task drawer/event rendering only as needed for grant/history; affected event visual mappings; `docs/orchestration-loop.md`, `docs/ops-http.md`, `docs/antiphon-api.md`, `.claude/skills/antiphon-delegate/SKILL.md` | New client policy/history tests, existing task drawer tests; incident-shaped deterministic worker harness; `AgentTaskReplyOverlayTests`, `AgentTaskReplyIntegrationTests`, `AgentTaskSettlementRaceTests`, `AgentTaskDeliveryWatchdogTests` regressions |
+| S1: immutable grant contract | `server/Domain/Entities/AgentTask.cs` policy and server-only audit-baseline fields; new domain policy/category types; `server/Application/Dtos/AgentTaskDtos.cs`; `AgentTaskService.cs` create/retry/escalation/follow-up/merge paths; new pure `InternalDecisionPolicy.cs`; `server/Infrastructure/Data/AppDbContext.cs`; CLI-generated migration and snapshot | `InternalDecisionPolicyTests` (new), `AgentTaskServiceIntegrationTests`, `AgentTaskCallerResolutionTests`, `AgentTaskInternalDecisionLifecycleTests` (new) |
+| S2a: structured check | New `AgentTaskDecisionQuestion` entity, DTOs and `AgentTaskDecisionQuestionService`; self-only route in `AgentTaskEndpoints.cs`; DI in `server/Program.cs`; append event enum; own CLI-generated additive migration after S1 | `AgentTaskDecisionQuestionTests`, `AgentTaskDecisionQuestionIntegrationTests`, `AgentTaskDecisionQuestionApiTests` (new), refusing-runner API authentication fixtures |
+| S2b: settlement path audit | New pure grant-path audit policy/service; `IInternalDecisionWorkspaceObserver` in Application and Git implementation in Infrastructure; `AgentTaskDispatcher.cs` baseline capture; `AgentTaskReplyService.cs` normal/deferred/recovery observation before MergeBackAsync and warning persistence/delivery; `AgentTaskService.cs` Cancel audit | `InternalDecisionSettlementAuditTests` (new), `AgentTaskSettlementRaceTests`, `AgentTaskReplyIntegrationTests`, `AgentTaskInternalDecisionLifecycleTests`; real temporary Git fixtures plus refusing I/O spies |
+| S3: delivery and operator front door | `scripts/delegate.ps1` policy flag; new ASCII-only `scripts/task-question.ps1`; dispatcher identity preflight/helper location/resolved provider plumbing; `DelegationReportFormatter.cs` conditional block; `orchestrator.md` and CLI reference. `delegate-basics.md` and `BlockedNote.cs` receive compatibility tests, no text changes | `DelegateScriptInternalDecisionTests`, `TaskQuestionScriptTests`, `InternalDecisionInstructionContractTests` (new), `DelegationUnitTests`, `DelegateBundleLaunchTests`, `AgentTaskStandingAgentDispatchTests`, `AgentTaskPoolTests`, `CodexDelegateDispatchTests`, `GrokDelegateDispatchTests`, `DelegationBriefCeilingPtyTests` |
+| S4a: visible evidence and deterministic acceptance | `client/src/api/agentTasks.ts`, task drawer/event display and visual mappings for grant/history/audit warning; deterministic worker fixture; `docs/orchestration-loop.md`, `docs/ops-http.md`, `docs/antiphon-api.md`, `.claude/skills/antiphon-delegate/SKILL.md` | New client policy/history tests, existing task drawer tests; `InternalDecisionWorkerFlowTests` (new); reply/overlay/settlement/watchdog regressions and FakeGrok contract if changed |
+| S4b: real-provider acceptance and final evidence | E2E `InternalDecisionGrokCanaryTests`, pure `InternalDecisionGrokCanaryGuardTests`, owned fixture resources and sanitized acceptance manifest; consolidate the per-slice verification ledger | Explicit V-17 two-task canary, PC-31 pure guard mutants, final R-5 rebase inspection; targeted reruns only for integration changes |
 
-S1 precedes S2; S3 publishes a callable helper only after S2 exists. Land as one
-coherent feature or keep partial slices inert: do not ship instructions pointing
-to an absent endpoint. S4 completes acceptance. Each Code slice commits and
-pushes its actual result. Plan/TestDesign artifacts must land before the next
-stage's worktree is dispatched, per the orchestration owner.
+Dispatch **six separate sequential Code tasks**: S1 -> S2a -> S2b -> S3 -> S4a
+-> S4b. The caller lands each completed slice via `-Land` before creating the
+next worktree, which otherwise branches from master rather than its sibling.
+Each slice commits/pushes implementation and its own verification evidence; it
+settles `next: code` naming the next slice. S4b settles `next: review` with the
+consolidated evidence (or reports the exact acceptance block). Do not give one
+Code dispatch the entire card or imply that all PCs fit a single short session.
+
+S1/S2a/S2b remain inert for existing dispatches: no unconditional instruction
+changes, no caller guidance to use the feature and no helper advertised before
+S3. S3 can enable explicit opt-in only after the endpoint and audit exist and its
+contract tests pass; general rollout/card closure awaits S4a/S4b and Review.
+Plan/TestDesign artifacts must land before S1. If a slice exceeds its practical
+session budget, commit the coherent work and hand off its exact remaining V/R/PC
+variants in another `next: code` report; never drop variants to meet an estimate.
+
+The execution ownership and estimates below are part of each next brief. A V/R
+row spanning slices has one evidence chain with labeled subcases, not permission
+for either slice to claim the other's unfinished cases.
+
+| Code dispatch | Verification owned (all variants unless partitioned) | Next handoff |
+|---|---|---|
+| S1 | V-1..5 create/pure-policy/lifecycle subcases (question-time denials belong to S2a); PC-2..5, PC-17; legacy create/inheritance part of R-4 | S2a: implement the mapped decision endpoint on landed S1 and finish its admission/durability checks |
+| S2a | V-2/V-3/V-5 question-time subcases, V-6..12; R-1, R-2 decision-service side, R-4, current R-5 inspection; PC-1, PC-6..16, PC-18..24 (PC-24 service-side witness) | S2b: add dispatch-baselined settlement path warnings before publishing the helper |
+| S2b | V-19 including baseline lifecycle; R-7 audit/settlement side; PC-35 | S3: deliver the helper and kind-specific policy block, preserving every no-policy contract |
+| S3 | V-13..14, V-18; R-3 script/contract side, R-8; PC-25..27, PC-33..34 contract witnesses | S4a: implement deterministic worker flows and visible grant/history/audit evidence |
+| S4a | V-15..16; R-2/R-3 worker/reply side, R-6, remaining R-7/R-8; PC-24/PC-26/PC-33/PC-34 worker witnesses, PC-28..30, PC-32 | S4b: run isolated real Grok acceptance and consolidate the complete evidence ledger |
+| S4b | V-17, PC-31, R-5 pre-land inspection/conditional integration, unresolved cross-slice regressions only | Review: judge the integrated behavior, per-variant PC evidence and real-provider acceptance |
 
 Read the area owners before implementation: project-context, orchestration-loop,
 agent-card-lifecycle, agent-credentials, testing-and-build and, if touching question delivery,
@@ -326,9 +451,9 @@ merely to implement this plan.
 
 ## Acceptance requirements for TestDesign
 
-TestDesign is a separate stage. It must convert these requirements into the
-repository's `V-n`/`R-n`/`PC-n` verification design with exact filters and positive
-controls; these are coverage requirements, not claims of executed tests.
+TestDesign ran as a separate stage and the amended verification design below
+converts these requirements into `V-n`/`R-n`/`PC-n` rows with exact filters and
+positive controls. These are coverage requirements, not executed-test claims.
 
 1. **Incident:** dispatch a synthetic Grok/Custom task for a local deploy-script
    repair with the sample grant, submit the LineEndings question, get Continue,
@@ -346,10 +471,11 @@ controls; these are coverage requirements, not claims of executed tests.
    script path with a backup-retention/database/argument policy change goes to
    a human. "Internal" in prose and a recommended Yes never grant authority.
 4. **Provider shape:** returned Continue remains in-turn and cannot count as a
-   report. NeedsHuman uses a native structured question where available, and
-   waits. Existing matching Grok ToolResult confirms an explicit human reply;
-   an unrelated result does not. For a provider without a usable question tool,
-   the revised contract produces an explicit structured Blocked fallback.
+   report. Only Grok's NeedsHuman branch opens `ask_user_question` and waits;
+   a matching ToolResult confirms an explicit human reply, an unrelated result
+   does not. ClaudeCode and Codex always receive the explicit structured Blocked
+   fallback for unresolved policy checks, even when their own native question
+   tool exists. Unknown kinds and Grok without its supported tool also Block.
 5. **Authorization and lifecycle:** own worker token and exact current worker
    session token accepted, including warm hash transfer; missing, sibling,
    parent, stale-session/attempt and capability impersonation denied. A standing
@@ -357,20 +483,30 @@ controls; these are coverage requirements, not claims of executed tests.
    cancel/settle racing with question admission and duplicate posts across
    independent service scopes/restart. No orphan session, card transition,
    replayed approval or second event from retries. ReadOnly/Test/Review and
-   specialists cannot receive edit grants.
+   specialists cannot receive edit grants. Coverage is explicitly eligible in
+   Shared/Worktree, with exactly the same grant and verification limits as Code.
 6. **Compatibility:** absent-policy tasks keep existing behavior; legacy fields
    and once-only semantics are unchanged; new answers never consume/reset that
    counter. Same-task retries retain grants but not old-session answers; new
    follow-ups/merge children never inherit them. Grant files edited after create
    cannot alter the stored snapshot. Preserve settlement positive-evidence,
    report nudges, stage tokens, scope-warning and CARD-0033 reply-round tests.
-7. **Instruction delivery:** exact old unconditional missing-decision language
-   is removed from all generic instruction builders named above; both direct
-   and spill briefs include the effective grant and real helper path, including
-   a target project without an Antiphon scripts directory. Warm reuse cannot
-   depend on the old process's bundle. No-policy and specialist brief cases are
-   explicit. A fixture agent must consume the contract/helper response, not
-   merely assert that an arbitrary prompt contains the word "internal".
+7. **Instruction delivery:** preserve the old unconditional permission-question
+   verdict in the generic contract and delegate-basics.md. No-policy briefs
+   still direct Blocked for missing permission and contain no new helper or
+   discouragement instructions, including a standing-authority-only dispatch.
+   Only validated-policy direct/spill briefs include the effective grant,
+   conditional exception, provider-specific fallback and real helper path,
+   including a target project without Antiphon scripts. Warm reuse cannot depend
+   on the old process's bundle. Specialist vocabularies stay unchanged. A fixture
+   agent must consume the contract/helper response, not merely assert keywords.
+8. **Settlement observation:** for every attempt that used Continue, audit
+   actual committed/uncommitted/rename/delete/untracked paths against the union
+   of grants used by its Continue rows before cleanup. Mismatches and unavailable
+   evidence produce distinct existing Warning-shaped records and a caller
+   caveat. Unused/denied/old-attempt grants cannot conceal drift. No-policy and
+   no-Continue tasks retain existing settlement; a failed observation never
+   masquerades as a clean audit or prevents settlement.
 
 Use the existing isolated database/runner harnesses. TUnit runs through
 `dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-card0407/ -- --treenode-filter "/*/*/<NamedClass>/*"`;
@@ -394,9 +530,10 @@ this behavioral acceptance gate.
 
 No human decision blocks writing or implementing this plan. The defaults above
 are deliberate: explicit grant, empty old-task policy, three categories, exact
-paths, synchronous answer, existing human fallback. TestDesign proceeds next.
+paths, synchronous answer, kind-specific existing human fallback and advisory
+settlement detection. Verification is amended below; S1 Code proceeds next.
 
-Apply the additive CLI-generated migration before running the feature. Publish
+Apply the additive CLI-generated migrations before running the feature. Publish
 the service and installed helper together, then the generated contract/bundles.
 Verify a freshly composed real dispatch carries the policy and accessible helper;
 a healthy server alone is insufficient evidence. Do not amend running tasks or
@@ -406,7 +543,9 @@ policy and question history until no active task depends on the new endpoint.
 
 Limits to report: an honest but wrong semantic classification is still possible;
 the category/path/impact contract narrows that risk but does not prove program
-equivalence. A policy omission or an unusable helper can still require a human
+equivalence. Settlement warnings detect visible path mismatch and disclose
+unavailable/ambiguous attribution; they are not enforcement or semantic proof.
+A policy omission or an unusable helper can still require a human
 fallback. V1 intentionally has no automatic rescue of a free-form blocked report
 or already-open popup: those lack the structured, preauthorized question this
 mechanism requires. The actual dispatch and report-contract changes are therefore
@@ -416,7 +555,10 @@ part of acceptance, not optional documentation cleanup.
 
 TestDesign: `446f9666`, 2026-09-08, against landed plan/baseline `1730bc56`.
 This section specifies tests to implement and run in Code; no runtime tests or
-real-provider acceptance were run in TestDesign. The fix design above is unchanged.
+real-provider acceptance were run in TestDesign. Amendment `ccc876ce` updates
+both design and verification for review D1-D5: V-18/PC-33..34 pin provider and
+no-policy contracts; V-4/PC-4 name Coverage; V-19/PC-35 pin settlement detection;
+the slice ownership table and Cost replace the single-dispatch allowance.
 No human decision is needed to implement this verification design.
 
 ### Proves it works now
@@ -472,7 +614,7 @@ Keep encoding/BOM and all unrelated bytes in before/after hash evidence.
 | V-1 | Policy schema and limits; unit + mapped HTTP | New `InternalDecisionPolicyTests.Policy_schema_boundaries` and `AgentTaskDecisionQuestionApiTests.Create_rejects_invalid_policy_before_task_creation`. Valid v1 and empty-to-absent normalize deterministically. Test 16/17 grants, 64/65 distinct paths, 1000/1001 preserve characters and 20000/20001 canonical JSON characters; construct valid boundary specimens for each independent limit. Missing/blank categories, paths or preserve, duplicate IDs, unsupported categories/version and unknown fields at policy or grant level are 422 with no task/session/worktree/queue side effects. A server-generated provenance field supplied by the caller is rejected, not trusted. |
 | V-2 | Exact repository boundary; unit + filesystem integration | New `InternalDecisionPolicyTests.Exact_paths_only` and `AgentTaskDecisionQuestionIntegrationTests.Repository_path_boundary`. Accept a named existing file and a named proposed new helper; normalize slash/backslash and `./`. Reject drive-absolute, drive-relative, rooted, UNC, traversal (including internal `..`), wildcard and directory grants. Deny a sibling prefix (`scripts/deploy.ps1.bak`), another repository and a mixed in/out-of-grant request. Compare case using the repository filesystem's rules, with unit vectors for case-sensitive and insensitive comparers and native filesystem coverage on the executing platform. A file link, directory junction and a missing file below an escaping linked ancestor must not authorize an outside target; re-point a link after dispatch to pin question-time resolution. Do not accept a worker-supplied repository root. Invalid policy syntax is 422; a valid request whose resolved target escapes is NeedsHuman/path_not_granted. |
 | V-3 | Attribute scope is narrower than the containing file; unit + integration | New `InternalDecisionPolicyTests.Attribute_grant_boundaries` and `AgentTaskDecisionQuestionTests.Attribute_requests_are_exact`. Require nonempty `attributeTargets` within grant paths when `.gitattributes` is granted. An exact target with only text/eol passes LineEndings. Unlisted target, broad `*.ps1`/directory pattern, filter/diff/merge/working-tree-encoding attribute, omitted targets, ShellTransport or BuildTestHarness touching `.gitattributes` cannot Continue (422 for malformed fields; NeedsHuman/attribute_not_granted or category_not_granted for a well-formed mismatch). Include two explicit targets to catch first-target-only checks. |
-| V-4 | Dispatch provenance and role eligibility; integration | Extend `AgentTaskServiceIntegrationTests` with `Internal_policy_create_role_matrix`. Exercise every role in D-1/D-2 eligibility: writing Code/Debug/Custom/Deploy/Plan/TestDesign/Docs/Commit/Merge with Shared and Worktree can carry a valid grant; ReadOnly always rejects it; Review/Investigate/Test and specialist contracts reject it. Roles not expressly eligible must not become eligible by falling through an enum switch. Existing grant-free requests stay valid. Store caller identity/time from resolved dispatch caller, including a legitimately authorized capability-created task; an authorized worker question later remains self-only. Scope/unknown area warnings do not create grants. |
+| V-4 | Dispatch provenance and role eligibility; integration | Extend `AgentTaskServiceIntegrationTests` with `Internal_policy_create_role_matrix`. Enumerate every current AgentTaskRole and assert the case list is exhaustive: Code/Debug/Custom/Deploy/Plan/TestDesign/**Coverage**/Docs/Commit/Merge with Shared and Worktree accept a valid grant; Review/Investigate/Test/Check/Distill/Diagnose reject it; ReadOnly rejects every role. Include explicit Coverage positives for both writable workspaces and its ReadOnly negative. Unknown future enum values reject until classified; they cannot silently enlarge eligibility. Existing grant-free requests stay valid. Store caller identity/time from resolved dispatch caller, including an authorized capability-created task; worker questions remain self-only. Scope/unknown area warnings do not create grants. |
 | V-5 | Immutable snapshot and lifecycle; integration | New `AgentTaskInternalDecisionLifecycleTests.Policy_snapshot_survives_only_same_task_requeue`. Edit/delete the source policy file after create, Refine the task, submit a report containing a forged grant and write a policy file in its target repository: the persisted canonical policy/hash and granting identity stay unchanged. Retry and escalation retain that snapshot but advance binding/attempt; old tokens and old-session answers do not become new permission. New tasks, `-OnAgent` follow-ups, new stage-role tasks, specialist children and automatic Merge children have null policy unless their own eligible dispatch explicitly supplies one. Preserve CARD-0294's separate StandingAuthority inheritance. Include a migration upgrade of a pre-feature task: null policy, no history, unchanged legacy fields. |
 | V-6 | Worker identity, not caller delegation permission; mapped HTTP | New `AgentTaskDecisionQuestionApiTests.Self_identity_matrix`. POST the real `/api/agent-tasks/{id}/decision-questions` route. Own task token succeeds despite `MayDelegate == false`; exact session-scoped token succeeds. Absent/invalid, sibling task, parent task/session, capability and unrelated session tokens receive 403 and no row/event. Capability root permission and a token-less polling GET are not alternatives. A still-valid session principal referring to a retired/rebound session is rejected with 409 as stale; a revoked/unknown token remains 403. Include a same-session principal attached to another task to distinguish live binding from mere parent lineage. |
 | V-7 | Attempt, session and state admission; mapped HTTP + integration | New `AgentTaskDecisionQuestionApiTests.Current_binding_required` covers Dispatched and Working positives; Queued/Blocked/Succeeded/Failed/Canceled negatives, wrong/missing attempt, no session, ended/detached session, previous session and two active tasks bound to the same session. Valid but stale/ambiguous binding is 409; malformed attempt is 422. Repeat an already recorded request after cancel/retry: admission still runs before duplicate lookup, so an old Continue cannot be replayed to an inactive or different attempt. |
@@ -482,10 +624,21 @@ Keep encoding/BOM and all unrelated bytes in before/after hash evidence.
 | V-11 | Transaction and state races; Postgres integration | New `AgentTaskDecisionQuestionIntegrationTests.State_transition_races_are_serialized` uses barriers for cancel, settlement and retry between preliminary admission and locked recheck. If the state change commits first, receive 409/no decision; if the decision commits first, one check is valid before the later transition and cannot resurrect the task. Pin unique session binding when a second binding appears during admission. `Decision_and_event_commit_together` injects a save failure between typed row and event: neither survives, no publication/Continue escapes, and retry after recovery works once. A recording event bus reads from a separate DB connection to prove publication occurs only after both are committed. |
 | V-12 | In-turn check has no settlement/delivery effects; integration | New `AgentTaskDecisionQuestionIntegrationTests.Decision_is_not_a_reply_or_report` snapshots the fields named in the harness contract for both Continue and NeedsHuman. Assert unchanged status/CompletedAt/report/result/handoff/watermark/card revisions, no Blocked/Completed/Replied event, no AnswerAsync/ContinueWithAuthorityAsync/terminal send/release/merge call, no new user prompt or approval message. Multiple distinct permitted questions each add one audit record but do not use another model turn or legacy continuation allowance. A DB write error and auth/schema error also have zero such effects. |
 | V-13 | Real operator/helper scripts; subprocess + mapped HTTP | New `DelegateScriptInternalDecisionTests.Policy_file_is_posted_verbatim_as_structured_json` executes `delegate.ps1 -InternalDecisionPolicyFile` with UTF-8 multiline/Unicode content and a path containing spaces via `ProcessStartInfo.ArgumentList` (reuse `DelegateScriptRunner`). Inspect the posted object and stored snapshot; absent file/invalid JSON/oversize policy fail without a create POST. New `TaskQuestionScriptTests.Helper_is_fail_closed` executes the actual installed helper from another repository; success returns a complete parseable JSON decision. Timeout, connection failure, 403/409/422/500, empty/truncated/non-JSON response, unknown disposition and missing required response fields are unresolved/nonzero and must never output a success-shaped Continue. A valid NeedsHuman stays distinguishable from transport failure. Keep script ASCII and parse under pwsh and Windows PowerShell 5.1. Verify injected synthetic tokens never appear in argv, stdout/stderr, question files, brief or audit detail. |
-| V-14 | Dispatch reaches the actual worker; integration + ConPTY | Extend `DelegationUnitTests`, `DelegateBundleLaunchTests`, `CodexDelegateDispatchTests`, `GrokDelegateDispatchTests`, `AgentTaskPoolTests`, `AgentTaskStandingAgentDispatchTests` and `DelegationBriefCeilingPtyTests` with policy-bearing direct/spill cases. Assert effective policy, version, current attempt and existing absolute Antiphon helper path; target repository has no Antiphon scripts. Warm hash transfer must authenticate a question for the new task and deny the old task; retained warm bundle text is deliberately stale, so only the new brief can supply the grant. Authenticated standing session accepts the check; credential-less standing dispatch refuses with internal_decision_identity_unavailable before any brief enqueue/type and neither reroutes nor changes the standing agent. Grant-free standing behavior remains unchanged. Assert no replacement token is embedded. Generic formatter, delegate bundle, StandingAuthorityBlock and ContinueMessage all use structured questioning before Blocked fallback, and the old unconditional missing-decision instruction is gone. Pin no-policy and specialist branches explicitly, without replacing their verdict vocabularies. |
-| V-15 | Actual local repairs and human fallback; deterministic worker integration | New `InternalDecisionWorkerFlowTests` implements the four fixture flows below using the real helper, dispatch contract, decision service and reply observer. It must read the spill file, parse its actual policy/helper path and branch on the helper's returned disposition. Stub only worker choice/tool behavior, not the decision endpoint or its result. A fake worker that just prints done or receives its grant through a second test-only channel fails the evidence oracle. |
+| V-14 | Dispatch reaches the actual worker; integration + ConPTY | Extend `DelegationUnitTests`, `DelegateBundleLaunchTests`, `CodexDelegateDispatchTests`, `GrokDelegateDispatchTests`, `AgentTaskPoolTests`, `AgentTaskStandingAgentDispatchTests` and `DelegationBriefCeilingPtyTests` with policy-bearing direct/spill cases. Assert effective policy, version, current attempt, resolved AgentKind and existing absolute Antiphon helper path; target repository has no Antiphon scripts. Warm hash transfer authenticates the new task and denies the old; a deliberately stale warm bundle means only the fresh brief can supply the grant. Authenticated standing session accepts the check; credential-less standing dispatch refuses with internal_decision_identity_unavailable before delivery and neither reroutes nor changes the standing agent. Grant-free standing behavior stays unchanged. Assert no token embedding and a server-owned attempt baseline before policy-bearing delivery. V-18 pins unchanged unconditional formatter/bundle/legacy authority text and the gated provider branch in the actual direct/spill brief. Specialist verdict vocabularies stay unchanged. |
+| V-15 | Actual local repairs and human fallback; deterministic worker integration | New `InternalDecisionWorkerFlowTests` implements the four fixture flows below using the real helper, dispatch contract, decision service and reply observer. Policy-bearing flows read the spill file, parse its actual policy/helper path and branch on the returned disposition and provider instruction. No-policy flows follow the actual Blocked contract without inventing a helper call. Stub only worker choice/tool behavior, not the endpoint or result. A fake worker that just prints done or receives its grant through a second test-only channel fails the evidence oracle. |
 | V-16 | Visible history and enum compatibility; integration + client | New `AgentTaskDecisionQuestionIntegrationTests.Detail_history_is_separate_from_report` plus new `client/src/api/agentTasks.test.ts` and `client/src/features/delegations/TaskDetailBody.test.tsx`. Detail exposes immutable grants/provenance and recorded checks, including a NeedsHuman still shown as historical after a later human answer. Empty old-task policy/history renders cleanly; bounded history ordering/page behavior loses or duplicates no entries across page boundaries if paging is implemented. Existing Result, blocked context and reply rounds retain their meanings. Extend `taskVisuals.test.ts` to require a DecisionQuestion entry; assert existing enum numeric values are unchanged and the addition uses the current next value. No new modal/column/decision state. |
 | V-17 | Real Grok uses the new mechanism; isolated real-provider acceptance | New explicit `tests/Antiphon.E2E/InternalDecisionGrokCanaryTests.cs`, method `Real_grok_repairs_in_turn_and_waits_on_product_impact`. Execute the procedure below after the deterministic gate passes. Both the mechanical positive and product-impact negative are required. FakeGrok, a real CLI backed by scripted model responses, a composed-bundle stamp or a healthy service cannot replace this evidence. |
+| V-18 | Provider answerability and opt-in instruction boundary; unit + composed-brief integration | New `InternalDecisionInstructionContractTests.Needs_human_route_uses_resolved_provider_kind` and `No_policy_permission_question_still_directs_blocked`. Cross ClaudeCode/Codex/Grok with absent/null/empty/validated policy and direct/spill/cold/warm/standing composition. For policy-bearing ClaudeCode and Codex assert an affirmative report-question-and-blocked directive and absence of native-wait permission, even with a fixture native tool present; Grok alone names ask_user_question and explicit waiting, with Blocked on tool unavailability. Unknown kind also gets Blocked. Exercise a resolved-kind value different from a stale/default formatter value. For every no-policy variant assert the original blocked-if-you-need-a-decision-or-answer instruction remains effective, with no new discouragement/helper/grant exception; StandingAuthority alone cannot activate it. Pin unchanged delegate-basics.md, StandingAuthorityBlock and ContinueMessage as supplementary source assertions. V-15 consumes these branches and proves Blocked is surfaced and answerable; a check only that old wording disappeared is insufficient. |
+| V-19 | Actual changed paths versus used grants; Git + settlement integration | New `InternalDecisionSettlementAuditTests.Continue_paths_are_audited_before_cleanup`, `Audit_baseline_is_attempt_scoped`, `Audit_failure_is_visible_without_changing_settlement` and `Repeated_settlement_deduplicates_the_same_audit`. A real temp Git repo covers matching edits and an outside-grant edit made through a shell and committed before settlement, plus staged/unstaged/deleted/renamed/untracked files (both rename endpoints). Multiple Continue rows union only their referenced grants; unused-policy, NeedsHuman-only and prior-attempt grants cannot cover a mismatch. Snapshot before MergeBackAsync/removal with a cleanup spy; capture a new baseline on retry/warm/standing dispatch and deny worker-forged baseline fields. Clean success has no mismatch warning; absent policy/no Continue performs no new I/O. Missing baseline/repo, failing Git, root replacement or capped observation yields audit_unavailable, not empty-clean; dirty/shared attribution is explicit. Assert one persisted Warning and caller caveat per observation, unchanged report verdict/card/legacy fields and normal persistence/release; repeated same-boundary settlement/restart does not duplicate it, while a later answered-blocker boundary with new edits is audited again. |
+
+V-19 also adds `InternalDecisionSettlementAuditTests.All_settlement_paths_keep_audit_evidence`:
+parameterize normal marked completion, deferred/unmarked Blocked settlement,
+existing recovery settlement and explicit Cancel after a Continue. Require the
+same path mismatch warning before owned cleanup, or an explicit unavailable
+warning when cancellation makes observation impossible. Preserve each path's
+existing status, note behavior and killed/pooled/standing ownership outcome.
+Cancel does not create a new completion note just to carry this warning; its
+existing task detail/events remain the observation surface.
 
 #### V-15 deterministic worker fixtures
 
@@ -496,8 +649,11 @@ runtime transcript pumping: reuse those seams openly, but bind the **mapped new
 decision route** on a fixture-owned loopback host with real authentication and
 the same fixture database. A test relay that manually returns Continue is not
 allowed. V-6/V-8 additionally exercise the route through the real Program host.
-Pin Grok kind, worker role Custom, actual brief delivery and marked settlement;
-do not dispatch another agent or rely on any live stack. Use a unique task nonce
+Pin Grok kind for positive flows and Custom role throughout, with actual brief
+delivery and marked settlement. Case 4 additionally uses existing Claude/Codex
+fixture transcript formats and actual kind-specific composition; do not simply
+relabel a Grok transcript. Do not dispatch another agent or rely on a live stack.
+Use a unique task nonce
 and native turn ID in the fake transcript, with correctly correlated final text.
 
 Name the four cases as follows:
@@ -529,16 +685,23 @@ Name the four cases as follows:
    honestly declared behavioral/Unknown impact negative under V-9, not portability.
 4. `Needs_human_waits_or_reports_a_structured_blocker`: reuse the same path and
    grant but declare each V-9 non-None impact (separate parameter rows). For a
-   native-capable fake Grok worker, record one open ask_user_question after the
+   fake Grok worker with its server-answerable tool, record one open ask_user_question after the
    NeedsHuman row and stop all dependent edits. Assert no automatic answer/new
    prompt; task remains Working/Dispatched. Supply an explicit fixture human
    answer through existing AnswerAsync and confirm the matching tool_call_id's
-   ToolResult; unrelated ToolResult/UserPrompt is not confirmation. For a provider
-   fixture with no usable native question tool, emit question, proposed action,
-   impact and missing grant/authority with the marked blocked token. Assert
-   Blocked, a structured parent note, unchanged target bytes and a retained live
-   session; only a subsequent explicit reply resumes it. Run both missing-policy
-   and helper-unavailable variants. Do not convert transport failure into approval.
+   ToolResult; unrelated ToolResult/UserPrompt is not confirmation. For **each
+   of ClaudeCode and Codex**, expose a native question tool in the fixture but
+   require the consumed contract to select question/proposed action/impact/missing
+   authority plus the marked blocked token, with zero native question calls.
+   Grok's tool-unavailable variant also follows that fallback. Assert Blocked,
+   BlockedContextBuilder question visibility, a structured parent note, unchanged
+   target bytes and a retained live session. A subsequent explicit API reply must
+   succeed via the existing Blocked branch, not return the Working-task 409.
+   Run helper-unavailable policy-bearing variants through the same kind branch.
+   Separately run missing/null/empty-policy permission questions for all three
+   kinds: no helper is advertised or called, the existing contract directs
+   Blocked, and no discouragement bypasses that result. Do not convert transport
+   failure or elapsed waiting time into approval.
 
 The fixture asserts state while paused immediately after each check and before
 releasing tool work/final output; otherwise a fast final report can hide premature
@@ -630,10 +793,12 @@ only verified fixture-contained scratch paths; preserve the manifest/evidence.
 
 #### Exact execution and reporting
 
-From the Code worktree, run each named class in the following lists as its own
-scoped invocation. For a new method named above, the class filter selects it; the
+From each Code worktree, select that slice's owned classes from the following
+card-wide lists and run each as its own scoped invocation. Do not run future
+slice classes before they exist. For a new method, the class filter selects it; the
 fresh TRX must contain that method and every specified parameter row. Record
-baseline `1730bc56`, implementation SHA, selected class/method, executed/pass/fail/
+design baseline `33d906a7`, the landed amendment SHA, slice implementation SHA,
+selected class/method, executed/pass/fail/
 skip counts and elapsed time. A nonexistent class, zero tests, build/fixture
 failure or skipped required case is not coverage. Do not use `--list-tests` as
 execution proof. If classes are renamed during implementation, update this list
@@ -646,6 +811,8 @@ $card407Classes = @(
   'AgentTaskDecisionQuestionApiTests',
   'AgentTaskDecisionQuestionIntegrationTests',
   'AgentTaskInternalDecisionLifecycleTests',
+  'InternalDecisionSettlementAuditTests',
+  'InternalDecisionInstructionContractTests',
   'DelegateScriptInternalDecisionTests',
   'TaskQuestionScriptTests',
   'InternalDecisionWorkerFlowTests',
@@ -724,8 +891,8 @@ PowerShell filesystem operations and do not touch the main checkout's outputs.
 | R-4 | Internal decisions consume, reset or inherit legacy AutoContinue | New `AgentTaskDecisionQuestionIntegrationTests.Legacy_auto_continue_fields_are_orthogonal` seeds `(false,null)`, `(true,null)` and `(true,already-used timestamp)` with valid StandingAuthority. Multiple Continue checks, NeedsHuman and duplicate retries preserve both fields bit-for-bit and enqueue no legacy reply. Existing service tests `authority_lands_on_the_row_trimmed_and_in_the_brief`, `authority_over_2000_characters_is_422`, `auto_continue_without_authority_is_422`, `a_merge_child_copies_authority_not_the_auto_continue_flag` stay green. Serialize/create/read AutoContinue=true with authority and verify it is stored, without asserting a runtime behavior absent here. |
 | R-5 | Later CARD-0294 S3 loses explicit once-only behavior or overrides NeedsHuman | Conditional rebase gate, not a silently skipped current test: at Code start and pre-land inspect the actual delegate parameter metadata and consumers/writers of AutoContinueOnWait/AutoContinuedAt. At `1730bc56`, runtime S3 and `-AutoContinue` do not exist; report that fact, do not implement them as CARD-0407. If S3 is present by integration, add `AgentTaskDecisionQuestionIntegrationTests.Legacy_once_only_and_human_precedence` and real-script `Auto_continue_requires_explicit_authority`: flag-off never continues, flag-on+authority handles one eligible legacy wait once atomically (including two concurrent wait writers), second wait/used stamp escalates to a human, no merge-conflict auto-answer, no inherited flag on a new child. Insert internal Continue checks before/between waits and prove they neither consume nor replenish the stamp. A current NeedsHuman followed by its native/final blocked question must stay unanswered even with flag=true and an unused stamp; it must not fall into legacy authority replay. Duplicate checks and host restart do not reset either contract. If only the CLI or consumer lands, report partial integration explicitly; do not call once-only acceptance proven. |
 | R-6 | Human popup reply is mistaken for a new prompt, or the wrong tool result confirms it | `AgentTaskReplyOverlayTests.Working_with_open_question_tool_types_Now_without_a_marker_and_confirms_on_ToolResult` is an existing generic fixture, not proof of a Grok-specific matrix. Extend this class with open/closed Grok ask_user_question and exact tool_call_id cases in V-15: matching explicit human reply confirms without task marker; unrelated result/new UserPrompt/TurnEnd does not; no automatic Now send or Esc is added. Blocked reply remains a marked WhenIdle message. |
-| R-7 | New decision evidence mutates card state, advisory scopes or reply rounds | V-4/V-12/V-16 plus `AgentTaskDetailBlockedContextTests.prior_rounds_are_rebuilt_from_events`, `AgentTaskSettlementRaceTests.an_answered_blocked_task_is_not_re_blocked_by_the_stale_boundary`, and answer-turn completion tests. A DecisionQuestion event cannot create a Move/Reopen, NeedsDecision column, stage handoff, scope grant or reply round; normal final settlement retains its existing card transition. Unknown Scope remains an accepted warning with absent internal policy. |
-| R-8 | Instructions drift on warm/spill/specialist paths | V-14/V-15 and existing `DelegateBundleLaunchTests`, `DelegationBriefCeilingPtyTests`, Codex/Grok dispatch tests, specialist/nudge/stage-token cases in `DelegationUnitTests` and `AgentTaskReplyIntegrationTests`. Exact contract-source checks supplement a worker that consumes the helper; prompt keyword snapshots alone cannot close this item. Grant-free tasks retain human fallback, and specialist/next:decide/report/finding vocabularies stay unchanged. |
+| R-7 | New decision evidence mutates card state, advisory scopes or reply rounds | V-4/V-12/V-16/V-19 plus `AgentTaskDetailBlockedContextTests.prior_rounds_are_rebuilt_from_events`, `AgentTaskSettlementRaceTests.an_answered_blocked_task_is_not_re_blocked_by_the_stale_boundary`, and answer-turn completion tests. DecisionQuestion and grant-audit Warning events cannot create a Move/Reopen, NeedsDecision column, stage handoff, scope grant or reply round; normal final settlement retains its existing card transition. Advisory Scope/ObservedScope/ScopeDrift semantics remain independent. Audit failure preserves settlement and appears as a caller warning; a shared/dirty-workspace caveat is not a verdict of unauthorized work. Unknown Scope remains an accepted warning with absent internal policy and no new audit. |
+| R-8 | Instructions drift on warm/spill/specialist paths | V-14/V-15/V-18 and existing `DelegateBundleLaunchTests`, `DelegationBriefCeilingPtyTests`, Codex/Grok dispatch tests, specialist/nudge/stage-token cases in `DelegationUnitTests` and `AgentTaskReplyIntegrationTests`. Exact contract-source checks supplement a worker consuming the helper and provider fallback; prompt keywords alone cannot close this item. Grant-free permission questions still direct Blocked, with no new discouragement/helper text; only Grok's policy-bearing NeedsHuman branch permits native waiting. Specialist/next:decide/report/finding vocabularies and legacy authority text stay unchanged. |
 
 ### Positive controls
 
@@ -744,7 +911,7 @@ test targets; Code records the actual source location changed in its PC table.
 | PC-1 | Replace absent-policy/no-grant denial with Continue | V-9 missing policy and R-1 marked design-approval case receive forbidden approval or an inferred reply; restored NeedsHuman/normal Blocked. |
 | PC-2 | Bypass policy schema validation, independently version/category/required-preserve/unknown-field rejection | V-1 invalid-create parameter for each guard admits a task; restored 422/no task. |
 | PC-3 | Raise each of policy grant/path/preserve/canonical-size limits by one | V-1 corresponding just-over-limit case is accepted; restored rejection. Run four mutations. |
-| PC-4 | Remove ReadOnly rejection, then remove ineligible-role rejection | V-4 respective disallowed dispatch creates a grant; restored 422/no dispatch. |
+| PC-4 | Remove ReadOnly rejection; remove ineligible-role rejection; independently remove Coverage from the eligible set | V-4 disallowed dispatches create a grant, or Coverage Shared/Worktree incorrectly rejects a valid one. Restored 422 for ineligible/ReadOnly and successful explicit Coverage dispatch. Run all three mutations. |
 | PC-5 | Replace exact file equality with prefix matching; independently bypass rooted/traversal/wildcard/directory rejection | V-2 sibling-prefix/invalid-path parameter gets authorization; restored denial. Test every lexical guard, not just `../`. |
 | PC-6 | Bypass resolved-link containment | V-2 escaping link, junction or changed linked ancestor gets Continue; restored path_not_granted. A skipped symlink fixture cannot satisfy this control. |
 | PC-7 | Bypass attribute target restriction; then bypass allowed-attribute set; then allow attributes for ShellTransport | V-3 unlisted target/filter/wrong-category parameters become Continue; restored refusal. |
@@ -760,7 +927,7 @@ test targets; Code records the actual source location changed in its PC table.
 | PC-17 | Copy parent/follow-up policy into new tasks, separately clear policy during same-task requeue | V-5 inheritance/retry assertions fail; restored fresh-null/same-task-retained behavior. |
 | PC-18 | Return stored result without comparing canonical content | V-10 changed payload under the same ID receives the old answer; restored decision_question_changed. |
 | PC-19 | Remove the composite unique index configuration/migration in a throwaway test schema | V-10 direct duplicate insert is accepted; restored database constraint rejects it. Apply the mutant migration to that isolated schema so a preexisting good index cannot conceal the mutation. |
-| PC-20 | Remove the in-transaction state/binding recheck (one variant per guarded state) | V-11 barrier lets a state/binding change commit first but the stale check still Continues; restored 409/no decision. |
+| PC-20 | Remove each in-transaction recheck independently: active status, attempt, current live session, unique active binding (at least four variants) | V-11 barrier lets a cancel/settlement, retry, detach/rebind or competing binding commit first but the stale check still Continues; restored 409/no decision. Expand if implementation splits an independent guard. |
 | PC-21 | Move event persistence outside the decision transaction; independently move event publication before commit | V-11 injected failure leaves a partial audit, or a subscriber's separate connection cannot see both rows; restored atomic storage/post-commit observation. |
 | PC-22 | Set CompletedAt or call AnswerAsync in the decision-success branch | V-12 snapshot/queue spy catches premature settlement or a continuation message; restored audit-only interaction. Run the two side-effect variants. |
 | PC-23 | Set/reset AutoContinuedAt while resolving an internal check | R-4 legacy-field matrix fails on unused/used stamp; restored byte-equivalent fields. If S3 exists, also remove its once-only stamp predicate: R-5 second/concurrent-wait assertions must fail. |
@@ -771,8 +938,11 @@ test targets; Code records the actual source location changed in its PC table.
 | PC-28 | Ignore NeedsHuman in the deterministic worker and execute the repair | V-15 negative file hashes/tool-work assertion fails before teardown; restored wait/Blocked fallback. |
 | PC-29 | Let cancelled TurnEnd enter report settlement | R-2 cancelled cases with a prior decision settle or nudge incorrectly; restored non-report boundary and unchanged task. |
 | PC-30 | Confirm an open human question on any ToolResult instead of matching its tool_call_id | R-6 unrelated-result case falsely confirms; restored unanswered question until exact human ToolResult. |
-| PC-31 | Remove the canary resource-ownership/opt-in guard (each independent check) | New `InternalDecisionGrokCanaryGuardTests` in E2E uses a refusing launch spy: disarmed opt-in, production/non-owned runner, foreign DB/root or external-message adapter must fail validation with zero real launches. Mutation tests use only malformed in-memory config and that spy; never actually point a launched canary at production. Restored preflight refusal. |
-| PC-32 | Replace the line-ending or transport repair with a no-op; independently force the harness verifier to return zero | V-15 independently captured argv remains wrong, or intentionally wrong input passes. Restored repair gives expected argv and preserves the bad-input assertion failure. These positive controls pin verification strength, not only endpoint verdicts. |
+| PC-31 | Remove each canary guard independently: headed opt-in, card opt-in, production-runner rejection, runner ownership, DB ownership, root ownership and refusing external-message adapter (at least seven variants) | New `InternalDecisionGrokCanaryGuardTests` in E2E uses a refusing launch spy. Each malformed config must fail validation with zero real launches. Mutations use only in-memory config and that spy; never actually launch against production. Restored preflight refusal. Include further independent ownership checks if implementation adds them. |
+| PC-32 | Replace the line-ending repair with a no-op; replace the shell-transport repair with a no-op; independently force the harness verifier to return zero (three variants) | V-15 independently captured argv remains wrong, or intentionally wrong input passes. Restored repairs give expected argv and preserve the bad-input assertion failure. These controls pin verification strength, not only endpoint verdicts. |
+| PC-33 | Remove the provider branch by returning Grok's native-wait instruction for every policy-bearing kind | V-18 ClaudeCode and Codex each fail their explicit report-question-and-Blocked contract assertions despite a native tool being available; V-15's corresponding worker fixture selects an unanswerable wait instead of the required Blocked surface. Restored both non-Grok cases report Blocked and can receive an API reply; Grok retains its supported path. |
+| PC-34 | Remove validated-policy gating so BuildBrief appends the discouragement/helper block on an absent policy (use an empty-grants block rather than a null dereference) | V-18 absent/null/empty-policy and authority-only contracts wrongly discourage a permission blocker or advertise the helper. Require a behavioral contract assertion, not an exception or missing-key failure. V-15 no-policy cases again follow the original Blocked directive after restoration. |
+| PC-35 | Independently (a) skip path comparison/warning, (b) union all policy grants including unused/denied ones, (c) include prior-attempt Continue rows, (d) diff against current HEAD instead of the dispatch SHA, (e) omit rename source, (f) turn unavailable into empty-success, (g) observe only after cleanup, (h) remove same-boundary audit deduplication, (i) reuse an old attempt's baseline on retry/warm rebound | V-19 respectively loses the mismatch warning, lets unrelated grants conceal it, misses the committed shell edit or renamed source, falsely reports clean on failed evidence, loses pre-cleanup evidence, duplicates the warning/caller caveat, or audits against the wrong task attempt. Require the specific path/baseline/event assertion for each of nine mutations; restore and rerun it green. No compile failure or Git timeout counts as red. |
 
 Run PC-31's pure validation class without real-provider opt-in:
 
@@ -780,8 +950,13 @@ Run PC-31's pure validation class without real-provider opt-in:
 dotnet run --project tests/Antiphon.E2E --property:OutputPath=bin-card0407/ -- --treenode-filter "/*/*/InternalDecisionGrokCanaryGuardTests/*" --report-trx --report-trx-filename card0407-canary-guards.trx
 ```
 
-Code's report contains one table covering every V/R/PC ID, guard variant,
-executed counts, red assertion, restored-green counts and evidence path. Report
+Each Code slice's report and committed evidence ledger cover its assigned V/R/PC
+IDs and all guard variants with executed counts, red assertion, restored-green
+counts and evidence path. Use a shared ledger at
+`docs/superpowers/plans/2026-09-08-card-0407-verification-evidence.md` (created in
+S1) with rows marked pending until executed; include landed slice SHAs and
+sanitized durable artifact references. S4b consolidates every row without
+rerunning unchanged, already-proven variants. Report
 the real canary outcome separately. Pending V-17 or conditional R-5 cannot be
 silently folded into "all green". Do not ship a canary guard mutation, a loosened
 fixture assertion or an instruction pointing to a helper/endpoint not yet present.
@@ -795,7 +970,8 @@ fixture assertion or an instruction pointing to a helper/endpoint not yet presen
   shared-service restart or landing as a side effect of a grant. All repair
   execution is fixture-local; non-None impact rejection is covered explicitly.
 - Proving arbitrary edits semantically preserve behavior when a worker lies or
-  misclassifies them as None. The server does not interpret code/English. The
+  misclassifies them as None. D-8's actual-path audit is in scope, including its
+  unavailable-evidence warning, but it does not interpret code/English. The
   actual three fixture repairs have independent argv/assertion/hash oracles;
   the real product-negative checks whether Grok honors the semantic boundary.
 - Popup detection/dismissal redesign, provider normalizer changes, generic
@@ -812,17 +988,53 @@ fixture assertion or an instruction pointing to a helper/endpoint not yet presen
 
 ### Cost
 
-- Suites forced: the 23 named Antiphon.Tests classes, five scoped client files,
-  client build, E2E canary guard class, and one explicit E2E real-Grok test with
-  two sequential fixture dispatches. FakeGrokContractTests in Pty.Tests is forced
-  when V-15 changes that fake. No namespace-wide or full-assembly default run.
-- Planning estimate, not measured timing: first isolated build and deterministic
-  V/R runs about 20-35 minutes; PC red/restore/green runs about 45-75 minutes using
-  exact method filters and incremental builds; real Grok acceptance about 10-20
-  minutes when authenticated/available. Verification floor is approximately
-  75 minutes, with 90-130 minutes a practical allowance; implementation time is
-  additional. Do not trade away negative/PC coverage by widening test timeouts.
-- Runtime count for this TestDesign: 0 tests, 0 builds, 0 real-provider dispatches.
-  Deliverable validation is document diff/structure and commit/push only. Land
-  this updated plan through the caller's normal `-Land` operation before Code's
-  worktree is dispatched.
+This is a multi-session card with six sequential Code dispatches, not a single
+90-130 minute verification allowance. Estimates below are planning ranges,
+not measured timings or permission to omit evidence.
+
+- Suites forced across the card: 25 named Antiphon.Tests classes, five scoped
+  client files, client build, E2E canary guard class and one explicit real-Grok
+  test containing two sequential fixture dispatches. FakeGrokContractTests in
+  Pty.Tests is forced when V-15 changes that fake. Each slice runs its owned
+  classes/methods; the list is not a demand to repeat all 25 on every dispatch.
+- The reviewed PC-1..32 already implied roughly 55-70 mutation cycles, before
+  enumerating every guarded state. With explicit Coverage, provider/no-policy
+  and audit mutations, reserve **80-95 red/restore/green cycles**. The current
+  minimum guard inventory is 83 (PC-20 four, PC-31 seven, PC-32 three, PC-35 nine);
+  independent implementation guards and the conditional S3 checks in R-5 can
+  increase it. Expand a per-variant registry at each slice's start; never count
+  one red as proof of several independent mutations.
+- Each cycle requires mutate, build/run to the named assertion, restore and
+  build/run green. At a provisional 6-10 minutes per cycle this is approximately
+  **8-16 hours for PCs alone**, including evidence capture. Cross-slice worker
+  witnesses can require a second execution of a variant, also covered by the
+  80-95 cycle allowance. First isolated builds,
+  deterministic V/R runs, client verification and integration reconciliation add
+  roughly 1-2 hours. Reserve **9.5-18 hours total verification** across slices;
+  slow process/DB fixtures or genuine failures can increase that. Measure the
+  first few cycles and update remaining estimates, without reducing coverage.
+- V-17 execution remains bounded to 20 minutes for its two tasks and teardown;
+  reserve additional S4b time for owned-fixture setup, guard PCs and evidence
+  export. Provider availability/authentication wait is an external dependency,
+  excluded from the duration estimates and explicitly pending if unavailable.
+
+| Code dispatch | Implementation / test-authoring estimate | Verification / evidence estimate |
+|---|---|---|
+| S1 | 3-5 hours | 2-3 hours |
+| S2a | 4-7 hours | 4-7 hours |
+| S2b | 3-5 hours | 1-2 hours |
+| S3 | 3-5 hours | 1-2 hours |
+| S4a | 3-5 hours | 1-2 hours |
+| S4b | 2-3 hours | 0.5-2 hours |
+| Total | 18-30 hours | 9.5-18 hours |
+
+Allow roughly **28-48 hours of serial effort** before Review, excluding provider
+holds and unexpected defects. Large slices can continue in another bounded Code
+dispatch with their committed remaining-variant ledger. These are estimates of
+work, not expanded test/provider timeouts or an automatic scheduled spend.
+
+Runtime count for Plan/TestDesign and this amendment: **0 tests, 0 builds,
+0 real-provider dispatches**. Deliverable validation is document diff/structure
+and commit/push only. Land this amended artifact through the caller's normal
+`-Land` operation before dispatching **S1 only**, with the ownership table and
+remaining slices in its brief. S1's report hands off S2a, not the entire feature.
