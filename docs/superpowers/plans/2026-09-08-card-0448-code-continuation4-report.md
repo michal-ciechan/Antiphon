@@ -35,16 +35,27 @@ policy. The optional SaveFault predicate selects that subphase without moving it
 
 ## Execution record
 
-`bin-c448-c4` builds with 0 errors and 133 warnings. The first fixture run is pending;
-individual completed test messages are not a completed run verdict.
+`bin-c448-c4` builds with 0 errors and 133 warnings. `c4-fixtures-01.trx` completed
+66 executed / 65 passed / 1 failed / 0 skipped (43m50s). All 24 admission races and
+30 source-boundary selectors passed; RepositoryMutationLeaseTests passed 11/12.
+The sole failure, C24 killed-worker recovery, stopped before child-PID acknowledgement.
+It receives no C24 credit. The worker fixture now pins Git identity, signing and its blocking
+hook explicitly instead of inheriting global configuration, and reports worker startup errors.
+Its rerun is pending.
 The exact pre-change incident adapter also builds at `f202fcc1` in the independent
 `C:\Antiphon\worktrees\c448-4692ec26-baseline` checkout (0 errors, 132 warnings).
-It has not yet earned incident RED credit.
+`c4-incident-baseline.trx` executed 1 / passed 0 / failed 1 / skipped 0 with the intended
+directory-preservation assertion. The old production shortcut and remover actually deleted
+the clean unique detached checkout and local branch. Fixture source S was
+`cb7df822e40f4c1ba48045bdc75b82ca0b139afa`, unique detached U was
+`aa198f3c482329a7d01e6e91380d08e199631347`, and the independently observed remote source
+remained S. This is baseline incident RED credit, not an implemented-code failure.
 
 Client: TaskDrawer 18/18 and pipelineStageModel 34/34 passed in separate wrapper invocations
 with exit 0. `npm run build` passed. The first expanded backend build found one fixture
 expression-tree compilation error (CS8122); the predicate was corrected to ordinary equality
-comparisons before rebuilding. No execution credit is assigned to that failed build.
+comparisons before rebuilding. The next build passed with 0 errors and 131 warnings.
+No execution credit is assigned to the failed build.
 
 Local execution scripts, logs, TRX and command evidence are under this task's `.antiphon`
 and isolated `tests/Antiphon.Tests/bin-c448-*` outputs. The 86 adapted mutation definitions
