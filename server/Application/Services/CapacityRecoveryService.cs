@@ -4,6 +4,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -46,8 +47,11 @@ public sealed class CapacityRecoveryService
     public async Task ReconcileAsync(CancellationToken ct)
     {
         await ConsumePendingReleasesAsync(ct);
-        if (IsEnabled)
-            await GrantReadyAsync(ct);
+        if (!IsEnabled)
+            return;
+        await ReconcileCompatibilityAsync(ct);
+        await RearmStalledAdmissionsAsync(ct);
+        await GrantReadyAsync(ct);
     }
 
     public async Task<int> ConsumePendingReleasesAsync(CancellationToken ct)
@@ -129,6 +133,7 @@ public sealed class CapacityRecoveryService
         foreach (var kind in Enum.GetValues<AgentKind>().Distinct())
         {
             ct.ThrowIfCancellationRequested();
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
             await TakeProviderLockAsync(db, kind, ct);
             var state = await db.Set<CapacityRecoveryProviderState>()
                 .FirstOrDefaultAsync(s => s.Kind == kind, ct);
@@ -138,6 +143,7 @@ public sealed class CapacityRecoveryService
                 db.Set<CapacityRecoveryProviderState>().Add(state);
             }
 
+            var skipGrant = false;
             if (state.GrantedWaitId is { } outstanding)
             {
                 var current = await db.Set<CapacityRecoveryWait>()
@@ -151,67 +157,66 @@ public sealed class CapacityRecoveryService
                 }
                 else
                 {
-                    continue;
+                    skipGrant = true;
                 }
             }
 
-            if (state.NextAdmissionAt is { } due && due > now)
-                continue;
-
-            var batch = Math.Clamp(Settings.ReconciliationBatchSize, 1, 1000);
-            var candidates = await db.Set<CapacityRecoveryWait>()
-                .Where(w => w.ExecutionKind == kind
-                    && (w.State == CapacityRecoveryWaitState.Ready
-                        || w.State == CapacityRecoveryWaitState.ActionPending
-                        || (w.State == CapacityRecoveryWaitState.Admitted && w.NeedsRevalidationGrant)))
-                .OrderBy(w => w.BlockedAt)
-                .ThenBy(w => w.Id)
-                .Take(batch)
-                .ToListAsync(ct);
-
-            CapacityRecoveryWait? winner = null;
-            foreach (var wait in candidates)
+            if (!skipGrant && !(state.NextAdmissionAt is { } due && due > now))
             {
-                if (wait.DueAt is { } waitDue && waitDue > now)
-                    continue;
-                if (CapacityRecoveryPolicy.AttemptWouldExhaust(wait.AdmissionCount, MaxAttempts)
-                    && !wait.NeedsRevalidationGrant)
+                var batch = Math.Clamp(Settings.ReconciliationBatchSize, 1, 1000);
+                var candidates = await db.Set<CapacityRecoveryWait>()
+                    .Where(w => w.ExecutionKind == kind
+                        && (w.State == CapacityRecoveryWaitState.Ready
+                            || w.State == CapacityRecoveryWaitState.ActionPending
+                            || (w.State == CapacityRecoveryWaitState.Admitted && w.NeedsRevalidationGrant)))
+                    .OrderBy(w => w.BlockedAt)
+                    .ThenBy(w => w.Id)
+                    .Take(batch)
+                    .ToListAsync(ct);
+
+                CapacityRecoveryWait? winner = null;
+                foreach (var wait in candidates)
                 {
-                    wait.State = CapacityRecoveryWaitState.Exhausted;
-                    wait.Outcome = nameof(CapacityRecoveryWaitState.Exhausted);
-                    wait.OutcomeReason = "max-episode-attempts";
-                    wait.UpdatedAt = now;
-                    wait.Version++;
-                    continue;
+                    if (wait.DueAt is { } waitDue && waitDue > now)
+                        continue;
+                    if (CapacityRecoveryPolicy.AttemptWouldExhaust(wait.AdmissionCount, MaxAttempts)
+                        && !wait.NeedsRevalidationGrant)
+                    {
+                        wait.State = CapacityRecoveryWaitState.Exhausted;
+                        wait.Outcome = nameof(CapacityRecoveryWaitState.Exhausted);
+                        wait.OutcomeReason = "max-episode-attempts";
+                        wait.UpdatedAt = now;
+                        wait.Version++;
+                        continue;
+                    }
+
+                    winner = wait;
+                    break;
                 }
 
-                winner = wait;
-                break;
+                if (winner is not null)
+                {
+                    state.GrantedWaitId = winner.Id;
+                    state.GrantedActionKey = winner.ActionKey;
+                    state.GrantedAt = now;
+                    state.GrantVersion++;
+                    state.ExpectedWaitVersion = winner.Version;
+                    state.ExpectedWaveRevision = state.WaveRevision;
+                    state.ExpectedOwnerId = winner.TaskId ?? winner.AgentId ?? winner.SessionId;
+                    state.UpdatedAt = now;
+                    if (winner.State == CapacityRecoveryWaitState.Ready)
+                        winner.State = CapacityRecoveryWaitState.ActionPending;
+                    winner.UpdatedAt = now;
+                    winner.Version++;
+                    granted++;
+                    _logger.LogInformation(
+                        "Capacity recovery grant {ActionKey} kind {Kind} wait {WaitId} blockedAt {BlockedAt:u}",
+                        winner.ActionKey, kind, winner.Id, winner.BlockedAt);
+                }
             }
 
-            if (winner is null)
-            {
-                await db.SaveChangesAsync(ct);
-                continue;
-            }
-
-            state.GrantedWaitId = winner.Id;
-            state.GrantedActionKey = winner.ActionKey;
-            state.GrantedAt = now;
-            state.GrantVersion++;
-            state.ExpectedWaitVersion = winner.Version;
-            state.ExpectedWaveRevision = state.WaveRevision;
-            state.ExpectedOwnerId = winner.TaskId ?? winner.AgentId ?? winner.SessionId;
-            state.UpdatedAt = now;
-            if (winner.State == CapacityRecoveryWaitState.Ready)
-                winner.State = CapacityRecoveryWaitState.ActionPending;
-            winner.UpdatedAt = now;
-            winner.Version++;
             await db.SaveChangesAsync(ct);
-            granted++;
-            _logger.LogInformation(
-                "Capacity recovery grant {ActionKey} kind {Kind} wait {WaitId} blockedAt {BlockedAt:u}",
-                winner.ActionKey, kind, winner.Id, winner.BlockedAt);
+            await tx.CommitAsync(ct);
         }
 
         return granted;
@@ -227,6 +232,7 @@ public sealed class CapacityRecoveryService
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
         await TakeProviderLockAsync(db, kind, ct);
         var now = UtcNow();
         var state = await db.Set<CapacityRecoveryProviderState>()
@@ -234,45 +240,53 @@ public sealed class CapacityRecoveryService
         var wait = await db.Set<CapacityRecoveryWait>().FirstOrDefaultAsync(w => w.Id == waitId, ct);
         if (state is null || wait is null)
             return CapacityRedemption.Refused("missing-grant");
-        if (!IsEnabled)
-            return await DeferRedemptionAsync(db, wait, state, "feature-disabled", now, ct);
-        if (state.GrantedWaitId != waitId || state.GrantedActionKey != actionKey)
-            return CapacityRedemption.Refused("grant-mismatch");
-        if (state.NextAdmissionAt is { } due && due > now)
-            return await DeferRedemptionAsync(db, wait, state, "clock-not-due", now, ct);
-        if (!string.IsNullOrWhiteSpace(refusalReason))
-            return await DeferRedemptionAsync(db, wait, state, refusalReason, now, ct);
 
-        var revalidation = wait.NeedsRevalidationGrant;
-        if (!revalidation)
+        CapacityRedemption result;
+        if (!IsEnabled)
+            result = await DeferRedemptionAsync(db, wait, state, "feature-disabled", now, ct);
+        else if (state.GrantedWaitId != waitId || state.GrantedActionKey != actionKey)
+            return CapacityRedemption.Refused("grant-mismatch");
+        else if (state.NextAdmissionAt is { } due && due > now)
+            result = await DeferRedemptionAsync(db, wait, state, "clock-not-due", now, ct);
+        else if (!string.IsNullOrWhiteSpace(refusalReason))
+            result = await DeferRedemptionAsync(db, wait, state, refusalReason, now, ct);
+        else
         {
-            if (CapacityRecoveryPolicy.AttemptWouldExhaust(wait.AdmissionCount, MaxAttempts))
+            var revalidation = wait.NeedsRevalidationGrant;
+            if (!revalidation)
             {
-                wait.State = CapacityRecoveryWaitState.Exhausted;
-                wait.Outcome = nameof(CapacityRecoveryWaitState.Exhausted);
-                wait.OutcomeReason = "max-episode-attempts";
-                ClearGrant(state, now);
-                wait.UpdatedAt = now;
-                wait.Version++;
-                await db.SaveChangesAsync(ct);
-                return CapacityRedemption.Refused("exhausted");
+                if (CapacityRecoveryPolicy.AttemptWouldExhaust(wait.AdmissionCount, MaxAttempts))
+                {
+                    wait.State = CapacityRecoveryWaitState.Exhausted;
+                    wait.Outcome = nameof(CapacityRecoveryWaitState.Exhausted);
+                    wait.OutcomeReason = "max-episode-attempts";
+                    ClearGrant(state, now);
+                    wait.UpdatedAt = now;
+                    wait.Version++;
+                    await db.SaveChangesAsync(ct);
+                    await tx.CommitAsync(ct);
+                    return CapacityRedemption.Refused("exhausted");
+                }
+
+                wait.AdmissionCount++;
             }
 
-            wait.AdmissionCount++;
+            wait.NeedsRevalidationGrant = false;
+            wait.State = CapacityRecoveryWaitState.Admitted;
+            wait.Outcome = nameof(CapacityRecoveryWaitState.Admitted);
+            wait.OutcomeReason = path.ToString();
+            wait.UpdatedAt = now;
+            wait.Version++;
+            state.LastActionKey = actionKey;
+            state.LastActionAt = now;
+            state.NextAdmissionAt = now.AddSeconds(Math.Max(1, Settings.AdmissionIntervalSeconds));
+            ClearGrant(state, now);
+            await db.SaveChangesAsync(ct);
+            result = CapacityRedemption.Accepted(wait.AdmissionCount, revalidation);
         }
 
-        wait.NeedsRevalidationGrant = false;
-        wait.State = CapacityRecoveryWaitState.Admitted;
-        wait.Outcome = nameof(CapacityRecoveryWaitState.Admitted);
-        wait.OutcomeReason = path.ToString();
-        wait.UpdatedAt = now;
-        wait.Version++;
-        state.LastActionKey = actionKey;
-        state.LastActionAt = now;
-        state.NextAdmissionAt = now.AddSeconds(Math.Max(1, Settings.AdmissionIntervalSeconds));
-        ClearGrant(state, now);
-        await db.SaveChangesAsync(ct);
-        return CapacityRedemption.Accepted(wait.AdmissionCount, revalidation);
+        await tx.CommitAsync(ct);
+        return result;
     }
 
     public async Task<CapacityRecoveryWait> EnsureWaitAsync(CapacityWaitRegistration registration, CancellationToken ct)
@@ -370,30 +384,9 @@ public sealed class CapacityRecoveryService
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var wait = await db.Set<CapacityRecoveryWait>().FirstOrDefaultAsync(w => w.Id == waitId, ct);
-        if (wait is null || wait.State == CapacityRecoveryWaitState.Exhausted)
+        if (wait is null)
             return;
-        if (CapacityRecoveryPolicy.AttemptWouldExhaust(wait.AdmissionCount, MaxAttempts))
-        {
-            wait.State = CapacityRecoveryWaitState.Exhausted;
-            wait.Outcome = nameof(CapacityRecoveryWaitState.Exhausted);
-            wait.OutcomeReason = "max-episode-attempts";
-            wait.UpdatedAt = UtcNow();
-            wait.Version++;
-            await db.SaveChangesAsync(ct);
-            return;
-        }
-
-        wait.ActionOrdinal++;
-        wait.ActionKey = CapacityRecoveryPolicy.ActionKey(wait.Id, wait.ActionOrdinal);
-        wait.State = CapacityRecoveryWaitState.Ready;
-        wait.NeedsRevalidationGrant = false;
-        wait.UpdatedAt = UtcNow();
-        wait.Version++;
-        wait.DueAt = CapacityRecoveryPolicy.EligibleAt(
-            wait.LatestClearObservedAt ?? wait.BlockedAt,
-            wait.Id,
-            wait.ActionOrdinal,
-            Settings.JitterSeconds);
+        PrepareNextAttemptOn(wait);
         await db.SaveChangesAsync(ct);
     }
 
@@ -435,38 +428,60 @@ public sealed class CapacityRecoveryService
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        await TakeProviderLockAsync(db, kind, ct);
-        var now = UtcNow();
-        var state = await db.Set<CapacityRecoveryProviderState>()
-            .FirstOrDefaultAsync(s => s.Kind == kind, ct);
-        if (state is null)
-        {
-            state = new CapacityRecoveryProviderState { Kind = kind, UpdatedAt = now };
-            db.Set<CapacityRecoveryProviderState>().Add(state);
-        }
+        await BumpWaveOnAsync(db, kind, wallObservedAt, ct);
+    }
 
-        state.WaveRevision++;
-        var floor = wallObservedAt.AddSeconds(Math.Max(1, Settings.AdmissionIntervalSeconds));
-        if (state.NextAdmissionAt is null || state.NextAdmissionAt < floor)
-            state.NextAdmissionAt = floor;
-        if (state.GrantedWaitId is { } grantedId)
+    /// <summary>
+    /// Same-context wave bump for a caller that already holds the wait/hold rows. Uses the
+    /// ambient transaction when present so the advisory lock lasts until that caller commits.
+    /// </summary>
+    public async Task BumpWaveOnAsync(AppDbContext db, AgentKind kind, DateTime wallObservedAt, CancellationToken ct)
+    {
+        IDbContextTransaction? owned = null;
+        if (db.Database.CurrentTransaction is null)
+            owned = await db.Database.BeginTransactionAsync(ct);
+        try
         {
-            var wait = await db.Set<CapacityRecoveryWait>().FirstOrDefaultAsync(w => w.Id == grantedId, ct);
-            if (wait is not null && wait.State is CapacityRecoveryWaitState.Ready
-                or CapacityRecoveryWaitState.ActionPending)
+            await TakeProviderLockAsync(db, kind, ct);
+            var now = UtcNow();
+            var state = await db.Set<CapacityRecoveryProviderState>()
+                .FirstOrDefaultAsync(s => s.Kind == kind, ct);
+            if (state is null)
             {
-                wait.State = CapacityRecoveryWaitState.Reheld;
-                wait.Outcome = nameof(CapacityRecoveryWaitState.Reheld);
-                wait.OutcomeReason = "new-wall-wave";
-                wait.UpdatedAt = now;
-                wait.Version++;
+                state = new CapacityRecoveryProviderState { Kind = kind, UpdatedAt = now };
+                db.Set<CapacityRecoveryProviderState>().Add(state);
             }
 
-            ClearGrant(state, now);
-        }
+            state.WaveRevision++;
+            var floor = wallObservedAt.AddSeconds(Math.Max(1, Settings.AdmissionIntervalSeconds));
+            if (state.NextAdmissionAt is null || state.NextAdmissionAt < floor)
+                state.NextAdmissionAt = floor;
+            if (state.GrantedWaitId is { } grantedId)
+            {
+                var wait = await db.Set<CapacityRecoveryWait>().FirstOrDefaultAsync(w => w.Id == grantedId, ct);
+                if (wait is not null && wait.State is CapacityRecoveryWaitState.Ready
+                    or CapacityRecoveryWaitState.ActionPending)
+                {
+                    wait.State = CapacityRecoveryWaitState.Reheld;
+                    wait.Outcome = nameof(CapacityRecoveryWaitState.Reheld);
+                    wait.OutcomeReason = "new-wall-wave";
+                    wait.UpdatedAt = now;
+                    wait.Version++;
+                }
 
-        state.UpdatedAt = now;
-        await db.SaveChangesAsync(ct);
+                ClearGrant(state, now);
+            }
+
+            state.UpdatedAt = now;
+            await db.SaveChangesAsync(ct);
+            if (owned is not null)
+                await owned.CommitAsync(ct);
+        }
+        finally
+        {
+            if (owned is not null)
+                await owned.DisposeAsync();
+        }
     }
 
     public async Task<bool> TryClaimCountedSlotAsync(
@@ -503,7 +518,7 @@ public sealed class CapacityRecoveryService
     }
 
     public async Task ObserveTranscriptAsync(
-        Guid sessionId, string kind, bool isApiError, CancellationToken ct)
+        Guid sessionId, string kind, bool isApiError, CancellationToken ct, long? sequence = null)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -517,7 +532,11 @@ public sealed class CapacityRecoveryService
         if (wait is null)
             return;
         if (kind == TranscriptKinds.UserPrompt || kind == TranscriptKinds.QueuedUserPrompt)
+        {
+            if (sequence is long seq)
+                await ConfirmPromptOnAsync(db, wait, seq, ct);
             return;
+        }
         if (kind == TranscriptKinds.TurnEnd && !isApiError)
         {
             wait.State = CapacityRecoveryWaitState.Progressed;
@@ -536,9 +555,16 @@ public sealed class CapacityRecoveryService
         var wait = await db.Set<CapacityRecoveryWait>().FirstOrDefaultAsync(w => w.Id == waitId, ct);
         if (wait is null)
             return;
-        if (wait.State is CapacityRecoveryWaitState.Canceled
-            or CapacityRecoveryWaitState.Superseded
-            or CapacityRecoveryWaitState.Progressed)
+        await ConfirmPromptOnAsync(db, wait, sequence, ct);
+    }
+
+    private async Task ConfirmPromptOnAsync(
+        AppDbContext db, CapacityRecoveryWait wait, long sequence, CancellationToken ct)
+    {
+        if (wait.State is not (CapacityRecoveryWaitState.Admitted
+            or CapacityRecoveryWaitState.StartAccepted
+            or CapacityRecoveryWaitState.Running
+            or CapacityRecoveryWaitState.PromptConfirmed))
             return;
         wait.ConfirmedPromptSequence = sequence;
         wait.State = CapacityRecoveryWaitState.PromptConfirmed;
@@ -886,10 +912,82 @@ public sealed class CapacityRecoveryService
         return existing + "," + token;
     }
 
+    /// <summary>
+    /// Transaction-scoped advisory lock. Callers must hold an explicit EF transaction;
+    /// PostgreSQL otherwise treats the SELECT as its own xact and drops the lock immediately.
+    /// </summary>
     private static Task TakeProviderLockAsync(AppDbContext db, AgentKind kind, CancellationToken ct) =>
         db.Database.ExecuteSqlRawAsync(
             $"SELECT pg_advisory_xact_lock(hashtext('antiphon.capacity.kind.{kind}'))",
             cancellationToken: ct);
+
+    private async Task RearmStalledAdmissionsAsync(CancellationToken ct)
+    {
+        var cutoff = UtcNow() - CapacityRecoveryPolicy.StalledAdmissionTimeout(Settings.AdmissionIntervalSeconds);
+        var batch = Math.Clamp(Settings.ReconciliationBatchSize, 1, 1000);
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var stalled = await db.Set<CapacityRecoveryWait>()
+            .Where(w => w.State == CapacityRecoveryWaitState.Admitted
+                && !w.NeedsRevalidationGrant
+                && w.UpdatedAt <= cutoff)
+            .OrderBy(w => w.UpdatedAt)
+            .ThenBy(w => w.Id)
+            .Take(batch)
+            .ToListAsync(ct);
+        foreach (var wait in stalled)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (CapacityRecoveryPolicy.HasExecutionReceipt(wait))
+            {
+                wait.NeedsRevalidationGrant = true;
+                wait.State = CapacityRecoveryWaitState.Admitted;
+                wait.UpdatedAt = UtcNow();
+                wait.Version++;
+                _logger.LogInformation(
+                    "Capacity recovery re-arm revalidation wait {WaitId} action {ActionKey}",
+                    wait.Id, wait.ActionKey);
+            }
+            else
+            {
+                PrepareNextAttemptOn(wait);
+                _logger.LogInformation(
+                    "Capacity recovery re-arm next attempt wait {WaitId} action {ActionKey}",
+                    wait.Id, wait.ActionKey);
+            }
+        }
+
+        if (stalled.Count > 0)
+            await db.SaveChangesAsync(ct);
+    }
+
+    private void PrepareNextAttemptOn(CapacityRecoveryWait wait)
+    {
+        if (wait.State == CapacityRecoveryWaitState.Exhausted)
+            return;
+        var now = UtcNow();
+        if (CapacityRecoveryPolicy.AttemptWouldExhaust(wait.AdmissionCount, MaxAttempts))
+        {
+            wait.State = CapacityRecoveryWaitState.Exhausted;
+            wait.Outcome = nameof(CapacityRecoveryWaitState.Exhausted);
+            wait.OutcomeReason = "max-episode-attempts";
+            wait.UpdatedAt = now;
+            wait.Version++;
+            return;
+        }
+
+        wait.ActionOrdinal++;
+        wait.ActionKey = CapacityRecoveryPolicy.ActionKey(wait.Id, wait.ActionOrdinal);
+        wait.State = CapacityRecoveryWaitState.Ready;
+        wait.NeedsRevalidationGrant = false;
+        wait.UpdatedAt = now;
+        wait.Version++;
+        wait.DueAt = CapacityRecoveryPolicy.EligibleAt(
+            wait.LatestClearObservedAt ?? wait.BlockedAt,
+            wait.Id,
+            wait.ActionOrdinal,
+            Settings.JitterSeconds);
+    }
 
     private DateTime UtcNow() => _time.GetUtcNow().UtcDateTime;
 }

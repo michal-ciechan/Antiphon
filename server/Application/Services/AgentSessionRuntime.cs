@@ -278,6 +278,13 @@ public sealed class AgentSessionRuntime
         var actOnTurnBoundary = IsTurnBoundary(entry) && await IsUnseenTurnBoundaryAsync(entry, ct);
 
         var persisted = await PersistTranscriptAsync(entry.SessionId, new[] { entry });
+        if (persisted.LastStoredSeq is long storedSeq
+            && (entry.Kind == TranscriptKinds.UserPrompt
+                || entry.Kind == TranscriptKinds.QueuedUserPrompt
+                || entry.Kind == TranscriptKinds.TurnEnd))
+        {
+            await DispatchCapacityRecoveryTranscriptAsync(entry, storedSeq, ct);
+        }
 
         // A completed turn (the agent stopped and is waiting) is the trigger to flush the next queued
         // "wait until idle" message, or — when nothing is queued — to mark the session finished.
@@ -434,6 +441,23 @@ public sealed class AgentSessionRuntime
             _logger.LogWarning(
                 ex, "Turn-boundary replay check failed for session {SessionId}; treating as live", entry.SessionId);
             return true;
+        }
+    }
+
+    private async Task DispatchCapacityRecoveryTranscriptAsync(
+        SessionRunnerTranscriptEvent entry, long sequence, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var recovery = scope.ServiceProvider.GetService<CapacityRecoveryService>();
+            if (recovery is not null)
+                await recovery.ObserveTranscriptAsync(
+                    entry.SessionId, entry.Kind, entry.IsApiError == true, ct, sequence);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Capacity recovery transcript dispatch failed for session {SessionId}", entry.SessionId);
         }
     }
 
