@@ -154,8 +154,12 @@ public sealed class AgentReportStore(
         var pattern = "/" + Path.GetRelativePath(top, root).Replace('\\', '/').TrimEnd('/') + "/";
         // A root containing glob syntax cannot safely become an exclude rule.
         if (pattern.IndexOfAny(['*', '?', '[', '\n', '\r']) >= 0 || pattern.Contains("../")) return false;
-        Directory.CreateDirectory(Path.GetDirectoryName(exclude.Trim())!);
-        await File.AppendAllTextAsync(exclude.Trim(), "\n" + pattern + "\n", ct);
+        var excludePath = exclude.Trim();
+        Directory.CreateDirectory(Path.GetDirectoryName(excludePath)!);
+        // Higher-priority ignore rules can defeat this rule; retries must not keep appending it.
+        if (!File.Exists(excludePath)
+            || !(await File.ReadAllLinesAsync(excludePath, ct)).Contains(pattern, StringComparer.Ordinal))
+            await File.AppendAllTextAsync(excludePath, "\n" + pattern + "\n", ct);
         return await IgnoredAsync();
 
         async Task<bool> IgnoredAsync()
