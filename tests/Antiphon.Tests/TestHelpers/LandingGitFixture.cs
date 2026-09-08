@@ -156,7 +156,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             if (BeforeObservedCommand is not null) await BeforeObservedCommand(arguments);
             LandingEvidence.Write(taskId, "git_start", new { repository, arguments });
             var result = await base.RunAsync(repository, arguments, ct);
-            LandingEvidence.Write(taskId, "git_exit", new { arguments, result.ExitCode });
+            LandingEvidence.Write(taskId, "git_exit", new { arguments, result.ExitCode, result.RebaseHeadSha });
             if (AfterCommand is not null) await AfterCommand(repository, arguments, result);
             return result;
         }
@@ -169,7 +169,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             if (BeforeObservedCommand is not null) await BeforeObservedCommand(arguments);
             LandingEvidence.Write(taskId, "owned_git_start", new { repository, arguments });
             var result = await base.RunOwnedAsync(repository, arguments, started, ct);
-            LandingEvidence.Write(taskId, "owned_git_exit", new { arguments, result.ExitCode });
+            LandingEvidence.Write(taskId, "owned_git_exit", new { arguments, result.ExitCode, result.RebaseHeadSha });
             if (AfterCommand is not null) await AfterCommand(repository, arguments, result);
             return result;
         }
