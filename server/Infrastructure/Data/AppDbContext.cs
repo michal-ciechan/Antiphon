@@ -66,6 +66,8 @@ public class AppDbContext : DbContext
     public DbSet<SubscriptionUsageSample> SubscriptionUsageSamples => Set<SubscriptionUsageSample>();
     public DbSet<ModelAvailabilityHold> ModelAvailabilityHolds => Set<ModelAvailabilityHold>();
     public DbSet<RoutingPin> RoutingPins => Set<RoutingPin>();
+    public DbSet<StandingSpecialistRouting> StandingSpecialistRoutings => Set<StandingSpecialistRouting>();
+    public DbSet<StandingSpecialistCandidateState> StandingSpecialistCandidateStates => Set<StandingSpecialistCandidateState>();
     public DbSet<ComplexityChain> ComplexityChains => Set<ComplexityChain>();
     public DbSet<Schedule> Schedules => Set<Schedule>();
     public DbSet<ScheduleFire> ScheduleFires => Set<ScheduleFire>();
@@ -1693,6 +1695,28 @@ public class AppDbContext : DbContext
             entity.HasIndex(h => h.ReleasePendingAt)
                 .HasFilter("\"ReleasePendingAt\" IS NOT NULL AND \"ReleaseConsumedAt\" IS NULL")
                 .HasDatabaseName("IX_ModelAvailabilityHolds_ReleasePending");
+        });
+
+        modelBuilder.Entity<StandingSpecialistRouting>(entity =>
+        {
+            entity.ToTable("StandingSpecialistRoutings");
+            entity.HasKey(r => r.Id);
+            entity.HasIndex(r => r.AgentId).IsUnique();
+            entity.Property(r => r.CandidatesJson).HasMaxLength(1000);
+            entity.Property(r => r.ConcurrencyToken).IsConcurrencyToken();
+        });
+        modelBuilder.Entity<StandingSpecialistCandidateState>(entity =>
+        {
+            entity.ToTable("StandingSpecialistCandidateStates");
+            entity.HasKey(c => c.Id);
+            entity.HasIndex(c => new { c.AgentId, c.AgentKind, c.ModelLevel }).IsUnique();
+            entity.HasIndex(c => c.PhysicalAgentId).IsUnique()
+                .HasFilter("\"PhysicalAgentId\" IS NOT NULL AND \"Enabled\" = TRUE");
+            entity.Property(c => c.ModelAlias).HasMaxLength(256);
+            entity.Property(c => c.Reason).HasMaxLength(400);
+            entity.Property(c => c.Fingerprint).HasMaxLength(128);
+            entity.Property(c => c.QualificationEvidenceJson).HasMaxLength(16000);
+            // No cascading FK: removing an agent must retain the candidate's audit history.
         });
 
         modelBuilder.Entity<RoutingPin>(entity =>
