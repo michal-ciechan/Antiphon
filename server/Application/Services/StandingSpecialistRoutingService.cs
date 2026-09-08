@@ -59,6 +59,19 @@ public sealed class StandingSpecialistRoutingService(
             }
 
             var states = await db.StandingSpecialistCandidateStates.AsNoTracking().Where(c => c.AgentId == agentId).ToListAsync(ct);
+            // A primary identity edit can move an existing alternate pair to the head. The old
+            // primary pair must not keep claiming the owner's physical process as an alternate.
+            // Retain its old session/fingerprint evidence, but require a distinct new seat.
+            var detachedPrimaryIds = new HashSet<Guid>();
+            foreach (var state in states.Where(c => c.PhysicalAgentId == owner.Id
+                && new RoutingCandidate(c.AgentKind, c.ModelLevel) != pairs[0]))
+            {
+                await db.StandingSpecialistCandidateStates.Where(c => c.Id == state.Id).ExecuteUpdateAsync(s =>
+                    s.SetProperty(c => c.PhysicalAgentId, (Guid?)null)
+                        .SetProperty(c => c.QualifiedAt, (DateTime?)null), ct);
+                state.PhysicalAgentId = null;
+                detachedPrimaryIds.Add(state.Id);
+            }
             // Retire admission first, releasing the active-physical-seat uniqueness claim. Retain
             // all evidence and ownership; actual active work drains through the execution owner.
             foreach (var state in states.Where(c => !request.Enabled || !pairs.Contains(new(c.AgentKind, c.ModelLevel))))
@@ -96,7 +109,8 @@ public sealed class StandingSpecialistRoutingService(
                     await db.SaveChangesAsync(ct);
                     db.Entry(state).State = EntityState.Detached;
                 }
-                else if (request.Enabled && (!state.Enabled || state.ModelAlias != alias))
+                else if (request.Enabled && (!state.Enabled || state.ModelAlias != alias
+                    || detachedPrimaryIds.Contains(state.Id) || (index == 0 && state.PhysicalAgentId != owner.Id)))
                 {
                     var authorization = Guid.NewGuid();
                     var physical = index == 0 ? owner.Id : state.PhysicalAgentId;
@@ -106,6 +120,7 @@ public sealed class StandingSpecialistRoutingService(
                         s.SetProperty(c => c.Enabled, true).SetProperty(c => c.ModelAlias, alias)
                             .SetProperty(c => c.PhysicalAgentId, physical).SetProperty(c => c.Status, status)
                             .SetProperty(c => c.Reason, reason).SetProperty(c => c.QualificationAuthorization, authorization)
+                            .SetProperty(c => c.UnprovisionedAt, physical == null ? state.UnprovisionedAt ?? now : null)
                             .SetProperty(c => c.QualifiedAt, (DateTime?)null).SetProperty(c => c.UpdatedAt, now), ct);
                 }
                 // Reordering an enabled unchanged pair preserves its seat, certificate and streak.
