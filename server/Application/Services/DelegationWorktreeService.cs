@@ -370,7 +370,8 @@ public sealed class DelegationWorktreeService
         }
 
         var prepared = await _landingGit.InspectAsync(source.Snapshot!.Coordinates, ct);
-        if (!prepared.Accepted || prepared.Snapshot!.GitDirectory != source.Snapshot.GitDirectory)
+        if (!prepared.Accepted || prepared.Snapshot!.GitDirectory != source.Snapshot.GitDirectory
+            || rebase.RebaseHeadSha is null || prepared.Snapshot.HeadSha != rebase.RebaseHeadSha)
             return new MergeOutcome(MergeResult.Failed, [], "source_changed");
         var advanced = await AdvanceTargetAsync(repo, prepared.Snapshot!.HeadSha, targetRef!, targetBefore!, targetCheckoutBefore, ct);
         if (advanced is { } failure)
@@ -481,14 +482,14 @@ public sealed class DelegationWorktreeService
             TargetCheckoutRecorded: true, TargetCheckoutPath: expectedCheckout), ct);
     }
 
-    private sealed record GitResult(bool Ok, string StdOut, string StdErr);
+    private sealed record GitResult(bool Ok, string StdOut, string StdErr, string? RebaseHeadSha = null);
 
     private async Task<GitResult> GitAsync(string workingDirectory, CancellationToken ct, params string[] args)
     {
         if (_landingGit is not null)
         {
             var result = await _landingGit.RunAsync(workingDirectory, args, ct);
-            return new(result.Succeeded, result.Output, result.Diagnostic);
+            return new(result.Succeeded, result.Output, result.Diagnostic, result.RebaseHeadSha);
         }
         var psi = new ProcessStartInfo
         {

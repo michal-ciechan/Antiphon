@@ -5,6 +5,8 @@ namespace Antiphon.Server.Application.Dtos;
 public sealed record LandingGitResult(int ExitCode, string Output, string Diagnostic)
 {
     public bool Succeeded => ExitCode == 0;
+    /// <summary>HEAD observed at successful rebase completion, before returning to its caller.</summary>
+    public string? RebaseHeadSha { get; init; }
 }
 
 public sealed record LandSourceCoordinates(Guid TaskId, string RepositoryPath, string WorktreePath,

@@ -13,6 +13,34 @@ namespace Antiphon.Tests.Application;
 public sealed class AgentTaskLandPreparationIdentityTests
 {
     [Test]
+    public async Task C448_V15_ExplicitRepostCannotReplaceTargetAdvanceIntent()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        var original = await h.AddSourceAsync();
+        h.Fault.Phase = LandPhase.TargetAdvanceStarted;
+        h.Fault.AfterCommit = true;
+        await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.RunAsync());
+        var previous = (await h.OperationAsync()).ShouldNotBeNull();
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "commit", "--allow-empty", "-m", "new source after advancement intent");
+        var retained = (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim();
+        await h.RepostAsync();
+        await h.RestartServicesAsync();
+        h.Fixture.Git.Trace.Clear();
+        await h.RunAsync();
+        var current = (await h.OperationAsync()).ShouldNotBeNull();
+        current.Id.ShouldBe(previous.Id, "a request cannot discard unresolved target-advance evidence");
+        current.Phase.ShouldBe(LandPhase.TargetAdvanceStarted);
+        current.RemoteConfirmedAt.ShouldBeNull();
+        h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase") || a.Contains("--ff-only") || a[0] == "push" || a.Contains("remove"));
+        Directory.Exists(h.Fixture.Source).ShouldBeTrue();
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim().ShouldBe(retained);
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", previous.RecoveryRefPrefix + "/source")).Trim().ShouldBe(original);
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(h.Fixture.SeedSha);
+        await h.Fixture.AssertRemoteSourceAsync();
+    }
+
+    [Test]
     [Arguments("source")]
     [Arguments("target")]
     [Arguments("target-checkout")]

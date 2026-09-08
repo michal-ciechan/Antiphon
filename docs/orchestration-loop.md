@@ -926,5 +926,13 @@ forcing checkout over surviving files. Failed-add rollback requires unchanged in
 registration and an empty status including ignored contents; unknown hook output is retained.
 Local child cleanup also rechecks its captured parent SHA, checkout and sequencer state.
 
+A changed preparation at `Verified`, before any target-advance intent, requires an explicit
+request and fresh leased source inspection to open a new operation. Source, target, target
+checkout, destination and selected verification-filter changes require fresh preparation;
+the old operation and pins remain. Automatic recovery cannot replace it, and an operation
+that has started target advancement or publication must retain its unresolved evidence.
+After rebase, the source must still match HEAD observed when that command completed before
+the preparation can be recorded or a local child merge can advance its parent.
+
 The CARD-0448 continuation is not rollout-ready until its complete verification matrix and
 creation-recovery/admission coverage are accepted. Do not deploy a checkpoint independently.
