@@ -20,6 +20,7 @@ public enum SpecialistRunOutcome
     Held = 8,
     Expired = 9,
     AvailabilityFailed = 10,
+    IdentityMismatch = 11,
 }
 
 public sealed record SpecialistRun(
@@ -91,7 +92,8 @@ public sealed class SpecialistTaskRunner
         async Task<bool> Held(Agent? seat, AgentKind? executionKind)
         {
             kind = executionKind ?? seat?.Kind ?? AgentKind.ClaudeCode;
-            alias = DispatchModelAlias.Resolve(kind.Value, seat?.ModelLevel ?? AgentModelLevel.Low, seat?.ModelId);
+            alias = run?.SpecialistModelAlias
+                ?? DispatchModelAlias.Resolve(kind.Value, seat?.ModelLevel ?? AgentModelLevel.Low, seat?.ModelId);
             if (_availability is null)
                 throw new InvalidOperationException("Model availability reader is not registered.");
             var held = await _availability.IsHeldAsync(kind.Value, alias, token);
@@ -142,7 +144,8 @@ public sealed class SpecialistTaskRunner
                 if (AgentTaskService.IsSettled(row.Status) || row.Status == AgentTaskStatus.Blocked)
                 {
                     var outcome = row.Status is AgentTaskStatus.Failed or AgentTaskStatus.Canceled
-                        ? (row.FailureReason == "Optional work expired before execution."
+                        ? (row.FailureCode == AgentTaskFailureCode.SpecialistIdentityMismatch
+                            ? SpecialistRunOutcome.IdentityMismatch : row.FailureReason == "Optional work expired before execution."
                             ? SpecialistRunOutcome.Expired : SpecialistRunOutcome.Failed)
                         : string.IsNullOrWhiteSpace(row.Result) ? SpecialistRunOutcome.Empty : SpecialistRunOutcome.Succeeded;
                     return Result(outcome, outcome == SpecialistRunOutcome.Expired ? "deadline" : FailureDetail(row))
@@ -265,7 +268,9 @@ public sealed class SpecialistTaskRunner
             var reason = FailureDetail(settled) ?? "the interpretation failed";
             await RaiseUnavailableAsync(spec, specialist, reason, ct);
             return new SpecialistRun(
-                SpecialistRunOutcome.Failed, settled.Result, settled.CostUsd, waitMs, settled.Id, reason);
+                settled.FailureCode == AgentTaskFailureCode.SpecialistIdentityMismatch
+                    ? SpecialistRunOutcome.IdentityMismatch : SpecialistRunOutcome.Failed,
+                settled.Result, settled.CostUsd, waitMs, settled.Id, reason);
         }
 
         if (string.IsNullOrWhiteSpace(settled.Result))
@@ -283,10 +288,12 @@ public sealed class SpecialistTaskRunner
         SpecialistRunOutcome outcome, DateTimeOffset started, Guid? runTaskId = null) =>
         new(outcome, null, 0m, WaitMs(started), runTaskId);
 
-    private static string? FailureDetail(AgentTask task) =>
-        string.IsNullOrWhiteSpace(task.FailureReason) ? null
-            : AgentTaskCheckService.ScrubTaskMarkers(task.FailureReason).ReplaceLineEndings(" ").Trim() is var reason
-                ? reason[..Math.Min(reason.Length, 800)] : null;
+    private static string? FailureDetail(AgentTask task)
+    {
+        if (string.IsNullOrWhiteSpace(task.FailureReason)) return null;
+        var reason = AgentTaskCheckService.ScrubTaskMarkers(task.FailureReason).ReplaceLineEndings(" ").Trim();
+        return reason[..Math.Min(reason.Length, 800)];
+    }
 
     private int WaitMs(DateTimeOffset started) =>
         (int)Math.Max(0, (_timeProvider.GetUtcNow() - started).TotalMilliseconds);
@@ -301,6 +308,9 @@ public sealed class SpecialistTaskRunner
     {
         var now = _timeProvider.GetUtcNow().UtcDateTime;
         var id = Guid.NewGuid();
+        var selectedSession = Guid.TryParse(specialist.PersistentSessionId, out var sessionId)
+            ? await _db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct)
+            : null;
         var row = new AgentTask
         {
             Id = id,
@@ -314,6 +324,12 @@ public sealed class SpecialistTaskRunner
             Role = spec.Role,
             AgentKind = specialist.Kind,
             ModelLevel = specialist.ModelLevel,
+            SpecialistModelAlias = DispatchModelAlias.Resolve(specialist.Kind, specialist.ModelLevel, specialist.ModelId),
+            SpecialistModelId = specialist.ModelId,
+            SpecialistEffectiveModelId = selectedSession?.EffectiveModelId,
+            SpecialistSessionId = selectedSession?.Id,
+            SpecialistSessionStartedAt = selectedSession?.StartedAt,
+            SpecialistProfileRevisionId = selectedSession?.TuiProfileRevisionId,
             Workspace = WorkspaceMode.Shared,
             WorkingDirectory = specialist.WorkingDirectory,
             AgentId = specialist.Id,
