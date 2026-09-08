@@ -91,7 +91,7 @@ public sealed class SpecialistTaskRunner
         async Task<bool> Held(Agent? seat, AgentKind? executionKind)
         {
             kind = executionKind ?? seat?.Kind ?? AgentKind.ClaudeCode;
-            alias = DispatchModelAlias.Resolve(kind.Value, AgentModelLevel.Low, seat?.ModelId);
+            alias = DispatchModelAlias.Resolve(kind.Value, seat?.ModelLevel ?? AgentModelLevel.Low, seat?.ModelId);
             if (_availability is null)
                 throw new InvalidOperationException("Model availability reader is not registered.");
             var held = await _availability.IsHeldAsync(kind.Value, alias, token);
@@ -145,7 +145,7 @@ public sealed class SpecialistTaskRunner
                         ? (row.FailureReason == "Optional work expired before execution."
                             ? SpecialistRunOutcome.Expired : SpecialistRunOutcome.Failed)
                         : string.IsNullOrWhiteSpace(row.Result) ? SpecialistRunOutcome.Empty : SpecialistRunOutcome.Succeeded;
-                    return Result(outcome, outcome == SpecialistRunOutcome.Expired ? "deadline" : null)
+                    return Result(outcome, outcome == SpecialistRunOutcome.Expired ? "deadline" : FailureDetail(row))
                         with { Result = row.Result, CostUsd = row.CostUsd };
                 }
                 if (row.Status == AgentTaskStatus.Queued)
@@ -262,9 +262,10 @@ public sealed class SpecialistTaskRunner
         var waitMs = WaitMs(started);
         if (settled.Status is AgentTaskStatus.Failed or AgentTaskStatus.Canceled)
         {
-            await RaiseUnavailableAsync(spec, specialist, "the interpretation failed", ct);
+            var reason = FailureDetail(settled) ?? "the interpretation failed";
+            await RaiseUnavailableAsync(spec, specialist, reason, ct);
             return new SpecialistRun(
-                SpecialistRunOutcome.Failed, settled.Result, settled.CostUsd, waitMs, settled.Id);
+                SpecialistRunOutcome.Failed, settled.Result, settled.CostUsd, waitMs, settled.Id, reason);
         }
 
         if (string.IsNullOrWhiteSpace(settled.Result))
@@ -281,6 +282,11 @@ public sealed class SpecialistTaskRunner
     private SpecialistRun Finish(
         SpecialistRunOutcome outcome, DateTimeOffset started, Guid? runTaskId = null) =>
         new(outcome, null, 0m, WaitMs(started), runTaskId);
+
+    private static string? FailureDetail(AgentTask task) =>
+        string.IsNullOrWhiteSpace(task.FailureReason) ? null
+            : AgentTaskCheckService.ScrubTaskMarkers(task.FailureReason).ReplaceLineEndings(" ").Trim() is var reason
+                ? reason[..Math.Min(reason.Length, 800)] : null;
 
     private int WaitMs(DateTimeOffset started) =>
         (int)Math.Max(0, (_timeProvider.GetUtcNow() - started).TotalMilliseconds);
@@ -306,7 +312,8 @@ public sealed class SpecialistTaskRunner
             Goal = goal,
             Kind = AgentTaskKind.Worker,
             Role = spec.Role,
-            ModelLevel = AgentModelLevel.Low,
+            AgentKind = specialist.Kind,
+            ModelLevel = specialist.ModelLevel,
             Workspace = WorkspaceMode.Shared,
             WorkingDirectory = specialist.WorkingDirectory,
             AgentId = specialist.Id,
@@ -317,16 +324,13 @@ public sealed class SpecialistTaskRunner
             CreatedAt = now,
             ExecutionDeadlineAt = executionDeadlineAt,
         };
-        // The new Distill policy snapshots its resolved seat kind. Legacy callers keep the
-        // previous row defaults as well as the previous wait/incident policy.
-        if (executionDeadlineAt is not null) row.AgentKind = specialist.Kind;
         _db.AgentTasks.Add(row);
         _db.AgentTaskEvents.Add(new AgentTaskEvent
         {
             Id = Guid.NewGuid(),
             AgentTaskId = id,
             Type = AgentTaskEventType.Created,
-            ModelLevel = AgentModelLevel.Low,
+            ModelLevel = specialist.ModelLevel,
             Detail = createdDetail ?? $"{spec.DisplayName} run.",
             At = now,
         });
