@@ -86,3 +86,16 @@ PC variants and remaining V/R/C/F rows, reproduce the baseline incident, refresh
 per-variant ledger, and run the final unmutated combined regression. Historical aggregate
 passes cannot replace these requirements. The original session has requested ownership
 clarification; it has not authorized landing or declared this Code task complete.
+
+## Later-delivered checkpoint and scope-freeze refinement
+
+The caller's refinement file `task-347a3d88-refinement-20260908174819.md` was delivered
+to this session after the reconciliation report. It required an immediate WIP commit/push,
+no new test run, and completion only of work already in flight. The original code checkpoint
+had already been committed by the overlapping continuation. The then-current tracked change
+was continuation 3's reconciliation report update; it was checkpointed with the requested
+message and pushed as `695995d1`. This session started no additional tests or code changes.
+Its own run had already been cancelled without a verdict, and the other continuation's
+active test was left alone. The scope freeze supersedes this session's pending question
+about resuming implementation: it now hands back completed versus remaining work. Acceptance
+is still incomplete, and no land or deploy occurred.
