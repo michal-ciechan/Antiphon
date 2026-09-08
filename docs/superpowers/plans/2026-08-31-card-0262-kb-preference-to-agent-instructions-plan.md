@@ -1,5 +1,9 @@
 # CARD-0262 — A user preference stored in KB does not reach the agent's own instructions
 
+> Superseded on 2026-09-08 by [the dedicated-file and queued-reread re-plan](2026-09-08-card-0262-kb-preference-to-agent-instructions-plan.md).
+> This file is historical evidence, not the implementation brief. Its managed-CLAUDE floor and
+> next-launch-only decisions predate the operator's later refinements. The recorded build hold remains in force.
+
 - **Date:** 2026-08-31
 - **Status:** Plan (investigation + design only; verified against master `1d317695`)
 - **Card:** CARD-0262 — the 15:57 Slack instruction "always give me pdf" (2026-08-30,
