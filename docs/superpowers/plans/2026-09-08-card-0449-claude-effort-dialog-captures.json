@@ -1,0 +1,38 @@
+{
+  "card": "CARD-0449",
+  "investigationTask": "6d120c92",
+  "verificationDesignTask": "d335620d",
+  "encoding": "SHA-256 of the unmodified renderedScreen string encoded as UTF-8, without BOM or newline normalization",
+  "captures": [
+    {
+      "sessionId": "9184ec6d-f3ff-407d-add2-baad58758f77",
+      "taskBanner": "task-beaf82ff",
+      "source": "http://localhost:17204/sessions/9184ec6d-f3ff-407d-add2-baad58758f77/snapshot",
+      "capturedAtUtc": "2026-09-08T23:10:33.4996445Z",
+      "lastSequence": 23,
+      "renderedScreenUtf8Bytes": 1559,
+      "renderedScreenSha256": "b82f0a8895c3ef0c38dbad6b1d1ee4cda66cc7db339f9e6723516426d07d70f6",
+      "renderedScreen": " ▐▛███▛█   Claude Code v2.1.263\n▝▜██████▀  Fable 5.1 with xhigh effort · Claude Max\n  ▝▝ ▝▝    C:\\src\\markdown-package\n\n\n──────────────────────────────────────────────────────────────────────────────────────────────────────── task-beaf82ff ─\n\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n Use Fable 5.1 at high effort by default?\n\n   high is the default effort for Fable 5.1 and is recommended for most coding tasks; xhigh spends more tokens per\n   task. You can change this any time with /effort.\n\n   xhigh effort is ~1.7x the estimated cost of high (the default).\n\n   > Keep xhigh\n     Switch Fable 5.1 to high effort\n\n\n\n\n\n\n\n\n\n\n\n"
+    },
+    {
+      "sessionId": "2968433b-f664-4410-b03b-73d176c06f70",
+      "taskBanner": "task-de877677",
+      "source": "http://localhost:17204/sessions/2968433b-f664-4410-b03b-73d176c06f70/snapshot",
+      "capturedAtUtc": "2026-09-08T23:10:33.5260935Z",
+      "lastSequence": 23,
+      "renderedScreenUtf8Bytes": 1559,
+      "renderedScreenSha256": "8a57fb6c4a9e0a95014230de456eb06f66f9a6ab652ab9231e239c8c02b246fe",
+      "renderedScreen": " ▐▛███▛█   Claude Code v2.1.263\n▝▜██████▀  Fable 5.1 with xhigh effort · Claude Max\n  ▝▝ ▝▝    C:\\src\\markdown-package\n\n\n──────────────────────────────────────────────────────────────────────────────────────────────────────── task-de877677 ─\n\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n Use Fable 5.1 at high effort by default?\n\n   high is the default effort for Fable 5.1 and is recommended for most coding tasks; xhigh spends more tokens per\n   task. You can change this any time with /effort.\n\n   xhigh effort is ~1.7x the estimated cost of high (the default).\n\n   > Keep xhigh\n     Switch Fable 5.1 to high effort\n\n\n\n\n\n\n\n\n\n\n\n"
+    },
+    {
+      "sessionId": "787bfee2-ec0a-4f7c-9716-f44012730a89",
+      "taskBanner": "task-2722ce41",
+      "source": "http://localhost:17204/sessions/787bfee2-ec0a-4f7c-9716-f44012730a89/snapshot",
+      "capturedAtUtc": "2026-09-08T23:10:33.5331780Z",
+      "lastSequence": 19,
+      "renderedScreenUtf8Bytes": 1559,
+      "renderedScreenSha256": "8613cadad4b1491161b14181f4224c113e96f58aab10eefd0753f8c61663d378",
+      "renderedScreen": " ▐▛███▛█   Claude Code v2.1.263\n▝▜██████▀  Fable 5.1 with xhigh effort · Claude Max\n  ▝▝ ▝▝    C:\\src\\markdown-package\n\n\n──────────────────────────────────────────────────────────────────────────────────────────────────────── task-2722ce41 ─\n\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n Use Fable 5.1 at high effort by default?\n\n   high is the default effort for Fable 5.1 and is recommended for most coding tasks; xhigh spends more tokens per\n   task. You can change this any time with /effort.\n\n   xhigh effort is ~1.7x the estimated cost of high (the default).\n\n   > Keep xhigh\n     Switch Fable 5.1 to high effort\n\n\n\n\n\n\n\n\n\n\n\n"
+    }
+  ]
+}
