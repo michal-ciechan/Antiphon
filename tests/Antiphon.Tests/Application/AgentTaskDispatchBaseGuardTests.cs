@@ -20,6 +20,7 @@ namespace Antiphon.Tests.Application;
 /// branch is already gone.
 /// </summary>
 [Category("Integration")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class AgentTaskDispatchBaseGuardTests
 {
     [Test]

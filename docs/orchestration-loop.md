@@ -895,3 +895,19 @@ drop.
 
 - **A restart can strand "working" forever — two distinct ways** (REQUIREMENT, live miss 2026-08-08, Antiphon-Opus badged Working for 30+ min while idle): (1) *Backfill reordering*: stored transcript sequences are ARRIVAL-ordered — `PersistTranscriptAsync` rebases entries past the session max, so a catch-up sync that lands entries missed during a server restart/stream gap puts stale pre-gap activity ABOVE the already-persisted TurnEnd, and the seq-only working rule read mid-turn forever. Both server `IsWorkingAsync` and client `isWorking()` now carry a timestamp override (record timestamps survive reordering; equal ts keeps the seq verdict); the runner's `TranscriptWorkingState` deliberately has NO override (its mirror is file-ordered). `SessionRunnerEventPump` also catches up ALL runner sessions on every (re)connect — never rely on the lazy GET-transcript sync — and `SyncTranscriptAsync` fires the turn-end queue flush for boundaries that only ever arrive via backfill (the live path dedups them as "seen" and stays silent). (2) *Dead mid-turn process*: a session relaunched after dying mid-turn (reboot/kill) has no TurnEnd coming, ever. The launch paths write a synthetic `SessionRestartBoundary` (a turn END in all working-rule implementations) and, on a genuine `--resume`, queue an auto-continue prompt (`AgentSessionSettings.ResumeAutoContinue`, WhenIdle so it serialises after the launch note). Pinned by `SessionMessageQueueServiceTests` (backfill/boundary cases), `AgentControlServiceIntegrationTests` resume-recovery pair, and the client `isWorking` tests.
 <!-- CARD-0254 preserved source ends -->
+
+## CARD-0448 landing evidence and conservative cleanup
+
+The task detail's `landing` object records operation identity, phase, source/verified/remote
+SHAs, publication and cleanup separately. AlreadyPresent records independent containment
+without claiming a push. A failed or interrupted publication can follow local target advance.
+Legacy event prose and disappeared branches grant no cleanup authority. Re-POST preserves an
+unfinished operation; cleanup retry requires its saved receipt and fresh remote containment.
+
+Automatic removal now refuses opaque ignored files, dirty/mismatched sources, unregistered
+leftovers and unknown receipts. The janitor and residue sweep retain legacy work. Failed-add
+rollback and stale-registration healing retain uncertain state for inspection. They no longer
+force-remove or recursively erase a directory. This increases residue intentionally.
+
+The CARD-0448 continuation is not rollout-ready until its complete verification matrix and
+creation-recovery/admission coverage are accepted. Do not deploy a checkpoint independently.

@@ -82,6 +82,8 @@ public sealed class AgentTaskDispatcher
     private readonly OrchestratorWorkspaceWarningService? _workspaceWarning;
     private readonly CapacityRecoveryService? _capacityRecovery;
 
+    private readonly IRepositoryMutationLease? _repositoryLeases;
+
     public AgentTaskDispatcher(
         AppDbContext db,
         AgentRegistry agentRegistry,
@@ -131,8 +133,10 @@ public sealed class AgentTaskDispatcher
         ComplexityRoutingService? complexityRouting = null,
         IOptions<SessionReconciliationSettings>? reconciliation = null,
         OrchestratorWorkspaceWarningService? workspaceWarning = null,
-        CapacityRecoveryService? capacityRecovery = null)
+        CapacityRecoveryService? capacityRecovery = null,
+        IRepositoryMutationLease? repositoryLeases = null)
     {
+        _repositoryLeases = repositoryLeases;
         _capacityRecovery = capacityRecovery;
         _complexityRouting = complexityRouting;
         _routingPins = routingPins;
@@ -2960,6 +2964,23 @@ public sealed class AgentTaskDispatcher
 
     private async Task<bool> DispatchOneAsync(AgentTask task, CancellationToken ct)
     {
+        // Admission and landing read running claims under the same common-directory lease.
+        // Hold through commit of the claim, including warm-agent and follow-up paths.
+        var needsLease = task.Workspace != WorkspaceMode.ReadOnly && !AgentTaskRoles.IsSpecialist(task.Role)
+            && task.RepoPath is not null;
+        await using var repositoryLease = needsLease && _repositoryLeases is not null
+            ? await _repositoryLeases.TryAcquireAsync(task.RepoPath!, ct) : null;
+        if (needsLease && repositoryLease is null)
+        {
+            _db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(), AgentTaskId = task.Id, Type = AgentTaskEventType.Held,
+                Detail = "Held: repository mutation lease is occupied or unavailable.", At = UtcNow(),
+            });
+            await _db.SaveChangesAsync(ct);
+            return false;
+        }
+
         // Transactional claim: re-read under the concurrency token so a second tick (or another
         // server instance) racing this one loses cleanly instead of double-launching a delegate.
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);

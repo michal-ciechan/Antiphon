@@ -338,6 +338,20 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
         </Section>
       )}
 
+      {detail.landing && (
+        <Section title="Landing">
+          <Text size="sm">Publication: {detail.landing.publication}</Text>
+          <Text size="sm">Cleanup: {detail.landing.cleanup}</Text>
+          <Text size="xs">Mode: {detail.landing.mode}</Text>
+          <Text size="xs">Source: <Code>{detail.landing.sourceSha}</Code></Text>
+          {detail.landing.verifiedSha && <Text size="xs">Verified: <Code>{detail.landing.verifiedSha}</Code></Text>}
+          {detail.landing.remoteConfirmedAt && (
+            <Text size="xs">Remote confirmed: <Code>{detail.landing.remoteSha}</Code> at {detail.landing.remoteConfirmedAt}</Text>
+          )}
+          {detail.landing.reason && <Text size="sm">{detail.landing.reason}</Text>}
+        </Section>
+      )}
+
       <Section title="Timeline">
         <Timeline active={detail.events.length - 1} bulletSize={12} lineWidth={1}>
           {detail.events.map((event, index) => (

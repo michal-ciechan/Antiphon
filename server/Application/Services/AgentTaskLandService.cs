@@ -19,6 +19,9 @@ namespace Antiphon.Server.Application.Services;
 /// </summary>
 public sealed class AgentTaskLandService
 {
+    private readonly AgentTaskLandingProtocol? _protocol;
+    private readonly IRepositoryMutationLease? _leases;
+    private readonly ILandingGit? _landingGit;
     private readonly AppDbContext _db;
     private readonly DelegationWorktreeService _worktrees;
     private readonly AgentTaskService _tasks;
@@ -38,8 +41,12 @@ public sealed class AgentTaskLandService
         IEventBus eventBus,
         TimeProvider clock,
         IOptions<DelegationSettings> settings,
-        ILogger<AgentTaskLandService> logger)
+        ILogger<AgentTaskLandService> logger,
+        AgentTaskLandingProtocol? protocol = null, IRepositoryMutationLease? leases = null, ILandingGit? landingGit = null)
     {
+        _protocol = protocol;
+        _leases = leases;
+        _landingGit = landingGit;
         _db = db;
         _worktrees = worktrees;
         _tasks = tasks;
@@ -118,158 +125,119 @@ public sealed class AgentTaskLandService
             return LandRunResult.Complete;
         }
 
-        var filter = task.LandVerifyFilter ?? verifyFilter;
-
-        if (await _worktrees.IsAlreadyLandedAsync(task, ct))
-            return await CleanupAlreadyLandedAsync(task, ct);
-
-        var holder = await FindSharedWriterAsync(task, ct);
-        if (holder is not null)
+        if (_protocol is null || _leases is null || _landingGit is null || task.RepoPath is null)
         {
-            var alreadyHeld = await _db.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == task.Id
-                && e.Type == AgentTaskEventType.Held
-                && task.LandRequestedAt != null
-                && e.At >= task.LandRequestedAt, ct);
-            if (!alreadyHeld)
+            await RefuseAsync(task, "landing_protocol_unavailable", ct);
+            return LandRunResult.Complete;
+        }
+        await using var lease = await _leases.TryAcquireAsync(task.RepoPath, ct);
+        if (lease is null)
+        {
+            if (!await _db.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == task.Id
+                && e.Type == AgentTaskEventType.Held && e.At >= task.LandRequestedAt, ct))
             {
                 _db.AgentTaskEvents.Add(Event(task.Id, AgentTaskEventType.Held,
-                    $"Held: land waits for running Shared write task {DelegationReportFormatter.Short(holder.Id)} \"{holder.Title}\" in this repo.",
-                    _clock.GetUtcNow().UtcDateTime));
+                    "Held: repository mutation lease is occupied.", _clock.GetUtcNow().UtcDateTime));
                 await _db.SaveChangesAsync(ct);
-                await PublishAsync(task, ct);
             }
             return LandRunResult.Held;
         }
-
-        var now = _clock.GetUtcNow().UtcDateTime;
-        task.LandStartedAt = now;
+        await _db.Entry(task).ReloadAsync(ct);
+        if (task.LandRequestedAt is null || task.Status != AgentTaskStatus.Succeeded)
+            return LandRunResult.Complete;
+        var holder = await FindWriterAsync(task, lease.CommonDirectory, ct);
+        if (holder is not null)
+        {
+            if (!await _db.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == task.Id
+                && e.Type == AgentTaskEventType.Held && e.At >= task.LandRequestedAt, ct))
+            {
+                _db.AgentTaskEvents.Add(Event(task.Id, AgentTaskEventType.Held,
+                    $"Held: landing waits for repository/source writer {holder.Id:N}.", _clock.GetUtcNow().UtcDateTime));
+                await _db.SaveChangesAsync(ct);
+            }
+            return LandRunResult.Held;
+        }
+        task.LandStartedAt = _clock.GetUtcNow().UtcDateTime;
         task.LandAttempt += 1;
         task.ConcurrencyToken = Guid.NewGuid();
         await _db.SaveChangesAsync(ct);
-
-        var rebaseWatch = Stopwatch.StartNew();
-        var prepared = await _worktrees.PrepareLandAsync(task, ct);
-        var rebaseSeconds = ElapsedSeconds(rebaseWatch);
-        if (prepared.Conflicted)
+        var result = await _protocol.RunAsync(task, lease, ct);
+        if (result.Conflicts.Count > 0)
         {
             task.Status = AgentTaskStatus.Blocked;
-            task.FailureReason = $"Rebase onto {prepared.Target} conflicted in {prepared.ConflictFiles.Count} file(s).";
-            task.ConcurrencyToken = Guid.NewGuid();
+            task.FailureReason = "Landing rebase conflicted.";
+            var helper = await _tasks.CreateMergeTaskAsync(task, result.Conflicts, ct, task.MergeTargetRef ?? "master");
+            Record(task, OrchestrationStage.Rebase, StageOutcomeKind.Found, 0,
+                string.Join(", ", result.Conflicts), helper is null ? "merge task cap reached" : DelegationReportFormatter.Short(helper.Id));
             _db.AgentTaskEvents.Add(Event(task.Id, AgentTaskEventType.Conflicted,
-                $"Conflicts: {string.Join(", ", prepared.ConflictFiles)}", _clock.GetUtcNow().UtcDateTime));
-            var merge = await _tasks.CreateMergeTaskAsync(task, prepared.ConflictFiles, ct, prepared.Target);
-            Record(task, OrchestrationStage.Rebase, StageOutcomeKind.Found, rebaseSeconds,
-                string.Join(", ", prepared.ConflictFiles),
-                merge is null ? "merge task cap reached" : merge.Id.ToString("D"));
+                string.Join(", ", result.Conflicts), _clock.GetUtcNow().UtcDateTime));
             await _db.SaveChangesAsync(ct);
-            await DeliverAsync(task, merge is null
-                ? $"land conflict on {prepared.Target}: {string.Join(", ", prepared.ConflictFiles)}; merge task cap reached"
-                : $"land conflict on {prepared.Target}: merge task {DelegationReportFormatter.Short(merge.Id)} is resolving and will finish landing", ct);
-            await PublishAsync(task, ct);
             return LandRunResult.Complete;
         }
-
-        if (!prepared.Succeeded)
+        var op = result.Operation;
+        if (!result.Published)
         {
-            Record(task, OrchestrationStage.Rebase, StageOutcomeKind.Failed, rebaseSeconds,
-                prepared.Detail ?? "Land preparation failed.");
-            await RefuseAsync(task, prepared.Detail ?? "Land preparation failed.", ct);
+            if (op?.RebasedSourceSha is not null && op.Mode != LandOperationMode.CleanupRetry)
+                Record(task, OrchestrationStage.Rebase, StageOutcomeKind.Clean, 0);
+            if (result.Reason == "verification_failed")
+                Record(task, OrchestrationStage.Verify, StageOutcomeKind.Found, 0, "build failed or selected tests failed", task.WorktreePath);
+            if (op?.VerifiedAt is not null)
+                Record(task, OrchestrationStage.Verify, op.VerificationPassed ? StageOutcomeKind.Clean : StageOutcomeKind.Skipped,
+                    0, op.VerificationSkipReason ?? "verification passed");
+            await RefuseAsync(task, result.Reason ?? "publication_unconfirmed", ct);
             return LandRunResult.Complete;
         }
-
-        var verifyWatch = Stopwatch.StartNew();
-        var verification = prepared.BaseMoved
-            ? await VerifyAsync(task.WorktreePath!, filter, ct)
-            : LandVerification.Success("build skipped (base unchanged)");
-        var verifySeconds = prepared.BaseMoved ? ElapsedSeconds(verifyWatch) : 0;
-        Record(task, OrchestrationStage.Rebase, StageOutcomeKind.Clean, rebaseSeconds);
-        if (!prepared.BaseMoved)
+        if (op!.Mode != LandOperationMode.CleanupRetry)
         {
-            Record(task, OrchestrationStage.Verify, StageOutcomeKind.Skipped, verifySeconds,
-                "build skipped (base unchanged)");
+            Record(task, OrchestrationStage.Rebase, op.RebasedSourceSha is null ? StageOutcomeKind.Skipped : StageOutcomeKind.Clean, 0);
+            Record(task, OrchestrationStage.Verify, op.VerificationPassed ? StageOutcomeKind.Clean : StageOutcomeKind.Skipped,
+                0, op.VerificationSkipReason ?? "build OK; selected verification passed");
         }
-        else if (verification.Ok)
-        {
-            Record(task, OrchestrationStage.Verify, StageOutcomeKind.Clean, verifySeconds, verification.Description);
-        }
-        else
-        {
-            Record(task, OrchestrationStage.Verify, StageOutcomeKind.Found, verifySeconds,
-                $"{verification.Step} failed:\n{verification.Tail}", task.WorktreePath);
-            await RefuseAsync(task, $"{verification.Step} failed:\n{verification.Tail}", ct);
-            return LandRunResult.Complete;
-        }
-
-        // CARD-0215: probe same-card kept branches against the rebased HEAD before the
-        // worktree is removed. Warn, do not refuse — a superseded plan is a legitimate state.
-        var (unlandedMarker, unlandedWarnings) = await CollectUnlandedSiblingsAsync(
-            task, task.WorktreePath!, ct);
-
-        var cleanupWatch = Stopwatch.StartNew();
-        var finalized = await _worktrees.FinalizeLandAsync(task, prepared.Target!, ct);
-        var cleanupSeconds = ElapsedSeconds(cleanupWatch);
-        if (!finalized.Pushed)
-        {
-            Record(task, OrchestrationStage.Cleanup, StageOutcomeKind.Failed, cleanupSeconds,
-                finalized.Detail ?? "Land finalization failed.");
-            await RefuseAsync(task, finalized.Detail ?? "Land finalization failed.", ct);
-            return LandRunResult.Complete;
-        }
-
-        var verify = prepared.BaseMoved
-            ? verification.Description
-            : "build skipped (base unchanged)";
-        if (finalized.Residue is not null)
-        {
-            Record(task, OrchestrationStage.Cleanup, StageOutcomeKind.Failed, cleanupSeconds,
-                finalized.Residue);
-            var residueOutcome = $"landed {prepared.Branch} -> {prepared.Target} as {finalized.Sha}, pushed "
-                + $"(origin/{prepared.Target}={finalized.Sha}), verify: {verify}, cleanup incomplete: {finalized.Residue}";
-            await SettleLandedAsync(task, AgentTaskEventType.LandedWithResidue,
-                AppendUnlandedMarker(residueOutcome, unlandedMarker), unlandedWarnings, ct);
-            return LandRunResult.Complete;
-        }
-
-        Record(task, OrchestrationStage.Cleanup, StageOutcomeKind.Clean, cleanupSeconds);
-        var outcome = $"landed {prepared.Branch} -> {prepared.Target} as {finalized.Sha}, pushed "
-            + $"(origin/{prepared.Target}={finalized.Sha}), verify: {verify}, worktree removed";
-        await SettleLandedAsync(task, AgentTaskEventType.Landed,
-            AppendUnlandedMarker(outcome, unlandedMarker), unlandedWarnings, ct);
+        Record(task, OrchestrationStage.Cleanup,
+            op.Cleanup == LandCleanupStatus.Complete ? StageOutcomeKind.Clean : StageOutcomeKind.Failed, 0, result.Reason ?? "cleanup complete");
+        var type = op.Publication == LandPublicationOutcome.AlreadyPresent ? AgentTaskEventType.AlreadyPresent
+            : op.Cleanup == LandCleanupStatus.Complete ? AgentTaskEventType.Landed : AgentTaskEventType.LandedWithResidue;
+        var (marker, warnings) = await CollectUnlandedSiblingsAsync(task, op.RepositoryPath, ct, op.VerifiedSourceSha);
+        await SettleLandedAsync(task, type, AppendUnlandedMarker(FormatOutcome(op), marker), warnings, ct);
         return LandRunResult.Complete;
     }
 
-    private async Task<LandRunResult> CleanupAlreadyLandedAsync(AgentTask task, CancellationToken ct)
+    internal static string FormatOutcome(AgentTaskLanding op) =>
+        $"{(op.Publication == LandPublicationOutcome.AlreadyPresent ? "already present" : "landed")} operation={op.Id:N} mode={op.Mode} "
+        + $"source={op.OriginalSourceSha} verified={op.VerifiedSourceSha} -> {op.RemoteName}:{op.DestinationFullRef}; "
+        + $"remote={op.ObservedRemoteTargetSha} confirmed at {op.RemoteConfirmedAt:O}; "
+        + (op.PushStartedAt is null ? "no push attempted; " : $"push exit={op.PushExitCode?.ToString() ?? "unknown"}; ")
+        + $"cleanup={op.Cleanup}" + (op.LastReason is null ? "" : $": {op.LastReason}");
+
+    private async Task<AgentTask?> FindWriterAsync(AgentTask task, string common, CancellationToken ct)
     {
-        var cleanupWatch = Stopwatch.StartNew();
-        var cleaned = await _worktrees.CleanupAlreadyLandedAsync(task, ct);
-        var cleanupSeconds = ElapsedSeconds(cleanupWatch);
-        if (cleaned.PushFailure is { } pushFailure)
+        var candidates = await _db.AgentTasks.AsNoTracking().Where(t => t.Id != task.Id
+            && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Blocked))
+            .Where(AgentTaskRoles.NotSpecialist).ToListAsync(ct);
+        foreach (var candidate in candidates)
         {
-            Record(task, OrchestrationStage.Cleanup, StageOutcomeKind.Failed, cleanupSeconds, pushFailure);
-            await RefuseAsync(task, pushFailure, ct);
-            return LandRunResult.Complete;
+            var sourcePath = candidate.WorktreePath ?? candidate.WorkingDirectory;
+            if (task.WorktreePath is not null && string.Equals(Path.GetFullPath(sourcePath), Path.GetFullPath(task.WorktreePath),
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) return candidate;
+            if (task.WorktreePath is not null && Directory.Exists(task.WorktreePath) && Directory.Exists(sourcePath))
+            {
+                try
+                {
+                    if (string.Equals(await _landingGit!.CanonicalDirectoryAsync(task.WorktreePath, ct),
+                        await _landingGit.CanonicalDirectoryAsync(sourcePath, ct),
+                        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) return candidate;
+                }
+                catch (IOException) { return candidate; }
+            }
+            if (candidate.Workspace != WorkspaceMode.Shared) continue;
+            try
+            {
+                if (string.Equals(await _landingGit!.CommonDirectoryAsync(candidate.RepoPath ?? candidate.WorkingDirectory, ct), common,
+                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) return candidate;
+            }
+            catch (IOException) { return candidate; } // An inaccessible active writer cannot prove disjoint ownership.
         }
-
-        var sha = cleaned.Sha ?? "unknown";
-        var branch = task.WorktreeBranch ?? "(branch)";
-        var target = cleaned.Target;
-
-        if (cleaned.Removal.IsClean)
-        {
-            Record(task, OrchestrationStage.Cleanup, StageOutcomeKind.Clean, cleanupSeconds,
-                "nothing left to clean");
-            var outcome = $"landed {branch} -> {target} as {sha}, pushed "
-                + $"(origin/{target}={sha}), nothing left to clean";
-            await SettleLandedAsync(task, AgentTaskEventType.Landed, outcome, [], ct);
-            return LandRunResult.Complete;
-        }
-
-        Record(task, OrchestrationStage.Cleanup, StageOutcomeKind.Failed, cleanupSeconds,
-            cleaned.Removal.Residue ?? "cleanup incomplete");
-        var residueOutcome = $"landed {branch} -> {target} as {sha}, pushed "
-            + $"(origin/{target}={sha}), cleanup incomplete: {cleaned.Removal.Residue}";
-        await SettleLandedAsync(task, AgentTaskEventType.LandedWithResidue, residueOutcome, [], ct);
-        return LandRunResult.Complete;
+        return null;
     }
 
     private async Task SettleLandedAsync(
@@ -294,10 +262,10 @@ public sealed class AgentTaskLandService
 
     /// <summary>
     /// Same-card kept Worktree branches whose tip is not an ancestor of the rebased HEAD
-    /// (CARD-0215). Branch gone = already landed; not an ancestor = stranded, warn.
+    /// (CARD-0215). Warn on a surviving uncontained branch; absence grants no landing authority.
     /// </summary>
     private async Task<(string? Marker, IReadOnlyList<string> Warnings)> CollectUnlandedSiblingsAsync(
-        AgentTask task, string rebasedHeadRepo, CancellationToken ct)
+        AgentTask task, string rebasedHeadRepo, CancellationToken ct, string? verifiedSha = null)
     {
         if (task.CardId is null || task.RepoPath is null || !Directory.Exists(rebasedHeadRepo))
             return (null, []);
@@ -328,7 +296,7 @@ public sealed class AgentTaskLandService
                 continue;
             if (!await _worktrees.KeptBranchExistsAsync(task.RepoPath, branch, ct))
                 continue;
-            if (await _worktrees.IsAncestorOfBaseAsync(rebasedHeadRepo, branch, "HEAD", ct))
+            if (await _worktrees.IsAncestorOfBaseAsync(rebasedHeadRepo, branch, verifiedSha ?? "HEAD", ct))
                 continue;
 
             var shortId = DelegationReportFormatter.Short(sibling.Id);
@@ -340,22 +308,6 @@ public sealed class AgentTaskLandService
         return tokens.Count == 0
             ? (null, [])
             : ($"unlanded-sibling={string.Join(",", tokens)}", warnings);
-    }
-
-    private async Task<AgentTask?> FindSharedWriterAsync(AgentTask task, CancellationToken ct)
-    {
-        var candidates = await _db.AgentTasks.AsNoTracking()
-            .Where(t => t.Id != task.Id && t.Workspace == WorkspaceMode.Shared
-                && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working))
-            .Where(AgentTaskRoles.NotSpecialist)
-            .ToListAsync(ct);
-        return IsHeldBehindSharedWriter(task, candidates)
-            ? candidates.First(t => t.Id != task.Id && t.Workspace == WorkspaceMode.Shared
-                && !AgentTaskRoles.IsSpecialist(t.Role)
-                && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
-                && ScopeResolver.KeyFor(t.RepoPath, t.WorkingDirectory)
-                    == ScopeResolver.KeyFor(task.RepoPath, task.WorkingDirectory))
-            : null;
     }
 
     /// <summary>Pure form of the Shared-writer rule, kept visible for the lease contract tests.</summary>
@@ -426,7 +378,20 @@ public sealed class AgentTaskLandService
         var task = await _db.AgentTasks.SingleOrDefaultAsync(t => t.Id == taskId, ct);
         if (task is null)
             return;
-        await PersistRefusalAsync(task, $"land failed: {exception.Message}", exception.Message, ct);
+        _db.ChangeTracker.Clear();
+        task = await _db.AgentTasks.SingleAsync(t => t.Id == taskId, ct);
+        var op = task.ActiveLandingId is Guid id
+            ? await _db.AgentTaskLandings.SingleOrDefaultAsync(o => o.Id == id, ct) : null;
+        if (op is not null && new AgentTaskLandingState().HasPublication(op))
+        {
+            op.LastReason = "landing_interrupted_after_publication";
+            if (op.Cleanup != LandCleanupStatus.Complete) op.Cleanup = LandCleanupStatus.Pending;
+            var type = op.Publication == LandPublicationOutcome.AlreadyPresent ? AgentTaskEventType.AlreadyPresent
+                : op.Cleanup == LandCleanupStatus.Complete ? AgentTaskEventType.Landed : AgentTaskEventType.LandedWithResidue;
+            await SettleLandedAsync(task, type, FormatOutcome(op), [], ct);
+            return;
+        }
+        await PersistRefusalAsync(task, "land unconfirmed: operation failed; inspect durable evidence", "landing_failed", ct);
     }
 
     private async Task RefuseAsync(AgentTask task, string detail, CancellationToken ct) =>
@@ -437,7 +402,7 @@ public sealed class AgentTaskLandService
         var now = _clock.GetUtcNow().UtcDateTime;
         _db.AgentTaskEvents.Add(Event(task.Id, AgentTaskEventType.LandRefused, line, now));
         _db.AgentTaskEvents.Add(Event(task.Id, AgentTaskEventType.Warning,
-            $"Land refused; branch {task.WorktreeBranch} and worktree {task.WorktreePath} were kept. {warningDetail}",
+            $"Landing not confirmed; no cleanup authorized by this result. {warningDetail}",
             now));
         ClearPending(task);
         await _db.SaveChangesAsync(ct);
@@ -478,27 +443,26 @@ public sealed class AgentTaskLandService
 
     internal static async Task<LandVerification> VerifyAsync(string worktree, string? filter, CancellationToken ct)
     {
-        try
-        {
-            // CARD-0331: a kill mid-build leaves bin-land/; the next VerifyAsync overwrites it
-            // and the finally still deletes it.
-            var build = await RunProcessAsync(worktree, ct, "dotnet", "build", "--property:OutputPath=bin-land/");
-            if (!build.Ok)
-                return LandVerification.Failure("build", Tail(build));
-            if (string.IsNullOrWhiteSpace(filter))
-                return LandVerification.Success("build OK");
-
-            var tests = await RunProcessAsync(worktree, ct, "dotnet", "test", "--property:OutputPath=bin-land/", "--", "--treenode-filter", filter);
-            return tests.Ok
-                ? LandVerification.Success($"build OK, {DescribeTests(tests)}")
-                : LandVerification.Failure("tests", Tail(tests));
-        }
-        finally
-        {
-            var output = Path.Combine(worktree, "bin-land");
-            if (Directory.Exists(output))
-                Directory.Delete(output, recursive: true);
-        }
+        // SDK artifacts isolate both bin and obj by project, outside the source checkout.
+        // Unique owned outputs are retained; never recursively erase pre-existing bin-* paths.
+        var output = Path.Combine(Path.GetTempPath(), "antiphon-land-verify-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(output);
+        var build = await RunProcessAsync(worktree, ct, "dotnet", "build", "--artifacts-path", output);
+        if (!build.Ok) return LandVerification.Failure("build", Tail(build));
+        if (string.IsNullOrWhiteSpace(filter)) return LandVerification.Success("build OK");
+        var tests = await RunProcessAsync(worktree, ct, "dotnet", "run", "--project", "tests/Antiphon.Tests",
+            "--artifacts-path", output, "--", "--treenode-filter", filter, "--report-trx",
+            "--report-trx-filename", "landing-verification.trx");
+        if (!tests.Ok) return LandVerification.Failure("tests", Tail(tests));
+        var reports = Directory.GetFiles(output, "landing-verification.trx", SearchOption.AllDirectories);
+        if (reports.Length != 1) return LandVerification.Failure("tests", "fresh_test_report_missing_or_ambiguous");
+        var report = System.Xml.Linq.XDocument.Load(reports[0]);
+        var counters = report.Descendants().SingleOrDefault(e => e.Name.LocalName == "Counters");
+        if (!int.TryParse(counters?.Attribute("executed")?.Value, out var executed) || executed == 0
+            || counters?.Attribute("passed")?.Value != executed.ToString()
+            || counters?.Attribute("failed")?.Value != "0")
+            return LandVerification.Failure("tests", "no_confirmed_passing_tests");
+        return LandVerification.Success($"build OK, tests {executed}/{executed}");
     }
 
     private static async Task<ProcessResult> RunProcessAsync(string cwd, CancellationToken ct, string file, params string[] args)
@@ -509,7 +473,13 @@ public sealed class AgentTaskLandService
         using var process = Process.Start(start) ?? throw new InvalidOperationException($"Could not start {file}.");
         var stdout = process.StandardOutput.ReadToEndAsync(ct);
         var stderr = process.StandardError.ReadToEndAsync(ct);
-        await process.WaitForExitAsync(ct);
+        try { await process.WaitForExitAsync(ct); }
+        catch (OperationCanceledException)
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync(CancellationToken.None);
+            throw;
+        }
         return new ProcessResult(process.ExitCode == 0, await stdout, await stderr);
     }
 
@@ -517,18 +487,6 @@ public sealed class AgentTaskLandService
     {
         var text = (result.StdOut + "\n" + result.StdErr).Trim();
         return text.Length <= 1800 ? text : text[^1800..];
-    }
-
-    private static string DescribeTests(ProcessResult result)
-    {
-        var text = result.StdOut + "\n" + result.StdErr;
-        var total = System.Text.RegularExpressions.Regex.Match(text, @"total:\s*(\d+)",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        var failed = System.Text.RegularExpressions.Regex.Match(text, @"failed:\s*(\d+)",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        return total.Success && failed.Success && failed.Groups[1].Value == "0"
-            ? $"tests {total.Groups[1].Value}/{total.Groups[1].Value}"
-            : "tests OK";
     }
 
     private void Record(
@@ -553,9 +511,6 @@ public sealed class AgentTaskLandService
             RecordedAt = _clock.GetUtcNow().UtcDateTime,
         });
     }
-
-    private static int ElapsedSeconds(Stopwatch watch) =>
-        (int)Math.Clamp(Math.Round(watch.Elapsed.TotalSeconds), 0, int.MaxValue);
 
     internal static string Clip(string detail) =>
         detail.Length <= StageOutcome.DetailMaxLength

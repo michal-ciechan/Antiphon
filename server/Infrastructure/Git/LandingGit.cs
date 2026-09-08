@@ -12,6 +12,27 @@ public class LandingGit : ILandingGit
     protected virtual void ConfigureProcess(ProcessStartInfo start) { }
 
     public virtual async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
+        => await ExecuteAsync(repository, arguments, null, ct);
+
+    public virtual async Task<LandingGitResult> RunOwnedAsync(string repository, IReadOnlyList<string> arguments,
+        Func<int, long, CancellationToken, Task> started, CancellationToken ct)
+        => await ExecuteAsync(repository, arguments, started, ct);
+
+    public Task<bool?> IsProcessAliveAsync(int processId, long startTicks, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            return Task.FromResult<bool?>(!process.HasExited && process.StartTime.ToUniversalTime().Ticks == startTicks);
+        }
+        catch (ArgumentException) { return Task.FromResult<bool?>(false); }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        { return Task.FromResult<bool?>(null); }
+    }
+
+    private async Task<LandingGitResult> ExecuteAsync(string repository, IReadOnlyList<string> arguments,
+        Func<int, long, CancellationToken, Task>? started, CancellationToken ct)
     {
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
         budget.CancelAfter(TimeSpan.FromMinutes(5));
@@ -28,15 +49,19 @@ public class LandingGit : ILandingGit
         using var process = Process.Start(start) ?? throw new IOException("git_start_failed");
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
-        try { await process.WaitForExitAsync(budget.Token); }
-        catch (OperationCanceledException)
+        try
+        {
+            if (started is not null) await started(process.Id, process.StartTime.ToUniversalTime().Ticks, ct);
+            await process.WaitForExitAsync(budget.Token);
+        }
+        catch
         {
             // The Process handle, not a subsequently looked-up PID, identifies this child.
             if (!process.HasExited) process.Kill(entireProcessTree: true);
             await process.WaitForExitAsync(CancellationToken.None);
             await Task.WhenAll(output, error);
-            if (ct.IsCancellationRequested) throw;
-            throw new TimeoutException("git_timeout");
+            if (!ct.IsCancellationRequested && budget.IsCancellationRequested) throw new TimeoutException("git_timeout");
+            throw;
         }
         await error; // Never expose Git's stderr: endpoint URLs and hooks can contain secrets.
         return new(process.ExitCode, await output,
@@ -216,6 +241,16 @@ public class LandingGit : ILandingGit
         return await RunAsync(repository, ["push", endpoint, $"{sha}:{destination.FullRef}"], ct);
     }
 
+    public async Task<LandingGitResult> PushOwnedAsync(string repository, LandingDestination destination, string sha,
+        Func<int, long, CancellationToken, Task> started, CancellationToken ct)
+    {
+        if (!IsOid(sha)) return new(1, "", "invalid_push_commit");
+        if (await DestinationAsync(repository, destination.FullRef, ct) != destination)
+            return new(1, "", "remote_configuration_changed");
+        var endpoint = await EndpointAsync(repository, ct);
+        return await RunOwnedAsync(repository, ["push", endpoint, $"{sha}:{destination.FullRef}"], started, ct);
+    }
+
     internal async Task<string> CommitAsync(string repository, string revision, CancellationToken ct)
     {
         var sha = (await RequiredAsync(repository, ["rev-parse", "--verify", $"{revision}^{{commit}}"], ct)).Trim();
@@ -225,7 +260,8 @@ public class LandingGit : ILandingGit
 
     private async Task ValidateBranchAsync(string repository, string fullRef, CancellationToken ct)
     {
-        if (!fullRef.StartsWith("refs/heads/", StringComparison.Ordinal)) throw new ArgumentException("invalid_branch");
+        if (!fullRef.StartsWith("refs/heads/", StringComparison.Ordinal) || fullRef[11..].StartsWith('-'))
+            throw new ArgumentException("invalid_branch");
         var valid = await RunAsync(repository, ["check-ref-format", fullRef], ct);
         if (!valid.Succeeded) throw new ArgumentException("invalid_branch");
     }

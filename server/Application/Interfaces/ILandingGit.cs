@@ -6,6 +6,9 @@ namespace Antiphon.Server.Application.Interfaces;
 public interface ILandingGit
 {
     Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct);
+    Task<LandingGitResult> RunOwnedAsync(string repository, IReadOnlyList<string> arguments,
+        Func<int, long, CancellationToken, Task> started, CancellationToken ct);
+    Task<bool?> IsProcessAliveAsync(int processId, long startTicks, CancellationToken ct);
     Task<string> CanonicalDirectoryAsync(string path, CancellationToken ct);
     Task<string> CommonDirectoryAsync(string repository, CancellationToken ct);
     Task<LandSourceInspection> InspectAsync(LandSourceCoordinates coordinates, CancellationToken ct);
@@ -14,4 +17,6 @@ public interface ILandingGit
         string sourceSha, string observationRef, CancellationToken ct);
     Task<LandingGitResult> PinAsync(string repository, string recoveryRef, string sha, CancellationToken ct);
     Task<LandingGitResult> PushAsync(string repository, LandingDestination destination, string sha, CancellationToken ct);
+    Task<LandingGitResult> PushOwnedAsync(string repository, LandingDestination destination, string sha,
+        Func<int, long, CancellationToken, Task> started, CancellationToken ct);
 }

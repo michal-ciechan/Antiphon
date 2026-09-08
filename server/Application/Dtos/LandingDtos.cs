@@ -25,3 +25,5 @@ public sealed record LandingRegistration(string Path, string? Branch, string? He
 public sealed record LandingDestination(string RemoteName, string FullRef, string Fingerprint);
 
 public sealed record LandingRemoteObservation(string? Sha, bool ContainsSource, string? Reason);
+
+public sealed record LandingVerification(bool Passed, string Description);

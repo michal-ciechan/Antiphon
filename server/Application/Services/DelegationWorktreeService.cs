@@ -18,6 +18,8 @@ namespace Antiphon.Server.Application.Services;
 /// </summary>
 public sealed class DelegationWorktreeService
 {
+    private readonly IRepositoryMutationLease? _leases;
+    private readonly ILandingGit? _landingGit;
     private readonly IWorktreeManager _worktrees;
     private readonly IGitService _git;
     private readonly GitWorkspaceService _gitWorkspace;
@@ -27,8 +29,11 @@ public sealed class DelegationWorktreeService
         IWorktreeManager worktrees,
         IGitService git,
         ILogger<DelegationWorktreeService> logger,
-        GitWorkspaceService gitWorkspace)
+        GitWorkspaceService gitWorkspace,
+        IRepositoryMutationLease? leases = null, ILandingGit? landingGit = null)
     {
+        _leases = leases;
+        _landingGit = landingGit;
         _worktrees = worktrees;
         _git = git;
         _logger = logger;
@@ -50,7 +55,7 @@ public sealed class DelegationWorktreeService
         /// <summary>Rebased onto the target and fast-forwarded it; the worktree is gone.</summary>
         Merged = 0,
 
-        /// <summary>The delegate wrote nothing — nothing to merge, worktree removed.</summary>
+        /// <summary>The delegate wrote nothing; Detail reports whether guarded cleanup completed.</summary>
         NothingToMerge = 1,
 
         /// <summary>Rebase hit conflicts (aborted cleanly); the worktree is intact for a Merge task.</summary>
@@ -63,8 +68,8 @@ public sealed class DelegationWorktreeService
         Failed = 4,
 
         /// <summary>
-        /// The delegate already merged and removed its worktree; there is nothing left for us to
-        /// commit or merge. Not a failure — the work landed before we ran.
+        /// Legacy outcome retained for compatibility. Missing source alone no longer produces it
+        /// and is never publication or deletion authority.
         /// </summary>
         AlreadyCleanedUp = 5,
     }
@@ -83,114 +88,16 @@ public sealed class DelegationWorktreeService
     public sealed record LandFinalization(bool Pushed, string? Sha, string? Detail, string? Residue = null);
 
     /// <summary>
-    /// Fetch and rebase a kept task branch for an explicit land. This deliberately shares the
-    /// conflict/abort shape of <see cref="TryMergeBackAsync"/>, but does not advance or remove
-    /// anything: callers must verify a replay before they make the target visible.
+    /// Legacy split API: refuses because it cannot establish the durable landing checkpoints.
     /// </summary>
-    public async Task<LandPreparation> PrepareLandAsync(AgentTask task, CancellationToken ct)
-    {
-        if (task.WorktreePath is not { } worktree || task.WorktreeBranch is not { } branch
-            || task.RepoPath is not { } repo)
-            return new(false, false, false, null, null, "The task has no worktree recorded.", []);
+    [Obsolete("Use AgentTaskLandingProtocol; legacy preparation has no durable authority.")]
+    public Task<LandPreparation> PrepareLandAsync(AgentTask task, CancellationToken ct) =>
+        Task.FromResult(new LandPreparation(false, false, false, null, null, "durable_landing_protocol_required", []));
 
-        if (!await IsRegisteredWorktreeAsync(repo, worktree, ct))
-            return new(false, false, false, null, branch, "The task worktree is no longer registered.", []);
+    [Obsolete("Use AgentTaskLandingProtocol; legacy finalization has no durable authority.")]
+    public Task<LandFinalization> FinalizeLandAsync(AgentTask task, string target, CancellationToken ct) =>
+        Task.FromResult(new LandFinalization(false, null, "durable_landing_protocol_required"));
 
-        var target = task.MergeTargetRef ?? "master";
-        // A hard kill mid-rebase leaves rebase-merge / rebase-apply; `git rebase` then fails
-        // "already a rebase-merge directory" with no unmerged files → a spurious LandRefused.
-        // Abort first so this attempt actually rebases (CARD-0331 S3).
-        var abortNote = await AbortInterruptedRebaseAsync(worktree, ct);
-        if (abortNote is { Ok: false, Detail: { } abortFailure })
-            return new(false, false, false, target, branch, abortFailure, []);
-
-        var fetch = await GitAsync(repo, ct, "fetch", "origin");
-        if (!fetch.Ok)
-            return new(false, false, false, target, branch, $"git fetch origin failed: {fetch.StdErr.Trim()}", []);
-
-        // This machine's local target is canonical. A remote advance is a refusal for the caller,
-        // never an implicit merge of somebody else's remote work into an ordered landing.
-        var remoteAhead = await GitAsync(repo, ct, "rev-list", "--count", $"{target}..origin/{target}");
-        if (!remoteAhead.Ok)
-            return new(false, false, false, target, branch,
-                $"Could not compare {target} with origin/{target}: {remoteAhead.StdErr.Trim()}", []);
-        if (remoteAhead.StdOut.Trim() != "0")
-            return new(false, false, false, target, branch,
-                $"origin/{target} moved ahead of local {target}; refresh the target before landing.", []);
-
-        // A target already reachable from HEAD makes `rebase target` a no-op. Verification is only
-        // needed when rebase replayed commits onto a base the task did not previously contain.
-        var targetAlreadyInHead = await GitAsync(worktree, ct, "merge-base", "--is-ancestor", target, "HEAD");
-        var baseMoved = !targetAlreadyInHead.Ok;
-
-        var rebase = await GitAsync(worktree, ct, "rebase", target);
-        if (!rebase.Ok)
-        {
-            var conflicts = await GitAsync(worktree, ct, "diff", "--name-only", "--diff-filter=U");
-            var files = conflicts.StdOut
-                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .ToList();
-            await GitAsync(worktree, ct, "rebase", "--abort");
-
-            return files.Count > 0
-                ? new(false, true, baseMoved, target, branch,
-                    AnnotateInterruptedRebase(abortNote.Detail, rebase.StdErr.Trim()), files)
-                : new(false, false, baseMoved, target, branch,
-                    AnnotateInterruptedRebase(abortNote.Detail, $"Rebase onto {target} failed: {rebase.StdErr.Trim()}"),
-                    []);
-        }
-
-        return new(true, false, baseMoved, target, branch, abortNote.Detail, []);
-    }
-
-    /// <summary>Advance, push, and remove a branch whose explicit land verification passed.</summary>
-    public async Task<LandFinalization> FinalizeLandAsync(AgentTask task, string target, CancellationToken ct)
-    {
-        if (task.WorktreePath is not { } worktree || task.WorktreeBranch is not { } branch
-            || task.RepoPath is not { } repo)
-            return new(false, null, "The task has no worktree recorded.");
-
-        var advanced = await AdvanceTargetAsync(repo, branch, target, ct);
-        if (advanced is { } advanceFailure)
-            return new(false, null, advanceFailure);
-
-        var push = await GitAsync(repo, ct, "push", "origin", target);
-        if (!push.Ok)
-            return new(false, null, $"git push origin {target} rejected: {push.StdErr.Trim()}");
-
-        var sha = await GitAsync(repo, ct, "rev-parse", target);
-        var removal = await RemoveQuietlyAsync(repo, worktree, target, ct);
-        return new(true, sha.StdOut.Trim(), null, removal.IsClean ? null : removal.Residue);
-    }
-
-    /// <summary>
-    /// True when the task branch is gone, or is already an ancestor of the pushed target — a
-    /// second <c>-Land</c> should only retry cleanup (CARD-0328).
-    /// </summary>
-    public async Task<bool> IsAlreadyLandedAsync(AgentTask task, CancellationToken ct)
-    {
-        if (task.WorktreeBranch is not { } branch || task.RepoPath is not { } repo)
-            return false;
-        if (!Directory.Exists(repo))
-            return false;
-
-        var exists = await GitAsync(repo, ct, "show-ref", "--verify", "--quiet", $"refs/heads/{branch}");
-        if (!exists.Ok)
-            return true;
-
-        var target = task.MergeTargetRef ?? "master";
-        await GitAsync(repo, ct, "fetch", "origin");
-        var remote = await GitAsync(repo, ct, "merge-base", "--is-ancestor", branch, $"origin/{target}");
-        if (remote.Ok)
-            return true;
-        var local = await GitAsync(repo, ct, "merge-base", "--is-ancestor", branch, target);
-        return local.Ok;
-    }
-
-    /// <summary>
-    /// True when <paramref name="branch"/> still exists as a local head in <paramref name="repo"/>.
-    /// Branch existence is the durable "not landed" signal: FinalizeLand deletes the branch.
-    /// </summary>
     public async Task<bool> KeptBranchExistsAsync(string repo, string branch, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(branch) || !Directory.Exists(repo))
@@ -237,114 +144,7 @@ public sealed class DelegationWorktreeService
 
     public sealed record KeptBranchInfo(string Tip, int CommitsAbove, string Subject);
 
-    /// <summary>Retry worktree/branch cleanup after a successful land (CARD-0328).</summary>
-    public async Task<LandCleanup> CleanupAlreadyLandedAsync(AgentTask task, CancellationToken ct)
-    {
-        var target = task.MergeTargetRef ?? "master";
-        string? sha = null;
-        if (task.RepoPath is { } pushRepo && Directory.Exists(pushRepo)
-            && task.WorktreeBranch is { } branch)
-        {
-            var push = await PushLocalTargetIfAheadAsync(pushRepo, branch, target, ct);
-            if (push.Failure is { } failure)
-                return new LandCleanup(WorktreeRemoval.Clean, target, null, failure);
-            sha = push.Sha;
-        }
-
-        sha ??= await TryRevParseAsync(task.RepoPath, $"origin/{target}", ct)
-            ?? await TryRevParseAsync(task.RepoPath, target, ct);
-
-        if (task.WorktreePath is not { } worktree || task.RepoPath is not { } repo)
-            return new LandCleanup(WorktreeRemoval.Clean, target, sha);
-
-        var removal = await RemoveQuietlyAsync(repo, worktree, target, ct);
-        return new LandCleanup(removal, target, sha);
-    }
-
-    public sealed record LandCleanup(
-        WorktreeRemoval Removal, string Target, string? Sha, string? PushFailure = null);
-
-    private async Task<string?> TryRevParseAsync(string? repo, string rev, CancellationToken ct)
-    {
-        if (repo is null || !Directory.Exists(repo))
-            return null;
-        var result = await GitAsync(repo, ct, "rev-parse", rev);
-        var sha = result.StdOut.Trim();
-        return result.Ok && sha.Length > 0 ? sha : null;
-    }
-
-    /// <summary>
-    /// Push <paramref name="target"/> when local is ahead of origin and <paramref name="branch"/>
-    /// is already an ancestor of local target — the kill-after-ff-merge-before-push window
-    /// (CARD-0331 D6). Same push <see cref="FinalizeLandAsync"/> would have made.
-    /// </summary>
-    private async Task<(string? Sha, string? Failure)> PushLocalTargetIfAheadAsync(
-        string repo, string branch, string target, CancellationToken ct)
-    {
-        var exists = await GitAsync(repo, ct, "show-ref", "--verify", "--quiet", $"refs/heads/{branch}");
-        if (!exists.Ok)
-            return (null, null);
-
-        var ancestor = await GitAsync(repo, ct, "merge-base", "--is-ancestor", branch, target);
-        if (!ancestor.Ok)
-            return (null, null);
-
-        var ahead = await GitAsync(repo, ct, "rev-list", "--count", $"origin/{target}..{target}");
-        if (!ahead.Ok || !int.TryParse(ahead.StdOut.Trim(), out var count) || count <= 0)
-            return (null, null);
-
-        var push = await GitAsync(repo, ct, "push", "origin", target);
-        if (!push.Ok)
-            return (null, $"git push origin {target} rejected: {push.StdErr.Trim()}");
-
-        var sha = await GitAsync(repo, ct, "rev-parse", target);
-        return (sha.Ok ? sha.StdOut.Trim() : null, null);
-    }
-
-    /// <summary>
-    /// Abort a leftover rebase-merge / rebase-apply before starting a new rebase. Returns
-    /// <c>Detail = "aborted an interrupted rebase"</c> when it actually aborted.
-    /// </summary>
-    private static async Task<(bool Ok, string? Detail)> AbortInterruptedRebaseAsync(
-        string worktree, CancellationToken ct)
-    {
-        if (!await RebaseInProgressAsync(worktree, ct))
-            return (true, null);
-
-        var abort = await GitAsync(worktree, ct, "rebase", "--abort");
-        return abort.Ok
-            ? (true, "aborted an interrupted rebase")
-            : (false, $"Could not abort interrupted rebase: {abort.StdErr.Trim()}");
-    }
-
-    private static async Task<bool> RebaseInProgressAsync(string worktree, CancellationToken ct)
-    {
-        foreach (var name in new[] { "rebase-merge", "rebase-apply" })
-        {
-            var parsed = await GitAsync(worktree, ct, "rev-parse", "--git-path", name);
-            if (!parsed.Ok)
-                continue;
-            var path = parsed.StdOut.Trim();
-            if (path.Length == 0)
-                continue;
-            if (!Path.IsPathRooted(path))
-                path = Path.GetFullPath(Path.Combine(worktree, path));
-            if (Directory.Exists(path))
-                return true;
-        }
-
-        return false;
-    }
-
-    private static string AnnotateInterruptedRebase(string? abortNote, string detail) =>
-        abortNote is null ? detail : $"{abortNote}. {detail}";
-
-    /// <summary>
-    /// Create the task's worktree and record its coordinates on the row. Branches from the merge
-    /// target when one is set — the rebase-back is then linear — and from HEAD otherwise. Never
-    /// from a sibling task's branch (CARD-0215). A leftover worktree from a previous attempt of
-    /// the SAME task is adopted, not an error.
-    /// </summary>
+    /// <summary>Create or reuse the task's managed checkout; never infer publication here.</summary>
     public async Task CreateForTaskAsync(AgentTask task, CancellationToken ct)
     {
         if (task.RepoPath is not { } repoPath)
@@ -488,16 +288,16 @@ public sealed class DelegationWorktreeService
             return new MergeOutcome(MergeResult.Failed, [], "The task has no worktree recorded.");
         }
 
-        // Self-cleanup (`git worktree remove`) unregisters the path before we run. Status then
-        // exits 128 ("not a git repository") and used to be reported as "NOT merged". Skip that.
+        if (_leases is null || _landingGit is null)
+            return new MergeOutcome(MergeResult.Failed, [], "repository_lease_required");
+        await using var lease = await _leases.TryAcquireAsync(repo, ct);
+        if (lease is null) return new MergeOutcome(MergeResult.Failed, [], "repository_busy");
+        // Missing registration is unknown, never evidence that this child merged.
         if (!await IsRegisteredWorktreeAsync(repo, worktree, ct))
-        {
-            _logger.LogInformation(
-                "Task {ShortId}: worktree already cleaned up by the task at {Path}",
-                DelegationReportFormatter.Short(task.Id), worktree);
-            return new MergeOutcome(
-                MergeResult.AlreadyCleanedUp, [], "worktree already cleaned up by the task");
-        }
+            return new MergeOutcome(MergeResult.Failed, [], "source_registration_unknown");
+        var symbolic = await _landingGit.RunAsync(worktree, ["symbolic-ref", "-q", "HEAD"], ct);
+        if (!symbolic.Succeeded || symbolic.Output.Trim() != "refs/heads/" + branch)
+            return new MergeOutcome(MergeResult.Failed, [], "source_branch_mismatch");
 
         try
         {
@@ -519,13 +319,14 @@ public sealed class DelegationWorktreeService
         var ahead = await GitAsync(worktree, ct, "rev-list", "--count", $"{target}..HEAD");
         if (ahead.Ok && ahead.StdOut.Trim() == "0")
         {
-            await RemoveQuietlyAsync(repo, worktree, target, ct);
-            return new MergeOutcome(MergeResult.NothingToMerge, [], null);
+            var cleanup = await RemoveLocalAsync(task, target, lease, ct);
+            return new MergeOutcome(MergeResult.NothingToMerge, [], cleanup.IsClean
+                ? "No changes beyond target; cleanup complete." : $"No changes beyond target; cleanup retained: {cleanup.Residue}");
         }
 
         // Rebase, never merge commits (repo convention). A conflict aborts cleanly: the worktree is
         // left exactly as the delegate finished it, which is what the Merge task needs to see.
-        var rebase = await GitAsync(worktree, ct, "rebase", target);
+        var rebase = await GitAsync(worktree, ct, "-c", "rebase.autoStash=false", "-c", "rebase.updateRefs=false", "rebase", target);
         if (!rebase.Ok)
         {
             var conflicts = await GitAsync(worktree, ct, "diff", "--name-only", "--diff-filter=U");
@@ -544,7 +345,7 @@ public sealed class DelegationWorktreeService
         if (advanced is { } failure)
             return new MergeOutcome(MergeResult.Failed, [], failure);
 
-        var removal = await RemoveQuietlyAsync(repo, worktree, target, ct);
+        var removal = await RemoveLocalAsync(task, target, lease, ct);
         var detail = $"{branch} → {target}";
         if (!removal.IsClean && removal.Residue is not null)
             detail += $"; cleanup incomplete: {removal.Residue}";
@@ -642,20 +443,17 @@ public sealed class DelegationWorktreeService
         return null;
     }
 
-    private async Task<WorktreeRemoval> RemoveQuietlyAsync(
-        string repo, string worktree, string? mergedInto, CancellationToken ct)
+    private async Task<WorktreeRemoval> RemoveLocalAsync(AgentTask task, string target, RepositoryLease lease, CancellationToken ct)
     {
-        try
-        {
-            return await _worktrees.TryRemoveAsync(repo, worktree, mergedInto, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            // The janitor's TTL prune is the backstop; a lingering merged worktree costs disk, not
-            // correctness.
-            _logger.LogWarning(ex, "Could not remove merged worktree {Path}; the janitor will", worktree);
-            return new WorktreeRemoval(false, !Directory.Exists(worktree), false, ex.Message);
-        }
+        var coordinates = new LandSourceCoordinates(task.Id, task.RepoPath!, task.WorktreePath!,
+            "refs/heads/" + task.WorktreeBranch, target.StartsWith("refs/heads/", StringComparison.Ordinal) ? target : "refs/heads/" + target);
+        var inspected = await _landingGit!.InspectAsync(coordinates, ct);
+        if (!inspected.Accepted) return new(false, false, false, inspected.Reason ?? "source_unknown");
+        var targetResult = await _landingGit.RunAsync(task.RepoPath!, ["rev-parse", "--verify", coordinates.TargetFullRef + "^{commit}"], ct);
+        if (!targetResult.Succeeded) return new(false, false, false, "target_unknown");
+        var source = inspected.Snapshot!;
+        return await _worktrees.TryRemoveAsync(new(WorktreeRemovalPurpose.LocalMerge, coordinates,
+            source.CommonDirectory, source.GitDirectory, source.HeadSha, targetResult.Output.Trim(), null, lease), ct);
     }
 
     private sealed record GitResult(bool Ok, string StdOut, string StdErr);
@@ -677,7 +475,13 @@ public sealed class DelegationWorktreeService
             ?? throw new InvalidOperationException("Failed to start git.");
         var stdout = process.StandardOutput.ReadToEndAsync(ct);
         var stderr = process.StandardError.ReadToEndAsync(ct);
-        await process.WaitForExitAsync(ct);
+        try { await process.WaitForExitAsync(ct); }
+        catch (OperationCanceledException)
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync(CancellationToken.None);
+            throw;
+        }
         return new GitResult(process.ExitCode == 0, await stdout, await stderr);
     }
 }
