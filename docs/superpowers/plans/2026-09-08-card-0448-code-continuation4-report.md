@@ -83,6 +83,22 @@ The TRX counter predicate was extracted verbatim into an internal helper; its bo
 and production caller behavior are unchanged. Individual controls replace the earlier broad
 verification-policy mutation as independent-clause evidence.
 
+`c4-push-ack-01.trx` passed 2/2: both push-result save acknowledgement outcomes preserve
+the source until a fresh restart confirms the accepted remote update, without a second push.
+`c4-real-verifier-01.trx` passed 3/3 after the counter extraction (real selected pass, selected
+failure and zero-selection cases).
+
+The task-owned `.antiphon/policy-project/PolicyControls.csproj` links the exact four policy
+test source files and the production server. It contains no service host, real process or DB
+fixtures. `c4-policy-adapter-01.trx` passed the identical 92 named cases/outcomes in 1 second,
+compared with 39 seconds in the normal assembly. `c4-policy-equivalence.json` records that
+comparison and project hash. Its controls have a separate output tree and fingerprinted
+manifest. The final normal-assembly regression remains mandatory.
+
+Individual mutation results, including pending variants, are tracked in
+[the control ledger](2026-09-08-card-0448-code-continuation4-controls.md). A broad policy
+mutation or the existence of a definition is not independent-variant acceptance.
+
 Local execution scripts, logs, TRX and command evidence are under this task's `.antiphon`
 and isolated `tests/Antiphon.Tests/bin-c448-*` outputs. The adapted mutation definitions
 have unique anchors against the current source; definitions are not execution evidence.
