@@ -143,11 +143,13 @@ public class StandingSpecialistRoutingHttpTests
         get.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
     }
 
-    private sealed class Harness(IsolatedTestSchema database, WebApplication app, Guid agentId) : IAsyncDisposable
+    internal sealed class Harness(IsolatedTestSchema database, WebApplication app, Guid agentId, bool network) : IAsyncDisposable
     {
         public Guid AgentId => agentId;
         public string Path => $"/api/agents/{agentId}/specialist-routing";
-        public HttpClient Client { get; } = app.GetTestClient();
+        public HttpClient Client { get; } = network
+            ? new HttpClient { BaseAddress = new Uri(app.Urls.Single()) }
+            : app.GetTestClient();
         public JsonSerializerOptions Json { get; } = new(JsonSerializerDefaults.Web) { Converters = { new JsonStringEnumConverter() } };
         public RoutingCandidate[] Pairs => [new(AgentKind.ClaudeCode, AgentModelLevel.High), new(AgentKind.Codex, AgentModelLevel.Low)];
         public AppDbContext Context() => new(new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(database.ConnectionString).Options);
@@ -159,11 +161,12 @@ public class StandingSpecialistRoutingHttpTests
             response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
             return (await response.Content.ReadFromJsonAsync<StandingSpecialistRoutingDto>(Json))!;
         }
-        public static async Task<Harness> CreateAsync()
+        public static async Task<Harness> CreateAsync(bool network = false)
         {
             var database = await TestDbFixture.CreateIsolatedSchemaAsync();
             var builder = WebApplication.CreateBuilder();
-            builder.WebHost.UseTestServer();
+            if (network) builder.WebHost.UseUrls("http://127.0.0.1:0");
+            else builder.WebHost.UseTestServer();
             builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
             builder.Services.AddDbContext<AppDbContext>(o => o.UseNpgsql(database.ConnectionString));
             builder.Services.AddSingleton<IOptions<DelegationSettings>>(Options.Create(new DelegationSettings()));
@@ -175,7 +178,7 @@ public class StandingSpecialistRoutingHttpTests
             app.MapStandingSpecialistRoutingEndpoints();
             await app.StartAsync();
             var id = Guid.NewGuid();
-            var harness = new Harness(database, app, id);
+            var harness = new Harness(database, app, id, network);
             await using var db = harness.Context();
             db.Agents.Add(new Agent
             {
