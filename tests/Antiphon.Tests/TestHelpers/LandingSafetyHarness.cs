@@ -212,6 +212,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     internal sealed class SaveFault : SaveChangesInterceptor
     {
         public LandPhase? Phase { get; set; }
+        public Func<AgentTaskLanding, bool>? Matches { get; set; }
         public bool AfterCommit { get; set; }
         public bool Triggered { get; private set; }
         public Func<LandPhase, Task>? AfterAcknowledged { get; set; }
@@ -219,8 +220,9 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data,
             InterceptionResult<int> result, CancellationToken ct = default)
         {
-            _armed = !Triggered && Phase is not null && data.Context!.ChangeTracker.Entries<AgentTaskLanding>()
-                .Any(e => e.Entity.Phase == Phase && e.State != EntityState.Unchanged);
+            _armed = !Triggered && data.Context!.ChangeTracker.Entries<AgentTaskLanding>()
+                .Any(e => e.State != EntityState.Unchanged
+                    && (Phase is not null && e.Entity.Phase == Phase || Matches?.Invoke(e.Entity) == true));
             if (_armed && !AfterCommit) { Triggered = true; throw new InjectedSaveFailure(); }
             return ValueTask.FromResult(result);
         }
