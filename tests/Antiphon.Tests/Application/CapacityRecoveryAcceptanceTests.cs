@@ -124,6 +124,63 @@ public class CapacityRecoveryAcceptanceTests
     }
 
     [Test]
+    public async Task Card0412_V09_redeem_refuses_before_next_admission_clock()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var (service, time, _) = CapacityRecoveryTestSupport.CreateService(schema, intervalSeconds: 60, jitterSeconds: 0);
+        var wait = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+            $"task:{Guid.NewGuid():N}",
+            CapacityWaitConsumerKind.QueuedTask,
+            holdAlreadyCleared: true), CancellationToken.None);
+        await service.GrantReadyAsync(CancellationToken.None);
+        await using (var db = CapacityRecoveryTestSupport.CreateContext(schema))
+        {
+            var state = await db.Set<CapacityRecoveryProviderState>()
+                .SingleAsync(s => s.Kind == AgentKind.ClaudeCode);
+            state.GrantedWaitId.ShouldBe(wait.Id);
+            state.NextAdmissionAt = time.GetUtcNow().UtcDateTime.AddSeconds(60);
+            await db.SaveChangesAsync();
+        }
+
+        var premature = await service.RedeemAsync(
+            wait.Id, wait.ActionKey, AgentKind.ClaudeCode, CapacityRedemptionPath.Dispatch,
+            CancellationToken.None);
+        premature.Ok.ShouldBeFalse();
+        premature.Deferred.ShouldBeTrue();
+        premature.Reason.ShouldBe("clock-not-due");
+        (await CapacityRecoveryTestSupport.CreateContext(schema).CapacityRecoveryWaits.SingleAsync(w => w.Id == wait.Id))
+            .AdmissionCount.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Card0412_V09_outstanding_ready_grant_survives_elapsed_interval()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var (service, time, _) = CapacityRecoveryTestSupport.CreateService(schema, intervalSeconds: 60, jitterSeconds: 0);
+        var older = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+            $"task:{Guid.NewGuid():N}",
+            CapacityWaitConsumerKind.QueuedTask,
+            holdAlreadyCleared: true,
+            blockedAt: time.GetUtcNow().UtcDateTime.AddMinutes(-30)), CancellationToken.None);
+        var younger = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+            $"session:{Guid.NewGuid():N}",
+            CapacityWaitConsumerKind.LiveSession,
+            holdAlreadyCleared: true,
+            blockedAt: time.GetUtcNow().UtcDateTime.AddMinutes(-1)), CancellationToken.None);
+        await service.GrantReadyAsync(CancellationToken.None);
+        time.Advance(TimeSpan.FromSeconds(5));
+        await service.GrantReadyAsync(CancellationToken.None);
+        await using var verify = CapacityRecoveryTestSupport.CreateContext(schema);
+        var grant = await verify.Set<CapacityRecoveryProviderState>()
+            .SingleAsync(s => s.Kind == AgentKind.ClaudeCode);
+        grant.GrantedWaitId.ShouldBe(older.Id);
+        (await verify.CapacityRecoveryWaits.SingleAsync(w => w.Id == younger.Id)).AdmissionCount.ShouldBe(0);
+        (await service.RedeemAsync(
+            younger.Id, younger.ActionKey, AgentKind.ClaudeCode, CapacityRedemptionPath.Queue,
+            CancellationToken.None)).Ok.ShouldBeFalse();
+    }
+
+    [Test]
     public async Task Card0412_V10_wave_invalidates_unredeemed_grant()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -145,6 +202,45 @@ public class CapacityRecoveryAcceptanceTests
             wait.Id, wait.ActionKey, AgentKind.ClaudeCode, CapacityRedemptionPath.Queue,
             CancellationToken.None);
         redeemed.Ok.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Card0412_V10_wall_observation_floor_blocks_until_interval()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var (service, time, _) = CapacityRecoveryTestSupport.CreateService(schema, intervalSeconds: 60, jitterSeconds: 0);
+        var older = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+            $"task:{Guid.NewGuid():N}",
+            CapacityWaitConsumerKind.QueuedTask,
+            holdAlreadyCleared: true,
+            blockedAt: time.GetUtcNow().UtcDateTime.AddMinutes(-10)), CancellationToken.None);
+        var younger = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+            $"session:{Guid.NewGuid():N}",
+            CapacityWaitConsumerKind.LiveSession,
+            holdAlreadyCleared: true,
+            blockedAt: time.GetUtcNow().UtcDateTime.AddMinutes(-1)), CancellationToken.None);
+        await service.GrantReadyAsync(CancellationToken.None);
+        var wallAt = time.GetUtcNow().UtcDateTime;
+        await service.BumpWaveAsync(AgentKind.ClaudeCode, wallAt, CancellationToken.None);
+        var afterWave = await CapacityRecoveryTestSupport.CreateContext(schema)
+            .Set<CapacityRecoveryProviderState>()
+            .SingleAsync(s => s.Kind == AgentKind.ClaudeCode);
+        afterWave.GrantedWaitId.ShouldBeNull();
+        afterWave.NextAdmissionAt.ShouldNotBeNull();
+        (afterWave.NextAdmissionAt!.Value - wallAt).TotalSeconds.ShouldBeGreaterThan(59);
+        await service.GrantReadyAsync(CancellationToken.None);
+        var tooSoon = await CapacityRecoveryTestSupport.CreateContext(schema)
+            .Set<CapacityRecoveryProviderState>()
+            .SingleAsync(s => s.Kind == AgentKind.ClaudeCode);
+        tooSoon.GrantedWaitId.ShouldBeNull();
+        time.SetUtcNow(new DateTimeOffset(wallAt.AddSeconds(60), TimeSpan.Zero));
+        await service.GrantReadyAsync(CancellationToken.None);
+        var due = await CapacityRecoveryTestSupport.CreateContext(schema)
+            .Set<CapacityRecoveryProviderState>()
+            .SingleAsync(s => s.Kind == AgentKind.ClaudeCode);
+        due.GrantedWaitId.ShouldBe(younger.Id);
+        (await CapacityRecoveryTestSupport.CreateContext(schema).CapacityRecoveryWaits.SingleAsync(w => w.Id == older.Id))
+            .State.ShouldBe(CapacityRecoveryWaitState.Reheld);
     }
 
     [Test]

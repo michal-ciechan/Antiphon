@@ -104,6 +104,70 @@ public class CapacityRecoveryRefusalTests
         (await verify.CapacityRecoveryWaits.CountAsync()).ShouldBe(0);
     }
 
+    [Test]
+    public async Task Card0412_V21_capability_caller_with_session_still_has_no_recipient()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var sessionId = Guid.NewGuid();
+        var holdId = Guid.NewGuid();
+        await using (var db = Ctx(schema))
+        {
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = sessionId,
+                DefinitionName = "fake",
+                AgentKind = AgentKind.Codex,
+                Status = SessionStatus.Running,
+                Cwd = workspace.Path,
+                Cols = 120,
+                Rows = 30,
+                CreatedAt = DateTime.UtcNow,
+                StartedAt = DateTime.UtcNow,
+                LastSeenAt = DateTime.UtcNow,
+            });
+            db.ModelAvailabilityHolds.Add(CapacityRecoveryTestSupport.Hold(holdId, "opus"));
+            await db.SaveChangesAsync();
+        }
+
+        await Should.ThrowAsync<ModelDisabledException>(() =>
+            CreateService(schema).CreateAsync(
+                new CreateAgentTaskRequest(
+                    "plan the work",
+                    Role: AgentTaskRole.Plan,
+                    AgentKind: AgentKind.ClaudeCode,
+                    ModelLevel: AgentModelLevel.High),
+                new AgentTaskService.Caller(null, sessionId, workspace.Path, CapabilityId: Guid.NewGuid()),
+                CancellationToken.None));
+        await using var verify = Ctx(schema);
+        (await verify.CapacityRecoveryWaits.CountAsync()).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Card0412_V21_unresolved_session_is_not_a_recipient()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var holdId = Guid.NewGuid();
+        await using (var db = Ctx(schema))
+        {
+            db.ModelAvailabilityHolds.Add(CapacityRecoveryTestSupport.Hold(holdId, "opus"));
+            await db.SaveChangesAsync();
+        }
+
+        await Should.ThrowAsync<ModelDisabledException>(() =>
+            CreateService(schema).CreateAsync(
+                new CreateAgentTaskRequest(
+                    "plan the work",
+                    Role: AgentTaskRole.Plan,
+                    AgentKind: AgentKind.ClaudeCode,
+                    ModelLevel: AgentModelLevel.High),
+                new AgentTaskService.Caller(null, Guid.NewGuid(), workspace.Path),
+                CancellationToken.None));
+        await using var verify = Ctx(schema);
+        (await verify.CapacityRecoveryWaits.CountAsync()).ShouldBe(0);
+    }
+
     private static AgentTaskService CreateService(IsolatedTestSchema schema)
     {
         var services = new ServiceCollection();
