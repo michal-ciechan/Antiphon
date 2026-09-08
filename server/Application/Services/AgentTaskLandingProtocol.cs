@@ -165,7 +165,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 Require(prepared.Accepted && prepared.Snapshot!.GitDirectory == op.GitDirectory,
                     prepared.Reason ?? "source_changed");
                 Require(prepared.Snapshot!.HeadSha == rebase.RebaseHeadSha, "source_changed");
-                op.RebasedSourceSha = rebase.RebaseHeadSha;
+                op.RebasedSourceSha = rebase.RebaseHeadSha!;
                 await PinAsync(op, "prepared", op.RebasedSourceSha, ct);
                 op.PreparedPinned = true;
                 op.PreparedAt = Now();
