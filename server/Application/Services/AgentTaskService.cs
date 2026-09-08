@@ -1430,7 +1430,8 @@ public sealed class AgentTaskService
         var events = await _db.AgentTaskEvents.AsNoTracking()
             .Where(e => e.AgentTaskId == id)
             .OrderBy(e => e.At)
-            .Select(e => new AgentTaskEventDto(e.Type, e.ModelLevel, e.Detail, e.At))
+            .Select(e => new AgentTaskEventDto(e.Type, e.ModelLevel, e.Detail, e.At,
+                e.LandingOperationId, e.LandingPublication, e.LandingCleanup, e.LandingMode))
             .ToListAsync(ct);
 
         var blocked = await BlockedContextBuilder.BuildAsync(task, family, events, _checkProbe, ct);

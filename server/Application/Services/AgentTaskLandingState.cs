@@ -13,10 +13,7 @@ public sealed class AgentTaskLandingState
         && IsOid(operation.VerifiedSourceSha) && IsOid(operation.ObservedRemoteTargetSha)
         && operation.DestinationFullRef == operation.TargetFullRef
         && operation.RemoteFingerprint.Length == 64
-        && operation.VerifiedSourceSha == (operation.RebasedSourceSha ?? operation.OriginalSourceSha)
-        && operation.VerifiedAt is not null
-        && (operation.VerificationPassed || operation.VerificationSkipReason is "base_unchanged" or "exact_remote_containment")
-        && operation.SourcePinned && operation.TargetPinned
+        && HasVerification(operation)
         && operation.RecoveryRefPrefix == $"refs/antiphon/land/{operation.TaskId:N}/{operation.Id:N}"
         && operation.ConfirmationMethod == "push-endpoint-read-fetch-ancestry";
 
@@ -42,9 +39,7 @@ public sealed class AgentTaskLandingState
             _ => false,
         };
         if (next is LandPhase.Verified or LandPhase.TargetAdvanceStarted or LandPhase.PushStarted)
-            permitted &= IsOid(operation.VerifiedSourceSha) && operation.VerifiedAt is not null
-                && (operation.VerificationPassed || operation.VerificationSkipReason is "base_unchanged" or "exact_remote_containment")
-                && operation.VerifiedSourceSha == (operation.RebasedSourceSha ?? operation.OriginalSourceSha);
+            permitted &= HasVerification(operation);
         if (next != LandPhase.Refused) permitted &= HasIdentity(operation);
         if (!permitted) throw new InvalidOperationException($"landing_transition_refused:{operation.Phase}:{next}");
         operation.Phase = next;
@@ -64,6 +59,16 @@ public sealed class AgentTaskLandingState
             || freshInspection.Snapshot.Coordinates.TargetFullRef != previous.TargetFullRef
             || freshInspection.Snapshot.CommonDirectory != previous.CommonDirectory
             || freshInspection.Snapshot.RegisteredPath != previous.WorktreePath);
+
+    private static bool HasVerification(AgentTaskLanding operation) => IsOid(operation.VerifiedSourceSha)
+        && operation.VerifiedAt is not null && operation.SourcePinned && operation.TargetPinned
+        && (operation.RebasedSourceSha is null || operation.PreparedPinned)
+        && operation.VerifiedSourceSha == (operation.RebasedSourceSha ?? operation.OriginalSourceSha)
+        && (operation.VerificationPassed
+            || operation.VerificationSkipReason == "base_unchanged"
+                && operation.RebasedSourceSha == operation.OriginalSourceSha
+                && string.IsNullOrWhiteSpace(operation.VerificationFilter)
+            || operation.VerificationSkipReason == "exact_remote_containment" && operation.RebasedSourceSha is null);
 
     private static bool IsOid(string? value) => value is { Length: 40 or 64 }
         && value.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');

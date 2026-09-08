@@ -11,6 +11,8 @@ public interface ILandingGit
     Task<bool?> IsProcessAliveAsync(int processId, long startTicks, CancellationToken ct);
     Task<string> CanonicalDirectoryAsync(string path, CancellationToken ct);
     Task<string> CommonDirectoryAsync(string repository, CancellationToken ct);
+    Task<bool> HasActiveSequencerAsync(string repository, CancellationToken ct);
+    Task<IReadOnlyList<LandingRegistration>> RegistrationsAsync(string repository, CancellationToken ct);
     Task<LandSourceInspection> InspectAsync(LandSourceCoordinates coordinates, CancellationToken ct);
     Task<LandingDestination> DestinationAsync(string repository, string targetFullRef, CancellationToken ct);
     Task<LandingRemoteObservation> ObserveAsync(string repository, LandingDestination destination,

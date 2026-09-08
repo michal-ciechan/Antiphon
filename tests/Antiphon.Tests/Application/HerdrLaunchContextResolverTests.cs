@@ -10,7 +10,8 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>CARD-0225: pane title is the agent's name, never the shared TUI profile id. CARD-0384 V-6 standing overrides.</summary>
-public class HerdrLaunchContextResolverTests
+[Category("Unit")]
+public class HerdrLaunchContextTitleTests
 {
     [Test]
     [Category("Unit")]
@@ -51,8 +52,12 @@ public class HerdrLaunchContextResolverTests
             new AgentSession { DefinitionName = "  " }).ShouldBe("agent");
     }
 
+}
+
+[Category("Integration")]
+public class HerdrLaunchContextResolverTests
+{
     [Test]
-    [Category("Integration")]
     public async Task Standing_cardless_agent_overrides_workspace_label_and_carries_tab_label()
     {
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());

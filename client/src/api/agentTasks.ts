@@ -97,6 +97,7 @@ export type AgentTaskEventType =
   | 'Rerouted'
   | 'LandedWithResidue'
   | 'AlreadyPresent'
+  | 'LandingCleanup'
   /** A settled report was distilled (CARD-0330). Reserved so CARD-0352 can land the substrate. */
   | 'Distilled'
   /** The diagnose seat applied a title or labels (CARD-0352). */
@@ -185,6 +186,10 @@ export interface AgentTaskEventDto {
   modelLevel: AgentModelLevel | null
   detail: string
   at: string
+  landingOperationId?: string | null
+  landingPublication?: 'Unconfirmed' | 'Landed' | 'AlreadyPresent' | 'Refused' | null
+  landingCleanup?: 'NotStarted' | 'Pending' | 'Complete' | 'Refused' | null
+  landingMode?: 'Fresh' | 'ResumePublication' | 'CleanupRetry' | null
 }
 
 export type BlockedKind = 'Question' | 'MergeConflict' | 'CostCeiling' | 'RoutingExhausted'

@@ -72,6 +72,25 @@ function serve(body: AgentTaskDetailDto, extra: Parameters<typeof server.use> = 
 }
 
 describe('TaskDrawer', () => {
+  it.each(['Unconfirmed', 'Landed', 'AlreadyPresent'] as const)('renders %s evidence through a cleanup update', async (publication) => {
+    serve(detail({ status: 'Succeeded', workspace: 'Worktree' }, {
+      landing: {
+        operationId: TASK_ID, phase: 'CleanupStarted', mode: 'CleanupRetry',
+        publication, cleanup: 'Refused', sourceSha: 'a'.repeat(40),
+        verifiedSha: 'b'.repeat(40), remoteSha: publication === 'Unconfirmed' ? null : 'c'.repeat(40),
+        remoteConfirmedAt: publication === 'Unconfirmed' ? null : '2026-09-08T10:00:00Z',
+        destinationRef: 'refs/heads/master', reason: 'source_changed',
+      },
+      events: [{ type: 'LandingCleanup', modelLevel: null, detail: 'cleanup retained',
+        at: '2026-09-08T12:00:00Z', landingOperationId: TASK_ID,
+        landingPublication: publication, landingCleanup: 'Refused', landingMode: 'CleanupRetry' }],
+    }))
+    renderWithProviders(<TaskDrawer taskId={TASK_ID} onClose={() => {}} />)
+    expect(await screen.findByText(`Publication: ${publication}`)).toBeVisible()
+    expect(screen.getByText('Cleanup: Refused')).toBeVisible()
+    expect(screen.getByText('Mode: CleanupRetry')).toBeVisible()
+  })
+
   it('shows publication and cleanup independently from legacy timeline prose', async () => {
     serve(detail({ status: 'Succeeded', workspace: 'Worktree' }, {
       landing: {

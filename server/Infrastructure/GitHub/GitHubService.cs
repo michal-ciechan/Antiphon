@@ -76,40 +76,10 @@ public class GitHubService : IGitHubService
     {
         _logger.LogInformation("Pushing branch {Branch} in {RepoPath}", branchName, repoPath);
 
-        // Use git CLI to push — the GitHub API doesn't support push operations
-        var psi = new System.Diagnostics.ProcessStartInfo
-        {
-            FileName = "git",
-            Arguments = $"push origin {branchName}",
-            WorkingDirectory = repoPath,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        using var process = System.Diagnostics.Process.Start(psi)
-            ?? throw new InvalidOperationException("Failed to start git push process.");
-
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(TimeSpan.FromSeconds(60));
-
-        try
-        {
-            await process.WaitForExitAsync(cts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            try { process.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-            throw;
-        }
-
-        if (process.ExitCode != 0)
-        {
-            var stderr = await process.StandardError.ReadToEndAsync(ct);
-            _logger.LogError("git push failed (exit {ExitCode}): {StdErr}", process.ExitCode, stderr);
-            throw new InvalidOperationException($"git push failed with exit code {process.ExitCode}: {stderr}");
-        }
+        var result = await new Git.LandingGit().RunAsync(repoPath, ["push", "origin", branchName], cts.Token);
+        if (!result.Succeeded) throw new InvalidOperationException(result.Diagnostic);
 
         _logger.LogInformation("Successfully pushed branch {Branch}", branchName);
     }

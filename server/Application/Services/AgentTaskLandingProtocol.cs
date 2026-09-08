@@ -17,6 +17,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     {
         AgentTaskLanding? op = task.ActiveLandingId is Guid id
             ? await db.AgentTaskLandings.SingleAsync(o => o.Id == id && o.TaskId == task.Id, ct) : null;
+        AgentTaskLanding? previousToReplace = null;
         try
         {
             if (task.RepoPath is null || task.WorktreePath is null || task.WorktreeBranch is null)
@@ -29,6 +30,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             {
                 await db.Entry(op).ReloadAsync(ct);
                 Require(op.SchemaVersion == 1, "landing_schema_unsupported");
+                Require(op.Active, "landing_operation_inactive");
                 if (op.ChildOperation is not null)
                 {
                     Require(op.ChildProcessId is not null && op.ChildProcessStartTicks is not null,
@@ -47,10 +49,8 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     var fresh = await git.InspectAsync(coordinates, ct);
                     Require(_state.CanReplaceRefused(op, fresh, task.LandRequestedAt > op.UpdatedAt, true),
                         op.LastReason ?? "refused_operation_requires_new_evidence");
-                    op.Active = false;
-                    op.ConcurrencyToken = Guid.NewGuid();
-                    await db.SaveChangesAsync(ct);
-                    op = null;
+                    previousToReplace = op;
+                    op = null; // Keep the previous operation active until a complete replacement can commit.
                 }
                 else
                 {
@@ -66,6 +66,8 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             if (op is not null && _state.HasPublication(op))
             {
                 op.Mode = LandOperationMode.CleanupRetry;
+                op.CleanupStartedAt = Now();
+                op.CleanupCompletedAt = null;
                 await SaveAsync(op, ct);
                 return await CleanupAsync(op, lease, ct);
             }
@@ -89,10 +91,9 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     VerificationFilter = task.LandVerifyFilter,
                 };
                 op.RecoveryRefPrefix = $"refs/antiphon/land/{task.Id:N}/{op.Id:N}";
-                db.AgentTaskLandings.Add(op);
-                task.ActiveLandingId = op.Id;
-                task.ConcurrencyToken = Guid.NewGuid();
-                await db.SaveChangesAsync(ct);
+                op.TargetCheckoutPath = await TargetCheckoutAsync(op, ct);
+                op.TargetCheckoutRecorded = true;
+                await PersistNewOperationAsync(task, op, previousToReplace, ct);
             }
             else
             {
@@ -116,6 +117,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             {
                 await RecheckSourceAsync(op, op.OriginalSourceSha, ct);
                 var remote = await ObserveAsync(op, op.OriginalSourceSha, ct);
+                await RecheckSourceAsync(op, op.OriginalSourceSha, ct);
                 op.RemoteBeforeSha = remote.Sha;
                 await SaveAsync(op, ct);
                 if (remote.ContainsSource)
@@ -130,7 +132,10 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 Require(await IsAncestorAsync(op.RepositoryPath, remote.Sha!, op.TargetBeforeSha, ct), "remote_ahead_or_diverged");
                 await RecheckSourceAsync(op, op.OriginalSourceSha, ct);
                 await CheckTargetAsync(op, op.TargetBeforeSha, ct);
+                op.RebaseStartedAt = Now();
                 await TransitionAsync(op, LandPhase.RebaseStarted, ct);
+                await RecheckSourceAsync(op, op.OriginalSourceSha, ct);
+                await CheckTargetAsync(op, op.TargetBeforeSha, ct);
                 var rebase = await MutateAsync(op, op.WorktreePath,
                     ["-c", "rebase.autoStash=false", "-c", "rebase.updateRefs=false", "rebase", op.TargetBeforeSha], ct);
                 if (!rebase.Succeeded)
@@ -142,7 +147,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     await RecheckSourceAsync(op, op.OriginalSourceSha, ct);
                     var files = conflicts.Succeeded ? conflicts.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries) : [];
                     op.LastReason = files.Length > 0 ? "rebase_conflict" : "rebase_failed";
-                    await TransitionAsync(op, LandPhase.Refused, ct);
+                    _state.Transition(op, LandPhase.Refused, Now());
                     return new(op, op.LastReason, files);
                 }
                 var prepared = await git.InspectAsync(Coordinates(op), ct);
@@ -151,6 +156,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 op.RebasedSourceSha = prepared.Snapshot!.HeadSha;
                 await PinAsync(op, "prepared", op.RebasedSourceSha, ct);
                 op.PreparedPinned = true;
+                op.PreparedAt = Now();
                 await TransitionAsync(op, LandPhase.Prepared, ct);
             }
             if (op.Phase == LandPhase.Prepared)
@@ -158,6 +164,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 await RecheckSourceAsync(op, op.RebasedSourceSha!, ct);
                 await CheckTargetAsync(op, op.TargetBeforeSha, ct);
                 op.VerificationCommand = "dotnet build; dotnet run --project tests/Antiphon.Tests";
+                op.VerificationStartedAt = Now();
                 await SaveAsync(op, ct);
                 if (op.RebasedSourceSha == op.OriginalSourceSha && string.IsNullOrWhiteSpace(op.VerificationFilter))
                     op.VerificationSkipReason = "base_unchanged";
@@ -194,7 +201,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                         : await MutateAsync(op, checkout, ["-c", "merge.autoStash=false", "merge", "--ff-only", op.VerifiedSourceSha!], ct);
                     Require(advanced.Succeeded, "target_advance_failed");
                 }
-                Require(await CommitAsync(op.RepositoryPath, op.TargetFullRef, ct) == op.VerifiedSourceSha, "target_changed");
+                await CheckTargetAsync(op, op.VerifiedSourceSha!, ct);
                 op.LocalTargetAfterSha = op.VerifiedSourceSha;
                 await TransitionAsync(op, LandPhase.LocalTargetAdvanced, ct);
             }
@@ -213,6 +220,8 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                         op.PushStartedAt = Now();
                         await TransitionAsync(op, LandPhase.PushStarted, ct);
                     }
+                    await RecheckSourceAsync(op, op.VerifiedSourceSha!, ct);
+                    await CheckTargetAsync(op, op.VerifiedSourceSha!, ct);
                     var pushed = await OwnedAsync(op, "push", started =>
                         git.PushOwnedAsync(op.RepositoryPath, Destination(op), op.VerifiedSourceSha!, started, ct), ct);
                     op.PushExitCode = pushed.ExitCode;
@@ -236,9 +245,11 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 else if (op.Phase is LandPhase.Inspected or LandPhase.RecoveryPinned or LandPhase.RebaseStarted or LandPhase.Prepared)
                 {
                     op.Publication = LandPublicationOutcome.Refused;
-                    await TransitionAsync(op, LandPhase.Refused, ct);
+                    _state.Transition(op, LandPhase.Refused, Now());
                 }
-                await SaveAsync(op, ct);
+                // The caller commits terminal evidence, event, stages and pending state together.
+                op.UpdatedAt = Now();
+                op.ConcurrencyToken = Guid.NewGuid();
             }
             return new(op, reason, []);
         }
@@ -260,6 +271,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         op.BranchRemoved = removed.BranchDeleted;
         op.LastReason = removed.Residue;
         op.Cleanup = removed.IsClean ? LandCleanupStatus.Complete : LandCleanupStatus.Refused;
+        op.CleanupCompletedAt = Now();
         // The terminal cleanup evidence is committed with the outcome event and pending-task
         // changes by AgentTaskLandService. Until then the saved cleanup intent supports retry.
         if (removed.IsClean && op.Phase != LandPhase.Complete) _state.Transition(op, LandPhase.Complete, Now());
@@ -277,8 +289,44 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         await TransitionAsync(op, LandPhase.PublicationConfirmed, ct);
     }
 
+    private async Task PersistNewOperationAsync(AgentTask task, AgentTaskLanding operation,
+        AgentTaskLanding? previous, CancellationToken ct)
+    {
+        // The unique active-operation constraint needs the old row updated first. Both saves
+        // and the task pointer change commit together; failed preparation leaves the old row active.
+        await using var transaction = previous is null ? null : await db.Database.BeginTransactionAsync(ct);
+        if (previous is not null)
+        {
+            previous.Active = false;
+            previous.ConcurrencyToken = Guid.NewGuid();
+            await db.SaveChangesAsync(ct);
+        }
+        db.AgentTaskLandings.Add(operation);
+        task.ActiveLandingId = operation.Id;
+        task.ConcurrencyToken = Guid.NewGuid();
+        await db.SaveChangesAsync(ct);
+        if (transaction is not null) await transaction.CommitAsync(ct);
+    }
+
     private async Task RecheckSourceAsync(AgentTaskLanding op, string sha, CancellationToken ct)
     {
+        var currentTask = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == op.TaskId, ct);
+        Require(currentTask is not null && currentTask.ActiveLandingId == op.Id
+            && currentTask.Status == AgentTaskStatus.Succeeded
+            && currentTask.RepoPath is not null && SamePath(currentTask.RepoPath, op.RepositoryPath)
+            && currentTask.WorktreePath is not null && SamePath(currentTask.WorktreePath, op.WorktreePath)
+            && currentTask.WorktreeBranch is not null && FullRef(currentTask.WorktreeBranch) == op.SourceFullRef
+            && FullRef(currentTask.MergeTargetRef ?? "master") == op.TargetFullRef, "task_coordinates_changed");
+        var pins = new List<(string Name, string Sha)>();
+        if (op.SourcePinned) pins.Add(("source", op.OriginalSourceSha));
+        if (op.TargetPinned) pins.Add(("target-before", op.TargetBeforeSha));
+        if (op.PreparedPinned) pins.Add(("prepared", op.RebasedSourceSha!));
+        foreach (var pin in pins)
+        {
+            var read = await git.RunAsync(op.RepositoryPath,
+                ["show-ref", "--verify", "--hash", op.RecoveryRefPrefix + "/" + pin.Name], ct);
+            Require(read.Succeeded && read.Output.Trim() == pin.Sha, "recovery_pin_changed");
+        }
         var inspected = await git.InspectAsync(Coordinates(op), ct);
         Require(inspected.Accepted && Matches(inspected.Snapshot!, op, sha), inspected.Reason ?? "source_changed");
     }
@@ -287,7 +335,10 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     {
         Require(await CommitAsync(op.RepositoryPath, op.TargetFullRef, ct) == expected, "target_changed");
         var checkout = await TargetCheckoutAsync(op, ct);
+        Require(op.TargetCheckoutRecorded && (checkout is null ? op.TargetCheckoutPath is null
+            : op.TargetCheckoutPath is not null && SamePath(checkout, op.TargetCheckoutPath)), "target_checkout_changed");
         if (checkout is null) return;
+        Require(!await git.HasActiveSequencerAsync(checkout, ct), "target_active_sequencer");
         var symbolic = await git.RunAsync(checkout, ["symbolic-ref", "-q", "HEAD"], ct);
         Require(symbolic.Succeeded && symbolic.Output.Trim() == op.TargetFullRef, "target_checkout_changed");
         var status = await git.RunAsync(checkout,
@@ -298,19 +349,11 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
 
     private async Task<string?> TargetCheckoutAsync(AgentTaskLanding op, CancellationToken ct)
     {
-        var list = await git.RunAsync(op.RepositoryPath, ["worktree", "list", "--porcelain", "-z"], ct);
-        Require(list.Succeeded, "target_registration_error");
-        // Parse only NUL fields; never unquote paths through whitespace splitting.
-        var paths = new List<string>();
-        string? path = null;
-        foreach (var field in list.Output.Split('\0'))
-        {
-            if (field.StartsWith("worktree ", StringComparison.Ordinal)) path = field[9..];
-            else if (field == "branch " + op.TargetFullRef) paths.Add(path ?? throw new LandingRefusal("target_registration_error"));
-            else if (field.Length == 0) path = null;
-        }
-        Require(paths.Count <= 1, "ambiguous_target_checkout");
-        return paths.SingleOrDefault();
+        var rows = (await git.RegistrationsAsync(op.RepositoryPath, ct)).Where(r => r.Branch == op.TargetFullRef).ToList();
+        Require(rows.Count <= 1, "ambiguous_target_checkout");
+        if (rows.Count == 0) return null;
+        Require(!rows[0].Locked && !rows[0].Prunable, "target_registration_unavailable");
+        return await git.CanonicalDirectoryAsync(rows[0].Path, ct);
     }
 
     private async Task<LandingRemoteObservation> ObserveAsync(AgentTaskLanding op, string sha, CancellationToken ct)

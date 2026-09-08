@@ -3073,7 +3073,7 @@ public sealed class AgentTaskDispatcher
         // target keeps the eventual rebase-back linear.
         if (claimed.Workspace == WorkspaceMode.Worktree && claimed.WorktreePath is null)
         {
-            await _worktrees.CreateForTaskAsync(claimed, ct);
+            await _worktrees.CreateForTaskAsync(claimed, repositoryLease!, ct);
 
             // The hard version of the orchestrator contract: a PreToolUse hook that refuses
             // Edit/Write with "delegate this instead". Only ever written into the task's OWN

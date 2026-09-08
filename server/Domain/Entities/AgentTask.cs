@@ -480,6 +480,10 @@ public class AgentTaskEvent
     public AgentModelLevel? ModelLevel { get; set; }
     public string Detail { get; set; } = string.Empty;
     public DateTime At { get; set; }
+    public Guid? LandingOperationId { get; set; }
+    public LandPublicationOutcome? LandingPublication { get; set; }
+    public LandCleanupStatus? LandingCleanup { get; set; }
+    public LandOperationMode? LandingMode { get; set; }
 
     public AgentTask AgentTask { get; set; } = null!;
 }

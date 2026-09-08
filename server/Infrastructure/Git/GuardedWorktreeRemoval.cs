@@ -37,6 +37,10 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 var final = await git.InspectAsync(source, ct);
                 if (!Matches(final, request)) return Refuse(final.Reason ?? "source_changed");
                 if (HasProtectedIgnored(final.Snapshot!)) return Refuse("ignored_content_preserved");
+                // The final status/identity read can race a task-coordinate or receipt revision.
+                // Revalidate durable authority immediately before deletion without reusing a tracked row.
+                reason = await AuthorityAsync(request, ct, refreshRemote: false);
+                if (reason is not null) return Refuse(reason);
                 var removed = await git.RunAsync(source.RepositoryPath,
                     ["worktree", "remove", "--", source.WorktreePath], ct);
                 if (!removed.Succeeded) return Refuse("worktree_remove_failed");
@@ -76,13 +80,13 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
             }
             return new(unregistered, directoryGone, branchGone, null);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or TimeoutException)
         {
             return Refuse("cleanup_inspection_error");
         }
     }
 
-    private async Task<string?> AuthorityAsync(WorktreeRemovalRequest request, CancellationToken ct)
+    private async Task<string?> AuthorityAsync(WorktreeRemovalRequest request, CancellationToken ct, bool refreshRemote = true)
     {
         if (request.Purpose is not (WorktreeRemovalPurpose.Publication or WorktreeRemovalPurpose.LocalMerge))
             return "removal_purpose_unsupported";
@@ -94,6 +98,27 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
             || source.SourceFullRef == source.TargetFullRef) return "invalid_removal_identity";
         if (request.Purpose == WorktreeRemovalPurpose.LocalMerge)
         {
+            if (!request.TargetCheckoutRecorded) return "local_target_identity_required";
+            var targets = (await git.RegistrationsAsync(source.RepositoryPath, ct))
+                .Where(r => r.Branch == source.TargetFullRef).ToList();
+            if (targets.Count > 1 || targets.Any(r => r.Locked || r.Prunable)) return "local_target_unavailable";
+            var checkout = targets.Count == 0 ? null : await git.CanonicalDirectoryAsync(targets[0].Path, ct);
+            if (checkout is null ? request.TargetCheckoutPath is not null
+                : request.TargetCheckoutPath is null || !LandingGit.PathsEqual(checkout, request.TargetCheckoutPath))
+                return "local_target_checkout_changed";
+            if (checkout is not null)
+            {
+                if (await git.HasActiveSequencerAsync(checkout, ct)) return "local_target_active_sequencer";
+                var symbolic = await git.RunAsync(checkout, ["symbolic-ref", "-q", "HEAD"], ct);
+                var head = await git.RunAsync(checkout, ["rev-parse", "--verify", "HEAD^{commit}"], ct);
+                var status = await git.RunAsync(checkout, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], ct);
+                if (!symbolic.Succeeded || symbolic.Output.Trim() != source.TargetFullRef || !head.Succeeded
+                    || head.Output.Trim() != request.ExpectedTargetSha || !status.Succeeded || status.Output.Length != 0)
+                    return "local_target_dirty_or_changed";
+            }
+            var targetSymbolic = await git.RunAsync(source.RepositoryPath,
+                ["symbolic-ref", "-q", source.TargetFullRef], ct);
+            if (targetSymbolic.ExitCode != 1) return "local_target_symbolic_or_unresolved";
             var target = await git.RunAsync(source.RepositoryPath,
                 ["rev-parse", "--verify", source.TargetFullRef + "^{commit}"], ct);
             if (!target.Succeeded || target.Output.Trim() != request.ExpectedTargetSha) return "local_target_changed";
@@ -103,9 +128,10 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
         }
         if (request.LandingId is not Guid id) return "publication_receipt_required";
         var op = await evidence.ReadAsync(id, ct);
-        if (op is null || !op.Active || !new AgentTaskLandingState().HasPublication(op)
+        if (op is null || op.Id != id || !op.Active || !new AgentTaskLandingState().HasPublication(op)
             || op.TaskId != source.TaskId || op.SourceFullRef != source.SourceFullRef
-            || op.TargetFullRef != source.TargetFullRef || op.ExpectedDeletionSha != request.ExpectedSourceSha
+            || op.TargetFullRef != source.TargetFullRef || op.TargetBeforeSha != request.ExpectedTargetSha
+            || op.ExpectedDeletionSha != request.ExpectedSourceSha
             || op.VerifiedSourceSha != request.ExpectedSourceSha || op.CleanupStartedAt is null
             || op.Phase is not (LandPhase.CleanupStarted or LandPhase.Complete)
             || !LandingGit.PathsEqual(op.RepositoryPath, source.RepositoryPath)
@@ -120,6 +146,7 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 ["show-ref", "--verify", "--hash", op.RecoveryRefPrefix + "/" + pin.Name], ct);
             if (!resolved.Succeeded || resolved.Output.Trim() != pin.Sha) return "recovery_pin_changed";
         }
+        if (!refreshRemote) return null; // The preceding authority read already refreshed remote proof.
         var observed = await git.ObserveAsync(source.RepositoryPath,
             new(op.RemoteName, op.DestinationFullRef, op.RemoteFingerprint), request.ExpectedSourceSha,
             op.RecoveryRefPrefix + "/cleanup-observed", ct);

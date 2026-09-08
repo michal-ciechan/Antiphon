@@ -21,6 +21,7 @@ namespace Antiphon.Tests.Application;
 /// CARD-0328 S3: first-match-wins residue labels, plus one real-git execute gate.
 /// </summary>
 [Category("Integration")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class WorktreeResidueSweepTests
 {
     private static readonly DateTime Now = new(2026, 9, 4, 12, 0, 0, DateTimeKind.Utc);
@@ -50,15 +51,15 @@ public sealed class WorktreeResidueSweepTests
             "Settling",
             "Unmerged (2 ahead)",
             "Dirty",
-            "Eligible"
+            "Evidence required"
         ]);
-        rows.Select(r => r.Keep).ShouldBe([true, true, true, true, true, false]);
+        rows.Select(r => r.Keep).ShouldBe([true, true, true, true, true, true]);
         rows[1].Detail.ShouldContain("Working");
         rows[3].Detail.ShouldContain("2 commit(s) not on master");
     }
 
     [Test]
-    public void classify_landed_succeeded_ignores_untracked_only()
+    public void classify_landed_succeeded_preserves_untracked_content()
     {
         var facts = Fact(
             "aaaaaaaa",
@@ -66,8 +67,8 @@ public sealed class WorktreeResidueSweepTests
             untracked: true);
 
         var row = WorktreeResidueSweepService.ClassifyOne(facts, Settings, Now);
-        row.Label.ShouldBe(WorktreeResidueLabel.Eligible);
-        row.Keep.ShouldBeFalse();
+        row.Label.ShouldBe(WorktreeResidueLabel.Dirty);
+        row.Keep.ShouldBeTrue();
     }
 
     [Test]
@@ -97,7 +98,7 @@ public sealed class WorktreeResidueSweepTests
 
     [Test]
     [Category("Integration")]
-    public async Task execute_false_touches_nothing_and_execute_true_removes_only_the_eligible_row()
+    public async Task execute_never_treats_legacy_landed_event_as_cleanup_authority()
     {
         using var repo = new ScratchGitRepo("wt-residue");
         await repo.CommitFileAsync("README.md", "base\n");
@@ -135,7 +136,7 @@ public sealed class WorktreeResidueSweepTests
                 NullLogger<WorktreeResidueSweepService>.Instance)
             .RunAsync(CancellationToken.None);
 
-        report.Counts.Eligible.ShouldBe(1);
+        report.Counts.Eligible.ShouldBe(0);
         report.Counts.Unmerged.ShouldBe(1);
         report.Counts.Removed.ShouldBe(0);
         Directory.Exists(eligible.WorktreePath!).ShouldBeTrue();
@@ -150,14 +151,14 @@ public sealed class WorktreeResidueSweepTests
                 NullLogger<WorktreeResidueSweepService>.Instance)
             .RunAsync(CancellationToken.None);
 
-        executed.Counts.Eligible.ShouldBe(1);
+        executed.Counts.Eligible.ShouldBe(0);
         executed.Counts.Unmerged.ShouldBe(1);
-        executed.Removed.ShouldBe(1);
-        Directory.Exists(eligible.WorktreePath!).ShouldBeFalse();
+        executed.Removed.ShouldBe(0);
+        Directory.Exists(eligible.WorktreePath!).ShouldBeTrue();
         Directory.Exists(unmerged.WorktreePath!).ShouldBeTrue();
         (await ScratchGitRepo.GitInAsync(
             repo.Path, "show-ref", "--verify", "--quiet", $"refs/heads/{eligible.WorktreeBranch}"))
-            .Ok.ShouldBeFalse();
+            .Ok.ShouldBeTrue();
         (await ScratchGitRepo.GitInAsync(
             repo.Path, "show-ref", "--verify", "--quiet", $"refs/heads/{unmerged.WorktreeBranch}"))
             .Ok.ShouldBeTrue();

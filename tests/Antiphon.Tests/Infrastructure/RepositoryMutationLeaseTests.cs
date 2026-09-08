@@ -11,6 +11,292 @@ namespace Antiphon.Tests.Infrastructure;
 public sealed class RepositoryMutationLeaseTests
 {
     [Test]
+    public async Task C448_V28_ExitedRootKeepsItsJournalWhileADescendantOwnsOutput()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        if (!OperatingSystem.IsWindows()) throw new TUnit.Core.Exceptions.SkipTestException("Windows inherited-handle boundary");
+        var rootScript = Path.Combine(fixture.Root, "output-root.ps1");
+        var script = Path.Combine(fixture.Root, "output-child.ps1");
+        var ready = Path.Combine(fixture.Root, "output-child.json");
+        await File.WriteAllTextAsync(script, """
+            $ownedProcess = [Diagnostics.Process]::GetCurrentProcess()
+            [IO.File]::WriteAllText($args[0] + '.tmp', (@{ Pid = $ownedProcess.Id; StartTicks = $ownedProcess.StartTime.ToUniversalTime().Ticks } | ConvertTo-Json -Compress))
+            [IO.File]::Move($args[0] + '.tmp', $args[0])
+            Start-Sleep -Seconds 90
+            Write-Output 'fixture child exited'
+            """);
+        await File.WriteAllTextAsync(rootScript, """
+            $ErrorActionPreference = 'Stop'
+            $commandArgs = $args[2..($args.Length - 1)]
+            & git @commandArgs
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Add-Type -TypeDefinition @'
+            using System;
+            using System.Runtime.InteropServices;
+            public static class FixtureHandles {
+                [DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int which);
+                [DllImport("kernel32.dll", SetLastError=true)] public static extern bool SetHandleInformation(IntPtr handle, uint mask, uint flags);
+            }
+            '@
+            if (-not [FixtureHandles]::SetHandleInformation([FixtureHandles]::GetStdHandle(-12), 1, 0)) { throw 'fixture stderr inheritance failed' }
+            $childStart = [Diagnostics.ProcessStartInfo]::new('pwsh')
+            $childStart.UseShellExecute = $false
+            $childStart.CreateNoWindow = $true
+            $childStart.RedirectStandardError = $true
+            foreach ($part in @('-NoProfile', '-File', $args[0], $args[1])) { $childStart.ArgumentList.Add($part) }
+            [void][Diagnostics.Process]::Start($childStart)
+            """);
+        var runner = new OutputHoldingGit(Path.Combine(fixture.Root, "home"), fixture.TaskId, rootScript, script, ready);
+        Process? root = null;
+        Process? child = null;
+        var operation = runner.RunOwnedAsync(fixture.Source,
+            ["commit", "--allow-empty", "-m", "output descendant"],
+            (pid, ticks, _) => { root = Process.GetProcessById(pid); root.StartTime.ToUniversalTime().Ticks.ShouldBe(ticks); return Task.CompletedTask; }, CancellationToken.None);
+        try
+        {
+            using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            while (!File.Exists(ready)) await Task.Delay(50, budget.Token);
+            using var record = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(ready, budget.Token));
+            child = Process.GetProcessById(record.RootElement.GetProperty("Pid").GetInt32());
+            child.StartTime.ToUniversalTime().Ticks.ShouldBe(record.RootElement.GetProperty("StartTicks").GetInt64());
+            root.ShouldNotBeNull();
+            await root.WaitForExitAsync(budget.Token);
+            child.HasExited.ShouldBeFalse();
+            operation.IsCompleted.ShouldBeFalse("the descendant still owns stdout after the Git root exited");
+            var common = await fixture.Git.CommonDirectoryAsync(fixture.Repository, CancellationToken.None);
+            Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children"), "*.json").ShouldNotBeEmpty(
+                "a root exit cannot clear standing ownership while redirected output is still live");
+            await using var admission = await new RepositoryMutationLease(fixture.Git).TryAcquireAsync(fixture.Repository, CancellationToken.None);
+            admission.ShouldBeNull();
+        }
+        finally
+        {
+            if (child is not null) { if (!child.HasExited) child.Kill(true); await child.WaitForExitAsync(); child.Dispose(); }
+            if (root is not null) { if (!root.HasExited) root.Kill(true); await root.WaitForExitAsync(); root.Dispose(); }
+            await operation;
+        }
+        var afterProvider = new RepositoryMutationLease(fixture.Git);
+        await using var after = await afterProvider.TryAcquireAsync(fixture.Repository, CancellationToken.None);
+        after.ShouldNotBeNull("acknowledged root and output completion clears only the owned journal");
+        await fixture.AssertRemoteSourceAsync();
+    }
+
+    private sealed class OutputHoldingGit(string home, Guid taskId, string rootScript, string childScript, string ready)
+        : LandingGitFixture.FixtureGit(home, taskId)
+    {
+        protected override void ConfigureProcess(ProcessStartInfo start)
+        {
+            base.ConfigureProcess(start);
+            // The real command executes Git, then leaves a real descendant with stdout only.
+            // Explicit stderr non-inheritance makes omission of stdout draining load-bearing.
+            start.FileName = "pwsh";
+            foreach (var argument in new[] { "-NoProfile", "-File", rootScript, childScript, ready }) start.ArgumentList.Add(argument);
+        }
+    }
+
+    [Test]
+    [Arguments("malformed")]
+    [Arguments("torn-start")]
+    [Arguments("directory-replaced-by-file")]
+    public async Task C448_C24_UnreadableJournalStateCannotAdmitAWriter(string variant)
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var common = await fixture.Git.CommonDirectoryAsync(fixture.Repository, CancellationToken.None);
+        var directory = Path.Combine(common, "antiphon", "children");
+        Directory.CreateDirectory(directory);
+        if (variant == "directory-replaced-by-file")
+        {
+            Directory.Delete(directory); // Fixture-owned, confirmed empty.
+            await File.WriteAllTextAsync(directory, "unknown bytes");
+        }
+        else await File.WriteAllTextAsync(Path.Combine(directory, variant == "torn-start" ? "child.json.tmp" : "child.json"), "unknown bytes");
+        var leases = new RepositoryMutationLease(fixture.Git);
+        await using var held = await leases.TryAcquireAsync(fixture.Repository, CancellationToken.None);
+        held.ShouldBeNull("unknown or unreadable standing child evidence must hold repository admission");
+        await fixture.AssertRemoteSourceAsync();
+    }
+
+    [Test]
+    public async Task C448_V28_CancellationAwaitsOwnedGitBeforeReleasingExclusion()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var hooks = Path.Combine(fixture.Root, "cancel-hooks");
+        Directory.CreateDirectory(hooks);
+        await File.WriteAllTextAsync(Path.Combine(hooks, "pre-commit"), "#!/bin/sh\nmkdir -p .antiphon\nprintf ready > .antiphon/owned-hook.ready\nsleep 90\n");
+        await fixture.RequiredAsync(fixture.Repository, "config", "core.hooksPath", hooks);
+        await fixture.RequiredAsync(fixture.Repository, "config", "user.name", "Fixture");
+        await fixture.RequiredAsync(fixture.Repository, "config", "user.email", "fixture@example.invalid");
+        var provider = new RepositoryMutationLease(fixture.Git);
+        await using var lease = await provider.TryAcquireAsync(fixture.Repository, CancellationToken.None);
+        lease.ShouldNotBeNull();
+        using var unrelated = StartSleeper();
+        using var cancellation = new CancellationTokenSource();
+        Process? child = null;
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var mutation = new LandingGit().RunOwnedAsync(fixture.Source, ["commit", "--allow-empty", "-m", "owned cancel"],
+            (pid, ticks, _) =>
+            {
+                child = Process.GetProcessById(pid);
+                child.StartTime.ToUniversalTime().Ticks.ShouldBe(ticks);
+                started.SetResult();
+                return Task.CompletedTask;
+            }, cancellation.Token);
+        try
+        {
+            using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            await started.Task.WaitAsync(budget.Token);
+            var marker = Path.Combine(fixture.Source, ".antiphon", "owned-hook.ready");
+            while (!File.Exists(marker))
+            {
+                if (mutation.IsCompleted) await mutation;
+                await Task.Delay(50, budget.Token);
+            }
+            child!.HasExited.ShouldBeFalse();
+            await using (var contender = await provider.TryAcquireAsync(fixture.Source, CancellationToken.None))
+                contender.ShouldBeNull();
+            cancellation.Cancel();
+            await Should.ThrowAsync<OperationCanceledException>(async () => await mutation);
+            child.HasExited.ShouldBeTrue("cancellation must await the exact owned process before returning");
+            unrelated.HasExited.ShouldBeFalse();
+            provider.Owns(lease, lease.CommonDirectory).ShouldBeTrue();
+            Directory.EnumerateFiles(Path.Combine(lease.CommonDirectory, "antiphon", "children")).ShouldBeEmpty();
+            await lease.DisposeAsync();
+            await using var admitted = await provider.TryAcquireAsync(fixture.Source, CancellationToken.None);
+            admitted.ShouldNotBeNull();
+            File.Exists(Path.Combine(lease.CommonDirectory, "antiphon", "landing.lock")).ShouldBeTrue();
+            await fixture.AssertRemoteSourceAsync();
+        }
+        finally
+        {
+            cancellation.Cancel();
+            try { try { await mutation; } catch (OperationCanceledException) { } }
+            finally
+            {
+                child?.Dispose();
+                if (!unrelated.HasExited) unrelated.Kill(true);
+                await unrelated.WaitForExitAsync();
+            }
+        }
+    }
+
+    private static Process StartSleeper()
+    {
+        var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, CreateNoWindow = true };
+        foreach (var arg in new[] { "-NoProfile", "-Command", "Start-Sleep -Seconds 90" }) start.ArgumentList.Add(arg);
+        return Process.Start(start)!;
+    }
+
+    [Test]
+    [Arguments("alive")]
+    [Arguments("reused")]
+    [Arguments("unknown")]
+    [Arguments("exited")]
+    public async Task C448_C24_StandingJournalFencesAdmissionByStartIdentity(string state)
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var provider = new RepositoryMutationLease(fixture.Git);
+        var journal = await RepositoryChildJournal.BeginAsync(fixture.Repository, CancellationToken.None);
+        var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, CreateNoWindow = true };
+        foreach (var arg in new[] { "-NoProfile", "-Command", "Start-Sleep -Seconds 90" }) start.ArgumentList.Add(arg);
+        using var child = Process.Start(start)!;
+        try
+        {
+            if (state != "unknown")
+                await journal.StartedAsync(child.Id, child.StartTime.ToUniversalTime().Ticks + (state == "reused" ? 1 : 0), CancellationToken.None);
+            if (state == "exited") { child.Kill(true); await child.WaitForExitAsync(); }
+            await using var admitted = await provider.TryAcquireAsync(fixture.Source, CancellationToken.None);
+            admitted.ShouldBeNull("unacknowledged root exit or reused PID cannot prove descendant exit");
+            if (state != "exited") child.HasExited.ShouldBeFalse("admission never kills a recorded or reused PID");
+        }
+        finally
+        {
+            if (!child.HasExited) child.Kill(true);
+            await child.WaitForExitAsync();
+            journal.Exited(child);
+        }
+        await using var after = await provider.TryAcquireAsync(fixture.Repository, CancellationToken.None);
+        after.ShouldNotBeNull();
+    }
+
+    [Test]
+    public async Task C448_C24_KilledWorkerLeavesLiveGitChildFenced()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var hooks = Path.Combine(fixture.Root, "hooks");
+        Directory.CreateDirectory(hooks);
+        await File.WriteAllTextAsync(Path.Combine(hooks, "pre-commit"), "#!/bin/sh\nsleep 90\n");
+        await fixture.RequiredAsync(fixture.Repository, "config", "core.hooksPath", hooks);
+        var worker = Path.Combine(fixture.Root, "crash-worker.ps1");
+        await File.WriteAllTextAsync(worker, """
+            $ErrorActionPreference = 'Stop'
+            [Reflection.Assembly]::LoadFrom($args[0]) | Out-Null
+            $git = [Antiphon.Server.Infrastructure.Git.LandingGit]::new()
+            $operation = $git.RunAsync($args[1], [string[]]@('commit', '--allow-empty', '-m', 'owned child'), [Threading.CancellationToken]::None)
+            $operation.GetAwaiter().GetResult() | Out-Null
+            """);
+        var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var arg in new[] { "-NoProfile", "-File", worker, typeof(LandingGit).Assembly.Location, fixture.Source })
+            start.ArgumentList.Add(arg);
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        Process? child = null;
+        using var unrelated = StartSleeper();
+        try
+        {
+            var common = await fixture.Git.CommonDirectoryAsync(fixture.Repository, CancellationToken.None);
+            var directory = Path.Combine(common, "antiphon", "children");
+            RepositoryChildJournal.ChildRecord? record = null;
+            using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            while (record?.ProcessId is null && !process.HasExited)
+            {
+                budget.Token.ThrowIfCancellationRequested();
+                if (Directory.Exists(directory))
+                {
+                    var path = Directory.EnumerateFiles(directory, "*.json").SingleOrDefault();
+                    if (path is not null) record = System.Text.Json.JsonSerializer.Deserialize<RepositoryChildJournal.ChildRecord>(await File.ReadAllTextAsync(path));
+                }
+                if (record?.ProcessId is null) await Task.Delay(50, budget.Token);
+            }
+            record.ShouldNotBeNull(process.HasExited ? await error : "child start must be acknowledged");
+            record.ProcessId.ShouldNotBeNull();
+            child = Process.GetProcessById(record.ProcessId.Value);
+            child.StartTime.ToUniversalTime().Ticks.ShouldBe(record.StartTicks!.Value);
+            process.Kill(entireProcessTree: false); // Actual OS worker death, not an in-process exception.
+            await process.WaitForExitAsync();
+            child.HasExited.ShouldBeFalse();
+            var provider = new RepositoryMutationLease(fixture.Git);
+            await using (var sourceAdmission = await provider.TryAcquireAsync(fixture.Source, CancellationToken.None))
+                sourceAdmission.ShouldBeNull();
+            await using (var mainAdmission = await provider.TryAcquireAsync(fixture.Repository, CancellationToken.None))
+                mainAdmission.ShouldBeNull();
+            child.HasExited.ShouldBeFalse();
+            unrelated.HasExited.ShouldBeFalse("worker recovery must not terminate an unrelated fixture process");
+            child.Kill(true);
+            await child.WaitForExitAsync();
+            await using var after = await provider.TryAcquireAsync(fixture.Repository, CancellationToken.None);
+            after.ShouldBeNull("worker death left no acknowledged child/tree completion; recovery must remain visibly held");
+            unrelated.HasExited.ShouldBeFalse();
+            await fixture.AssertRemoteSourceAsync();
+        }
+        finally
+        {
+            if (child is not null) { if (!child.HasExited) child.Kill(true); await child.WaitForExitAsync(); child.Dispose(); }
+            if (!process.HasExited) process.Kill(true);
+            await process.WaitForExitAsync();
+            await Task.WhenAll(output, error);
+            if (!unrelated.HasExited) unrelated.Kill(true);
+            await unrelated.WaitForExitAsync();
+        }
+    }
+
+    [Test]
     public async Task C448_V13_WindowsJunctionAndOtherProcessShareTheLease()
     {
         if (!OperatingSystem.IsWindows()) throw new TUnit.Core.Exceptions.SkipTestException("Requires Windows junctions");

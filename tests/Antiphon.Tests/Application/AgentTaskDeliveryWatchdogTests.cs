@@ -2864,20 +2864,14 @@ public class AgentTaskDeliveryWatchdogTests
     private static (DelegationWorktreeService Service, WorktreeManager Manager) CreateWorktreeService(
         ScratchGitRepo repo)
     {
-        var manager = new WorktreeManager(
-            Options.Create(new GitSettings
-            {
-                WorktreeBasePath = repo.WorktreeRoot,
-                WorktreeStaleAfterDays = 7,
-                WorktreeJanitorIntervalHours = 24,
-            }),
-            TimeProvider.System,
-            NullLogger<WorktreeManager>.Instance);
-        var service = new DelegationWorktreeService(
-            manager,
-            new GitService(NullLogger<GitService>.Instance),
-            NullLogger<DelegationWorktreeService>.Instance,
-            new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance));
+        var graph = DelegationTestServices.CreateGitGraph(new GitSettings
+        {
+            WorktreeBasePath = repo.WorktreeRoot,
+            WorktreeStaleAfterDays = 7,
+            WorktreeJanitorIntervalHours = 24,
+        });
+        var manager = graph.Manager;
+        var service = graph.Worktrees;
         return (service, manager);
     }
 

@@ -83,7 +83,9 @@ public sealed class LandSourceIdentityTests
     [Arguments("bin-land/keep.txt")]
     [Arguments("MERGE_HEAD")]
     [Arguments("CHERRY_PICK_HEAD")]
+    [Arguments("REVERT_HEAD")]
     [Arguments("rebase-merge")]
+    [Arguments("rebase-apply")]
     [Arguments("sequencer")]
     public async Task C448_V04_ProtectedContentsArePreserved(string variant)
     {
@@ -91,7 +93,7 @@ public sealed class LandSourceIdentityTests
         await fixture.InitializeAsync();
         var initial = await fixture.Git.InspectAsync(fixture.Coordinates, CancellationToken.None);
         initial.Accepted.ShouldBeTrue(initial.Reason);
-        var isState = variant is "MERGE_HEAD" or "CHERRY_PICK_HEAD" or "rebase-merge" or "sequencer";
+        var isState = variant is "MERGE_HEAD" or "CHERRY_PICK_HEAD" or "REVERT_HEAD" or "rebase-merge" or "rebase-apply" or "sequencer";
         var ignored = variant.Contains('/');
         var file = isState ? Path.Combine(initial.Snapshot!.GitDirectory, variant)
             : Path.Combine(fixture.Source, variant is "staged" or "unstaged" ? "keep.txt" : variant);

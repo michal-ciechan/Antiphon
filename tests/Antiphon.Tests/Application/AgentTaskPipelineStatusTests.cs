@@ -25,6 +25,58 @@ namespace Antiphon.Tests.Application;
 public class AgentTaskPipelineStatusTests
 {
     [Test]
+    [Arguments(LandPublicationOutcome.Landed, false)]
+    [Arguments(LandPublicationOutcome.Landed, true)]
+    [Arguments(LandPublicationOutcome.AlreadyPresent, false)]
+    [Arguments(LandPublicationOutcome.AlreadyPresent, true)]
+    [Arguments(LandPublicationOutcome.Unconfirmed, false)]
+    [Arguments(LandPublicationOutcome.Unconfirmed, true)]
+    public async Task C448_V33_PipelineUsesLandingEvidence(LandPublicationOutcome publication, bool pending)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var card = await SeedCardAsync(db, CardStatus.InProgress, "CARD-0448");
+        var source = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Plan, AgentTaskStatus.Succeeded,
+            title: "landing evidence", cardId: card.Id, workspace: WorkspaceMode.Worktree, repoPath: workspace.Path,
+            worktreeBranch: "source", landRequestedAt: pending ? DateTime.UtcNow : null, completedAt: DateTime.UtcNow.AddMinutes(-3));
+        var waiting = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Code, AgentTaskStatus.Queued,
+            title: "waiting code", cardId: card.Id, workspace: WorkspaceMode.Worktree, repoPath: workspace.Path);
+        var op = new AgentTaskLanding { Id = Guid.NewGuid(), TaskId = source.Id, Publication = publication,
+            Phase = publication == LandPublicationOutcome.Unconfirmed ? LandPhase.PushStarted : LandPhase.CleanupStarted,
+            Mode = publication == LandPublicationOutcome.Unconfirmed ? LandOperationMode.ResumePublication : LandOperationMode.CleanupRetry,
+            Cleanup = LandCleanupStatus.Refused, OriginalSourceSha = new string('a', 40), VerifiedSourceSha = new string('a', 40),
+            TargetBeforeSha = new string('a', 40), TargetFullRef = "refs/heads/master", DestinationFullRef = "refs/heads/master",
+            SourceFullRef = "refs/heads/source", RepositoryPath = workspace.Path, CommonDirectory = workspace.Path,
+            WorktreePath = workspace.Path, GitDirectory = workspace.Path, SourcePinned = true, TargetPinned = true,
+            VerificationSkipReason = "exact_remote_containment", VerifiedAt = DateTime.UtcNow,
+            RemoteFingerprint = new string('a', 64), CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        op.RecoveryRefPrefix = $"refs/antiphon/land/{source.Id:N}/{op.Id:N}";
+        if (publication != LandPublicationOutcome.Unconfirmed)
+        {
+            op.RemoteConfirmedAt = DateTime.UtcNow;
+            op.ObservedRemoteTargetSha = op.VerifiedSourceSha;
+            op.ConfirmationMethod = "push-endpoint-read-fetch-ancestry";
+        }
+        db.AgentTaskLandings.Add(op);
+        await db.SaveChangesAsync();
+        source.ActiveLandingId = op.Id;
+        db.AgentTaskEvents.Add(new AgentTaskEvent { Id = Guid.NewGuid(), AgentTaskId = source.Id,
+            Type = pending ? AgentTaskEventType.Landed : AgentTaskEventType.LandRequested,
+            Detail = pending ? "landed pushed cleanup complete" : "landing still running", At = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        new AgentTaskLandingState().HasPublication(op).ShouldBe(publication != LandPublicationOutcome.Unconfirmed);
+        var row = (await CreateService(db).GetAsync(CancellationToken.None)).Stages.Single(s => s.Role == AgentTaskRole.Code)
+            .Queued.Single(t => t.TaskId == waiting.Id);
+        row.QueueReason.ShouldBe(pending ? AgentTaskPipelineStatusService.QueueReasonSiblingLandInFlight
+            : AgentTaskPipelineStatusService.QueueReasonAwaitingDispatch);
+        row.HeldBy.Count.ShouldBe(pending ? 1 : 0);
+        LandingEvidenceDto.From(op).Publication.ShouldBe(publication);
+        LandingEvidenceDto.From(op).Cleanup.ShouldBe(LandCleanupStatus.Refused);
+        card.Status.ShouldBe(CardStatus.InProgress);
+    }
+
+    [Test]
     public async Task empty_fleet_returns_every_visible_stage_and_omits_check()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();

@@ -71,9 +71,11 @@ public sealed class AgentTaskLandingPersistenceTests
         var options = TestDbFixture.CreateDbContextOptions(connection);
         await using var db = new AppDbContext(options);
         var migrations = db.Database.GetMigrations().ToArray();
-        migrations[^1].ShouldEndWith("_AddAgentTaskLandingEvidence");
-        await db.GetService<IMigrator>().MigrateAsync(migrations[^2]);
-        (await db.Database.GetAppliedMigrationsAsync()).ShouldNotContain(migrations[^1]);
+        var landingIndex = Array.FindIndex(migrations, m => m.EndsWith("_AddAgentTaskLandingEvidence", StringComparison.Ordinal));
+        landingIndex.ShouldBeGreaterThan(0);
+        migrations[^1].ShouldEndWith("_AddLandingTargetAndStageTiming");
+        await db.GetService<IMigrator>().MigrateAsync(migrations[landingIndex - 1]);
+        (await db.Database.GetAppliedMigrationsAsync()).ShouldNotContain(migrations[landingIndex]);
         var intact = Guid.NewGuid();
         var missing = Guid.NewGuid();
         foreach (var id in new[] { intact, missing })
@@ -99,5 +101,7 @@ public sealed class AgentTaskLandingPersistenceTests
         (await observer.AgentTaskLandings.CountAsync()).ShouldBe(0);
         (await observer.AgentTaskEvents.CountAsync(e => (e.AgentTaskId == intact || e.AgentTaskId == missing)
             && e.Type == AgentTaskEventType.Landed)).ShouldBe(2);
+        (await observer.AgentTaskEvents.Where(e => e.AgentTaskId == intact || e.AgentTaskId == missing)
+            .Select(e => e.LandingOperationId).ToListAsync()).ShouldAllBe(value => value == null);
     }
 }

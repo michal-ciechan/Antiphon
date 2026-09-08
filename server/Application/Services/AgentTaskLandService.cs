@@ -164,37 +164,42 @@ public sealed class AgentTaskLandService
         var result = await _protocol.RunAsync(task, lease, ct);
         if (result.Conflicts.Count > 0)
         {
+            await using var transaction = await _db.Database.BeginTransactionAsync(ct);
             task.Status = AgentTaskStatus.Blocked;
             task.FailureReason = "Landing rebase conflicted.";
             var helper = await _tasks.CreateMergeTaskAsync(task, result.Conflicts, ct, task.MergeTargetRef ?? "master");
-            Record(task, OrchestrationStage.Rebase, StageOutcomeKind.Found, 0,
+            Record(task, OrchestrationStage.Rebase, StageOutcomeKind.Found, DurationSeconds(result.Operation, OrchestrationStage.Rebase),
                 string.Join(", ", result.Conflicts), helper is null ? "merge task cap reached" : DelegationReportFormatter.Short(helper.Id));
-            _db.AgentTaskEvents.Add(Event(task.Id, AgentTaskEventType.Conflicted,
-                string.Join(", ", result.Conflicts), _clock.GetUtcNow().UtcDateTime));
+            var conflictEvent = Event(task.Id, AgentTaskEventType.Conflicted,
+                string.Join(", ", result.Conflicts), _clock.GetUtcNow().UtcDateTime);
+            SetLandingEvidence(conflictEvent, result.Operation);
+            _db.AgentTaskEvents.Add(conflictEvent);
             await _db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
             return LandRunResult.Complete;
         }
         var op = result.Operation;
         if (!result.Published)
         {
             if (op?.RebasedSourceSha is not null && op.Mode != LandOperationMode.CleanupRetry)
-                Record(task, OrchestrationStage.Rebase, StageOutcomeKind.Clean, 0);
+                Record(task, OrchestrationStage.Rebase, StageOutcomeKind.Clean, DurationSeconds(op, OrchestrationStage.Rebase));
             if (result.Reason == "verification_failed")
-                Record(task, OrchestrationStage.Verify, StageOutcomeKind.Found, 0, "build failed or selected tests failed", task.WorktreePath);
+                Record(task, OrchestrationStage.Verify, StageOutcomeKind.Found, DurationSeconds(op, OrchestrationStage.Verify), "build failed or selected tests failed", task.WorktreePath);
             if (op?.VerifiedAt is not null)
                 Record(task, OrchestrationStage.Verify, op.VerificationPassed ? StageOutcomeKind.Clean : StageOutcomeKind.Skipped,
-                    0, op.VerificationSkipReason ?? "verification passed");
+                    DurationSeconds(op, OrchestrationStage.Verify), op.VerificationSkipReason ?? "verification passed");
             await RefuseAsync(task, result.Reason ?? "publication_unconfirmed", ct);
             return LandRunResult.Complete;
         }
         if (op!.Mode != LandOperationMode.CleanupRetry)
         {
-            Record(task, OrchestrationStage.Rebase, op.RebasedSourceSha is null ? StageOutcomeKind.Skipped : StageOutcomeKind.Clean, 0);
+            Record(task, OrchestrationStage.Rebase, op.RebasedSourceSha is null ? StageOutcomeKind.Skipped : StageOutcomeKind.Clean, DurationSeconds(op, OrchestrationStage.Rebase));
             Record(task, OrchestrationStage.Verify, op.VerificationPassed ? StageOutcomeKind.Clean : StageOutcomeKind.Skipped,
-                0, op.VerificationSkipReason ?? "build OK; selected verification passed");
+                DurationSeconds(op, OrchestrationStage.Verify), op.VerificationSkipReason ?? "build OK; selected verification passed");
         }
         Record(task, OrchestrationStage.Cleanup,
-            op.Cleanup == LandCleanupStatus.Complete ? StageOutcomeKind.Clean : StageOutcomeKind.Failed, 0, result.Reason ?? "cleanup complete");
+            op.Cleanup == LandCleanupStatus.Complete ? StageOutcomeKind.Clean : StageOutcomeKind.Failed,
+            DurationSeconds(op, OrchestrationStage.Cleanup), result.Reason ?? "cleanup complete");
         var type = op.Publication == LandPublicationOutcome.AlreadyPresent ? AgentTaskEventType.AlreadyPresent
             : op.Cleanup == LandCleanupStatus.Complete ? AgentTaskEventType.Landed : AgentTaskEventType.LandedWithResidue;
         var (marker, warnings) = await CollectUnlandedSiblingsAsync(task, op.RepositoryPath, ct, op.VerifiedSourceSha);
@@ -250,7 +255,17 @@ public sealed class AgentTaskLandService
         var now = _clock.GetUtcNow().UtcDateTime;
         foreach (var warning in warnings)
             _db.AgentTaskEvents.Add(Event(task.Id, AgentTaskEventType.Warning, warning, now));
-        _db.AgentTaskEvents.Add(Event(task.Id, type, outcome, now));
+        var op = task.ActiveLandingId is Guid id ? await _db.AgentTaskLandings.SingleAsync(o => o.Id == id, ct) : null;
+        if (op is not null)
+        {
+            var alreadyReported = await _db.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == task.Id
+                && e.LandingOperationId == op.Id && (e.Type == AgentTaskEventType.Landed
+                    || e.Type == AgentTaskEventType.LandedWithResidue || e.Type == AgentTaskEventType.AlreadyPresent), ct);
+            if (alreadyReported) type = AgentTaskEventType.LandingCleanup;
+        }
+        var terminal = Event(task.Id, type, outcome, now);
+        SetLandingEvidence(terminal, op);
+        _db.AgentTaskEvents.Add(terminal);
         ClearPending(task);
         await _db.SaveChangesAsync(ct);
         await DeliverAsync(task, outcome, ct);
@@ -400,7 +415,10 @@ public sealed class AgentTaskLandService
     private async Task PersistRefusalAsync(AgentTask task, string line, string warningDetail, CancellationToken ct)
     {
         var now = _clock.GetUtcNow().UtcDateTime;
-        _db.AgentTaskEvents.Add(Event(task.Id, AgentTaskEventType.LandRefused, line, now));
+        var terminal = Event(task.Id, AgentTaskEventType.LandRefused, line, now);
+        var op = task.ActiveLandingId is Guid id ? await _db.AgentTaskLandings.SingleAsync(o => o.Id == id, ct) : null;
+        SetLandingEvidence(terminal, op);
+        _db.AgentTaskEvents.Add(terminal);
         _db.AgentTaskEvents.Add(Event(task.Id, AgentTaskEventType.Warning,
             $"Landing not confirmed; no cleanup authorized by this result. {warningDetail}",
             now));
@@ -416,6 +434,27 @@ public sealed class AgentTaskLandService
         task.LandVerifyFilter = null;
         task.LandStartedAt = null;
         task.ConcurrencyToken = Guid.NewGuid();
+    }
+
+    private static void SetLandingEvidence(AgentTaskEvent terminal, AgentTaskLanding? op)
+    {
+        terminal.LandingOperationId = op?.Id;
+        terminal.LandingPublication = op?.Publication;
+        terminal.LandingCleanup = op?.Cleanup;
+        terminal.LandingMode = op?.Mode;
+    }
+
+    internal static int DurationSeconds(AgentTaskLanding? op, OrchestrationStage stage)
+    {
+        if (op is null) return 0;
+        var (start, end) = stage switch
+        {
+            OrchestrationStage.Rebase => (op.RebaseStartedAt, op.PreparedAt ?? op.UpdatedAt),
+            OrchestrationStage.Verify => (op.VerificationStartedAt, op.VerifiedAt ?? op.UpdatedAt),
+            OrchestrationStage.Cleanup => (op.CleanupStartedAt, op.CleanupCompletedAt ?? op.UpdatedAt),
+            _ => ((DateTime?)null, op.UpdatedAt),
+        };
+        return start is null ? 0 : (int)Math.Clamp((end - start.Value).TotalSeconds, 0, int.MaxValue);
     }
 
     private static string? ClipFilter(string? verifyFilter)
@@ -442,15 +481,19 @@ public sealed class AgentTaskLandService
     }
 
     internal static async Task<LandVerification> VerifyAsync(string worktree, string? filter, CancellationToken ct)
+        => await VerifyWithObserverAsync(worktree, filter, null, ct);
+
+    internal static async Task<LandVerification> VerifyWithObserverAsync(string worktree, string? filter,
+        ILandingChildObserver? observer, CancellationToken ct)
     {
         // SDK artifacts isolate both bin and obj by project, outside the source checkout.
         // Unique owned outputs are retained; never recursively erase pre-existing bin-* paths.
         var output = Path.Combine(Path.GetTempPath(), "antiphon-land-verify-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(output);
-        var build = await RunProcessAsync(worktree, ct, "dotnet", "build", "--artifacts-path", output);
+        var build = await RunProcessAsync(worktree, observer, ct, "dotnet", "build", "--artifacts-path", output);
         if (!build.Ok) return LandVerification.Failure("build", Tail(build));
         if (string.IsNullOrWhiteSpace(filter)) return LandVerification.Success("build OK");
-        var tests = await RunProcessAsync(worktree, ct, "dotnet", "run", "--project", "tests/Antiphon.Tests",
+        var tests = await RunProcessAsync(worktree, observer, ct, "dotnet", "run", "--project", "tests/Antiphon.Tests",
             "--artifacts-path", output, "--", "--treenode-filter", filter, "--report-trx",
             "--report-trx-filename", "landing-verification.trx");
         if (!tests.Ok) return LandVerification.Failure("tests", Tail(tests));
@@ -465,21 +508,30 @@ public sealed class AgentTaskLandService
         return LandVerification.Success($"build OK, tests {executed}/{executed}");
     }
 
-    private static async Task<ProcessResult> RunProcessAsync(string cwd, CancellationToken ct, string file, params string[] args)
+    private static async Task<ProcessResult> RunProcessAsync(string cwd, ILandingChildObserver? observer, CancellationToken ct, string file, params string[] args)
     {
         var start = new ProcessStartInfo { FileName = file, WorkingDirectory = cwd, UseShellExecute = false,
             CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var arg in args) start.ArgumentList.Add(arg);
+        if (observer is not null) await observer.BeforeStartAsync(ct);
         using var process = Process.Start(start) ?? throw new InvalidOperationException($"Could not start {file}.");
-        var stdout = process.StandardOutput.ReadToEndAsync(ct);
-        var stderr = process.StandardError.ReadToEndAsync(ct);
-        try { await process.WaitForExitAsync(ct); }
-        catch (OperationCanceledException)
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        try
+        {
+            if (observer is not null) await observer.StartedAsync(process.Id, process.StartTime.ToUniversalTime().Ticks, ct);
+            await process.WaitForExitAsync(ct);
+        }
+        catch
         {
             if (!process.HasExited) process.Kill(entireProcessTree: true);
             await process.WaitForExitAsync(CancellationToken.None);
+            await Task.WhenAll(stdout, stderr);
+            if (observer is not null) await observer.ExitedAsync(CancellationToken.None);
             throw;
         }
+        await Task.WhenAll(stdout, stderr);
+        if (observer is not null) await observer.ExitedAsync(CancellationToken.None);
         return new ProcessResult(process.ExitCode == 0, await stdout, await stderr);
     }
 

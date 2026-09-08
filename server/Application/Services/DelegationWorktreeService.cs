@@ -147,8 +147,20 @@ public sealed class DelegationWorktreeService
     /// <summary>Create or reuse the task's managed checkout; never infer publication here.</summary>
     public async Task CreateForTaskAsync(AgentTask task, CancellationToken ct)
     {
+        if (_leases is null || task.RepoPath is null)
+            throw new ConflictException("repository_lease_required");
+        await using var lease = await _leases.TryAcquireAsync(task.RepoPath, ct);
+        if (lease is null) throw new ConflictException("repository_busy");
+        await CreateForTaskAsync(task, lease, ct);
+    }
+
+    public async Task CreateForTaskAsync(AgentTask task, RepositoryLease lease, CancellationToken ct)
+    {
         if (task.RepoPath is not { } repoPath)
             throw new ValidationException(nameof(task.RepoPath), "A worktree task needs a git repository.");
+        if (_leases is null || _landingGit is null
+            || !_leases.Owns(lease, await _landingGit.CommonDirectoryAsync(repoPath, ct)))
+            throw new ConflictException("repository_lease_required");
 
         var identifier = $"task-{DelegationReportFormatter.Short(task.Id)}";
         var baseRef = task.MergeTargetRef ?? "HEAD";
@@ -156,7 +168,7 @@ public sealed class DelegationWorktreeService
         Dtos.WorktreeInfo info;
         try
         {
-            info = await _worktrees.CreateAsync(repoPath, identifier, baseRef, ct);
+            info = await _worktrees.CreateAsync(repoPath, identifier, baseRef, lease, ct);
         }
         catch (ConflictException ex)
         {
@@ -256,7 +268,7 @@ public sealed class DelegationWorktreeService
     /// the parent's branch — a settings file escaping its sandbox is exactly the failure the
     /// worktree placement exists to prevent.
     /// </summary>
-    private static async Task EnsureGitExcludeAsync(string worktree, string relativePath, CancellationToken ct)
+    private async Task EnsureGitExcludeAsync(string worktree, string relativePath, CancellationToken ct)
     {
         var common = await GitAsync(worktree, ct, "rev-parse", "--git-common-dir");
         if (!common.Ok)
@@ -298,6 +310,17 @@ public sealed class DelegationWorktreeService
         var symbolic = await _landingGit.RunAsync(worktree, ["symbolic-ref", "-q", "HEAD"], ct);
         if (!symbolic.Succeeded || symbolic.Output.Trim() != "refs/heads/" + branch)
             return new MergeOutcome(MergeResult.Failed, [], "source_branch_mismatch");
+        var targetRef = task.MergeTargetRef is { } requested
+            ? (requested.StartsWith("refs/heads/", StringComparison.Ordinal) ? requested : "refs/heads/" + requested) : null;
+        string? targetBefore = null;
+        string? targetCheckoutBefore = null;
+        if (targetRef is not null)
+        {
+            targetBefore = await ReadCleanTargetAsync(repo, targetRef, ct);
+            if (targetBefore is null || targetRef == "refs/heads/" + branch)
+                return new MergeOutcome(MergeResult.Failed, [], "target_dirty_or_unknown");
+            targetCheckoutBefore = await FindCheckoutOfBranchAsync(repo, targetRef[11..], ct);
+        }
 
         try
         {
@@ -316,17 +339,22 @@ public sealed class DelegationWorktreeService
 
         // Nothing on the branch beyond the target means the delegate changed nothing (a read-only
         // investigation, or work it decided against). Don't leave an empty branch around.
-        var ahead = await GitAsync(worktree, ct, "rev-list", "--count", $"{target}..HEAD");
+        var source = await _landingGit.InspectAsync(new(task.Id, repo, worktree, "refs/heads/" + branch, targetRef!), ct);
+        if (!source.Accepted) return new MergeOutcome(MergeResult.Failed, [], source.Reason);
+        var ahead = await GitAsync(worktree, ct, "rev-list", "--count", $"{targetBefore}..{source.Snapshot!.HeadSha}");
         if (ahead.Ok && ahead.StdOut.Trim() == "0")
         {
-            var cleanup = await RemoveLocalAsync(task, target, lease, ct);
+            var cleanup = await RemoveLocalAsync(task, target, targetBefore!, targetCheckoutBefore, lease, ct);
             return new MergeOutcome(MergeResult.NothingToMerge, [], cleanup.IsClean
                 ? "No changes beyond target; cleanup complete." : $"No changes beyond target; cleanup retained: {cleanup.Residue}");
         }
 
         // Rebase, never merge commits (repo convention). A conflict aborts cleanly: the worktree is
         // left exactly as the delegate finished it, which is what the Merge task needs to see.
-        var rebase = await GitAsync(worktree, ct, "-c", "rebase.autoStash=false", "-c", "rebase.updateRefs=false", "rebase", target);
+        if (await ReadCleanTargetAsync(repo, targetRef!, ct) != targetBefore
+            || await FindCheckoutOfBranchAsync(repo, targetRef![11..], ct) != targetCheckoutBefore)
+            return new MergeOutcome(MergeResult.Failed, [], "target_changed");
+        var rebase = await GitAsync(worktree, ct, "-c", "rebase.autoStash=false", "-c", "rebase.updateRefs=false", "rebase", targetBefore!);
         if (!rebase.Ok)
         {
             var conflicts = await GitAsync(worktree, ct, "diff", "--name-only", "--diff-filter=U");
@@ -341,11 +369,14 @@ public sealed class DelegationWorktreeService
             return new MergeOutcome(MergeResult.Failed, [], $"Rebase onto {target} failed: {rebase.StdErr.Trim()}");
         }
 
-        var advanced = await AdvanceTargetAsync(repo, branch, target, ct);
+        var prepared = await _landingGit.InspectAsync(source.Snapshot!.Coordinates, ct);
+        if (!prepared.Accepted || prepared.Snapshot!.GitDirectory != source.Snapshot.GitDirectory)
+            return new MergeOutcome(MergeResult.Failed, [], "source_changed");
+        var advanced = await AdvanceTargetAsync(repo, prepared.Snapshot!.HeadSha, targetRef!, targetBefore!, targetCheckoutBefore, ct);
         if (advanced is { } failure)
             return new MergeOutcome(MergeResult.Failed, [], failure);
 
-        var removal = await RemoveLocalAsync(task, target, lease, ct);
+        var removal = await RemoveLocalAsync(task, target, prepared.Snapshot.HeadSha, targetCheckoutBefore, lease, ct);
         var detail = $"{branch} → {target}";
         if (!removal.IsClean && removal.Residue is not null)
             detail += $"; cleanup incomplete: {removal.Residue}";
@@ -353,34 +384,48 @@ public sealed class DelegationWorktreeService
     }
 
     /// <summary>
-    /// Fast-forward the target ref to the rebased branch. `git fetch . branch:target` is the
-    /// primitive — it refuses anything but a fast-forward and needs no checkout. When the target IS
-    /// checked out somewhere (the parent's own worktree, or the main repo), that refusal is
-    /// expected: fall back to `merge --ff-only` inside that checkout, which also updates its
-    /// working tree — the parent sees the child's work appear, which is the point of merging into
-    /// the parent's branch. Returns null on success, or the failure detail.
+    /// Fast-forward the captured target using expected-old-SHA CAS, or merge --ff-only in
+    /// the same clean checkout captured before preparation. Returns null only after rechecking it.
     /// </summary>
     private async Task<string?> AdvanceTargetAsync(
-        string repo, string branch, string target, CancellationToken ct)
+        string repo, string sourceSha, string target, string expected, string? expectedCheckout, CancellationToken ct)
     {
-        var fetch = await GitAsync(repo, ct, "fetch", ".", $"{branch}:{target}");
-        if (fetch.Ok)
-            return null;
+        if (await ReadCleanTargetAsync(repo, target, ct) != expected) return "target_changed";
+        if (!(await GitAsync(repo, ct, "merge-base", "--is-ancestor", expected, sourceSha)).Ok)
+            return "target_not_fast_forward";
+        var checkout = await FindCheckoutOfBranchAsync(repo, target[11..], ct);
+        if (checkout != expectedCheckout) return "target_checkout_changed";
+        var advance = checkout is null
+            ? await GitAsync(repo, ct, "update-ref", "--no-deref", target, sourceSha, expected)
+            : await GitAsync(checkout, ct, "-c", "merge.autoStash=false", "merge", "--ff-only", sourceSha);
+        return advance.Ok && await ReadCleanTargetAsync(repo, target, ct) == sourceSha ? null : "target_advance_unconfirmed";
+    }
 
-        var checkout = await FindCheckoutOfBranchAsync(repo, target, ct);
-        if (checkout is null)
-            return $"Could not fast-forward {target} to {branch}: {fetch.StdErr.Trim()}";
-
-        var merge = await GitAsync(checkout, ct, "merge", "--ff-only", branch);
-        return merge.Ok
-            ? null
-            : $"Could not fast-forward {target} (checked out at {checkout}): {merge.StdErr.Trim()}";
+    private async Task<string?> ReadCleanTargetAsync(string repo, string fullRef, CancellationToken ct)
+    {
+        if (!(await GitAsync(repo, ct, "check-ref-format", fullRef)).Ok) return null;
+        if (_landingGit is null || (await _landingGit.RunAsync(repo, ["symbolic-ref", "-q", fullRef], ct)).ExitCode != 1) return null;
+        var sha = await GitAsync(repo, ct, "rev-parse", "--verify", fullRef + "^{commit}");
+        if (!sha.Ok) return null;
+        var rows = (await _landingGit.RegistrationsAsync(repo, ct)).Where(r => r.Branch == fullRef).ToList();
+        if (rows.Count > 1 || rows.Any(r => r.Locked || r.Prunable)) return null;
+        foreach (var row in rows)
+        {
+            var path = await _landingGit.CanonicalDirectoryAsync(row.Path, ct);
+            if (await _landingGit.HasActiveSequencerAsync(path, ct)) return null;
+            var symbolic = await GitAsync(path, ct, "symbolic-ref", "-q", "HEAD");
+            var status = await GitAsync(path, ct, "status", "--porcelain", "-z", "--untracked-files=all", "--ignore-submodules=none");
+            var head = await GitAsync(path, ct, "rev-parse", "HEAD");
+            if (!symbolic.Ok || symbolic.StdOut.Trim() != fullRef || !status.Ok || status.StdOut.Length != 0
+                || !head.Ok || head.StdOut.Trim() != sha.StdOut.Trim()) return null;
+        }
+        return sha.StdOut.Trim();
     }
 
     /// <summary>
     /// True when <paramref name="worktree"/> still exists as this repo's registered worktree and
     /// git will actually run there. A missing directory, a missing .git, a prune leftover, or a
-    /// stale gitdir (the Windows "fatal: not a git repository" shape) are all "already cleaned up".
+    /// stale gitdir is unknown source identity and cannot establish cleanup or merge success.
     /// </summary>
     private async Task<bool> IsRegisteredWorktreeAsync(string repo, string worktree, CancellationToken ct)
     {
@@ -400,66 +445,51 @@ public sealed class DelegationWorktreeService
 
     private async Task<bool> IsListedAsWorktreeAsync(string repo, string worktree, CancellationToken ct)
     {
-        var list = await GitAsync(repo, ct, "worktree", "list", "--porcelain");
-        if (!list.Ok)
-            return false;
-
-        var wanted = NormalizePath(worktree);
-        var comparison = OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-
-        foreach (var raw in list.StdOut.Split(['\r', '\n'], StringSplitOptions.None))
+        if (_landingGit is null) return false;
+        var wanted = await _landingGit.CanonicalDirectoryAsync(worktree, ct);
+        var rows = await _landingGit.RegistrationsAsync(repo, ct);
+        var matching = new List<LandingRegistration>();
+        foreach (var row in rows)
         {
-            var line = raw.TrimEnd();
-            if (!line.StartsWith("worktree ", StringComparison.Ordinal))
-                continue;
-            if (NormalizePath(line["worktree ".Length..]).Equals(wanted, comparison))
-                return true;
+            if (!Directory.Exists(row.Path)) continue;
+            var path = await _landingGit.CanonicalDirectoryAsync(row.Path, ct);
+            if (string.Equals(path, wanted, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                matching.Add(row);
         }
-
-        return false;
+        return matching.Count == 1 && !matching[0].Locked && !matching[0].Prunable;
     }
-
-    private static string NormalizePath(string path) =>
-        Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
     /// <summary>Where <paramref name="branch"/> is currently checked out, if anywhere.</summary>
     private async Task<string?> FindCheckoutOfBranchAsync(string repo, string branch, CancellationToken ct)
     {
-        var list = await GitAsync(repo, ct, "worktree", "list", "--porcelain");
-        if (!list.Ok)
-            return null;
-
-        string? currentPath = null;
-        foreach (var line in list.StdOut.Split('\n', StringSplitOptions.TrimEntries))
-        {
-            if (line.StartsWith("worktree ", StringComparison.Ordinal))
-                currentPath = line["worktree ".Length..];
-            else if (line.StartsWith("branch refs/heads/", StringComparison.Ordinal)
-                && line["branch refs/heads/".Length..] == branch)
-                return currentPath;
-        }
-        return null;
+        if (_landingGit is null) throw new IOException("target_inspection_unavailable");
+        var rows = (await _landingGit.RegistrationsAsync(repo, ct)).Where(r => r.Branch == "refs/heads/" + branch).ToList();
+        if (rows.Count > 1 || rows.Any(r => r.Locked || r.Prunable)) throw new IOException("target_registration_unavailable");
+        return rows.Count == 0 ? null : await _landingGit.CanonicalDirectoryAsync(rows[0].Path, ct);
     }
 
-    private async Task<WorktreeRemoval> RemoveLocalAsync(AgentTask task, string target, RepositoryLease lease, CancellationToken ct)
+    private async Task<WorktreeRemoval> RemoveLocalAsync(AgentTask task, string target, string expectedTarget,
+        string? expectedCheckout, RepositoryLease lease, CancellationToken ct)
     {
         var coordinates = new LandSourceCoordinates(task.Id, task.RepoPath!, task.WorktreePath!,
             "refs/heads/" + task.WorktreeBranch, target.StartsWith("refs/heads/", StringComparison.Ordinal) ? target : "refs/heads/" + target);
         var inspected = await _landingGit!.InspectAsync(coordinates, ct);
         if (!inspected.Accepted) return new(false, false, false, inspected.Reason ?? "source_unknown");
-        var targetResult = await _landingGit.RunAsync(task.RepoPath!, ["rev-parse", "--verify", coordinates.TargetFullRef + "^{commit}"], ct);
-        if (!targetResult.Succeeded) return new(false, false, false, "target_unknown");
         var source = inspected.Snapshot!;
         return await _worktrees.TryRemoveAsync(new(WorktreeRemovalPurpose.LocalMerge, coordinates,
-            source.CommonDirectory, source.GitDirectory, source.HeadSha, targetResult.Output.Trim(), null, lease), ct);
+            source.CommonDirectory, source.GitDirectory, source.HeadSha, expectedTarget, null, lease,
+            TargetCheckoutRecorded: true, TargetCheckoutPath: expectedCheckout), ct);
     }
 
     private sealed record GitResult(bool Ok, string StdOut, string StdErr);
 
-    private static async Task<GitResult> GitAsync(string workingDirectory, CancellationToken ct, params string[] args)
+    private async Task<GitResult> GitAsync(string workingDirectory, CancellationToken ct, params string[] args)
     {
+        if (_landingGit is not null)
+        {
+            var result = await _landingGit.RunAsync(workingDirectory, args, ct);
+            return new(result.Succeeded, result.Output, result.Diagnostic);
+        }
         var psi = new ProcessStartInfo
         {
             FileName = "git",
