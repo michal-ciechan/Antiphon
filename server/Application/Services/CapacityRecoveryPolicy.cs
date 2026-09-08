@@ -72,7 +72,7 @@ public static class CapacityRecoveryPolicy
 
     /// <summary>
     /// How long an Admitted wait may sit without progress before reconciliation re-arms it,
-    /// and how long an unredeemed grant may reserve the provider before being deferred.
+    /// and how long an unredeemed grant may reserve the provider before being re-armed.
     /// Two admission intervals allow a slower consumer to run while bounding the time a
     /// disappeared consumer can block every other wait for the provider.
     /// </summary>

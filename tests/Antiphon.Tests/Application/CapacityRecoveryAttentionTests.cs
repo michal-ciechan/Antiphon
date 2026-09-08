@@ -18,6 +18,50 @@ namespace Antiphon.Tests.Application;
 public class CapacityRecoveryAttentionTests
 {
     [Test]
+    public async Task Card0412_D6_expired_then_unsuccessful_admissions_eventually_raise_exhausted_attention()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var (service, time, provider) = CapacityRecoveryTestSupport.CreateService(schema);
+        await using var services = provider;
+        var taskId = Guid.NewGuid();
+        var wait = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+            $"task:{taskId:N}", CapacityWaitConsumerKind.QueuedTask,
+            holdAlreadyCleared: true, taskId: taskId), CancellationToken.None);
+        await service.ReconcileAsync(CancellationToken.None);
+        time.Advance(TimeSpan.FromSeconds(120));
+        await service.ReconcileAsync(CancellationToken.None);
+        time.Advance(TimeSpan.FromSeconds(120));
+
+        // Real admissions spend attempts; an unavailable dispatch slot before redemption
+        // does not. No execution receipt or progress follows these accepted attempts.
+        for (var attempt = 1; attempt <= service.MaxAttempts; attempt++)
+        {
+            await service.ReconcileAsync(CancellationToken.None);
+            var current = (await service.FindUnfinishedAsync(wait.ConsumerKey, CancellationToken.None))!;
+            var accepted = await service.RedeemAsync(current.Id, current.ActionKey, AgentKind.ClaudeCode,
+                CapacityRedemptionPath.Dispatch, CancellationToken.None);
+            accepted.Ok.ShouldBeTrue();
+            accepted.AdmissionCount.ShouldBe(attempt);
+            time.Advance(TimeSpan.FromSeconds(120));
+        }
+        await service.ReconcileAsync(CancellationToken.None);
+
+        await using var db = CapacityRecoveryTestSupport.CreateContext(schema);
+        var exhausted = await db.CapacityRecoveryWaits.SingleAsync(w => w.Id == wait.Id);
+        exhausted.State.ShouldBe(CapacityRecoveryWaitState.Exhausted);
+        exhausted.AdmissionCount.ShouldBe(service.MaxAttempts);
+        exhausted.OutcomeReason.ShouldBe("max-episode-attempts");
+        var attention = new AttentionService(db, new BridgeQueueHarness.EmptyRunnerClient(),
+            Options.Create(new SupervisionSettings()), Options.Create(new DelegationSettings()),
+            time, NullLogger<AttentionService>.Instance);
+        var items = await attention.GetAsync(CancellationToken.None);
+        var item = items.Items.Single(i => i.Kind == AttentionKind.CapacityRecoveryExhausted && i.TaskId == taskId);
+        item.Severity.ShouldBe(AlertSeverity.Error);
+        item.Headline.ShouldContain($"after {service.MaxAttempts} attempts");
+        item.Headline.ShouldContain("manual continuation");
+    }
+
+    [Test]
     public async Task Card0412_V24_exhausted_attention_survives_without_incident()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();

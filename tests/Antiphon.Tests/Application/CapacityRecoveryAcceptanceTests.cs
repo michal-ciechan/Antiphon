@@ -248,7 +248,7 @@ public class CapacityRecoveryAcceptanceTests
             .SingleAsync(s => s.Kind == AgentKind.ClaudeCode);
         due.GrantedWaitId.ShouldBe(younger.Id);
         (await CapacityRecoveryTestSupport.CreateContext(schema).CapacityRecoveryWaits.SingleAsync(w => w.Id == older.Id))
-            .State.ShouldBe(CapacityRecoveryWaitState.Reheld);
+            .State.ShouldBe(CapacityRecoveryWaitState.Ready);
     }
 
     [Test]
@@ -493,7 +493,7 @@ public class CapacityRecoveryAcceptanceTests
         state.GrantedWaitId.ShouldBeNull();
         state.NextAdmissionAt.ShouldNotBeNull();
         (await verify.CapacityRecoveryWaits.SingleAsync(w => w.Id == wait.Id))
-            .State.ShouldBe(CapacityRecoveryWaitState.Reheld);
+            .State.ShouldBe(CapacityRecoveryWaitState.Ready);
         (await verify.CapacityRecoveryWaits.CountAsync(w => w.SessionId == h.SessionId))
             .ShouldBeGreaterThanOrEqualTo(1);
     }
