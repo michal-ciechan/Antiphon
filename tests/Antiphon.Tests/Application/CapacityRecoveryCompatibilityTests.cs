@@ -171,4 +171,46 @@ public class CapacityRecoveryCompatibilityTests
         await using var verify = CapacityRecoveryTestSupport.CreateContext(schema);
         (await verify.CapacityRecoveryWaits.CountAsync(w => w.SessionId == sessionId)).ShouldBe(1);
     }
+
+    [Test]
+    public async Task Card0412_V23_reconcile_runs_compatibility()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var sessionId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        await using (var db = CapacityRecoveryTestSupport.CreateContext(schema))
+        {
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = sessionId,
+                DefinitionName = "fake",
+                AgentKind = AgentKind.ClaudeCode,
+                Status = SessionStatus.Running,
+                Cwd = Path.GetTempPath(),
+                Cols = 120,
+                Rows = 30,
+                CreatedAt = now.AddHours(-4),
+                StartedAt = now.AddHours(-4),
+                LastSeenAt = now,
+            });
+            db.ApiErrorRecoveries.Add(new ApiErrorRecovery
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = sessionId,
+                StubSequence = 2,
+                Classification = ApiErrorClassification.Wall,
+                DetectedAt = now.AddHours(-3),
+                ResolvedAt = now.AddHours(-3),
+                ResolvedReason = ApiErrorRecoveryReasons.WallParked,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var (service, _, _) = CapacityRecoveryTestSupport.CreateService(schema, jitterSeconds: 0);
+        await service.ReconcileAsync(CancellationToken.None);
+        await using var verify = CapacityRecoveryTestSupport.CreateContext(schema);
+        var wait = await verify.CapacityRecoveryWaits.SingleAsync(
+            w => w.ConsumerKey == $"session:{sessionId:N}");
+        wait.CompatibilityResult.ShouldBe(CapacityRecoveryCompatibilityResult.LegacyAvailable);
+    }
 }

@@ -257,8 +257,11 @@ public class CapacityRecoveryPersistenceTests
             wait.Id, grant!.GrantedActionKey!, AgentKind.ClaudeCode, CapacityRedemptionPath.Queue,
             CancellationToken.None)).Ok.ShouldBeTrue();
         await service.ObserveTranscriptAsync(
-            sessionId, TranscriptKinds.UserPrompt, isApiError: false, CancellationToken.None);
-        (await ReloadWait(schema, wait.Id)).State.ShouldBe(CapacityRecoveryWaitState.Admitted);
+            sessionId, TranscriptKinds.UserPrompt, isApiError: false, CancellationToken.None, sequence: 42);
+        var afterPrompt = await ReloadWait(schema, wait.Id);
+        afterPrompt.State.ShouldBe(CapacityRecoveryWaitState.PromptConfirmed);
+        afterPrompt.ConfirmedPromptSequence.ShouldBe(42);
+        afterPrompt.AdmissionCount.ShouldBe(1);
         await service.ObserveTranscriptAsync(
             sessionId, TranscriptKinds.TurnEnd, isApiError: false, CancellationToken.None);
         (await ReloadWait(schema, wait.Id)).State.ShouldBe(CapacityRecoveryWaitState.Progressed);

@@ -4,6 +4,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -18,7 +19,8 @@ internal static class CapacityRecoveryTestSupport
         int intervalSeconds = 60,
         int jitterSeconds = 0,
         int batch = 100,
-        bool enabled = true)
+        bool enabled = true,
+        IInterceptor? interceptor = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -35,7 +37,12 @@ internal static class CapacityRecoveryTestSupport
                 ReconciliationBatchSize = batch,
             },
         }));
-        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(schema.ConnectionString));
+        services.AddDbContext<AppDbContext>(o =>
+        {
+            o.UseNpgsql(schema.ConnectionString);
+            if (interceptor is not null)
+                o.AddInterceptors(interceptor);
+        });
         services.AddSingleton<CapacityRecoveryService>();
         var provider = services.BuildServiceProvider();
         return (provider.GetRequiredService<CapacityRecoveryService>(), time, provider);

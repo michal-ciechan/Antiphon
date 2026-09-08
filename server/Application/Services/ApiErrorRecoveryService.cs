@@ -98,25 +98,29 @@ public sealed class ApiErrorRecoveryService
         }
 
         var now = UtcNow();
-        var row = await BuildNewRowAsync(
-            db, scope.ServiceProvider, sessionId, stubSequence, stubUuid, apiErrorClass, apiErrorStatus, errorText, now, ct);
-        db.ApiErrorRecoveries.Add(row);
-
-        var older = await db.ApiErrorRecoveries
-            .Where(r => r.AgentSessionId == sessionId
-                && r.StubSequence < stubSequence
-                && r.ResolvedAt == null)
-            .ToListAsync(ct);
-        foreach (var prior in older)
-            Resolve(prior, now, ApiErrorRecoveryReasons.Replaced);
-
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        ApiErrorRecovery row;
         try
         {
+            row = await BuildNewRowAsync(
+                db, scope.ServiceProvider, sessionId, stubSequence, stubUuid, apiErrorClass, apiErrorStatus, errorText, now, ct);
+            db.ApiErrorRecoveries.Add(row);
+
+            var older = await db.ApiErrorRecoveries
+                .Where(r => r.AgentSessionId == sessionId
+                    && r.StubSequence < stubSequence
+                    && r.ResolvedAt == null)
+                .ToListAsync(ct);
+            foreach (var prior in older)
+                Resolve(prior, now, ApiErrorRecoveryReasons.Replaced);
+
             await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
         }
         catch (DbUpdateException ex) when (IsUniqueAdoptionConflict(ex))
         {
             // Unique (AgentSessionId, StubSequence) — a concurrent sweep/turn-end already wrote it.
+            await tx.RollbackAsync(ct);
             db.ChangeTracker.Clear();
             var raced = await db.ApiErrorRecoveries.SingleAsync(
                 r => r.AgentSessionId == sessionId && r.StubSequence == stubSequence, ct);
@@ -460,6 +464,8 @@ public sealed class ApiErrorRecoveryService
                 ClearCause = hold.ClearCause,
             }, ct);
             row.CapacityWaitId = wait.Id;
+            if (isNew)
+                await _capacityRecovery.BumpWaveOnAsync(db, kind, now, ct);
         }
 
         if (parked)

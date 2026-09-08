@@ -200,15 +200,28 @@ public class CapacityRecoverySupervisionTests
                     Version = 1,
                     UpdatedAt = DateTime.UtcNow,
                 });
-                db.Set<CapacityRecoveryProviderState>().Add(new CapacityRecoveryProviderState
+                var provider = await db.Set<CapacityRecoveryProviderState>()
+                    .FirstOrDefaultAsync(s => s.Kind == AgentKind.ClaudeCode);
+                if (provider is null)
                 {
-                    Kind = AgentKind.ClaudeCode,
-                    GrantedWaitId = waitId,
-                    GrantedActionKey = actionKey,
-                    GrantedAt = DateTime.UtcNow,
-                    GrantVersion = 1,
-                    UpdatedAt = DateTime.UtcNow,
-                });
+                    db.Set<CapacityRecoveryProviderState>().Add(new CapacityRecoveryProviderState
+                    {
+                        Kind = AgentKind.ClaudeCode,
+                        GrantedWaitId = waitId,
+                        GrantedActionKey = actionKey,
+                        GrantedAt = DateTime.UtcNow,
+                        GrantVersion = 1,
+                        UpdatedAt = DateTime.UtcNow,
+                    });
+                }
+                else
+                {
+                    provider.GrantedWaitId = waitId;
+                    provider.GrantedActionKey = actionKey;
+                    provider.GrantedAt = DateTime.UtcNow;
+                    provider.GrantVersion++;
+                    provider.UpdatedAt = DateTime.UtcNow;
+                }
                 await db.SaveChangesAsync();
             }
 

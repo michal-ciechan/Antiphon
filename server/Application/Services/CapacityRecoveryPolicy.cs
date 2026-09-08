@@ -70,6 +70,22 @@ public static class CapacityRecoveryPolicy
     public static bool AttemptWouldExhaust(int admissionCount, int maxAttempts) =>
         admissionCount >= maxAttempts;
 
+    /// <summary>
+    /// How long an Admitted wait may sit without progress before reconciliation re-arms it.
+    /// Two admission intervals: long enough that a still-running action is not recycled, short
+    /// enough that a dead admission cannot hold the active-consumer unique index forever.
+    /// </summary>
+    public const int StalledAdmissionIntervalMultiplier = 2;
+
+    public static TimeSpan StalledAdmissionTimeout(int admissionIntervalSeconds) =>
+        TimeSpan.FromSeconds(Math.Max(1, admissionIntervalSeconds) * StalledAdmissionIntervalMultiplier);
+
+    public static bool HasExecutionReceipt(CapacityRecoveryWait wait) =>
+        wait.SelectedMessageId is not null
+        || wait.LaunchSessionId is not null
+        || wait.LaunchReceipt is not null
+        || wait.DispatchAttemptId is not null;
+
     public static CapacityRecoverySettings ValidateOrThrow(CapacityRecoverySettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);

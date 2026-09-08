@@ -2,8 +2,14 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -358,5 +364,233 @@ public class CapacityRecoveryAcceptanceTests
             holdAlreadyCleared: true), CancellationToken.None);
         (await service.GrantReadyAsync(CancellationToken.None)).ShouldBe(0);
         wait.State.ShouldBe(CapacityRecoveryWaitState.Ready);
+    }
+
+    [Test]
+    public async Task Card0412_V09_concurrent_redeem_admits_once()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var pause = new PauseAdmittedSaveInterceptor();
+        var (service, _, _) = CapacityRecoveryTestSupport.CreateService(
+            schema, intervalSeconds: 60, jitterSeconds: 0, interceptor: pause);
+        var wait = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+            $"task:{Guid.NewGuid():N}",
+            CapacityWaitConsumerKind.QueuedTask,
+            holdAlreadyCleared: true), CancellationToken.None);
+        await service.GrantReadyAsync(CancellationToken.None);
+        var grant = await CapacityRecoveryTestSupport.CreateContext(schema)
+            .Set<CapacityRecoveryProviderState>()
+            .SingleAsync(s => s.Kind == AgentKind.ClaudeCode);
+
+        var first = service.RedeemAsync(
+            wait.Id, grant.GrantedActionKey!, AgentKind.ClaudeCode, CapacityRedemptionPath.Dispatch,
+            CancellationToken.None);
+        await pause.FirstArrived.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var second = service.RedeemAsync(
+            wait.Id, grant.GrantedActionKey!, AgentKind.ClaudeCode, CapacityRedemptionPath.Queue,
+            CancellationToken.None);
+        await Task.WhenAny(pause.SecondArrived.Task, Task.Delay(400));
+        pause.Release.TrySetResult();
+        var results = await Task.WhenAll(first, second);
+
+        var okCount = results.Count(r => r.Ok);
+        okCount.ShouldBe(1);
+        (await CapacityRecoveryTestSupport.CreateContext(schema).CapacityRecoveryWaits.SingleAsync(w => w.Id == wait.Id))
+            .AdmissionCount.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task Card0412_V10_fresh_wall_registration_bumps_wave()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            AlwaysOn = true,
+            ConnectionString = schema.ConnectionString,
+            Supervision = new SupervisionSettings
+            {
+                ApiErrorRecovery = new ApiErrorRecoverySettings { Enabled = true },
+                CapacityRecovery = new CapacityRecoverySettings
+                {
+                    Enabled = true,
+                    AdmissionIntervalSeconds = 60,
+                    JitterSeconds = 0,
+                },
+            },
+        });
+        var recovery = h.Provider.GetRequiredService<CapacityRecoveryService>();
+        var wait = await recovery.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+            $"task:{Guid.NewGuid():N}",
+            CapacityWaitConsumerKind.QueuedTask,
+            holdAlreadyCleared: true,
+            blockedAt: DateTime.UtcNow.AddMinutes(-10)), CancellationToken.None);
+        (await recovery.GrantReadyAsync(CancellationToken.None)).ShouldBeGreaterThanOrEqualTo(1);
+        (await CapacityRecoveryTestSupport.CreateContext(schema)
+            .Set<CapacityRecoveryProviderState>()
+            .SingleAsync(s => s.Kind == AgentKind.ClaudeCode)).GrantedWaitId.ShouldBe(wait.Id);
+
+        await using (var db = CapacityRecoveryTestSupport.CreateContext(schema))
+        {
+            var uuid = Guid.NewGuid().ToString("D");
+            var now = DateTime.UtcNow;
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = h.SessionId,
+                Sequence = 1,
+                Kind = TranscriptKinds.AssistantText,
+                Uuid = uuid,
+                Role = "assistant",
+                Text = UsageLimitWallParser.SessionLimitHourOnlyTwoPmText,
+                Timestamp = now,
+                IsApiError = true,
+                ApiErrorClass = "rate_limit",
+                ApiErrorStatus = 429,
+                CreatedAt = now,
+            });
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = h.SessionId,
+                Sequence = 2,
+                Kind = TranscriptKinds.TurnEnd,
+                Uuid = uuid,
+                Role = "assistant",
+                Text = null,
+                Timestamp = now,
+                StopReason = "stop_sequence",
+                IsApiError = true,
+                ApiErrorClass = "rate_limit",
+                ApiErrorStatus = 429,
+                CreatedAt = now,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var apiRecovery = new ApiErrorRecoveryService(
+            h.Provider.GetRequiredService<IServiceScopeFactory>(),
+            h.Queue,
+            h.Runtime,
+            Options.Create(new SupervisionSettings
+            {
+                ApiErrorRecovery = new ApiErrorRecoverySettings { Enabled = true },
+                CapacityRecovery = new CapacityRecoverySettings
+                {
+                    Enabled = true,
+                    AdmissionIntervalSeconds = 60,
+                    JitterSeconds = 0,
+                },
+            }),
+            TimeProvider.System,
+            NullLogger<ApiErrorRecoveryService>.Instance,
+            recovery);
+        await apiRecovery.SweepAsync(CancellationToken.None);
+
+        await using var verify = CapacityRecoveryTestSupport.CreateContext(schema);
+        var state = await verify.Set<CapacityRecoveryProviderState>()
+            .SingleAsync(s => s.Kind == AgentKind.ClaudeCode);
+        state.WaveRevision.ShouldBeGreaterThan(0);
+        state.GrantedWaitId.ShouldBeNull();
+        state.NextAdmissionAt.ShouldNotBeNull();
+        (await verify.CapacityRecoveryWaits.SingleAsync(w => w.Id == wait.Id))
+            .State.ShouldBe(CapacityRecoveryWaitState.Reheld);
+        (await verify.CapacityRecoveryWaits.CountAsync(w => w.SessionId == h.SessionId))
+            .ShouldBeGreaterThanOrEqualTo(1);
+    }
+
+    [Test]
+    public async Task Card0412_V10_stalled_admitted_without_receipt_prepares_next_attempt()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var (service, time, _) = CapacityRecoveryTestSupport.CreateService(
+            schema, intervalSeconds: 1, jitterSeconds: 0);
+        var wait = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+            $"task:{Guid.NewGuid():N}",
+            CapacityWaitConsumerKind.QueuedTask,
+            holdAlreadyCleared: true), CancellationToken.None);
+        await service.GrantReadyAsync(CancellationToken.None);
+        var grant = await CapacityRecoveryTestSupport.CreateContext(schema)
+            .Set<CapacityRecoveryProviderState>()
+            .SingleAsync(s => s.Kind == AgentKind.ClaudeCode);
+        (await service.RedeemAsync(
+            wait.Id, grant.GrantedActionKey!, AgentKind.ClaudeCode, CapacityRedemptionPath.Dispatch,
+            CancellationToken.None)).Ok.ShouldBeTrue();
+
+        time.Advance(TimeSpan.FromSeconds(2.1));
+        await service.ReconcileAsync(CancellationToken.None);
+        var rearmed = await CapacityRecoveryTestSupport.CreateContext(schema)
+            .CapacityRecoveryWaits.SingleAsync(w => w.Id == wait.Id);
+        rearmed.AdmissionCount.ShouldBe(1);
+        rearmed.ActionOrdinal.ShouldBe(1);
+        rearmed.State.ShouldBeOneOf(
+            CapacityRecoveryWaitState.Ready, CapacityRecoveryWaitState.ActionPending);
+        rearmed.NeedsRevalidationGrant.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Card0412_V10_stalled_admitted_with_receipt_requests_revalidation()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var (service, time, _) = CapacityRecoveryTestSupport.CreateService(
+            schema, intervalSeconds: 1, jitterSeconds: 0);
+        var wait = await service.EnsureWaitAsync(CapacityRecoveryTestSupport.Registration(
+            $"agent:{Guid.NewGuid():N}",
+            CapacityWaitConsumerKind.StandingStart,
+            holdAlreadyCleared: true), CancellationToken.None);
+        await service.GrantReadyAsync(CancellationToken.None);
+        var grant = await CapacityRecoveryTestSupport.CreateContext(schema)
+            .Set<CapacityRecoveryProviderState>()
+            .SingleAsync(s => s.Kind == AgentKind.ClaudeCode);
+        (await service.RedeemAsync(
+            wait.Id, grant.GrantedActionKey!, AgentKind.ClaudeCode, CapacityRedemptionPath.Start,
+            CancellationToken.None)).Ok.ShouldBeTrue();
+        await using (var db = CapacityRecoveryTestSupport.CreateContext(schema))
+        {
+            var row = await db.CapacityRecoveryWaits.SingleAsync(w => w.Id == wait.Id);
+            row.LaunchReceipt = "accepted";
+            await db.SaveChangesAsync();
+        }
+
+        time.Advance(TimeSpan.FromSeconds(2.1));
+        await service.ReconcileAsync(CancellationToken.None);
+        await using var verify = CapacityRecoveryTestSupport.CreateContext(schema);
+        var rearmed = await verify.CapacityRecoveryWaits.SingleAsync(w => w.Id == wait.Id);
+        rearmed.NeedsRevalidationGrant.ShouldBeTrue();
+        rearmed.AdmissionCount.ShouldBe(1);
+        rearmed.ActionOrdinal.ShouldBe(0);
+        (await verify.Set<CapacityRecoveryProviderState>().SingleAsync(s => s.Kind == AgentKind.ClaudeCode))
+            .GrantedWaitId.ShouldBe(wait.Id);
+    }
+
+    private sealed class PauseAdmittedSaveInterceptor : SaveChangesInterceptor
+    {
+        public readonly TaskCompletionSource FirstArrived = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public readonly TaskCompletionSource SecondArrived = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public readonly TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _admittedSaves;
+
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (eventData.Context?.ChangeTracker.Entries<CapacityRecoveryWait>()
+                    .Any(e => e.Entity.State == CapacityRecoveryWaitState.Admitted
+                        && e.Property(w => w.AdmissionCount).IsModified) == true)
+            {
+                var n = Interlocked.Increment(ref _admittedSaves);
+                if (n == 1)
+                {
+                    FirstArrived.TrySetResult();
+                    await Release.Task.WaitAsync(cancellationToken);
+                }
+                else if (n == 2)
+                {
+                    SecondArrived.TrySetResult();
+                }
+            }
+
+            return await base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
     }
 }

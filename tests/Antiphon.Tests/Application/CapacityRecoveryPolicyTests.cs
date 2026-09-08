@@ -18,6 +18,8 @@ public class CapacityRecoveryPolicyTests
     {
         CapacityRecoveryPolicy.DefaultAdmissionIntervalSeconds.ShouldBe(60);
         CapacityRecoveryPolicy.DefaultJitterSeconds.ShouldBe(30);
+        CapacityRecoveryPolicy.StalledAdmissionTimeout(60).ShouldBe(TimeSpan.FromSeconds(120));
+        CapacityRecoveryPolicy.StalledAdmissionTimeout(1).ShouldBe(TimeSpan.FromSeconds(2));
         var jitter = CapacityRecoveryPolicy.StableJitterSeconds(WaitA, 0, 30);
         jitter.ShouldBeGreaterThanOrEqualTo(0);
         jitter.ShouldBeLessThanOrEqualTo(30);
@@ -77,6 +79,9 @@ public class CapacityRecoveryPolicyTests
         CapacityRecoveryPolicy.IsGrantCandidate(pending).ShouldBeTrue();
         CapacityRecoveryPolicy.IsGrantCandidate(admitted).ShouldBeTrue();
         CapacityRecoveryPolicy.IsGrantCandidate(admittedSpent).ShouldBeFalse();
+        CapacityRecoveryPolicy.HasExecutionReceipt(new CapacityRecoveryWait()).ShouldBeFalse();
+        CapacityRecoveryPolicy.HasExecutionReceipt(new CapacityRecoveryWait { LaunchReceipt = "x" })
+            .ShouldBeTrue();
     }
 
     [Test]
