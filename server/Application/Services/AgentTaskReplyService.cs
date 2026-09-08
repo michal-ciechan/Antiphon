@@ -1390,7 +1390,7 @@ public sealed class AgentTaskReplyService
 
             case DelegationWorktreeService.MergeResult.NothingToMerge:
                 db.AgentTaskEvents.Add(NewEvent(
-                    task.Id, AgentTaskEventType.Merged, "No changes beyond the target — worktree removed.", now));
+                    task.Id, AgentTaskEventType.Merged, outcome.Detail ?? "No changes beyond the target; cleanup state unknown.", now));
                 return "no changes";
 
             case DelegationWorktreeService.MergeResult.LeftForHuman:

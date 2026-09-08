@@ -1434,13 +1434,16 @@ public sealed class AgentTaskService
             .ToListAsync(ct);
 
         var blocked = await BlockedContextBuilder.BuildAsync(task, family, events, _checkProbe, ct);
+        var landing = task.ActiveLandingId is Guid landingId
+            ? await _db.AgentTaskLandings.AsNoTracking().SingleOrDefaultAsync(o => o.Id == landingId && o.TaskId == task.Id, ct)
+            : null;
 
         return new AgentTaskDetailDto(
             ToSummary(task, family, await LoadCardIdentifiersAsync([task], ct)), task.Goal, task.Result,
             task.ResultFilePath, task.DeliverablePath, task.DeliverableRef,
             task.FailureReason, task.MergeTargetRef, events, task.FailureCode, blocked,
             task.StandingAuthority, task.AutoContinueOnWait, task.NextStage, task.NextHandoff,
-            task.DistilledResult);
+            task.DistilledResult, landing is null ? null : LandingEvidenceDto.From(landing));
     }
 
     /// <summary>Record the first operator read; repeat opens deliberately preserve that timestamp.</summary>

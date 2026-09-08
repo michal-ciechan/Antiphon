@@ -72,6 +72,25 @@ function serve(body: AgentTaskDetailDto, extra: Parameters<typeof server.use> = 
 }
 
 describe('TaskDrawer', () => {
+  it('shows publication and cleanup independently from legacy timeline prose', async () => {
+    serve(detail({ status: 'Succeeded', workspace: 'Worktree' }, {
+      landing: {
+        operationId: TASK_ID, phase: 'CleanupStarted', mode: 'CleanupRetry',
+        publication: 'AlreadyPresent', cleanup: 'Refused', sourceSha: 'a'.repeat(40),
+        verifiedSha: 'b'.repeat(40), remoteSha: 'c'.repeat(40),
+        remoteConfirmedAt: '2026-09-08T10:00:00Z', destinationRef: 'refs/heads/master',
+        reason: 'ignored_content_preserved',
+      },
+      events: [{ type: 'Landed', modelLevel: null, detail: 'legacy pushed and cleaned', at: '2026-08-01T00:00:00Z' }],
+    }))
+    renderWithProviders(<TaskDrawer taskId={TASK_ID} onClose={() => {}} />)
+    expect(await screen.findByText('Publication: AlreadyPresent')).toBeVisible()
+    expect(screen.getByText('Cleanup: Refused')).toBeVisible()
+    expect(screen.getByText('Mode: CleanupRetry')).toBeVisible()
+    expect(screen.getByText('ignored_content_preserved')).toBeVisible()
+    expect(screen.getByText('c'.repeat(40))).toBeVisible()
+  })
+
   it('shows the distilled section and flags a lost distillation', async () => {
     serve(
       detail(

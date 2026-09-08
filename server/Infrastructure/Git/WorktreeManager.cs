@@ -25,6 +25,7 @@ public sealed class WorktreeManager : IWorktreeManager
         WriteIndented = true
     };
 
+    private readonly GuardedWorktreeRemoval? _guardedRemoval;
     private readonly GitSettings _settings;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<WorktreeManager> _logger;
@@ -32,8 +33,10 @@ public sealed class WorktreeManager : IWorktreeManager
     public WorktreeManager(
         IOptions<GitSettings> settings,
         TimeProvider timeProvider,
-        ILogger<WorktreeManager> logger)
+        ILogger<WorktreeManager> logger,
+        GuardedWorktreeRemoval? guardedRemoval = null)
     {
+        _guardedRemoval = guardedRemoval;
         _settings = settings.Value;
         _timeProvider = timeProvider;
         _logger = logger;
@@ -358,10 +361,10 @@ public sealed class WorktreeManager : IWorktreeManager
         string? repoPath, string? worktreePath, string? branch, string targetRef, CancellationToken ct)
     {
         var branchExists = false;
-        var isAncestor = true;
+        var isAncestor = false;
         var ahead = 0;
-        var tracked = false;
-        var untracked = false;
+        var tracked = true;
+        var untracked = true;
 
         var repo = !string.IsNullOrWhiteSpace(repoPath) && Directory.Exists(repoPath)
             ? Path.GetFullPath(repoPath)
@@ -396,7 +399,7 @@ public sealed class WorktreeManager : IWorktreeManager
         {
             var status = await RunGitAsync(
                 tree,
-                ["status", "--porcelain", "-z", "--untracked-files=all"],
+                ["status", "--porcelain", "-z", "--untracked-files=all", "--ignored"],
                 ct,
                 throwOnError: false);
             if (status.ExitCode == 0)
@@ -408,8 +411,8 @@ public sealed class WorktreeManager : IWorktreeManager
 
     internal static (bool Tracked, bool Untracked) ParsePorcelainDirtiness(string stdout)
     {
-        var tracked = false;
-        var untracked = false;
+        var tracked = true;
+        var untracked = true;
         var records = stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries);
         for (var i = 0; i < records.Length; i++)
         {
@@ -458,102 +461,20 @@ public sealed class WorktreeManager : IWorktreeManager
             throw new InvalidOperationException(result.Residue ?? "Worktree removal left residue.");
     }
 
-    public async Task<WorktreeRemoval> TryRemoveAsync(
+    public Task<WorktreeRemoval> TryRemoveAsync(
         string repoPath, string worktreePath, string? mergedInto, CancellationToken ct)
     {
-        var repoFullPath = ResolveExistingDirectory(repoPath, nameof(repoPath));
-        await EnsureGitRepositoryAsync(repoFullPath, ct);
+        ct.ThrowIfCancellationRequested();
+        // An age, target name or legacy event is not authority to erase a working directory.
+        return Task.FromResult(new WorktreeRemoval(false, false, false, "typed_removal_authority_required"));
+    }
 
-        var worktreeRoot = ResolveWorktreeRoot(create: true);
-        var worktreeFullPath = Path.GetFullPath(worktreePath);
-        EnsurePathUnderRoot(worktreeFullPath, worktreeRoot, nameof(worktreePath));
-
-        var metadata = await FindMetadataByPathAsync(worktreeRoot, worktreeFullPath, ct);
-        var branch = metadata?.Branch;
-        if (Directory.Exists(worktreeFullPath))
-            branch = await TryGetCurrentBranchAsync(worktreeFullPath, ct) ?? branch;
-        branch ??= InferAntiphonBranchFromDirectory(worktreeFullPath);
-
-        if (!IsAntiphonBranch(branch))
-            throw new ValidationException(nameof(worktreePath), "Worktree is not an Antiphon-managed feat/card-* worktree.");
-
-        string? gitRemoveError = null;
-        var removeFailedOrTimedOut = false;
-        var locked = false;
-
-        try
-        {
-            var remove = await RunGitAsync(
-                repoFullPath,
-                ["worktree", "remove", "--force", worktreeFullPath],
-                ct,
-                throwOnError: false);
-
-            if (remove.ExitCode == 0)
-            {
-                // Unregistered (and usually deleted). Directory leftovers are step 2's job only
-                // when this command failed or timed out.
-            }
-            else if (IsAlreadyUnregisteredWorktreeError(remove.Stderr))
-            {
-                _logger.LogWarning(
-                    "git worktree remove --force reported {Path} is not a working tree (already unregistered); deleting leftover directory. stderr: {StdErr}",
-                    worktreeFullPath,
-                    remove.Stderr);
-                var leftover = TryDeleteDirectory(worktreeFullPath);
-                if (leftover is not null)
-                    gitRemoveError = leftover;
-            }
-            else
-            {
-                removeFailedOrTimedOut = true;
-                gitRemoveError = FirstLine(remove.Stderr);
-                locked = IsLockedWorktreeError(remove.Stderr);
-                _logger.LogWarning(
-                    "git worktree remove --force failed (exit {ExitCode}): {StdErr}",
-                    remove.ExitCode,
-                    remove.Stderr);
-            }
-        }
-        catch (TimeoutException ex)
-        {
-            removeFailedOrTimedOut = true;
-            gitRemoveError = ex.Message;
-            _logger.LogWarning(ex, "git worktree remove --force timed out for {Path}", worktreeFullPath);
-        }
-
-        string? directoryDeleteError = null;
-        if (removeFailedOrTimedOut && !locked)
-        {
-            directoryDeleteError = TryDeleteDirectory(worktreeFullPath);
-            await RunGitAsync(repoFullPath, ["worktree", "prune"], ct, throwOnError: false);
-        }
-
-        var unregistered = !await IsRegisteredAsync(repoFullPath, worktreeFullPath, ct);
-        var directoryGone = !Directory.Exists(worktreeFullPath);
-
-        var (branchDeleted, branchResidue) = await TryDeleteBranchAsync(
-            repoFullPath, branch!, mergedInto, ct);
-
-        var directoryReason = !directoryGone
-            ? DirectoryResidueReason(gitRemoveError, directoryDeleteError)
-            : null;
-        var residue = ComposeResidue(
-            unregistered, directoryGone, branchDeleted,
-            worktreeFullPath, directoryReason, branchResidue);
-
-        if (residue is null)
-        {
-            await DeleteMetadataForPathAsync(worktreeRoot, worktreeFullPath, ct);
-        }
-        else if (metadata is not null)
-        {
-            await SaveMetadataAsync(
-                metadata with { ResidueSince = metadata.ResidueSince ?? _timeProvider.GetUtcNow() },
-                ct);
-        }
-
-        return new WorktreeRemoval(unregistered, directoryGone, branchDeleted, residue);
+    public Task<WorktreeRemoval> TryRemoveAsync(WorktreeRemovalRequest request, CancellationToken ct)
+    {
+        if (!IsPathUnderRoot(request.Source.WorktreePath, ResolveWorktreeRoot(create: false)))
+            return Task.FromResult(new WorktreeRemoval(false, false, false, "worktree_outside_managed_root"));
+        return _guardedRemoval?.RemoveAsync(request, ct)
+            ?? Task.FromResult(new WorktreeRemoval(false, false, false, "removal_evidence_reader_required"));
     }
 
     public async Task TouchAsync(string worktreePath, CancellationToken ct)
@@ -990,40 +911,6 @@ public sealed class WorktreeManager : IWorktreeManager
         }
     }
 
-    private async Task<(bool Deleted, string? Residue)> TryDeleteBranchAsync(
-        string repoPath, string branch, string? mergedInto, CancellationToken ct)
-    {
-        if (!await BranchExistsAsync(repoPath, branch, ct))
-            return (true, null);
-
-        if (mergedInto is not null)
-        {
-            var ancestor = await RunGitAsync(
-                repoPath, ["merge-base", "--is-ancestor", branch, mergedInto], ct, throwOnError: false);
-            if (ancestor.ExitCode != 0)
-            {
-                var count = await RunGitAsync(
-                    repoPath, ["rev-list", "--count", $"{mergedInto}..{branch}"], ct, throwOnError: false);
-                var ahead = count.ExitCode == 0 && int.TryParse(count.Stdout.Trim(), out var n) ? n : 0;
-                return (false, $"branch kept: {ahead} commit(s) not on {mergedInto}");
-            }
-        }
-
-        var deleted = await RunGitAsync(repoPath, ["branch", "-D", branch], ct, throwOnError: false);
-        if (deleted.ExitCode == 0)
-            return (true, null);
-
-        _logger.LogWarning(
-            "Failed to delete worktree branch {Branch} in {RepoPath}: {StdErr}",
-            branch,
-            repoPath,
-            deleted.Stderr);
-        var reason = FirstLine(deleted.Stderr);
-        return (false, string.IsNullOrEmpty(reason)
-            ? $"branch {branch} kept"
-            : $"branch {branch} kept ({reason})");
-    }
-
     private static string DirectoryResidueReason(string? gitRemoveError, string? directoryDeleteError)
     {
         if (!string.IsNullOrWhiteSpace(directoryDeleteError))
@@ -1121,143 +1008,19 @@ public sealed class WorktreeManager : IWorktreeManager
         string repoPath, string worktreePath, CancellationToken ct)
     {
         var list = await RunGitAsync(repoPath, ["worktree", "list", "--porcelain"], ct, throwOnError: false);
-        if (list.ExitCode != 0)
-            return false;
-
-        var stale = ParseWorktreeList(list.Stdout)
-            .FirstOrDefault(entry => PathsEqual(entry.Path, worktreePath));
-        if (stale is null || Directory.Exists(worktreePath))
-            return false;
-
-        var commands = new List<string>();
-        try
-        {
-            TryDeleteDirectory(worktreePath);
-            commands.Add("delete directory");
-
-            var remove = await RunGitAsync(
-                repoPath,
-                ["worktree", "remove", "--force", "--force", worktreePath],
-                CancellationToken.None,
-                throwOnError: false);
-            commands.Add(DescribeGitStep("worktree remove --force --force", remove));
-            if (remove.ExitCode != 0)
-                throw new InvalidOperationException(remove.Stderr.Trim());
-
-            var prune = await RunGitAsync(
-                repoPath,
-                ["worktree", "prune"],
-                CancellationToken.None,
-                throwOnError: false);
-            commands.Add(DescribeGitStep("worktree prune", prune));
-            if (prune.ExitCode != 0)
-                throw new InvalidOperationException(prune.Stderr.Trim());
-
-            var lockReason = stale.Locked
-                ? (string.IsNullOrEmpty(stale.LockReason) ? "(no reason)" : stale.LockReason)
-                : "unlocked";
-            var killedAdd = string.Equals(stale.LockReason, "initializing", StringComparison.Ordinal)
-                ? " — a killed add"
-                : string.Empty;
-            _logger.LogWarning(
-                "Healed stale worktree registration at {Path} (lock: {LockReason}{KilledAdd}); ran: {Commands}",
-                worktreePath,
-                lockReason,
-                killedAdd,
-                string.Join(" → ", commands));
-            return true;
-        }
-        catch (Exception ex) when (ex is not ConflictException)
-        {
-            var diagnosis = $"Worktree '{worktreePath}' is registered"
-                + (stale.Locked
-                    ? $" and locked ({(string.IsNullOrEmpty(stale.LockReason) ? "no reason" : stale.LockReason)})"
-                    : "")
-                + " but its directory is gone";
-            throw new ConflictException(
-                $"{diagnosis}. Heal attempted: {string.Join("; ", commands)}. {ex.Message}",
-                ex);
-        }
+        if (list.ExitCode != 0) throw new ConflictException("Worktree registration inspection failed; nothing removed.");
+        var stale = ParseWorktreeList(list.Stdout).FirstOrDefault(entry => PathsEqual(entry.Path, worktreePath));
+        if (stale is not null && !Directory.Exists(worktreePath))
+            throw new ConflictException("Stale worktree registration requires creation/recovery ownership evidence; nothing removed.");
+        return false;
     }
 
-    /// <summary>
-    /// Full rollback of a failed <c>worktree add</c>, on a fresh token so a cancelled caller cannot
-    /// abort cleanup halfway. Each step is logged; a rollback failure is Warning and the original
-    /// exception still propagates.
-    /// </summary>
-    private async Task RollbackFailedAddAsync(
-        string repoPath,
-        string worktreePath,
-        string branch,
-        bool branchExistedBefore)
+    private Task RollbackFailedAddAsync(string repoPath, string worktreePath, string branch, bool branchExistedBefore)
     {
-        var ct = CancellationToken.None;
-        _logger.LogInformation(
-            "Rolling back failed worktree add at {Path} (branch {Branch}, existedBefore={ExistedBefore})",
-            worktreePath,
-            branch,
-            branchExistedBefore);
-
-        TryDeleteDirectory(worktreePath);
-
-        try
-        {
-            if (await IsRegisteredAsync(repoPath, worktreePath, ct))
-            {
-                var remove = await RunGitAsync(
-                    repoPath,
-                    ["worktree", "remove", "--force", "--force", worktreePath],
-                    ct,
-                    throwOnError: false);
-                if (remove.ExitCode != 0)
-                {
-                    _logger.LogWarning(
-                        "Rollback worktree remove --force --force failed for {Path}: {StdErr}",
-                        worktreePath,
-                        remove.Stderr);
-                }
-                else
-                {
-                    _logger.LogInformation("Rollback removed worktree registration {Path}", worktreePath);
-                }
-            }
-
-            var prune = await RunGitAsync(repoPath, ["worktree", "prune"], ct, throwOnError: false);
-            if (prune.ExitCode != 0)
-            {
-                _logger.LogWarning(
-                    "Rollback worktree prune failed in {RepoPath}: {StdErr}",
-                    repoPath,
-                    prune.Stderr);
-            }
-            else
-            {
-                _logger.LogInformation("Rollback pruned worktree registrations in {RepoPath}", repoPath);
-            }
-
-            if (!branchExistedBefore && await BranchExistsAsync(repoPath, branch, ct))
-            {
-                var deleteBranch = await RunGitAsync(repoPath, ["branch", "-D", branch], ct, throwOnError: false);
-                if (deleteBranch.ExitCode != 0)
-                {
-                    _logger.LogWarning(
-                        "Rollback branch -D {Branch} failed: {StdErr}",
-                        branch,
-                        deleteBranch.Stderr);
-                }
-                else
-                {
-                    _logger.LogInformation("Rollback deleted branch {Branch}", branch);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(
-                ex,
-                "Rollback of failed worktree add at {Path} failed; the original exception still propagates",
-                worktreePath);
-        }
+        // A partial directory is not proof that everything in it belongs to this add. Keep the
+        // checkout, registration and branch together until a recorded creation intent can prove it.
+        _logger.LogWarning("Failed worktree creation retained for inspection at {Path}; branch {Branch}", worktreePath, branch);
+        return Task.CompletedTask;
     }
 
     private async Task<bool> IsRegisteredAsync(string repoPath, string worktreePath, CancellationToken ct)
@@ -1266,30 +1029,6 @@ public sealed class WorktreeManager : IWorktreeManager
         if (result.ExitCode != 0)
             return false;
         return ParseWorktreeList(result.Stdout).Any(entry => PathsEqual(entry.Path, worktreePath));
-    }
-
-    private string? TryDeleteDirectory(string path)
-    {
-        if (!Directory.Exists(path))
-            return null;
-
-        try
-        {
-            foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
-            {
-                try { File.SetAttributes(file, FileAttributes.Normal); }
-                catch (Exception) { /* best-effort; Delete will report if it still cannot */ }
-            }
-
-            Directory.Delete(path, recursive: true);
-            _logger.LogInformation("Deleted leftover worktree directory {Path}", path);
-            return Directory.Exists(path) ? $"directory {path} still exists after delete" : null;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to delete worktree directory {Path}", path);
-            return ex.Message;
-        }
     }
 
     private static string DescribeGitStep(string command, GitCommandResult result)

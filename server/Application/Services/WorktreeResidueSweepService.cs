@@ -23,13 +23,6 @@ public sealed class WorktreeResidueSweepService
         AgentTaskStatus.Blocked
     ];
 
-    private static readonly AgentTaskEventType[] LandOrMergeEvents =
-    [
-        AgentTaskEventType.Landed,
-        AgentTaskEventType.LandedWithResidue,
-        AgentTaskEventType.Merged
-    ];
-
     private readonly AppDbContext _db;
     private readonly IWorktreeManager _worktrees;
     private readonly WorktreeResidueSettings _settings;
@@ -182,7 +175,7 @@ public sealed class WorktreeResidueSweepService
             return Row(facts, WorktreeResidueLabel.Dirty, "Dirty", why, keep: true);
         }
 
-        return Row(facts, WorktreeResidueLabel.Eligible, "Eligible", "safe to remove", keep: false);
+        return Row(facts, WorktreeResidueLabel.Unknown, "Evidence required", "Explicit landing cleanup receipt required; legacy events and TTL grant no authority", keep: true);
     }
 
     private async Task<WorktreeResidueRow> TryRemoveEligibleAsync(
@@ -301,15 +294,7 @@ public sealed class WorktreeResidueSweepService
             .First();
     }
 
-    private static bool IncludeUntracked(WorktreeResidueTaskSnapshot task)
-    {
-        if (task.Status is AgentTaskStatus.Failed or AgentTaskStatus.Canceled)
-            return true;
-        if (task.Status == AgentTaskStatus.Succeeded
-            && task.EventTypes.Any(e => LandOrMergeEvents.Contains(e)))
-            return false;
-        return true;
-    }
+    private static bool IncludeUntracked(WorktreeResidueTaskSnapshot task) => true;
 
     private static WorktreeResidueRow Row(
         WorktreeResidueFacts facts,

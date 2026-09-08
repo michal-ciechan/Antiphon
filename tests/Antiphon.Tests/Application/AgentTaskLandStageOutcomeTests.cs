@@ -19,6 +19,7 @@ namespace Antiphon.Tests.Application;
 /// (that stays in <see cref="DelegationWorktreeTests"/>).
 /// </summary>
 [Category("Integration")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class AgentTaskLandStageOutcomeTests
 {
     [Test]
@@ -94,7 +95,7 @@ public class AgentTaskLandStageOutcomeTests
     }
 
     [Test]
-    public async Task land_push_rejection_writes_cleanup_failed()
+    public async Task unreadable_push_endpoint_refuses_before_any_stage()
     {
         using var repo = new ScratchGitRepo("antiphon-land-so-push");
         using var remote = new TemporaryDirectory("antiphon-land-so-premote");
@@ -119,12 +120,10 @@ public class AgentTaskLandStageOutcomeTests
         await land.RunAsync(task.Id, null, CancellationToken.None);
 
         var rows = await RowsAsync(db, task.Id);
-        rows.Select(o => (o.Stage, o.Outcome)).ShouldBe([
-            (OrchestrationStage.Rebase, StageOutcomeKind.Clean),
-            (OrchestrationStage.Verify, StageOutcomeKind.Skipped),
-            (OrchestrationStage.Cleanup, StageOutcomeKind.Failed),
-        ]);
-        rows.Single(o => o.Stage == OrchestrationStage.Cleanup).Detail.ShouldContain("push");
+        rows.ShouldBeEmpty("unreadable push endpoint is refused before preparation or verification");
+        var refused = await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.LandRefused);
+        refused.Detail.ShouldContain("remote_read_failed");
+        Directory.Exists(task.WorktreePath).ShouldBeTrue();
         await AssertPendingClearedAsync(db, task.Id, attempt: 1);
     }
 
@@ -195,7 +194,7 @@ public class AgentTaskLandStageOutcomeTests
     }
 
     [Test]
-    public async Task residue_land_writes_cleanup_failed_and_landed_with_residue_not_refused()
+    public async Task locked_source_is_refused_before_publication()
     {
         using var repo = new ScratchGitRepo("antiphon-land-so-residue");
         using var remote = new TemporaryDirectory("antiphon-land-so-reresidue");
@@ -217,24 +216,12 @@ public class AgentTaskLandStageOutcomeTests
         await land.RunAsync(task.Id, null, CancellationToken.None);
 
         var rows = await RowsAsync(db, task.Id);
-        rows.Select(o => (o.Stage, o.Outcome)).ShouldBe([
-            (OrchestrationStage.Rebase, StageOutcomeKind.Clean),
-            (OrchestrationStage.Verify, StageOutcomeKind.Skipped),
-            (OrchestrationStage.Cleanup, StageOutcomeKind.Failed),
-        ]);
-        var events = await db.AgentTaskEvents.AsNoTracking()
-            .Where(e => e.AgentTaskId == task.Id)
-            .Select(e => e.Type)
-            .ToListAsync();
-        events.ShouldContain(AgentTaskEventType.LandedWithResidue);
-        events.ShouldNotContain(AgentTaskEventType.LandRefused);
-        events.ShouldNotContain(AgentTaskEventType.Warning);
+        rows.ShouldBeEmpty("locked source registration is refused at identity inspection");
         var outcome = await db.AgentTaskEvents.AsNoTracking()
-            .SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.LandedWithResidue);
-        outcome.Detail.ShouldStartWith("landed ");
-        outcome.Detail.ShouldContain("cleanup incomplete:");
-        (await ScratchGitRepo.GitInAsync(remote.Path, "show", "master:feature.md")).StdOut.ShouldBe("the work\n");
+            .SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.LandRefused);
+        outcome.Detail.ShouldContain("registration_unavailable");
         Directory.Exists(task.WorktreePath).ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(remote.Path, "show", "master:feature.md")).Ok.ShouldBeFalse();
         await AssertPendingClearedAsync(db, task.Id, attempt: 1);
 
         var queued = await land.RequestAsync(task.Id, null, CancellationToken.None);
@@ -276,15 +263,16 @@ public class AgentTaskLandStageOutcomeTests
         rows.Count.ShouldBe(4);
         rows[3].Stage.ShouldBe(OrchestrationStage.Cleanup);
         rows[3].Outcome.ShouldBe(StageOutcomeKind.Clean);
-        rows[3].Detail.ShouldContain("nothing left to clean");
+        rows[3].Detail.ShouldContain("cleanup complete");
         var landed = await db.AgentTaskEvents.AsNoTracking()
             .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Landed)
             .OrderByDescending(e => e.At)
             .FirstAsync();
-        landed.Detail.ShouldContain("nothing left to clean");
+        landed.Detail.ShouldContain("mode=CleanupRetry");
+        landed.Detail.ShouldContain("cleanup=Complete");
         (await db.AgentTaskEvents.CountAsync(e =>
             e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.LandRefused)).ShouldBe(0);
-        await AssertPendingClearedAsync(db, task.Id, attempt: 1);
+        await AssertPendingClearedAsync(db, task.Id, attempt: 2);
     }
 
     [Test]
@@ -435,20 +423,8 @@ public class AgentTaskLandStageOutcomeTests
     private static (AgentTaskLandService Land, DelegationWorktreeService Worktrees) CreateLand(
         AppDbContext db, ScratchGitRepo repo)
     {
-        var manager = new WorktreeManager(
-            Options.Create(new GitSettings
-            {
-                WorktreeBasePath = repo.WorktreeRoot,
-                WorktreeStaleAfterDays = 7,
-                WorktreeJanitorIntervalHours = 24,
-            }),
-            TimeProvider.System,
-            NullLogger<WorktreeManager>.Instance);
-        var worktrees = new DelegationWorktreeService(
-            manager,
-            new GitService(NullLogger<GitService>.Instance),
-            NullLogger<DelegationWorktreeService>.Instance,
-            new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance));
+        var graph = DelegationTestServices.CreateGitGraph(new GitSettings { WorktreeBasePath = repo.WorktreeRoot }, db);
+        var worktrees = graph.Worktrees;
         var tasks = new AgentTaskService(
             db,
             new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
@@ -466,7 +442,9 @@ public class AgentTaskLandStageOutcomeTests
             new MockEventBus(),
             TimeProvider.System,
             Options.Create(new DelegationSettings()),
-            NullLogger<AgentTaskLandService>.Instance);
+            NullLogger<AgentTaskLandService>.Instance,
+            new AgentTaskLandingProtocol(db, graph.Git, graph.Leases, graph.Manager, new LandingVerifier(), TimeProvider.System),
+            graph.Leases, graph.Git);
         return (land, worktrees);
     }
 

@@ -75,6 +75,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
     {
         public List<string[]> Trace { get; } = [];
         public Func<string, IReadOnlyList<string>, Task<LandingGitResult?>>? BeforeCommand { get; set; }
+        public Func<string, IReadOnlyList<string>, LandingGitResult, Task>? AfterCommand { get; set; }
         protected override void ConfigureProcess(ProcessStartInfo start)
         {
             start.Environment["HOME"] = home;
@@ -97,7 +98,19 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         {
             Trace.Add(arguments.ToArray());
             if (BeforeCommand is not null && await BeforeCommand(repository, arguments) is { } injected) return injected;
-            return await base.RunAsync(repository, arguments, ct);
+            var result = await base.RunAsync(repository, arguments, ct);
+            if (AfterCommand is not null) await AfterCommand(repository, arguments, result);
+            return result;
+        }
+
+        public override async Task<LandingGitResult> RunOwnedAsync(string repository, IReadOnlyList<string> arguments,
+            Func<int, long, CancellationToken, Task> started, CancellationToken ct)
+        {
+            Trace.Add(arguments.ToArray());
+            if (BeforeCommand is not null && await BeforeCommand(repository, arguments) is { } injected) return injected;
+            var result = await base.RunOwnedAsync(repository, arguments, started, ct);
+            if (AfterCommand is not null) await AfterCommand(repository, arguments, result);
+            return result;
         }
     }
 }

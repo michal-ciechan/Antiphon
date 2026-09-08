@@ -20,6 +20,7 @@ public sealed class CardReviewService
     private readonly AgentChannelService _agentChannelService;
     private readonly GithubSettings _githubSettings;
     private readonly ILogger<CardReviewService> _logger;
+    private readonly IRepositoryMutationLease? _repositoryLeases;
 
     public CardReviewService(
         AppDbContext db,
@@ -27,7 +28,8 @@ public sealed class CardReviewService
         IGitHubService gitHubService,
         AgentChannelService agentChannelService,
         IOptions<GithubSettings> githubSettings,
-        ILogger<CardReviewService> logger)
+        ILogger<CardReviewService> logger,
+        IRepositoryMutationLease? repositoryLeases = null)
     {
         _db = db;
         _gitService = gitService;
@@ -35,6 +37,7 @@ public sealed class CardReviewService
         _agentChannelService = agentChannelService;
         _githubSettings = githubSettings.Value;
         _logger = logger;
+        _repositoryLeases = repositoryLeases;
     }
 
     public async Task<BranchDiffDto> GetDiffAsync(Guid cardId, CancellationToken ct)
@@ -123,6 +126,10 @@ public sealed class CardReviewService
             .OrderByDescending(a => a.AttemptNumber)
             .FirstOrDefault();
         var body = BuildPullRequestBody(card, lastAttempt);
+        await using var repositoryLease = _repositoryLeases is null ? null
+            : await _repositoryLeases.TryAcquireAsync(worktree.Path, ct);
+        if (repositoryLease is null)
+            throw new ConflictException("Repository is busy or mutation exclusion is unavailable; retry the pull request.");
 
         try
         {

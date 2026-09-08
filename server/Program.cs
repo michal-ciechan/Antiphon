@@ -310,9 +310,13 @@ try
     builder.Services.AddScoped<AgentTaskPipelineStatusService>();
     builder.Services.AddSingleton<AgentTaskLandQueue>();
     builder.Services.AddSingleton<ILandingGit, LandingGit>();
+    builder.Services.AddSingleton<IWorktreeRemovalEvidence, WorktreeRemovalEvidence>();
+    builder.Services.AddSingleton<GuardedWorktreeRemoval>();
     builder.Services.AddSingleton<IRepositoryMutationLease, RepositoryMutationLease>();
     builder.Services.AddScoped<AgentTaskLandingState>();
     builder.Services.AddScoped<AgentTaskLandService>();
+    builder.Services.AddScoped<AgentTaskLandingProtocol>();
+    builder.Services.AddSingleton<ILandingVerifier, LandingVerifier>();
     builder.Services.AddScoped<StageOutcomeService>();
     // CARD-0140 S3: AgentTuiLaunchResolver is already AddScoped below; the dispatcher's optional
     // constructor parameter picks it up so a pinned standing agent launches from its own profile.

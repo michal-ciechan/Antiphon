@@ -22,6 +22,7 @@ namespace Antiphon.Tests.Application;
 /// "refusing to fetch into checked-out branch" is not something a fake would ever say.
 /// </summary>
 [Category("Integration")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class DelegationWorktreeTests
 {
     // ---- creation --------------------------------------------------------------------------
@@ -754,7 +755,8 @@ public class DelegationWorktreeTests
     private static (AgentTaskLandService Land, DelegationWorktreeService Worktrees) CreateLand(
         AppDbContext db, ScratchGitRepo repo)
     {
-        var (worktrees, _) = CreateService(repo);
+        var graph = DelegationTestServices.CreateGitGraph(new GitSettings { WorktreeBasePath = repo.WorktreeRoot }, db);
+        var worktrees = graph.Worktrees;
         var tasks = new AgentTaskService(
             db,
             new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
@@ -772,7 +774,9 @@ public class DelegationWorktreeTests
             new MockEventBus(),
             TimeProvider.System,
             Options.Create(new DelegationSettings()),
-            NullLogger<AgentTaskLandService>.Instance);
+            NullLogger<AgentTaskLandService>.Instance,
+            new AgentTaskLandingProtocol(db, graph.Git, graph.Leases, graph.Manager, new LandingVerifier(), TimeProvider.System),
+            graph.Leases, graph.Git);
         return (land, worktrees);
     }
 
@@ -780,22 +784,12 @@ public class DelegationWorktreeTests
         ScratchGitRepo repo,
         int? worktreeAddTimeoutSeconds = null)
     {
-        var manager = new WorktreeManager(
-            Options.Create(new GitSettings
-            {
-                WorktreeBasePath = repo.WorktreeRoot,
-                WorktreeStaleAfterDays = 7,
-                WorktreeJanitorIntervalHours = 24,
-                WorktreeAddTimeoutSeconds = worktreeAddTimeoutSeconds ?? 180,
-            }),
-            TimeProvider.System,
-            NullLogger<WorktreeManager>.Instance);
-        var service = new DelegationWorktreeService(
-            manager,
-            new GitService(NullLogger<GitService>.Instance),
-            NullLogger<DelegationWorktreeService>.Instance,
-            new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance));
-        return (service, manager);
+        var graph = DelegationTestServices.CreateGitGraph(new GitSettings
+        {
+            WorktreeBasePath = repo.WorktreeRoot, WorktreeStaleAfterDays = 7,
+            WorktreeJanitorIntervalHours = 24, WorktreeAddTimeoutSeconds = worktreeAddTimeoutSeconds ?? 180,
+        });
+        return (graph.Worktrees, graph.Manager);
     }
 
     private sealed class TemporaryDirectory : IDisposable
