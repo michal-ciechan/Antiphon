@@ -71,9 +71,10 @@ public static class CapacityRecoveryPolicy
         admissionCount >= maxAttempts;
 
     /// <summary>
-    /// How long an Admitted wait may sit without progress before reconciliation re-arms it.
-    /// Two admission intervals: long enough that a still-running action is not recycled, short
-    /// enough that a dead admission cannot hold the active-consumer unique index forever.
+    /// How long an Admitted wait may sit without progress before reconciliation re-arms it,
+    /// and how long an unredeemed grant may reserve the provider before being deferred.
+    /// Two admission intervals allow a slower consumer to run while bounding the time a
+    /// disappeared consumer can block every other wait for the provider.
     /// </summary>
     public const int StalledAdmissionIntervalMultiplier = 2;
 
