@@ -924,6 +924,14 @@ worker death keeps admission held, including a dead or reused root PID: that PID
 prove all descendants exited. Malformed/torn records also hold. Do not unlink `landing.lock`,
 Git locks or uncertain child records to force admission; inspect the recorded process identity
 and surviving work first. Recovery never kills an unrelated process by PID alone.
+Use `pwsh -NoProfile -File scripts/recover-repository-children.ps1 -Repository <checkout>`
+to preview the records. After confirming the recorded children's descendants have exited,
+repeat with `-Execute -ConfirmDescendantsExited`. The command holds the same repository lock,
+clears only valid records whose exact PID/start identity is gone, and retains live, unreadable,
+malformed or torn evidence. Exit 3 means busy or retained evidence; exit 0 means none remains.
+A server restart alone does not establish descendant exit; a machine reboot does. Unknown
+start intents still require investigation. Recovery clears admission, not Git sequencer/lock
+state or publication evidence; retry the original operation through its normal recovery path.
 
 Creation records now distinguish unfinished intent from a completed/reused checkout. An
 owned missing checkout can be reconstructed from its recorded Git admin/index without
