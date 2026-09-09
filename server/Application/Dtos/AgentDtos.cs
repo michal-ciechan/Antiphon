@@ -250,7 +250,17 @@ public sealed record AgentSupervisionDto(
     int LastEscalationTier,
     int HerdrConsecutiveFailures = 0,
     DateTime? HerdrFailureHeldAt = null,
-    HerdrSupervisionFailureKind? LastHerdrFailureKind = null);
+    HerdrSupervisionFailureKind? LastHerdrFailureKind = null,
+    int RestartBackoffFailures = 0,
+    DateTime? ContinuityHeldAt = null,
+    Guid? ContinuitySessionId = null,
+    StandingContinuityReason? ContinuityReason = null,
+    string? ContinuityEvidence = null);
+
+public sealed record StandingSessionHistoryDto(IReadOnlyList<StandingSessionHistoryItemDto> Items, Guid? NextBefore);
+
+public sealed record StandingSessionHistoryItemDto(Guid Id, DateTime CreatedAt, DateTime? EndedAt,
+    AgentKind Kind, string Cwd, SessionStatus Status, string OwnershipEvidence, bool Eligible, string? RefusalCode);
 
 public sealed record AgentIncidentDto(
     Guid Id,
@@ -446,7 +456,9 @@ public sealed record StartAgentRequest(
     /// CARD-0412 automatic standing recovery. Must not clear human latches, Herdr holds,
     /// or the suspend flag, and must not set ResetHerdrFailureHold / AllowUnauthenticatedProvider.
     /// </summary>
-    bool CapacityRecovery = false);
+    bool CapacityRecovery = false,
+    Guid? ResumeSessionId = null,
+    bool RetryContinuity = false);
 
 /// <summary>CARD-0213: bind a standing Herdr agent to an existing operator pane.</summary>
 public sealed record AttachHerdrPaneRequest(string PaneId);

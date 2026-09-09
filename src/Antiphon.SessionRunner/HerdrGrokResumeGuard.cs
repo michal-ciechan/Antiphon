@@ -32,15 +32,18 @@ internal static class HerdrGrokResumeGuard
             return;
 
         var grokHome = GrokTranscriptTailer.ResolveGrokHome(request.Env);
-        if (GrokNativeSessionStore.Exists(grokHome, resumeId))
+        var presence = GrokNativeSessionStore.Probe(grokHome, resumeId);
+        if (presence == NativeSessionPresence.Found)
             return;
+        if (presence == NativeSessionPresence.Unavailable)
+            throw new IOException("Grok native session storage is unavailable; resume identity is preserved.");
 
         var sessions = Path.Combine(grokHome, "sessions");
         logger.LogWarning(
             "Refusing grok --resume {ResumeId} for session {SessionId}: no native directory under {SessionsRoot}",
             resumeId, sessionId, sessions);
         throw new HerdrLaunchException(
-            $"refusing to type `--resume {resumeId:D}` for session {sessionId:D}: no grok session directory under {sessions}; grok 1.0.13 exits 1 after a remote 404 and herdr never detects it. Launch with --session-id {resumeId:D} to create the conversation (Antiphon's next start does this).",
+            $"Cannot resume {resumeId:D} for session {sessionId:D}: native history is missing. Inspect or select owned history; only an explicit fresh start creates another conversation.",
             HerdrProblemTypes.GrokNativeSessionMissing);
     }
 

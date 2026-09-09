@@ -39,6 +39,10 @@ export interface AttentionVisual {
 }
 
 export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
+  StandingContinuityDecision: {
+    label: 'Conversation decision', color: 'danger', icon: TbHelpCircle,
+    hint: 'Inspect the conversation, retry after repair, select owned history, or explicitly start fresh.',
+  },
   HerdrSupervisionHeld: {
     label: 'Herdr retries paused',
     color: 'danger',

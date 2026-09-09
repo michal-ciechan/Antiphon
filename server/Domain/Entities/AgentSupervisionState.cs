@@ -16,6 +16,13 @@ public class AgentSupervisionState
     public bool Suspended { get; set; }
 
     public int ConsecutiveFailures { get; set; }
+    public int RestartBackoffFailures { get; set; }
+    public Guid? LastObservedRestartSessionId { get; set; }
+    public DateTime? LastObservedRestartStartedAt { get; set; }
+    public DateTime? ContinuityHeldAt { get; set; }
+    public Guid? ContinuitySessionId { get; set; }
+    public StandingContinuityReason? ContinuityReason { get; set; }
+    public string? ContinuityEvidence { get; set; }
     public int HerdrConsecutiveFailures { get; set; }
     public DateTime? HerdrFailureHeldAt { get; set; }
     public HerdrSupervisionFailureKind? LastHerdrFailureKind { get; set; }

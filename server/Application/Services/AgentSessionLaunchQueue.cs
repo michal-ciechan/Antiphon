@@ -46,7 +46,7 @@ public sealed class AgentSessionLaunchQueue : ILaunchOwnership
         Guid sessionId, Guid agentId, AgentLaunchSpec spec, string? remoteControlName,
         bool resume = false, LaunchNotes? notes = null, string? initialPrompt = null)
     {
-        _owned.TryAdd(sessionId, 0);
+        if (!_owned.TryAdd(sessionId, 0)) return;
         var launch = Task.Run(() => LaunchInteractiveSessionAsync(
             sessionId, agentId, spec, remoteControlName, resume, notes, initialPrompt));
         TrackLaunch(launch, sessionId, agentId, interactive: true);

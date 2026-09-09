@@ -181,6 +181,8 @@ try
     // a human dryRun then a manual sync must land before anyone turns committing on.
     builder.Services.Configure<CardFileSyncSettings>(builder.Configuration.GetSection(CardFileSyncSettings.SectionName));
     builder.Services.Configure<ParkedMessageSweepSettings>(builder.Configuration.GetSection("ParkedMessages"));
+    if (builder.Configuration["Supervision:FreshAfterResumeFailures"] is not null)
+        Log.Warning("Supervision:FreshAfterResumeFailures is deprecated and ignored; only explicit Fresh replaces a conversation.");
     builder.Services.AddSingleton<IValidateOptions<SupervisionSettings>, SupervisionSettingsValidator>();
     builder.Services.AddOptions<SupervisionSettings>()
         .Bind(builder.Configuration.GetSection("Supervision"))

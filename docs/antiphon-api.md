@@ -716,3 +716,10 @@ Boards default off and Unknown repository visibility blocks publication. Private
 notes do not appear in ordinary DTOs or generated markdown. Outcome and archive
 reasons remain public fields on eligible cards. Cleanup pending is independent of
 card/session state; disabling the feature freezes existing exports.
+
+## Standing conversation recovery (CARD-0466)
+
+`GET /api/agents/{id}/sessions?take=25&before={session-guid}` returns owned metadata history
+with `items` and `nextBefore`. Start appends mutually exclusive `resumeSessionId`,
+`retryContinuity` and existing `fresh`; POST acceptance means queued. See
+[the operator flow](ops-http.md) for strict ownership, refusals and safe queued input.

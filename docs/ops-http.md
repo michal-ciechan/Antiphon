@@ -217,3 +217,24 @@ Boards default off and Unknown repository visibility blocks publication. Private
 notes do not appear in ordinary DTOs or generated markdown. Outcome and archive
 reasons remain public fields on eligible cards. Cleanup pending is independent of
 card/session state; disabling the feature freezes existing exports.
+
+Inspect the agent/session and Stop active work before selecting history. Read
+`GET /api/agents/{id}/sessions?take=25&before={session-guid}` for bounded metadata history;
+`nextBefore` is the next cursor. GET never adopts ownership and Start revalidates it.
+POST `/api/agents/{id}/start` with exactly one of `resumeSessionId`, `retryContinuity:true`,
+or `fresh:true`. The first selects an owned Antiphon session GUID; retry uses the current
+target after repair; Fresh explicitly creates a new ID and keeps the old row. Acceptance
+means queued, not proven recovered. These options do not reset Herdr's independent hold.
+
+Historical ownership is the immutable physical standing-agent ID, or unambiguous legacy
+current-pointer, task execution or Crash/RestartScheduled/Recovered incident evidence.
+ParentSessionId, cwd, name and knowledge of an ID never prove ownership. Missing or
+contradictory evidence refuses `standing_resume_owner_unproven`; a different stamped
+owner refuses `standing_resume_not_owned`. Deleting/recreating a name does not transfer
+ownership. This cannot reconstruct native history overwritten by the former same-ID fallback.
+
+Selecting older history refuses live/queued sessions, pending card work and open execution
+assignments. Only never-attempted pending non-rules input moves, appended in source order
+after the target queue. Any delivery baseline, timestamp, verdict or settlement evidence
+refuses the switch (including manual Fresh) with `standing_resume_delivery_pending`.
+Resolve that input using existing queue controls. Transcript and task history stay separate.

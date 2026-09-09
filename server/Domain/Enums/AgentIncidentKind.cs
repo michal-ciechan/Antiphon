@@ -541,4 +541,8 @@ public enum AgentIncidentKind
     /// </summary>
     CapacityRecovery = 56,
     StandingSpecialistHealth = 57,
+    StandingContinuityHeld = 58,
+    StandingFreshSelected = 59,
+    StandingResumeSelected = 60,
+    ResumeUnsupported = 61,
 }

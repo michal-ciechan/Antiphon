@@ -83,12 +83,12 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         {
             await _runnerClient.ListAsync(ct);
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        catch (Exception ex) when (!ct.IsCancellationRequested && new RestartFailurePolicy().Classify(ex) == RestartFailureKind.Infrastructure)
         {
             _logger.LogDebug(ex, "Supervision tick skipped: session runner unreachable");
             return 0;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             _logger.LogTrace(ex, "Supervision runner probe failed non-transport; continuing");
         }
@@ -105,7 +105,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             {
                 actions += await SuperviseAsync(agent, ct) ? 1 : 0;
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 _logger.LogWarning(ex, "Supervision failed for agent {AgentId} ({AgentName})", agent.Id, agent.Name);
             }
@@ -139,7 +139,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             }
             return await CompleteAsync(false);
         }
-        if (state.Suspended)
+        if (state.Suspended || state.LivenessLatchedAt is not null || state.ContinuityHeldAt is not null)
             return await CompleteAsync(false);
         if (Guid.TryParse(agent.PersistentSessionId, out var ownedId) && _launchQueue.Owns(ownedId))
             return await CompleteAsync(false);
@@ -148,12 +148,14 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         if (liveSession is not null)
         {
             // Healthy long enough? Reset the ladder so the next incident starts from 5s again.
-            if ((state.ConsecutiveFailures > 0 || state.NextRestartAt is not null || state.LastEscalationTier > 0)
+            if ((state.RestartBackoffFailures > 0 || state.ConsecutiveFailures > 0 || state.NextRestartAt is not null || state.LastEscalationTier > 0)
                 && liveSession.Status == SessionStatus.Running
-                && now - liveSession.StartedAt >= TimeSpan.FromMinutes(_settings.HealthyUptimeResetMinutes))
+                && liveSession.InteractiveLaunchCompletedAt is { } completedAt
+                && now - completedAt >= TimeSpan.FromMinutes(_settings.HealthyUptimeResetMinutes))
             {
                 var failures = state.ConsecutiveFailures;
                 state.ConsecutiveFailures = 0;
+                state.RestartBackoffFailures = 0;
                 state.NextRestartAt = null;
                 state.LastEscalationTier = 0;
                 state.LastHealthyAt = now;
@@ -201,11 +203,17 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
 
             // A previous supervised start that evidently died before reaching healthy uptime
             // counts as a failure — this is what grows the ladder for fast crash-loops.
-            if (state.LastAttemptAt is not null)
-                state.ConsecutiveFailures++;
+            if (dead?.RestartFailureKind == RestartFailureKind.ContinuityUnavailable)
+            {
+                await new StandingContinuityState(_db, _timeProvider).HoldAsync(agent.Id, dead.Id,
+                    StandingContinuityReason.NativeSessionMissing, ct);
+                return await CompleteAsync(false);
+            }
+            if (dead is not null)
+                new RestartFailurePolicy().Observe(state, dead);
 
-            var attempt = state.ConsecutiveFailures + 1;
-            var delay = Backoff(state.ConsecutiveFailures);
+            var attempt = state.RestartBackoffFailures + 1;
+            var delay = Backoff(state.RestartBackoffFailures);
             state.NextRestartAt = now + delay;
             state.UpdatedAt = now;
 
@@ -236,12 +244,12 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             return await CompleteAsync(false);
 
         // Due: attempt the restart.
-        var attemptNumber = state.ConsecutiveFailures + 1;
+        var attemptNumber = state.RestartBackoffFailures + 1;
         state.LastAttemptAt = now;
         state.UpdatedAt = now;
         await _db.SaveChangesAsync(ct);
 
-        var fresh = state.ConsecutiveFailures >= _settings.FreshAfterResumeFailures;
+        // Failure counts pace retries; they never authorize a new conversation.
         await transaction.CommitAsync(ct);
         await transaction.DisposeAsync();
         // A manual Start may have consumed another outcome while this tick was handing off.
@@ -252,11 +260,11 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         {
             _logger.LogInformation(
                 "Agent {AgentName}: supervised restart attempt {Attempt} ({Mode})",
-                agent.Name, attemptNumber, fresh ? "fresh conversation" : "resume");
+                agent.Name, attemptNumber, "resume");
             // IgnoreSubscriptionQuota: a supervisor cannot pick another provider, and stopping
             // AlwaysOn restarts on a quota reading is the silent-stop the CARD-0136 gate forbids.
             await _control.StartAsync(
-                agent.Id, new StartAgentRequest(Fresh: fresh, IgnoreSubscriptionQuota: !StandingSpecialistSeatPolicy.IsAlternate(agent)), ct, automatic: true);
+                agent.Id, new StartAgentRequest(Fresh: false, IgnoreSubscriptionQuota: !StandingSpecialistSeatPolicy.IsAlternate(agent)), ct, automatic: true);
 
             // Success ⇒ stop scheduling; the failure counter only resets after sustained health.
             // (StartAsync clears supervision state itself for manual semantics; re-load ours.)
@@ -266,12 +274,12 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             await _db.SaveChangesAsync(ct);
             return true;
         }
-        catch (ConflictException ex) when (ex.Code == HerdrSupervisionStateService.HeldCode)
+        catch (ConflictException ex) when (ex.Code is HerdrSupervisionStateService.HeldCode or StandingContinuityState.HeldCode)
         {
             await _herdrSupervision.ObserveAsync(agent.Id, false, false, ct);
             return false;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             var refreshed = await GetOrCreateStateAsync(agent.Id, ct);
             if (ex is ModelDisabledException held)
@@ -295,8 +303,8 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
                     return true;
                 }
 
-                refreshed.ConsecutiveFailures++;
-                var heldDelay = Backoff(refreshed.ConsecutiveFailures);
+                new RestartFailurePolicy().Charge(refreshed, RestartFailureKind.Unknown);
+                var heldDelay = Backoff(refreshed.RestartBackoffFailures);
                 refreshed.NextRestartAt = UtcNow() + heldDelay;
                 refreshed.LastAttemptAt = now;
                 refreshed.UpdatedAt = UtcNow();
@@ -318,8 +326,14 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             }
             else
             {
-                refreshed.ConsecutiveFailures++;
-                var delay = Backoff(refreshed.ConsecutiveFailures);
+                new RestartFailurePolicy().Charge(refreshed, new RestartFailurePolicy().Classify(ex));
+                var incarnation = await FindPersistentSessionAsync(agent, statuses: null, ct);
+                if (incarnation is not null && incarnation.StartedAt >= now)
+                {
+                    refreshed.LastObservedRestartSessionId = incarnation.Id;
+                    refreshed.LastObservedRestartStartedAt = incarnation.StartedAt;
+                }
+                var delay = Backoff(refreshed.RestartBackoffFailures);
                 refreshed.NextRestartAt = UtcNow() + delay;
                 refreshed.LastAttemptAt = now;
                 refreshed.UpdatedAt = UtcNow();
@@ -435,7 +449,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         var cadence = tier == 2 ? "daily-or-slower" : "hourly-or-slower";
         await RecordIncidentAsync(
             agent.Id, null, AgentIncidentKind.BackoffEscalated, severity,
-            $"Backoff escalated: {state.ConsecutiveFailures} consecutive failures; now retrying on a {cadence} cadence (current delay {Describe(delay)}).",
+            $"Backoff escalated: {state.RestartBackoffFailures} consecutive failures; now retrying on a {cadence} cadence (current delay {Describe(delay)}).",
             ct: ct);
         _logger.LogError(
             "Agent {AgentName}: supervision backoff escalated to {Cadence} after {Failures} consecutive failures",

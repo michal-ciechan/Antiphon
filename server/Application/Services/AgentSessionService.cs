@@ -20,6 +20,7 @@ namespace Antiphon.Server.Application.Services;
 
 public sealed class AgentSessionService : IDelegateSessionStopper
 {
+    internal SessionMessageQueueService MessageQueue => _messageQueue;
     private const string MemoryKilledFailureReason = "MemoryKilled: agent exceeded the configured memory limit.";
     public const string ClaudeSessionNotFoundFailureReason =
         "Claude resume session was not found. Continue from last context in this worktree or start a new Claude session.";
@@ -342,49 +343,27 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
         try
         {
-            try
-            {
-                await LaunchInteractiveProcessAsync(
-                    session, agentId, launchSpec, remoteControlName,
-                    resume ? AgentSessionResumeMode.Resume : null, notes, initialPrompt, ct);
-            }
-            catch (ResumeTargetMissingException)
-            {
-                if (await _db.Agents.AsNoTracking().Where(a => a.Id == agentId)
-                    .AnyAsync(StandingSpecialistSeatPolicy.SeatOrSlug(_delegationSettings), ct))
-                    throw;
-                await _db.Entry(session).ReloadAsync(ct);
-                session.HerdrSupervisionFailureKind = null;
-                session.TerminationSource = SessionTerminationSource.Unknown;
-                session.Status = SessionStatus.Starting;
-                session.StartedAt = UtcNow();
-                session.EndedAt = null;
-                session.ExitCode = null;
-                session.FailureReason = null;
-                await _db.SaveChangesAsync(ct);
-                _logger.LogInformation(
-                    "Resume target for session {SessionId} was not found; starting fresh with the same id",
-                    sessionId);
-                // Effective fresh: same session row, brand-new conversation — it must BOOTSTRAP,
-                // not get the restart note, so the fallback keeps the full notes and the process
-                // launcher's resumeMode=null branch selects FreshBody.
-                await LaunchInteractiveProcessAsync(
-                    session, agentId, launchSpec, remoteControlName, resumeMode: null, notes, initialPrompt, ct);
-            }
+            await LaunchInteractiveProcessAsync(
+                session, agentId, launchSpec, remoteControlName,
+                resume ? AgentSessionResumeMode.Resume : null, notes, initialPrompt, ct);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             _logger.LogWarning(ex, "Failed to start interactive agent session {SessionId}", sessionId);
             await using var evidenceTransaction = _db.Database.CurrentTransaction is null
                 ? await _db.Database.BeginTransactionAsync(CancellationToken.None) : null;
+            await _db.Agents.FromSqlInterpolated($"SELECT * FROM \"Agents\" WHERE \"Id\" = {agentId} FOR UPDATE")
+                .AsNoTracking().SingleOrDefaultAsync(CancellationToken.None);
+            var expectedGeneration = session.StartedAt;
             await _db.AgentSessions.FromSqlInterpolated(
                 $"""SELECT * FROM "AgentSessions" WHERE "Id" = {sessionId} FOR UPDATE""").AsNoTracking().SingleAsync(CancellationToken.None);
             // Cleanup's exit observer has its own context. Re-read before merging typed
             // evidence so an unrelated catch cannot overwrite its proven timeout.
             await _db.Entry(session).ReloadAsync(CancellationToken.None);
+            if (session.StartedAt != expectedGeneration) throw;
+            session.RestartFailureKind = new RestartFailurePolicy().Classify(ex);
             HerdrSupervisionFailureEvidence.Record(session, HerdrSupervisionFailureEvidence.FromLaunchFailure(ex));
-            var stoppedCheck = ex is ConflictException { Code: "specialist_start_intent_revoked" }
-                && session.TerminationSource == SessionTerminationSource.OperatorRequest;
+            var stoppedCheck = session.TerminationSource == SessionTerminationSource.OperatorRequest;
             session.Status = stoppedCheck ? SessionStatus.Stopped : SessionStatus.Failed;
             session.FailureReason = ex.Message;
             session.EndedAt = UtcNow();
@@ -409,6 +388,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 agent.UpdatedAt = UtcNow();
             }
 
+            if (!stoppedCheck && session.RestartFailureKind == RestartFailureKind.ContinuityUnavailable
+                && agent?.PersistentSessionId == sessionId.ToString("D"))
+                await new StandingContinuityState(_db, _timeProvider).HoldAsync(agentId, sessionId,
+                    StandingContinuityReason.NativeSessionMissing, CancellationToken.None);
             await _db.SaveChangesAsync(CancellationToken.None);
             // Let the UI refetch: the now-Failed session is no longer "live", so the agent card returns
             if (evidenceTransaction is not null)
@@ -434,7 +417,9 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         try
         {
             await RequireCurrentCheckLaunchAsync(session, agentId, ct);
-            resumeMode = ApplyEffectiveResumeMode(session, launchSpec, resumeMode);
+            // Standing resume preserves native identity even when local storage cannot be inspected.
+            if (session.CardId is not null || session.WorktreeId is not null)
+                resumeMode = ApplyEffectiveResumeMode(session, launchSpec, resumeMode);
             adapter = _adapterFactory.Create(session.AgentKind);
             var spec = await BuildRuntimeLaunchSpecAsync(launchSpec, session, session.Cwd, resumeMode, ct);
             EnsureHerdrLaunchAllowed(session, spec);
@@ -505,12 +490,17 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // CARD-0312 S2, LAST: the one launch shape that ends with Status=Running, an
             // AgentChanged event, and zero evidence that anything can be reached.
             await TryEnqueueBootProbeAsync(session, agentId, typedSomething, ct);
+            await RequireCurrentCheckLaunchAsync(session, agentId, ct);
+            session.InteractiveLaunchCompletedAt = UtcNow();
+            await _db.SaveChangesAsync(ct);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex)
         {
             // Read the adapter's output BEFORE tearing it down — that is where the "No conversation
             // found with session ID:" evidence lives.
-            var resumeTargetMissing = resumeMode == AgentSessionResumeMode.Resume
+            var resumeTargetMissing = !ct.IsCancellationRequested
+                && new RestartFailurePolicy().Classify(ex) != RestartFailureKind.Infrastructure
+                && resumeMode == AgentSessionResumeMode.Resume
                 && (IsClaudeSessionNotFound(adapter, ex)
                     || ex is ConflictException { Code: HerdrProblemTypes.GrokNativeSessionMissing });
             if (adapter is not null)
@@ -531,13 +521,14 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     {
         var agent = await _db.Agents.AsNoTracking().SingleOrDefaultAsync(a => a.Id == agentId, ct);
         if (agent is null) throw new NotFoundException(nameof(Agent), agentId);
-        if (!StandingSpecialistSeatPolicy.IsCheck(agent, _delegationSettings)) return;
+        var check = StandingSpecialistSeatPolicy.IsCheck(agent, _delegationSettings);
+        if (agent.IsPoolDelegate && !check) return;
         var current = await _db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == expected.Id, ct);
         if (agent.PersistentSessionId != expected.Id.ToString("D") || current?.StartedAt != expected.StartedAt
             || current.Status is not (SessionStatus.Starting or SessionStatus.Running)
             || current.TerminationSource == SessionTerminationSource.OperatorRequest
-            || await StandingSpecialistSeatPolicy.StartRefusalAsync(_db, agent, _delegationSettings, true, ct) is not null)
-            throw new ConflictException("The Check launch is no longer authorized for this generation.", "specialist_start_intent_revoked");
+            || (check && await StandingSpecialistSeatPolicy.StartRefusalAsync(_db, agent, _delegationSettings, true, ct) is not null))
+            throw new ConflictException("The standing launch is no longer authorized for this generation.", "specialist_start_intent_revoked");
     }
 
     /// <summary>

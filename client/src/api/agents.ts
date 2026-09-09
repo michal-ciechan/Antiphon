@@ -249,6 +249,11 @@ export interface PolicyDriftDto {
 }
 
 export interface AgentSupervisionDto {
+  restartBackoffFailures?: number
+  continuityHeldAt?: string | null
+  continuitySessionId?: string | null
+  continuityReason?: 'NativeSessionMissing' | 'TargetMissing' | 'TargetIncompatible' | 'OwnershipUnproven' | null
+  continuityEvidence?: string | null
   herdrConsecutiveFailures?: number
   herdrFailureHeldAt?: string | null
   lastHerdrFailureKind?: 'NonQualifying' | 'PaneClosed' | 'ChildGone' | 'DetectTimeout' | null
@@ -259,6 +264,10 @@ export interface AgentSupervisionDto {
 }
 
 export type AgentIncidentKind =
+  | 'StandingContinuityHeld'
+  | 'StandingFreshSelected'
+  | 'StandingResumeSelected'
+  | 'ResumeUnsupported'
   | 'HerdrSupervisionHeld'
   | 'HerdrSupervisionRetried'
   | 'Crash'
@@ -453,6 +462,8 @@ export interface AssignAgentCardRequest {
 }
 
 export interface StartAgentRequest {
+  resumeSessionId?: string
+  retryContinuity?: boolean
   resetHerdrFailureHold?: boolean
   /** Omit = use the agent's persisted remoteControlEnabled setting. */
   remoteControl?: boolean | null
@@ -599,6 +610,8 @@ export function useStartAgent(agentId: string) {
     onSuccess: (agent) => {
       queryClient.setQueryData(agentKeys.detail(agentId), agent)
       queryClient.invalidateQueries({ queryKey: agentKeys.all })
+      queryClient.invalidateQueries({ queryKey: ['agents', 'sessions', agentId] })
+      queryClient.invalidateQueries({ queryKey: ['attention'] })
       // Starting boots a session and may move a card into an active column.
       queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
     },
@@ -693,5 +706,26 @@ export function useAssignAgentCard(agentId: string) {
         queryClient.invalidateQueries({ queryKey: boardKeys.detail(boardId) })
       }
     },
+  })
+}
+
+export interface StandingSessionHistoryItem {
+  id: string
+  createdAt: string
+  endedAt: string | null
+  kind: string
+  cwd: string
+  status: string
+  ownershipEvidence: string
+  eligible: boolean
+  refusalCode: string | null
+}
+
+export function useStandingSessionHistory(agentId: string, enabled: boolean, before?: string) {
+  return useQuery({
+    queryKey: ['agents', 'sessions', agentId, before],
+    queryFn: () => apiGet<{ items: StandingSessionHistoryItem[]; nextBefore: string | null }>(
+      `/agents/${agentId}/sessions?take=25${before ? `&before=${before}` : ''}`),
+    enabled,
   })
 }

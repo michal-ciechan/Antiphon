@@ -4,6 +4,10 @@ namespace Antiphon.Server.Domain.Entities;
 
 public class AgentSession
 {
+    /// <summary>Historical physical standing owner; deliberately not a cascading foreign key.</summary>
+    public Guid? StandingAgentId { get; set; }
+    public RestartFailureKind? RestartFailureKind { get; set; }
+    public DateTime? InteractiveLaunchCompletedAt { get; set; }
     public Guid? GrokRulesGeneration { get; set; }
     public string? GrokRulesExpectedSha256 { get; set; }
     public int? GrokRulesExpectedByteCount { get; set; }

@@ -206,7 +206,7 @@ verification report.
 
 ### Gotcha #89
 
-- **A Grok `--resume` is typed only when `GROK_HOME/sessions/*/{id}/` exists; a row id is not a conversation** (CARD-0383). Absent ⇒ same row launches `--session-id <id>` (create), which makes the row id the native id from then on. The runner refuses a dead resume with 409 `herdr_grok_native_session_missing` before touching herdr; a detect timeout on an idle shell retires the pane to last-pane instead of closing it. That keep-pane exit is `HerdrLaunchDetectTimeout` (Failed row, Warning log, no incident) — never `HerdrPaneLeftOpen`, whose "tidy the pane by hand" badge would recreate the original split-into-a-stranger's-tab bug. Pinned by `GrokNativeSessionResumeTests`, `HerdrGrokResumeGuardTests`, `HerdrLaunchShapeTests`, `AgentSessionRuntimeTests`, `GrokNativeSessionCanaryTests`, `HerdrGrokNativeSessionLiveTests`.
+- **Card-only policy: a Grok `--resume` is typed only when `GROK_HOME/sessions/*/{id}/` exists; a row id is not a conversation** (CARD-0383). Absent ⇒ same row launches `--session-id <id>` (create), which makes the row id the native id from then on. The runner refuses a dead resume with 409 `herdr_grok_native_session_missing` before touching herdr; a detect timeout on an idle shell retires the pane to last-pane instead of closing it. That keep-pane exit is `HerdrLaunchDetectTimeout` (Failed row, Warning log, no incident) — never `HerdrPaneLeftOpen`, whose "tidy the pane by hand" badge would recreate the original split-into-a-stranger's-tab bug. Pinned by `GrokNativeSessionResumeTests`, `HerdrGrokResumeGuardTests`, `HerdrLaunchShapeTests`, `AgentSessionRuntimeTests`, `GrokNativeSessionCanaryTests`, `HerdrGrokNativeSessionLiveTests`.
 
 ### Gotcha #90
 
@@ -229,3 +229,41 @@ Established-session refresh failure holds queued work and records an error incid
 
 The initial implementation still needs the full crash/ownership, native-wire and live endurance
 verification specified by the plan. Do not infer acceptance from the FakeGrok E2E tests.
+
+
+## Standing conversation continuity (CARD-0466)
+
+Infrastructure failures and unknown launch outcomes only pace retries. Neither failure
+counter authorizes Fresh. `RestartBackoffFailures` drives the capped ladder;
+`ConsecutiveFailures` counts confirmed launch/process failures. Terminal evidence is
+consumed once per persisted session/StartedAt generation. Completed interactive boot,
+followed by healthy uptime, resets both counts. `FreshAfterResumeFailures` is deprecated
+and ignored, with a startup warning when configured.
+
+Standing Claude/Grok Start resumes the current conversation strictly. Missing native
+history, an incompatible target or unproven ownership preserves history and requires a
+durable continuity decision. Attention survives incident pruning and AlwaysOn off.
+A failed resume never creates a replacement under the same ID. Grok storage I/O failure
+is unavailable infrastructure, not positive evidence of missing history. Card-only
+native resume policy and interrupted-startup eligibility are unchanged.
+
+Inspect the agent/session and Stop active work before selecting history. Read
+`GET /api/agents/{id}/sessions?take=25&before={session-guid}` for bounded metadata history;
+`nextBefore` is the next cursor. GET never adopts ownership and Start revalidates it.
+POST `/api/agents/{id}/start` with exactly one of `resumeSessionId`, `retryContinuity:true`,
+or `fresh:true`. The first selects an owned Antiphon session GUID; retry uses the current
+target after repair; Fresh explicitly creates a new ID and keeps the old row. Acceptance
+means queued, not proven recovered. These options do not reset Herdr's independent hold.
+
+Historical ownership is the immutable physical standing-agent ID, or unambiguous legacy
+current-pointer, task execution or Crash/RestartScheduled/Recovered incident evidence.
+ParentSessionId, cwd, name and knowledge of an ID never prove ownership. Missing or
+contradictory evidence refuses `standing_resume_owner_unproven`; a different stamped
+owner refuses `standing_resume_not_owned`. Deleting/recreating a name does not transfer
+ownership. This cannot reconstruct native history overwritten by the former same-ID fallback.
+
+Selecting older history refuses live/queued sessions, pending card work and open execution
+assignments. Only never-attempted pending non-rules input moves, appended in source order
+after the target queue. Any delivery baseline, timestamp, verdict or settlement evidence
+refuses the switch (including manual Fresh) with `standing_resume_delivery_pending`.
+Resolve that input using existing queue controls. Transcript and task history stay separate.

@@ -20,6 +20,7 @@ import {
  */
 const ALL_KINDS: AttentionKind[] = [
   'HerdrSupervisionHeld',
+  'StandingContinuityDecision',
   'BlockedQuestion',
   'ParkedMessage',
   'DeadSession',

@@ -7,6 +7,30 @@ namespace Antiphon.Agents.Pty;
 /// </summary>
 public static class GrokNativeSessionStore
 {
+    public static NativeSessionPresence Probe(string grokHome, Guid id)
+    {
+        try
+        {
+            var root = Path.Combine(grokHome, "sessions");
+            foreach (var cwd in Directory.GetDirectories(root))
+            {
+                try
+                {
+                    if ((File.GetAttributes(Path.Combine(cwd, id.ToString("D"))) & FileAttributes.Directory) != 0)
+                        return NativeSessionPresence.Found;
+                }
+                catch (FileNotFoundException) { }
+                catch (DirectoryNotFoundException) { }
+            }
+            return NativeSessionPresence.Missing;
+        }
+        catch (DirectoryNotFoundException) { return NativeSessionPresence.Missing; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return NativeSessionPresence.Unavailable;
+        }
+    }
+
     /// <summary>
     /// The session directory (parent of <c>updates.jsonl</c>), or <see langword="null"/> when
     /// nothing under <paramref name="grokHome"/> contains <c>{id:D}/</c>.
@@ -45,3 +69,5 @@ public static class GrokNativeSessionStore
     public static bool Exists(string grokHome, Guid id) =>
         TryLocateSessionDirectory(grokHome, id) is not null;
 }
+
+public enum NativeSessionPresence { Found, Missing, Unavailable }

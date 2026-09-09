@@ -138,6 +138,10 @@ public sealed class AgentControlService
     /// </summary>
     public async Task<AgentDetailDto> StartAsync(Guid agentId, StartAgentRequest request, CancellationToken ct, bool automatic = false)
     {
+        if ((request.Fresh ? 1 : 0) + (request.ResumeSessionId is not null ? 1 : 0) + (request.RetryContinuity ? 1 : 0) > 1)
+            throw new ValidationException("start", "fresh, resumeSessionId and retryContinuity are mutually exclusive.");
+        if ((automatic || request.CapacityRecovery) && (request.Fresh || request.ResumeSessionId is not null || request.RetryContinuity))
+            throw new ConflictException("Automatic recovery cannot select or discard history.", "standing_recovery_operator_required");
         var agent = await LockAgentAsync(agentId, ct);
 
         if (await StandingSpecialistSeatPolicy.StartRefusalAsync(_db, agent, _delegationSettings, automatic || request.CapacityRecovery, ct) is { } specialistRefusal)
@@ -149,6 +153,11 @@ public sealed class AgentControlService
         var herdrState = await _herdrSupervision.ObserveAsync(agentId, request.ResetHerdrFailureHold, false, ct);
         await _db.Entry(agent).ReloadAsync(ct);
         var alreadyLive = await HasLiveSessionAsync(agent, ct);
+        if (herdrState.ContinuityHeldAt is not null && !request.Fresh && request.ResumeSessionId is null && !request.RetryContinuity)
+            throw new ConflictException(herdrState.ContinuityEvidence ?? "Conversation recovery needs a decision.", StandingContinuityState.HeldCode);
+        if ((request.ResumeSessionId is { } selected && agent.PersistentSessionId != selected.ToString("D") || request.Fresh)
+            && (alreadyLive || Guid.TryParse(agent.PersistentSessionId, out var activeId) && _launchQueue.Owns(activeId)))
+            throw new ConflictException("Stop the current conversation before selecting another.", "standing_resume_current_active");
         if (!alreadyLive && herdrState.HerdrFailureHeldAt is not null)
             throw new ConflictException(_herdrSupervision.HeldMessage(agent.Name, herdrState), HerdrSupervisionStateService.HeldCode);
         if (!alreadyLive && Guid.TryParse(agent.PersistentSessionId, out var pendingId) && _launchQueue.Owns(pendingId))
@@ -177,20 +186,13 @@ public sealed class AgentControlService
                     "capacity_recovery_liveness_latched");
             }
         }
-        else
-        {
-            // Any Start (human, bridge, supervisor) lifts the supervision suspend latch, cancels a
-            // pending scheduled restart, and clears CARD-0312's LivenessLatchedAt — a start IS the
-            // intent supervision waits for. The failure counter is deliberately NOT reset here (only
-            // sustained healthy uptime resets it), so a manual retry of a still-broken agent doesn't
-            // collapse the backoff ladder back to 5s.
-            if (!automatic || !StandingSpecialistSeatPolicy.IsCheck(agent, _delegationSettings))
-                await ClearSupervisionLatchAsync(agent, ct);
-        }
-
         // Already running — leave the existing process (and its remote-control state) untouched.
         if (await HasLiveSessionAsync(agent, ct))
+        {
+            if (!automatic && !request.CapacityRecovery && herdrState.ContinuityHeldAt is null)
+                await ClearSupervisionLatchAsync(agent, ct);
             return await _agentService.GetByIdAsync(agent.Id, ct);
+        }
 
         var kind = await _launchComposer.PeekProfileKindAsync(agent, ct);
         if (kind is AgentKind k && _quotaGate is not null)
@@ -241,6 +243,8 @@ public sealed class AgentControlService
         }
         var remoteControlName = remoteControl ? agent.Name : null;
         var card = await ResolveStartCardAsync(agent, ct);
+        if (card is not null && (request.ResumeSessionId is not null || request.RetryContinuity))
+            throw new ConflictException("Settle queued card work before conversation recovery.", "standing_resume_card_work_pending");
         var launchEnvOverride = AgentLaunchEnv.ValidateOverride(
             request.LaunchEnvOverride, "launchEnvOverride");
         var initialPrompt = string.IsNullOrWhiteSpace(request.Prompt) ? null : request.Prompt.Trim();
@@ -269,14 +273,18 @@ public sealed class AgentControlService
         {
             sessionId = await StartInteractiveSessionAsync(
                 agent, remoteControlName, request.Fresh, launchEnvOverride, initialPrompt,
-                request.PolicyRefreshDelta, ct);
+                request.PolicyRefreshDelta, request.ResumeSessionId, request.RetryContinuity, automatic || request.CapacityRecovery, ct);
             agent.CurrentCardId = null;
         }
 
-        agent.PersistentSessionId = sessionId.ToString("D");
-        agent.Status = AgentStatus.Running;
-        agent.UpdatedAt = UtcNow();
-        await _db.SaveChangesAsync(ct);
+        if (card is not null)
+        {
+            agent.PersistentSessionId = sessionId.ToString("D");
+            agent.Status = AgentStatus.Running;
+            agent.UpdatedAt = UtcNow();
+            if (!automatic && !request.CapacityRecovery) await ClearSupervisionLatchAsync(agent, ct);
+            await _db.SaveChangesAsync(ct);
+        }
         await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
         if (_workspaceWarning is not null)
             await _workspaceWarning.MaybeRaiseForStandingAgentAsync(agent, sessionId, ct);
@@ -295,8 +303,12 @@ public sealed class AgentControlService
         IReadOnlyDictionary<string, string>? launchEnvOverride,
         string? initialPrompt,
         string? policyRefreshDelta,
+        Guid? resumeSessionId,
+        bool retryContinuity,
+        bool automatic,
         CancellationToken ct)
     {
+        var expectedAgentVersion = agent.UpdatedAt;
         if (string.IsNullOrWhiteSpace(agent.WorkingDirectory))
             throw new ConflictException($"Agent '{agent.Name}' has no working directory to start a session in.");
 
@@ -390,9 +402,76 @@ public sealed class AgentControlService
 
         AgentSession? previous = null;
         if (!fresh)
-            previous = await FindResumableSessionAsync(agent, spec.Kind, cwd, ct);
+            previous = await FindResumableSessionAsync(agent, spec.Kind, cwd, resumeSessionId, ct);
         var chosenSessionId = previous?.Id ?? Guid.NewGuid();
         await PreflightNamedPlacementAsync(agent, spec, chosenSessionId, ct);
+
+        var expectedPointer = agent.PersistentSessionId;
+        var expectedGeneration = previous?.StartedAt;
+        var sourceId = Guid.TryParse(expectedPointer, out var source) ? source : (Guid?)null;
+        var involved = new[] { sourceId, previous?.Id }.OfType<Guid>().Distinct().Order().ToArray();
+        if (resumeSessionId is not null && _sessionRunner is null)
+            throw new ServiceUnavailableException("Runner liveness cannot be verified.", "standing_resume_runner_unavailable");
+        if (_sessionRunner is not null && involved.Length > 0)
+        {
+            var processes = await _sessionRunner.ListAsync(ct);
+            if (processes.Any(p => involved.Contains(p.SessionId) && p.Status != "Exited" && p.ExitCode is null))
+                throw new ConflictException("An involved conversation still has a live runner process.", "standing_resume_target_active");
+        }
+        // Coordinate with delivery before taking the short database reservation. These are the
+        // same singleton queue locks that guard stamping and typing, in deterministic order.
+        var queueLocks = involved.Select(id => _agentSessionService.MessageQueue.GetLock(id)).ToArray();
+        var acquired = 0;
+        try
+        {
+            foreach (var queueLock in queueLocks) { await queueLock.WaitAsync(ct); acquired++; }
+            await using var reservation = await _db.Database.BeginTransactionAsync(ct);
+            await LockAgentAsync(agent.Id, ct);
+            await _db.Entry(agent).ReloadAsync(ct);
+            foreach (var id in involved)
+                await _db.AgentSessions.FromSqlInterpolated($"SELECT * FROM \"AgentSessions\" WHERE \"Id\" = {id} FOR UPDATE")
+                    .AsNoTracking().SingleOrDefaultAsync(ct);
+            if (agent.PersistentSessionId != expectedPointer)
+                throw new ConflictException("The current conversation changed; refresh and retry.", "standing_resume_current_changed");
+            if (await HasLiveSessionAsync(agent, ct) || involved.Any(id => _launchQueue.Owns(id)))
+            {
+                if (!fresh && previous?.Id == sourceId) return previous!.Id;
+                throw new ConflictException("A conversation launch already owns this agent.", "standing_resume_current_active");
+            }
+            if (agent.UpdatedAt != expectedAgentVersion)
+                throw new ConflictException("Agent settings or intent changed during preflight.", "standing_resume_current_changed");
+            var intent = await GetOrCreateSupervisionStateAsync(agent.Id, ct);
+            if (_db.Entry(intent).State != EntityState.Added) await _db.Entry(intent).ReloadAsync(ct);
+            if (automatic && (intent.Suspended || intent.LivenessLatchedAt is not null))
+                throw new ConflictException("Start was superseded by operator intent.", "standing_start_intent_revoked");
+            if (intent.HerdrFailureHeldAt is not null)
+                throw new ConflictException("Herdr recovery requires its explicit reset.", HerdrSupervisionStateService.HeldCode);
+            if (intent.ContinuityHeldAt is not null && !fresh && resumeSessionId is null && !retryContinuity)
+                throw new ConflictException("Conversation recovery needs a decision.", StandingContinuityState.HeldCode);
+            if (await ResolveStartCardAsync(agent, ct) is not null)
+                throw new ConflictException("Card work became pending.", "standing_resume_card_work_pending");
+            if (previous is not null)
+            {
+                await _db.Entry(previous).ReloadAsync(ct);
+                if (previous.StartedAt != expectedGeneration)
+                    throw new ConflictException("The target generation changed.", "standing_resume_target_active");
+                await new StandingSessionOwnership(_db).RequireAsync(agent, previous, ct);
+                if (new StandingSessionOwnership(_db).Refusal(agent, previous, spec.Kind, cwd) is { } refusal)
+                    throw new ConflictException("The selected conversation cannot be resumed.", refusal);
+            }
+            var switching = sourceId is not null && sourceId != chosenSessionId;
+            var pending = new List<SessionQueuedMessage>();
+            if (switching)
+            {
+                if (resumeSessionId is not null && await _db.AgentTasks.AnyAsync(t => t.AgentSessionId != null
+                    && involved.Contains(t.AgentSessionId.Value)
+                    && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Blocked), ct))
+                    throw new ConflictException("Settle execution assignments before selecting history.", "standing_resume_work_in_flight");
+                pending = await _db.SessionQueuedMessages.Where(m => m.AgentSessionId == sourceId
+                    && m.Status == QueuedMessageStatus.Pending && m.RulesRefreshKey == null).OrderBy(m => m.Sequence).ThenBy(m => m.Id).ToListAsync(ct);
+                if (pending.Any(m => !StandingQueueSwitchPolicy.NeverAttempted(m)))
+                    throw new ConflictException($"Resolve attempted pending input in /sessions/{sourceId}/queue before switching.", "standing_resume_delivery_pending");
+            }
 
         if (previous is not null)
         {
@@ -407,6 +486,9 @@ public sealed class AgentControlService
                 previous.ExitCode = null;
                 previous.FailureReason = null;
                 previous.HerdrSupervisionFailureKind = null;
+                previous.RestartFailureKind = null;
+                previous.InteractiveLaunchCompletedAt = null;
+                previous.StandingAgentId ??= agent.Id;
                 // A resume is a new life of this row. Leaving the kill's PolicyRefresh (or a
                 // crash's ProcessExit) stamped would make SessionTermination.Record a no-op on
                 // the next close — first-writer-wins would never record the real closer.
@@ -424,6 +506,9 @@ public sealed class AgentControlService
                 previous.SessionBackend = agent.SessionBackend;
                 await _db.SaveChangesAsync(ct);
 
+            await AcceptAsync(previous);
+            await reservation.CommitAsync(ct);
+            await _db.Entry(previous).ReloadAsync(ct);
             _launchQueue.EnqueueInteractiveSession(
                 previous.Id, agent.Id, spec, remoteControlName, resume: true, notes: notes,
                 initialPrompt: initialPrompt);
@@ -434,6 +519,7 @@ public sealed class AgentControlService
         var session = new AgentSession
         {
             Id = chosenSessionId,
+            StandingAgentId = agent.IsPoolDelegate ? null : agent.Id,
             CardId = null,
             WorktreeId = null,
             DefinitionName = definitionName,
@@ -464,19 +550,11 @@ public sealed class AgentControlService
         if (Guid.TryParse(agent.PersistentSessionId, out var previousSessionId)
             && previousSessionId != session.Id)
         {
-            var moved = await _db.SessionQueuedMessages
-                .Where(m => m.AgentSessionId == previousSessionId && m.Status == QueuedMessageStatus.Pending && m.RulesRefreshKey == null)
-                .ExecuteUpdateAsync(s => s.SetProperty(m => m.AgentSessionId, session.Id), ct);
-            if (moved > 0)
-                _logger.LogInformation(
-                    "Agent {AgentName}: moved {Count} pending queued message(s) from session {Previous} to new session {New}",
-                    agent.Name, moved, previousSessionId, session.Id);
-
             // Same follow-through for in-flight tasks: OnTurnEndAsync looks up the open task by
             // AgentSessionId of the session that just ended the turn. Leaving Dispatched/Working
             // rows on the previous id is how CARD-0079's check interpreter answered on the new
             // session and never settled (the occupancy lock then blocked every later check).
-            var remapped = await _db.AgentTasks
+            var remapped = !StandingSpecialistSeatPolicy.IsCheck(agent, _delegationSettings) ? 0 : await _db.AgentTasks
                 .Where(t => t.AgentId == agent.Id
                     && t.AgentSessionId == previousSessionId
                     && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working))
@@ -518,16 +596,78 @@ public sealed class AgentControlService
                 agent.Name, agent.Id, session.Id);
         }
 
-        // The background worker validates the current Check incarnation before starting.
-        // Persist its owner link before enqueue can schedule that worker.
-        if (StandingSpecialistSeatPolicy.IsCheck(agent, _delegationSettings))
-        {
-            agent.PersistentSessionId = session.Id.ToString("D");
-            await _db.SaveChangesAsync(ct);
-        }
+        await AcceptAsync(session);
+        await reservation.CommitAsync(ct);
         _launchQueue.EnqueueInteractiveSession(
             session.Id, agent.Id, spec, remoteControlName, notes: notes, initialPrompt: initialPrompt);
         return session.Id;
+
+        async Task AcceptAsync(AgentSession accepted)
+        {
+            if (pending.Count > 0)
+            {
+                var sequence = await _db.SessionQueuedMessages.Where(m => m.AgentSessionId == accepted.Id)
+                    .MaxAsync(m => (long?)m.Sequence, ct) ?? 0;
+                foreach (var message in pending) { message.AgentSessionId = accepted.Id; message.Sequence = ++sequence; }
+            }
+            agent.PersistentSessionId = accepted.Id.ToString("D");
+            agent.Status = AgentStatus.Running;
+            agent.CurrentCardId = null;
+            agent.UpdatedAt = UtcNow();
+            new StandingContinuityState(_db, _timeProvider).Clear(intent);
+            if (!automatic) await ClearSupervisionLatchAsync(agent, ct);
+            if (fresh || resumeSessionId is not null || retryContinuity || spec.Kind is not (AgentKind.ClaudeCode or AgentKind.Grok))
+                _db.AgentIncidents.Add(new AgentIncident
+                {
+                    Id = Guid.NewGuid(), AgentId = agent.Id, SessionId = accepted.Id,
+                    Kind = fresh ? AgentIncidentKind.StandingFreshSelected
+                        : resumeSessionId is not null || retryContinuity ? AgentIncidentKind.StandingResumeSelected : AgentIncidentKind.ResumeUnsupported,
+                    Severity = AlertSeverity.Info, CreatedAt = UtcNow(),
+                    Message = $"Accepted {(fresh ? "explicit fresh conversation" : "resume selection")}: {expectedPointer ?? "none"} -> {accepted.Id:D}; launch queued.",
+                });
+            await _db.SaveChangesAsync(ct);
+        }
+        }
+        finally { for (var i = acquired - 1; i >= 0; i--) queueLocks[i].Release(); }
+    }
+
+    public async Task<StandingSessionHistoryDto> GetSessionsAsync(Guid agentId, int take, Guid? before, CancellationToken ct)
+    {
+        var agent = await _db.Agents.AsNoTracking().SingleOrDefaultAsync(a => a.Id == agentId, ct)
+            ?? throw new NotFoundException(nameof(Agent), agentId);
+        if (agent.IsPoolDelegate) return new([], null);
+        var ownership = new StandingSessionOwnership(_db);
+        var kind = await _launchComposer.PeekProfileKindAsync(agent, ct) ?? agent.Kind;
+        var candidates = _db.AgentSessions.AsNoTracking().Where(s => s.CardId == null && s.WorktreeId == null
+            && (s.StandingAgentId == agentId || s.StandingAgentId == null
+                && (agent.PersistentSessionId == s.Id.ToString()
+                    || _db.AgentTasks.Any(t => t.AgentId == agentId && t.AgentSessionId == s.Id)
+                    || _db.AgentIncidents.Any(i => i.AgentId == agentId && i.SessionId == s.Id
+                        && (i.Kind == AgentIncidentKind.Crash || i.Kind == AgentIncidentKind.RestartScheduled || i.Kind == AgentIncidentKind.Recovered)))));
+        if (before is { } cursor)
+        {
+            var boundary = await candidates.SingleOrDefaultAsync(s => s.Id == cursor, ct)
+                ?? throw new ValidationException("before", "Unknown history cursor.");
+            candidates = candidates.Where(s => s.CreatedAt < boundary.CreatedAt
+                || s.CreatedAt == boundary.CreatedAt && s.Id.CompareTo(boundary.Id) < 0);
+        }
+        var page = new List<StandingSessionHistoryItemDto>();
+        var limit = Math.Clamp(take, 1, 100);
+        Guid? next = null;
+        // Scan bounded batches: contradictory legacy evidence must never leak another owner's history.
+        var rows = await candidates.OrderByDescending(s => s.CreatedAt).ThenByDescending(s => s.Id).Take(limit * 4 + 1).ToListAsync(ct);
+        foreach (var session in rows)
+        {
+            var proof = await ownership.ResolveAsync(session, ct);
+            if (proof.Owner != agentId) continue;
+            if (page.Count == limit) { next = page[^1].Id; break; }
+            var refusal = ownership.Refusal(agent, session, kind, agent.WorkingDirectory);
+            if (_launchQueue.Owns(session.Id)) refusal = "standing_resume_target_active";
+            page.Add(new(session.Id, session.CreatedAt, session.EndedAt, session.AgentKind, session.Cwd,
+                session.Status, proof.Evidence, refusal is null, refusal));
+        }
+        if (next is null && rows.Count == limit * 4 + 1) next = rows[^1].Id;
+        return new(page, next);
     }
 
     private async Task PreflightNamedPlacementAsync(
@@ -558,25 +698,37 @@ public sealed class AgentControlService
     // runners scope conversations per directory, so resuming an id from a different cwd would fail.
     // Codex/OpenCode/Raw always start fresh.
     private async Task<AgentSession?> FindResumableSessionAsync(
-        Agent agent, AgentKind kind, string cwd, CancellationToken ct)
+        Agent agent, AgentKind kind, string cwd, Guid? selected, CancellationToken ct)
     {
-        if (kind is not (AgentKind.ClaudeCode or AgentKind.Grok)
-            || !Guid.TryParse(agent.PersistentSessionId, out var previousId))
-            return null;
-
+        if (selected is null && string.IsNullOrWhiteSpace(agent.PersistentSessionId)) return null;
+        var previousId = selected ?? (Guid.TryParse(agent.PersistentSessionId, out var parsed) ? parsed : Guid.Empty);
         var previous = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == previousId, ct);
-        if (previous is null
-            || previous.CardId is not null
-            || previous.AgentKind != kind
-            || previous.Status is not (SessionStatus.Stopped or SessionStatus.Failed)
-            || !string.Equals(
-                Path.GetFullPath(previous.Cwd), cwd,
-                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+        if (selected is null && kind is not (AgentKind.ClaudeCode or AgentKind.Grok)
+            && previous?.AgentKind is not (AgentKind.ClaudeCode or AgentKind.Grok)) return null;
+        if (previous is null)
         {
-            return null;
+            if (selected is not null) throw new NotFoundException(nameof(AgentSession), previousId);
+            await HoldAsync(StandingContinuityReason.TargetMissing);
         }
-
+        try
+        {
+            await new StandingSessionOwnership(_db).RequireAsync(agent, previous!, ct);
+            if (new StandingSessionOwnership(_db).Refusal(agent, previous!, kind, cwd) is { } refusal)
+                throw new ConflictException("The selected conversation is incompatible or active.", refusal);
+        }
+        catch (ConflictException ex) when (selected is null)
+        {
+            await HoldAsync(ex.Code is "standing_resume_owner_unproven" or "standing_resume_not_owned"
+                ? StandingContinuityReason.OwnershipUnproven : StandingContinuityReason.TargetIncompatible);
+        }
         return previous;
+
+        async Task HoldAsync(StandingContinuityReason reason)
+        {
+            await new StandingContinuityState(_db, _timeProvider).HoldAsync(agent.Id,
+                previousId == Guid.Empty ? null : previousId, reason, ct);
+            throw new ConflictException("Inspect the existing conversation before retrying or starting fresh.", StandingContinuityState.HeldCode);
+        }
     }
 
     /// <summary>
@@ -653,7 +805,8 @@ public sealed class AgentControlService
         {
             var owner = await _db.Agents.FirstOrDefaultAsync(
                 a => a.PersistentSessionId == sessionId.ToString("D"), ct);
-            var ours = owner is not null
+            var ours = (existing.StandingAgentId is null || existing.StandingAgentId == agent.Id)
+                && owner is not null
                 && owner.Id == agent.Id
                 && existing.CardId is null
                 && existing.Status is SessionStatus.Stopped or SessionStatus.Failed
@@ -671,6 +824,7 @@ public sealed class AgentControlService
             }
 
             session = existing;
+            session.StandingAgentId ??= agent.IsPoolDelegate ? null : agent.Id;
             var resumeNow = UtcNow();
             session.Status = SessionStatus.Starting;
             session.StartedAt = occupant.StartTimeUtc ?? resumeNow;
@@ -693,6 +847,7 @@ public sealed class AgentControlService
             session = new AgentSession
             {
                 Id = sessionId,
+                StandingAgentId = agent.IsPoolDelegate ? null : agent.Id,
                 CardId = null,
                 WorktreeId = null,
                 DefinitionName = definitionName,
@@ -777,7 +932,7 @@ public sealed class AgentControlService
     {
         var agent = await LockAgentAsync(agentId, ct);
 
-        if (StandingSpecialistSeatPolicy.IsCheck(agent, _delegationSettings))
+        if (!agent.IsPoolDelegate)
         {
             // Record human intent before the runner RPC. A launch already queued but not
             // yet started must see the stop even when there is no process to kill yet.
@@ -809,12 +964,15 @@ public sealed class AgentControlService
             await _agentSessionService.KillAsync(sessionId, SessionTerminationSource.OperatorRequest, ct);
         }
 
-        agent.Status = AgentStatus.Stopped;
-        agent.UpdatedAt = UtcNow();
+        if (agent.IsPoolDelegate)
+        {
+            agent.Status = AgentStatus.Stopped;
+            agent.UpdatedAt = UtcNow();
+        }
 
         // Deliberate stop of an always-on agent suspends supervision until a manual Start —
         // supervision must never fight a human's explicit intent.
-        if (agent.AlwaysOn)
+        if (agent.AlwaysOn && agent.IsPoolDelegate)
         {
             var state = await GetOrCreateSupervisionStateAsync(agent.Id, ct);
             if (!state.Suspended)

@@ -207,6 +207,7 @@ public sealed class AttentionService
         items.AddRange(await BuildQueuedInputStuckItemsAsync(since, ct));
         items.AddRange(await BuildBootReplyMissingItemsAsync(since, ct));
         items.AddRange(await BuildHerdrSupervisionHeldItemsAsync(ct));
+        items.AddRange(await BuildStandingContinuityItemsAsync(ct));
         items.AddRange(await BuildAgentOutlivedTaskItemsAsync(now, ct));
         items.AddRange(await BuildModelAvailabilityHoldItemsAsync(now, ct));
         items.AddRange(await BuildCapacityRecoveryExhaustedItemsAsync(now, ct));
@@ -1419,6 +1420,17 @@ public sealed class AttentionService
 
     // ---- condition 9: recent Error-or-worse incidents, grouped ----------------------------------
 
+    private async Task<List<AttentionItemDto>> BuildStandingContinuityItemsAsync(CancellationToken ct)
+    {
+        var holds = await _db.AgentSupervisionStates.AsNoTracking().Include(s => s.Agent)
+            .Where(s => s.ContinuityHeldAt != null).ToListAsync(ct);
+        return holds.Select(s => new AttentionItemDto(AttentionKind.StandingContinuityDecision, AlertSeverity.Error,
+            null, s.ContinuitySessionId, s.AgentId, null, s.Agent?.Name ?? s.AgentId.ToString("D"),
+            $"Conversation recovery needs a decision: {s.ContinuityReason}", s.ContinuityEvidence ?? "Inspect the selected conversation.",
+            s.ContinuityHeldAt!.Value, null, s.ContinuitySessionId is null ? [AttentionAction.OpenAgent]
+                : [AttentionAction.OpenAgent, AttentionAction.OpenDrawer])).ToList();
+    }
+
     private async Task<List<AttentionItemDto>> BuildHerdrSupervisionHeldItemsAsync(CancellationToken ct)
     {
         var holds = await _db.AgentSupervisionStates.AsNoTracking().Include(s => s.Agent)
@@ -1449,7 +1461,8 @@ public sealed class AttentionService
         var recent = await _db.AgentIncidents.AsNoTracking()
             .Where(i => i.Severity >= AlertSeverity.Error && i.CreatedAt >= since
                 && i.Kind != AgentIncidentKind.HerdrSupervisionHeld
-                && i.Kind != AgentIncidentKind.StandingSpecialistHealth)
+                && i.Kind != AgentIncidentKind.StandingSpecialistHealth
+                && i.Kind != AgentIncidentKind.StandingContinuityHeld)
             .Select(i => new { i.Id, i.AgentId, i.SessionId, i.Kind, i.Severity, i.Message, i.CreatedAt, i.FailureReason })
             .ToListAsync(ct);
 

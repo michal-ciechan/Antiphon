@@ -592,7 +592,7 @@ public class AgentControlServiceIntegrationTests
     }
 
     [Test]
-    public async Task Named_missing_resume_target_fallback_relaunch_carries_TabLabel()
+    public async Task Named_missing_resume_target_preserves_TabLabel_without_create()
     {
         await using var db = CreateContext();
         var tempRoot = NewTempRoot();
@@ -620,10 +620,9 @@ public class AgentControlServiceIntegrationTests
             var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
             await control.StartAsync(agent.Id, new StartAgentRequest(RemoteControl: false), CancellationToken.None);
             await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
-            fresh.StartedHerdr.ShouldNotBeNull();
-            fresh.StartedHerdr!.TabLabel.ShouldBe("Orch");
-            fresh.StartedHerdr.ReusePaneOfSessionId.ShouldBeNull();
-            fresh.StartedSessionId.ShouldBe(Guid.Parse(started.PersistentSessionId!));
+            fresh.Started.ShouldBeFalse();
+            failing.StartedHerdr!.TabLabel.ShouldBe("Orch");
+            (await db.AgentSupervisionStates.SingleAsync(s => s.AgentId == agent.Id)).ContinuityHeldAt.ShouldNotBeNull();
         }
         finally
         {
@@ -940,7 +939,7 @@ public class AgentControlServiceIntegrationTests
     }
 
     [Test]
-    public async Task Start_interactive_falls_back_to_fresh_session_when_claude_conversation_is_missing()
+    public async Task Start_interactive_holds_when_claude_conversation_is_missing()
     {
         await using var db = CreateContext();
         var tempRoot = NewTempRoot();
@@ -972,13 +971,13 @@ public class AgentControlServiceIntegrationTests
             // fresh conversation under the same session id.
             failingResumeAdapter.StartedArgs.ShouldContain("--resume");
             failingResumeAdapter.Disposed.ShouldBeTrue();
-            freshAdapter.StartedArgs.ShouldContain("--session-id");
-            freshAdapter.StartedArgs.ShouldContain(first.PersistentSessionId);
+            freshAdapter.Started.ShouldBeFalse();
             second.PersistentSessionId.ShouldBe(first.PersistentSessionId);
 
             await using var verify = CreateContext();
             var session = await verify.AgentSessions.SingleAsync(s => s.Id.ToString() == first.PersistentSessionId);
-            session.Status.ShouldBe(SessionStatus.Running);
+            session.Status.ShouldBe(SessionStatus.Failed);
+            session.RestartFailureKind.ShouldBe(RestartFailureKind.ContinuityUnavailable);
         }
         finally
         {

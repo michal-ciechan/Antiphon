@@ -1,3 +1,4 @@
+import { StandingSessionRecovery } from './StandingSessionRecovery'
 import {
   ActionIcon,
   Alert,
@@ -237,6 +238,7 @@ export function AgentsPage() {
                         variant="light"
                         leftSection={<TbPlayerPlay size={16} />}
                         loading={startAgent.isPending}
+                        disabled={!!selected.data.supervision?.continuityHeldAt}
                         onClick={() =>
                           // Remote control comes from the agent's persisted setting (Agent Settings).
                           startAgent.mutate(
@@ -280,6 +282,8 @@ export function AgentsPage() {
                 </Button>
               </Group>
             </Group>
+
+            <StandingSessionRecovery key={selected.data.id} agent={selected.data} />
 
             <Table>
               <Table.Thead>

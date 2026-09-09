@@ -22,7 +22,7 @@ public sealed class SupervisionSettings
     /// <summary>Continuous Running time after which the failure counter resets.</summary>
     public int HealthyUptimeResetMinutes { get; set; } = 10;
 
-    /// <summary>Consecutive failures after which restarts use a fresh conversation instead of resume.</summary>
+    /// <summary>Deprecated compatibility setting, ignored. Only an explicit Fresh request replaces continuity.</summary>
     public int FreshAfterResumeFailures { get; set; } = 2;
 
     public int IncidentRetentionDays { get; set; } = 30;

@@ -75,6 +75,10 @@ public static class AgentEndpoints
             return Results.Ok(await service.GetByIdAsync(id, cancellationToken));
         });
 
+        agents.MapGet("/{id:guid}/sessions", async (
+            Guid id, int? take, Guid? before, AgentControlService control, CancellationToken cancellationToken) =>
+            Results.Ok(await control.GetSessionsAsync(id, take ?? 25, before, cancellationToken)));
+
         agents.MapPost("/", async (
             CreateAgentRequest request,
             AgentService service,

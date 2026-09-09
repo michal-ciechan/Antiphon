@@ -108,8 +108,8 @@ A session's command line is built in layers, and no single file holds the whole 
    only for kinds whose `SessionResume` contract is `Supported`. Any pre-existing
    `--session-id` / `-s` / `--resume` / `-r` / `--continue` / `-c` in the profile args is stripped
    first, then exactly one of `--session-id <guid>` / `--resume <guid>` / `--continue` is added.
-   For Grok, `--resume` vs `--session-id` is decided from the on-disk session directory
-   (`AgentSessionService.EffectiveResumeMode`), never from the row.
+   Standing Grok resume always preserves `--resume`; unavailable storage cannot authorize
+   create. The card-only path retains `AgentSessionService.EffectiveResumeMode`.
 5. **Claude remote-control overlay** — `ClaudeRemoteControlLaunchArgs.ApplyOff` appends
    `--settings <file>` with `remoteControlAtStartup: false` for `AgentKind.ClaudeCode` only,
    at `AgentSessionService.BuildRuntimeLaunchSpecAsync` (the one funnel that actually starts
@@ -605,3 +605,9 @@ closing or resuming a terminal must identify and clean stale remote sessions wit
 live one.
 
 <!-- CARD-0254 preserved source ends -->
+
+Standing conversation selection and explicit Fresh are documented in
+[session continuity](session-runtime-invariants.md#standing-conversation-continuity-card-0466).
+Codex/OpenCode retain ordinary new-session behavior with `ResumeUnsupported` audit evidence;
+explicit historical selection is refused for unsupported native-resume kinds. Changing an
+existing Claude/Grok conversation to another kind requires explicit Fresh.

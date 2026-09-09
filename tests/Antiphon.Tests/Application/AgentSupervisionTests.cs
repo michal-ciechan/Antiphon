@@ -251,7 +251,7 @@ public class AgentSupervisionTests
                 db.AgentSupervisionStates.Add(new AgentSupervisionState
                 {
                     AgentId = agent.Id,
-                    ConsecutiveFailures = 10, // Backoff(11) after increment ≈ 2.8h => hourly tier
+                    RestartBackoffFailures = 10, // Backoff(10) after increment ≈ 2.8h => hourly tier
                     LastAttemptAt = harness.Clock.GetUtcNow().UtcDateTime.AddMinutes(-1),
                     UpdatedAt = harness.Clock.GetUtcNow().UtcDateTime,
                 });
@@ -280,7 +280,7 @@ public class AgentSupervisionTests
             await using (var db = CreateContext())
             {
                 var state = await db.AgentSupervisionStates.SingleAsync(s => s.AgentId == agent.Id);
-                state.ConsecutiveFailures = 17;
+                state.RestartBackoffFailures = 18;
                 state.NextRestartAt = null;
                 await db.SaveChangesAsync();
             }
@@ -292,7 +292,7 @@ public class AgentSupervisionTests
                     "tick 3 should have scheduled the deep-ladder retry; supervisor log:\n"
                     + string.Join("\n", harness.SupervisorLog));
                 var after = await verify.AgentSupervisionStates.SingleAsync(s => s.AgentId == agent.Id);
-                after.ConsecutiveFailures.ShouldBe(18, "tick should have incremented 17 -> 18");
+                after.RestartBackoffFailures.ShouldBe(18, "observation without a new incarnation does not invent a failure");
                 after.NextRestartAt.ShouldNotBeNull("tick should have scheduled the deep-ladder retry");
                 after.LastEscalationTier.ShouldBe(2, $"delay was {after.NextRestartAt - harness.Clock.GetUtcNow().UtcDateTime}");
 
@@ -333,6 +333,7 @@ public class AgentSupervisionTests
                     Rows = 25,
                     CreatedAt = now.AddMinutes(-30),
                     StartedAt = now.AddMinutes(-30),
+                    InteractiveLaunchCompletedAt = now.AddMinutes(-30),
                     LastSeenAt = now,
                 };
                 db.AgentSessions.Add(session);
@@ -421,7 +422,7 @@ public class AgentSupervisionTests
     }
 
     [Test]
-    public async Task Supervised_fresh_threshold_restart_carries_TabLabel_and_previous_pane_hint()
+    public async Task Supervised_repeated_resume_preserves_TabLabel_and_native_identity()
     {
         var tempRoot = NewTempRoot();
         try
@@ -458,8 +459,9 @@ public class AgentSupervisionTests
             await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
             fresh.StartedHerdr.ShouldNotBeNull();
             fresh.StartedHerdr!.TabLabel.ShouldBe("Orch");
-            fresh.StartedHerdr.ReusePaneOfSessionId.ShouldBe(resumedId);
-            fresh.StartedSessionId.ShouldNotBe(resumedId);
+            fresh.StartedHerdr.ReusePaneOfSessionId.ShouldBeNull();
+            fresh.StartedSessionId.ShouldBe(resumedId);
+            fresh.StartedArgs.ShouldContain("--resume");
         }
         finally
         {
@@ -495,7 +497,7 @@ public class AgentSupervisionTests
             harness.Runner.CheckCalls.Count.ShouldBeGreaterThanOrEqualTo(1);
             await using var verify = CreateContext();
             var state = await verify.AgentSupervisionStates.SingleAsync(s => s.AgentId == agent.Id);
-            state.ConsecutiveFailures.ShouldBeGreaterThanOrEqualTo(1);
+            state.RestartBackoffFailures.ShouldBeGreaterThanOrEqualTo(1);
             state.NextRestartAt.ShouldNotBeNull();
             (await verify.AgentSessions.CountAsync(s => s.Cwd.StartsWith(tempRoot))).ShouldBe(0);
         }

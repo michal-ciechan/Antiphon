@@ -166,6 +166,7 @@ public class AppDbContext : DbContext
         {
             entity.ToTable("AgentSupervisionStates");
             entity.Property(s => s.HerdrConsecutiveFailures).HasDefaultValue(0);
+            entity.Property(s => s.ContinuityEvidence).HasMaxLength(1000);
             entity.HasKey(s => s.AgentId);
             entity.Property(s => s.UpdatedAt).IsRequired();
 
@@ -1098,6 +1099,7 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<AgentSession>(entity =>
         {
             entity.ToTable("AgentSessions");
+            entity.HasIndex(s => new { s.StandingAgentId, s.CreatedAt });
             entity.HasKey(s => s.Id);
             entity.Property(s => s.CardId).IsRequired(false);
             entity.Property(s => s.DefinitionName).IsRequired().HasMaxLength(100);
