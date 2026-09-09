@@ -33,6 +33,8 @@ public class StandingSpecialistRoutingMigrationTests
             DisabledUntil = now.AddHours(1), Reason = "fixture capacity hold" };
         db.ModelAvailabilityHolds.Add(hold);
         await db.SaveChangesAsync();
+        // Compare the persisted value: PostgreSQL timestamps have microsecond precision.
+        var persistedUntil = await db.ModelAvailabilityHolds.Where(h => h.Id == hold.Id).Select(h => h.DisabledUntil).SingleAsync();
         var migrations = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
         var first = Array.FindIndex(migrations, m => m.EndsWith("_AddSpecialistExecutionIdentity", StringComparison.Ordinal));
         first.ShouldBeGreaterThan(0);
@@ -52,7 +54,7 @@ public class StandingSpecialistRoutingMigrationTests
         task.SpecialistModelAlias.ShouldBeNull();
         task.SpecialistSessionId.ShouldBeNull();
         var retained = await db.ModelAvailabilityHolds.SingleAsync(h => h.Id == hold.Id);
-        retained.DisabledUntil.ShouldBe(hold.DisabledUntil);
+        retained.DisabledUntil.ShouldBe(persistedUntil);
         retained.ClearedAt.ShouldBeNull();
         (await db.StandingSpecialistRoutings.CountAsync()).ShouldBe(0);
         (await db.StandingSpecialistCandidateStates.CountAsync()).ShouldBe(0);
