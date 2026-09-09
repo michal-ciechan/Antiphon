@@ -120,7 +120,9 @@ public class RunnerClaudeAdapterEffortPromptTests
             (await Task.WhenAny(task, Task.Delay(9000))).ShouldBe(task, "operation completed before watchdog");
             (await task).ShouldBeFalse(fake.Evidence);
             adapter.LaunchBlock.ShouldNotBeNull(); adapter.LaunchBlock.Kind.ShouldBe(AgentLaunchBlockKind.EffortDialogNotCleared);
-            foreach (var field in new[] { "requested=xhigh", "current=xhigh", "suggested=high", "selected=Keep", "Enter=3" }) adapter.LaunchBlock.Reason.ShouldContain(field);
+            // polls=/last= is the settle summary: the persisted block reason must carry the whole
+            // diagnosis, not just "settle deadline exhausted" (CARD-0449 D-4).
+            foreach (var field in new[] { "requested=xhigh", "current=xhigh", "suggested=high", "selected=Keep", "Enter=3", "polls=", "last=parse" }) adapter.LaunchBlock.Reason.ShouldContain(field);
             fake.Writes.Count.ShouldBe(3); fake.Writes.All(w => w.Key == "\r").ShouldBeTrue(); fake.TokenWrites.ShouldBe(0);
         }
         finally { await cts.CancelAsync(); try { await task; } catch (OperationCanceledException) { }

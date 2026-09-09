@@ -58,8 +58,11 @@ public static class ClaudeStartupReadiness
                         detail = EffortDetail();
                     }
                     var remaining = budget - clock.Elapsed;
+                    // log as trace: the resolver reports each change of its clearance gate, so the
+                    // "Claude startup:" line and the persisted launch-block reason carry the
+                    // diagnosis without a diagnostic build.
                     var result = await ClaudeEffortPrompt.ResolveAsync(snapshotScreen, EffortWrite, intent,
-                        remaining < options.EffortBudget ? remaining : options.EffortBudget, token);
+                        remaining < options.EffortBudget ? remaining : options.EffortBudget, token, log);
                     detail = result.Detail;
                     log?.Invoke(detail);
                     if (!result.Cleared) return new(active, detail, writes);

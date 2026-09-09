@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Shouldly;
 using TUnit.Core;
 
@@ -26,6 +27,56 @@ public class ClaudeStartupReadinessTests
         fake.ClearObservations.ShouldBeGreaterThanOrEqualTo(2);
         fake.Composer.ShouldBeEmpty();
         fake.Raw.ShouldContain("Keep xhigh");
+    }
+
+    [Test, Arguments("static-hold"), Arguments("phased")]
+    public async Task Settle_trace_fires_on_gate_changes_not_per_poll(string row)
+    {
+        // RunAsync passes its log as the resolver's trace, so the "Claude startup:" line carries
+        // each change of the clearance gate — and ONLY the changes. A 50 ms heartbeat through the
+        // server logger would be noise, so a static hold must produce a handful of lines, not one
+        // per poll.
+        var fake = new EffortTestScreen { SwallowEnters = row == "static-hold" ? 100 : 0 };
+        if (row == "phased")
+        {
+            var phase = -1;
+            fake.AfterWrite = (_, key) => { if (key == "\r" && phase < 0) phase = 0; };
+            fake.OnSnapshot = f =>
+            {
+                if (phase < 0 || phase > 4) return;
+                f.Override = phase++ switch { 0 => "", 1 => ">\n? for shortcuts", 2 => f.Template, _ => null };
+            };
+        }
+        using var cts = new CancellationTokenSource();
+        var task = row == "static-hold"
+            ? fake.ReadyAsync(totalMs: 5500, maxWrites: 100, ct: cts.Token)
+            : fake.ReadyAsync(ct: cts.Token);
+        try
+        {
+            (await Task.WhenAny(task, Task.Delay(row == "static-hold" ? 8000 : 20000)))
+                .ShouldBe(task, "operation completed before independent watchdog");
+            var result = await task;
+            // Resolver-originated lines: not the fake's own read/write journal, not the one
+            // end-of-resolution detail line RunAsync logs.
+            var resolver = fake.Trace
+                .Where(t => !Regex.IsMatch(t, @"^\d+: (read|write) ") && !t.StartsWith("requested="))
+                .ToArray();
+            var evidence = fake.Evidence + "\n--- resolver lines ---\n" + string.Join("\n", resolver);
+            if (row == "static-hold")
+            {
+                result.Ready.ShouldBeFalse(evidence);
+                fake.Snapshots.ShouldBeGreaterThanOrEqualTo(40, evidence);
+                resolver.Length.ShouldBeLessThanOrEqualTo(6, "gate CHANGES, not polls:\n" + evidence);
+            }
+            else
+            {
+                result.Ready.ShouldBeTrue(evidence);
+                resolver.Length.ShouldBeGreaterThanOrEqualTo(2, evidence);
+                resolver.Any(t => t.Contains("parse")).ShouldBeTrue(evidence);
+                resolver.Any(t => t.Contains("unsettled")).ShouldBeTrue(evidence);
+            }
+        }
+        finally { await cts.CancelAsync(); try { await task; } catch (OperationCanceledException) { } }
     }
 
     [Test]

@@ -100,8 +100,26 @@ public static class ClaudeEffortPrompt
         return null;
     }
 
-    public static bool HasRemnant(string screen) => Regex.IsMatch(screen,
-        @"(?im)^\s*[│┃║]?\s*(?:Use .+ effort by default\?|[>❯]?\s*Keep (?:low|medium|high|xhigh|max)\s*$|[>❯]?\s*Switch .+ effort\s*$)");
+    private const string Remnant =
+        @"^\s*[│┃║]?\s*(?:Use .+ effort by default\?|[>❯]?\s*Keep (?:low|medium|high|xhigh|max)\s*$|[>❯]?\s*Switch .+ effort\s*$)";
+
+    public static bool HasRemnant(string screen) => Regex.IsMatch(screen, "(?im)" + Remnant);
+
+    /// <summary>
+    /// The first row <see cref="HasRemnant"/> matched, trimmed and capped at 60 characters — the
+    /// whole diagnosis when a launch blocks on the remnant gate, named in the block reason so the
+    /// next incident is answerable without a diagnostic build.
+    /// </summary>
+    public static string? FirstRemnant(string screen)
+    {
+        foreach (var line in screen.ReplaceLineEndings("\n").Split('\n'))
+        {
+            var row = Row(line);
+            if (!Regex.IsMatch(row, "(?i)" + Remnant)) continue;
+            return row.Length > 60 ? row[..60] : row;
+        }
+        return null;
+    }
 
     public static string? CurrentEffort(string screen)
     {
@@ -110,12 +128,18 @@ public static class ClaudeEffortPrompt
         return match.Success ? match.Groups[1].Value.ToLowerInvariant() : null;
     }
 
+    /// <param name="trace">
+    /// Invoked only when the clearance gate's outcome CHANGES between polls, never per poll — the
+    /// runner-side adapter logs through the server logger at Information level, so a 50 ms
+    /// heartbeat would be pure noise.
+    /// </param>
     public static async Task<ClaudeEffortResolution> ResolveAsync(
         Func<CancellationToken, Task<string>> snapshotScreen,
         Func<string, CancellationToken, Task> write,
         ClaudeEffortIntent intent,
         TimeSpan budget,
-        CancellationToken ct)
+        CancellationToken ct,
+        Action<string>? trace = null)
     {
         var clock = Stopwatch.StartNew();
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -124,13 +148,23 @@ public static class ClaudeEffortPrompt
         ClaudeEffortMenu? original = null;
         var target = ClaudeEffortOption.Unknown;
         var enters = 0;
+        // Diagnostics: the summary below turns "settle deadline exhausted" into the whole
+        // diagnosis, so the next incident is answerable from the persisted launch-block reason.
+        var polls = 0;
+        var clear = 0;
+        var gate = "none";
+        var held = false;
+        string? lastScreen = null;
         ClaudeEffortResolution Result(bool cleared, string cause) => new(cleared,
             $"requested={ (intent.Invalid ? "invalid" : intent.Value ?? "absent (Keep option)") }; current={original?.Current ?? "unknown"}; "
-            + $"suggested={original?.Suggested ?? "unknown"}; selected={target}; Enter={enters}; {cause}. "
+            + $"suggested={original?.Suggested ?? "unknown"}; selected={target}; Enter={enters}; {cause}"
+            + $" [polls={polls} clear={clear} last={gate} "
+            + $"composer={(lastScreen is not null && ClaudeScreen.ComposerIsLive(lastScreen) ? "live" : "absent")}]. "
             + (cleared ? "" : "Inspect the effort picker and relaunch with a supported explicit effort."));
         try
         {
-            original = Parse(await snapshotScreen(token));
+            lastScreen = await snapshotScreen(token);
+            original = Parse(lastScreen);
             if (original is null) return Result(false, "no complete effort dialog");
             target = original.Select(intent);
             if (target == ClaudeEffortOption.Unknown || original.Highlight == ClaudeEffortOption.Unknown)
@@ -138,28 +172,56 @@ public static class ClaudeEffortPrompt
             await Task.Delay(ClaudeTrustDialogKeys.HighlightSettle, token);
             var nextEnter = TimeSpan.Zero;
             var navigation = 0;
-            var clearFrames = 0;
+            // The last frame that qualified for clearance. Clearance needs a settled PAIR: one
+            // frame proves nothing, because a dialog mid-repaint parses as neither dialog nor
+            // remnant for an instant.
+            string? kept = null;
+            void Note(string? rejected)
+            {
+                var changed = (rejected is not null && rejected != gate) || (kept is not null) != held;
+                if (rejected is not null) gate = rejected;
+                held = kept is not null;
+                if (changed) trace?.Invoke($"effort settle: polls={polls} clear={clear} last={gate} kept={(held ? "yes" : "no")}");
+            }
             while (clock.Elapsed < budget)
             {
-                var screen = await snapshotScreen(token);
+                polls++;
+                var screen = lastScreen = await snapshotScreen(token);
                 var menu = Parse(screen);
                 if (menu is null)
                 {
-                    var nextModal = ClaudeBlockingPromptDetector.Detect(screen);
-                    if (enters > 0 && !HasRemnant(screen)
-                        && (ClaudeScreen.ComposerIsLive(screen) || nextModal is not null))
+                    // Clearance is two consecutive settled, remnant-free, non-parsing frames. No
+                    // dependency on the composer's hint-bar wording (a reworded hint bar would
+                    // otherwise fail every launch) and no separate "next modal" acceptance path —
+                    // a modal that appears and holds still is accepted by the same rule. The
+                    // composer probe that follows is the positive proof of an accepting composer.
+                    if (enters == 0) { kept = null; Note(null); }
+                    else if (HasRemnant(screen))
+                    {
+                        kept = null;
+                        Note(FirstRemnant(screen) is { } row ? $"remnant:\"{row}\"" : "remnant");
+                    }
+                    else if (kept is not null && ClaudeScreen.IsSettled(kept, screen))
                     {
                         var observed = CurrentEffort(screen);
                         var desired = target == ClaudeEffortOption.Keep ? original.Current : original.Suggested;
                         if (observed is not null && observed != desired)
                             return Result(false, $"visible current effort contradicts selection ({observed})");
-                        if (++clearFrames >= 2) return Result(true, "two clear observations");
+                        clear++;
+                        return Result(true, "two settled clear observations");
                     }
-                    else clearFrames = 0;
+                    else
+                    {
+                        var unsettled = kept is not null;
+                        kept = screen;
+                        clear = 1;
+                        Note(unsettled ? "unsettled" : null);
+                    }
                     await Task.Delay(50, token);
                     continue;
                 }
-                clearFrames = 0;
+                kept = null;
+                Note("parse");
                 if (!original.SameIdentity(menu) || menu.Highlight == ClaudeEffortOption.Unknown)
                     return Result(false, "dialog identity or highlight changed; input withheld");
                 string? key = null;
@@ -173,7 +235,7 @@ public static class ClaudeEffortPrompt
                 if (key is not null)
                 {
                     // Mandatory fresh validation immediately before every key, including retries.
-                    var fresh = Parse(await snapshotScreen(token));
+                    var fresh = Parse(lastScreen = await snapshotScreen(token));
                     if (fresh is null || !original.SameIdentity(fresh) || fresh.Highlight != menu.Highlight)
                         return Result(false, "fresh dialog identity or highlight changed; input withheld");
                     token.ThrowIfCancellationRequested();

@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Shouldly;
 using TUnit.Core;
 
@@ -129,6 +130,89 @@ public class ClaudeEffortPromptTests
         fake.AfterWrite = (f, key) => { if (key == "\r") f.Override = "Use Fable 5.1 at high effort by default?\n> Keep xhigh\n? for shortcuts"; };
         (await fake.ResolveAsync(budgetMs: 2200)).Cleared.ShouldBeFalse(fake.Evidence);
         fake.TokenWrites.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Clearance_does_not_require_composer_chrome()
+    {
+        // The resolver's only job is "the dialog is gone and the screen has stopped moving". The
+        // composer probe that follows is the positive proof that the composer accepts input, so a
+        // hint bar the CLI might reword must not be able to fail every launch.
+        var fake = new EffortTestScreen { HintBar = "" };
+        var result = await fake.ResolveAsync();
+        result.Cleared.ShouldBeTrue(fake.Evidence);
+        fake.Writes.Select(w => w.Key).ShouldBe(["\r"], fake.Evidence);
+        fake.TokenWrites.ShouldBe(0);
+        fake.AppliedEffort.ShouldBe("xhigh");
+        result.Detail.ShouldContain("two settled clear observations");
+    }
+
+    [Test, Arguments("exhausts"), Arguments("outlasts-budget")]
+    public async Task An_unsettled_pair_never_clears_and_a_settled_pair_does(string row)
+    {
+        // "outlasts-budget" alternates with a permission modal on purpose: it parses as neither
+        // dialog nor remnant, so an immediate-accept path for a "next modal" would clear on it.
+        const string quiet = "> \n? for shortcuts";
+        var alternate = row == "exhausts"
+            ? "> \nSome output line\n? for shortcuts"
+            : "Do you want to proceed?\n1. Yes\n2. No";
+        var repeats = row == "exhausts" ? 10 : 100;
+        var fake = new EffortTestScreen
+        {
+            Churn = [.. Enumerable.Range(0, repeats).SelectMany(_ => new[] { quiet, alternate })]
+        };
+        var atEnter = -1;
+        fake.AfterWrite = (f, key) => { if (key == "\r" && atEnter < 0) atEnter = f.Snapshots; };
+        var result = await fake.ResolveAsync(budgetMs: row == "exhausts" ? 8000 : 2600);
+        fake.TokenWrites.ShouldBe(0, fake.Evidence);
+        result.Detail.ShouldContain("Enter=1");
+        if (row == "exhausts")
+        {
+            result.Cleared.ShouldBeTrue(fake.Evidence);
+            (fake.Snapshots - atEnter).ShouldBeGreaterThanOrEqualTo(22,
+                "the churn must be outlasted, never cleared through:\n" + fake.Evidence);
+            result.Detail.ShouldContain("clear=2");
+        }
+        else
+        {
+            result.Cleared.ShouldBeFalse(fake.Evidence);
+            result.Detail.ShouldContain("settle deadline exhausted");
+            result.Detail.ShouldContain("last=unsettled");
+        }
+    }
+
+    [Test]
+    public async Task A_lone_ghost_title_still_blocks_and_is_named()
+    {
+        // A title row with no option rows is either an emulator/CLI defect to fail loudly on, or a
+        // dialog mid-repaint the settle pair waits out. Neither may be typed into — and when it
+        // blocks, the offending row is named so the next incident needs no diagnostic build.
+        var fake = new EffortTestScreen();
+        fake.AfterWrite = (f, key) =>
+        {
+            if (key == "\r")
+                f.Override = "Fable 5.1 with xhigh effort · Claude Max\n────\n Use Fable 5.1 at high effort by default?\n> \n────\n? for shortcuts";
+        };
+        var result = await fake.ResolveAsync(budgetMs: 2600);
+        result.Cleared.ShouldBeFalse(fake.Evidence);
+        fake.Writes.Select(w => w.Key).ShouldBe(["\r"], fake.Evidence);
+        foreach (var field in new[] { "Enter=1", "settle deadline exhausted", "clear=0", "composer=live",
+                     "last=remnant:\"Use Fable 5.1 at high effort by default?\"" })
+            result.Detail.ShouldContain(field);
+        fake.TokenWrites.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Settle_failure_detail_summarises_the_polls()
+    {
+        var fake = new EffortTestScreen { SwallowEnters = 100 };
+        var result = await fake.ResolveAsync();
+        result.Cleared.ShouldBeFalse(fake.Evidence);
+        var summary = Regex.Match(result.Detail,
+            @"Enter=3; settle deadline exhausted \[polls=(\d+) clear=0 last=parse composer=absent\]");
+        summary.Success.ShouldBeTrue(result.Detail);
+        int.Parse(summary.Groups[1].Value).ShouldBeGreaterThanOrEqualTo(40, result.Detail);
+        result.Detail.ShouldEndWith("Inspect the effort picker and relaunch with a supported explicit effort.");
     }
 
     [Test]

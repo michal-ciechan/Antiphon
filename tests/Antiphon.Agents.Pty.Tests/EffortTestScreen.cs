@@ -34,6 +34,20 @@ internal sealed class EffortTestScreen
     public string? ResultBanner { get; set; }
     public bool ShowBanner { get; set; } = true;
     public string Composer { get; set; } = "";
+
+    /// <summary>
+    /// The cleared screen's hint bar. Set to "" to render no hint line at all — clearance must not
+    /// depend on composer chrome, so a future CLI that reworded it cannot fail every launch.
+    /// </summary>
+    public string HintBar { get; set; } = "? for shortcuts";
+
+    /// <summary>
+    /// Non-dialog screens served round-robin after the accepting Enter until exhausted, then the
+    /// normal cleared screen. Churn screens count as neither <see cref="ClearObservations"/> nor
+    /// <see cref="Dialog"/>: they prove that an unsettled pair never clears and a settled one does.
+    /// </summary>
+    public IReadOnlyList<string> Churn { get; set; } = [];
+    private int _churned;
     public string? AppliedEffort { get; private set; }
     public int? AcceptedOption { get; private set; }
     public string Raw { get; private set; }
@@ -51,15 +65,16 @@ internal sealed class EffortTestScreen
             .Replace("> Keep", Highlight == 1 ? "> Keep" : "  Keep")
             .Replace("     Switch", Highlight == 2 ? "   > Switch" : "     Switch")
         : (ShowBanner ? $"{Model} with {ResultBanner ?? AppliedEffort ?? Current} effort · Claude Max\n" : "")
-            + $"> {Composer}\n? for shortcuts");
+            + $"> {Composer}" + (HintBar.Length > 0 ? "\n" + HintBar : ""));
 
     public Task<string> SnapshotAsync(CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         Snapshots++;
         OnSnapshot?.Invoke(this);
-        var screen = Screen;
-        if (!Dialog && Override is null) ClearObservations++;
+        var churning = !Dialog && Override is null && _churned < Churn.Count;
+        var screen = churning ? Churn[_churned++] : Screen;
+        if (!Dialog && Override is null && !churning) ClearObservations++;
         Trace.Add($"{Clock.ElapsedMilliseconds}: read {Snapshots}, dialog={Dialog}, highlight={Highlight}, applied={AppliedEffort}, text={Composer}");
         Raw += "\n" + screen;
         AfterSnapshot?.Invoke(this);
