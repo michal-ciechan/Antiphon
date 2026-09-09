@@ -27,6 +27,19 @@ namespace Antiphon.Tests.Application;
 public class StandingSpecialistRoutingHttpTests
 {
     [Test]
+    public async Task Card0415_V09_revalidate_rejects_a_stale_revision()
+    {
+        await using var h = await Harness.CreateAsync();
+        var original = await h.PutAsync(null, h.Pairs);
+        var updated = await h.PutAsync(original.ConcurrencyToken, h.Pairs);
+        using var response = await h.Client.PostAsJsonAsync(h.Path + "/revalidate",
+            new RevalidateStandingSpecialistRequest(original.ConcurrencyToken!.Value), h.Json);
+        response.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        (await response.Content.ReadAsStringAsync()).ShouldContain("specialist_routing_stale");
+        (await h.GetAsync()).ConcurrencyToken.ShouldBe(updated.ConcurrencyToken);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task Card0415_V09_changed_primary_does_not_reuse_its_process_as_an_alternate(bool disableFirst)
