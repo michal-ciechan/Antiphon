@@ -102,8 +102,14 @@ picker through `ClaudeStartupReadiness`. The resolved `--effort` selects the mat
 absent intent preserves Keep, and invalid or unmatched explicit intent withholds input.
 Selection requires a fresh matching identity/highlight before each key. The 15-second
 `ClaudeEffortPromptSettleMs` budget includes the initial 1.5-second settle, at most three
-Enters spaced at least 1.5 seconds apart, and two positive clear frames. Blank redraws and
-malformed remnants are not clearance; a contradictory visible current effort fails.
+Enters spaced at least 1.5 seconds apart, and clearance on **two consecutive settled,
+remnant-free, non-parsing frames** (`ClaudeScreen.IsSettled` — not the composer's hint-bar
+wording, and not a "next modal" alternative: a modal that appears and holds still is accepted by
+the same rule). Blank redraws and malformed remnants are not clearance; a lone dialog title still
+blocks; a contradictory visible current effort fails. Every resolution appends
+` [polls=P clear=C last=<gate> composer=live|absent]` to its detail, where `last` is `parse`,
+`remnant:"<row>"`, `unsettled` or `none` — so `EffortDialogNotCleared` names the gate, and for a
+remnant the offending row, without a diagnostic build (CARD-0449 D-4).
 `EffortDialogNotCleared` preserves the bounded diagnosis through existing launch cleanup.
 The gate remains active after the startup floor and throughout composer probing. Late
 modals discard old probe proof without renewing its deadline or token-write allowance.
@@ -201,6 +207,10 @@ verification report.
 ### Gotcha #89
 
 - **A Grok `--resume` is typed only when `GROK_HOME/sessions/*/{id}/` exists; a row id is not a conversation** (CARD-0383). Absent ⇒ same row launches `--session-id <id>` (create), which makes the row id the native id from then on. The runner refuses a dead resume with 409 `herdr_grok_native_session_missing` before touching herdr; a detect timeout on an idle shell retires the pane to last-pane instead of closing it. That keep-pane exit is `HerdrLaunchDetectTimeout` (Failed row, Warning log, no incident) — never `HerdrPaneLeftOpen`, whose "tidy the pane by hand" badge would recreate the original split-into-a-stranger's-tab bug. Pinned by `GrokNativeSessionResumeTests`, `HerdrGrokResumeGuardTests`, `HerdrLaunchShapeTests`, `AgentSessionRuntimeTests`, `GrokNativeSessionCanaryTests`, `HerdrGrokNativeSessionLiveTests`.
+
+### Gotcha #90
+
+- **A terminal that consumes ConPTY output MUST implement deferred (last-column) wrap, and a clean hint bar is not a clean screen** (CARD-0449, live miss 2026-09-09). `TerminalScreen` wrapped as soon as a printable filled the last column. xterm, Windows Terminal and ConPTY's own VT renderer all **delay** it: the cursor stays on that row with the wrap owed, and only the NEXT printable moves down. The renderer relies on that — after a full-width row it emits `\r` then a relative move (`\x1b[1B`) and expects the next text one row BELOW the row it just filled. Claude's 120-column rules are exactly full width, so our cursor sat one row low from the first paint, every row-relative move after a rule landed one row off, and the effort dialog's erase-and-repaint (`\x1b[2K\x1b[1A` ×5, then `\x1b[2K\x1b[G\x1b[1A\x1b[5A`) cleared rows the CLI never meant to clear and spared the ones it meant to erase. The dismissed dialog's title survived as a ghost row, `HasRemnant` stayed true on a **static** screen for ~13 s, and the launch failed with `settle deadline exhausted` — above a perfectly normal-looking hint bar, which is why the first investigation read the wrong signal. **Full-width rows are the tell, and the diagnosis is in the ROWS, never the hint bar: read them.** The owed wrap is cancelled by CR, LF, BS, TAB and every cursor-positioning CSI (`A B C D E F G H f d r`) and left armed by erase (`J K X`), insert/delete (`L M P @`), scroll (`S T`) and SGR; paying it goes through `LineFeed` so the scroll region still holds; and the tab loop must be bounded at `Cols - 1` or it never terminates once `WriteChar` stops advancing there. DECAWM off (`\x1b[?7l`) stays unmodelled — private modes are skipped and ConPTY has not been observed emitting it. This is a shared surface: every rendered-screen consumer (runner snapshots, the trust/effort/permission detectors, the composer probe, the Codex and Grok adapters) was reading a grid that was off by one row after any full-width line, so no consumer indexed rows and none could have. The usage-limit banner was incidental — a replay with its bytes excised ghosts identically, so the fix does not special-case it. Pinned by `TerminalScreenTests` and by `ClaudeEffortDismissalReplayTests`, which replays the real failing PTY stream and three real dialog-only paints from `tests/Antiphon.Agents.Pty.Tests/golden/card-0449/` in three chunkings (one write, per Ink frame, escape-safe 256-char pieces) and asserts chunk invariance. The live dismissal path's record before this fix was 0 successes / 1 failure; the next Frontier launch whose `Claude startup:` line reads `two settled clear observations` with `clear=2` is its first success.
 
 ### Grok rules refresh state (CARD-0395)
 
