@@ -430,3 +430,395 @@ the stack, resolving the incident's Shared owner, auto-closing the card, guarant
 understanding of a note by a model, and automatic replay of unprovable legacy notifications.
 A complete UserPrompt proves receipt by the session, not that its next model response took the
 right action. Real-model behavior is not needed for this transport acceptance.
+
+## Verification design
+
+TestDesign, 2026-09-09, task `311fb3cb`; reviewed plan commit `808ce854` from worktree
+baseline `10cfbc63`. This section specifies tests to implement and execute during Code; it
+does not claim that the proposed classes, seams or tests already exist. D-1 through D-8 remain
+the implementation contract. In particular, a **Blocked writer still excludes landing**.
+
+### Delivery inventory and executable fixture contract
+
+Apply D-8 to this design now. The identity chain is
+`TaskId -> RequestId -> SourceEventId -> NotificationId -> SourceLandNotificationId/QueueMessageId
+-> destination session + ConfirmingPromptSequence`. Operation ID is optional before admission
+and is not a notification deduplication key. Every failure artifact records the entire available
+chain, with publication and receipt as separate verdicts.
+
+| Producer | Destination | Persistence boundary and durable identity | Recovery exercised | Observable receipt and covering tests |
+|---|---|---|---|---|
+| Real `delegate.ps1 -Land` / HTTP request | Hosted land drain | Request plus LandRequested event; `(TaskId, RequestId)` wakeup | Dropped wakeup, new host, concurrent POST, stale channel item | Committed matching admission/hold, not delivery acceptance; V-1, V-2, V-27 |
+| Land admission and independent age monitor | Caller session and Attention | Current hold/checkpoint, episode/threshold event and immutable notification in one commit | Restart, owner change, lost wakeup, repeated evaluation, attempt-zero and active requests | Stable Attention plus complete keyed hold/aged UserPrompt; V-3, V-4, V-15, V-16, V-24 |
+| Land settlement, refusal, conflict and cleanup | Snapshotted caller session | Business evidence, terminal request/event where applicable, pending clear and outbox in one commit | Before-commit failure, lost acknowledgement, actual server death before enqueue | Independent remote containment and complete keyed outcome UserPrompt; V-5 through V-7, V-25, V-29, V-31 |
+| Notification worker | Real session queue | Unique notification key, destination, immutable transport payload and source metadata in the queue insert | Enqueue errors, insert/link ambiguity, two providers, pagination, missing caller | Same queue row enters normal delivery; insert alone is insufficient; V-8 through V-10, V-26, V-28, V-31 |
+| Production queue, runner, native tailer and runtime event pump | Caller transcript, then durable outbox receipt | Attempt/baseline -> actual UserPrompt -> ConfirmedAt/sequence | Lost flush, delayed catch-up, typed-before-verdict/receipt failure, late confirmation and pruning | Complete matching UserPrompt in the right session after the attempt floor; V-11 through V-14, V-22 through V-24, V-28, V-30, V-32 |
+
+Use these two complementary fixtures:
+
+- **Integration:** extend `LandingSafetyHarness` only for its safety/real-git use cases; keep its
+  default ReplyTo=None. New delivery-focused integration helpers compose the real request,
+  protocol, notification, queue and monitor services with `TestDbFixture` isolated schemas,
+  `LandingGitFixture`, `DelegationTestServices`, independent service providers for races and
+  fresh `AsNoTracking` database observers. Direct service ticks and seeded transcript rows are
+  allowed here to isolate an assertion. They prove transactions, predicates and matching,
+  not production scheduling or terminal receipt.
+- **E2E:** add `AgentTaskLandDeliveryE2ETests` and `Fixtures/LandDeliveryFixture`. Adapt the
+  real Kestrel `Program` setup in `AntiphonAppFixture`, `IsolatedSessionRunner` and the owned
+  bare-remote/source fixture. Add FakeGrok output staging to `Antiphon.E2E.csproj`, following
+  the existing Pty.Tests copy target so alternate outputs contain `fakegrok/fakegrok.exe`.
+  Use modern ConPTY, a private `GROK_HOME`, a non-AlwaysOn caller outside the source worktree,
+  and `Supervision:DeliveryVerification:Enabled=true` plus
+  `Supervision:DeliveryVerification:TranscriptConfirmEnabled=true`. Assert these
+  resolved settings and loaded server/runner/fake binary identities before exercising Land.
+  Disable check interpreter, diagnose, distiller, channel bridge and live messaging; retain the
+  Land drain/sweep/monitor/notifier, completion worker and runtime event pump. Refuse external
+  messaging and assert the runner is fixture-owned and is not port 17204.
+
+The E2E fixture creates a test caller/token and a succeeded Worktree task with no pending land,
+using production token construction. Invoke the checked-out `scripts/delegate.ps1` with
+`ProcessStartInfo.ArgumentList`, `ANTIPHON_API` set to the owned host and the test token only in
+the child environment. Adapt `DelegateScriptRunner`'s invocation pattern; do not reference the
+whole Antiphon.Tests assembly just for that helper. Record the HTTP 202 body via passive HTTP
+observation and correlate its request ID with the script's output. A barrier after durable
+request acceptance, before execution, proves the script returns while publication is pending.
+Tests may release barriers, observe HTTP/DB/runner data, and explicitly settle a **test-owned**
+writer. They may not invoke RunAsync, DeliverAsync, FlushSessionAsync or FlushIfIdleAsync to
+supply a missing production trigger, copy a Land note into the terminal, or insert a confirming
+transcript row in any E2E arm.
+
+Add a default-off FakeGrok file gate for one marked caller turn: write the native
+`user_message_chunk`, acknowledge that the turn is held, and withhold `turn_completed` until
+the fixture releases the gate. Continue reading input while held so an erroneous early submit
+is recorded and detected rather than silently buffered. Release through the control file, not
+another user prompt; then emit the normal native completion/idle evidence. Add
+`FakeGrokContractTests.C467_BusyGatePreservesNativePromptAndTurnEnd` for this opt-in behavior
+and run existing FakeGrok contract tests unchanged. Use a long, multi-line ASCII outcome body
+with a distinctive beginning, middle and tail. FakeGrok drops LF; use the production
+`PromptSubmissionMatch.IsConfirmedBy` **and** `IsCompleteIn` whitespace rules, not byte equality
+and not only the 200-character identity window. A spill case compares the actual queued
+transport pointer and verifies that the fixture-owned spill file contains the full payload;
+it does not claim the model read that file.
+
+The crash fixture owns database, repository, runner and caller independently of the server
+host. Implement a test-assembly child entry, analogous to
+`LandingSafetyHarness.RunCrashWorkerAsync`, which starts the same real Kestrel factory and
+awaits indefinitely. Its parent starts it using pwsh/reflection or a dedicated test executable,
+with all overrides installed by the factory; no public fault endpoint or production fault
+setting is required. Refactor fixture ownership so restarting the child neither reseeds nor
+disposes the existing database/runner. Use a fresh host/provider and verify its new PID/MVID,
+same database and caller, and fresh transcript catch-up on recovery.
+
+Provide awaitable, instance-scoped test barriers at the cuts below. EF save/transaction
+interceptors must distinguish `SavedChanges` from **transaction committed**; acknowledge a
+durable cut only after an independent connection sees it. A test callback or pass-through I/O
+decorator may delay or throw at a boundary, but may not implement the business/queue path.
+For terminal-before-enqueue, block the notifier before its first enqueue as well as the producer
+after commit: an independently scanning worker must not race past the intended crash cut.
+Barrier receipts contain cut, nonce, PID/start time and correlation IDs. The parent confirms
+ownership, kills only that server child (`entireProcessTree:false`), awaits its exit, and keeps
+the runner/database alive. Graceful disposal and killing the E2E test process do not count.
+Trigger the terminal barrier from the committed terminal event, without requiring an outbox row
+to exist: PC-7 must fail the missing-obligation assertion, not time out in fixture setup.
+For insert/link recovery, use the queue's keyed Enqueue branch to validate/reload the existing
+row and return its ID; record that this branch ran before linking. This makes V-26/PC-13 exercise
+production idempotent handoff, rather than a test-only shortcut around that guard.
+
+| Cut | Arrange and required fresh-observer assertion | Test |
+|---|---|---|
+| Request committed, wakeup absent | Drop only the request-channel wakeup; restart with the original ID/age still pending | V-27 |
+| Terminal transaction before commit | Throw before commit, including after SaveChanges inside the transaction; no terminal event/outbox/pending clear visible | V-6 |
+| Terminal commit acknowledged ambiguously | Throw after independently observed commit, then call the normal error/recovery path; one terminal identity and no additional git mutation | V-6, V-7 |
+| Terminal committed, enqueue not begun | Hard-kill at the named barrier with pending fields cleared and no queue row; boot notification scan alone must recover | V-25 |
+| Enqueue fails before insert | Fail first two notification queue inserts without failing the terminal commit; original obligation remains due with persisted error | V-8, V-31 |
+| Queue committed, link not persisted | Hard-kill after observing the keyed queue insert, while QueueMessageId is absent on the outbox; recover the same row | V-26 |
+| Queue persisted, flush wakeup absent | Drop only its completion-flush wakeup; already-idle caller stays untouched by the test; periodic completion scan delivers | V-28 |
+| Body attempted / prompt persisted, verdict or receipt not saved | Arm separate failures at each save; restart observer and catch up from real native evidence without another body write | V-12, V-30 |
+| Destination unavailable or queue parked/truncated | Keep the unresolved obligation and actionable error through restart and age thresholds; no new row/caller or false receipt | V-8, V-13, V-16, V-32 |
+
+Use real time for queue polling/deadlines. For fast age/retry tests, use an offset over real time
+or an auto-advancing FakeTimeProvider; never freeze the whole server clock. Exact 5/15-minute
+boundary tests use an isolated monitor clock, outside queue loops. In E2E, inject the shared
+offset clock only into Land request/monitor/notification services so their event/due timestamps
+agree; keep queue/runtime deadlines on TimeProvider.System. Let E2E scans run at their
+production cadence; gates remove ordering guesses. Use cancellation-bounded waits (60 seconds
+for delivery after eligibility, 120 seconds for host startup/crash recovery), fail with the
+last observed state, and measure actual latency. A negative assertion spans at least two
+observed worker passes while its gate remains closed; a short arbitrary sleep is not evidence.
+Crash/recovery and busy tests also count native keyed prompt records/body writes through the
+observation window after receipt: one logical notification must not become two submissions.
+
+### Proves it works now
+
+`I` below means integration in `tests/Antiphon.Tests/Application/<Class>.cs`, unless a row names
+another path. `E` means E2E in `tests/Antiphon.E2E/AgentTaskLandDeliveryE2ETests.cs`. Names are the
+required new methods, not claims of existing discovery. Each matrix row becomes an explicit
+TUnit Arguments/DataSource case with its case name visible in results; no hidden loop that
+reports only its first failure. All positive-path E2E methods use real Land production and the
+inventory's full receipt oracle. No skipped capstone is acceptance evidence.
+
+| ID | Layer and exact class.method / client test | Arrange, action and required assertion |
+|---|---|---|
+| V-1 | I `AgentTaskLandRequestTests.C467_V01_AcceptRequeueSerializeRequest` | Initial POST commits request/event and returns its ID; inactive requeue preserves ID/age/attempt and permits filter update; active request is 409 without mutation. Race two contexts at acceptance: at most one current request; each response is the same accepted ID or documented 409, never a unique-constraint/500 failure. A terminal retry gets a new ID/reset attempts and preserves history/destination snapshots. |
+| V-2 | I `AgentTaskLandRequestTests.C467_V02_RejectStaleWorkAndExposeMirrorDrift` | Drain old ID after a newer request, and canceled/superseded IDs: no git or newer-row mutation. NeedsResolution is not swept as Succeeded. Compatibility-field disagreement is visible and never creates publication/receipt. Cancel a completed request's task and retain its owed terminal note. |
+| V-3 | I `AgentTaskLandHoldVisibilityTests.C467_V03_RealWriterLeaseAndEpisodeMatrix` | Exercise real FindWriterAsync for Shared Dispatched/Working/Blocked in common-repo aliases, source writers/path aliases, inaccessible identity, and an occupied lease. Unrelated repository is the negative control. Each exclusion gives zero attempts, no protocol entry/operation/mutating git calls, correct reason/actual holder (unknown for unexposed lease owner). Capture a faulty run's exception and assert admission/protocol-entry counters before rethrowing, so lease-bypass PCs fail on the safety assertion rather than a downstream null-lease error. Unchanged sweeps do not duplicate; changed reason/holder creates one episode; admission clears current hold and records HeldReleased. |
+| V-4 | I `AgentTaskLandHoldVisibilityTests.C467_V04_HoldAndAgeAreAtomicBeforePublish` | Fault hold and aged-event transactions before/after commit; current state/event/outbox appear together or not at all. IEventBus observer opens a fresh connection: AgentTaskChanged cannot precede persistence. Restart reconstructs same episode/threshold obligation. |
+| V-5 | I `AgentTaskLandNotificationPersistenceTests.C467_V05_OutcomeObligationMatrix` | Real git fixtures produce Landed, AlreadyPresent, LandedWithResidue, later LandingCleanup, pre-operation LandRefused, operation-backed LandRefused and Conflict. Assert correct publication/cleanup, event linkage, immutable body/digest/destination and one obligation per event; terminal pending clear is atomic. Conflict stays NeedsResolution/Blocked with existing helper behavior and no claimed publication. Enqueue starts only after commit and repository lease release. |
+| V-6 | I `AgentTaskLandPersistenceFailureTests.C467_V06_AtomicSettlementFaultMatrix` | For success/refusal/cleanup: before-save, after-save-before-commit, commit failure, and committed-but-acknowledgement-lost. First three leave no partial terminal transaction; last preserves one complete transaction. Recovery uses committed protocol checkpoints; FailAsync cannot emit a second terminal event or repeat publication/cleanup after committed settlement. |
+| V-7 | I `AgentTaskLandNotificationPersistenceTests.C467_V07_ConcurrentSettlementAndExplicitCleanup` | Race terminal settlement/FailAsync across contexts; unique terminal request/event/obligation, including a commit-ack retry. Separate explicit cleanup request after residue legitimately shares the operation but creates a different event, notification, digest and queue row. Raw duplicate inserts verify pending-request, terminal-event and SourceEventId uniqueness; multiple nonterminal hold/age events remain legal. |
+| V-8 | I `AgentTaskLandNotificationRecoveryTests.C467_V08_RetryAndDestinationMatrix` | Enqueue errors persist 5,10,20,40,80,160,300,300-second due offsets, attempt/error and original obligation; no early retry or exhaustion into silence. None -> NotRequired. Missing Session destination -> DestinationUnavailable, never NotRequired; deleted/stopped/failed caller retains obligation without spawn/reroute. Destination snapshot survives task edits. On recovery one queue row carries all source/key/header/digest metadata and WhenIdle with deliverIfIdle=false. |
+| V-9 | I `AgentTaskLandNotificationRecoveryTests.C467_V09_KeyedQueueRacesAndDistinctEvents` | Two independently constructed providers rendezvous after absent-key reads and enqueue concurrently into real Postgres. One row/returned ID, no unhandled unique violation. Independently try a raw duplicate key to pin the database constraint. Same task/body but different event/destination identities remains distinct; replay of same key with wrong destination is refused. Keyed branch precedes report dedup; ordinary report dedup still works. |
+| V-10 | I `AgentTaskLandNotificationRecoveryTests.C467_V10_BootScanFairnessAndClearedPending` | More than two configured pages, with failed/not-yet-due/confirmed rows interspersed and Succeeded tasks whose pending fields are null. Fresh hosted worker boot plus periodic scans eventually process every eligible row; a failing first row cannot starve the tail. Drop bounded notifier wakeups and keep the same result without manual ticks. |
+| V-11 | I `AgentTaskLandReceiptTests.C467_V11_RejectFalseReceipts` | Cases: only QueueEnqueue/QueuedUserPrompt, Sent/null verdict, screen-only Delivered, wrong session, wrong notification/request, old identical prompt at/below sequence baseline, old prompt before attempt-time floor with no sequence, head-only clip, head+tail splice, unrelated later prompt. Assert ConfirmedAt/sequence remain null; LateConfirmed flag alone also fails. Matching complete newer UserPrompt is the paired positive case. |
+| V-12 | I `AgentTaskLandReceiptTests.C467_V12_CatchUpAndRecoverReceiptWithoutRetyping` | Withhold event-pump persistence but expose matching native evidence through CatchUpTranscriptAsync; production catch-up must persist it. Fail queue-verdict and outbox-receipt saves separately, use new scopes/providers, reconcile twice: one prompt, saved correct sequence/time, zero new body/Enter calls. Include long/spilled transport body, newline flattening and genuine late-confirm. |
+| V-13 | I `AgentTaskLandReceiptTests.C467_V13_RetentionCancellationAndSupersession` | Attempt-zero hold note may be superseded only after terminal commit, preserving reason/event. Attempted/parked/truncated rows are retained and not canceled/replaced to bypass retry caps. Explicit queue cancellation remains Canceled/unconfirmed. Retention preserves unresolved key and prompt evidence; after receipt ordinary pruning may remove queue history while outbox proof survives. Session deletion cannot cascade away the obligation. |
+| V-14 | I `AgentTaskLandNotificationRecoveryTests.C467_V14_LandNotesDoNotCountAsReports` | Exercise the real AgentTaskService read/poll, AgentTaskCheckService completion check, failure-reminder selection, output-distillation and polled-note shrinking with a Land row plus a separate ordinary report control. Polling/read stamps may acknowledge the report only; Land payload/digest/receipt remain unchanged. A Land note cannot satisfy a missing report or suppress its reminder. Retain SourceTaskId for machine-turn follow-up routing. |
+| V-15 | I `AgentTaskLandMonitoringTests.C467_V15_ThresholdsUseMeaningfulProgress` | Queued/Held/Running/NeedsResolution at 4:59.999, 5:00, 14:59.999 and 15:00 without progress; include attempt zero and process-active ID. Warning then Error, one durable threshold event/note per severity across restart/races. Repeated evaluations, starts at same checkpoint, blocker changes, retry count and UpdatedAt do not reset age; first admission/new checkpoint does. Validate configured positive ordered thresholds and defaults; request age remains intact. |
+| V-16 | I `AgentTaskLandMonitoringTests.C467_V16_AttentionSurvivesRecencyAndDeduplicates` | Query real Attention after aging incidents out and restarting on Succeeded tasks. One enriched LandHeld item per current hold, independent no-progress and outcome receipt conditions, stable keys and specific missing/queued/busy/parked errors. 5/15-minute outcome thresholds start at outcome commit. Deduplicate generic CallerNoteUndelivered/ParkedMessage only for matching keyed Land; unrelated queue warnings remain. Complete receipt resolves receipt warning, release resolves hold, NotRequired is explicit; no task/card moves, owner stop/resume, SendNow or alerts. |
+| V-17 | I `AgentTaskLandNotificationPersistenceTests.C467_V17_UpgradeAndLegacyEvidence` | Migrate a schema at the immediately preceding migration with aged pending rows, terminal history, ReplyTo=None, unknown routing, a uniquely matchable legacy queue row and ambiguous rows. Backfill preserves clocks/attempt/filter and evaluates blocker afresh. Latest relevant legacy outcome is informational LegacyUnverified without replay; known None is NotRequired. Unique legacy attachment is idempotent and needs real receipt evidence. New completion of a backfilled pending request always creates atomic outbox. Verify index catalog and migration rerun safety. |
+| V-18 | I `DelegateScriptLandStatusTests.C467_V18_StatusAndAcceptance` | Run real pwsh script against test HTTP responses for no request, held Blocked owner/attempt zero, running, published-with-residue plus held cleanup retry, each terminal outcome, queued/unconfirmed/confirmed, legacy unknown and None. Assert exact meaningful fields before the report, additive request ID acceptance text, no publication/receipt inferred from Succeeded or HTTP 202. |
+| V-19 | I `DelegationReportFormatterTests.C467_V19_CompletionHeadersSeparatePublication` | Worktree report header preserves `[task ... done]`, next-stage parse and lossless delegate/publication/land bits; actual known land state is used. Event-specific Land notes distinguish publication/cleanup and never announce their own receipt. Non-Worktree/report parsing controls remain green. |
+| V-20 | Client `TaskDrawer.test.tsx` and `attentionVisuals.test.ts` | Add named cases `shows a blocked land separately from delegate success`, `keeps published evidence during a held cleanup retry`, `shows unconfirmed receipt and destination errors`, `invalidates land detail after AgentTaskChanged`, and `opens land task holder caller and queue without mutation`. Pin appended Attention enum values against prior numeric values and task/attention DTO serialization in V-16. Component tests use DTO fixtures and prove rendering/actions only. |
+| V-21 | I/unit `InstructionBundleTests.C467_V21_DeliveryInventoryAndReviewAreMandatory` | Pin D-8's five inventory fields, durable identity, busy/already-eligible recipient, every-handoff fault recovery, complete UserPrompt acceptance, substitute declaration and named positive controls in StageTestDesign. Pin matching StageReview inventory/evidence audit and explicit rejection of designs stopping before recipient proof. Run existing stage invariants, ASCII/2,500-char caps and composition tests; preserve required structure and read-only Review. |
+| V-22 | E `C467_V22_AlreadyIdleGetsOutcomeWithoutNewInput` | Establish real native TurnEnd/idle before POST, release execution gate and supply no later input/turn-end. Require remote ancestry from test remote, terminal obligation, full unique UserPrompt and persisted receipt via production workers. Observe two more scans with no duplicate prompt. |
+| V-23 | E `C467_V23_BusyCallerDoesNotBlockAnotherLand` | Gate a real caller turn, finish first land and observe pending outcome with zero keyed prompt/body attempts. Land a second task in another owned repository to an idle caller and require its complete receipt while the first caller is still busy. Release the first turn through the fake gate; normal runtime TurnEnd delivers exactly once. |
+| V-24 | E `C467_V24_BlockedWriterThenReleaseDeliversBothNotes` | Seed same-common-repo Shared Blocked writer. POST once: attempt zero, no operation/git mutation, correct current holder and Attention, complete hold-note receipt. Advance monitor age past both thresholds, require aged-note receipts and single warning/error obligations; restart retains ages/identities. Settle only fixture writer explicitly, then automatic sweep publishes and delivers terminal note without re-POST. Require HeldReleased and resolved current hold/receipt warnings. |
+| V-25 | E `C467_V25_HardCrashAfterOutcomeCommitRecoversReceipt` | Kill server child at terminal-commit/before-enqueue barrier. Fresh connection proves remote-confirmed terminal event/outbox and no queue row. New child against same DB/runner automatically delivers and confirms; no extra push, cleanup, terminal event or obligation. |
+| V-26 | E `C467_V26_HardCrashAfterQueueInsertReusesRow` | Kill server child at queue-commit/before-link barrier, holding delivery until observation is captured. Restart recovers same SourceLandNotificationId/queue ID and full receipt, with exactly one queue insert/logical prompt. Busy caller control may delay typing across crash; release through native gate only. V-9 supplies the independent-provider insert race. |
+| V-27 | E `C467_V27_LostRequestWakeupRecoversAtBoot` | Drop request wakeup after acceptance and stop child before periodic sweep can consume it. Restart with fresh channel/provider: same request ID/age is admitted, remotely published and fully received. No second POST or direct queue/service call. |
+| V-28 | E `C467_V28_LostFlushWakeupRecoversOnIdleCaller` | Already-idle non-AlwaysOn caller; let Land persist keyed queue row, drop its immediate flush wakeup, and do not produce another TurnEnd. CompletionNoteWorkHostedService periodic scan discovers source/digest, normal idle flush delivers, and receipt is persisted. Record scan provenance so an unrelated wakeup cannot satisfy this test. |
+| V-29 | E `C467_V29_RealOutcomeProducerMatrix` | Real-git cases: Landed, independently AlreadyPresent, residue from a controlled cleanup failure, legitimate later cleanup after removing that obstacle, pre-operation and operation-backed refusal, and real rebase conflict. Each produces its own full keyed caller UserPrompt and correct state; successful outcomes prove remote ancestry directly. Refusals never infer publication from local/all-ref presence. Conflict retains NeedsResolution and helper behavior without auto-resume. Repeated identical refusal prose across explicit requests produces distinct notes. |
+| V-30 | E `C467_V30_ReceiptSaveFailureNeverRetypes` | Fault after native prompt is persisted, before queue verdict and before outbox receipt in separate cases. Restart host, catch up and save receipt with original attempt floor; retain one native keyed prompt/body attempt. No test-seeded transcript or manually submitted note. |
+| V-31 | E `C467_V31_EnqueueFailureRecoversAutomatically` | Fail first two queue inserts after real terminal commit; show RetryPending/LastError/NextAttemptAt from a fresh observer, then recover at persisted due times without new POST/input. Remote publication stays true throughout; final UserPrompt and receipt match the original notification. |
+| V-32 | E `C467_V32_StatusPollingCannotDischargeUnreceivedOutcome` | Two cases: busy caller across outcome commit; already-idle caller paused at the real queue's Sent/attempt-save-before-typing I/O barrier. Repeatedly run real -Status while moving Land monitor clock beyond 5/15 minutes. Outcome remains unconfirmed with no matching native prompt, Attention persists with accurate busy/attempted detail and one aged note per severity. Release gate; only actual complete receipt resolves its warning. Re-read state after restart to rule out in-memory clearing. |
+
+For V-29 use genuine repository arrangements, not fabricated successful protocol results:
+AlreadyPresent pre-publishes the source into the owned bare remote; residue uses a one-shot
+cleanup I/O failure after confirmed publication; refusal uses absent source identity or a
+rejected owned-remote push; conflict uses opposing source/target edits. Assert source/recovery
+refs and user content remain protected on failure. The integration fault decorator observes
+real git commands and may fail the selected I/O; it cannot substitute remote containment.
+
+### Guards the regression
+
+Every R item names the change it would catch. Run the associated V methods plus the listed
+existing class filters; a copied helper assertion alone is not retained coverage.
+
+| ID | Regression | Caught by / decisive assertion |
+|---|---|---|
+| R-1 | Requeue hides an old request, or stale queue work mutates a new request | V-1/V-2/V-27: unchanged identity/age and no stale git; existing `AgentTaskLandRequestTests`, `AgentTaskLandSweepTests` |
+| R-2 | Blocked/aliased writer or occupied lease is treated as permission to land | V-3/V-24: real guard, zero attempts/mutations; `AgentTaskLandAdmissionTests`, `AgentTaskLandConcurrencyTests`, `AgentTaskLandIdentityMatrixTests` |
+| R-3 | Holds become silent or emit a note per tick | V-3/V-4/V-15/V-24: structured episode, atomic obligation, one event per transition, complete hold/aged receipt |
+| R-4 | Publication and pending clear survive without an owed note | V-5/V-6/V-25/V-31: fresh-observer atomicity and terminal-commit hard crash; `AgentTaskLandPersistenceFailureTests`, `AgentTaskLandRecoveryTests` |
+| R-5 | Error recovery repeats publication/cleanup or collapses later cleanup into an old note | V-7/V-9/V-26/V-29: stable request terminal identity and distinct legitimate event identities; `AgentTaskLandPublicationTests`, `AgentTaskLandCleanupSafetyTests`, `AgentTaskLandStageOutcomeTests` |
+| R-6 | In-memory wakeups or open-task queries strand owed work | V-8/V-10/V-22/V-27/V-28/V-31: boot/due scans recover cleared-pending outcomes and already-idle callers |
+| R-7 | Same notification duplicates across processes, or report dedup collapses distinct Land events | V-9/V-26/V-29: database uniqueness, same returned queue ID, distinct event notes and one actual prompt |
+| R-8 | Busy delivery types early or stalls the land drain | V-23: no first-caller attempt while second land and receipt finish; existing `SessionMessageQueuePtyIntegrationTests`, `SessionMessageQueueDeliveryVerificationTests` |
+| R-9 | Sent, screen, old/wrong/truncated text passes as receipt | V-11/V-12/V-30/V-32: complete correct-session UserPrompt after floor and no recovery retype; existing `SessionMessageQueueInterruptedAttemptTests` |
+| R-10 | New SourceTaskId metadata alters ordinary report consumers or cancels attempted rows | V-13/V-14/V-32: report controls still work, Land body/obligation survives; `OutputDistillationQueueTests`, `PolledCompletionNoteShrinkTests` |
+| R-11 | Polling, changed blockers, progress timestamps or recency hide silence | V-15/V-16/V-24/V-32: durable ages/keys, thresholds once, stable unresolved evidence; `AttentionServiceTests` |
+| R-12 | Upgrade fabricates receipt/destination or automatically replays history | V-17: explicit LegacyUnverified/NotRequired, no guessed replay, new atomic obligation for upgraded pending work; `AgentTaskLandingPersistenceTests` |
+| R-13 | UI/script/report conflates delegate completion, publication and receipt | V-18/V-19/V-20: separate facts and preserved completion parser; `DelegationReportFormatterTests`, touched client files |
+| R-14 | Future TestDesign stops at the queue or Review accepts that gap | V-21: standing inventory and rejection rule retained; existing `InstructionBundleTests` stage/cap/composition coverage |
+
+### Positive controls
+
+Code executes **every** PC red -> restore -> green against the exact method named below,
+including all named matrix cases. These are temporary one-line source mutations at the stated
+semantic anchor in the implemented slice; record the actual file/line and diff. Where a guard
+is new, the expression below specifies which behavior to replace, not a requirement to expose
+a production mutation switch. A compiler error, fixture failure, unavailable binary, skip or
+zero tests does not satisfy red. Red must contain the named invariant's assertion failure.
+If a lower assertion trips first, improve the test to reach the targeted observable failure.
+
+| ID | One-line mutation / owning anchor | Exact method to run | Expected red assertion |
+|---|---|---|---|
+| PC-1 | Land request requeue: replace preserved RequestedAt with `now` | `AgentTaskLandRequestTests.C467_V01_AcceptRequeueSerializeRequest` | Original age changed on inactive requeue |
+| PC-2 | Drain identity guard: replace current-request-ID equality with `true` | `AgentTaskLandRequestTests.C467_V02_RejectStaleWorkAndExposeMirrorDrift` | Stale ID performs work or changes newer request |
+| PC-3 | FindWriterAsync status predicate: remove `Blocked` | `AgentTaskLandDeliveryE2ETests.C467_V24_BlockedWriterThenReleaseDeliversBothNotes` | Attempt-zero/no-mutation hold and holder/hold receipt missing |
+| PC-4 | Land admission: replace `if (lease is null)` with `if (false)` | `AgentTaskLandHoldVisibilityTests.C467_V03_RealWriterLeaseAndEpisodeMatrix` | Busy lease no longer holds; attempt/protocol-entry counter advances without lease |
+| PC-5 | FindWriterAsync inaccessible identity branch: return no writer | `AgentTaskLandHoldVisibilityTests.C467_V03_RealWriterLeaseAndEpisodeMatrix` | Fail-closed identity case is admitted/mutates |
+| PC-6 | Shared hold persistence path: remove notification-obligation add | `AgentTaskLandHoldVisibilityTests.C467_V04_HoldAndAgeAreAtomicBeforePublish` | Committed hold/aged event has no atomic outbox |
+| PC-7 | Terminal settlement: remove the outcome-notification add before commit | `AgentTaskLandDeliveryE2ETests.C467_V25_HardCrashAfterOutcomeCommitRecoversReceipt` | Terminal commit has no recoverable obligation/complete receipt |
+| PC-8 | Terminal transaction: move pending-field clearing save to immediately before BeginTransactionAsync | `AgentTaskLandPersistenceFailureTests.C467_V06_AtomicSettlementFaultMatrix` | Before-commit fault exposes cleared pending fields without complete transaction |
+| PC-9 | FailAsync: remove the already-committed terminal-request early return | `AgentTaskLandNotificationPersistenceTests.C467_V07_ConcurrentSettlementAndExplicitCleanup` | Extra terminal settlement/side effect or failed idempotent recovery |
+| PC-10 | Notifier failure handler: set ConfirmedAt to `now` instead of scheduling retry | `AgentTaskLandDeliveryE2ETests.C467_V31_EnqueueFailureRecoversAutomatically` | Owed notification falsely discharged without UserPrompt |
+| PC-11 | Notification scan: add `task.LandRequestedAt != null` filter | `AgentTaskLandDeliveryE2ETests.C467_V25_HardCrashAfterOutcomeCommitRecoversReceipt` | Cleared-pending terminal obligation never delivered after boot |
+| PC-12 | SourceLandNotificationId index migration: change unique to non-unique (fresh migrated schema) | `AgentTaskLandNotificationRecoveryTests.C467_V09_KeyedQueueRacesAndDistinctEvents` | Raw duplicate accepted / concurrent insert count exceeds one |
+| PC-13 | Keyed enqueue existing-row branch: replace return-existing-ID with a conflict throw | `AgentTaskLandDeliveryE2ETests.C467_V26_HardCrashAfterQueueInsertReusesRow` | Insert/link recovery cannot reuse and confirm existing queue row |
+| PC-14 | Existing-key destination validation: replace destination equality guard with `true` | `AgentTaskLandNotificationRecoveryTests.C467_V09_KeyedQueueRacesAndDistinctEvents` | Wrong-destination key reuse is accepted |
+| PC-15 | Land enqueue: pass `sourceTaskId:null` | `AgentTaskLandDeliveryE2ETests.C467_V28_LostFlushWakeupRecoversOnIdleCaller` | Metadata assertion/recovery scan fails; no complete idle receipt |
+| PC-16 | CompletionNoteWorkHostedService flush consumer: skip its FlushIfIdleAsync call | `AgentTaskLandDeliveryE2ETests.C467_V28_LostFlushWakeupRecoversOnIdleCaller` | Persisted pending row never reaches caller despite eligible scan |
+| PC-17 | Land enqueue: change `MessageSendMode.WhenIdle` to `MessageSendMode.Now` | `AgentTaskLandDeliveryE2ETests.C467_V23_BusyCallerDoesNotBlockAnotherLand` | Keyed body/prompt attempted while caller's gate is closed |
+| PC-18 | Receipt predicate: replace `IsCompleteIn` with `IsConfirmedBy` | `AgentTaskLandReceiptTests.C467_V11_RejectFalseReceipts` | Head-only/head+tail clipped prompt falsely confirms |
+| PC-19 | Receipt sequence cutoff: replace saved baseline with `0` | `AgentTaskLandReceiptTests.C467_V11_RejectFalseReceipts` | Old identical prompt confirms |
+| PC-20 | Receipt fallback-time cutoff: replace saved attempt time with `DateTime.MinValue` | `AgentTaskLandReceiptTests.C467_V11_RejectFalseReceipts` | Old prompt confirms when sequence baseline is absent |
+| PC-21 | Receipt transcript query: remove destination-session predicate | `AgentTaskLandReceiptTests.C467_V11_RejectFalseReceipts` | Matching text in a different session confirms |
+| PC-22 | Receipt transcript query: remove UserPrompt-kind predicate | `AgentTaskLandReceiptTests.C467_V11_RejectFalseReceipts` | QueueEnqueue/QueuedUserPrompt falsely confirms |
+| PC-23 | Receipt reconciler: treat Sent or screen Delivered as confirmed without transcript match | `AgentTaskLandDeliveryE2ETests.C467_V32_StatusPollingCannotDischargeUnreceivedOutcome` | Sent-before-typing case is confirmed/warning cleared despite no UserPrompt; V-11 also retains the isolated screen-only negative |
+| PC-24 | Receipt reconciliation: skip production CatchUpTranscriptAsync | `AgentTaskLandReceiptTests.C467_V12_CatchUpAndRecoverReceiptWithoutRetyping` | Native-only receipt remains unpersisted/unconfirmed |
+| PC-25 | Unresolved-key retention predicate: remove unresolved-Land exclusion | `AgentTaskLandReceiptTests.C467_V13_RetentionCancellationAndSupersession` | Sole key/prompt evidence pruned before receipt recovery |
+| PC-26 | Hold-note supersession: remove `DeliveryAttempts == 0` predicate | `AgentTaskLandReceiptTests.C467_V13_RetentionCancellationAndSupersession` | Attempted row canceled despite possible late receipt |
+| PC-27 | Notifier linked-row handling: clear QueueMessageId/key association when row is parked | `AgentTaskLandReceiptTests.C467_V13_RetentionCancellationAndSupersession` | Existing authoritative row association lost or replacement attempted to evade cap |
+| PC-28 | Delegate-report consumer predicates: remove `SourceLandNotificationId == null` in **each** consumer, one separate cycle per site: read/poll, check completion, failure reminder, output distillation, polled shrinking, legacy report dedup | `AgentTaskLandNotificationRecoveryTests.C467_V14_LandNotesDoNotCountAsReports` (first five sites); `AgentTaskLandNotificationRecoveryTests.C467_V09_KeyedQueueRacesAndDistinctEvents` (dedup site) | Land row acknowledged/rewritten, missing report satisfied/reminder suppressed, or distinct Land events collapsed. Report PC-28a through PC-28f separately |
+| PC-29 | Monitor: assign LastProgressAt on every LastEvaluatedAt update | `AgentTaskLandMonitoringTests.C467_V15_ThresholdsUseMeaningfulProgress` | Re-evaluation hides 5/15-minute warning/error |
+| PC-30 | Monitor scan: skip IDs in process active set | `AgentTaskLandMonitoringTests.C467_V15_ThresholdsUseMeaningfulProgress` | Active Running request escapes no-progress detection |
+| PC-31 | Threshold crossing guard: force already-emitted check to `false` | `AgentTaskLandMonitoringTests.C467_V15_ThresholdsUseMeaningfulProgress` | Duplicate event/obligation or unique conflict instead of idempotent sweep |
+| PC-32 | Land Attention query: restrict to Working/Dispatched tasks | `AgentTaskLandDeliveryE2ETests.C467_V32_StatusPollingCannotDischargeUnreceivedOutcome` | Succeeded task's unresolved outcome warning disappears |
+| PC-33 | Land Attention predicate: accept task read/poll timestamp as receipt | `AgentTaskLandDeliveryE2ETests.C467_V32_StatusPollingCannotDischargeUnreceivedOutcome` | -Status clears warning before complete caller prompt |
+| PC-34 | Generic queue Attention: remove keyed-Land dedup exclusion | `AgentTaskLandMonitoringTests.C467_V16_AttentionSurvivesRecencyAndDeduplicates` | More than one item for same unresolved keyed Land condition |
+| PC-35 | Historical projection: map ambiguous LegacyUnverified to Confirmed | `AgentTaskLandNotificationPersistenceTests.C467_V17_UpgradeAndLegacyEvidence` | Guessed legacy receipt/destination shown as fact |
+| PC-36 | Cancellation/invalidation: delete unresolved terminal obligations for the canceled task | `AgentTaskLandRequestTests.C467_V02_RejectStaleWorkAndExposeMirrorDrift` | Owed published outcome erased by later cancellation |
+| PC-37 | Hold transition: move PublishAsync before transaction commit | `AgentTaskLandHoldVisibilityTests.C467_V04_HoldAndAgeAreAtomicBeforePublish` | Event observer cannot read advertised committed hold/outbox |
+| PC-38 | Boot land sweep: omit enqueue of recovered pending requests | `AgentTaskLandDeliveryE2ETests.C467_V27_LostRequestWakeupRecoversAtBoot` | Original accepted request never reaches publication/receipt |
+| PC-39 | StageTestDesign bundle: delete D-8's complete UserPrompt acceptance sentence | `InstructionBundleTests.C467_V21_DeliveryInventoryAndReviewAreMandatory` | Standing session receipt requirement absent |
+| PC-40 | StageReview bundle: delete the reject-missing-producer-to-recipient-test sentence | `InstructionBundleTests.C467_V21_DeliveryInventoryAndReviewAreMandatory` | Review obligation absent |
+| PC-41 | Request pending-uniqueness migration: change unique index to non-unique | `AgentTaskLandNotificationPersistenceTests.C467_V07_ConcurrentSettlementAndExplicitCleanup` | Raw duplicate current request accepted |
+| PC-42 | Terminal-request uniqueness migration: change unique index to non-unique | `AgentTaskLandNotificationPersistenceTests.C467_V07_ConcurrentSettlementAndExplicitCleanup` | Raw duplicate terminal event accepted |
+| PC-43 | Notification SourceEventId uniqueness migration: change unique index to non-unique | `AgentTaskLandNotificationPersistenceTests.C467_V07_ConcurrentSettlementAndExplicitCleanup` | Raw duplicate source-event obligation accepted |
+| PC-44 | Request acceptance: omit the task-row serialization lock statement | `AgentTaskLandRequestTests.C467_V01_AcceptRequeueSerializeRequest` | Concurrent acceptance produces an unhandled uniqueness/500 failure or different accepted current IDs |
+
+PC-12/41/42/43 each use a fresh pre-change database and the modified CLI-generated migration;
+changing only the EF model against an already-migrated schema would leave the guard enabled.
+For PC-44, rendezvous immediately before lock acquisition, pause the first accepted reader
+before its write, start the second request, then release the first. The fixed second request
+must wait for the row lock and reload; a missing lock exposes the stale read. Do not place a
+two-reader barrier inside the correctly locked region, which would deadlock the green run.
+For PC-28f, seed an ordinary-report row whose task/digest matches the candidate Land note as an
+adversarial fixture: different legitimate Land identities normally have distinct digests, which
+would otherwise mask removal of the report-only dedup predicate. The keyed Land row must still
+be inserted and returned independently. No production digest algorithm is weakened for the test.
+
+All inherited CARD-0448 publication/identity/cleanup guards remain covered by the R-2/R-4/R-5
+class floor and their existing controls. If Code changes one of those guard implementations,
+also run its named control from the CARD-0448 verification design, method-scoped; do not rewrite
+that protocol under this card. New source aliases/identity cases in V-3 supplement the legacy
+`IsHeldBehindSharedWriter` helper tests and cannot be replaced by them.
+
+### Commands, evidence and test-design review
+
+Use one task-owned output directory per assembly/run family; do not build against locked live
+outputs. The following PowerShell helper is an executable command template for every C# row.
+Its class and optional method parameters map exactly to the tables. Run from the repository
+root; each invocation produces a uniquely named fresh TRX in the requested results directory.
+
+```powershell
+function Invoke-C467Test {
+    param(
+        [ValidateSet('Antiphon.Tests','Antiphon.E2E','Antiphon.Agents.Pty.Tests')]
+        [string]$Project = 'Antiphon.Tests',
+        [Parameter(Mandatory)][string]$Class,
+        [string]$Method = '*',
+        [string]$Label = 'verify'
+    )
+    $runId = '{0}-{1}-{2}' -f $Label, $Class, [Guid]::NewGuid().ToString('N')
+    $resultDir = Join-Path (Get-Location) '.antiphon/acceptance/card-0467'
+    New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+    $outputArg = '--property:OutputPath=bin-c467-{0}/' -f $Project.ToLowerInvariant()
+    dotnet run --project "tests/$Project" $outputArg -- --treenode-filter "/*/*/$Class/$Method" --report-trx --report-trx-filename "$runId.trx" --results-directory $resultDir
+    $runExit = $LASTEXITCODE
+    $trxPath = Join-Path $resultDir "$runId.trx"
+    if (-not (Test-Path -LiteralPath $trxPath)) { throw "Missing TRX: $trxPath (exit $runExit)" }
+    [xml]$trx = Get-Content -LiteralPath $trxPath -Raw
+    $rows = @($trx.SelectNodes("//*[local-name()='UnitTestResult']"))
+    if ($rows.Count -eq 0) { throw "Zero executed results: $trxPath" }
+    $rows | Select-Object testName, outcome, duration
+    [pscustomobject]@{ ExitCode=$runExit; Results=$rows.Count; Trx=$trxPath }
+}
+
+# Illustrative verification invocations; execute all table classes, not just these examples.
+Invoke-C467Test -Class AgentTaskLandHoldVisibilityTests
+Invoke-C467Test -Project Antiphon.E2E -Class AgentTaskLandDeliveryE2ETests
+
+# PC-3: run after applying its single mutation, then restore and run again.
+Invoke-C467Test -Project Antiphon.E2E -Class AgentTaskLandDeliveryE2ETests -Method C467_V24_BlockedWriterThenReleaseDeliversBothNotes -Label PC03-red
+Invoke-C467Test -Project Antiphon.E2E -Class AgentTaskLandDeliveryE2ETests -Method C467_V24_BlockedWriterThenReleaseDeliversBothNotes -Label PC03-green
+```
+
+Do not run those red/green lines consecutively without restoring source between them. Inspect
+the reported exit code, test names, case names and assertions: green requires all expected
+cases passed with no skipped acceptance cases; red requires the expected assertion failures.
+The helper deliberately preserves failing TRX evidence rather than treating any failure as
+successful mutation evidence. Confirm the runner accepts the results-directory flag and file
+location on the first invocation; an option/discovery failure is not a test result.
+
+Execute the **union**, once after restoration, of every C# class in V-1 through V-19/V-21,
+`AgentTaskLandDeliveryE2ETests`, and the existing classes explicitly named in R-1 through R-14.
+Use separate class-filtered invocations or the testing owner's supported parenthesized class
+OR syntax; never a namespace-wide fallback. Include existing `SessionMessageQueuePtyIntegrationTests`
+and `SessionMessageQueueInterruptedAttemptTests` even if only the Land caller changes.
+After Antiphon.Tests completes, run:
+
+```powershell
+Invoke-C467Test -Project Antiphon.Agents.Pty.Tests -Class FakeGrokContractTests
+pwsh -NoProfile -File scripts/test-client.ps1 TaskDrawer.test
+pwsh -NoProfile -File scripts/test-client.ps1 attentionVisuals.test
+Push-Location client
+try { npm run build; if ($LASTEXITCODE -ne 0) { throw 'client build failed' } }
+finally { Pop-Location }
+Invoke-C467Test -Project Antiphon.E2E -Class AgentTaskLandDeliveryE2ETests
+```
+
+Run E2E once after the client build; the earlier E2E invocation only illustrates the helper.
+Process-spawning classes, including new script/real-git fixtures, carry their assembly-local
+`ParallelLimiter<ProcessSpawnLimit>`. No Antiphon.Tests/Pty.Tests co-scheduling. A global sweep
+on a shared schema requires unkeyed NotInParallel; prefer isolated schemas and scoped counts.
+This fake-provider E2E is Windows/modern-ConPTY integration acceptance, not a headed real-model
+canary; missing Docker/Postgres/git/pwsh/modern PTY/fake binaries is a prerequisite failure to
+report and fix, never a passing skip. No live-stack restart, deploy or live-caller probe is part
+of these commands. Ensure fixture teardown accounts for every owned process and retains crash
+evidence before removing only its own temporary paths.
+
+For each run retain commit SHA, mutation diff (if any), binary MVID/hash, fresh TRX, case counts,
+duration and failing assertions. For capstones also retain redacted request/operation/event/
+notification/queue/receipt snapshots, native keyed prompts and submitting input counters,
+attempt baseline, host/runner ownership, barrier receipt, monitor ages, git command trace and
+`git --git-dir <owned-bare-remote> merge-base --is-ancestor <verified-sha> refs/heads/master`
+exit code. Do not log caller tokens or native credentials. Store paths beneath
+`.antiphon/acceptance/card-0467/<run-id>/` and E2E's normal `TestOutput/Logs/<method>/`; the Code
+report gives absolute retained artifact paths and a V/R/PC result table. Update restored source
+last-write time/rebuild so green cannot reuse a mutated DLL. Commit before long runs and do not
+edit a running worktree. PC sharding uses only additional owned worktrees at the same committed
+task tip, with separate outputs/results and no agent sub-delegation; controls touching the same
+file/method remain separate, as required by the testing owner.
+
+Test-design review applies in the existing Code/Review process; this creates no new role.
+Review must trace each inventory row to its V/R/PC evidence, inspect the capstone for a direct
+test-side submit/flush or seeded receipt, and check both actual server-death cuts. Reject missing
+busy/already-idle/held-release recipient proof, a guard without its red/green control, skipped
+capstones, status-only delivery acceptance, or a mutation whose expected assertion never ran.
+Review also verifies that S6 installs D-8 in StageTestDesign and StageReview and updates the
+orchestration/testing owners. V-21 protects instruction text only. If the concrete fixture cannot
+reach these cuts or ingest native UserPrompt evidence, return next: plan with that seam defect;
+do not replace the acceptance oracle with mocks or ask Code to invent a weaker test.
+
+### Out of scope
+
+- Live incident-owner release, live caller messages, production data repair/migration execution,
+  deploying/restarting the shared stack, card moves, owner termination and exclusion bypass.
+- Model understanding or taking the next stage correctly after receipt; native FakeGrok proves
+  session transport/persistence, not reasoning, provider authentication or every provider's TUI.
+- Real GitHub/network publication reliability; a real local bare remote proves git protocol and
+  containment with deterministic rejection/crash control, not WAN availability.
+- Revalidating all generic terminal policy or introducing a new delivery engine. Retained queue
+  and FakeGrok contract suites cover the touched transport dependencies; inherited landing safety
+  suites cover unchanged protocol guards. Changed inherited guards bring their own PCs into scope.
+- Automatic legacy outcome replay or semantic reconstruction of an unknowable destination.
+  V-17 requires explicit uncertainty, not manufactured historical delivery proof.
+
+### Cost
+
+- Suites forced: the named Antiphon.Tests class union, FakeGrokContractTests sequentially,
+  TaskDrawer/attentionVisuals via the client wrapper, a current client build, and the eleven
+  Land delivery E2E methods V-22 through V-32, with parameterized outcome/save-failure/receipt
+  cases. Count executed cases from TRX rather than equating V rows with test counts.
+- Estimated verification floor after tests exist: 35-65 minutes for build plus restored-green
+  named regression/capstone runs, and 100-180 minutes for 49 method-scoped PC cycles (PC-28 has
+  six sites). Serial total approximately 135-245 minutes, excluding implementation and failure
+  diagnosis. Independent worktree shards can reduce elapsed PC time, not required evidence.
+- **Measured evidence available now:** the testing owner records approximately 25.5 minutes for
+  the full Antiphon.Tests assembly and 15-35 seconds for a filtered client file. Those are context,
+  not measurements of this new selection. TestDesign ran no application suites or capstones;
+  their costs are unmeasured estimates. Code must report cold/warm build time, per-class/TRX
+  durations, capstone/recovery latency and per-PC red/green cost, then replace estimates with
+  those measurements. A long/slow or missing test does not relax acceptance.
