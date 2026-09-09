@@ -995,6 +995,425 @@ public class TrackerBidirectionalSyncTests
 
     // ---- helpers ---------------------------------------------------------------------------------
 
+    [Test]
+    public async Task Content_edit_outbound_echo_and_repeated_pull_create_no_discussion_rows()
+    {
+        var tempRoot = NewTempRoot();
+        var clock = EchoClock();
+        try
+        {
+            var (graph, _) = await SeedEchoGraphAsync(tempRoot, clock, pendingEdit: true);
+            var fake = EchoTracker();
+            fake.EchoPostedComments = true;
+            var first = await RunEchoPassAsync(graph, fake, clock);
+            AssertContentEditPost(graph, fake);
+            AssertEchoResult(graph, fake, first, commentsOut: 1);
+            var postedAt = clock.GetUtcNow().UtcDateTime;
+            await AssertEchoCursorAsync(graph, clock, 1, postedAt);
+            (await ReadCommentSnapshotsAsync(graph.Card.Id)).ShouldBeEmpty();
+            var echo = fake.CommentsSince.Single();
+            echo.Body.ShouldBe(fake.PostCommentCalls.Single().Body);
+
+            for (var pass = 0; pass < 2; pass++)
+            {
+                fake.ClearWriteCounters();
+                fake.CommentsSince.ShouldBe(new[] { echo });
+                AssertEchoResult(graph, fake, await RunEchoPassAsync(graph, fake, clock));
+                (await ReadCommentSnapshotsAsync(graph.Card.Id)).ShouldBeEmpty();
+                await AssertEchoCursorAsync(graph, clock, 1, postedAt);
+            }
+        }
+        finally { await CleanupAsync(tempRoot); }
+    }
+
+    [Test]
+    public async Task Legacy_content_edit_revision_marker_is_ignored_on_repeated_pulls()
+    {
+        var tempRoot = NewTempRoot();
+        var clock = EchoClock();
+        try
+        {
+            var (graph, revision) = await SeedEchoGraphAsync(tempRoot, clock);
+            var fake = EchoTracker();
+            var inbound = EchoComments(clock, "alice",
+                TrackerSyncMarkers.AppendCommentMarker("Historical content edit", revision.Id));
+            fake.CommentsSince = inbound;
+            var outboundAt = clock.GetUtcNow().UtcDateTime;
+            for (var pass = 0; pass < 3; pass++)
+            {
+                if (pass == 2)
+                {
+                    await using var update = CreateContext();
+                    var issueRef = await update.ExternalIssueRefs.SingleAsync(r => r.CardId == graph.Card.Id);
+                    issueRef.Origin = ExternalIssueOrigin.AntiphonExport;
+                    issueRef.LastOutboundSyncedAt = outboundAt = clock.GetUtcNow().UtcDateTime;
+                    await update.SaveChangesAsync();
+                }
+                fake.ClearWriteCounters();
+                fake.CommentsSince.ShouldBe(inbound);
+                AssertEchoResult(graph, fake, await RunEchoPassAsync(graph, fake, clock));
+                (await ReadCommentSnapshotsAsync(graph.Card.Id)).ShouldBeEmpty();
+                await AssertEchoCursorAsync(graph, clock, 1, outboundAt);
+            }
+        }
+        finally { await CleanupAsync(tempRoot); }
+    }
+
+    [Test]
+    public async Task Legacy_marker_requires_same_card_and_ContentEdit_kind()
+    {
+        var tempRoot = NewTempRoot();
+        var clock = EchoClock();
+        try
+        {
+            var (graph, _) = await SeedEchoGraphAsync(tempRoot, clock);
+            Guid foreignCardId;
+            Guid[] markerIds;
+            await using (var seed = CreateContext())
+            {
+                var card = await seed.Cards.SingleAsync(c => c.Id == graph.Card.Id);
+                var move = AddEchoRevision(seed, card, clock, CardRevisionKind.Move);
+                var reopen = AddEchoRevision(seed, card, clock, CardRevisionKind.Reopen);
+                var foreign = NewCard(graph, clock.GetUtcNow().UtcDateTime);
+                foreign.Identifier = graph.Card.Identifier + "-foreign";
+                foreign.Board = null!;
+                foreign.BoardColumn = null!;
+                seed.Cards.Add(foreign);
+                foreignCardId = foreign.Id;
+                var foreignEdit = AddEchoRevision(seed, foreign, clock, CardRevisionKind.ContentEdit);
+                var unknown = Guid.NewGuid();
+                (await seed.CardRevisions.AnyAsync(r => r.Id == unknown)).ShouldBeFalse();
+                (await seed.CardComments.AnyAsync(c => c.Id == unknown)).ShouldBeFalse();
+                markerIds = [foreignEdit.Id, move.Id, reopen.Id, unknown];
+                var issueRef = await seed.ExternalIssueRefs.SingleAsync(r => r.CardId == card.Id);
+                issueRef.LastRevisionSynced = card.RevisionCount;
+                await seed.SaveChangesAsync();
+            }
+            var fake = EchoTracker();
+            var inbound = EchoComments(clock, "alice", markerIds.Select(id =>
+                TrackerSyncMarkers.AppendCommentMarker("Visible revision reference", id)).ToArray());
+            fake.CommentsSince = inbound;
+            var first = await RunEchoPassAsync(graph, fake, clock);
+            var original = await AssertImportedCommentsAsync(graph, inbound);
+            (await ReadCommentSnapshotsAsync(foreignCardId)).ShouldBeEmpty();
+            AssertEchoResult(graph, fake, first, commentsIn: 4);
+            fake.ClearWriteCounters();
+            fake.CommentsSince.ShouldBe(inbound);
+            AssertEchoResult(graph, fake, await RunEchoPassAsync(graph, fake, clock));
+            (await AssertImportedCommentsAsync(graph, inbound)).ShouldBe(original);
+            (await ReadCommentSnapshotsAsync(foreignCardId)).ShouldBeEmpty();
+        }
+        finally { await CleanupAsync(tempRoot); }
+    }
+
+    [Test]
+    public async Task Same_author_human_comment_imports_beside_content_edit_echo()
+    {
+        var tempRoot = NewTempRoot();
+        var clock = EchoClock();
+        try
+        {
+            var (graph, revision) = await SeedEchoGraphAsync(tempRoot, clock, pendingEdit: true);
+            var fake = EchoTracker();
+            var first = await RunEchoPassAsync(graph, fake, clock);
+            AssertContentEditPost(graph, fake);
+            AssertEchoResult(graph, fake, first, commentsOut: 1);
+            await AssertEchoCursorAsync(graph, clock, 1, clock.GetUtcNow().UtcDateTime);
+            (await ReadCommentSnapshotsAsync(graph.Card.Id)).ShouldBeEmpty();
+            var inbound = EchoComments(EchoClock(), "michal-ciechan",
+                fake.PostCommentCalls.Single().Body,
+                TrackerSyncMarkers.AppendCommentMarker("Historical content edit", revision.Id),
+                "Antiphon content edit by michal-ciechan: I wrote this comment myself.");
+            fake.CommentsSince = inbound;
+            fake.ClearWriteCounters();
+            AssertEchoResult(graph, fake, await RunEchoPassAsync(graph, fake, clock), commentsIn: 1);
+            var original = await AssertImportedCommentsAsync(graph, [inbound[2]]);
+            fake.ClearWriteCounters();
+            fake.CommentsSince.ShouldBe(inbound);
+            AssertEchoResult(graph, fake, await RunEchoPassAsync(graph, fake, clock));
+            (await AssertImportedCommentsAsync(graph, [inbound[2]])).ShouldBe(original);
+        }
+        finally { await CleanupAsync(tempRoot); }
+    }
+
+    [Test]
+    public async Task Unrecognized_marker_shapes_remain_visible_and_deduplicate()
+    {
+        var tempRoot = NewTempRoot();
+        var clock = EchoClock();
+        try
+        {
+            var (graph, revision) = await SeedEchoGraphAsync(tempRoot, clock);
+            var otherCardId = Guid.NewGuid();
+            var revId = revision.Id;
+            var shortId = revId.ToString("N")[..31];
+            var badHex = shortId + "z";
+            (string Name, string Suffix, bool System, Guid? ParsedId)[] matrix =
+            [
+                ("wrong-card-system", $"<!-- antiphon:system-comment={otherCardId:N} -->", true, otherCardId),
+                ("nonhex-revision", $"<!-- antiphon:comment={badHex} -->", false, null),
+                ("hyphenated-revision", $"<!-- antiphon:comment={revId:D} -->", false, null),
+                ("short-revision", $"<!-- antiphon:comment={shortId} -->", false, null),
+                ("unclosed-revision", $"<!-- antiphon:comment={revId:N}", false, null),
+                ("nontrailing-revision", $"<!-- antiphon:comment={revId:N} -->\nHuman follow-up.", false, null),
+                ("nontrailing-system", $"<!-- antiphon:system-comment={graph.Card.Id:N} -->\nHuman follow-up.", true, null),
+                ("valid-legacy-control", $"<!-- antiphon:comment={revId.ToString("N").ToUpperInvariant()} -->\r\n \t", false, revId),
+                ("valid-system-control", $"<!-- antiphon:system-comment={graph.Card.Id:N} -->\r\n \t", true, graph.Card.Id)
+            ];
+            var bodies = matrix.Select(row => "Visible text\n\n" + row.Suffix).ToArray();
+            for (var i = 0; i < matrix.Length; i++)
+            {
+                Guid parsedId;
+                var parsed = matrix[i].System
+                    ? TrackerSyncMarkers.TryReadTrailingSystemCommentMarker(bodies[i], out parsedId)
+                    : TrackerSyncMarkers.TryReadTrailingCommentMarker(bodies[i], out parsedId);
+                parsed.ShouldBe(matrix[i].ParsedId.HasValue, matrix[i].Name);
+                if (parsed)
+                    parsedId.ShouldBe(matrix[i].ParsedId!.Value, matrix[i].Name);
+            }
+            var inbound = EchoComments(clock, "alice", bodies);
+            var fake = EchoTracker();
+            fake.CommentsSince = inbound;
+            var first = await RunEchoPassAsync(graph, fake, clock);
+            var original = await AssertImportedCommentsAsync(graph, inbound.Take(7).ToArray());
+            AssertEchoResult(graph, fake, first, commentsIn: 7);
+            fake.ClearWriteCounters();
+            fake.CommentsSince.ShouldBe(inbound);
+            AssertEchoResult(graph, fake, await RunEchoPassAsync(graph, fake, clock));
+            (await AssertImportedCommentsAsync(graph, inbound.Take(7).ToArray())).ShouldBe(original);
+        }
+        finally { await CleanupAsync(tempRoot); }
+    }
+
+    [Test]
+    public async Task Existing_external_revision_echo_is_left_unchanged()
+    {
+        var tempRoot = NewTempRoot();
+        var clock = EchoClock();
+        try
+        {
+            var (graph, revision) = await SeedEchoGraphAsync(tempRoot, clock);
+            var inbound = EchoComments(clock, "michal-ciechan",
+                TrackerSyncMarkers.AppendCommentMarker("Historical content edit", revision.Id),
+                "An unrelated human comment.");
+            await using (var seed = CreateContext())
+            {
+                foreach (var comment in inbound)
+                    seed.CardComments.Add(new CardComment
+                    {
+                        Id = Guid.NewGuid(), CardId = graph.Card.Id, Body = comment.Body,
+                        Author = comment.Author, Origin = CardCommentOrigin.External,
+                        ExternalCommentId = comment.ExternalCommentId, ExternalUrl = comment.Url,
+                        CreatedAt = comment.CreatedAt, SyncedAt = null
+                    });
+                await seed.SaveChangesAsync();
+            }
+            var original = await AssertImportedCommentsAsync(graph, inbound);
+            original.ShouldAllBe(c => c.Id != revision.Id);
+            var fake = EchoTracker();
+            fake.CommentsSince = [inbound[0]];
+            for (var pass = 0; pass < 2; pass++)
+            {
+                fake.ClearWriteCounters();
+                fake.CommentsSince.ShouldBe(new[] { inbound[0] });
+                AssertEchoResult(graph, fake, await RunEchoPassAsync(graph, fake, clock));
+                (await ReadCommentSnapshotsAsync(graph.Card.Id)).ShouldBe(original);
+                await using var verify = CreateContext();
+                (await verify.CardRevisions.AnyAsync(r => r.Id == revision.Id
+                    && r.CardId == graph.Card.Id && r.Kind == CardRevisionKind.ContentEdit)).ShouldBeTrue();
+            }
+        }
+        finally { await CleanupAsync(tempRoot); }
+    }
+
+    [Test]
+    public async Task Known_discussion_marker_repairs_missing_link_before_legacy_lookup()
+    {
+        var tempRoot = NewTempRoot();
+        var clock = EchoClock();
+        try
+        {
+            var (graph, revision) = await SeedEchoGraphAsync(tempRoot, clock);
+            await using (var seed = CreateContext())
+            {
+                seed.CardComments.Add(new CardComment
+                {
+                    Id = revision.Id, CardId = graph.Card.Id, Body = "Original discussion",
+                    Author = "operator", Origin = CardCommentOrigin.Antiphon,
+                    CreatedAt = clock.GetUtcNow().UtcDateTime.AddMinutes(-2),
+                    SyncedAt = clock.GetUtcNow().UtcDateTime
+                });
+                await seed.SaveChangesAsync();
+            }
+            var original = (await ReadCommentSnapshotsAsync(graph.Card.Id)).Single();
+            var inbound = EchoComments(clock, "alice",
+                TrackerSyncMarkers.AppendCommentMarker("Remote discussion echo", revision.Id));
+            var fake = EchoTracker();
+            fake.CommentsSince = inbound;
+            for (var pass = 0; pass < 2; pass++)
+            {
+                fake.ClearWriteCounters();
+                fake.CommentsSince.ShouldBe(inbound);
+                AssertEchoResult(graph, fake, await RunEchoPassAsync(graph, fake, clock));
+                var stored = (await ReadCommentSnapshotsAsync(graph.Card.Id)).Single();
+                stored.ExternalCommentId.ShouldBe(inbound[0].ExternalCommentId);
+                stored.ExternalUrl.ShouldBe(inbound[0].Url);
+                stored.ShouldBe(original with
+                {
+                    ExternalCommentId = inbound[0].ExternalCommentId, ExternalUrl = inbound[0].Url
+                });
+            }
+        }
+        finally { await CleanupAsync(tempRoot); }
+    }
+
+    private static FakeTimeProvider EchoClock() =>
+        new(new DateTimeOffset(2026, 9, 7, 12, 0, 0, TimeSpan.Zero));
+
+    private static FakeBidirectionalTracker EchoTracker() => new(TrackerKind.GitHubIssues)
+    {
+        Candidates = [Issue("acme/app#1", "open", "Title", "Body", ["status:backlog"])]
+    };
+
+    private static async Task<(Graph Graph, CardRevision Revision)> SeedEchoGraphAsync(
+        string tempRoot, FakeTimeProvider clock, bool pendingEdit = false)
+    {
+        await using var db = CreateContext();
+        var graph = await SeedLinkedBoardAsync(db, tempRoot, clock);
+        graph.Card.Title = "Title";
+        graph.Card.Description = "Body";
+        graph.Card.ImportanceProvenance = CardImportanceProvenance.Auto;
+        var revision = AddEchoRevision(db, graph.Card, clock, CardRevisionKind.ContentEdit);
+        graph.Card.ExternalIssueRef!.LastRevisionSynced = pendingEdit ? 0 : graph.Card.RevisionCount;
+        graph.Card.ExternalIssueRef.LastOutboundSyncedAt = clock.GetUtcNow().UtcDateTime;
+        await db.SaveChangesAsync();
+        return (graph, revision);
+    }
+
+    private static CardRevision AddEchoRevision(
+        AppDbContext db, Card card, FakeTimeProvider clock, CardRevisionKind kind)
+    {
+        var revision = new CardRevision
+        {
+            Id = Guid.NewGuid(), CardId = card.Id, Card = card,
+            RevisionNumber = ++card.RevisionCount, Kind = kind,
+            EditedBy = "operator", Reason = "clarify acceptance",
+            CreatedAt = clock.GetUtcNow().UtcDateTime,
+            Title = kind == CardRevisionKind.ContentEdit ? "Previous title" : null,
+            Description = kind == CardRevisionKind.ContentEdit ? "Previous body" : null
+        };
+        db.CardRevisions.Add(revision);
+        return revision;
+    }
+
+    private static TrackedIssueComment[] EchoComments(FakeTimeProvider clock, string author, params string[] bodies)
+    {
+        var ids = new HashSet<string>();
+        return bodies.Select(body =>
+        {
+            string id;
+            do { id = Random.Shared.NextInt64(1_000_000_000_000, long.MaxValue).ToString(); }
+            while (!ids.Add(id));
+            var createdAt = clock.GetUtcNow().UtcDateTime.AddMinutes(-1);
+            return new TrackedIssueComment(id, "acme/app#1", author, body,
+                $"https://github.test/acme/app/issues/1#issuecomment-{id}", createdAt, createdAt);
+        }).ToArray();
+    }
+
+    // Every pass owns a new context/SUT; replay cannot depend on tracked cursor or revision state.
+    private static async Task<TrackerSyncBoardResult> RunEchoPassAsync(
+        Graph graph, FakeBidirectionalTracker fake, FakeTimeProvider clock)
+    {
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await using var db = CreateContext();
+        var run = await NewSut(db, fake, clock).RunAsync(graph.Board.Id, CancellationToken.None);
+        run.ConcurrentRunSkipped.ShouldBeFalse();
+        run.Boards.ShouldHaveSingleItem();
+        var result = run.Boards.Single();
+        result.BoardId.ShouldBe(graph.Board.Id);
+        result.Error.ShouldBeNull();
+        result.Skips.ShouldBeEmpty();
+        result.IssuesPulled.ShouldBe(1);
+        await using var verify = CreateContext();
+        (await verify.Boards.SingleAsync(b => b.Id == graph.Board.Id))
+            .TrackerCommentsPulledAt.ShouldBe(clock.GetUtcNow().UtcDateTime);
+        return result;
+    }
+
+    private static void AssertEchoResult(Graph graph, FakeBidirectionalTracker fake,
+        TrackerSyncBoardResult result, int commentsIn = 0, int commentsOut = 0)
+    {
+        result.CommentsIn.ShouldBe(commentsIn);
+        result.CommentsOut.ShouldBe(commentsOut);
+        result.LabelsChanged.ShouldBe(0);
+        result.StateChanges.ShouldBe(0);
+        result.Creates.ShouldBe(0);
+        result.ExternalReopens.ShouldBe(0);
+        result.Changes.Select(c => c.Kind).ShouldBe(
+            Enumerable.Repeat(TrackerSyncChangeKind.CommentIn, commentsIn)
+                .Concat(Enumerable.Repeat(TrackerSyncChangeKind.CommentOut, commentsOut)));
+        foreach (var change in result.Changes)
+        {
+            change.CardIdentifier.ShouldBe(graph.Card.Identifier);
+            change.ExternalKey.ShouldBe("#1");
+        }
+        fake.WriteCallCount.ShouldBe(commentsOut);
+    }
+
+    private static void AssertContentEditPost(Graph graph, FakeBidirectionalTracker fake)
+    {
+        var post = fake.PostCommentCalls.ShouldHaveSingleItem();
+        post.ExternalId.ShouldBe("acme/app#1");
+        post.Body.ShouldBe($"Antiphon content edit by operator: clarify acceptance\n\n"
+            + $"**Title:** {graph.Card.Title}\n\n{graph.Card.Description}\n\n"
+            + "_The issue body remains authoritative on this import-origin link._\n\n"
+            + $"<!-- antiphon:system-comment={graph.Card.Id:N} -->");
+        TrackerSyncMarkers.TryReadTrailingSystemCommentMarker(post.Body, out var cardId).ShouldBeTrue();
+        cardId.ShouldBe(graph.Card.Id);
+        TrackerSyncMarkers.TryReadTrailingCommentMarker(post.Body, out _).ShouldBeFalse();
+    }
+
+    private static async Task AssertEchoCursorAsync(
+        Graph graph, FakeTimeProvider clock, int revisionNumber, DateTime outboundAt)
+    {
+        await using var verify = CreateContext();
+        var issueRef = await verify.ExternalIssueRefs.SingleAsync(r => r.CardId == graph.Card.Id);
+        issueRef.LastRevisionSynced.ShouldBe(revisionNumber);
+        issueRef.LastOutboundSyncedAt.ShouldBe(outboundAt);
+        (await verify.Boards.SingleAsync(b => b.Id == graph.Board.Id))
+            .TrackerCommentsPulledAt.ShouldBe(clock.GetUtcNow().UtcDateTime);
+    }
+
+    private sealed record CommentSnapshot(Guid Id, Guid CardId, CardCommentOrigin Origin,
+        string Body, string? Author, string? ExternalCommentId, string? ExternalUrl,
+        DateTime CreatedAt, DateTime? SyncedAt);
+
+    private static async Task<CommentSnapshot[]> ReadCommentSnapshotsAsync(Guid cardId)
+    {
+        await using var verify = CreateContext();
+        return await verify.CardComments.Where(c => c.CardId == cardId).OrderBy(c => c.Id)
+            .Select(c => new CommentSnapshot(c.Id, c.CardId, c.Origin, c.Body, c.Author,
+                c.ExternalCommentId, c.ExternalUrl, c.CreatedAt, c.SyncedAt)).ToArrayAsync();
+    }
+
+    private static async Task<CommentSnapshot[]> AssertImportedCommentsAsync(
+        Graph graph, IReadOnlyList<TrackedIssueComment> expected)
+    {
+        var rows = await ReadCommentSnapshotsAsync(graph.Card.Id);
+        // Check individual IDs before the aggregate so card/kind/unknown-identity mutants name the lost row.
+        foreach (var comment in expected)
+        {
+            var matches = rows.Where(c => c.ExternalCommentId == comment.ExternalCommentId).ToArray();
+            matches.Length.ShouldBe(1, $"Missing or duplicate remote comment: {comment.Body}");
+            var row = matches.Single();
+            row.Id.ShouldNotBe(Guid.Empty);
+            row.ShouldBe(new CommentSnapshot(row.Id, graph.Card.Id, CardCommentOrigin.External,
+                comment.Body, comment.Author, comment.ExternalCommentId, comment.Url, comment.CreatedAt, null));
+        }
+        rows.Length.ShouldBe(expected.Count);
+        return rows;
+    }
+
     private static TrackerBidirectionalSyncService NewSut(
         AppDbContext db,
         FakeBidirectionalTracker fake,

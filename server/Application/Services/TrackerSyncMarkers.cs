@@ -14,7 +14,7 @@ public static partial class TrackerSyncMarkers
         $"{body.TrimEnd()}\n\n{CommentPrefix}{commentId:N} -->";
 
     /// <summary>
-    /// Marks a tracker comment generated from card state rather than a <see cref="Domain.Entities.CardComment"/>.
+    /// Marks a tracker comment generated from card state or a content edit rather than a <see cref="Domain.Entities.CardComment"/>.
     /// The card is its durable identity, so an echo can be discarded without creating a synthetic comment row.
     /// </summary>
     public static string AppendSystemCommentMarker(string body, Guid cardId) =>
