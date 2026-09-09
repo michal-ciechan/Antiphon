@@ -12,6 +12,7 @@ public class SpecialistAttemptEvidenceTests
 {
     [Test]
     [Arguments("complete", SpecialistAttemptOutcome.ValidReading)]
+    [Arguments("late-confirmed-within-budget", SpecialistAttemptOutcome.ValidReading)]
     [Arguments("damaged-middle", SpecialistAttemptOutcome.DeliveryUnconfirmed)]
     [Arguments("queued-prompt", SpecialistAttemptOutcome.DeliveryUnconfirmed)]
     [Arguments("unconfirmed", SpecialistAttemptOutcome.DeliveryUnconfirmed)]
@@ -44,6 +45,7 @@ public class SpecialistAttemptEvidenceTests
             case "damaged-middle": entries[0].Text = message.Body.Replace("FULL MIDDLE", "lost"); break;
             case "queued-prompt": entries[0].Kind = TranscriptKinds.QueuedUserPrompt; break;
             case "unconfirmed": message.DeliveryVerdict = null; break;
+            case "late-confirmed-within-budget": message.DeliveryVerdict = DeliveryVerdict.LateConfirmed; break;
             case "wrong-token": entries[1].Text = reading + "\n" + DelegationReportFormatter.ReportToken(Guid.NewGuid(), "done"); break;
             case "old-api-text": entries[1].ApiCallId = "previous-response"; break;
             case "too-long": entries[1].Text = "On track, " + new string('x', 241) + "\n" + reportToken; break;

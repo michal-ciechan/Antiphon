@@ -491,6 +491,7 @@ try
     builder.Services.AddScoped<StandingSpecialistHealthService>();
 builder.Services.AddScoped<ISpecialistExecutionEvidenceReader, SpecialistExecutionEvidenceReader>();
 builder.Services.AddScoped<SpecialistRequestService>();
+builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.SpecialistRequestHostedService>();
     // CARD-0090: complexity chains. Scoped like the pin/availability readers the walker consumes.
     builder.Services.AddScoped<ComplexityRoutingService>();
     builder.Services.AddScoped<ComplexityChainService>();

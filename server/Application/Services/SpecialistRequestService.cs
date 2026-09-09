@@ -14,9 +14,9 @@ namespace Antiphon.Server.Application.Services;
 /// every attempt, winner and consequence is committed under the same logical owner lock used by
 /// routing edits. Process starts and qualification are deliberately outside the Check path.
 /// </summary>
-public sealed class SpecialistRequestService(AppDbContext db, IOptions<DelegationSettings> settings,
+public sealed partial class SpecialistRequestService(AppDbContext db, IOptions<DelegationSettings> settings,
     TimeProvider time, IModelAvailability availability, ISpecialistExecutionEvidenceReader evidenceReader,
-    SubscriptionQuotaGate quota, ILogger<SpecialistRequestService> logger)
+    SubscriptionQuotaGate quota, AgentSessionRuntime runtime, IEventBus events, ILogger<SpecialistRequestService> logger)
 {
     public async Task<SpecialistRun> RunCheckAsync(AgentTask checkedTask, int checkNumber, string digest, CancellationToken ct)
     {
@@ -89,6 +89,11 @@ public sealed class SpecialistRequestService(AppDbContext db, IOptions<Delegatio
         if (pending is not null)
         {
             await ObserveAttemptAsync(request, pending, ct);
+            return;
+        }
+        if (request.Purpose == SpecialistRequestPurpose.Qualification)
+        {
+            await AdvanceQualificationAsync(request, ct);
             return;
         }
         if (time.GetUtcNow().UtcDateTime >= request.DeadlineAt)
@@ -179,9 +184,13 @@ public sealed class SpecialistRequestService(AppDbContext db, IOptions<Delegatio
         var routing = await db.StandingSpecialistRoutings.AsNoTracking().SingleOrDefaultAsync(r => r.AgentId == expected.AgentId, ct);
         var attempts = await db.SpecialistAttempts.AsNoTracking().Where(a => a.RequestId == request.Id).ToListAsync(ct);
         var now = time.GetUtcNow().UtcDateTime;
+        var qualification = request.Purpose == SpecialistRequestPurpose.Qualification;
         if (request.CompletedAt is not null || now >= request.DeadlineAt || attempts.Count >= 2
-            || attempts.Any(a => a.CompletedAt == null || a.CandidateId == selected.Id)
-            || candidate is not { Enabled: true, Status: StandingSpecialistCandidateStatus.Qualified }
+            || attempts.Any(a => a.CompletedAt == null || (!qualification && a.CandidateId == selected.Id))
+            || candidate is not { Enabled: true }
+            || candidate.Status != (qualification ? StandingSpecialistCandidateStatus.Qualifying : StandingSpecialistCandidateStatus.Qualified)
+            || (qualification && (candidate.Id != request.QualificationCandidateId
+                || candidate.ClaimedQualificationAuthorization != request.QualificationAuthorization))
             || candidate.Fingerprint != evidence.Fingerprint || candidate.QualificationAuthorization != selected.QualificationAuthorization
             || routing?.ConcurrencyToken != request.ConfigurationRevision || routing is { Enabled: false }
             || currentSeat is null || currentSeat.PersistentSessionId != seat.PersistentSessionId || currentSeat.UpdatedAt != seat.UpdatedAt
@@ -196,11 +205,17 @@ public sealed class SpecialistRequestService(AppDbContext db, IOptions<Delegatio
         }
         var taskId = Guid.NewGuid();
         var deadline = request.DeadlineAt;
-        if (attempts.Count == 0 && settings.Value.CheckInterpreterFirstAttemptSeconds is int first)
+        if (qualification)
+            deadline = new[] { deadline, now.AddSeconds(Math.Max(1, settings.Value.CheckInterpreterWaitSeconds)) }.Min();
+        // A configured split is not measured calibration. No certificate means the primary
+        // retains the full request budget (the observed normal tail exceeds thirty seconds).
+        else if (attempts.Count == 0 && evidence.CertifiedFirstAttemptSeconds is int first
+            && settings.Value.CheckInterpreterFirstAttemptSeconds == first)
             deadline = new[] { deadline, request.StartedAt.AddSeconds(first) }.Min();
+        var goal = qualification ? JsonSerializer.Deserialize<SpecialistQualificationFixture[]>(request.Facts)![attempts.Count].Goal : request.Facts;
         var task = new AgentTask
         {
-            Id = taskId, RootTaskId = taskId, Title = request.Title, Goal = request.Facts,
+            Id = taskId, RootTaskId = taskId, Title = request.Title, Goal = goal,
             Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Check, AgentKind = seat.Kind, ModelLevel = seat.ModelLevel,
             SpecialistModelAlias = selected.ModelAlias, SpecialistModelId = seat.ModelId,
             SpecialistEffectiveModelId = session.EffectiveModelId, SpecialistSessionId = session.Id,
@@ -240,6 +255,9 @@ public sealed class SpecialistRequestService(AppDbContext db, IOptions<Delegatio
         else if (task is null) verdict = new(SpecialistAttemptOutcome.TaskFailedUnknown, Reason: "The owned Check task is missing.");
         else
         {
+            // A missing streamed row is not proof of missing input: pull the native transcript
+            // before deciding delivery, timeout, tools or final-response absence.
+            await runtime.CatchUpTranscriptAsync(attempt.SessionId, ct);
             var message = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.ExecutionTaskId == task.Id)
                 .OrderByDescending(m => m.Sequence).FirstOrDefaultAsync(ct);
             var entries = await db.TranscriptEntries.AsNoTracking().Where(e => e.AgentSessionId == attempt.SessionId
@@ -269,11 +287,38 @@ public sealed class SpecialistRequestService(AppDbContext db, IOptions<Delegatio
         liveAttempt.ReportSequence = verdict.ReportSequence;
         liveAttempt.CostUsd = task?.CostUsd ?? 0;
         var candidate = await db.StandingSpecialistCandidateStates.SingleOrDefaultAsync(c => c.Id == attempt.CandidateId, ct);
+        var qualification = request.Purpose == SpecialistRequestPurpose.Qualification;
+        if (qualification && verdict.Outcome == SpecialistAttemptOutcome.ValidReading)
+        {
+            var fixtures = JsonSerializer.Deserialize<SpecialistQualificationFixture[]>(request.Facts)!;
+            if (!SpecialistQualificationContract.Validate(fixtures[attempt.Ordinal - 1], verdict.Reading))
+                verdict = verdict with { Outcome = SpecialistAttemptOutcome.InvalidReading, Reading = null,
+                    Reason = "Qualification reading did not explain the current fixture's evidence." };
+            liveAttempt.Outcome = verdict.Outcome;
+            liveAttempt.Reading = verdict.Reading;
+            liveAttempt.Reason = verdict.Reason;
+        }
+        var validBatch = false;
+        SpecialistQualificationEvidence? batchEvidence = null;
+        if (qualification && attempt.Ordinal == 2 && verdict.Outcome == SpecialistAttemptOutcome.ValidReading && current is not null)
+        {
+            var first = await db.SpecialistAttempts.AsNoTracking().SingleOrDefaultAsync(a => a.RequestId == request.Id && a.Ordinal == 1, ct);
+            var fixtures = JsonSerializer.Deserialize<SpecialistQualificationFixture[]>(request.Facts)!;
+            if (first?.Outcome == SpecialistAttemptOutcome.ValidReading && first.Fingerprint == current.Fingerprint)
+            {
+                batchEvidence = new(current.Fingerprint, current.Provenance, [first.TaskId, attempt.TaskId], fixtures.Select(f => f.Nonce).ToArray());
+                validBatch = evidenceReader.Trusts(batchEvidence);
+            }
+            if (!validBatch)
+                verdict = verdict with { Outcome = SpecialistAttemptOutcome.InvalidReading, Reading = null,
+                    Reason = "Qualification evidence has no trusted current provider provenance." };
+        }
         if (candidate is not null)
         {
-            var decision = SpecialistFailurePolicy.Evaluate(verdict.Outcome, candidate.TransientFailures,
+            var decision = SpecialistFailurePolicy.Evaluate(validBatch ? SpecialistAttemptOutcome.ValidQualificationBatch : verdict.Outcome, candidate.TransientFailures,
                 settings.Value.CheckInterpreterTransientFailureThreshold,
-                publicationAllowed && sameGeneration && candidate.Fingerprint == attempt.Fingerprint
+                publicationAllowed && (!qualification || verdict.Outcome != SpecialistAttemptOutcome.ValidReading || validBatch)
+                    && sameGeneration && candidate.Fingerprint == attempt.Fingerprint
                     && candidate.SessionStartedAt == attempt.SessionStartedAt, true);
             candidate.TransientFailures = decision.TransientFailures;
             if (decision.Quarantine)
@@ -284,7 +329,37 @@ public sealed class SpecialistRequestService(AppDbContext db, IOptions<Delegatio
             }
             candidate.UpdatedAt = now;
         }
-        if (publicationAllowed && sameGeneration && verdict.Outcome == SpecialistAttemptOutcome.ValidReading && now < request.DeadlineAt
+        if (qualification)
+        {
+            var authorized = publicationAllowed && sameGeneration && candidate is { Enabled: true }
+                && candidate.Fingerprint == attempt.Fingerprint && candidate.SessionStartedAt == attempt.SessionStartedAt
+                && candidate.QualificationAuthorization == request.QualificationAuthorization
+                && candidate.ClaimedQualificationAuthorization == request.QualificationAuthorization;
+            if (authorized && validBatch && now < request.DeadlineAt)
+            {
+                candidate!.Status = StandingSpecialistCandidateStatus.Qualified;
+                candidate.QualifiedAt = now;
+                candidate.QualificationEvidenceJson = JsonSerializer.Serialize(batchEvidence);
+                candidate.Reason = "Two current-generation semantic qualification fixtures passed; awaiting a real Check.";
+                liveRequest.Status = SpecialistRequestStatus.Succeeded;
+                liveRequest.Outcome = SpecialistAttemptOutcome.ValidQualificationBatch;
+                liveRequest.CompletedAt = now;
+            }
+            else if (!authorized || verdict.Outcome != SpecialistAttemptOutcome.ValidReading || now >= request.DeadlineAt)
+            {
+                liveRequest.Status = authorized ? SpecialistRequestStatus.Failed : SpecialistRequestStatus.Canceled;
+                liveRequest.Outcome = authorized ? verdict.Outcome : SpecialistAttemptOutcome.Disabled;
+                liveRequest.Reason = verdict.Reason;
+                liveRequest.CompletedAt = now;
+                if (candidate is { Status: StandingSpecialistCandidateStatus.Qualifying })
+                {
+                    candidate.Status = StandingSpecialistCandidateStatus.Unqualified;
+                    candidate.QualifiedAt = null;
+                    candidate.Reason = "Qualification failed; awaiting authorized revalidate. " + verdict.Reason;
+                }
+            }
+        }
+        else if (publicationAllowed && sameGeneration && verdict.Outcome == SpecialistAttemptOutcome.ValidReading && now < request.DeadlineAt
             && candidate is { Enabled: true, Status: StandingSpecialistCandidateStatus.Qualified }
             && candidate.Fingerprint == attempt.Fingerprint && candidate.SessionStartedAt == attempt.SessionStartedAt)
         {
@@ -301,12 +376,16 @@ public sealed class SpecialistRequestService(AppDbContext db, IOptions<Delegatio
             liveRequest.Reason = verdict.Reason;
             liveRequest.CompletedAt = now;
         }
+        liveAttempt.Outcome = verdict.Outcome;
+        liveAttempt.Reading = verdict.Reading;
+        liveAttempt.Reason = verdict.Reason;
         await CancelUnsubmittedAsync(attempt.TaskId, now, ct);
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
         db.Entry(liveRequest).State = EntityState.Detached;
         db.Entry(liveAttempt).State = EntityState.Detached;
         if (candidate is not null) db.Entry(candidate).State = EntityState.Detached;
+        await PublishChangedAsync(request.AgentId, ct);
     }
 
     private async Task CompleteWithoutAttemptAsync(SpecialistRequest request, SpecialistAttemptOutcome outcome, string reason, CancellationToken ct)
@@ -318,6 +397,11 @@ public sealed class SpecialistRequestService(AppDbContext db, IOptions<Delegatio
         await db.SpecialistRequests.Where(r => r.Id == request.Id && r.CompletedAt == null)
             .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, now >= request.DeadlineAt ? SpecialistRequestStatus.Expired : SpecialistRequestStatus.Failed)
                 .SetProperty(r => r.Outcome, outcome).SetProperty(r => r.Reason, reason).SetProperty(r => r.CompletedAt, now), ct);
+        if (request.Purpose == SpecialistRequestPurpose.Qualification)
+            await db.StandingSpecialistCandidateStates.Where(c => c.Id == request.QualificationCandidateId
+                && c.Status == StandingSpecialistCandidateStatus.Qualifying && c.ClaimedQualificationAuthorization == request.QualificationAuthorization)
+                .ExecuteUpdateAsync(s => s.SetProperty(c => c.Status, StandingSpecialistCandidateStatus.Unqualified)
+                    .SetProperty(c => c.Reason, "Qualification failed; awaiting authorized revalidate. " + reason), ct);
         await transaction.CommitAsync(ct);
     }
 
@@ -331,6 +415,11 @@ public sealed class SpecialistRequestService(AppDbContext db, IOptions<Delegatio
             s.SetProperty(r => r.Status, SpecialistRequestStatus.Canceled).SetProperty(r => r.Outcome, outcome).SetProperty(r => r.CompletedAt, now), ct);
         var tasks = await db.SpecialistAttempts.Where(a => a.RequestId == requestId && a.CompletedAt == null).Select(a => a.TaskId).ToListAsync(ct);
         foreach (var taskId in tasks) await CancelUnsubmittedAsync(taskId, now, ct);
+        if (request.Purpose == SpecialistRequestPurpose.Qualification)
+            await db.StandingSpecialistCandidateStates.Where(c => c.Id == request.QualificationCandidateId
+                && c.Status == StandingSpecialistCandidateStatus.Qualifying && c.ClaimedQualificationAuthorization == request.QualificationAuthorization)
+                .ExecuteUpdateAsync(s => s.SetProperty(c => c.Status, StandingSpecialistCandidateStatus.Unqualified)
+                    .SetProperty(c => c.Reason, "Qualification stopped; awaiting authorized revalidate."), ct);
         await transaction.CommitAsync(ct);
     }
 
@@ -345,4 +434,11 @@ public sealed class SpecialistRequestService(AppDbContext db, IOptions<Delegatio
 
     private Task<Agent?> LockOwnerAsync(Guid ownerId, CancellationToken ct) => db.Agents.FromSqlInterpolated(
         $"SELECT * FROM \"Agents\" WHERE \"Id\" = {ownerId} FOR UPDATE").AsNoTracking().SingleOrDefaultAsync(ct);
+
+    private async Task PublishChangedAsync(Guid ownerId, CancellationToken ct)
+    {
+        try { await events.PublishToAllAsync("AgentChanged", new { agentId = ownerId }, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        { logger.LogWarning(ex, "Specialist transition for {AgentId} committed; notification failed", ownerId); }
+    }
 }
