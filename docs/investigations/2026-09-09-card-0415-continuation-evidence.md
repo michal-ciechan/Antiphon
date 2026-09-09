@@ -223,3 +223,61 @@ likewise produced one expected assertion failure, then restored source passed
 and per-phase results: `L/run-start-controls.ps1`, `L/start-controls.jsonl`;
 TRX copies: `L/extra-results/c415-fad-pc46-stop-*-red.trx` and `*-green.trx`.
 These controls cover the two implemented launch barriers, not all PC46 races.
+
+## Final retained-code regression and incomplete acceptance
+
+At `63f0d339`, `T/c415-fad-final-specialist-regression.trx` passed **85/85**,
+zero failures and zero skips. The fresh TRX selected exactly these named classes:
+SpecialistAttemptEvidenceTests (13), SpecialistExecutionIdentityTests (15),
+SpecialistHealthAttentionTests (1), SpecialistInputTransportTests (12),
+SpecialistPublicationTests (1), SpecialistQualificationTests (15),
+SpecialistStartIntentTests (4), SpecialistTaskRunnerDeadlineTests (7),
+StandingSpecialistHealthPolicyTests (5), StandingSpecialistSeatTests (12).
+The earlier 103/103 launch regression remains separately recorded above.
+These counts overlap earlier exact-method runs; do not add them as unique coverage.
+
+Rerun from `C:\Antiphon\worktrees\card-task-2ddbfaf6`:
+
+```powershell
+dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c415-followup/ -- --treenode-filter '/*/Antiphon.Tests.Application/(SpecialistQualificationTests*)|(SpecialistPublicationTests*)|(SpecialistAttemptEvidenceTests*)|(SpecialistExecutionIdentityTests*)|(SpecialistHealthAttentionTests*)|(StandingSpecialistHealthPolicyTests*)|(StandingSpecialistSeatTests*)|(SpecialistInputTransportTests*)|(SpecialistStartIntentTests*)|(SpecialistTaskRunnerDeadlineTests*)/*' --report-trx --report-trx-filename c415-specialist-rerun.trx
+```
+
+The extra test checkout's 15 TRX files are preserved in `L/extra-results` before
+its removal. U is a historical execution location; use the preserved copy.
+The primary delegated worktree remains the continuation/landing location.
+
+**S2-S6 are incomplete and must not be released as accepted.** The current native
+Claude gate fails: 7/12 passed, 5 failed in the last complete finite-grid run,
+with native assistant/system records preceding the matching user in file order.
+The existing tailer explicitly promises stable file-order sequence identities
+across re-tails. Timestamp sorting or accepting a preceding report would not
+satisfy the current-turn contract. The next native fix must preserve re-tail,
+resume, fork/compaction, stream/catch-up and current-prompt attribution before
+rerunning the complete V5 grid. A compatible separately measured CLI is another
+possible route; no machine-wide CLI change was made in this task.
+
+Release prerequisites still outstanding:
+
+- V5 network/search and independent executor receipts for every tool family,
+  plus the complete fresh/warm native transport gate. The production capability
+  catalog remains empty and proposed M=32768 remains uncertified.
+- Remaining V7-V15 controls: per-component fingerprint drift, two-instance
+  request/attempt claims, both cancellation race orders, calibrated deadlines,
+  active late results/cost audit, final publication and native ownership races.
+- Remaining V16-V25 coverage: mixed CARD-0412 consumers and grant/lock ordering,
+  every automatic-start barrier, retirement versus active work, recovery episode
+  exhaustion/restart, full health/Attention/SignalR and migration-constraint matrix.
+- The remaining PC1-PC59 arms beyond the prior S1 evidence and the explicitly
+  recorded red/restored-green controls in this ledger. Pure tests and passing
+  regression counts are not substitutes for these controls.
+- Applicable authenticated V26 acceptance after V5. It was not run and no real
+  provider turns were spent. Codex and cross-provider cells remain explicitly
+  PendingDependency CARD-0167; its injection seam and skipped gate were not changed.
+
+Additional implementation edges needing review alongside that matrix: capability
+verification and final admission still straddle external I/O; late active-work
+cost capture is incomplete; retired-seat idle observation/stop is not one atomic
+claim; and publication's checked-task observation must be tested against a newer
+Check committing at the final insertion boundary. The settings UI still lacks
+transient count/N and the complete disabled-feature presentation. Do not infer
+these are resolved from the passing narrower cases.
