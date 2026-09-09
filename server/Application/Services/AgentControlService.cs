@@ -327,8 +327,8 @@ public sealed class AgentControlService
         var isStandingSpecialist = string.Equals(
             agent.Slug, CheckInterpreterProvisioner.Slug(_delegationSettings), StringComparison.OrdinalIgnoreCase);
         if (isStandingSpecialist)
-            StandingSpecialistProvisioner.RequireCheckLaunchToolPolicy(
-                CheckInterpreterProvisioner.Spec(_delegationSettings) with { WorkingDirectory = cwd }, spec.Kind);
+            spec = CheckSpecialistLaunchPolicy.Apply(spec,
+                CheckInterpreterProvisioner.Spec(_delegationSettings) with { WorkingDirectory = cwd }, agent.SessionBackend);
         GrokLaunchArgs.EnsureWindowsRulesArgv(spec.Args, spec.Kind, agent.SessionBackend, spec.Env, $"Agent '{agent.Name}'");
 
         // Bootstrap/restart notes ride on every launch of a preamble-configured agent; the launch
@@ -346,7 +346,7 @@ public sealed class AgentControlService
                 && !string.IsNullOrWhiteSpace(agent.SystemPromptAppend)
             ? new LaunchNotes(ChannelPreamble.BootstrapBody, ChannelPreamble.RestartResumeBody)
             : null;
-        if (!string.IsNullOrWhiteSpace(policyRefreshDelta))
+        if (!isStandingSpecialist && !string.IsNullOrWhiteSpace(policyRefreshDelta))
         {
             // CARD-0334: an orchestrator seat without a channel preamble must still be told
             // why it was relaunched. Resume body is the policy note regardless of preamble;
