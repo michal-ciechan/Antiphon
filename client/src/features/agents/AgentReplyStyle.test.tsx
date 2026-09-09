@@ -209,8 +209,9 @@ describe('Phone audience selection', () => {
 
   it.each(['Phone', 'Brief'] as const)('channel preamble buttons preserve %s', async (style) => {
     let submitted: UpdateAgentRequest | null = null
-    server.use(...handlers(),
+    server.use(
       http.get('/api/agents/preamble-preset', ({ request }) => HttpResponse.json({ template: `Channel ${new URL(request.url).searchParams.get('provider')}` })),
+      ...handlers(),
       http.patch('/api/agents/:id', async ({ request }) => {
         submitted = await request.json() as UpdateAgentRequest
         return HttpResponse.json({ ...detail, replyStyle: style })
