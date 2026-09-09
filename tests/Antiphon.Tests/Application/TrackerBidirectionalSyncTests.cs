@@ -1084,7 +1084,8 @@ public class TrackerBidirectionalSyncTests
                 var unknown = Guid.NewGuid();
                 (await seed.CardRevisions.AnyAsync(r => r.Id == unknown)).ShouldBeFalse();
                 (await seed.CardComments.AnyAsync(c => c.Id == unknown)).ShouldBeFalse();
-                markerIds = [foreignEdit.Id, move.Id, reopen.Id, unknown];
+                // The ID-predicate control must name the unknown row before any other missing row.
+                markerIds = [unknown, foreignEdit.Id, move.Id, reopen.Id];
                 var issueRef = await seed.ExternalIssueRefs.SingleAsync(r => r.CardId == card.Id);
                 issueRef.LastRevisionSynced = card.RevisionCount;
                 await seed.SaveChangesAsync();
