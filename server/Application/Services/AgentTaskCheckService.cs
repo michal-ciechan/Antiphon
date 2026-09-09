@@ -400,16 +400,49 @@ public sealed class AgentTaskCheckService
     /// actually happened), never the message queue's Sent flag, which CARD-0055 proved does not mean
     /// what it says.</para>
     /// </summary>
+    /// <summary>
+    /// Whether this check goes through the request graph instead of the legacy runner.
+    ///
+    /// <para>The plan is explicit that <b>null routing configuration preserves the current
+    /// primary</b> (2026-09-07 fallback plan, "Rollout and completion boundary"), and that only a
+    /// "declared, qualified chain" may be activated. <see cref="SpecialistRequestService"/> is
+    /// registered unconditionally and this service has one constructor, so <c>_requests</c> is
+    /// never null in production — a bare null check would route EVERY check into a graph that has
+    /// no declaration, no candidate rows and (until a capability certificate exists) nothing that
+    /// can qualify, turning every interpretation into an "interpreter unavailable" banner. The
+    /// declaration is what switches routing on, not the presence of the service.</para>
+    ///
+    /// <para>A declared chain whose candidate later stops being eligible still degrades with the
+    /// digest — that is a real degraded interpreter and it is supposed to say so. What must not
+    /// happen is degrading a host that never declared a chain at all.</para>
+    /// </summary>
+    private async Task<bool> RoutedAsync(CancellationToken ct)
+    {
+        if (_requests is null || !_settings.CheckInterpreterEnabled)
+            return false;
+        var owner = await _db.Agents.AsNoTracking()
+            .Where(a => a.StandingSpecialistOwnerId == a.Id && a.StandingSpecialistRole == AgentTaskRole.Check)
+            .Select(a => (Guid?)a.Id)
+            .FirstOrDefaultAsync(ct);
+        if (owner is not Guid ownerId)
+            return false;
+        if (!await _db.StandingSpecialistRoutings.AnyAsync(r => r.AgentId == ownerId && r.Enabled, ct))
+            return false;
+        return await _db.StandingSpecialistCandidateStates.AnyAsync(c => c.AgentId == ownerId && c.Enabled
+            && c.Status == StandingSpecialistCandidateStatus.Qualified && c.QualifiedAt != null, ct);
+    }
+
     private async Task<Interpretation> InterpretAsync(
         AgentTask task, DelegateCheckProbe.CheckFacts facts, string digest, CancellationToken ct)
     {
-        if (_requests is null && (_interpreter is null || !_settings.CheckInterpreterEnabled))
+        var routed = await RoutedAsync(ct);
+        if (!routed && (_interpreter is null || !_settings.CheckInterpreterEnabled))
             return Interpretation.NotWiredIn;
 
         var spec = CheckInterpreterProvisioner.Spec(_settings);
         var wait = TimeSpan.FromSeconds(Math.Max(1, _settings.CheckInterpreterWaitSeconds));
-        var run = _requests is not null
-            ? await _requests.RunCheckAsync(task, facts.Task.CheckNumber, digest, ct, facts)
+        var run = routed
+            ? await _requests!.RunCheckAsync(task, facts.Task.CheckNumber, digest, ct, facts)
             : await _runner.RunAsync(
             spec,
             CheckInterpretation.BuildTitle(task, facts.Task.CheckNumber),
