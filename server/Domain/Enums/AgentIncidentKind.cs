@@ -540,4 +540,5 @@ public enum AgentIncidentKind
     /// Keyed per consumer episode, not deduped by session lifetime.
     /// </summary>
     CapacityRecovery = 56,
+    StandingSpecialistHealth = 57,
 }

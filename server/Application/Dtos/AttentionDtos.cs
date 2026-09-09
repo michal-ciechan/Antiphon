@@ -258,6 +258,8 @@ public enum AttentionKind
     /// Appended after shipped 31; do not renumber.
     /// </summary>
     CapacityRecoveryExhausted = 32,
+    /// <summary>Durable logical Check service outage, fallback use or declared standby readiness defect.</summary>
+    StandingSpecialistHealth = 33,
 }
 
 /// <summary>

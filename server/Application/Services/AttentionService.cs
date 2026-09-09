@@ -210,6 +210,7 @@ public sealed class AttentionService
         items.AddRange(await BuildAgentOutlivedTaskItemsAsync(now, ct));
         items.AddRange(await BuildModelAvailabilityHoldItemsAsync(now, ct));
         items.AddRange(await BuildCapacityRecoveryExhaustedItemsAsync(now, ct));
+        items.AddRange(await BuildStandingSpecialistHealthItemsAsync(ct));
         items.AddRange(await BuildScheduleMisfireItemsAsync(now, ct));
         items.AddRange(await BuildDelegationCapabilityItemsAsync(since, ct));
         items.AddRange(BuildRecentFailureItems(failed, costs, checkDigests));
@@ -1447,7 +1448,8 @@ public sealed class AttentionService
 
         var recent = await _db.AgentIncidents.AsNoTracking()
             .Where(i => i.Severity >= AlertSeverity.Error && i.CreatedAt >= since
-                && i.Kind != AgentIncidentKind.HerdrSupervisionHeld)
+                && i.Kind != AgentIncidentKind.HerdrSupervisionHeld
+                && i.Kind != AgentIncidentKind.StandingSpecialistHealth)
             .Select(i => new { i.Id, i.AgentId, i.SessionId, i.Kind, i.Severity, i.Message, i.CreatedAt, i.FailureReason })
             .ToListAsync(ct);
 
@@ -1996,6 +1998,31 @@ public sealed class AttentionService
     /// CARD-0412: exhausted capacity-recovery waits. Derived from the durable wait so incident
     /// pruning cannot hide a still-blocked episode.
     /// </summary>
+    private async Task<List<AttentionItemDto>> BuildStandingSpecialistHealthItemsAsync(CancellationToken ct)
+    {
+        if (!_delegation.Enabled || !_delegation.CheckEnabled || !_delegation.CheckInterpreterEnabled) return [];
+        var rows = await _db.StandingSpecialistHealths.AsNoTracking()
+            .Where(h => h.Status != StandingSpecialistHealthStatus.Healthy && h.Status != StandingSpecialistHealthStatus.Disabled)
+            .ToListAsync(ct);
+        var items = new List<AttentionItemDto>();
+        foreach (var row in rows)
+        {
+            if (!await _db.Agents.AnyAsync(a => a.Id == row.AgentId && a.AlwaysOn, ct)
+                || await _db.StandingSpecialistRoutings.AnyAsync(r => r.AgentId == row.AgentId && !r.Enabled, ct)
+                || await _db.AgentSupervisionStates.AnyAsync(s => s.AgentId == row.AgentId
+                    && (s.Suspended || s.LivenessLatchedAt != null || s.HerdrFailureHeldAt != null), ct)) continue;
+            items.Add(new(AttentionKind.StandingSpecialistHealth,
+                row.Status == StandingSpecialistHealthStatus.Unavailable ? AlertSeverity.Error : AlertSeverity.Warning,
+                row.LastAttemptTaskId, null, row.AgentId, null,
+                $"Check interpreter: {row.Status}",
+                row.Reason ?? "Inspect Check interpreter readiness.",
+                $"{row.CandidateSummary}\nFailed requests: {row.ConsecutiveFailedRequests}; last valid Check: {row.LastValidCheckAt?.ToString("O") ?? "none"}.",
+                row.UnavailableSince ?? row.FirstFailureAt ?? row.UpdatedAt, null,
+                row.LastAttemptTaskId is null ? [AttentionAction.OpenAgent] : [AttentionAction.OpenAgent, AttentionAction.OpenDrawer]));
+        }
+        return items;
+    }
+
     private async Task<List<AttentionItemDto>> BuildCapacityRecoveryExhaustedItemsAsync(
         DateTime now, CancellationToken ct)
     {

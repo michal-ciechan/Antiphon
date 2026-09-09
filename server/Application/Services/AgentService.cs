@@ -1156,7 +1156,8 @@ public sealed class AgentService
             agent.Kind,
             policyDrift,
             agent.HerdrWorkspaceLabel,
-            agent.HerdrTabLabel);
+            agent.HerdrTabLabel,
+            agent.StandingSpecialistOwnerId);
     }
 
     private async Task<Dictionary<Guid, DateTime>> LoadLastRefreshedAtAsync(
@@ -1244,7 +1245,8 @@ public sealed class AgentService
             agent.Kind,
             drift,
             agent.HerdrWorkspaceLabel,
-            agent.HerdrTabLabel);
+            agent.HerdrTabLabel,
+            agent.StandingSpecialistOwnerId);
     }
 
     private static (AgentTuiConfiguredSelectionDto? Configured, AgentTuiLiveSessionSelectionDto? Live)

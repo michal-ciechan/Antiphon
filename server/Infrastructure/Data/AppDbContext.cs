@@ -68,6 +68,9 @@ public class AppDbContext : DbContext
     public DbSet<RoutingPin> RoutingPins => Set<RoutingPin>();
     public DbSet<StandingSpecialistRouting> StandingSpecialistRoutings => Set<StandingSpecialistRouting>();
     public DbSet<StandingSpecialistCandidateState> StandingSpecialistCandidateStates => Set<StandingSpecialistCandidateState>();
+    public DbSet<StandingSpecialistHealth> StandingSpecialistHealths => Set<StandingSpecialistHealth>();
+    public DbSet<SpecialistRequest> SpecialistRequests => Set<SpecialistRequest>();
+    public DbSet<SpecialistAttempt> SpecialistAttempts => Set<SpecialistAttempt>();
     public DbSet<ComplexityChain> ComplexityChains => Set<ComplexityChain>();
     public DbSet<Schedule> Schedules => Set<Schedule>();
     public DbSet<ScheduleFire> ScheduleFires => Set<ScheduleFire>();
@@ -1698,6 +1701,33 @@ public class AppDbContext : DbContext
                 .HasDatabaseName("IX_ModelAvailabilityHolds_ReleasePending");
         });
 
+        modelBuilder.Entity<StandingSpecialistHealth>(entity =>
+        {
+            entity.HasKey(h => h.AgentId);
+            entity.Property(h => h.Reason).HasMaxLength(800);
+            entity.Property(h => h.CandidateSummary).HasMaxLength(4000);
+        });
+        modelBuilder.Entity<SpecialistRequest>(entity =>
+        {
+            entity.HasKey(r => r.Id);
+            entity.HasIndex(r => new { r.CheckedTaskId, r.CheckNumber }).IsUnique()
+                .HasFilter("\"CheckedTaskId\" IS NOT NULL AND \"Purpose\" = 0");
+            entity.HasIndex(r => new { r.QualificationCandidateId, r.QualificationAuthorization }).IsUnique()
+                .HasFilter("\"QualificationCandidateId\" IS NOT NULL AND \"Purpose\" = 1");
+            entity.Property(r => r.Title).HasMaxLength(400);
+            entity.Property(r => r.Reason).HasMaxLength(800);
+            entity.Property(r => r.Reading).HasMaxLength(240);
+        });
+        modelBuilder.Entity<SpecialistAttempt>(entity =>
+        {
+            entity.HasKey(a => a.Id);
+            entity.HasIndex(a => new { a.RequestId, a.Ordinal }).IsUnique();
+            entity.HasIndex(a => a.TaskId).IsUnique();
+            entity.Property(a => a.Fingerprint).HasMaxLength(128);
+            entity.Property(a => a.CapabilityFingerprint).HasMaxLength(128);
+            entity.Property(a => a.Reason).HasMaxLength(800);
+            entity.Property(a => a.Reading).HasMaxLength(240);
+        });
         modelBuilder.Entity<StandingSpecialistRouting>(entity =>
         {
             entity.ToTable("StandingSpecialistRoutings");

@@ -150,6 +150,7 @@ export type AttentionKind =
    * Inspect the latest wall and continue manually.
    */
   | 'CapacityRecoveryExhausted'
+  | 'StandingSpecialistHealth'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =

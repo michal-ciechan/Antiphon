@@ -14,4 +14,8 @@ public sealed record StandingSpecialistCandidateDto(
 public sealed record StandingSpecialistRoutingDto(
     Guid AgentId, Guid? ConcurrencyToken, bool? Enabled, AgentKind PrimaryKind,
     AgentModelLevel PrimaryLevel, string PrimaryModelAlias, IReadOnlyList<RoutingCandidate> Candidates,
-    IReadOnlyList<StandingSpecialistCandidateDto> CandidateStates);
+    IReadOnlyList<StandingSpecialistCandidateDto> CandidateStates, StandingSpecialistHealthDto? Health = null);
+
+public sealed record StandingSpecialistHealthDto(
+    StandingSpecialistHealthStatus Status, string? Reason, DateTime? LastValidCheckAt,
+    int ConsecutiveFailedRequests, DateTime? UnavailableSince, Guid? LastAttemptTaskId);
