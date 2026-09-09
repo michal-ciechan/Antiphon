@@ -379,7 +379,7 @@ carries the stage's **standing** shape: for `stage-plan`, that a design living o
 a plan, the plan-doc path convention, and the full `next:` vocabulary; for `stage-code`, that every
 `PC-n` runs red-then-green and is reported in a table, and that landing/deploy are not this
 delegate's job; for `stage-test-design`, the exact `## Verification design` sub-structure
-(`V-n`/`R-n`/`PC-n`/Out of scope/Cost); for `stage-investigate`, that a fix idea is one line under
+(Inspection/`V-n`/`R-n`/Guard inventory/`PC-n`/Out of scope/Cost); for `stage-investigate`, that a fix idea is one line under
 "Not done, noted", never a design; for `stage-review`, read-only. **None of that belongs in the
 brief** — repeating it only costs the delegate's attention. What the brief must still supply is
 what no bundle can (below), plus, stage-specific: the **previous stage's `handoff:` line, verbatim**
