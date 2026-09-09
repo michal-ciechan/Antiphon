@@ -1460,6 +1460,56 @@ public class AgentSessionLaunchFailureTests
             new Dictionary<string, string> { ["GROK_HOME"] = grokHome },
             cwd, 120, 30);
 
+    [Test]
+    [Arguments("start", false)]
+    [Arguments("start", true)]
+    [Arguments("ready", false)]
+    [Arguments("ready", true)]
+    public async Task Launch_timeout_is_infrastructure_but_requested_cancellation_has_no_failure_outcome(string gate, bool requested)
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var startGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var readyGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var adapter = new FakeAgentProtocolAdapter
+        {
+            ThrowOnStartFactory = () => { entered.TrySetResult(); return null; },
+            StartGate = gate == "start" ? startGate : null,
+            ReadyHold = gate == "ready" ? readyGate : null,
+        };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        using var caller = new CancellationTokenSource();
+        var launch = fixture.LaunchInteractiveAsync(resume: true, ct: caller.Token);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            if (gate == "ready")
+            {
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                while (!adapter.Started) await Task.Delay(10, deadline.Token);
+            }
+            if (requested) caller.Cancel();
+            else if (gate == "start") startGate.TrySetException(new TaskCanceledException("synthetic adapter timeout"));
+            else readyGate.TrySetException(new TaskCanceledException("synthetic readiness timeout"));
+            await Should.ThrowAsync<OperationCanceledException>(launch);
+            adapter.Killed.ShouldBeTrue(); adapter.Disposed.ShouldBeTrue();
+            await using var verify = LaunchFixture.CreateContext();
+            var session = (await verify.AgentSessions.FindAsync(fixture.SessionId))!;
+            session.RestartFailureKind.ShouldBe(requested ? null : RestartFailureKind.Infrastructure);
+            session.InteractiveLaunchCompletedAt.ShouldBeNull();
+            var state = await verify.AgentSupervisionStates.FindAsync(fixture.AgentId);
+            if (state is not null)
+            {
+                state.ConsecutiveFailures.ShouldBe(0); state.RestartBackoffFailures.ShouldBe(0);
+                state.ContinuityHeldAt.ShouldBeNull();
+            }
+        }
+        finally
+        {
+            startGate.TrySetResult(); readyGate.TrySetResult(true);
+            try { await launch; } catch (OperationCanceledException) { }
+        }
+    }
+
     private sealed class LaunchFixture : IAsyncDisposable
     {
         private readonly List<Guid> _projectIds = [];

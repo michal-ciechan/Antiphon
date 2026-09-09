@@ -5,6 +5,8 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.Agents;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Antiphon.Server.Infrastructure.Data;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
@@ -15,6 +17,51 @@ namespace Antiphon.Tests.Application;
 [NotInParallel]
 public class StandingSessionSwitchConcurrencyTests
 {
+    [Test]
+    public async Task Failure_after_reservation_writes_rolls_back_owner_pointer_hold_queue_and_decision()
+    {
+        var fault = new ReservationWriteFailure();
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var f = new StandingRecoveryFixture(s => s.AddDbContext<AppDbContext>(b => b.AddInterceptors(fault)), adapter);
+        await f.SeedAsync(legacy: true, held: true);
+        var messageId = Guid.NewGuid();
+        await using (var db = f.Db())
+        {
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage { Id = messageId, AgentSessionId = f.B.Id,
+                Sequence = 9, Body = "Safe source message", CreatedAt = DateTime.UtcNow });
+            await db.SaveChangesAsync();
+        }
+        fault.AgentId = f.Agent.Id; fault.MessageId = messageId; fault.TargetId = f.A.Id;
+        await Should.ThrowAsync<IOException>(() => f.StartAsync(new(ResumeSessionId: f.A.Id)));
+        fault.Hits.ShouldBe(1); adapter.Started.ShouldBeFalse(); f.Harness.LaunchQueue.Owns(f.A.Id).ShouldBeFalse();
+        await using var verify = f.Db();
+        (await verify.Agents.FindAsync(f.Agent.Id))!.PersistentSessionId.ShouldBe(f.B.Id.ToString("D"));
+        var target = (await verify.AgentSessions.FindAsync(f.A.Id))!;
+        target.StandingAgentId.ShouldBeNull(); target.Status.ShouldBe(SessionStatus.Stopped);
+        target.StartedAt.ShouldBe(f.A.StartedAt, TimeSpan.FromMilliseconds(1));
+        (await verify.AgentSupervisionStates.FindAsync(f.Agent.Id))!.ContinuityHeldAt.ShouldNotBeNull();
+        var message = (await verify.SessionQueuedMessages.FindAsync(messageId))!;
+        message.AgentSessionId.ShouldBe(f.B.Id); message.Sequence.ShouldBe(9); message.DeliveryAttempts.ShouldBe(0);
+        (await verify.AgentIncidents.CountAsync(i => i.AgentId == f.Agent.Id && i.Kind == AgentIncidentKind.StandingResumeSelected)).ShouldBe(0);
+    }
+
+    private sealed class ReservationWriteFailure : SaveChangesInterceptor
+    {
+        public Guid AgentId { get; set; }
+        public Guid TargetId { get; set; }
+        public Guid MessageId { get; set; }
+        public int Hits { get; private set; }
+        public override ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData data, int result, CancellationToken ct = default)
+        {
+            var tracker = data.Context!.ChangeTracker;
+            if (tracker.Entries<Agent>().Any(e => e.Entity.Id == AgentId && e.Entity.PersistentSessionId == TargetId.ToString("D"))
+                && tracker.Entries<SessionQueuedMessage>().Any(e => e.Entity.Id == MessageId && e.Entity.AgentSessionId == TargetId)
+                && tracker.Entries<AgentIncident>().Any(e => e.Entity.AgentId == AgentId && e.Entity.Kind == AgentIncidentKind.StandingResumeSelected))
+            { Hits++; throw new IOException("synthetic failure after reservation writes before commit"); }
+            return ValueTask.FromResult(result);
+        }
+    }
+
     [Test]
     public async Task Concurrent_selections_reserve_one_generation_without_locking_during_runner_probe()
     {

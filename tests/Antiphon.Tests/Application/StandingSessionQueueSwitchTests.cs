@@ -1,9 +1,12 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.Agents;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 using TUnit.Core;
 
@@ -13,6 +16,48 @@ namespace Antiphon.Tests.Application;
 [NotInParallel]
 public class StandingSessionQueueSwitchTests
 {
+    [Test]
+    public async Task Target_late_confirmation_and_open_task_guards_remain_intact()
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var f = new StandingRecoveryFixture(adapter);
+        await f.SeedAsync();
+        adapter.RegisterOnStart = f.Harness.Provider.GetRequiredService<AgentSessionRuntime>();
+        var now = DateTime.UtcNow;
+        var confirmed = new SessionQueuedMessage { Id = Guid.NewGuid(), AgentSessionId = f.A.Id, Sequence = 1,
+            Body = "The old target prompt already reached its owning transcript", CreatedAt = now.AddMinutes(-2),
+            DeliveryAttempts = 1, LastDeliveryBaselineSequence = 0, LastDeliveryStartedAt = now.AddSeconds(-10), DeliveryVerdict = DeliveryVerdict.NoSubmitOutput };
+        var parked = new SessionQueuedMessage { Id = Guid.NewGuid(), AgentSessionId = f.A.Id, Sequence = 2,
+            Body = "An unconfirmed parked target prompt", CreatedAt = now.AddMinutes(-1), DeliveryAttempts = int.MaxValue,
+            LastDeliveryBaselineSequence = 2, LastDeliveryStartedAt = now.AddSeconds(-5), DeliveryVerdict = DeliveryVerdict.NoSubmitOutput };
+        await using (var db = f.Db())
+        {
+            db.SessionQueuedMessages.AddRange(confirmed, parked);
+            db.TranscriptEntries.AddRange(new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = f.A.Id, Sequence = 1,
+                Kind = TranscriptKinds.UserPrompt, Text = confirmed.Body, Timestamp = now, CreatedAt = now },
+                new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = f.A.Id, Sequence = 2,
+                    Kind = TranscriptKinds.TurnEnd, StopReason = "end_turn", Timestamp = now, CreatedAt = now });
+            var historical = Guid.NewGuid(); var child = Guid.NewGuid();
+            db.AgentTasks.AddRange(new AgentTask { Id = historical, RootTaskId = historical, AgentId = f.Agent.Id,
+                AgentSessionId = f.A.Id, Title = "Completed history", Goal = "Synthetic", WorkingDirectory = f.Root,
+                Status = AgentTaskStatus.Succeeded, CreatedAt = now },
+                new AgentTask { Id = child, RootTaskId = child, ParentSessionId = f.A.Id, Title = "Independent child",
+                    Goal = "Synthetic", WorkingDirectory = f.Root, Status = AgentTaskStatus.Working, CreatedAt = now });
+            await db.SaveChangesAsync();
+        }
+        await f.StartAsync(new(ResumeSessionId: f.A.Id)); await f.IdleAsync();
+        await f.Harness.Provider.GetRequiredService<SessionMessageQueueService>().FlushStrandedQueuesAsync(default);
+        adapter.Inputs.ShouldBeEmpty();
+        await using var verify = f.Db();
+        var done = (await verify.SessionQueuedMessages.FindAsync(confirmed.Id))!;
+        done.AgentSessionId.ShouldBe(f.A.Id); done.Status.ShouldBe(QueuedMessageStatus.Sent);
+        done.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed); done.DeliveryAttempts.ShouldBe(1);
+        done.LastDeliveryBaselineSequence.ShouldBe(0);
+        var waiting = (await verify.SessionQueuedMessages.FindAsync(parked.Id))!;
+        waiting.Status.ShouldBe(QueuedMessageStatus.Pending); waiting.DeliveryAttempts.ShouldBe(int.MaxValue);
+        waiting.LastDeliveryBaselineSequence.ShouldBe(2);
+    }
+
     [Test]
     [Arguments(AgentTaskStatus.Dispatched)]
     [Arguments(AgentTaskStatus.Working)]
