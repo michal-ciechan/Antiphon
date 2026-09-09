@@ -281,3 +281,49 @@ claim; and publication's checked-task observation must be tested against a newer
 Check committing at the final insertion boundary. The settings UI still lacks
 transient count/N and the complete disabled-feature presentation. Do not infer
 these are resolved from the passing narrower cases.
+
+## Follow-up round 072b883e: production wiring gated, harness isolation restored
+
+Two defects at `fcb149be`, one production and one in the harness. Evidence TRX in
+`.antiphon/verification-072b883e/`; the earlier round's TRX were moved out of the
+deleted `bin-c415-followup` build output into `.antiphon/verification-c415-followup/`.
+
+**Routing on a wired-in service, not on a declaration** (`654d0849`). `Program.cs`
+registers `SpecialistRequestService` unconditionally and `AgentTaskCheckService` has
+a single constructor, so `_requests is null` was never true in production: every
+Check left the legacy `SpecialistTaskRunner` for `RunCheckAsync`, where no routing
+row, no candidate row and an empty `SpecialistExecutionEvidenceReader
+.CertifiedEnvelopes` mean nothing can qualify. Every deployed Check degraded to
+"interpreter unavailable: No declared candidate is currently eligible for this
+Check." Routing is now gated on the plan's own condition — an enabled
+`StandingSpecialistRouting` for the standing Check owner plus at least one enabled
+`Qualified` candidate — so null routing configuration keeps the current primary.
+A declared chain that loses eligibility still degrades with the digest.
+
+**The seat is discovered globally, so harnesses shared it** (`56252307`). Since
+`3093f0d2`, `StandingSpecialistProvisioner.EnsureAsync` falls back to the single
+`StandingSpecialistOwnerId == Id` Check owner when the configured slug has no
+agent. That is deliberate for production (one database, one logical owner) but it
+ended slug-based isolation in the tests: on the shared fixture database every
+harness in the assembly resolved to one interpreter agent and inherited its backlog
+counter, its `CheckInterpreterUnavailable` dedup window and its interpretation rows.
+The 14 reds were that and nothing else — each passes alone at `fcb149be`. Both
+harnesses now own a cloned database.
+
+Regression at `654d0849`, all fresh nonzero TRX, zero failures and zero skips:
+`AgentTaskCheckInterpreterTests` + `AgentTaskCheckSweepTests` 75/75 (`c415-checks.trx`,
+was 58/72 with 14 failed in `c415-baseline.trx`); the ten-class specialist set 85/85
+(`c415-specialist.trx`); the four-class launch set 103/103 (`c415-launch.trx`).
+
+Positive control for the wiring gate: restoring `var routed = _requests is not null`
+fails `an_undeclared_chain_still_runs_the_legacy_interpreter` and
+`a_declared_but_unqualified_chain_still_runs_the_legacy_interpreter` while the
+declared-and-qualified arm still passes, so the three tests bracket the defect
+rather than merely asserting the new branch.
+
+**Still deferred, unchanged by this round.** The native transcript ordering race in
+`SpecialistAttemptEvidence.Evaluate` (file-order windowing where the parent chain is
+already persisted on `TranscriptEntry.Uuid`/`ParentUuid`) was not touched. Every
+release prerequisite listed above stands: the capability catalog is still empty, so
+no chain can qualify and the gate this round added is closed everywhere in practice.
+That is the intended pre-activation state, not an accident.
