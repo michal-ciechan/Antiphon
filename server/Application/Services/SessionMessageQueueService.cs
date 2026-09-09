@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -201,7 +201,7 @@ public sealed partial class SessionMessageQueueService
             specialistInputPolicyJson = inputTask?.SpecialistInputPolicyJson;
             if (SpecialistInputPolicy.Read(specialistInputPolicyJson) is { } policy)
             {
-                if (mode != MessageSendMode.WhenIdle || inputTask!.Role != AgentTaskRole.Check
+                if (mode != MessageSendMode.WhenIdle || !AgentTaskRoles.CarriesFullInlineInput(inputTask!.Role)
                     || policy.TaskId != inputTaskId || origin != QueuedMessageOrigin.Delegation)
                     throw new SpecialistInputUnsupportedException("Specialist input requires its durable Check brief queue.");
                 trimmed = await SpillQueueBodyAsync(sessionId, trimmed, "", null, inputDb, ct,
@@ -1297,9 +1297,8 @@ public sealed partial class SessionMessageQueueService
         {
             message.Status = QueuedMessageStatus.Canceled;
             message.CanceledAt = UtcNow();
-            await db.AgentTasks.Where(t => t.Id == message.ExecutionTaskId
-                    && (t.Role == AgentTaskRole.Distill || (t.Role == AgentTaskRole.Check && t.SpecialistInputPolicyJson != null))
-                    && t.Status == AgentTaskStatus.Dispatched)
+            await db.AgentTasks.Where(AgentTaskRoles.OptionalWork)
+                .Where(t => t.Id == message.ExecutionTaskId && t.Status == AgentTaskStatus.Dispatched)
                 .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, AgentTaskStatus.Canceled)
                     .SetProperty(t => t.CompletedAt, UtcNow())
                     .SetProperty(t => t.FailureReason, "Optional work expired before execution.")

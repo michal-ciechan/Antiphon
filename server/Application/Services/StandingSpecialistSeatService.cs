@@ -1,4 +1,4 @@
-using Antiphon.Server.Application.Settings;
+﻿using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -15,16 +15,15 @@ public sealed class StandingSpecialistSeatService(
     public async Task ReconcileAsync(CancellationToken ct)
     {
         var settings = options.Value;
-        var slug = CheckInterpreterProvisioner.Slug(settings);
-        var owners = await db.Agents.AsNoTracking().Where(a => a.Slug == slug
-            || (a.StandingSpecialistRole == AgentTaskRole.Check && a.StandingSpecialistOwnerId == a.Id)).ToListAsync(ct);
+        var owners = await db.Agents.AsNoTracking()
+            .Where(StandingSpecialistSeatPolicy.OwnerOrSlug(settings)).ToListAsync(ct);
         foreach (var owner in owners)
             await ReconcileOwnerAsync(owner.Id, ct);
 
         // Removal/deletion stops admission immediately via the typed start guard. Drain first:
         // a busy or task-owned process remains owned, even when its logical owner was removed.
-        var retained = await db.Agents.AsNoTracking().Where(a => a.StandingSpecialistRole == AgentTaskRole.Check
-            && a.StandingSpecialistOwnerId != a.Id).ToListAsync(ct);
+        var retained = await db.Agents.AsNoTracking()
+            .Where(StandingSpecialistSeatPolicy.Alternate).ToListAsync(ct);
         foreach (var seat in retained)
         {
             if (await StandingSpecialistSeatPolicy.StartRefusalAsync(db, seat, settings, true, ct) is null)
@@ -56,7 +55,7 @@ public sealed class StandingSpecialistSeatService(
                 .SingleOrDefaultAsync(ct);
             if (owner is null || !StandingSpecialistSeatPolicy.IsCheck(owner, options.Value)) return;
             owner.StandingSpecialistOwnerId = owner.Id;
-            owner.StandingSpecialistRole = AgentTaskRole.Check;
+            owner.StandingSpecialistRole = StandingSpecialistSeatPolicy.Role;
             var now = time.GetUtcNow().UtcDateTime;
             var routing = await db.StandingSpecialistRoutings.AsNoTracking().SingleOrDefaultAsync(r => r.AgentId == ownerId, ct);
             var pairs = routing is null ? new[] { new RoutingCandidate(owner.Kind, owner.ModelLevel) }
@@ -118,7 +117,7 @@ public sealed class StandingSpecialistSeatService(
                     {
                         Id = id, Name = $"Check {pair.AgentKind}/{pair.ModelLevel}", Slug = "check-seat-" + state.Id.ToString("N"),
                         WorkingDirectory = cwd, Kind = pair.AgentKind!.Value, ModelLevel = pair.ModelLevel!.Value,
-                        StandingSpecialistOwnerId = ownerId, StandingSpecialistRole = AgentTaskRole.Check,
+                        StandingSpecialistOwnerId = ownerId, StandingSpecialistRole = StandingSpecialistSeatPolicy.Role,
                         AlwaysOn = true, IsPoolDelegate = false, RemoteControlEnabled = false, AutoCompactEnabled = false,
                         SessionBackend = SessionBackend.PtyHost, SystemPromptAppend = CheckInterpretation.Contract,
                         Details = "Managed Check interpreter seat. Facts arrive inline; no tools.",
@@ -144,7 +143,8 @@ public sealed class StandingSpecialistSeatService(
     private async Task CancelUnclaimedAsync(Guid seatId, CancellationToken ct)
     {
         var now = time.GetUtcNow().UtcDateTime;
-        await db.AgentTasks.Where(t => t.AgentId == seatId && t.Role == AgentTaskRole.Check && t.Status == AgentTaskStatus.Queued)
+        await db.AgentTasks.Where(StandingSpecialistSeatPolicy.SeatWork)
+            .Where(t => t.AgentId == seatId && t.Status == AgentTaskStatus.Queued)
             .ExecuteUpdateAsync(u => u.SetProperty(t => t.Status, AgentTaskStatus.Canceled)
                 .SetProperty(t => t.CompletedAt, now).SetProperty(t => t.FailureReason, "Specialist candidate admission was disabled."), ct);
     }

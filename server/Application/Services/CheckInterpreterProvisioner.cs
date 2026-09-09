@@ -1,4 +1,4 @@
-using Antiphon.Server.Application.Settings;
+﻿using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -60,7 +60,9 @@ public sealed class CheckInterpreterProvisioner
         ContractVersion: CheckInterpretation.ContractVersion,
         DenyHookStderr: CheckInterpretation.DenyHookStderr,
         UnavailableIncidentKind: AgentIncidentKind.CheckInterpreterUnavailable,
-        DisplayName: "check interpreter");
+        DisplayName: "check interpreter",
+        OwnsStandingSeat: true,
+        ToolPolicyRequired: true);
 
     /// <summary>The configured slug, floored to the default so a blank setting cannot un-name the agent.</summary>
     public static string Slug(DelegationSettings settings) =>

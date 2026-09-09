@@ -1,4 +1,4 @@
-using Antiphon.Agents.Pty;
+﻿using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Domain.Entities;
@@ -64,8 +64,8 @@ public sealed class StandingSpecialistProvisioner
     public async Task<Agent> EnsureAsync(SpecialistSpec spec, CancellationToken ct)
     {
         var existing = await _db.Agents.FirstOrDefaultAsync(a => a.Slug == spec.Slug, ct);
-        if (existing is null && spec.Role == AgentTaskRole.Check)
-            existing = await _db.Agents.FirstOrDefaultAsync(a => a.StandingSpecialistRole == AgentTaskRole.Check
+        if (existing is null && spec.OwnsStandingSeat)
+            existing = await _db.Agents.FirstOrDefaultAsync(a => a.StandingSpecialistRole == spec.Role
                 && a.StandingSpecialistOwnerId == a.Id, ct);
         if (existing is not null)
         {
@@ -92,7 +92,7 @@ public sealed class StandingSpecialistProvisioner
             CreatedAt = now,
             UpdatedAt = now,
         };
-        if (spec.Role == AgentTaskRole.Check)
+        if (spec.OwnsStandingSeat)
         {
             agent.StandingSpecialistOwnerId = agent.Id;
             agent.StandingSpecialistRole = spec.Role;
@@ -126,7 +126,7 @@ public sealed class StandingSpecialistProvisioner
 
     private async Task ReconcileAsync(Agent agent, SpecialistSpec spec, CancellationToken ct)
     {
-        if (spec.Role == AgentTaskRole.Check && agent.StandingSpecialistOwnerId is null)
+        if (spec.OwnsStandingSeat && agent.StandingSpecialistOwnerId is null)
         {
             agent.StandingSpecialistOwnerId = agent.Id;
             agent.StandingSpecialistRole = spec.Role;
@@ -154,7 +154,7 @@ public sealed class StandingSpecialistProvisioner
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            if (spec.Role == AgentTaskRole.Check)
+            if (spec.ToolPolicyRequired)
                 throw new ConflictException(
                     "The check interpreter's deny-all tool policy could not be prepared; no Check may be admitted.",
                     "specialist_tool_policy_unavailable");

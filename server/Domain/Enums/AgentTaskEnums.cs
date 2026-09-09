@@ -375,4 +375,28 @@ public static class AgentTaskRoles
         t => t.Role != AgentTaskRole.Check
             && t.Role != AgentTaskRole.Distill
             && t.Role != AgentTaskRole.Diagnose;
+
+    /// <summary>
+    /// Optional work: cancelled at its execution deadline rather than dispatched late, because
+    /// nobody is waiting on it by then. Distill is optional wholesale; a Check is optional only
+    /// while it carries the durable full-inline input policy that makes it a standing-seat
+    /// request (CARD-0415 S2) — an operator-armed Check has no deadline to expire against.
+    /// EF-translatable; <see cref="IsOptionalWork"/> is the in-memory twin.
+    /// </summary>
+    public static readonly Expression<Func<AgentTask, bool>> OptionalWork =
+        t => t.Role == AgentTaskRole.Distill
+            || (t.Role == AgentTaskRole.Check && t.SpecialistInputPolicyJson != null);
+
+    /// <summary>In-memory twin of <see cref="OptionalWork"/>. Keep the two in step.</summary>
+    public static bool IsOptionalWork(AgentTask task) =>
+        task.Role == AgentTaskRole.Distill
+            || (task.Role == AgentTaskRole.Check && task.SpecialistInputPolicyJson is not null);
+
+    /// <summary>
+    /// The roles whose task may carry a <c>SpecialistInputPolicy</c> — complete facts typed
+    /// straight into a standing seat instead of the ordinary spilled file pointer (CARD-0415 S2).
+    /// Only Check has a certified input envelope; a second specialist earns this by measurement,
+    /// not by inheriting it here.
+    /// </summary>
+    public static bool CarriesFullInlineInput(AgentTaskRole role) => role is AgentTaskRole.Check;
 }

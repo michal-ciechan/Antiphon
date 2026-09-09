@@ -304,8 +304,8 @@ public sealed class AgentTaskDispatcher
                 ct);
 
         // Deadline is durable: recovery does not depend on the optional caller surviving.
-        await _db.AgentTasks.Where(t => t.Status == AgentTaskStatus.Queued
-                && (t.Role == AgentTaskRole.Distill || (t.Role == AgentTaskRole.Check && t.SpecialistInputPolicyJson != null)) && t.ExecutionDeadlineAt <= UtcNow())
+        await _db.AgentTasks.Where(AgentTaskRoles.OptionalWork)
+            .Where(t => t.Status == AgentTaskStatus.Queued && t.ExecutionDeadlineAt <= UtcNow())
             .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, AgentTaskStatus.Canceled)
                 .SetProperty(t => t.CompletedAt, UtcNow())
                 .SetProperty(t => t.FailureReason, "Optional work expired before execution.")
@@ -2952,7 +2952,7 @@ public sealed class AgentTaskDispatcher
     {
         using var observation = new RuntimePhase(_logger, _timeProvider, task.AgentSessionId ?? Guid.Empty,
             "dispatcher.claim-expiry", task.Id);
-        if ((task.Role != AgentTaskRole.Distill && (task.Role != AgentTaskRole.Check || task.SpecialistInputPolicyJson is null))
+        if (!AgentTaskRoles.IsOptionalWork(task)
             || task.ExecutionDeadlineAt is not DateTime deadline
             || deadline > UtcNow()) return false;
         task.Status = AgentTaskStatus.Canceled;
@@ -3154,8 +3154,8 @@ public sealed class AgentTaskDispatcher
             _db.ChangeTracker.Clear();
             // Rollback released the claim. A competing dispatcher may now own it, so the
             // recovery cancellation must be conditional again rather than saving a stale row.
-            await _db.AgentTasks.Where(t => t.Id == claimed.Id && t.Status == AgentTaskStatus.Queued
-                    && (t.Role == AgentTaskRole.Distill || (t.Role == AgentTaskRole.Check && t.SpecialistInputPolicyJson != null)) && t.ExecutionDeadlineAt <= UtcNow())
+            await _db.AgentTasks.Where(AgentTaskRoles.OptionalWork)
+                .Where(t => t.Id == claimed.Id && t.Status == AgentTaskStatus.Queued && t.ExecutionDeadlineAt <= UtcNow())
                 .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, AgentTaskStatus.Canceled)
                     .SetProperty(t => t.CompletedAt, UtcNow())
                     .SetProperty(t => t.FailureReason, "Optional work expired before execution.")
@@ -3512,7 +3512,7 @@ public sealed class AgentTaskDispatcher
         var brief = DelegationReportFormatter.BuildBrief(task, settings, limits.ReplyInlineMaxChars, refocus);
         if (SpecialistInputPolicy.Read(task.SpecialistInputPolicyJson) is { } inputPolicy)
         {
-            if (task.Role != AgentTaskRole.Check || inputPolicy.TaskId != task.Id || refocus)
+            if (!AgentTaskRoles.CarriesFullInlineInput(task.Role) || inputPolicy.TaskId != task.Id || refocus)
                 throw new SpecialistInputUnsupportedException("Full-inline input is restricted to the owning Check task.");
             return inputPolicy.Fit(brief, agentKind, limits.Backend);
         }

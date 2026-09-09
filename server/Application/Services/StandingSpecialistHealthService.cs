@@ -1,4 +1,4 @@
-using Antiphon.Server.Application.Dtos;
+﻿using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -15,8 +15,8 @@ public sealed class StandingSpecialistHealthService(
 {
     public async Task ReconcileAsync(CancellationToken ct)
     {
-        var owners = await db.Agents.AsNoTracking().Where(a => a.StandingSpecialistRole == AgentTaskRole.Check
-            && a.StandingSpecialistOwnerId == a.Id).Select(a => a.Id).ToListAsync(ct);
+        var owners = await db.Agents.AsNoTracking().Where(StandingSpecialistSeatPolicy.Owner)
+            .Select(a => a.Id).ToListAsync(ct);
         foreach (var id in owners) await ReconcileOwnerAsync(id, ct);
     }
 
@@ -64,8 +64,9 @@ public sealed class StandingSpecialistHealthService(
             var fallback = health.ActiveCandidateId is { } active && active != preferred?.Id;
             var readiness = candidates.Any(c => c.Id != preferred?.Id && !WarmQualified(c));
             var physical = candidates.Where(c => c.PhysicalAgentId != null).Select(c => c.PhysicalAgentId!.Value).ToArray();
-            var oldest = await db.AgentTasks.AsNoTracking().Where(t => t.AgentId != null && physical.Contains(t.AgentId.Value)
-                && t.Role == AgentTaskRole.Check && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working))
+            var oldest = await db.AgentTasks.AsNoTracking().Where(StandingSpecialistSeatPolicy.SeatWork)
+                .Where(t => t.AgentId != null && physical.Contains(t.AgentId.Value)
+                    && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working))
                 .MinAsync(t => (DateTime?)t.CreatedAt, ct);
             if (oldest is { } blocked && now - blocked >= TimeSpan.FromMinutes(5)) health.StarvedSince ??= blocked;
             health.Status = StandingSpecialistHealthPolicy.Project(health, disabled, ready.Count == 0, fallback, readiness, now);
