@@ -1,4 +1,4 @@
-using Antiphon.Server.Application.Dtos;
+﻿using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -56,6 +56,9 @@ public class SpecialistToolPolicyLaunchTests
         {
             var agent = await db.Agents.SingleAsync(a => a.Id == harness.AgentId);
             agent.Slug = settings.CheckInterpreterAgentSlug;
+            // An actual Check start is a provisioned seat: the typed owner relation, not the name.
+            agent.StandingSpecialistRole = AgentTaskRole.Check;
+            agent.StandingSpecialistOwnerId = agent.Id;
             agent.SystemPromptAppend = CheckInterpretation.Contract;
             cwd = agent.WorkingDirectory;
             (await db.AgentSessions.SingleAsync(s => s.Id == harness.SessionId)).Status = SessionStatus.Failed;
