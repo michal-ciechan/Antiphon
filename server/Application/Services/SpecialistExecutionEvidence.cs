@@ -54,6 +54,8 @@ public sealed class SpecialistExecutionEvidenceReader(IOptions<SupervisionSettin
             seat.SystemPromptAppend, seat.ReplyStyle, seat.WorkingDirectory, currentFiles,
             sessionId = session.Id, session.StartedAt, session.TuiProfileRevisionId, session.EffectiveModelId,
             session.ComposedBundleStamp, session.InstructionFileStamp, session.SpecialistLaunchEvidenceJson,
+            session.CompactionRecoveryWatermark, seat.AutoCompactEnabled,
+            seat.AutoCompactIdleMinutes, seat.AutoCompactContextPercent,
             contract = CheckInterpretation.Contract,
         }));
         return new(Hash(key), fingerprint, max, launch.Provenance);

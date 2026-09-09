@@ -25,10 +25,12 @@ public sealed partial class SpecialistRequestService
         var candidate = await db.StandingSpecialistCandidateStates.AsNoTracking().SingleAsync(c => c.Id == candidateId, ct);
         var seat = await db.Agents.AsNoTracking().SingleOrDefaultAsync(a => a.Id == candidate.PhysicalAgentId, ct);
         if (!candidate.Enabled || seat is null || !Guid.TryParse(seat.PersistentSessionId, out var sessionId)
-            || await StandingSpecialistSeatPolicy.StartRefusalAsync(db, seat, settings.Value, true, ct) is not null) return false;
+            || await StandingSpecialistSeatPolicy.StartRefusalAsync(db, seat, settings.Value, true, ct, requireCapability: false) is not null) return false;
         var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
         if (session?.Status != SessionStatus.Running || session.AgentKind != AgentKind.ClaudeCode) return false;
         var evidence = await evidenceReader.ReadAsync(seat, session, ct);
+        if (evidence is null || candidate.Fingerprint != evidence.Fingerprint)
+            await InvalidateQualificationAsync(candidate, ct);
         if (evidence is null) return false;
         var changed = candidate.Fingerprint != evidence.Fingerprint;
         if (!changed && candidate.QualificationAuthorization == candidate.ClaimedQualificationAuthorization) return false;
@@ -49,7 +51,7 @@ public sealed partial class SpecialistRequestService
             || current.ClaimedQualificationAuthorization != candidate.ClaimedQualificationAuthorization
             || owner is null || currentSeat?.UpdatedAt != seat.UpdatedAt || currentSeat.PersistentSessionId != seat.PersistentSessionId
             || currentSession?.StartedAt != session.StartedAt || currentSession.Status != SessionStatus.Running
-            || await StandingSpecialistSeatPolicy.StartRefusalAsync(db, currentSeat, settings.Value, true, ct) is not null
+            || await StandingSpecialistSeatPolicy.StartRefusalAsync(db, currentSeat, settings.Value, true, ct, requireCapability: false) is not null
             || await db.SpecialistRequests.AnyAsync(r => r.QualificationCandidateId == current.Id && r.CompletedAt == null, ct)
             || await db.AgentTasks.AnyAsync(t => t.AgentId == seat.Id && (t.Status == AgentTaskStatus.Queued
                 || t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Blocked), ct)
@@ -82,6 +84,23 @@ public sealed partial class SpecialistRequestService
         db.Entry(current).State = EntityState.Detached;
         await PublishChangedAsync(owner.Id, ct);
         return true;
+    }
+
+    private async Task InvalidateQualificationAsync(StandingSpecialistCandidateState expected, CancellationToken ct)
+    {
+        if (expected.Status != StandingSpecialistCandidateStatus.Qualified) return;
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        await LockOwnerAsync(expected.AgentId, ct);
+        var changed = await db.StandingSpecialistCandidateStates.Where(c => c.Id == expected.Id
+            && c.Status == StandingSpecialistCandidateStatus.Qualified && c.Fingerprint == expected.Fingerprint
+            && c.SessionId == expected.SessionId && c.SessionStartedAt == expected.SessionStartedAt
+            && c.QualificationAuthorization == expected.QualificationAuthorization)
+            .ExecuteUpdateAsync(s => s.SetProperty(c => c.Status, StandingSpecialistCandidateStatus.Unqualified)
+                .SetProperty(c => c.QualifiedAt, (DateTime?)null)
+                .SetProperty(c => c.Reason, "Current execution capability or fingerprint cannot be verified; qualification is invalid.")
+                .SetProperty(c => c.UpdatedAt, time.GetUtcNow().UtcDateTime), ct);
+        await transaction.CommitAsync(ct);
+        if (changed > 0) await PublishChangedAsync(expected.AgentId, ct);
     }
 
     private async Task AdvanceQualificationAsync(SpecialistRequest request, CancellationToken ct)

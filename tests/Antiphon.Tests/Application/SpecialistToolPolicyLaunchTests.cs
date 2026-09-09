@@ -33,7 +33,7 @@ public class SpecialistToolPolicyLaunchTests
         var settings = new DelegationSettings { CheckInterpreterAgentSlug = $"c415-{Guid.NewGuid():N}" };
         await using var harness = await BridgeQueueHarness.CreateAsync(new()
         {
-            AlwaysOn = false,
+            AlwaysOn = true,
             Delegation = settings,
             ConfigureServices = services =>
             {

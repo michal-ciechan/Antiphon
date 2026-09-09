@@ -45,10 +45,15 @@ CARD-0415 adds `GET`/`PUT /api/agents/{id}/specialist-routing` and
 `scripts/specialist-routing.ps1 inspect|set|revalidate -Agent <guid>` uses these shapes and reads a
 fresh revision before writes. `set -Candidates 'ClaudeCode/High,Codex/Low'` declares ordered pairs;
 the first pair must match the actual primary. `set -Disable` retains an existing list.
-These endpoints currently store declaration and bounded revalidation authorization only: no
-alternate is provisioned, qualified or used by the existing check execution path. A successful
-configuration write or revalidate response is not readiness or activation evidence. Codex rows
-report PendingDependency CARD-0167. The remaining execution work is tracked in the CARD-0415 plan.
+These endpoints expose declared pairs, retained candidate readiness/refusal reasons and durable
+logical health. Reconciliation creates separate typed Claude alternate seats. Revalidate rotates
+one bounded qualification authorization; the worker still requires verified CLI capability and
+an idle authorized generation before its two semantic probes. A successful write does not mean
+ready or activated. The production capability catalog is currently empty and authenticated
+acceptance remains pending. Codex rows report PendingDependency CARD-0167. See the
+[continuation evidence](investigations/2026-09-09-card-0415-continuation-evidence.md) before claiming
+the chain is available. Durable `StandingSpecialistHealth` Attention survives incident pruning;
+readiness or qualification alone cannot resolve a real-service outage.
 
 | Need | Method | Path |
 |---|---|---|

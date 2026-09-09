@@ -18,7 +18,8 @@ public static class StandingSpecialistSeatPolicy
         || string.Equals(agent.Slug, CheckInterpreterProvisioner.Slug(settings), StringComparison.OrdinalIgnoreCase);
 
     public static async Task<string?> StartRefusalAsync(
-        AppDbContext db, Agent seat, DelegationSettings settings, bool automatic, CancellationToken ct)
+        AppDbContext db, Agent seat, DelegationSettings settings, bool automatic, CancellationToken ct,
+        bool requireCapability = true)
     {
         if (!IsCheck(seat, settings)) return null;
         if (!settings.Enabled || !settings.CheckEnabled || !settings.CheckInterpreterEnabled)
@@ -43,11 +44,12 @@ public static class StandingSpecialistSeatPolicy
             var candidate = await db.StandingSpecialistCandidateStates.AsNoTracking()
                 .SingleOrDefaultAsync(c => c.AgentId == ownerId && c.PhysicalAgentId == seat.Id && c.Enabled, ct);
             if (candidate is null) return "This physical seat has no active candidate relation.";
-            if (string.IsNullOrWhiteSpace(candidate.CapabilityFingerprint) || candidate.MaxInputUtf8Bytes is not > 0)
+            if (requireCapability && (string.IsNullOrWhiteSpace(candidate.CapabilityFingerprint) || candidate.MaxInputUtf8Bytes is not > 0))
                 return "The alternate has no certified CLI/input/tool capability; standing start is deferred.";
-            if (candidate.Status is StandingSpecialistCandidateStatus.Unsupported or StandingSpecialistCandidateStatus.PendingDependency)
+            if (candidate.Status == StandingSpecialistCandidateStatus.PendingDependency
+                || (requireCapability && candidate.Status == StandingSpecialistCandidateStatus.Unsupported))
                 return candidate.Reason ?? "The candidate has no certified capability.";
-            if (candidate.Status == StandingSpecialistCandidateStatus.Quarantined
+            if (requireCapability && candidate.Status == StandingSpecialistCandidateStatus.Quarantined
                 && candidate.QualificationAuthorization == candidate.ClaimedQualificationAuthorization)
                 return "The candidate is quarantined; explicit revalidate is required.";
             if (seat.TuiProfileId is not null || seat.ModelId is not null || seat.SessionBackend != SessionBackend.PtyHost)

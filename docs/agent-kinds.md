@@ -505,11 +505,14 @@ There are further acceptance gates beyond that identity fix: ordinary Codex brie
 to file pointers, incompatible with an interpreter that cannot read files, and the specialist's
 Claude deny-all hook does not enforce a Codex tool policy. A ready reply is not a valid
 interpretation. The [CARD-0415 plan](superpowers/plans/2026-09-07-card-0415-interpreter-fallback-plan.md)
-defines qualified candidate routing and durable Attention; execution and visibility remain
-unimplemented. The CARD-0415 follow-up adds declared routing storage/API, a pure reading validator
-and a typed failure policy. They are preparation for that execution path, not an activated chain.
+defines qualified candidate routing and durable Attention. The follow-up implements typed
+primary/alternate seats, durable requests and attempts, a two-fixture qualification worker,
+native-turn reading validation, durable health/Attention and routing controls in agent settings.
+The production capability catalog is still empty: synthetic canaries and test certificates do
+not activate any real candidate. Current acceptance evidence and remaining gates are recorded in
+[the continuation ledger](investigations/2026-09-09-card-0415-continuation-evidence.md).
 `CheckInterpreterFirstAttemptSeconds` defaults to null (full remaining budget); a configured shorter
-value still needs matching calibration before a future chain executor can use it.
+value still needs matching capability calibration before the executor can use it.
 `CheckInterpreterTransientFailureThreshold` defaults to 3 and validates between 2 and 10.
 
 Check provisioning and a fresh standing Check launch now refuse if the Claude deny-hook file cannot
@@ -518,6 +521,19 @@ Check launch refuses with `specialist_tool_policy_pending_dependency` until CARD
 agent-path injection and CARD-0415 capability gates exist. File creation is not proof of tool denial:
 inherited-setting rejection, actual CLI/tool challenges, full-input transport certification and
 behavioral qualification are still required. Existing ordinary Codex launches are unaffected.
+
+Check attempts use one durable request deadline and at most two distinct declared candidates.
+They carry a full-inline UTF-8 input policy through dispatcher and queue; oversize input refuses
+before submission. Native full-prompt confirmation pulls on fresh and warm sessions, so earlier
+history never makes a missing live transcript stream sufficient evidence of failed delivery.
+An interpretation can win only from the current task's complete native prompt and successful
+tool-free final response. A persisted task Result or a ready process is insufficient.
+
+Managed alternates retain a typed owner relation across rename and use separate scratch seats.
+An active identity edit returns `specialist_identity_busy`; deleting a live or task-owned managed
+seat returns `specialist_delete_busy`. Qualification does not resolve an interpreter outage.
+Only a current successful real Check does, and an older request completion cannot reset a newer
+health episode. A committed caller note keeps its durable queue identity through retries.
 
 ## See also
 
