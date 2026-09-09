@@ -131,6 +131,8 @@ public sealed class AgentSessionLaunchComposer
 
     public async Task<AgentKind?> PeekProfileKindAsync(Agent agent, CancellationToken ct)
     {
+        if (StandingSpecialistSeatPolicy.IsAlternate(agent))
+            return agent.Kind;
         if (agent.TuiProfileId is { } profileId)
         {
             return await _db.AgentTuiProfiles.AsNoTracking()

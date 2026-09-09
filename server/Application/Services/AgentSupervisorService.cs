@@ -39,6 +39,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
     private readonly AgentSessionLaunchQueue _launchQueue;
     private readonly HerdrSupervisionStateService _herdrSupervision;
     private readonly CapacityRecoveryService? _capacityRecovery;
+    private readonly DelegationSettings _delegation;
 
     public AgentSupervisorService(
         AppDbContext db,
@@ -51,7 +52,8 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         ILogger<AgentSupervisorService> logger,
         AgentSessionLaunchQueue launchQueue,
         HerdrSupervisionStateService? herdrSupervision = null,
-        CapacityRecoveryService? capacityRecovery = null)
+        CapacityRecoveryService? capacityRecovery = null,
+        IOptions<DelegationSettings>? delegation = null)
     {
         _db = db;
         _control = control;
@@ -64,6 +66,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         _launchQueue = launchQueue;
         _herdrSupervision = herdrSupervision ?? new HerdrSupervisionStateService(db, settings, timeProvider, launchQueue, eventBus);
         _capacityRecovery = capacityRecovery;
+        _delegation = delegation?.Value ?? new();
     }
 
     /// <summary>Runs one supervision sweep. Returns the number of actions taken (schedules + attempts).</summary>
@@ -113,6 +116,8 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
 
     private async Task<bool> SuperviseAsync(Agent agent, CancellationToken ct)
     {
+        if (await StandingSpecialistSeatPolicy.StartRefusalAsync(_db, agent, _delegation, automatic: true, ct) is not null)
+            return false;
         // Keep the scheduling decision and evidence consumption under the same agent lock.
         // Commit before Start: composition and runner RPCs never run under this transaction.
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
@@ -241,7 +246,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             // IgnoreSubscriptionQuota: a supervisor cannot pick another provider, and stopping
             // AlwaysOn restarts on a quota reading is the silent-stop the CARD-0136 gate forbids.
             await _control.StartAsync(
-                agent.Id, new StartAgentRequest(Fresh: fresh, IgnoreSubscriptionQuota: true), ct);
+                agent.Id, new StartAgentRequest(Fresh: fresh, IgnoreSubscriptionQuota: !StandingSpecialistSeatPolicy.IsAlternate(agent)), ct, automatic: true);
 
             // Success ⇒ stop scheduling; the failure counter only resets after sustained health.
             // (StartAsync clears supervision state itself for manual semantics; re-load ours.)

@@ -173,7 +173,7 @@ public sealed class StandingSpecialistRoutingService(
                 .AsNoTracking().SingleOrDefaultAsync(ct)
             : await db.Agents.AsNoTracking().SingleOrDefaultAsync(a => a.Id == agentId, ct);
         if (owner is null) throw new NotFoundException("Agent", agentId);
-        if (!string.Equals(owner.Slug, CheckInterpreterProvisioner.Slug(settings.Value), StringComparison.OrdinalIgnoreCase)
+        if (!StandingSpecialistSeatPolicy.IsCheck(owner, settings.Value) || StandingSpecialistSeatPolicy.IsAlternate(owner)
             || owner.IsPoolDelegate || !owner.AlwaysOn)
             throw new ValidationException("agentId", "Only the standing Check interpreter owns specialist routing.");
         return owner;

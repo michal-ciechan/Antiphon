@@ -176,6 +176,9 @@ public sealed class ContextCompactionService
     {
         var resolved = ContextCompaction.Resolve(_settings, owner);
 
+        if (owner is not null && StandingSpecialistSeatPolicy.IsCheck(owner))
+            return false;
+
         await ObserveTimedOutCompactsAsync(sessionId, owner, now, ct);
 
         if (!resolved.Enabled)
