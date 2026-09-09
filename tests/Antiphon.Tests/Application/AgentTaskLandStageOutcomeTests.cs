@@ -265,11 +265,16 @@ public class AgentTaskLandStageOutcomeTests
         rows[3].Outcome.ShouldBe(StageOutcomeKind.Clean);
         rows[3].Detail.ShouldContain("cleanup complete");
         var landed = await db.AgentTaskEvents.AsNoTracking()
-            .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Landed)
+            .SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Landed);
+        landed.Detail.ShouldContain("mode=Fresh");
+        landed.Detail.ShouldContain("cleanup=Complete");
+        var cleanup = await db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.LandingCleanup)
             .OrderByDescending(e => e.At)
             .FirstAsync();
-        landed.Detail.ShouldContain("mode=CleanupRetry");
-        landed.Detail.ShouldContain("cleanup=Complete");
+        cleanup.Detail.ShouldContain("mode=CleanupRetry");
+        cleanup.Detail.ShouldContain("cleanup=Complete");
+        cleanup.LandingMode.ShouldBe(LandingExecutionMode.CleanupRetry);
         (await db.AgentTaskEvents.CountAsync(e =>
             e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.LandRefused)).ShouldBe(0);
         await AssertPendingClearedAsync(db, task.Id, attempt: 2);
