@@ -350,6 +350,9 @@ public class AgentTask
     /// </summary>
     public int LandAttempt { get; set; }
 
+    /// <summary>Durable landing evidence; scheduling retries never clear this association.</summary>
+    public Guid? ActiveLandingId { get; set; }
+
     /// <summary>
     /// UNCACHED input tokens only. The three input counters are kept apart because they are priced
     /// apart — a cache read is ~0.1x this, a cache write 1.25x (CARD-0023). Anything showing a
@@ -477,6 +480,10 @@ public class AgentTaskEvent
     public AgentModelLevel? ModelLevel { get; set; }
     public string Detail { get; set; } = string.Empty;
     public DateTime At { get; set; }
+    public Guid? LandingOperationId { get; set; }
+    public LandPublicationOutcome? LandingPublication { get; set; }
+    public LandCleanupStatus? LandingCleanup { get; set; }
+    public LandOperationMode? LandingMode { get; set; }
 
     public AgentTask AgentTask { get; set; } = null!;
 }

@@ -4,6 +4,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
+[Category("Unit")]
 public sealed class GrokRulesLiveEvidenceTests
 {
     // This validates the saved real-model experiment, not a synthetic substitute for it.

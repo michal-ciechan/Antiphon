@@ -229,6 +229,10 @@ public enum AgentTaskEventType
 
     /// <summary>CARD-0412: a capacity-recovery lifecycle event on this task. Not Failed and not a no-op Rerouted.</summary>
     CapacityRecovery = 28,
+    /// <summary>Exact remote containment confirmed; cleanup has its own durable status.</summary>
+    AlreadyPresent = 29,
+    /// <summary>Cleanup retry/update for an existing publication; never another publication.</summary>
+    LandingCleanup = 30,
 }
 
 /// <summary>

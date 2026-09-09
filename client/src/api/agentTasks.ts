@@ -96,6 +96,8 @@ export type AgentTaskEventType =
   | 'LandRefused'
   | 'Rerouted'
   | 'LandedWithResidue'
+  | 'AlreadyPresent'
+  | 'LandingCleanup'
   /** A settled report was distilled (CARD-0330). Reserved so CARD-0352 can land the substrate. */
   | 'Distilled'
   /** The diagnose seat applied a title or labels (CARD-0352). */
@@ -184,6 +186,10 @@ export interface AgentTaskEventDto {
   modelLevel: AgentModelLevel | null
   detail: string
   at: string
+  landingOperationId?: string | null
+  landingPublication?: 'Unconfirmed' | 'Landed' | 'AlreadyPresent' | 'Refused' | null
+  landingCleanup?: 'NotStarted' | 'Pending' | 'Complete' | 'Refused' | null
+  landingMode?: 'Fresh' | 'ResumePublication' | 'CleanupRetry' | null
 }
 
 export type BlockedKind = 'Question' | 'MergeConflict' | 'CostCeiling' | 'RoutingExhausted'
@@ -231,6 +237,19 @@ export interface BlockedContextDto {
 }
 
 export interface AgentTaskDetailDto {
+  landing?: {
+    operationId: string
+    phase: string
+    mode: 'Fresh' | 'ResumePublication' | 'CleanupRetry'
+    publication: 'Unconfirmed' | 'Landed' | 'AlreadyPresent' | 'Refused'
+    cleanup: 'NotStarted' | 'Pending' | 'Complete' | 'Refused'
+    sourceSha: string
+    verifiedSha: string | null
+    remoteSha: string | null
+    remoteConfirmedAt: string | null
+    destinationRef: string
+    reason: string | null
+  } | null
   summary: AgentTaskSummaryDto
   goal: string
   /** The delegate's final message, untouched — forwarding may excerpt it, this never does. */

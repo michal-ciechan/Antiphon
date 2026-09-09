@@ -1,0 +1,112 @@
+using System.Diagnostics;
+using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
+using Antiphon.Tests.TestHelpers;
+using Microsoft.Extensions.DependencyInjection;
+using Shouldly;
+using TUnit.Core;
+
+namespace Antiphon.Tests.Application;
+
+[Category("Integration")]
+[ParallelLimiter<ProcessSpawnLimit>]
+public sealed class C448IncidentBaselineTests
+{
+    [Test]
+    public async Task C448_V01_BaselineMustPreserveDetachedUniqueHead()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "antiphon-c448-baseline-" + Guid.NewGuid().ToString("N"));
+        var canonical = Path.Combine(root, "canonical");
+        var remote = Path.Combine(root, "remote.git");
+        var home = Path.Combine(root, "home");
+        Directory.CreateDirectory(canonical);
+        Directory.CreateDirectory(remote);
+        Directory.CreateDirectory(home);
+        var environment = new Dictionary<string, string?>();
+        void Set(string key, string value)
+        {
+            environment[key] = Environment.GetEnvironmentVariable(key);
+            Environment.SetEnvironmentVariable(key, value);
+        }
+        try
+        {
+            Set("GIT_CONFIG_GLOBAL", Path.Combine(home, "empty-config"));
+            Set("GIT_CONFIG_NOSYSTEM", "1");
+            Set("GIT_AUTHOR_NAME", "C448 Fixture");
+            Set("GIT_AUTHOR_EMAIL", "fixture@example.invalid");
+            Set("GIT_COMMITTER_NAME", "C448 Fixture");
+            Set("GIT_COMMITTER_EMAIL", "fixture@example.invalid");
+            Set("GIT_CONFIG_COUNT", "3");
+            Set("GIT_CONFIG_KEY_0", "commit.gpgSign");
+            Set("GIT_CONFIG_VALUE_0", "false");
+            Set("GIT_CONFIG_KEY_1", "credential.helper");
+            Set("GIT_CONFIG_VALUE_1", "");
+            Set("GIT_CONFIG_KEY_2", "core.hooksPath");
+            Set("GIT_CONFIG_VALUE_2", Path.Combine(home, "no-hooks"));
+            await Git(canonical, "init", "-b", "master");
+            await Git(remote, "init", "--bare");
+            await File.WriteAllTextAsync(Path.Combine(canonical, "keep.txt"), "base\n");
+            await Git(canonical, "add", ".");
+            await Git(canonical, "commit", "-m", "base");
+            var sourceBase = (await Git(canonical, "rev-parse", "HEAD")).Trim();
+            await Git(canonical, "remote", "add", "origin", remote);
+            await Git(canonical, "push", "origin", "master");
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddSingleton(TimeProvider.System);
+            services.AddDelegationWorktreeGraph(new GitSettings { WorktreeBasePath = Path.Combine(root, "trees") });
+            await using var provider = services.BuildServiceProvider();
+            using var scope = provider.CreateScope();
+            var manager = scope.ServiceProvider.GetRequiredService<Antiphon.Server.Application.Interfaces.IWorktreeManager>();
+            var info = await manager.CreateAsync(canonical, "task-11223344", "master", CancellationToken.None);
+            var task = new AgentTask { Id = Guid.NewGuid(), RepoPath = canonical, WorktreePath = info.Path,
+                WorktreeBranch = info.Branch, Workspace = WorkspaceMode.Worktree, Status = AgentTaskStatus.Succeeded };
+            await Git(canonical, "push", "origin", info.Branch);
+            await Git(info.Path, "checkout", "--detach");
+            await File.WriteAllTextAsync(Path.Combine(info.Path, "keep.txt"), "unique reviewed work\n");
+            await Git(info.Path, "commit", "-am", "unique detached work");
+            var unique = (await Git(info.Path, "rev-parse", "HEAD")).Trim();
+            unique.ShouldNotBe(sourceBase);
+            (await Git(info.Path, "status", "--porcelain")).ShouldBeEmpty();
+            var service = scope.ServiceProvider.GetRequiredService<DelegationWorktreeService>();
+            // Reach the actual old shortcut and actual old removal, not an emulated Git command.
+            (await service.IsAlreadyLandedAsync(task, CancellationToken.None)).ShouldBeTrue();
+            var removal = await service.CleanupAlreadyLandedAsync(task, CancellationToken.None);
+            var observedRemote = (await Git(remote, "rev-parse", "refs/heads/" + info.Branch)).Trim();
+            observedRemote.ShouldBe(sourceBase);
+            var image = new { S=sourceBase, U=unique, RemoteSource=observedRemote,
+                DirectoryExists=Directory.Exists(info.Path), removal.Removal.DirectoryGone,
+                removal.Removal.BranchDeleted };
+            Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(image));
+            Directory.Exists(info.Path).ShouldBeTrue("CARD-0448: unique detached HEAD directory must survive the already-landed shortcut");
+            (await Git(info.Path, "rev-parse", "HEAD")).Trim().ShouldBe(unique);
+        }
+        finally
+        {
+            foreach (var pair in environment) Environment.SetEnvironmentVariable(pair.Key, pair.Value);
+            var full = Path.GetFullPath(root);
+            var allowed = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath())) + Path.DirectorySeparatorChar;
+            if (!full.StartsWith(allowed, StringComparison.OrdinalIgnoreCase)
+                || !Path.GetFileName(full).StartsWith("antiphon-c448-baseline-", StringComparison.Ordinal))
+                throw new InvalidOperationException("Unsafe fixture disposal path");
+            foreach (var file in Directory.EnumerateFiles(full, "*", SearchOption.AllDirectories)) File.SetAttributes(file, FileAttributes.Normal);
+            Directory.Delete(full, true);
+        }
+    }
+
+    private static async Task<string> Git(string directory, params string[] arguments)
+    {
+        var start = new ProcessStartInfo("git") { WorkingDirectory=directory, UseShellExecute=false,
+            CreateNoWindow=true, RedirectStandardOutput=true, RedirectStandardError=true };
+        foreach (var value in arguments) start.ArgumentList.Add(value);
+        using var child = Process.Start(start)!;
+        var output = child.StandardOutput.ReadToEndAsync();
+        var error = child.StandardError.ReadToEndAsync();
+        await child.WaitForExitAsync();
+        await error;
+        if (child.ExitCode != 0) throw new InvalidOperationException("Fixture Git failed: " + arguments[0]);
+        return await output;
+    }
+}

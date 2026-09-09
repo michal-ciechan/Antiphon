@@ -298,10 +298,22 @@ POST   /api/agent-tasks/{id}/land            queue an explicit land of a Succeed
                                              task (`{ verify?: string }`). 202
                                              `{ status: "queued" | "requeued" }`; git
                                              runs in the background. Outcomes: `Landed`
-                                             (pushed and cleaned), `LandedWithResidue`
-                                             (pushed, cleanup left a branch/directory —
-                                             re-POST to retry cleanup), `LandRefused`
-                                             (target did not advance). 409 if a land is
+                                             (publication confirmed, cleaned), `AlreadyPresent`
+                                             (exact remote containment; cleanup separately
+                                             reported), `LandedWithResidue`
+                                             (publication confirmed, cleanup left residue;
+                                             re-POST to retry cleanup), `LandingCleanup`
+                                             (cleanup result for an existing publication;
+                                             never a second publication), `LandRefused`
+                                             (publication refused/unconfirmed; local target
+                                             may have advanced). GET task detail includes
+                                             structured `landing`: operation, mode, phase,
+                                             source/verified/remote SHAs, publication, cleanup
+                                             and reason. New landing events also carry
+                                             nullable landingOperationId, landingPublication,
+                                             landingCleanup and landingMode snapshots;
+                                             legacy events have no inferred receipt.
+                                             409 if a land is
                                              running in this server now (never for a
                                              request no process holds).
 GET    /api/stage-outcomes                   CARD-0272 per-stage hit rate vs. cost. Query

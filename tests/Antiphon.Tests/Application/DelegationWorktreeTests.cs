@@ -22,6 +22,7 @@ namespace Antiphon.Tests.Application;
 /// "refusing to fetch into checked-out branch" is not something a fake would ever say.
 /// </summary>
 [Category("Integration")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class DelegationWorktreeTests
 {
     // ---- creation --------------------------------------------------------------------------
@@ -80,7 +81,7 @@ public class DelegationWorktreeTests
     }
 
     [Test]
-    public async Task a_locked_registration_whose_directory_is_gone_is_healed_and_the_task_dispatches()
+    public async Task unowned_locked_missing_registration_requires_recovery_evidence()
     {
         using var repo = new ScratchGitRepo();
         await repo.CommitFileAsync("README.md", "base\n");
@@ -93,21 +94,16 @@ public class DelegationWorktreeTests
         DeleteTree(worktreePath);
         Directory.Exists(worktreePath).ShouldBeFalse();
 
-        await service.CreateForTaskAsync(task, CancellationToken.None);
-
-        task.WorktreePath.ShouldBe(worktreePath);
-        task.WorktreeBranch.ShouldBe(branch);
-        Directory.Exists(task.WorktreePath).ShouldBeTrue();
-        (await manager.ListAsync(repo.Path, CancellationToken.None)).Count.ShouldBe(1);
-        var ours = WorktreeManager.ParseWorktreeList(await repo.GitReadAsync("worktree", "list", "--porcelain"))
-            .Where(e => PathsEqual(e.Path, worktreePath))
-            .ToList();
-        ours.ShouldHaveSingleItem();
-        ours[0].Locked.ShouldBeFalse();
+        await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ConflictException>(
+            () => service.CreateForTaskAsync(task, CancellationToken.None));
+        Directory.Exists(worktreePath).ShouldBeFalse();
+        (await repo.GitReadAsync("show-ref", "--verify", "--hash", "refs/heads/" + branch)).Trim()
+            .ShouldBe((await repo.GitReadAsync("rev-parse", "HEAD")).Trim());
+        (await manager.ListAsync(repo.Path, CancellationToken.None)).ShouldHaveSingleItem();
     }
 
     [Test]
-    public async Task an_unlocked_registration_whose_directory_is_gone_is_healed_too()
+    public async Task unowned_unlocked_missing_registration_requires_recovery_evidence()
     {
         using var repo = new ScratchGitRepo();
         await repo.CommitFileAsync("README.md", "base\n");
@@ -120,19 +116,18 @@ public class DelegationWorktreeTests
         DeleteTree(worktreePath);
         Directory.Exists(worktreePath).ShouldBeFalse();
 
-        await service.CreateForTaskAsync(task, CancellationToken.None);
-
-        Directory.Exists(task.WorktreePath).ShouldBeTrue();
-        (await manager.ListAsync(repo.Path, CancellationToken.None)).Count.ShouldBe(1);
-        var ours = WorktreeManager.ParseWorktreeList(await repo.GitReadAsync("worktree", "list", "--porcelain"))
-            .Where(e => PathsEqual(e.Path, worktreePath))
-            .ToList();
-        ours.ShouldHaveSingleItem();
-        ours[0].Locked.ShouldBeFalse();
+        await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ConflictException>(
+            () => service.CreateForTaskAsync(task, CancellationToken.None));
+        Directory.Exists(worktreePath).ShouldBeFalse();
+        (await repo.GitReadAsync("show-ref", "--verify", "--hash", "refs/heads/" + branch)).Trim()
+            .ShouldBe((await repo.GitReadAsync("rev-parse", "HEAD")).Trim());
+        (await manager.ListAsync(repo.Path, CancellationToken.None)).ShouldHaveSingleItem();
     }
 
     [Test]
-    public async Task healing_re_attaches_the_task_branch_and_keeps_its_commits()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task healing_re_attaches_the_task_branch_and_keeps_its_commits(bool stagedResolution)
     {
         using var repo = new ScratchGitRepo();
         await repo.CommitFileAsync("README.md", "base\n");
@@ -149,6 +144,13 @@ public class DelegationWorktreeTests
             task.WorktreePath!, "rev-list", "--count", "feat/parent..HEAD")).StdOut.Trim();
         before.ShouldBe("1");
 
+        if (stagedResolution)
+        {
+            await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "kept.md"), "staged resolution\n");
+            (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "kept.md")).Ok.ShouldBeTrue();
+        }
+        var indexBefore = (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "write-tree")).StdOut.Trim();
+
         DeleteTree(task.WorktreePath!);
         task.WorktreePath = null;
         task.WorktreeBranch = null;
@@ -160,6 +162,32 @@ public class DelegationWorktreeTests
         after.ShouldBe(before);
         (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "show", "HEAD:kept.md"))
             .StdOut.ReplaceLineEndings("\n").ShouldBe("keep me\n");
+        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "write-tree")).StdOut.Trim().ShouldBe(indexBefore);
+        (await File.ReadAllTextAsync(Path.Combine(task.WorktreePath!, "kept.md"))).ReplaceLineEndings("\n")
+            .ShouldBe(stagedResolution ? "staged resolution\n" : "keep me\n");
+    }
+
+    [Test]
+    [Arguments("unknown.txt")]
+    [Arguments("bin-private/unknown.txt")]
+    public async Task failed_creation_preserves_unknown_hook_content(string relative)
+    {
+        using var repo = new ScratchGitRepo();
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.CommitFileAsync(".gitignore", "bin-private/\n");
+        var hooks = Path.Combine(repo.Path, ".git-hooks-fail");
+        Directory.CreateDirectory(hooks);
+        await File.WriteAllTextAsync(Path.Combine(hooks, "post-checkout"),
+            "#!/bin/sh\nmkdir -p bin-private\nprintf 'valuable' > " + relative + "\nexit 1\n");
+        await repo.GitAsync("config", "core.hooksPath", hooks);
+        var (service, _) = CreateService(repo);
+        var task = NewTask(repo.Path, null);
+        var (branch, path) = ExpectedCoordinates(repo, task);
+        await Should.ThrowAsync<InvalidOperationException>(() => service.CreateForTaskAsync(task, CancellationToken.None));
+        File.Exists(Path.Combine(path, relative)).ShouldBeTrue("failed creation must preserve unknown hook bytes before any ordinary removal");
+        (await File.ReadAllTextAsync(Path.Combine(path, relative))).ShouldBe("valuable");
+        (await repo.GitReadAsync("show-ref", "--verify", "--hash", "refs/heads/" + branch)).Trim()
+            .ShouldBe((await repo.GitReadAsync("rev-parse", "HEAD")).Trim());
     }
 
     [Test]
@@ -238,22 +266,29 @@ public class DelegationWorktreeTests
         await repo.GitAsync("remote", "add", "origin", remote.Path);
         await repo.GitAsync("push", "-u", "origin", "master");
 
-        var (service, _) = CreateService(repo);
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var (land, service) = CreateLand(db, repo);
         var task = NewTask(repo.Path, mergeTarget: null);
         await service.CreateForTaskAsync(task, CancellationToken.None);
+        task.Status = AgentTaskStatus.Succeeded;
+        task.CompletedAt = DateTime.UtcNow;
+        task.LandRequestedAt = DateTime.UtcNow;
+        db.AgentTasks.Add(task);
+        await db.SaveChangesAsync();
         await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "land me\n");
         await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "feature.md");
         await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "feature");
         await repo.CommitFileAsync("README.md", "base advanced\n");
         await repo.GitAsync("push", "origin", "master");
 
-        var prepared = await service.PrepareLandAsync(task, CancellationToken.None);
-        prepared.Succeeded.ShouldBeTrue();
-        prepared.BaseMoved.ShouldBeTrue();
-        var finalized = await service.FinalizeLandAsync(task, prepared.Target!, CancellationToken.None);
+        (await land.RunAsync(task.Id, null, CancellationToken.None)).ShouldBe(LandRunResult.Complete);
+        var operation = await db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.TaskId == task.Id);
+        operation.Publication.ShouldBe(LandPublicationOutcome.Landed);
+        operation.Cleanup.ShouldBe(LandCleanupStatus.Complete);
+        operation.RemoteConfirmedAt.ShouldNotBeNull();
+        operation.RebasedSourceSha.ShouldNotBe(operation.OriginalSourceSha);
 
-        finalized.Pushed.ShouldBeTrue(finalized.Detail);
-        finalized.Residue.ShouldBeNull();
         (await ScratchGitRepo.GitInAsync(remote.Path, "show", "master:feature.md")).StdOut.ShouldBe("land me\n");
         Directory.Exists(task.WorktreePath).ShouldBeFalse();
     }
@@ -268,9 +303,16 @@ public class DelegationWorktreeTests
         await repo.GitAsync("remote", "add", "origin", remote.Path);
         await repo.GitAsync("push", "-u", "origin", "master");
 
-        var (service, _) = CreateService(repo);
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var (land, service) = CreateLand(db, repo);
         var task = NewTask(repo.Path, mergeTarget: null);
         await service.CreateForTaskAsync(task, CancellationToken.None);
+        task.Status = AgentTaskStatus.Succeeded;
+        task.CompletedAt = DateTime.UtcNow;
+        task.LandRequestedAt = DateTime.UtcNow;
+        db.AgentTasks.Add(task);
+        await db.SaveChangesAsync();
         await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "land me\n");
         await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "feature.md");
         await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "feature");
@@ -278,12 +320,13 @@ public class DelegationWorktreeTests
         await repo.CommitFileAsync("README.md", "base advanced\n");
         await repo.GitAsync("push", "origin", "master");
 
-        var prepared = await service.PrepareLandAsync(task, CancellationToken.None);
-        prepared.Succeeded.ShouldBeTrue();
-        var finalized = await service.FinalizeLandAsync(task, prepared.Target!, CancellationToken.None);
+        (await land.RunAsync(task.Id, null, CancellationToken.None)).ShouldBe(LandRunResult.Complete);
+        var operation = await db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.TaskId == task.Id);
+        operation.Publication.ShouldBe(LandPublicationOutcome.Landed);
+        operation.Cleanup.ShouldBe(LandCleanupStatus.Complete);
+        operation.RemoteConfirmedAt.ShouldNotBeNull();
+        operation.RebasedSourceSha.ShouldNotBe(operation.OriginalSourceSha);
 
-        finalized.Pushed.ShouldBeTrue(finalized.Detail);
-        finalized.Residue.ShouldBeNull();
         Directory.Exists(task.WorktreePath).ShouldBeFalse();
         (await ScratchGitRepo.GitInAsync(repo.Path, "show-ref", "--verify", "--quiet", $"refs/heads/{task.WorktreeBranch}"))
             .Ok.ShouldBeFalse("the rebased branch must be deleted even when its upstream is behind");
@@ -299,26 +342,35 @@ public class DelegationWorktreeTests
         await repo.GitAsync("remote", "add", "origin", remote.Path);
         await repo.GitAsync("push", "-u", "origin", "master");
 
-        var (service, _) = CreateService(repo);
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var (land, service) = CreateLand(db, repo);
         var task = NewTask(repo.Path, mergeTarget: null);
         await service.CreateForTaskAsync(task, CancellationToken.None);
+        task.Status = AgentTaskStatus.Succeeded;
+        task.CompletedAt = DateTime.UtcNow;
+        task.LandRequestedAt = DateTime.UtcNow;
+        db.AgentTasks.Add(task);
+        await db.SaveChangesAsync();
         await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "shared.md"), "task version\n");
         await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "shared.md");
         await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "task edit");
         await repo.CommitFileAsync("shared.md", "target version\n");
         await repo.GitAsync("push", "origin", "master");
 
-        var prepared = await service.PrepareLandAsync(task, CancellationToken.None);
-
-        prepared.Conflicted.ShouldBeTrue();
-        prepared.ConflictFiles.ShouldContain("shared.md");
+        await land.RunAsync(task.Id, null, CancellationToken.None);
+        var operation = await db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.TaskId == task.Id);
+        operation.LastReason.ShouldBe("rebase_conflict");
+        operation.RemoteConfirmedAt.ShouldBeNull();
+        (await db.AgentTaskEvents.AsNoTracking().SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Conflicted))
+            .Detail.ShouldContain("shared.md");
         Directory.Exists(task.WorktreePath).ShouldBeTrue("a merge delegate must receive the original worktree");
         (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "status", "--porcelain")).StdOut.Trim().ShouldBeEmpty(
             "the rebase is aborted before the Merge delegate starts it again");
     }
 
     [Test]
-    public async Task prepare_land_aborts_an_interrupted_rebase_first()
+    public async Task legacy_prepare_refuses_and_preserves_interrupted_rebase_resolution()
     {
         using var repo = new ScratchGitRepo("antiphon-land-rebase-heal");
         using var remote = new TemporaryDirectory("antiphon-land-rebase-heal-remote");
@@ -340,17 +392,15 @@ public class DelegationWorktreeTests
         interrupted.Ok.ShouldBeFalse("the hand-run rebase must stop on the conflict");
         (await RebaseStateDirectoryAsync(task.WorktreePath!)).ShouldNotBeNull("the worktree must be left mid-rebase");
 
+        await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "shared.md"), "operator resolution\n");
+        await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "shared.md");
+        var indexBefore = (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "write-tree")).StdOut.Trim();
         var prepared = await service.PrepareLandAsync(task, CancellationToken.None);
-
-        prepared.Conflicted.ShouldBeTrue(prepared.Detail);
         prepared.Succeeded.ShouldBeFalse();
-        prepared.ConflictFiles.ShouldContain("shared.md");
-        prepared.Detail.ShouldNotBeNull();
-        prepared.Detail.ShouldContain("aborted an interrupted rebase");
-        prepared.Detail.ShouldNotContain("Rebase onto master failed");
-        Directory.Exists(task.WorktreePath).ShouldBeTrue();
-        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "status", "--porcelain")).StdOut.Trim()
-            .ShouldBeEmpty("the healed rebase still aborts cleanly for the Merge delegate");
+        prepared.Detail.ShouldBe("durable_landing_protocol_required");
+        (await RebaseStateDirectoryAsync(task.WorktreePath!)).ShouldNotBeNull();
+        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "write-tree")).StdOut.Trim().ShouldBe(indexBefore);
+        (await File.ReadAllTextAsync(Path.Combine(task.WorktreePath!, "shared.md"))).ShouldBe("operator resolution\n");
     }
 
     [Test]
@@ -391,7 +441,7 @@ public class DelegationWorktreeTests
         originAfter.ShouldBe(localSha);
         var landed = await db.AgentTaskEvents.AsNoTracking()
             .SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Landed);
-        landed.Detail.ShouldContain($"origin/master={originAfter}");
+        landed.Detail.ShouldContain($"remote={originAfter}");
         landed.Detail.ShouldContain(originAfter);
     }
 
@@ -405,28 +455,27 @@ public class DelegationWorktreeTests
         await repo.GitAsync("remote", "add", "origin", remote.Path);
         await repo.GitAsync("push", "-u", "origin", "master");
 
-        var (service, _) = CreateService(repo);
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var (land, service) = CreateLand(db, repo);
         var task = NewTask(repo.Path, mergeTarget: null);
         await service.CreateForTaskAsync(task, CancellationToken.None);
+        task.Status = AgentTaskStatus.Succeeded;
+        task.CompletedAt = DateTime.UtcNow;
+        task.LandRequestedAt = DateTime.UtcNow;
+        db.AgentTasks.Add(task);
+        await db.SaveChangesAsync();
         await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "land me\n");
         await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "feature.md");
         await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "feature");
-        var prepared = await service.PrepareLandAsync(task, CancellationToken.None);
-        prepared.Succeeded.ShouldBeTrue();
-
-        using var rival = new TemporaryDirectory("antiphon-land-rival");
-        await ScratchGitRepo.GitInAsync(rival.Path, "clone", remote.Path, ".");
-        await ScratchGitRepo.GitInAsync(rival.Path, "config", "user.email", "test@antiphon.local");
-        await ScratchGitRepo.GitInAsync(rival.Path, "config", "user.name", "Rival");
-        await File.WriteAllTextAsync(Path.Combine(rival.Path, "rival.md"), "remote moved\n");
-        await ScratchGitRepo.GitInAsync(rival.Path, "add", "rival.md");
-        await ScratchGitRepo.GitInAsync(rival.Path, "commit", "-m", "remote advance");
-        await ScratchGitRepo.GitInAsync(rival.Path, "push", "origin", "master");
-
-        var finalized = await service.FinalizeLandAsync(task, prepared.Target!, CancellationToken.None);
-
-        finalized.Pushed.ShouldBeFalse();
-        finalized.Detail.ShouldContain("push");
+        await File.WriteAllTextAsync(Path.Combine(remote.Path, "hooks", "pre-receive"), "#!/bin/sh\nexit 1\n");
+        var remoteBefore = (await ScratchGitRepo.GitInAsync(remote.Path, "rev-parse", "master")).StdOut.Trim();
+        await land.RunAsync(task.Id, null, CancellationToken.None);
+        var operation = await db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.TaskId == task.Id);
+        operation.LocalTargetAfterSha.ShouldNotBeNull();
+        operation.RemoteConfirmedAt.ShouldBeNull();
+        operation.Publication.ShouldBe(LandPublicationOutcome.Unconfirmed);
+        (await ScratchGitRepo.GitInAsync(remote.Path, "rev-parse", "master")).StdOut.Trim().ShouldBe(remoteBefore);
         Directory.Exists(task.WorktreePath).ShouldBeTrue("a push rejection must not clean up recoverable work");
     }
 
@@ -568,7 +617,7 @@ public class DelegationWorktreeTests
     // ---- CARD-0149: self-cleaned worktree is not "NOT merged" ------------------------------
 
     [Test]
-    public async Task a_self_removed_worktree_is_already_cleaned_up_not_a_merge_failure()
+    public async Task a_self_removed_worktree_without_receipt_cannot_claim_merge_success()
     {
         // The dispatched agent rebase/ff-merged itself, then `git worktree remove --force --force`
         // and `git branch -D`. Merge-back used to run `git status --porcelain` in the now-gone
@@ -592,13 +641,13 @@ public class DelegationWorktreeTests
 
         var outcome = await service.TryMergeBackAsync(task, CancellationToken.None);
 
-        outcome.Result.ShouldBe(DelegationWorktreeService.MergeResult.AlreadyCleanedUp);
-        outcome.Detail.ShouldBe("worktree already cleaned up by the task");
+        outcome.Result.ShouldBe(DelegationWorktreeService.MergeResult.Failed);
+        outcome.Detail.ShouldBe("source_registration_unknown");
         Directory.Exists(task.WorktreePath).ShouldBeFalse();
     }
 
     [Test]
-    public async Task an_unregistered_leftover_directory_is_already_cleaned_up_not_a_merge_failure()
+    public async Task an_unregistered_leftover_directory_is_preserved_without_merge_success()
     {
         // Windows shape of the CARD-0149 false alarm: `git worktree remove` unregisters (gitdir
         // gone) but leaves the directory, so Directory.Exists is true and `git status --porcelain`
@@ -619,8 +668,9 @@ public class DelegationWorktreeTests
 
         var outcome = await service.TryMergeBackAsync(task, CancellationToken.None);
 
-        outcome.Result.ShouldBe(DelegationWorktreeService.MergeResult.AlreadyCleanedUp);
-        outcome.Detail.ShouldBe("worktree already cleaned up by the task");
+        outcome.Result.ShouldBe(DelegationWorktreeService.MergeResult.Failed);
+        outcome.Detail.ShouldBe("source_registration_unknown");
+        (await File.ReadAllTextAsync(Path.Combine(task.WorktreePath!, "dangling.md"))).ShouldBe("left on disk\n");
     }
 
     [Test]
@@ -754,7 +804,8 @@ public class DelegationWorktreeTests
     private static (AgentTaskLandService Land, DelegationWorktreeService Worktrees) CreateLand(
         AppDbContext db, ScratchGitRepo repo)
     {
-        var (worktrees, _) = CreateService(repo);
+        var graph = DelegationTestServices.CreateGitGraph(new GitSettings { WorktreeBasePath = repo.WorktreeRoot }, db);
+        var worktrees = graph.Worktrees;
         var tasks = new AgentTaskService(
             db,
             new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
@@ -772,7 +823,9 @@ public class DelegationWorktreeTests
             new MockEventBus(),
             TimeProvider.System,
             Options.Create(new DelegationSettings()),
-            NullLogger<AgentTaskLandService>.Instance);
+            NullLogger<AgentTaskLandService>.Instance,
+            new AgentTaskLandingProtocol(db, graph.Git, graph.Leases, graph.Manager, new LandingSafetyHarness.ControlledVerifier(), TimeProvider.System),
+            graph.Leases, graph.Git);
         return (land, worktrees);
     }
 
@@ -780,22 +833,12 @@ public class DelegationWorktreeTests
         ScratchGitRepo repo,
         int? worktreeAddTimeoutSeconds = null)
     {
-        var manager = new WorktreeManager(
-            Options.Create(new GitSettings
-            {
-                WorktreeBasePath = repo.WorktreeRoot,
-                WorktreeStaleAfterDays = 7,
-                WorktreeJanitorIntervalHours = 24,
-                WorktreeAddTimeoutSeconds = worktreeAddTimeoutSeconds ?? 180,
-            }),
-            TimeProvider.System,
-            NullLogger<WorktreeManager>.Instance);
-        var service = new DelegationWorktreeService(
-            manager,
-            new GitService(NullLogger<GitService>.Instance),
-            NullLogger<DelegationWorktreeService>.Instance,
-            new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance));
-        return (service, manager);
+        var graph = DelegationTestServices.CreateGitGraph(new GitSettings
+        {
+            WorktreeBasePath = repo.WorktreeRoot, WorktreeStaleAfterDays = 7,
+            WorktreeJanitorIntervalHours = 24, WorktreeAddTimeoutSeconds = worktreeAddTimeoutSeconds ?? 180,
+        });
+        return (graph.Worktrees, graph.Manager);
     }
 
     private sealed class TemporaryDirectory : IDisposable

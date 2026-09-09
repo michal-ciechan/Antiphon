@@ -10,6 +10,10 @@ API); nothing here replaces that.
 **Do not grep `MapGet` to find a route.** The one route this page cannot give you is a route this
 page says does not exist.
 
+Landing timeline events carry nullable `landingOperationId`, `landingPublication`,
+`landingCleanup` and `landingMode` snapshots. `LandingCleanup` updates an existing publication
+without counting another one. Legacy events have null snapshots and grant no cleanup authority.
+
 ## Two processes, two prefixes
 
 Mixing them is how sessions get 404s that look like a broken server.
@@ -64,7 +68,7 @@ While Claude aliases are on a usage hold, a capability caller that wants to keep
 | Type work into a session | POST | `/api/sessions/{id}/messages` |
 | Schedules for an agent / card | GET | `/api/schedules?agentId=` / `?cardId=` (`scripts/schedule.ps1`) |
 | Kill a session | POST | `/api/sessions/{id}/kill` |
-| Land a succeeded Worktree task | POST | `/api/agent-tasks/{id}/land` (`{ verify?: string }`) — 202 `{ status: "queued" \| "requeued" }`. 409 means a land is running in this server now. Read `Landed` / `LandedWithResidue` / `LandRefused` on the task. `GET /api/agent-tasks/{id}` exposes `landRequestedAt`, `landStartedAt`, `landAttempt`. Re-POST retries leftover cleanup. |
+| Land a succeeded Worktree task | POST | `/api/agent-tasks/{id}/land` (`{ verify?: string }`) — 202 `{ status: "queued" \| "requeued" }`. 409 means a land is running in this server now. Read `Landed` / `AlreadyPresent` / `LandedWithResidue` / `LandRefused` and the structured `landing` evidence on the task. `GET /api/agent-tasks/{id}` exposes `landRequestedAt`, `landStartedAt`, `landAttempt`. Re-POST resumes recorded publication or retries guarded cleanup. `LandRefused` does not imply the local target stayed unchanged. |
 | Record/override a stage finding (CARD-0272) | POST | `/api/agent-tasks/{id}/finding` (`RecordStageFindingRequest`: `stage` name, `found` bool, `detail?`). Writes a `Source=Orchestrator` `StageOutcome` row that supersedes the latest for that (task, stage); `delegate.ps1 -Finding <id> -Stage … -Found "…"` / `-Clean`. |
 | Per-stage hit rate vs. cost (CARD-0272) | GET | `/api/stage-outcomes` (`since`, `until`, `stage`, `cardId`, `latestOnly` default true) — rows plus a per-stage summary (runs, found/clean/skipped/failed/unreported, hit %, USD spent, USD per finding, server seconds). `scripts/stage-value-report.ps1` prints it as a table. |
 | Live runner sessions / rendered screen | GET | `:17204/sessions`, `:17204/sessions/{id}/snapshot` |

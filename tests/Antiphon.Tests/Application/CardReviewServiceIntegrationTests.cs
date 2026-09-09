@@ -22,6 +22,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [NotInParallel("CardReview")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class CardReviewServiceIntegrationTests
 {
     [Test]
@@ -155,6 +156,7 @@ public class CardReviewServiceIntegrationTests
         try
         {
             var graph = NewGraph(tempRoot, githubEnabled: true);
+            await CreateRepoWithWorktreeChangeAsync(graph.Project.LocalRepositoryPath!, graph.Worktree.Path);
             graph.Project.BaseBranch = "develop";
             graph.Worktree.BaseRef = "release/1";
             db.Projects.Add(graph.Project);
@@ -198,6 +200,7 @@ public class CardReviewServiceIntegrationTests
         try
         {
             var graph = NewGraph(tempRoot, githubEnabled: true);
+            await CreateRepoWithWorktreeChangeAsync(graph.Project.LocalRepositoryPath!, graph.Worktree.Path);
             db.Projects.Add(graph.Project);
             await db.SaveChangesAsync();
             graph.Card.CurrentWorktreeId = graph.Worktree.Id;
@@ -221,6 +224,37 @@ public class CardReviewServiceIntegrationTests
             result.PrUrl.ShouldBe("https://github.example/pr/99");
             github.CreatedPullRequests.ShouldBeEmpty();
             github.PushedBranches.ShouldContain((graph.Worktree.Path, graph.Worktree.Branch));
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task CardPrApi_held_repository_lease_prevents_commit_and_push()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var graph = NewGraph(tempRoot, githubEnabled: true);
+            await CreateRepoWithWorktreeChangeAsync(graph.Project.LocalRepositoryPath!, graph.Worktree.Path);
+            db.Projects.Add(graph.Project);
+            await db.SaveChangesAsync();
+            graph.Card.CurrentWorktreeId = graph.Worktree.Id;
+            await db.SaveChangesAsync();
+            var git = new MockGitService();
+            var github = new FakeGitHubService();
+            await using var harness = BuildHarness(db, tempRoot, git, github);
+            await using var blocker = await new RepositoryMutationLease(new LandingGit())
+                .TryAcquireAsync(graph.Project.LocalRepositoryPath!, CancellationToken.None);
+            blocker.ShouldNotBeNull();
+            await Should.ThrowAsync<ConflictException>(() => harness.Service.OpenPullRequestAsync(graph.Card.Id, CancellationToken.None));
+            git.Operations.ShouldBeEmpty("a held repository must prevent the PR caller's commit");
+            github.PushedBranches.ShouldBeEmpty();
+            github.CreatedPullRequests.ShouldBeEmpty();
         }
         finally
         {
@@ -310,6 +344,8 @@ public class CardReviewServiceIntegrationTests
         services.AddSingleton<IGitService>(_ => gitService);
         services.AddSingleton(gitHubService);
         services.AddSingleton<IGitHubService>(_ => gitHubService);
+        services.AddSingleton<ILandingGit, LandingGit>();
+        services.AddSingleton<IRepositoryMutationLease, RepositoryMutationLease>();
         services.AddSingleton<IOptions<GithubSettings>>(Options.Create(new GithubSettings { Enabled = githubEnabled }));
         services.AddSingleton<IOptions<AgentSessionSettings>>(Options.Create(new AgentSessionSettings
         {

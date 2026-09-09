@@ -6,21 +6,20 @@ public interface IWorktreeManager
 {
     Task<WorktreeInfo> CreateAsync(string repoPath, string cardId, string baseRef, CancellationToken ct);
 
+    Task<WorktreeInfo> CreateAsync(string repoPath, string cardId, string baseRef, RepositoryLease lease, CancellationToken ct)
+        => CreateAsync(repoPath, cardId, baseRef, ct);
+
     Task<IReadOnlyList<WorktreeInfo>> ListAsync(string repoPath, CancellationToken ct);
 
     Task RemoveAsync(string repoPath, string worktreePath, CancellationToken ct);
 
-    /// <summary>
-    /// Non-throwing cleanup. Default implementation calls <see cref="RemoveAsync"/> and reports
-    /// clean so existing test fakes compile unchanged. <paramref name="mergedInto"/> is ignored
-    /// by the default; the real manager honours it (ancestor-guarded <c>branch -D</c>).
-    /// </summary>
-    async Task<WorktreeRemoval> TryRemoveAsync(
+    /// <summary>Legacy callers have no deletion authority; retain their residue.</summary>
+    Task<WorktreeRemoval> TryRemoveAsync(
         string repoPath, string worktreePath, string? mergedInto, CancellationToken ct)
-    {
-        await RemoveAsync(repoPath, worktreePath, ct);
-        return WorktreeRemoval.Clean;
-    }
+        => Task.FromResult(new WorktreeRemoval(false, false, false, "typed_removal_authority_required"));
+
+    Task<WorktreeRemoval> TryRemoveAsync(WorktreeRemovalRequest request, CancellationToken ct)
+        => Task.FromResult(new WorktreeRemoval(false, false, false, "guarded_removal_not_implemented"));
 
     Task TouchAsync(string worktreePath, CancellationToken ct);
 
@@ -53,10 +52,10 @@ public interface IWorktreeManager
 
     /// <summary>
     /// CARD-0328 S3: ancestor/ahead and porcelain dirtiness for one residue candidate.
-    /// A missing repo, branch, or directory degrades to "no branch, ancestor, clean".
+    /// Missing or failed inspection has no cleanup authority.
     /// Default so existing test fakes compile unchanged.
     /// </summary>
     Task<WorktreeResidueGitState> InspectResidueAsync(
         string? repoPath, string? worktreePath, string? branch, string targetRef, CancellationToken ct)
-        => Task.FromResult(new WorktreeResidueGitState(false, true, 0, false, false));
+        => Task.FromResult(new WorktreeResidueGitState(false, false, 0, true, true));
 }

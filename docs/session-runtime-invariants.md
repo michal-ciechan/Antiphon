@@ -160,7 +160,7 @@
 
 ### Gotcha #87
 
-- **A land request is a row; the channel is a hand-off** (CARD-0331): `AgentTasks.LandRequestedAt` is the durable queue. The in-process channel only hands the id to the drain. A sweep at boot and every `LandSweepSeconds` re-runs anything pending that this process does not hold. Three interrupted attempts (`LandAttempt >= LandMaxAttempts`, default 3) refuse; `-Land` again starts a new request. A 409 means running in this server now. An interrupted rebase is aborted before a new one; the already-landed arm pushes when local target is ahead of origin and the task branch is an ancestor of local target. Pinned by `AgentTaskLandRequestTests`, `AgentTaskLandSweepTests`, `DelegationWorktreeTests`.
+- **A land request is a row; the channel is a hand-off** (CARD-0331): `AgentTasks.LandRequestedAt` is the durable queue. The in-process channel only hands the id to the drain. A sweep at boot and every `LandSweepSeconds` re-runs anything pending that this process does not hold. Three interrupted attempts (`LandAttempt >= LandMaxAttempts`, default 3) refuse; `-Land` again starts a new request. A 409 means running in this server now. CARD-0448 replaces the old abort/ancestry shortcuts: an interrupted rebase without a durable Prepared checkpoint requires inspection and preserves manual resolution. Local target containment is not publication proof. Restart resumes the recorded operation, and cleanup requires committed publication plus fresh remote containment and current source identity. Pinned by `AgentTaskLandRequestTests`, `AgentTaskLandSweepTests`, `DelegationWorktreeTests`.
 
 ### Gotcha #83
 

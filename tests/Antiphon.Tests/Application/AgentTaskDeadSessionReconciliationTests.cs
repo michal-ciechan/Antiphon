@@ -436,20 +436,14 @@ public class AgentTaskDeadSessionReconciliationTests
         await repo.CommitFileAsync("README.md", "base\n");
         await repo.GitAsync("branch", "feat/parent");
 
-        var manager = new WorktreeManager(
-            Options.Create(new GitSettings
-            {
-                WorktreeBasePath = repo.WorktreeRoot,
-                WorktreeStaleAfterDays = 7,
-                WorktreeJanitorIntervalHours = 24,
-            }),
-            TimeProvider.System,
-            NullLogger<WorktreeManager>.Instance);
-        var worktrees = new DelegationWorktreeService(
-            manager,
-            new GitService(NullLogger<GitService>.Instance),
-            NullLogger<DelegationWorktreeService>.Instance,
-            new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance));
+        var graph = DelegationTestServices.CreateGitGraph(new GitSettings
+        {
+            WorktreeBasePath = repo.WorktreeRoot,
+            WorktreeStaleAfterDays = 7,
+            WorktreeJanitorIntervalHours = 24,
+        });
+        var manager = graph.Manager;
+        var worktrees = graph.Worktrees;
         var draft = new AgentTask
         {
             Id = Guid.NewGuid(),

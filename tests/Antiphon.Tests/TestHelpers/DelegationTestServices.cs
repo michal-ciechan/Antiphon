@@ -67,8 +67,44 @@ internal static class DelegationTestServices
         services.TryAddSingleton(Options.Create(gitSettings ?? new GitSettings()));
         services.TryAddSingleton<IWorktreeManager, WorktreeManager>();
         services.TryAddSingleton<IGitService, GitService>();
+        services.TryAddSingleton<ILandingGit, LandingGit>();
+        services.TryAddSingleton<IWorktreeRemovalEvidence, Antiphon.Server.Infrastructure.Data.WorktreeRemovalEvidence>();
+        services.TryAddSingleton<GuardedWorktreeRemoval>();
+        services.TryAddSingleton<IRepositoryMutationLease, RepositoryMutationLease>();
+        services.TryAddScoped<AgentTaskLandingState>();
+        services.TryAddSingleton<ILandingVerifier, LandingVerifier>();
+        services.TryAddScoped<AgentTaskLandingProtocol>();
         services.AddGitWorkspaceService();
         services.TryAddScoped<DelegationWorktreeService>();
         return services;
+    }
+
+    internal static (DelegationWorktreeService Worktrees, WorktreeManager Manager, ILandingGit Git,
+        IRepositoryMutationLease Leases) CreateGitGraph(GitSettings settings,
+        Antiphon.Server.Infrastructure.Data.AppDbContext? db = null)
+    {
+        var git = new LandingGit();
+        var leases = new RepositoryMutationLease(git);
+        var guarded = new GuardedWorktreeRemoval(git, leases, new TestRemovalEvidence(db));
+        var manager = new WorktreeManager(Options.Create(settings), TimeProvider.System,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<WorktreeManager>.Instance, guarded, leases, git);
+        var worktrees = new DelegationWorktreeService(manager,
+            new GitService(Microsoft.Extensions.Logging.Abstractions.NullLogger<GitService>.Instance),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<DelegationWorktreeService>.Instance,
+            new GitWorkspaceService(Microsoft.Extensions.Logging.Abstractions.NullLogger<GitWorkspaceService>.Instance),
+            leases, git);
+        return (worktrees, manager, git, leases);
+    }
+
+    private sealed class TestRemovalEvidence(Antiphon.Server.Infrastructure.Data.AppDbContext? database) : IWorktreeRemovalEvidence
+    {
+        public async Task<Antiphon.Server.Domain.Entities.AgentTaskLanding?> ReadAsync(Guid operationId, CancellationToken ct)
+        {
+            if (database is null) return null;
+            await using var fresh = new Antiphon.Server.Infrastructure.Data.AppDbContext(
+                TestDbFixture.CreateDbContextOptions(Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.GetConnectionString(database.Database)));
+            return await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.SingleOrDefaultAsync(
+                fresh.AgentTaskLandings, o => o.Id == operationId, ct);
+        }
     }
 }

@@ -399,7 +399,8 @@ public sealed class AgentTaskReplyService
         var events = await db.AgentTaskEvents.AsNoTracking()
             .Where(e => e.AgentTaskId == taskId)
             .OrderBy(e => e.At)
-            .Select(e => new AgentTaskEventDto(e.Type, e.ModelLevel, e.Detail, e.At))
+            .Select(e => new AgentTaskEventDto(e.Type, e.ModelLevel, e.Detail, e.At,
+                e.LandingOperationId, e.LandingPublication, e.LandingCleanup, e.LandingMode))
             .ToListAsync(ct);
         var kind = BlockedContextBuilder.Classify(task, events);
         if (kind != BlockedKind.Question)
@@ -1390,7 +1391,7 @@ public sealed class AgentTaskReplyService
 
             case DelegationWorktreeService.MergeResult.NothingToMerge:
                 db.AgentTaskEvents.Add(NewEvent(
-                    task.Id, AgentTaskEventType.Merged, "No changes beyond the target — worktree removed.", now));
+                    task.Id, AgentTaskEventType.Merged, outcome.Detail ?? "No changes beyond the target; cleanup state unknown.", now));
                 return "no changes";
 
             case DelegationWorktreeService.MergeResult.LeftForHuman:

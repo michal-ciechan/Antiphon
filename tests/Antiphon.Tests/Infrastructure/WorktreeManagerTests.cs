@@ -14,6 +14,18 @@ namespace Antiphon.Tests.Infrastructure;
 public class WorktreeManagerTests
 {
     [Test]
+    [Arguments("", false, false)]
+    [Arguments(" M tracked.txt\0", true, false)]
+    [Arguments("?? new.txt\0", false, true)]
+    [Arguments("!! bin-private/data.txt\0", false, true)]
+    [Arguments("R  new.txt\0old.txt\0?? new.bin\0", true, true)]
+    [Arguments("malformed\0", true, true)]
+    public void Residue_status_distinguishes_clean_tracked_and_protected_files(string status, bool tracked, bool untracked)
+    {
+        WorktreeManager.ParsePorcelainDirtiness(status).ShouldBe((tracked, untracked));
+    }
+
+    [Test]
     public void ParseWorktreeList_captures_locked_reason_and_prunable_reason()
     {
         const string porcelain = """
@@ -133,6 +145,7 @@ public class WorktreeManagerSafetyTests
 
 [Category("GitIntegration")]
 [Category("Integration")]
+[ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
 public class WorktreeManagerGitIntegrationTests
 {
     [Test]
@@ -197,7 +210,7 @@ public class WorktreeManagerGitIntegrationTests
     }
 
     [Test]
-    public async Task WorktreeManager_remove_deletes_worktree_and_branch()
+    public async Task WorktreeManager_raw_remove_refuses_without_authority()
     {
         await GitTestEnvironment.SkipIfGitUnavailableAsync();
         var env = await GitTestEnvironment.CreateAsync();
@@ -208,13 +221,15 @@ public class WorktreeManagerGitIntegrationTests
             await GitTestEnvironment.RunGitAsync(env.RepoPath, "branch", "unrelated");
             var worktree = await manager.CreateAsync(env.RepoPath, "E03-003", "HEAD", CancellationToken.None);
 
-            await manager.RemoveAsync(env.RepoPath, worktree.Path, CancellationToken.None);
+            var refusal = await Should.ThrowAsync<InvalidOperationException>(() =>
+                manager.RemoveAsync(env.RepoPath, worktree.Path, CancellationToken.None));
+            refusal.Message.ShouldBe("typed_removal_authority_required");
 
-            Directory.Exists(worktree.Path).ShouldBeFalse();
+            Directory.Exists(worktree.Path).ShouldBeTrue();
             (await GitTestEnvironment.RunGitAsync(env.RepoPath, "worktree", "list", "--porcelain"))
                 .ShouldNotContain(worktree.Path);
             (await GitTestEnvironment.RunGitAsync(env.RepoPath, "branch", "--list", "feat/card-E03-003"))
-                .ShouldBe(string.Empty);
+                .ShouldContain(worktree.Branch);
             (await GitTestEnvironment.RunGitAsync(env.RepoPath, "branch", "--list", "unrelated"))
                 .ShouldContain("unrelated");
         }
@@ -225,7 +240,7 @@ public class WorktreeManagerGitIntegrationTests
     }
 
     [Test]
-    public async Task WorktreeManager_remove_treats_unregistered_leftover_directory_as_already_clean()
+    public async Task WorktreeManager_raw_remove_preserves_unregistered_leftover_directory()
     {
         await GitTestEnvironment.SkipIfGitUnavailableAsync();
         var env = await GitTestEnvironment.CreateAsync();
@@ -243,15 +258,17 @@ public class WorktreeManagerGitIntegrationTests
             refused.ExitCode.ShouldBe(128);
             refused.Stderr.ShouldContain("is not a working tree");
 
-            await manager.RemoveAsync(env.RepoPath, worktree.Path, CancellationToken.None);
+            var refusal = await Should.ThrowAsync<InvalidOperationException>(() =>
+                manager.RemoveAsync(env.RepoPath, worktree.Path, CancellationToken.None));
+            refusal.Message.ShouldBe("typed_removal_authority_required");
 
-            Directory.Exists(worktree.Path).ShouldBeFalse();
+            Directory.Exists(worktree.Path).ShouldBeTrue();
             (await GitTestEnvironment.RunGitAsync(env.RepoPath, "worktree", "list", "--porcelain"))
                 .ShouldNotContain(worktree.Path);
             (await GitTestEnvironment.RunGitAsync(env.RepoPath, "branch", "--list", "feat/card-E03-007"))
-                .ShouldBe(string.Empty);
+                .ShouldContain(worktree.Branch);
             var metadataDir = Path.Combine(env.WorktreeRoot, ".antiphon", "worktrees");
-            Directory.EnumerateFiles(metadataDir, "*.json").ShouldBeEmpty();
+            Directory.EnumerateFiles(metadataDir, "*.json").ShouldNotBeEmpty();
         }
         finally
         {
@@ -332,7 +349,7 @@ public class WorktreeManagerGitIntegrationTests
             var ex = await Should.ThrowAsync<InvalidOperationException>(() =>
                 manager.RemoveAsync(env.RepoPath, worktree.Path, CancellationToken.None));
 
-            ex.Message.ShouldContain("locked working tree");
+            ex.Message.ShouldBe("typed_removal_authority_required");
             Directory.Exists(worktree.Path).ShouldBeTrue();
         }
         finally
@@ -342,7 +359,7 @@ public class WorktreeManagerGitIntegrationTests
     }
 
     [Test]
-    public async Task WorktreeManager_try_remove_deletes_a_merged_branch_whose_upstream_is_behind()
+    public async Task WorktreeManager_raw_remove_cannot_use_local_ancestry_as_authority()
     {
         await GitTestEnvironment.SkipIfGitUnavailableAsync();
         var env = await GitTestEnvironment.CreateAsync();
@@ -372,10 +389,11 @@ public class WorktreeManagerGitIntegrationTests
             var removal = await manager.TryRemoveAsync(
                 env.RepoPath, worktree.Path, mergedInto: head, CancellationToken.None);
 
-            removal.IsClean.ShouldBeTrue(removal.Residue);
-            Directory.Exists(worktree.Path).ShouldBeFalse();
+            removal.IsClean.ShouldBeFalse();
+            removal.Residue.ShouldBe("typed_removal_authority_required");
+            Directory.Exists(worktree.Path).ShouldBeTrue();
             (await GitTestEnvironment.RunGitAsync(env.RepoPath, "branch", "--list", worktree.Branch))
-                .ShouldBe(string.Empty);
+                .ShouldContain(worktree.Branch);
         }
         finally
         {
@@ -384,7 +402,7 @@ public class WorktreeManagerGitIntegrationTests
     }
 
     [Test]
-    public async Task WorktreeManager_try_remove_keeps_an_unmerged_branch_and_names_the_ahead_count()
+    public async Task WorktreeManager_raw_remove_preserves_unmerged_directory_and_branch()
     {
         await GitTestEnvironment.SkipIfGitUnavailableAsync();
         var env = await GitTestEnvironment.CreateAsync();
@@ -402,12 +420,11 @@ public class WorktreeManagerGitIntegrationTests
                 env.RepoPath, worktree.Path, mergedInto: head, CancellationToken.None);
 
             removal.IsClean.ShouldBeFalse();
-            removal.DirectoryGone.ShouldBeTrue();
+            removal.DirectoryGone.ShouldBeFalse();
             removal.BranchDeleted.ShouldBeFalse();
             removal.Residue.ShouldNotBeNull();
-            removal.Residue.ShouldContain("commit(s) not on");
-            removal.Residue.ShouldContain(head);
-            Directory.Exists(worktree.Path).ShouldBeFalse();
+            removal.Residue.ShouldBe("typed_removal_authority_required");
+            Directory.Exists(worktree.Path).ShouldBeTrue();
             (await GitTestEnvironment.RunGitAsync(env.RepoPath, "branch", "--list", worktree.Branch))
                 .ShouldContain(worktree.Branch);
         }
@@ -439,7 +456,7 @@ public class WorktreeManagerGitIntegrationTests
             removal.DirectoryGone.ShouldBeFalse();
             Directory.Exists(worktree.Path).ShouldBeTrue();
             removal.Residue.ShouldNotBeNull();
-            removal.Residue.ShouldContain("directory");
+            removal.Residue.ShouldBe("typed_removal_authority_required");
         }
         finally
         {
@@ -468,7 +485,7 @@ public class WorktreeManagerGitIntegrationTests
     }
 
     [Test]
-    public async Task WorktreeJanitor_prunes_stale_worktrees()
+    public async Task WorktreeJanitor_preserves_stale_worktrees_without_receipt()
     {
         await GitTestEnvironment.SkipIfGitUnavailableAsync();
         var env = await GitTestEnvironment.CreateAsync();
@@ -482,10 +499,10 @@ public class WorktreeManagerGitIntegrationTests
             clock.SetUtcNow(new DateTimeOffset(2026, 5, 10, 12, 0, 0, TimeSpan.Zero));
             var pruned = await manager.PruneStaleAsync(CancellationToken.None);
 
-            pruned.ShouldBe(1);
-            Directory.Exists(worktree.Path).ShouldBeFalse();
+            pruned.ShouldBe(0);
+            Directory.Exists(worktree.Path).ShouldBeTrue();
             (await GitTestEnvironment.RunGitAsync(env.RepoPath, "branch", "--list", "feat/card-E03-005"))
-                .ShouldBe(string.Empty);
+                .ShouldContain(worktree.Branch);
         }
         finally
         {
@@ -494,7 +511,7 @@ public class WorktreeManagerGitIntegrationTests
     }
 
     [Test]
-    public async Task WorktreeJanitor_retries_residue_before_the_ttl()
+    public async Task WorktreeJanitor_does_not_convert_raw_refusal_into_authority()
     {
         await GitTestEnvironment.SkipIfGitUnavailableAsync();
         var env = await GitTestEnvironment.CreateAsync();
@@ -510,7 +527,7 @@ public class WorktreeManagerGitIntegrationTests
                 env.RepoPath, worktree.Path, mergedInto: null, CancellationToken.None);
             first.IsClean.ShouldBeFalse();
             first.Residue.ShouldNotBeNull();
-            first.Residue.ShouldContain("locked");
+            first.Residue.ShouldBe("typed_removal_authority_required");
 
             clock.SetUtcNow(new DateTimeOffset(2026, 5, 1, 12, 1, 0, TimeSpan.Zero));
             (await manager.PruneStaleAsync(CancellationToken.None)).ShouldBe(0);
@@ -519,10 +536,10 @@ public class WorktreeManagerGitIntegrationTests
             await GitTestEnvironment.RunGitAsync(env.RepoPath, "worktree", "unlock", worktree.Path);
             var pruned = await manager.PruneStaleAsync(CancellationToken.None);
 
-            pruned.ShouldBe(1);
-            Directory.Exists(worktree.Path).ShouldBeFalse();
+            pruned.ShouldBe(0);
+            Directory.Exists(worktree.Path).ShouldBeTrue();
             (await GitTestEnvironment.RunGitAsync(env.RepoPath, "branch", "--list", "feat/card-E03-013"))
-                .ShouldBe(string.Empty);
+                .ShouldContain(worktree.Branch);
         }
         finally
         {
@@ -531,7 +548,7 @@ public class WorktreeManagerGitIntegrationTests
     }
 
     [Test]
-    public async Task WorktreeJanitor_prunes_stale_unregistered_leftover_directory()
+    public async Task WorktreeJanitor_preserves_stale_unregistered_leftover_directory()
     {
         await GitTestEnvironment.SkipIfGitUnavailableAsync();
         var env = await GitTestEnvironment.CreateAsync();
@@ -548,12 +565,12 @@ public class WorktreeManagerGitIntegrationTests
             clock.SetUtcNow(new DateTimeOffset(2026, 5, 10, 12, 0, 0, TimeSpan.Zero));
             var pruned = await manager.PruneStaleAsync(CancellationToken.None);
 
-            pruned.ShouldBe(1);
-            Directory.Exists(worktree.Path).ShouldBeFalse();
+            pruned.ShouldBe(0);
+            Directory.Exists(worktree.Path).ShouldBeTrue();
             (await GitTestEnvironment.RunGitAsync(env.RepoPath, "branch", "--list", "feat/card-E03-009"))
-                .ShouldBe(string.Empty);
+                .ShouldContain(worktree.Branch);
             var metadataDir = Path.Combine(env.WorktreeRoot, ".antiphon", "worktrees");
-            Directory.EnumerateFiles(metadataDir, "*.json").ShouldBeEmpty();
+            Directory.EnumerateFiles(metadataDir, "*.json").ShouldNotBeEmpty();
         }
         finally
         {
