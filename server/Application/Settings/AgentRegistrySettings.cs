@@ -2,6 +2,9 @@ namespace Antiphon.Server.Application.Settings;
 
 public class AgentRegistrySettings
 {
+    /// <summary>Total effort-picker selection and verified-dismissal budget.</summary>
+    public int ClaudeEffortPromptSettleMs { get; set; } = 15_000;
+
     internal const int MaximumDefinitionNameLength = 200;
 
     public string DefaultDefinition { get; set; } = "claude";

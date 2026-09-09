@@ -18,6 +18,41 @@ namespace Antiphon.Agents.Pty.Tests;
 /// </summary>
 public class ComposerInputProbeTests
 {
+    [Test, Arguments("BeforeFirstToken"), Arguments("AwaitingToken"), Arguments("BeforeRetype"),
+     Arguments("BeforeFirstClear"), Arguments("BeforeClearRetry"), Arguments("BeforeResponsive")]
+    public async Task A_modal_interrupts_before_each_probe_write_or_verdict(string checkpoint)
+    {
+        var writes = new List<string>();
+        var phaseReads = 0;
+        var modal = false;
+        var rendered = false;
+        Task<string> Snapshot(CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            phaseReads++;
+            modal |= checkpoint switch
+            {
+                "BeforeFirstToken" => writes.Count == 0,
+                "AwaitingToken" => writes.Count == 1,
+                "BeforeRetype" => writes.Count == 1 && phaseReads >= 3,
+                "BeforeFirstClear" => rendered,
+                "BeforeClearRetry" => writes.Count >= 2 && phaseReads >= 3,
+                "BeforeResponsive" => writes.Count >= 2 && phaseReads >= 2,
+                _ => false
+            };
+            if (modal) return Task.FromResult("SENTINEL MODAL");
+            var show = writes.Count > 0 && checkpoint != "BeforeRetype" && (writes.Count < 2 || checkpoint == "BeforeClearRetry");
+            rendered |= show;
+            return Task.FromResult(show ? "zzdeadbeef" : "");
+        }
+        Task Write(string key, CancellationToken ct) { ct.ThrowIfCancellationRequested(); writes.Add(key); phaseReads = 0; return Task.CompletedTask; }
+        var result = await ComposerInputProbe.RunAsync("zzdeadbeef", Snapshot, Write,
+            ComposerProbeOptions.FromMilliseconds(250, 10, 1, 60), null, s => s == "SENTINEL MODAL", CancellationToken.None);
+        result.Outcome.ShouldBe(ComposerProbeOutcome.InterruptedByModal, checkpoint);
+        string[] allowed = checkpoint == "BeforeFirstToken" ? [] : checkpoint is "BeforeClearRetry" or "BeforeResponsive" ? ["zzdeadbeef", "\x15"] : ["zzdeadbeef"];
+        writes.ShouldBe(allowed, checkpoint);
+    }
+
     private static ComposerProbeOptions FastOptions(
         int timeoutMs = 2000, int retypeMs = 100_000, int maxWrites = 3, int clearMs = 1000) =>
         ComposerProbeOptions.FromMilliseconds(

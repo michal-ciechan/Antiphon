@@ -15,6 +15,8 @@ public enum ClaudeBlockingPromptKind
 
     /// <summary>Any other numbered-choice modal waiting on a keypress.</summary>
     Choice = 3,
+
+    EffortChoice = 4,
 }
 
 /// <summary>
@@ -140,6 +142,9 @@ public static partial class ClaudeBlockingPromptDetector
     {
         if (string.IsNullOrWhiteSpace(screen))
             return null;
+
+        if (ClaudeEffortPrompt.Parse(screen) is { } effort)
+            return new(ClaudeBlockingPromptKind.EffortChoice, $"Effort default for {effort.Model}", "\r");
 
         // Letters+digits only, lowercased: immune to box drawing, ANSI leftovers, wrapping and the
         // variable whitespace a TUI uses to centre things.
@@ -320,6 +325,8 @@ public static partial class ClaudeBlockingPromptDetector
         TimeSpan? settleTimeout = null,
         CancellationToken ct = default)
     {
+        if (prompt.Kind == ClaudeBlockingPromptKind.EffortChoice)
+            return (false, "effort confirmation requires resolved launch intent; nothing typed");
         if (prompt.Kind == ClaudeBlockingPromptKind.TrustFolder)
             return await AnswerTrustAsync(snapshotScreen, write, prompt, settleTimeout, ct);
 
@@ -392,7 +399,7 @@ public static partial class ClaudeBlockingPromptDetector
             case ClaudeTrustDialogLayout.NumberedMenu:
                 await write(ClaudeTrustDialogKeys.LegacyDigit, ct);
                 var numberedCleared = await PollScreenAsync(
-                    snapshotScreen, screen => !IsBlocked(screen), settle, ct);
+                    snapshotScreen, screen => !IsBlocked(screen) || Detect(screen)?.Kind == ClaudeBlockingPromptKind.EffortChoice, settle, ct);
                 return (numberedCleared, numberedCleared
                     ? "sent 1; dialog cleared"
                     : $"sent 1; still on screen after {settle.TotalSeconds:0.#}s: {prompt.Title}");
@@ -442,7 +449,7 @@ public static partial class ClaudeBlockingPromptDetector
 
         await write(ClaudeTrustDialogKeys.Enter, ct);
         var cleared = await PollScreenAsync(
-            snapshotScreen, s => !IsBlocked(s), settle, ct);
+            snapshotScreen, s => !IsBlocked(s) || Detect(s)?.Kind == ClaudeBlockingPromptKind.EffortChoice, settle, ct);
         var rungText = rung is null ? "highlight already on Yes" : "sent " + rung;
         if (cleared)
             return (true, rungText + ", highlight on Yes, sent Enter; dialog cleared");

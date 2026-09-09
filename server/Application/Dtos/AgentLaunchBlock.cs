@@ -13,4 +13,5 @@ public enum AgentLaunchBlockKind
 {
     ProviderSignInRequired = 1,
     TrustDialogNotCleared = 2,
+    EffortDialogNotCleared = 3,
 }

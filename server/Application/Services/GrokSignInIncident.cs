@@ -88,6 +88,7 @@ internal static class GrokSignInIncident
     {
         AgentLaunchBlockKind.ProviderSignInRequired => SessionLaunchBlock.ProviderSignInRequired,
         AgentLaunchBlockKind.TrustDialogNotCleared => SessionLaunchBlock.TrustDialogNotCleared,
+        AgentLaunchBlockKind.EffortDialogNotCleared => SessionLaunchBlock.EffortDialogNotCleared,
         _ => SessionLaunchBlock.None,
     };
 }

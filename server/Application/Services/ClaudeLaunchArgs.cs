@@ -6,8 +6,8 @@ namespace Antiphon.Server.Application.Services;
 /// The Claude-shaped half of a launch command line (CARD-0289). claude 2.1.251 exposes
 /// <c>--effort &lt;level&gt;</c> as a first-class CLI launch flag, so effort is an ARGUMENT the
 /// same way Codex's <c>-c model_reasoning_effort=</c> and Grok's <c>--reasoning-effort</c> are —
-/// no boot-time slash-command typing, no picker to answer, no CARD-0055/0056-class
-/// typed-into-a-live-session risk. The two sites that launch a Claude process — a delegate task
+/// no boot-time slash-command typing. Claude can still ask whether to change its default;
+/// the startup effort gate preserves the requested launch effort (CARD-0449). The two sites that launch a Claude process — a delegate task
 /// (<c>AgentTaskDispatcher.ComposeDelegateArgs</c>) and a named agent
 /// (<c>AgentSessionLaunchComposer.ComposeForAgentAsync</c>) — share this rather than each spelling
 /// the flag out.

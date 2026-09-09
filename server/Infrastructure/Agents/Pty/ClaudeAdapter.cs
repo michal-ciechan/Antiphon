@@ -26,6 +26,7 @@ public sealed class ClaudeAdapter : IAgentProtocolAdapter
     private Guid _sessionId;
     private string? _cwd;
     private AgentLaunchBlock? _launchBlock;
+    private ClaudeEffortIntent _effortIntent = new();
 
     public ClaudeAdapter(IOptions<AgentRegistrySettings> options, ILogger? logger = null)
     {
@@ -57,6 +58,7 @@ public sealed class ClaudeAdapter : IAgentProtocolAdapter
         _started = true;
         _sessionId = spec.SessionId ?? Guid.NewGuid();
         _cwd = spec.Cwd;
+        _effortIntent = ClaudeEffortIntent.Read(spec.Args);
 
         _runner.OnData += ForwardData;
 
@@ -120,95 +122,24 @@ public sealed class ClaudeAdapter : IAgentProtocolAdapter
         if (!await _readyDetector.WaitAsync(_runner, ct))
             return false;
 
-        // Same gate as RunnerClaudeAdapter: a TUI parked on the trust dialog for an unseen working
-        // directory is silent, so the quiet-period detector calls it ready and every later write is
-        // swallowed. Kept in lockstep deliberately — the two adapters are the same contract.
-        var resolution = await ClaudeBlockingPromptDetector.ClearStartupTrustPromptAsync(
-            _ => Task.FromResult(_runner.SnapshotScreen()),
-            (input, token) => _runner.WriteAsync(input, token),
-            TimeSpan.FromMilliseconds(_settings.ClaudeTrustPromptSettleMs),
-            ct);
-
-        if (resolution.Outcome is ClaudeStartupBlockOutcome.TrustCleared)
-        {
-            _logger?.LogInformation(
-                "Answered Claude's trust dialog: {Title}. {Detail}",
-                resolution.Prompt?.Title, resolution.Detail);
-        }
-        else if (resolution.Outcome is ClaudeStartupBlockOutcome.NotAnswerable)
-        {
-            _logger?.LogWarning(
-                "Blocked on a modal that will not be auto-answered ({Kind}): {Title}",
-                resolution.Prompt?.Kind, resolution.Prompt?.Title);
-        }
-        else if (resolution.Outcome is ClaudeStartupBlockOutcome.TrustNotCleared
-                 or ClaudeStartupBlockOutcome.TrustUnanswerable)
-        {
-            var reason = ClaudeBlockingPromptDetector.FormatTrustDialogNotClearedReason(
-                _cwd,
-                resolution.Prompt?.Layout ?? ClaudeTrustDialogLayout.Unknown,
-                resolution.Detail);
-            _launchBlock = new AgentLaunchBlock(AgentLaunchBlockKind.TrustDialogNotCleared, reason);
-            _logger?.LogError(
-                "Still blocked on Claude's trust dialog ({Outcome}). Nothing can be delivered "
-                + "to this session. Prompt: {Title}. {Detail}",
-                resolution.Outcome, resolution.Prompt?.Title, resolution.Detail);
-            return false;
-        }
-
-        // CARD-0103's input-responsiveness probe, in lockstep with RunnerClaudeAdapter — quiet is
-        // not reading, and this is the only step that proves the difference. SKIPPED on the
-        // NotAnswerable arm: typing into a modal we deliberately refuse to answer is exactly the
-        // keystroke CARD-0047 declined to send.
-        if (resolution.Outcome is ClaudeStartupBlockOutcome.NotAnswerable)
-        {
-            _logger?.LogWarning(
-                "Skipping the input-responsiveness probe: an un-auto-answerable modal is standing.");
-            return true;
-        }
-
-        return await ProbeComposerInputAsync(ct);
-    }
-
-    /// <inheritdoc cref="ComposerInputProbe"/>
-    private async Task<bool> ProbeComposerInputAsync(CancellationToken ct)
-    {
-        if (_settings.ClaudeInputProbeTimeoutMs <= 0)
-            return true;
-
-        var result = await ComposerInputProbe.RunAsync(
+        var result = await ClaudeStartupReadiness.RunAsync(
             ComposerInputProbe.TokenFor(_sessionId),
-            _ => Task.FromResult(_runner.SnapshotScreen()),
-            (input, token) => _runner.WriteAsync(input, token),
-            ComposerProbeOptions.FromMilliseconds(
-                _settings.ClaudeInputProbeTimeoutMs,
-                _settings.ClaudeInputProbePollIntervalMs,
-                _settings.ClaudeInputProbeRetypeIntervalMs,
-                _settings.ClaudeInputProbeClearTimeoutMs,
-                _settings.ClaudeInputProbeMaxWrites),
-            message => _logger?.LogWarning("Input probe: {Message}", message),
-            ct);
-
-        if (result.Responsive)
-        {
-            if (result.Writes > 1 || result.Elapsed > TimeSpan.FromSeconds(5))
-                _logger?.LogWarning(
-                    "The TUI took {Elapsed:F1}s and {Writes} write(s) to answer the input probe; "
-                    + "anything typed in that window would have looked like a wedged composer.",
-                    result.Elapsed.TotalSeconds, result.Writes);
-            return true;
-        }
-
-        _logger?.LogError(
-            "The TUI is NOT reading input: probe token '{Token}' {Failure} after {Elapsed:F1}s and "
-            + "{Writes} write(s). Reporting the launch as not ready rather than typing into it.",
-            result.Token,
-            result.Outcome == ComposerProbeOutcome.NeverAppeared
-                ? "never rendered"
-                : "rendered but could not be cleared",
-            result.Elapsed.TotalSeconds,
-            result.Writes);
-        return false;
+            _ => Task.FromResult(_runner.SnapshotScreen()), (input, token) => _runner.WriteAsync(input, token), _effortIntent,
+            new ClaudeReadinessOptions(
+                ComposerProbeOptions.FromMilliseconds(_settings.ClaudeInputProbeTimeoutMs,
+                    _settings.ClaudeInputProbePollIntervalMs, _settings.ClaudeInputProbeRetypeIntervalMs,
+                    _settings.ClaudeInputProbeClearTimeoutMs, _settings.ClaudeInputProbeMaxWrites),
+                TimeSpan.FromMilliseconds(_settings.ClaudeTrustPromptSettleMs),
+                TimeSpan.FromMilliseconds(_settings.ClaudeEffortPromptSettleMs),
+                TimeSpan.FromMilliseconds(_settings.ClaudeReadyMaxWaitMs)),
+            message => _logger?.LogInformation("Claude startup: {Detail}", message), Exited, ct);
+        if (result.Outcome == ClaudeReadinessOutcome.EffortFailed)
+            _launchBlock = new(AgentLaunchBlockKind.EffortDialogNotCleared, result.Detail);
+        else if (result.Outcome == ClaudeReadinessOutcome.TrustFailed)
+            _launchBlock = new(AgentLaunchBlockKind.TrustDialogNotCleared,
+                ClaudeBlockingPromptDetector.FormatTrustDialogNotClearedReason(_cwd, result.TrustLayout, result.Detail));
+        if (!result.Ready) _logger?.LogError("Claude startup failed: {Outcome}; {Detail}", result.Outcome, result.Detail);
+        return result.Ready;
     }
 
     public async Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct)

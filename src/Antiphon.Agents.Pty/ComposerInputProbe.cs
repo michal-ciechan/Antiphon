@@ -14,6 +14,8 @@ public enum ComposerProbeOutcome
     /// must not have a boot prompt appended to it, so this is a failure, not a warning.
     /// </summary>
     NeverCleared = 2,
+
+    InterruptedByModal = 3,
 }
 
 /// <param name="Timeout">
@@ -101,86 +103,65 @@ public static class ComposerInputProbe
     /// <param name="snapshotScreen">Returns the current rendered screen.</param>
     /// <param name="write">Raw write into the terminal (no CR is ever appended — nothing is submitted).</param>
     /// <param name="log">Receives non-fatal events (a re-type, a lingering token); null to discard.</param>
+    public static Task<ComposerProbeResult> RunAsync(
+        string token, Func<CancellationToken, Task<string>> snapshotScreen,
+        Func<string, CancellationToken, Task> write, ComposerProbeOptions options,
+        Action<string>? log, CancellationToken ct) =>
+        RunAsync(token, snapshotScreen, write, options, log, null, ct);
+
     public static async Task<ComposerProbeResult> RunAsync(
-        string token,
-        Func<CancellationToken, Task<string>> snapshotScreen,
-        Func<string, CancellationToken, Task> write,
-        ComposerProbeOptions options,
-        Action<string>? log,
-        CancellationToken ct)
+        string token, Func<CancellationToken, Task<string>> snapshotScreen,
+        Func<string, CancellationToken, Task> write, ComposerProbeOptions options,
+        Action<string>? log, Func<string, bool>? isBlocked, CancellationToken ct)
     {
-        var startedAt = DateTime.UtcNow;
-        var maxWrites = Math.Max(1, options.MaxWrites);
-
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var writes = 0;
+        bool Blocked(string screen) => isBlocked?.Invoke(screen) == true;
+        async Task<bool> BlockedNow() => isBlocked is not null && Blocked(await snapshotScreen(ct));
+        ComposerProbeResult Result(ComposerProbeOutcome outcome) => new(outcome, token, writes, clock.Elapsed);
+        if (await BlockedNow()) return Result(ComposerProbeOutcome.InterruptedByModal);
         await write(token, ct);
-        var writes = 1;
-        var lastWriteAt = DateTime.UtcNow;
-
-        var deadline = startedAt + options.Timeout;
-        while (!ComposerDeliveryEvidence.FragmentIsVisible(await snapshotScreen(ct), token))
-        {
-            var now = DateTime.UtcNow;
-            if (now >= deadline)
-                return new ComposerProbeResult(
-                    ComposerProbeOutcome.NeverAppeared, token, writes, now - startedAt);
-
-            // The measured shape does NOT need this: ConPTY retains input written into a deaf TUI
-            // and drains it in order on wake, so a doubled token is the normal price of the belt.
-            // A doubled token still substring-matches, and the Ctrl+U below kills the whole line.
-            if (writes < maxWrites && now - lastWriteAt >= options.RetypeInterval)
-            {
-                log?.Invoke(
-                    $"Input probe token '{token}' has not rendered after "
-                    + $"{(now - startedAt).TotalSeconds:F0}s; writing it again "
-                    + $"(attempt {writes + 1}/{maxWrites}).");
-                await write(token, ct);
-                writes++;
-                lastWriteAt = DateTime.UtcNow;
-            }
-
-            await Task.Delay(options.PollInterval, ct);
-        }
-
-        var cleared = await ClearAsync(token, snapshotScreen, write, options, log, ct);
-        return new ComposerProbeResult(
-            cleared ? ComposerProbeOutcome.Responsive : ComposerProbeOutcome.NeverCleared,
-            token, writes, DateTime.UtcNow - startedAt);
-    }
-
-    private static async Task<bool> ClearAsync(
-        string token,
-        Func<CancellationToken, Task<string>> snapshotScreen,
-        Func<string, CancellationToken, Task> write,
-        ComposerProbeOptions options,
-        Action<string>? log,
-        CancellationToken ct)
-    {
-        var attempts = Math.Max(1, options.ClearAttempts);
-        var clearTimeout = options.EffectiveClearTimeout;
-        var deadline = DateTime.UtcNow + clearTimeout;
-        var betweenPresses = clearTimeout / attempts;
-        var presses = 0;
-        var nextPressAt = DateTime.UtcNow;
-
+        writes++;
+        var lastWrite = clock.Elapsed;
         while (true)
         {
-            var now = DateTime.UtcNow;
-            if (presses < attempts && now >= nextPressAt)
+            var screen = await snapshotScreen(ct);
+            if (Blocked(screen)) return Result(ComposerProbeOutcome.InterruptedByModal);
+            if (ComposerDeliveryEvidence.FragmentIsVisible(screen, token)) break;
+            if (clock.Elapsed >= options.Timeout) return Result(ComposerProbeOutcome.NeverAppeared);
+            if (writes < Math.Max(1, options.MaxWrites) && clock.Elapsed - lastWrite >= options.RetypeInterval)
             {
-                if (presses > 0)
-                    log?.Invoke($"Input probe token '{token}' is still on screen; pressing Ctrl+U again.");
+                if (await BlockedNow()) return Result(ComposerProbeOutcome.InterruptedByModal);
+                log?.Invoke($"Input probe token '{token}' has not rendered; writing it again.");
+                await write(token, ct);
+                writes++;
+                lastWrite = clock.Elapsed;
+            }
+            await Task.Delay(options.PollInterval, ct);
+        }
+        var deadline = clock.Elapsed + options.EffectiveClearTimeout;
+        var attempts = Math.Max(1, options.ClearAttempts);
+        var interval = options.EffectiveClearTimeout / attempts;
+        var nextPress = clock.Elapsed;
+        var presses = 0;
+        while (true)
+        {
+            if (presses < attempts && clock.Elapsed >= nextPress)
+            {
+                if (await BlockedNow()) return Result(ComposerProbeOutcome.InterruptedByModal);
                 await write(KillLine, ct);
                 presses++;
-                nextPressAt = DateTime.UtcNow + betweenPresses;
+                nextPress = clock.Elapsed + interval;
             }
-
             await Task.Delay(options.PollInterval, ct);
-
-            if (!ComposerDeliveryEvidence.FragmentIsVisible(await snapshotScreen(ct), token))
-                return true;
-
-            if (DateTime.UtcNow >= deadline && presses >= attempts)
-                return false;
+            var screen = await snapshotScreen(ct);
+            if (Blocked(screen)) return Result(ComposerProbeOutcome.InterruptedByModal);
+            if (!ComposerDeliveryEvidence.FragmentIsVisible(screen, token))
+            {
+                if (await BlockedNow()) return Result(ComposerProbeOutcome.InterruptedByModal);
+                return Result(ComposerProbeOutcome.Responsive);
+            }
+            if (clock.Elapsed >= deadline && presses >= attempts) return Result(ComposerProbeOutcome.NeverCleared);
         }
     }
 }
