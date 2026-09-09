@@ -47,7 +47,7 @@ public class AgentTaskCheckSweepTests
     [Test]
     public async Task a_due_task_is_claimed_and_a_task_due_later_is_not()
     {
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var due = await harness.SeedDelegateAsync(nextCheckInMinutes: -1);
         var notYet = await harness.SeedDelegateAsync(nextCheckInMinutes: 30);
 
@@ -63,7 +63,7 @@ public class AgentTaskCheckSweepTests
     public async Task a_task_that_has_settled_is_never_claimed()
     {
         // The sweep filter is the whole mechanism: settlement needs no check bookkeeping.
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var settled = await harness.SeedDelegateAsync(nextCheckInMinutes: -1, status: AgentTaskStatus.Succeeded);
 
         await harness.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
@@ -77,7 +77,7 @@ public class AgentTaskCheckSweepTests
         // CARD-0231: a never-dispatched failure reuses NextCheckAt, so Failed + due is now a legal
         // state. The real check sweep must keep filtering to Dispatched/Working — claiming a Failed
         // row would waste a ramp step and log a check that cannot run.
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var failed = await harness.SeedDelegateAsync(
             nextCheckInMinutes: -1, status: AgentTaskStatus.Failed);
 
@@ -92,7 +92,7 @@ public class AgentTaskCheckSweepTests
     [Test]
     public async Task the_feature_switch_stops_the_sweep_entirely()
     {
-        var harness = new Harness(s => s.CheckEnabled = false);
+        await using var harness = await Harness.CreateAsync(s => s.CheckEnabled = false);
         var due = await harness.SeedDelegateAsync(nextCheckInMinutes: -1);
 
         (await harness.Dispatcher.RunScheduledChecksAsync(CancellationToken.None)).ShouldBe(0);
@@ -106,7 +106,7 @@ public class AgentTaskCheckSweepTests
     [Test]
     public async Task the_next_check_backs_off_to_the_fixed_fibonacci_base()
     {
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var seed = await harness.SeedDelegateAsync(
             nextCheckInMinutes: -1, expectedMinutes: 20, checkCount: 0);
 
@@ -123,7 +123,7 @@ public class AgentTaskCheckSweepTests
     [Test]
     public async Task the_gap_widens_along_the_fibonacci_ramp_on_the_next_claim()
     {
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var seed = await harness.SeedDelegateAsync(
             nextCheckInMinutes: -1, expectedMinutes: 20, checkCount: 1);
 
@@ -141,7 +141,7 @@ public class AgentTaskCheckSweepTests
     {
         // The cap exists so a forgotten immortal task doesn't check forever — but the check that
         // spends the budget must still be DELIVERED, saying so, rather than vanishing.
-        var harness = new Harness(s => s.CheckMaxCount = 3);
+        await using var harness = await Harness.CreateAsync(s => s.CheckMaxCount = 3);
         var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: -1, checkCount: 2);
 
         await harness.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
@@ -169,7 +169,7 @@ public class AgentTaskCheckSweepTests
     [Test]
     public async Task the_first_check_of_a_task_is_numbered_one()
     {
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: -1, checkCount: 0);
 
         await harness.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
@@ -186,7 +186,7 @@ public class AgentTaskCheckSweepTests
     [Test]
     public async Task a_task_at_its_cap_is_never_claimed_again()
     {
-        var harness = new Harness(s => s.CheckMaxCount = 3);
+        await using var harness = await Harness.CreateAsync(s => s.CheckMaxCount = 3);
         var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: -1, checkCount: 2);
 
         await harness.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
@@ -201,7 +201,7 @@ public class AgentTaskCheckSweepTests
     public async Task an_exited_caller_session_stops_the_checks()
     {
         // Nobody is listening. Continuing to gather facts for a session that has ended is pure cost.
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var seed = await harness.SeedDelegateAsync(
             nextCheckInMinutes: -1, callerSessionStatus: SessionStatus.Stopped);
 
@@ -216,7 +216,7 @@ public class AgentTaskCheckSweepTests
     [Test]
     public async Task a_caller_session_that_no_longer_exists_stops_the_checks()
     {
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: -1, callerSessionStatus: null);
 
         await harness.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
@@ -232,7 +232,7 @@ public class AgentTaskCheckSweepTests
     {
         // This ordering is the whole crash-safety story: whatever happens to the run — a throw, a
         // kill -9, a machine reboot — the row has already moved on.
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: -1);
 
         await harness.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
@@ -249,7 +249,7 @@ public class AgentTaskCheckSweepTests
     {
         // A check whose probe blows up must cost ONE check, not turn the task into a row that is
         // due forever and re-claimed on every 5 s tick.
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: -1);
 
         await harness.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
@@ -287,7 +287,7 @@ public class AgentTaskCheckSweepTests
     public async Task an_earlier_sweep_that_throws_does_not_take_the_check_sweep_down_with_it()
     {
         var bus = new PoisonEventBus();
-        var harness = new Harness(
+        await using var harness = await Harness.CreateAsync(
             s =>
             {
                 // Only the sweeps are under test: hold every queued task on the concurrency gate so
@@ -327,7 +327,7 @@ public class AgentTaskCheckSweepTests
     [Test]
     public async Task a_check_delivers_a_digest_note_to_the_caller()
     {
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: -1, expectedMinutes: 15);
         await harness.SeedDelegateTranscriptAsync(seed.DelegateSessionId, seed.Task.Id);
 
@@ -348,7 +348,7 @@ public class AgentTaskCheckSweepTests
         // The envelope has to be readable at a glance: a caller that mistook a check for a report
         // would move on from a task that has not finished. And it must carry NO task marker of any
         // task — the transcript tail legitimately quotes the delegate's own marked brief.
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: -1);
         await harness.SeedDelegateTranscriptAsync(seed.DelegateSessionId, seed.Task.Id);
 
@@ -365,7 +365,7 @@ public class AgentTaskCheckSweepTests
             DelegationReportFormatter.TaskMarker(seed.Task.Id),
             customMessage: "including the delegate's own, which the transcript tail quotes verbatim");
 
-        await using var verify = CreateContext();
+        await using var verify = harness.CreateContext();
         var stored = await verify.SessionQueuedMessages.SingleAsync(
             m => m.AgentSessionId == seed.CallerSessionId);
         stored.Origin.ShouldBe(QueuedMessageOrigin.Check, "a check is not a Delegation report");
@@ -379,7 +379,7 @@ public class AgentTaskCheckSweepTests
         // A digest with a full transcript tail and twenty commits comfortably clears the inbox
         // conhost's 3 000-char ceiling. Typing it whole would raise an OversizedTerminalDelivery
         // incident on EVERY check — and the note would be silently clipped besides.
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: -1);
         await harness.SeedNoisyDelegateTranscriptAsync(seed.DelegateSessionId, seed.Task.Id);
 
@@ -396,7 +396,7 @@ public class AgentTaskCheckSweepTests
     public async Task a_task_that_settles_between_the_claim_and_the_run_delivers_nothing()
     {
         // The completion note is already on its way and says everything the check would.
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: -1);
 
         await harness.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
@@ -411,13 +411,13 @@ public class AgentTaskCheckSweepTests
     [Test]
     public async Task a_delivered_check_leaves_a_timeline_entry_and_nothing_else_on_the_task()
     {
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: -1);
 
         await harness.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
         await harness.Checks.RunCheckAsync(seed.Task.Id, CancellationToken.None);
 
-        await using var verify = CreateContext();
+        await using var verify = harness.CreateContext();
         var events = await verify.AgentTaskEvents
             .Where(e => e.AgentTaskId == seed.Task.Id).ToListAsync();
         events.ShouldContain(e => e.Type == AgentTaskEventType.Check);
@@ -444,7 +444,7 @@ public class AgentTaskCheckSweepTests
     [Test]
     public async Task a_parent_reacting_to_a_check_note_does_not_settle_its_own_task()
     {
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: -1);
         // The caller is a mid-flight orchestrator: its own brief, marked, is sitting in its session.
         var parentTask = await harness.SeedCallerTaskAsync(seed.CallerSessionId);
@@ -458,7 +458,7 @@ public class AgentTaskCheckSweepTests
             seed.CallerSessionId, prompt: note, reply: "Noted — it is still working, I will wait.");
         await harness.Replies.OnTurnEndAsync(seed.CallerSessionId, CancellationToken.None);
 
-        await using var verify = CreateContext();
+        await using var verify = harness.CreateContext();
         var parent = await verify.AgentTasks.SingleAsync(t => t.Id == parentTask.Id);
         parent.Status.ShouldBe(
             AgentTaskStatus.Dispatched,
@@ -480,7 +480,7 @@ public class AgentTaskCheckSweepTests
     [Test]
     public async Task the_same_caller_turn_DOES_settle_when_the_prompt_carries_its_own_marker()
     {
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: -1);
         var parentTask = await harness.SeedCallerTaskAsync(seed.CallerSessionId);
 
@@ -490,7 +490,7 @@ public class AgentTaskCheckSweepTests
             reply: "Chunk owned: three delegates ran, all merged.");
         await harness.Replies.OnTurnEndAsync(seed.CallerSessionId, CancellationToken.None);
 
-        await using var verify = CreateContext();
+        await using var verify = harness.CreateContext();
         var parent = await verify.AgentTasks.SingleAsync(t => t.Id == parentTask.Id);
         parent.Status.ShouldBe(AgentTaskStatus.Succeeded, "the control has to actually fire");
         parent.Result.ShouldContain("three delegates ran");
@@ -506,7 +506,7 @@ public class AgentTaskCheckSweepTests
     [Test]
     public async Task the_same_caller_turn_without_the_closing_line_is_nudged_once_not_settled()
     {
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: -1);
         var parentTask = await harness.SeedCallerTaskAsync(seed.CallerSessionId);
 
@@ -517,7 +517,7 @@ public class AgentTaskCheckSweepTests
             closingVerdict: false);
         await harness.Replies.OnTurnEndAsync(seed.CallerSessionId, CancellationToken.None);
 
-        await using var verify = CreateContext();
+        await using var verify = harness.CreateContext();
         var parent = await verify.AgentTasks.SingleAsync(t => t.Id == parentTask.Id);
         parent.Status.ShouldBe(AgentTaskStatus.Dispatched);
         parent.ReportNudgedAt.ShouldNotBeNull();
@@ -545,26 +545,26 @@ public class AgentTaskCheckSweepTests
     [Test]
     public async Task a_full_check_cycle_touches_the_delegate_not_at_all()
     {
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: -1);
         await harness.SeedDelegateTranscriptAsync(seed.DelegateSessionId, seed.Task.Id);
 
-        await using (var snapshotDb = CreateContext())
+        await using (var snapshotDb = harness.CreateContext())
         {
             var beforeMessages = await snapshotDb.SessionQueuedMessages
                 .CountAsync(m => m.AgentSessionId == seed.DelegateSessionId);
             beforeMessages.ShouldBe(0, "the fixture starts clean");
         }
-        var beforeEntries = await CountTranscriptAsync(seed.DelegateSessionId);
+        var beforeEntries = await harness.CountTranscriptAsync(seed.DelegateSessionId);
 
         await harness.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
         (await harness.Checks.RunCheckAsync(seed.Task.Id, CancellationToken.None))
             .ShouldBe(AgentTaskCheckService.CheckOutcome.Delivered);
 
-        await using var verify = CreateContext();
+        await using var verify = harness.CreateContext();
         (await verify.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == seed.DelegateSessionId))
             .ShouldBe(0, "nothing may be typed at the delegate");
-        (await CountTranscriptAsync(seed.DelegateSessionId))
+        (await harness.CountTranscriptAsync(seed.DelegateSessionId))
             .ShouldBe(beforeEntries, "and nothing may be written into its transcript");
         (await verify.AgentSessions.SingleAsync(s => s.Id == seed.DelegateSessionId))
             .Status.ShouldBe(SessionStatus.Running, "and its session may not be stopped or restarted");
@@ -592,7 +592,7 @@ public class AgentTaskCheckSweepTests
         var scratch = Directory.CreateTempSubdirectory("antiphon-c74-interp").FullName;
         try
         {
-            var harness = new Harness(s =>
+            await using var harness = await Harness.CreateAsync(s =>
             {
                 s.CheckInterpreterEnabled = true;
                 s.CheckInterpreterAgentSlug = $"c74-{Guid.NewGuid():N}"[..20];
@@ -613,7 +613,7 @@ public class AgentTaskCheckSweepTests
 
             (await run).ShouldBe(AgentTaskCheckService.CheckOutcome.SupersededBeforeDelivery);
             (await harness.NotesToCallerAsync(seed.CallerSessionId)).ShouldBeEmpty();
-            await using var verify = CreateContext();
+            await using var verify = harness.CreateContext();
             var timeline = (await verify.AgentTaskEvents
                 .Where(e => e.AgentTaskId == seed.Task.Id && e.Type == AgentTaskEventType.Check)
                 .Select(e => e.Detail).ToListAsync()).ShouldHaveSingleItem();
@@ -631,7 +631,7 @@ public class AgentTaskCheckSweepTests
     [Test]
     public async Task a_pending_check_note_is_canceled_when_its_task_settles()
     {
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: 30);
         var captured = DateTime.UtcNow.AddMinutes(-2);
         var body =
@@ -649,7 +649,7 @@ public class AgentTaskCheckSweepTests
         (await harness.Dispatcher.ReconcileSupersededChecksAsync(CancellationToken.None))
             .ShouldBe(0, "a second pass cannot cancel again");
 
-        await using var verify = CreateContext();
+        await using var verify = harness.CreateContext();
         var stored = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == noteId);
         stored.Status.ShouldBe(QueuedMessageStatus.Canceled);
         stored.CanceledAt.ShouldNotBeNull();
@@ -664,7 +664,7 @@ public class AgentTaskCheckSweepTests
     [Test]
     public async Task a_check_note_already_typed_once_is_not_canceled_by_the_sweep()
     {
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: 30);
         var body = $"[check {DelegationReportFormatter.Short(seed.Task.Id)} #1] the original digest";
         var noteId = await harness.SeedCheckNoteAsync(
@@ -674,7 +674,7 @@ public class AgentTaskCheckSweepTests
 
         (await harness.Dispatcher.ReconcileSupersededChecksAsync(CancellationToken.None)).ShouldBe(0);
 
-        await using var verify = CreateContext();
+        await using var verify = harness.CreateContext();
         var stored = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == noteId);
         stored.Body.ShouldBe(body);
         stored.Body.ShouldNotContain(AgentTaskCheckService.SupersededMarker);
@@ -687,7 +687,7 @@ public class AgentTaskCheckSweepTests
         var scratch = Directory.CreateTempSubdirectory("antiphon-c132-fallback").FullName;
         try
         {
-            var harness = new Harness(s =>
+            await using var harness = await Harness.CreateAsync(s =>
             {
                 s.CheckInterpreterEnabled = true;
                 s.CheckInterpreterAgentSlug = $"c132-{Guid.NewGuid():N}"[..20];
@@ -718,7 +718,7 @@ public class AgentTaskCheckSweepTests
     [Test]
     public async Task the_flush_cancels_a_settled_check_already_typed_once_before_it_retypes()
     {
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: 30);
         var noteId = await harness.SeedCheckNoteAsync(
             seed.CallerSessionId, seed.Task.Id, "[check] stale", deliveryAttempts: 1,
@@ -728,7 +728,7 @@ public class AgentTaskCheckSweepTests
 
         await harness.Messages.FlushIfIdleAsync(seed.CallerSessionId, CancellationToken.None);
 
-        await using var verify = CreateContext();
+        await using var verify = harness.CreateContext();
         var stored = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == noteId);
         stored.Status.ShouldBe(QueuedMessageStatus.Canceled);
         stored.DeliveryAttempts.ShouldBe(1, "the last look cancels instead of re-typing");
@@ -738,14 +738,14 @@ public class AgentTaskCheckSweepTests
     [Test]
     public async Task a_check_note_whose_task_is_still_working_is_not_canceled()
     {
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: 30);
         var body = $"[check {DelegationReportFormatter.Short(seed.Task.Id)} #1] still live";
         var noteId = await harness.SeedCheckNoteAsync(seed.CallerSessionId, seed.Task.Id, body);
 
         (await harness.Dispatcher.ReconcileSupersededChecksAsync(CancellationToken.None)).ShouldBe(0);
 
-        await using var verify = CreateContext();
+        await using var verify = harness.CreateContext();
         var stored = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == noteId);
         stored.Body.ShouldBe(body);
         stored.Body.ShouldNotContain(AgentTaskCheckService.SupersededMarker);
@@ -757,7 +757,7 @@ public class AgentTaskCheckSweepTests
         // Would go green on an unlocked separate-scope write: that path would mutate while this
         // test still holds the per-session lock. Holding GetLock is exactly what CancelAsync and
         // FlushAsync serialise on.
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: 30);
         var original = $"[check {DelegationReportFormatter.Short(seed.Task.Id)} #1] unlocked-write detector";
         var noteId = await harness.SeedCheckNoteAsync(seed.CallerSessionId, seed.Task.Id, original);
@@ -775,7 +775,7 @@ public class AgentTaskCheckSweepTests
             var finished = await Task.WhenAny(cancel, Task.Delay(400));
             finished.ShouldNotBe(cancel, "CancelPendingIfUntypedAsync must wait on GetLock — an unlocked scope would have finished");
 
-            await using var mid = CreateContext();
+            await using var mid = harness.CreateContext();
             var still = await mid.SessionQueuedMessages.SingleAsync(m => m.Id == noteId);
             still.Status.ShouldBe(QueuedMessageStatus.Pending, "no cancellation may land while the session lock is held");
         }
@@ -785,7 +785,7 @@ public class AgentTaskCheckSweepTests
         }
 
         (await cancel).ShouldBeTrue();
-        await using var after = CreateContext();
+        await using var after = harness.CreateContext();
         var canceled = await after.SessionQueuedMessages.SingleAsync(m => m.Id == noteId);
         canceled.Status.ShouldBe(QueuedMessageStatus.Canceled);
     }
@@ -794,11 +794,11 @@ public class AgentTaskCheckSweepTests
     public async Task a_banner_on_a_ceiling_sized_note_keeps_the_banner_and_trims_the_tail()
     {
         var ceiling = new DelegationSettings().ReplyInlineMaxChars;
-        var harness = new Harness();
+        await using var harness = await Harness.CreateAsync();
         var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: -1);
         await harness.SeedNoisyDelegateTranscriptAsync(seed.DelegateSessionId, seed.Task.Id);
 
-        await using var db = CreateContext();
+        await using var db = harness.CreateContext();
         var task = await db.AgentTasks.SingleAsync(t => t.Id == seed.Task.Id);
         var facts = await new DelegateCheckProbe(
                 db,
@@ -823,7 +823,7 @@ public class AgentTaskCheckSweepTests
     [Test]
     public async Task tick_runs_the_superseded_check_reconcile()
     {
-        var harness = new Harness(s =>
+        await using var harness = await Harness.CreateAsync(s =>
         {
             s.MaxConcurrentTasks = 0;
             s.RolePolicy.Clear();
@@ -844,7 +844,7 @@ public class AgentTaskCheckSweepTests
         await harness.SeedCompletionNoteAsync(seed.CallerSessionId, seed.Task.RootTaskId);
         await harness.Dispatcher.TickAsync(CancellationToken.None);
 
-        await using var verify = CreateContext();
+        await using var verify = harness.CreateContext();
         (await verify.SessionQueuedMessages.SingleAsync(m => m.Origin == QueuedMessageOrigin.Check && m.AgentSessionId == seed.CallerSessionId))
             .Status.ShouldBe(QueuedMessageStatus.Canceled);
     }
@@ -871,30 +871,47 @@ public class AgentTaskCheckSweepTests
         return count;
     }
 
-    private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
-
-    private static async Task<int> CountTranscriptAsync(Guid sessionId)
-    {
-        await using var db = CreateContext();
-        return await db.TranscriptEntries.CountAsync(e => e.AgentSessionId == sessionId);
-    }
-
     private sealed record Seeded(AgentTask Task, Guid DelegateSessionId, Guid CallerSessionId);
 
-    private sealed class Harness
+    /// <summary>
+    /// One harness is one whole sweep system, so it owns a CLONED database (CARD-0415). These
+    /// sweeps are global by construction and the interpreter seat is now discovered by its typed
+    /// standing-Check relation rather than by the configured slug, so on a shared database every
+    /// harness in the assembly — this class's and the interpreter class's alike — resolves to one
+    /// interpreter agent and inherits its backlog. Cloning is what makes "global" mean "global to
+    /// this test".
+    /// </summary>
+    private sealed class Harness : IAsyncDisposable
     {
         private readonly ServiceProvider _provider;
+        private readonly IsolatedTestSchema _schema;
         private readonly DelegationSettings _settings;
 
-        public Harness(Action<DelegationSettings>? configure = null, IEventBus? eventBus = null)
+        public static async Task<Harness> CreateAsync(
+            Action<DelegationSettings>? configure = null, IEventBus? eventBus = null)
         {
+            var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+            try
+            {
+                return new Harness(schema, configure, eventBus);
+            }
+            catch
+            {
+                await schema.DisposeAsync();
+                throw;
+            }
+        }
+
+        private Harness(IsolatedTestSchema schema, Action<DelegationSettings>? configure, IEventBus? eventBus)
+        {
+            _schema = schema;
             _settings = new DelegationSettings { MaxConcurrentTasks = 512 };
             configure?.Invoke(_settings);
             var settings = _settings;
 
             var services = new ServiceCollection();
             services.AddLogging();
-            services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
+            services.AddDbContext<AppDbContext>(o => o.UseNpgsql(_schema.ConnectionString));
             services.AddSingleton<IEventBus>(eventBus ?? new MockEventBus());
             services.AddSingleton(TimeProvider.System);
             services.AddSingleton(Options.Create(new SupervisionSettings()));
@@ -927,6 +944,21 @@ public class AgentTaskCheckSweepTests
             Checks = _provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskCheckService>();
             Replies = _provider.GetRequiredService<AgentTaskReplyService>();
             Queue = _provider.GetRequiredService<AgentTaskCheckQueue>();
+        }
+
+        public AppDbContext CreateContext() =>
+            new(TestDbFixture.CreateDbContextOptions(_schema.ConnectionString));
+
+        public async Task<int> CountTranscriptAsync(Guid sessionId)
+        {
+            await using var db = CreateContext();
+            return await db.TranscriptEntries.CountAsync(e => e.AgentSessionId == sessionId);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await _provider.DisposeAsync();
+            await _schema.DisposeAsync();
         }
 
         public RecordingRunnerClient Runner { get; } = new();

@@ -48,7 +48,7 @@ public class AgentTaskCheckInterpreterTests
     [Test]
     public async Task a_settled_interpretation_replaces_the_digest_in_the_note()
     {
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var specialist = await h.EnsureSpecialistAsync();
         var seed = await h.SeedDelegateAsync();
         await h.SeedDelegateTranscriptAsync(seed.DelegateSessionId, seed.Task.Id);
@@ -84,7 +84,7 @@ public class AgentTaskCheckInterpreterTests
             "the interpretation REPLACES the digest in the note — the digest stays on the timeline");
 
         // The timeline keeps the evidence, and names what watching cost.
-        await using var verify = CreateContext();
+        await using var verify = h.CreateContext();
         var check = (await verify.AgentTaskEvents
             .Where(e => e.AgentTaskId == seed.Task.Id && e.Type == AgentTaskEventType.Check)
             .ToListAsync()).ShouldHaveSingleItem();
@@ -94,9 +94,9 @@ public class AgentTaskCheckInterpreterTests
     }
 
     [Test]
-    public void a_live_session_with_no_entry_shows_activity_never()
+    public async Task a_live_session_with_no_entry_shows_activity_never()
     {
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var task = HeaderTask();
         var facts = HeaderFacts(withSession: true, sinceLastEntry: null);
         var note = h.Checks.BuildNote(task, facts, digest: "CAPTURED — digest body");
@@ -106,9 +106,9 @@ public class AgentTaskCheckInterpreterTests
     }
 
     [Test]
-    public void a_captured_entry_puts_activity_age_on_the_header()
+    public async Task a_captured_entry_puts_activity_age_on_the_header()
     {
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var task = HeaderTask();
         var facts = HeaderFacts(withSession: true, sinceLastEntry: TimeSpan.Zero);
         var note = h.Checks.BuildNote(
@@ -123,9 +123,9 @@ public class AgentTaskCheckInterpreterTests
     }
 
     [Test]
-    public void a_note_with_no_session_does_not_invent_activity()
+    public async Task a_note_with_no_session_does_not_invent_activity()
     {
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var task = HeaderTask();
         var facts = HeaderFacts(withSession: false, sinceLastEntry: null);
         var note = h.Checks.BuildNote(task, facts, digest: "CAPTURED — digest body");
@@ -135,9 +135,9 @@ public class AgentTaskCheckInterpreterTests
     }
 
     [Test]
-    public void a_check_header_after_a_reply_names_both_clocks()
+    public async Task a_check_header_after_a_reply_names_both_clocks()
     {
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var task = HeaderTask();
         var now = DateTime.UtcNow;
         var facts = HeaderFacts(
@@ -154,9 +154,9 @@ public class AgentTaskCheckInterpreterTests
     }
 
     [Test]
-    public void an_empty_title_renders_as_delegated_task()
+    public async Task an_empty_title_renders_as_delegated_task()
     {
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var task = HeaderTask();
         task.Title = "  \n  ";
         var note = h.Checks.BuildNote(task, HeaderFactsFor(task), digest: "CAPTURED — digest body");
@@ -168,9 +168,9 @@ public class AgentTaskCheckInterpreterTests
     }
 
     [Test]
-    public void a_final_check_keeps_the_budget_phrase_on_the_bounded_first_line()
+    public async Task a_final_check_keeps_the_budget_phrase_on_the_bounded_first_line()
     {
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var task = HeaderTask();
         task.NextCheckAt = null;
         var note = h.Checks.BuildNote(task, HeaderFacts(withSession: true, sinceLastEntry: null), digest: "CAPTURED — digest body");
@@ -182,9 +182,9 @@ public class AgentTaskCheckInterpreterTests
     }
 
     [Test]
-    public void a_direct_api_length_title_is_clipped_at_a_word_boundary()
+    public async Task a_direct_api_length_title_is_clipped_at_a_word_boundary()
     {
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var task = HeaderTask();
         task.Title = string.Join(" ", Enumerable.Repeat("titleword", 30));
         task.Title.Length.ShouldBe(299);
@@ -202,7 +202,7 @@ public class AgentTaskCheckInterpreterTests
     [Test]
     public async Task a_300_char_api_title_is_clipped_on_the_header()
     {
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var title = new string('x', 300);
         var created = await h.Tasks.CreateAsync(
             new CreateAgentTaskRequest(Goal: "do the checked thing", Title: title, Role: AgentTaskRole.Code),
@@ -228,7 +228,7 @@ public class AgentTaskCheckInterpreterTests
     [Test]
     public async Task a_long_multi_line_title_through_create_is_clipped_on_the_header()
     {
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var title =
             "Investigate the long-running check header dump that repeats the entire goal\n"
             + "paragraph across several lines until the first check overflows the composer";
@@ -309,9 +309,9 @@ public class AgentTaskCheckInterpreterTests
     }
 
     [Test]
-    public void a_bound_alias_replaces_the_task_title_on_the_header()
+    public async Task a_bound_alias_replaces_the_task_title_on_the_header()
     {
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var task = HeaderTask();
         var facts = HeaderFacts(
             withSession: false, sinceLastEntry: null,
@@ -323,9 +323,9 @@ public class AgentTaskCheckInterpreterTests
     }
 
     [Test]
-    public void a_bound_card_without_alias_prefixes_the_clipped_title()
+    public async Task a_bound_card_without_alias_prefixes_the_clipped_title()
     {
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var task = HeaderTask();
         task.Title = string.Join(" ", Enumerable.Repeat("titleword", 30));
         var facts = HeaderFactsFor(
@@ -341,9 +341,9 @@ public class AgentTaskCheckInterpreterTests
     }
 
     [Test]
-    public void a_cleared_alias_falls_back_to_the_card_identifier_and_clipped_title()
+    public async Task a_cleared_alias_falls_back_to_the_card_identifier_and_clipped_title()
     {
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var task = HeaderTask();
         var facts = HeaderFacts(
             withSession: false, sinceLastEntry: null,
@@ -355,9 +355,9 @@ public class AgentTaskCheckInterpreterTests
     }
 
     [Test]
-    public void build_note_formats_identity_from_facts_not_the_task_row()
+    public async Task build_note_formats_identity_from_facts_not_the_task_row()
     {
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var task = HeaderTask();
         task.Title = "the entity title";
         task.CardId = Guid.NewGuid();
@@ -374,9 +374,9 @@ public class AgentTaskCheckInterpreterTests
     }
 
     [Test]
-    public void a_missing_bound_card_falls_back_to_the_clipped_title_without_querying()
+    public async Task a_missing_bound_card_falls_back_to_the_clipped_title_without_querying()
     {
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var task = HeaderTask();
         task.CardId = Guid.NewGuid();
         var note = h.Checks.BuildNote(task, HeaderFactsFor(task), digest: "CAPTURED — digest body");
@@ -388,9 +388,9 @@ public class AgentTaskCheckInterpreterTests
     }
 
     [Test]
-    public void a_degraded_note_still_uses_the_bound_card_alias()
+    public async Task a_degraded_note_still_uses_the_bound_card_alias()
     {
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var task = HeaderTask();
         var facts = HeaderFacts(
             withSession: true, sinceLastEntry: null,
@@ -409,7 +409,7 @@ public class AgentTaskCheckInterpreterTests
     [Test]
     public async Task a_live_gather_puts_the_bound_alias_on_the_check_header()
     {
-        using var h = new Harness(s => s.CheckInterpreterEnabled = false);
+        await using var h = await Harness.CreateAsync(s => s.CheckInterpreterEnabled = false);
         var card = await h.SeedCardAsync("CARD-0350", "Status Stuck");
         var seed = await h.SeedDelegateAsync(cardId: card.Id);
         var facts = await h.Probe.GatherAsync(seed.Task, CancellationToken.None);
@@ -427,7 +427,7 @@ public class AgentTaskCheckInterpreterTests
     [Test]
     public async Task a_delivered_check_on_a_bound_card_keeps_the_envelope_and_names_the_alias()
     {
-        using var h = new Harness(s => s.CheckInterpreterEnabled = false);
+        await using var h = await Harness.CreateAsync(s => s.CheckInterpreterEnabled = false);
         var card = await h.SeedCardAsync("CARD-0350", "Status Stuck");
         var seed = await h.SeedDelegateAsync(cardId: card.Id);
         await h.SeedDelegateTranscriptAsync(seed.DelegateSessionId, seed.Task.Id);
@@ -451,7 +451,7 @@ public class AgentTaskCheckInterpreterTests
     [Test]
     public async Task the_interpretation_task_is_its_own_root_pinned_and_answers_to_nobody()
     {
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var specialist = await h.EnsureSpecialistAsync();
         var seed = await h.SeedDelegateAsync();
         await h.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
@@ -494,7 +494,7 @@ public class AgentTaskCheckInterpreterTests
     [Test]
     public async Task the_check_event_stores_the_reading_above_the_digest()
     {
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var specialist = await h.EnsureSpecialistAsync();
         var seed = await h.SeedDelegateAsync();
         await h.SeedDelegateTranscriptAsync(seed.DelegateSessionId, seed.Task.Id);
@@ -510,7 +510,7 @@ public class AgentTaskCheckInterpreterTests
         await h.PumpClockAsync(run);
         await run;
 
-        await using var verify = CreateContext();
+        await using var verify = h.CreateContext();
         var check = (await verify.AgentTaskEvents
             .Where(e => e.AgentTaskId == seed.Task.Id && e.Type == AgentTaskEventType.Check)
             .ToListAsync()).ShouldHaveSingleItem();
@@ -535,7 +535,7 @@ public class AgentTaskCheckInterpreterTests
     public async Task a_looks_stuck_reading_still_round_trips_through_the_checked_task_event()
     {
         // CARD-0302: LOOKS STUCK is evidence on the checked task, never the Check row's Status.
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var specialist = await h.EnsureSpecialistAsync();
         var seed = await h.SeedDelegateAsync();
         await h.SeedDelegateTranscriptAsync(seed.DelegateSessionId, seed.Task.Id);
@@ -550,7 +550,7 @@ public class AgentTaskCheckInterpreterTests
         await h.PumpClockAsync(run);
         await run;
 
-        await using var verify = CreateContext();
+        await using var verify = h.CreateContext();
         var check = (await verify.AgentTaskEvents
             .Where(e => e.AgentTaskId == seed.Task.Id && e.Type == AgentTaskEventType.Check)
             .ToListAsync()).ShouldHaveSingleItem();
@@ -567,7 +567,7 @@ public class AgentTaskCheckInterpreterTests
     [Test]
     public async Task a_degraded_check_stores_the_digest_alone_and_reads_back_as_no_reading()
     {
-        using var h = new Harness(s => s.CheckInterpreterMaxBacklog = 1);
+        await using var h = await Harness.CreateAsync(s => s.CheckInterpreterMaxBacklog = 1);
         var specialist = await h.EnsureSpecialistAsync();
         await h.SeedPendingInterpretationAsync(specialist.Id, AgentTaskStatus.Queued);
         var seed = await h.SeedDelegateAsync();
@@ -577,7 +577,7 @@ public class AgentTaskCheckInterpreterTests
         (await h.Checks.RunCheckAsync(seed.Task.Id, CancellationToken.None))
             .ShouldBe(AgentTaskCheckService.CheckOutcome.Delivered);
 
-        await using var verify = CreateContext();
+        await using var verify = h.CreateContext();
         var check = (await verify.AgentTaskEvents
             .Where(e => e.AgentTaskId == seed.Task.Id && e.Type == AgentTaskEventType.Check)
             .ToListAsync()).ShouldHaveSingleItem();
@@ -638,7 +638,7 @@ public class AgentTaskCheckInterpreterTests
     [Test]
     public async Task an_interpretation_that_never_settles_degrades_and_the_queued_task_is_cancelled()
     {
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var specialist = await h.EnsureSpecialistAsync();
         var seed = await h.SeedDelegateAsync();
         await h.SeedDelegateTranscriptAsync(seed.DelegateSessionId, seed.Task.Id);
@@ -668,7 +668,7 @@ public class AgentTaskCheckInterpreterTests
     {
         // One specialist, many delegates due at once. Past the bound a check degrades IMMEDIATELY
         // rather than waiting its full budget behind a pile.
-        using var h = new Harness(s => s.CheckInterpreterMaxBacklog = 2);
+        await using var h = await Harness.CreateAsync(s => s.CheckInterpreterMaxBacklog = 2);
         var specialist = await h.EnsureSpecialistAsync();
         await h.SeedPendingInterpretationAsync(specialist.Id, AgentTaskStatus.Queued);
         await h.SeedPendingInterpretationAsync(specialist.Id, AgentTaskStatus.Working);
@@ -693,7 +693,7 @@ public class AgentTaskCheckInterpreterTests
     {
         // Not "degraded" — OFF. CheckInterpreterEnabled=false must be today's behaviour to the
         // byte, which is the property that makes it a safe switch to reach for at 3am.
-        using var h = new Harness(s => s.CheckInterpreterEnabled = false);
+        await using var h = await Harness.CreateAsync(s => s.CheckInterpreterEnabled = false);
         var seed = await h.SeedDelegateAsync();
         await h.SeedDelegateTranscriptAsync(seed.DelegateSessionId, seed.Task.Id);
         await h.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
@@ -706,7 +706,7 @@ public class AgentTaskCheckInterpreterTests
         note.ShouldNotContain("unverified digest", customMessage: "no prefix — nothing was skipped");
         note.ShouldNotContain(AgentTaskCheckService.InterpreterDownMarker);
         note.ShouldContain("TASK ");
-        await using var verify = CreateContext();
+        await using var verify = h.CreateContext();
         (await verify.AgentTasks.AnyAsync(t => t.Role == AgentTaskRole.Check && t.CreatedAt >= h.StartedAt))
             .ShouldBeFalse("and no interpretation task was created at all");
         (await verify.Agents.AnyAsync(a => a.Slug == h.SpecialistSlug))
@@ -716,7 +716,7 @@ public class AgentTaskCheckInterpreterTests
     [Test]
     public async Task a_provisioner_that_throws_degrades()
     {
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         // The specialist already exists — Ensure throws on reconcile, which is the live shape.
         // Without a row there is nowhere to hang an AgentIncident (AgentId is required).
         var specialist = await h.EnsureSpecialistAsync();
@@ -747,7 +747,7 @@ public class AgentTaskCheckInterpreterTests
     public async Task a_settled_interpretation_with_nothing_usable_degrades(
         AgentTaskStatus status, string result, string expectedReason)
     {
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var specialist = await h.EnsureSpecialistAsync();
         var seed = await h.SeedDelegateAsync();
         await h.SeedDelegateTranscriptAsync(seed.DelegateSessionId, seed.Task.Id);
@@ -776,7 +776,7 @@ public class AgentTaskCheckInterpreterTests
     [Test]
     public async Task a_burst_of_unavailable_checks_raises_one_incident_per_specialist()
     {
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var specialist = await h.EnsureSpecialistAsync();
         var first = await h.SeedDelegateAsync();
         await h.SeedDelegateTranscriptAsync(first.DelegateSessionId, first.Task.Id);
@@ -805,7 +805,7 @@ public class AgentTaskCheckInterpreterTests
     [Test]
     public async Task the_unavailable_incident_re_fires_after_the_dedup_window()
     {
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var specialist = await h.EnsureSpecialistAsync();
         var first = await h.SeedDelegateAsync();
         await h.SeedDelegateTranscriptAsync(first.DelegateSessionId, first.Task.Id);
@@ -830,7 +830,7 @@ public class AgentTaskCheckInterpreterTests
     public async Task an_interpretation_task_is_never_armed_for_a_check()
     {
         // Guard one. Checks that checked checks would create an interpretation per interpretation.
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var specialist = await h.EnsureSpecialistAsync(withLiveSession: true);
         var seed = await h.SeedDelegateAsync();
         await h.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
@@ -854,7 +854,7 @@ public class AgentTaskCheckInterpreterTests
     {
         // Guard two, and the reason it is separate: guard one is about what we WRITE, this is about
         // what we READ. A row that somehow carried a NextCheckAt must still never be claimed.
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var specialist = await h.EnsureSpecialistAsync();
         var armed = await h.SeedPendingInterpretationAsync(specialist.Id, AgentTaskStatus.Dispatched);
         await h.ArmCheckByHandAsync(armed.Id, h.SeedCallerSessionId);
@@ -874,7 +874,7 @@ public class AgentTaskCheckInterpreterTests
         // session that is already running, so it spawns none — and a system at the cap must not
         // starve every interpretation and silently degrade all checks exactly when the operator
         // most wants eyes on the fleet.
-        using var h = new Harness(s => s.MaxConcurrentTasks = 1);
+        await using var h = await Harness.CreateAsync(s => s.MaxConcurrentTasks = 1);
         var specialist = await h.EnsureSpecialistAsync(withLiveSession: true);
         await h.SeedActiveOrdinaryTaskAsync();
         var ordinary = await h.SeedQueuedOrdinaryTaskAsync();
@@ -893,7 +893,7 @@ public class AgentTaskCheckInterpreterTests
     [Test]
     public async Task the_board_hides_interpretation_rows_unless_they_are_asked_for()
     {
-        using var h = new Harness();
+        await using var h = await Harness.CreateAsync();
         var specialist = await h.EnsureSpecialistAsync();
         var interpretation = await h.SeedPendingInterpretationAsync(specialist.Id, AgentTaskStatus.Queued);
 
@@ -905,8 +905,6 @@ public class AgentTaskCheckInterpreterTests
     }
 
     // ---- helpers ---------------------------------------------------------------------------------
-
-    private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
     private static AgentTask HeaderTask() => new()
     {
@@ -974,14 +972,39 @@ public class AgentTaskCheckInterpreterTests
 
     private sealed record Seeded(AgentTask Task, Guid DelegateSessionId, Guid CallerSessionId);
 
-    private sealed class Harness : IDisposable
+    /// <summary>
+    /// One harness is one whole check-interpreter system, so it owns a CLONED database rather
+    /// than a slice of the shared one (CARD-0415). The seat is now discovered by its TYPED
+    /// standing-Check relation, not only by the configured slug, so two harnesses on one database
+    /// resolve to the SAME interpreter agent: their backlog counts, their unavailable-incident
+    /// dedup windows and their interpretation rows all merge, and the class fails in ways that
+    /// have nothing to do with the code under test. A unique slug per harness stopped being
+    /// isolation the moment discovery stopped being slug-only.
+    /// </summary>
+    private sealed class Harness : IAsyncDisposable
     {
         private readonly ServiceProvider _provider;
+        private readonly IsolatedTestSchema _schema;
         private readonly string _scratch;
         private readonly DelegationSettings _settings;
 
-        public Harness(Action<DelegationSettings>? configure = null)
+        public static async Task<Harness> CreateAsync(Action<DelegationSettings>? configure = null)
         {
+            var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+            try
+            {
+                return new Harness(schema, configure);
+            }
+            catch
+            {
+                await schema.DisposeAsync();
+                throw;
+            }
+        }
+
+        private Harness(IsolatedTestSchema schema, Action<DelegationSettings>? configure)
+        {
+            _schema = schema;
             _scratch = Directory.CreateTempSubdirectory("antiphon-interp-wire").FullName;
             SpecialistSlug = $"check-interp-{Guid.NewGuid():N}"[..24];
             _settings = new DelegationSettings
@@ -1004,7 +1027,7 @@ public class AgentTaskCheckInterpreterTests
 
             var services = new ServiceCollection();
             services.AddLogging();
-            services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
+            services.AddDbContext<AppDbContext>(o => o.UseNpgsql(_schema.ConnectionString));
             services.AddSingleton<IEventBus, MockEventBus>();
             services.AddSingleton<TimeProvider>(Clock);
             services.AddSingleton(Options.Create(new SupervisionSettings()));
@@ -1058,9 +1081,13 @@ public class AgentTaskCheckInterpreterTests
         public AgentTaskCheckQueue Queue { get; }
         public Guid SeedCallerSessionId { get; private set; }
 
-        public void Dispose()
+        public AppDbContext CreateContext() =>
+            new(TestDbFixture.CreateDbContextOptions(_schema.ConnectionString));
+
+        public async ValueTask DisposeAsync()
         {
-            _provider.Dispose();
+            await _provider.DisposeAsync();
+            await _schema.DisposeAsync();
             try { Directory.Delete(_scratch, recursive: true); }
             catch (IOException) { }
         }
