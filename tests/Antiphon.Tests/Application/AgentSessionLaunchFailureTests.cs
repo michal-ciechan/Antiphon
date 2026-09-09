@@ -56,7 +56,7 @@ public class AgentSessionLaunchFailureTests
             await Should.ThrowAsync<AgentLaunchBlockedException>(fixture.StartCardSessionAsync(cardId, "boot-must-not-be-sent", kind: AgentKind.ClaudeCode));
         else await Should.ThrowAsync<AgentLaunchBlockedException>(fixture.LaunchInteractiveAsync());
         adapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
-        adapter.SentPrompts.ShouldBeEmpty();
+        adapter.Prompts.ShouldBeEmpty();
         await using var db = LaunchFixture.CreateContext();
         var session = card is { } id ? await db.AgentSessions.SingleAsync(s => s.CardId == id)
             : await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
