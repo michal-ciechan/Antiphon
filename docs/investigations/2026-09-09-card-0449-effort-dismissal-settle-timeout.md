@@ -119,3 +119,19 @@ robust to an arbitrary extra transient row near the hint bar, present or absent.
 - Live snapshot: `GET http://localhost:17204/sessions/23b5663c-fbce-40ea-8ec9-613764086827/snapshot`
   (task `f418105f`), decoded in §2 above — raw VT bytes captured 2026-09-09, `startedAt`
   `2026-09-09T07:46:18.2725409Z`, `lastSequence: 19`.
+
+## Correction (Plan stage, task `c6d64663`, 2026-09-09)
+
+Replaying the same bytes (`C:\logs\antiphon\session-runner\23b5663cfbce40ea8ec9613764086827.ansi.log`)
+through the production `TerminalScreen` reproduces the runner's `renderedScreen` exactly, and that screen is
+**not** clean: rows 7–8 hold two stacked rules, row 9 holds ` Use Fable 5.1 at high effort by default?`, and
+row 12 holds `task. You can change this any time with /effort.` — above and below a composer painted over the
+dialog's area. On every post-dismissal frame `ComposerIsLive` is true, `Parse` is null and `HasRemnant` is
+true; no further bytes arrived, so the settle loop failed the **remnant** gate on every poll for ~13 s. §1's
+hint-bar mechanism and §3's banner churn are not the cause: a replay with the banner write excised ghosts
+identically, and an xterm-style emulator (pyte 0.8.2) renders both variants clean. The divergence is
+`TerminalScreen` wrapping immediately when a character lands in the last column, where ConPTY's renderer
+assumes deferred wrap; Claude's full-width rules shift every later row-relative move by one row. §5's
+`IsSettled` recommendation cannot clear that screen on its own (the ghost title is stable content). Fix
+design, frame-by-frame evidence and fixtures:
+[2026-09-09-card-0449-effort-dismissal-settle-plan.md](../superpowers/plans/2026-09-09-card-0449-effort-dismissal-settle-plan.md).
