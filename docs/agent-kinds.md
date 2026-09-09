@@ -505,8 +505,19 @@ There are further acceptance gates beyond that identity fix: ordinary Codex brie
 to file pointers, incompatible with an interpreter that cannot read files, and the specialist's
 Claude deny-all hook does not enforce a Codex tool policy. A ready reply is not a valid
 interpretation. The [CARD-0415 plan](superpowers/plans/2026-09-07-card-0415-interpreter-fallback-plan.md)
-defines qualified candidate routing and durable Attention; those changes are planned, not
-implemented by this documentation update.
+defines qualified candidate routing and durable Attention; execution and visibility remain
+unimplemented. The CARD-0415 follow-up adds declared routing storage/API, a pure reading validator
+and a typed failure policy. They are preparation for that execution path, not an activated chain.
+`CheckInterpreterFirstAttemptSeconds` defaults to null (full remaining budget); a configured shorter
+value still needs matching calibration before a future chain executor can use it.
+`CheckInterpreterTransientFailureThreshold` defaults to 3 and validates between 2 and 10.
+
+Check provisioning and a fresh standing Check launch now refuse if the Claude deny-hook file cannot
+be armed. The launch boundary rearms the file even when supervision bypasses provisioning. Codex
+Check launch refuses with `specialist_tool_policy_pending_dependency` until CARD-0167's production
+agent-path injection and CARD-0415 capability gates exist. File creation is not proof of tool denial:
+inherited-setting rejection, actual CLI/tool challenges, full-input transport certification and
+behavioral qualification are still required. Existing ordinary Codex launches are unaffected.
 
 ## See also
 

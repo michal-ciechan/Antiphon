@@ -40,6 +40,16 @@ While Claude aliases are on a usage hold, a capability caller that wants to keep
 
 ## The jobs you have
 
+CARD-0415 adds `GET`/`PUT /api/agents/{id}/specialist-routing` and
+`POST /api/agents/{id}/specialist-routing/revalidate` for the configured standing Check owner.
+`scripts/specialist-routing.ps1 inspect|set|revalidate -Agent <guid>` uses these shapes and reads a
+fresh revision before writes. `set -Candidates 'ClaudeCode/High,Codex/Low'` declares ordered pairs;
+the first pair must match the actual primary. `set -Disable` retains an existing list.
+These endpoints currently store declaration and bounded revalidation authorization only: no
+alternate is provisioned, qualified or used by the existing check execution path. A successful
+configuration write or revalidate response is not readiness or activation evidence. Codex rows
+report PendingDependency CARD-0167. The remaining execution work is tracked in the CARD-0415 plan.
+
 | Need | Method | Path |
 |---|---|---|
 | Every agent, with its live session | GET | `/api/agents` |
