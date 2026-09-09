@@ -34,7 +34,7 @@ public class ComposerInputProbeTests
             {
                 "BeforeFirstToken" => writes.Count == 0,
                 "AwaitingToken" => writes.Count == 1,
-                "BeforeRetype" => writes.Count == 1 && phaseReads >= 3,
+                "BeforeRetype" => writes.Count == 1 && phaseReads >= 2,
                 "BeforeFirstClear" => rendered,
                 "BeforeClearRetry" => writes.Count >= 2 && phaseReads >= 3,
                 "BeforeResponsive" => writes.Count >= 2 && phaseReads >= 2,
