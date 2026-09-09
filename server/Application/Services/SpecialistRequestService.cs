@@ -18,7 +18,8 @@ public sealed partial class SpecialistRequestService(AppDbContext db, IOptions<D
     TimeProvider time, IModelAvailability availability, ISpecialistExecutionEvidenceReader evidenceReader,
     SubscriptionQuotaGate quota, AgentSessionRuntime runtime, IEventBus events, ILogger<SpecialistRequestService> logger)
 {
-    public async Task<SpecialistRun> RunCheckAsync(AgentTask checkedTask, int checkNumber, string digest, CancellationToken ct)
+    public async Task<SpecialistRun> RunCheckAsync(AgentTask checkedTask, int checkNumber, string digest, CancellationToken ct,
+        DelegateCheckProbe.CheckFacts? snapshot = null)
     {
         var began = time.GetUtcNow().UtcDateTime;
         var owner = await db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.StandingSpecialistOwnerId == a.Id
@@ -41,6 +42,7 @@ public sealed partial class SpecialistRequestService(AppDbContext db, IOptions<D
                     DeadlineAt = began.AddSeconds(Math.Max(1, settings.Value.CheckInterpreterWaitSeconds)),
                     Title = CheckInterpretation.BuildTitle(checkedTask, checkNumber),
                     Facts = CheckInterpretation.BuildGoal(checkedTask, checkNumber, digest),
+                    FactsSnapshotJson = snapshot is null ? null : JsonSerializer.Serialize(snapshot), CallerMessageId = Guid.NewGuid(),
                 };
                 db.SpecialistRequests.Add(request);
                 await db.SaveChangesAsync(ct);
@@ -64,7 +66,7 @@ public sealed partial class SpecialistRequestService(AppDbContext db, IOptions<D
                         : request.Outcome == SpecialistAttemptOutcome.Disabled ? SpecialistRunOutcome.Disabled
                         : request.Status == SpecialistRequestStatus.Expired ? SpecialistRunOutcome.Timeout : SpecialistRunOutcome.Failed,
                         request.Reading, attempts.Sum(a => a.CostUsd), (int)Math.Max(0, (time.GetUtcNow().UtcDateTime - began).TotalMilliseconds),
-                        last?.TaskId, request.Reason);
+                        last?.TaskId, request.Reason, RequestId: request.Id);
                 }
                 var remaining = request.DeadlineAt - time.GetUtcNow().UtcDateTime;
                 if (remaining > TimeSpan.Zero)

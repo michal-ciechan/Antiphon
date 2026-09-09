@@ -29,7 +29,7 @@ public sealed record SessionQueueTurnEndResult(
 /// Singleton: it owns per-session flush locks and is invoked from the (singleton) <see cref="AgentSessionRuntime"/>
 /// transcript observer. DB access is via a scope per operation, mirroring the runtime's own pattern.
 /// </summary>
-public sealed class SessionMessageQueueService
+public sealed partial class SessionMessageQueueService
 {
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _locks = new();
     private readonly IServiceScopeFactory _scopeFactory;

@@ -2985,6 +2985,17 @@ public sealed class AgentTaskDispatcher
         // Transactional claim: re-read under the concurrency token so a second tick (or another
         // server instance) racing this one loses cleanly instead of double-launching a delegate.
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        if (task.SpecialistInputPolicyJson is not null && task.AgentId is Guid physicalId)
+        {
+            // Same admission order as the specialized producer: counted-task lane, logical
+            // owner, then task. Routing/identity edits cannot slip between claim and dispatch.
+            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(hashtext('antiphon.capacity.counted-tasks'))", ct);
+            var ownerId = await _db.Agents.AsNoTracking().Where(a => a.Id == physicalId)
+                .Select(a => a.StandingSpecialistOwnerId).SingleOrDefaultAsync(ct);
+            if (ownerId is Guid owner)
+                await _db.Agents.FromSqlInterpolated($"SELECT * FROM \"Agents\" WHERE \"Id\" = {owner} FOR UPDATE")
+                    .AsNoTracking().SingleOrDefaultAsync(ct);
+        }
         var claimed = await _db.AgentTasks.FromSqlInterpolated(
             $"SELECT * FROM \"AgentTasks\" WHERE \"Id\" = {task.Id} FOR UPDATE")
             .FirstOrDefaultAsync(t => t.Status == AgentTaskStatus.Queued
@@ -4283,6 +4294,7 @@ public sealed class AgentTaskDispatcher
     private async Task<ReuseOutcome> PlaceOnStandingAgentAsync(
         AgentTask claimed, Agent standing, DateTime now, CancellationToken ct)
     {
+        if (claimed.SpecialistInputPolicyJson is not null) await _db.Entry(standing).ReloadAsync(ct);
         if (await LiveSessionIdOfAsync(standing, ct) is not Guid session)
             return standing.AlwaysOn ? ReuseOutcome.WaitForAgent : ReuseOutcome.SpawnFresh;
 
@@ -4310,6 +4322,9 @@ public sealed class AgentTaskDispatcher
 
         if (claimed.SpecialistModelAlias is { } expectedAlias)
         {
+            if (claimed.SpecialistInputPolicyJson is not null
+                && await StandingSpecialistSeatPolicy.StartRefusalAsync(_db, standing, _settings, true, ct) is { } refusal)
+                throw new SpecialistIdentityMismatchException(refusal);
             var currentAlias = DispatchModelAlias.Resolve(standing.Kind, standing.ModelLevel, standing.ModelId);
             if (standing.Kind != claimed.AgentKind || standing.ModelLevel != claimed.ModelLevel
                 || !string.Equals(standing.ModelId, claimed.SpecialistModelId, StringComparison.Ordinal)
