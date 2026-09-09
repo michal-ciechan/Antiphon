@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Antiphon.Agents.Pty;
 using Antiphon.Agents.Pty.Tests;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Infrastructure.Agents.Pty;
@@ -12,6 +13,47 @@ namespace Antiphon.Tests.Agents;
 [Category("Integration"), NotInParallel, ParallelLimiter<ProcessSpawnLimit>]
 public class ClaudeAdapterEffortPromptTests
 {
+    [Test]
+    public async Task Local_probe_failure_logs_token_elapsed_and_writes()
+    {
+        var scratch = Directory.CreateTempSubdirectory("c449-deaf-").FullName;
+        var script = Path.Combine(scratch, "deaf.ps1");
+        await File.WriteAllTextAsync(script, """
+            [Console]::Write("Claude ready`n> `n? for shortcuts")
+            while ($true) { [void][Console]::ReadKey($true) }
+            """);
+        var settings = RunnerClaudeAdapterEffortPromptTests.Settings(1000);
+        settings.ClaudeInputProbeRetypeIntervalMs = 100;
+        var logger = new RunnerClaudeAdapterEffortPromptTests.StartupLogger();
+        await using var adapter = new ClaudeAdapter(Options.Create(settings), logger);
+        var spec = RunnerClaudeAdapterEffortPromptTests.Spec() with
+        { Exe = "pwsh.exe", Cwd = scratch, Args = ["-NoProfile", "-File", script] };
+        try
+        {
+            await adapter.StartAsync(spec, CancellationToken.None);
+            (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeFalse();
+            var entry = logger.Errors.ShouldHaveSingleItem();
+            var token = ComposerInputProbe.TokenFor(spec.SessionId!.Value);
+            entry.Fields.ShouldContainKey("Token");
+            entry.Fields["Token"].ShouldBe(token);
+            entry.Fields["Writes"].ShouldBe(3);
+            ((double)entry.Fields["Elapsed"]!).ShouldBeGreaterThan(0);
+            entry.Message.ShouldContain(token);
+            entry.Message.ShouldContain("3 write(s)");
+            adapter.LaunchBlock.ShouldBeNull();
+        }
+        finally
+        {
+            if (adapter.Pid is not null)
+            {
+                (await adapter.KillAsync(TimeSpan.FromSeconds(5), CancellationToken.None)).ShouldBeTrue();
+                await adapter.Exited.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            await adapter.DisposeAsync();
+            DeleteScratch(scratch);
+        }
+    }
+
     [Test, Arguments("xhigh"), Arguments("high")]
     public Task Local_adapter_keeps_requested_effort_and_probes_after_clearance(string requested) => RunAsync(false, requested);
     [Test]

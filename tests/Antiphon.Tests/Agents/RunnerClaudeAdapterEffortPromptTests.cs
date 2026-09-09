@@ -44,6 +44,37 @@ public class RunnerClaudeAdapterEffortPromptTests
     }
 
     [Test]
+    public async Task Probe_failure_logs_token_elapsed_writes_and_screen()
+    {
+        const string screen = "Claude ready\n> \n? for shortcuts\nC449_DIAGNOSTIC_SCREEN";
+        var fake = new EffortTestScreen { Dialog = false, Override = screen };
+        var client = new Client(fake);
+        var logger = new StartupLogger();
+        var settings = Settings(1000);
+        settings.ClaudeInputProbeRetypeIntervalMs = 100;
+        await using var adapter = new RunnerClaudeAdapter(client, Options.Create(settings), logger: logger);
+        var spec = Spec();
+        await adapter.StartAsync(spec, CancellationToken.None);
+        try
+        {
+            (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeFalse();
+            var entry = logger.Errors.ShouldHaveSingleItem();
+            var token = ComposerInputProbe.TokenFor(spec.SessionId!.Value);
+            entry.Fields.ShouldContainKey("Token");
+            entry.Fields["Token"].ShouldBe(token);
+            entry.Fields["Writes"].ShouldBe(fake.Writes.Count(w => w.Key == token));
+            ((int)entry.Fields["Writes"]!).ShouldBeGreaterThan(0);
+            ((double)entry.Fields["Elapsed"]!).ShouldBeGreaterThan(0);
+            entry.Fields["Screen"].ShouldBe(screen);
+            entry.Message.ShouldContain(token);
+            entry.Message.ShouldContain("write(s)");
+            entry.Message.ShouldContain("Screen:\n" + screen);
+            adapter.LaunchBlock.ShouldBeNull();
+        }
+        finally { await adapter.KillAsync(TimeSpan.FromSeconds(1), CancellationToken.None); await adapter.Exited; }
+    }
+
+    [Test]
     public async Task Attach_without_launch_effort_preserves_current()
     {
         var fake = new EffortTestScreen { Highlight = 2 };
@@ -131,12 +162,19 @@ public class RunnerClaudeAdapterEffortPromptTests
         fake.Writes.ShouldBeEmpty();
     }
 
-    private sealed class StartupLogger : ILogger
+    internal sealed class StartupLogger : ILogger
     {
         public List<string> Messages { get; } = [];
+        public List<(string Message, Dictionary<string, object?> Fields)> Errors { get; } = [];
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
         public bool IsEnabled(LogLevel level) => true;
-        public void Log<TState>(LogLevel level, EventId id, TState state, Exception? exception, Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
+        public void Log<TState>(LogLevel level, EventId id, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            var message = formatter(state, exception);
+            Messages.Add(message);
+            if (level == LogLevel.Error)
+                Errors.Add((message, ((IEnumerable<KeyValuePair<string, object?>>)state!).ToDictionary(kv => kv.Key, kv => kv.Value)));
+        }
     }
 
     internal sealed class Client(EffortTestScreen screen) : ISessionRunnerClient
@@ -144,6 +182,8 @@ public class RunnerClaudeAdapterEffortPromptTests
         private readonly DateTime _startedAt = DateTime.UtcNow;
         private long _sequence;
         private bool _exited;
+        public int KillCalls { get; private set; }
+        public bool KillTokenWasCanceled { get; private set; }
         public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct) => GetAsync(sessionId, ct);
         public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
         public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) => Task.FromResult(new SessionRunnerSessionDto(sessionId, 4321,
@@ -159,7 +199,8 @@ public class RunnerClaudeAdapterEffortPromptTests
 
         public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) => Task.CompletedTask;
 
-        public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct) { _exited = true; return GetAsync(sessionId, ct); }
+        public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct)
+        { KillCalls++; KillTokenWasCanceled = ct.IsCancellationRequested; _exited = true; return GetAsync(sessionId, ct); }
 
         public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)

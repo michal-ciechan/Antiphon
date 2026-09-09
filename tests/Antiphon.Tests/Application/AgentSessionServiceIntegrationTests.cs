@@ -8,6 +8,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.Pty;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Server.Infrastructure.WorkspaceHooks;
@@ -30,6 +31,55 @@ namespace Antiphon.Tests.Application;
 public class AgentSessionServiceIntegrationTests
 {
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
+
+    [Test]
+    public async Task Cancellation_during_claude_minimum_floor_kills_the_started_runner_session()
+    {
+        await using var db = CreateContext();
+        using var scratch = new TemporaryDirectory("c449-floor");
+        var graph = CreateGraph(scratch.Path);
+        db.Add(graph.Project);
+        await db.SaveChangesAsync();
+        var screen = new Antiphon.Agents.Pty.Tests.EffortTestScreen { Dialog = false };
+        var atFloor = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Two visible-output snapshots precede quiet; the third is the early trust check.
+        screen.AfterSnapshot = f => { if (f.Snapshots == 3) atFloor.TrySetResult(); };
+        var client = new RunnerClaudeAdapterEffortPromptTests.Client(screen);
+        var settings = RunnerClaudeAdapterEffortPromptTests.Settings();
+        settings.ClaudeReadyMinTotalWaitMs = 30_000;
+        await using var adapter = new RunnerClaudeAdapter(client, Options.Create(settings));
+        await using var provider = BuildProvider();
+        var (service, _) = BuildServiceWithFakes(db, new MockEventBus(), provider, adapter,
+            Path.Combine(scratch.Path, "worktree"), new AgentSessionSettings
+            { KillGraceMs = 100, SessionLogPath = Path.Combine(scratch.Path, "logs") });
+        using var cancel = new CancellationTokenSource();
+        var launch = service.StartAsync(new StartAgentSessionRequest(graph.Card.Id, "claude", AgentKind.ClaudeCode, "do not send"),
+            RunnerClaudeAdapterEffortPromptTests.Spec() with { Cwd = scratch.Path }, cancel.Token);
+        try
+        {
+            await atFloor.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await Task.Delay(50); // Cancel inside the standing floor, after the early check returned.
+            launch.IsCompleted.ShouldBeFalse();
+            screen.Snapshots.ShouldBe(3);
+            await cancel.CancelAsync();
+            var failure = await Should.ThrowAsync<InvalidOperationException>(() => launch);
+            failure.Message.ShouldContain(AgentSessionService.NotReadyBase);
+            client.KillCalls.ShouldBe(1, "the real session-service failure path must kill the started runner session");
+            client.KillTokenWasCanceled.ShouldBeFalse("cleanup must not inherit the canceled launch token");
+            await adapter.Exited.WaitAsync(TimeSpan.FromSeconds(2));
+            screen.Writes.ShouldBeEmpty("neither the probe nor the boot prompt belongs before the floor");
+            var session = await db.AgentSessions.SingleAsync(s => s.CardId == graph.Card.Id);
+            session.Status.ShouldBe(SessionStatus.Failed);
+            session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
+        }
+        finally
+        {
+            await cancel.CancelAsync();
+            try { await launch; } catch (Exception) { }
+            await adapter.KillAsync(TimeSpan.FromSeconds(1), CancellationToken.None);
+            await adapter.Exited.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+    }
 
     [Test]
     public async Task AgentSessionService_start_to_first_text_delta_with_real_worktree_and_raw_pty()
