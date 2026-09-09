@@ -48,7 +48,27 @@ public class SpecialistToolPolicyTests
     public Task Card0415_V05_Claude_native_tool_denial_and_disposable_receipt_controls(string tool, bool protectedSeat) =>
         RunAsync(protectedSeat, tool, 0);
 
-    private static async Task RunAsync(bool protectedSeat, string? tool, int spareByte)
+    [Test]
+    [Timeout(300_000)]
+    [Arguments("small")]
+    [Arguments("body-1024")]
+    [Arguments("body-2048")]
+    [Arguments("fixture-3466")]
+    [Arguments("fixture-5166")]
+    [Arguments("full-facts")]
+    [Arguments("ascii-M")]
+    [Arguments("ascii-M-minus-one")]
+    [Arguments("multi-M")]
+    [Arguments("multi-M-minus-one")]
+    [Arguments("ascii-M-plus-one")]
+    [Arguments("multi-M-plus-one")]
+    public Task Card0415_V05_Claude_finite_grid_fresh_and_warm(string shape) => RunAsync(true, null, 0, shape, 2);
+
+    [Test]
+    [Timeout(180_000)]
+    public Task Card0415_V05_Claude_warm_small_diagnostic() => RunAsync(true, null, 0, "small", 2);
+
+    private static async Task RunAsync(bool protectedSeat, string? tool, int spareByte, string? gridShape = null, int repetitions = 1)
     {
         RealCliStubGate.SkipIfNotEligible(AgentKind.ClaudeCode);
         var root = Path.Combine(Path.GetTempPath(), "antiphon-c415-capability", Guid.NewGuid().ToString("N"));
@@ -157,22 +177,53 @@ public class SpecialistToolPolicyTests
             var session = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sessionId);
             session.Status.ShouldBe(SessionStatus.Running);
             (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == sessionId)).ShouldBe(0, "a Check launch has no bootstrap/ready prompt");
+            for (var iteration = 0; iteration < repetitions; iteration++)
+            {
+            if (iteration > 0)
+            {
+                nonce = "C415-NONCE-" + Guid.NewGuid().ToString("N");
+                taskId = Guid.NewGuid();
+                reply = "Moving - synthetic capability fixture.\n" + DelegationReportFormatter.ReportToken(taskId, "done");
+            }
             var task = new AgentTask
             {
                 Id = taskId, RootTaskId = taskId, Title = "synthetic capability only", Role = AgentTaskRole.Check,
                 ReplyTo = AgentTaskReplyTo.None, AgentKind = AgentKind.ClaudeCode,
+                ModelLevel = agent.ModelLevel,
                 AgentId = agent.Id, AgentSessionId = sessionId, WorkingDirectory = cwd,
                 Goal = nonce + "\nHEAD café 日本語 😀 e\u0301\r\nMIDDLE\r\nTAIL",
                 CreatedAt = DateTime.UtcNow, ExecutionDeadlineAt = DateTime.UtcNow.AddSeconds(60),
             };
             string Brief() => DelegationReportFormatter.BuildBrief(task, delegation).ReplaceLineEndings("\n").Trim();
-            const int provisionalM = 8192;
-            task.Goal += new string('x', provisionalM - spareByte - Encoding.UTF8.GetByteCount(Brief()));
+            var provisionalM = gridShape is null ? 8192 : 32768;
+            if (gridShape is null) task.Goal += new string('x', provisionalM - spareByte - Encoding.UTF8.GetByteCount(Brief()));
+            else if (gridShape.StartsWith("body-"))
+                task.Goal += new string('x', int.Parse(gridShape[5..]) - Encoding.UTF8.GetByteCount(task.Goal));
+            else if (gridShape.StartsWith("fixture-"))
+                task.Goal += new string('x', int.Parse(gridShape[8..]) - task.Goal.Length);
+            else if (gridShape == "full-facts") task.Goal = FullFactsGoal(nonce);
+            else if (gridShape != "small")
+            {
+                if (gridShape.StartsWith("ascii-")) task.Goal = nonce + "\nHEAD ASCII\nMIDDLE\nTAIL";
+                var target = provisionalM + (gridShape.EndsWith("plus-one") ? 1 : gridShape.EndsWith("minus-one") ? -1 : 0);
+                if (gridShape.StartsWith("multi-"))
+                    task.Goal += string.Concat(Enumerable.Repeat("日本語😀e\u0301", (target - Encoding.UTF8.GetByteCount(Brief())) / Encoding.UTF8.GetByteCount("日本語😀e\u0301")));
+                task.Goal += new string('x', target - Encoding.UTF8.GetByteCount(Brief()));
+            }
             var expected = Brief();
+            if (gridShape is not null && !gridShape.EndsWith("plus-one"))
+                Encoding.UTF8.GetByteCount(expected).ShouldBeLessThanOrEqualTo(provisionalM, "required finite-grid fixtures must fit the measured envelope");
             task.SpecialistInputPolicyJson = new SpecialistInputPolicy(1, task.Id, session.Id, session.StartedAt,
                 session.AgentKind, DeliveryBackend.ModernConPty, provisionalM, "isolated-provisional-measurement-only").Serialize();
             db.AgentTasks.Add(task);
             await db.SaveChangesAsync();
+            if (Encoding.UTF8.GetByteCount(expected) > provisionalM)
+            {
+                Should.Throw<SpecialistInputUnsupportedException>(() => AgentTaskDispatcher.FitBriefForTyping(task, delegation,
+                    new(DeliveryBackend.ModernConPty, 128, delegation.ReplyInlineMaxChars, 128, "provisional measurement"), agentKind: AgentKind.ClaudeCode));
+                (await db.SessionQueuedMessages.CountAsync(m => m.ExecutionTaskId == task.Id)).ShouldBe(0);
+                continue;
+            }
             var fitted = AgentTaskDispatcher.FitBriefForTyping(task, delegation,
                 new(DeliveryBackend.ModernConPty, 128, delegation.ReplyInlineMaxChars, 128, "provisional measurement"), agentKind: AgentKind.ClaudeCode);
             fitted.ShouldBe(expected);
@@ -183,6 +234,19 @@ public class SpecialistToolPolicyTests
             hit!.Headers["x-api-key"].ShouldBe([key]);
             JsonSerializer.Deserialize<JsonElement>(hit.Body).GetProperty("messages").ToString().ShouldContain(nonce);
             var queued = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.ExecutionTaskId == task.Id);
+            if (gridShape is not null && Environment.GetEnvironmentVariable("ANTIPHON_C415_EVIDENCE_DIR") is { Length: > 0 } rawDir)
+            {
+                Directory.CreateDirectory(rawDir);
+                var rawNative = await runner.GetTranscriptAsync(sessionId, CancellationToken.None);
+                File.WriteAllText(Path.Combine(rawDir, $"raw-{gridShape}-{iteration}-{task.Id:N}.json"), JsonSerializer.Serialize(new
+                {
+                    gridShape, iteration, sessionId, taskId = task.Id, expected, queued.DeliveryVerdict, queued.LastDeliveryBaselineSequence,
+                    availableTools = JsonSerializer.Deserialize<JsonElement>(hit.Body).GetProperty("tools").EnumerateArray()
+                        .Select(t => t.GetProperty("name").GetString()).ToArray(),
+                    native = rawNative.Entries.Where(e => e.Kind is TranscriptKinds.UserPrompt or TranscriptKinds.QueuedUserPrompt
+                        or TranscriptKinds.AssistantText or TranscriptKinds.TurnEnd).ToArray(),
+                }));
+            }
             queued.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered, "only the complete native UserPrompt confirms the envelope");
             queued.Body.ShouldBe(expected);
             var prompts = await db.TranscriptEntries.AsNoTracking().Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt).ToListAsync();
@@ -218,11 +282,73 @@ public class SpecialistToolPolicyTests
                     File.ReadAllText(receiptPath).ShouldBe(secretReceipt);
                 }
             }
+            if (gridShape is not null)
+            {
+                var prompt = prompts.Last(t => SpecialistInputPolicy.CompletePromptEquals(t.Text, expected));
+                var until = DateTime.UtcNow.AddSeconds(30);
+                while (DateTime.UtcNow < until && !await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == sessionId
+                    && t.Kind == TranscriptKinds.TurnEnd && t.Sequence > prompt.Sequence))
+                {
+                    await h.Runtime.CatchUpTranscriptAsync(sessionId, CancellationToken.None);
+                    await Task.Delay(100);
+                }
+                (await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.TurnEnd && t.Sequence > prompt.Sequence)).ShouldBeTrue();
+                var native = await runner.GetTranscriptAsync(sessionId, CancellationToken.None);
+                native.Entries.ShouldContain(t => t.Kind == TranscriptKinds.UserPrompt && SpecialistInputPolicy.CompletePromptEquals(t.Text, expected));
+                var evidenceDir = Environment.GetEnvironmentVariable("ANTIPHON_C415_EVIDENCE_DIR");
+                if (!string.IsNullOrWhiteSpace(evidenceDir))
+                {
+                    Directory.CreateDirectory(evidenceDir);
+                    File.WriteAllText(Path.Combine(evidenceDir, $"grid-{gridShape}-{task.Id:N}.json"), JsonSerializer.Serialize(new
+                    {
+                        shape = gridShape, iteration, taskId = task.Id, sessionId, session.StartedAt,
+                        cliSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(exe))),
+                        policy = "claude-check-isolated-settings-mcp-v1", backend = "ModernConPty",
+                        model = session.EffectiveModelId, provisionalM, bytes = Encoding.UTF8.GetByteCount(expected),
+                        inputSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(expected))),
+                        prompt.Sequence, endpoint = "owned-synthetic", costUsd = (decimal?)null,
+                    }));
+                }
+            }
+            }
         }
         finally
         {
             Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", previousConfig);
+            // Preserve only the owned synthetic conversation files, never a CLI home/config.
+            // Native file order is part of the canary evidence, including a failed assertion.
+            if (Environment.GetEnvironmentVariable("ANTIPHON_C415_EVIDENCE_DIR") is { Length: > 0 } evidenceRoot
+                && Directory.Exists(Path.Combine(config, "projects")))
+            {
+                var target = Path.Combine(evidenceRoot, "native-" + Path.GetFileName(root));
+                Directory.CreateDirectory(target);
+                foreach (var file in Directory.EnumerateFiles(Path.Combine(config, "projects"), "*.jsonl", SearchOption.AllDirectories))
+                    File.Copy(file, Path.Combine(target, Path.GetFileName(file)), true);
+            }
             RealCliStubBServerHarness.TryDelete(root);
         }
+    }
+
+    private static string FullFactsGoal(string nonce)
+    {
+        var now = DateTime.UtcNow;
+        var source = new AgentTask { Id = Guid.NewGuid() };
+        var text = new string('語', 190);
+        var facts = new DelegateCheckProbe.CheckFacts(now,
+            new(source.Id, DelegationReportFormatter.Short(source.Id), nonce + text, AgentTaskKind.Worker,
+                AgentKind.ClaudeCode, AgentTaskRole.Code, AgentModelLevel.High, AgentTaskStatus.Working,
+                false, 1, 2, now.AddMinutes(-5), null, TimeSpan.FromMinutes(5), 10, 1, false, null),
+            new(Guid.NewGuid(), SessionStatus.Running, true, 1000, now, TimeSpan.Zero),
+            Enumerable.Range(1, 10).Select(n => new DelegateCheckProbe.CheckTranscriptLine(n, TranscriptKinds.ToolCall,
+                $"{n}: {text}", now, new string('x', 120))).ToArray(),
+            new("C:\\synthetic\\fixture", DelegateCheckProbe.CheckGitEvidenceScope.TaskBranch, "master..fixture",
+                Enumerable.Range(1, 20).Select(n => $"{n:x8} {new string('g', 180)}").ToArray(), 20, 2, null),
+            Enumerable.Range(1, 5).Select(n => new DelegateCheckProbe.CheckQueuedMessage(n, QueuedMessageOrigin.Ui,
+                now, new string('q', 200), 1, now, false, 3, "synthetic queue item")).ToArray(),
+            Enumerable.Range(1, 5).Select(n => new DelegateCheckProbe.CheckIncident(AgentIncidentKind.StartFailure,
+                AlertSeverity.Warning, new string('i', 200), now)).ToArray(), now.AddMinutes(-3),
+            new("Task", TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(5), false, "synthetic bounded deadline"),
+            new("CARD-0415", "synthetic alias"));
+        return CheckInterpretation.BuildGoal(source, 1, DelegateCheckProbe.RenderDigest(facts));
     }
 }
