@@ -164,6 +164,28 @@ public class SpecialistInputTransportTests
     }
 
     [Test]
+    public async Task Card0415_V04_warm_native_pull_confirms_complete_input_when_live_stream_is_missing()
+    {
+        await using var h = await HarnessAsync();
+        var task = await TaskAsync(h, "warm complete input after a live-stream gap");
+        var body = Fit(task);
+        h.Adapter.OnSubmitted = submitted =>
+        {
+            h.Runner.SetTranscript(new SessionRunnerTranscriptDto(h.SessionId,
+                [new(h.SessionId, 100, TranscriptKinds.UserPrompt, Guid.NewGuid().ToString("N"), null,
+                    DateTimeOffset.UtcNow, "user", submitted, null, null, null, null, null, null)], 100));
+            return Task.CompletedTask;
+        };
+        await EnqueueAsync(h, task, body);
+        await using var db = BridgeQueueHarness.CreateContext();
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.ExecutionTaskId == task.Id);
+        message.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        message.LastDeliveryBaselineSequence.ShouldNotBeNull();
+        (await db.TranscriptEntries.AnyAsync(e => e.AgentSessionId == h.SessionId && e.Kind == TranscriptKinds.UserPrompt && e.Text == body)).ShouldBeTrue();
+        h.Adapter.SubmittedBodies.ShouldBe([body]);
+    }
+
+    [Test]
     public async Task Card0415_V04_generation_change_at_reload_refuses_before_submit()
     {
         await using var h = await HarnessAsync();

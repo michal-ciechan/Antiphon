@@ -35,7 +35,13 @@ public class SpecialistQualificationTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task Card0415_V07_authorized_batch_uses_real_dispatch_queue_and_settlement_once(bool wrongSemanticAnswer)
+    public Task Card0415_V07_authorized_batch_uses_real_dispatch_queue_and_settlement_once(bool wrongSemanticAnswer) =>
+        ExerciseAsync(wrongSemanticAnswer, false);
+
+    [Test]
+    public Task Card0415_V06_qualified_check_wins_from_native_turn_and_duplicate_request_reuses_result() => ExerciseAsync(false, true);
+
+    private static async Task ExerciseAsync(bool wrongSemanticAnswer, bool realCheck)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var settings = new DelegationSettings { CheckInterpreterAgentSlug = "c415-" + Guid.NewGuid().ToString("N"),
@@ -131,6 +137,46 @@ public class SpecialistQualificationTests
             (await scope.ServiceProvider.GetRequiredService<SpecialistRequestService>().AuthorizeQualificationAsync(candidateId, CancellationToken.None)).ShouldBeFalse();
             (await db.SpecialistRequests.CountAsync()).ShouldBe(1);
             (await db.StandingSpecialistHealths.CountAsync()).ShouldBe(0);
+        }
+        if (realCheck)
+        {
+            var checkedTask = new AgentTask { Id = Guid.NewGuid(), Title = "checked delegate", Role = AgentTaskRole.Code,
+                Status = AgentTaskStatus.Working, CreatedAt = DateTime.UtcNow, CheckCount = 1 };
+            checkedTask.RootTaskId = checkedTask.Id;
+            await using (var scope = h.Provider.CreateAsyncScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                db.AgentTasks.Add(checkedTask);
+                await db.SaveChangesAsync();
+            }
+            var nonce = "violet-" + Guid.NewGuid().ToString("N")[..12];
+            await using var requestScope = h.Provider.CreateAsyncScope();
+            var requestService = requestScope.ServiceProvider.GetRequiredService<SpecialistRequestService>();
+            var pending = requestService.RunCheckAsync(checkedTask, 1, $"Changed {nonce}.cs; seven focused tests passed; integration pending.", CancellationToken.None);
+            await SpecialistTaskRunnerDeadlineTests.UntilAsync(async () =>
+            {
+                await using var scope = h.Provider.CreateAsyncScope();
+                return await scope.ServiceProvider.GetRequiredService<AppDbContext>().AgentTasks.CountAsync(t => t.Role == AgentTaskRole.Check) == 3;
+            });
+            await using (var scope = h.Provider.CreateAsyncScope())
+                await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
+            await h.Provider.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(h.SessionId, CancellationToken.None);
+            var result = await pending.WaitAsync(TimeSpan.FromSeconds(10));
+            result.Outcome.ShouldBe(SpecialistRunOutcome.Succeeded, result.Reason);
+            result.Result.ShouldContain(nonce);
+            result.RequestId.ShouldNotBeNull();
+            var duplicate = await requestService.RunCheckAsync(checkedTask, 1, "must not replace captured facts", CancellationToken.None);
+            duplicate.RequestId.ShouldBe(result.RequestId);
+            duplicate.Result.ShouldBe(result.Result);
+            submitted.Count.ShouldBe(3, "two qualification prompts, one real-purpose Check, no retry publication or recursive qualification");
+            await using var verifyScope = h.Provider.CreateAsyncScope();
+            var verify = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var request = await verify.SpecialistRequests.SingleAsync(r => r.Purpose == SpecialistRequestPurpose.Check);
+            request.Status.ShouldBe(SpecialistRequestStatus.Succeeded);
+            request.WinnerAttemptId.ShouldNotBeNull();
+            request.Facts.ShouldContain(nonce);
+            request.Facts.ShouldNotContain("must not replace");
+            (await verify.SpecialistAttempts.CountAsync(a => a.RequestId == request.Id)).ShouldBe(1);
         }
     }
 

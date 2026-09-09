@@ -29,7 +29,11 @@ public static class StandingSpecialistHealthPolicy
         request.HealthAppliedAt = now;
         if (request.Outcome is SpecialistAttemptOutcome.Busy or SpecialistAttemptOutcome.Disabled
             or SpecialistAttemptOutcome.CallerCanceled or SpecialistAttemptOutcome.HostShutdown) return;
+        // Completion order can differ from request order. A delayed older success must
+        // never resolve a newer outage, and an older failure must not reopen recovery.
+        if (health.LastRequestStartedAt is { } last && request.StartedAt < last) return;
         health.LastRequestId = request.Id;
+        health.LastRequestStartedAt = request.StartedAt;
         health.LastAttemptTaskId = winner?.TaskId ?? health.LastAttemptTaskId;
         if (request.Status == SpecialistRequestStatus.Succeeded && winner is not null
             && winner.Id == request.WinnerAttemptId && winner.Outcome == SpecialistAttemptOutcome.ValidReading

@@ -2732,7 +2732,9 @@ public sealed partial class SessionMessageQueueService
                 return DeliveryOutcome.Of(DeliveryVerdict.NoTranscriptRecord);
             }
 
-            if (!observable && UtcNow() - lastPull >= pullEvery)
+            // Full-inline Check evidence must survive a dropped live transcript stream on
+            // warm sessions too. CatchUp preserves native file order and never re-enters flush.
+            if ((fullInline || !observable) && UtcNow() - lastPull >= pullEvery)
             {
                 await _runtime.CatchUpTranscriptAsync(sessionId, ct);
                 lastPull = UtcNow();

@@ -101,3 +101,28 @@ durable exactly-once caller publication and late-result ownership, calibrated
 deadline evidence, S5b mixed-consumer concurrency, remaining positive controls and
 applicable authenticated Claude V26 acceptance. Keep the Codex cells pending
 CARD-0167 instead of bypassing the prerequisite or silently substituting a provider.
+
+## Warm confirmation, owned lifecycle and request order (fad77641)
+
+- `c415-fad-cli-warm-small-fixed.trx`: 1/1 passed, native Claude fresh then warm
+  synthetic prompts. The prior failed run contained the complete warm UserPrompt
+  at sequence 4 despite NoTranscriptRecord. Full-inline confirmation now pulls
+  the native transcript even when earlier session history is observable.
+- `c415-fad-warm-pull.trx`: 1/1 passed with a missing live transcript stream.
+- `c415-fad-qualified-check.trx`: 1/1 passed: two semantic qualification turns,
+  real request/dispatcher/queue/native evidence/reply settlement, one winning
+  real-purpose Check, and duplicate-request reuse without another task.
+- `c415-fad-identity-edit.trx`: 3/3 passed (Dispatched/Working/Blocked).
+- `c415-fad-delete-ownership.trx`: 2/2 passed (live session or queued owned task).
+- `c415-fad-health-order.trx`: 2/2 passed. Persisted LastRequestStartedAt prevents
+  an older completion from resolving a newer outage or reopening newer recovery;
+  generated migration `20260909030639_OrderSpecialistHealthRequests`.
+- Extra-checkout `c415-fad-cli-grid-fixed.trx`: 12 executed, 8 passed, 4 failed,
+  no skips. Failing rows: small, ASCII M, ASCII M-1, multibyte M-1. Native
+  transcripts in several failures order AssistantText/TurnEnd before UserPrompt.
+  This is not a complete capability certificate. Provisional M=32768 remains
+  uncertified. Full bounded facts and multibyte M passed fresh and warm.
+  Raw owned synthetic evidence: `.antiphon/acceptance/fad77641/grid-fixed/`.
+
+The native-order investigation and mutation controls for these new guards are
+still ongoing. These results do not release V5/V26 or the Codex dependency.
