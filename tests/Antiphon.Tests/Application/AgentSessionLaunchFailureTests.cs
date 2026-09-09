@@ -1,4 +1,4 @@
-﻿using Antiphon.Agents.Pty;
+using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -39,6 +39,34 @@ namespace Antiphon.Tests.Application;
 [NotInParallel("AgentSessionLaunchFailure")]
 public class AgentSessionLaunchFailureTests
 {
+    [Test]
+    public Task Interactive_effort_dialog_block_persists_reason_and_cleanup() => VerifyEffortBlockAsync(false);
+
+    [Test]
+    public Task Card_effort_dialog_block_withholds_boot_and_cleans_up() => VerifyEffortBlockAsync(true);
+
+    private static async Task VerifyEffortBlockAsync(bool cardLaunch)
+    {
+        const string reason = "requested=xhigh; current=xhigh; suggested=high; selected=Keep; Enter=3; settle deadline exhausted";
+        var adapter = new FakeAgentProtocolAdapter { ReadyResult = false,
+            LaunchBlock = new(AgentLaunchBlockKind.EffortDialogNotCleared, reason) };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        Guid? card = cardLaunch ? await fixture.CreateCardAsync() : null;
+        if (card is { } cardId)
+            await Should.ThrowAsync<AgentLaunchBlockedException>(fixture.StartCardSessionAsync(cardId, "boot-must-not-be-sent", kind: AgentKind.ClaudeCode));
+        else await Should.ThrowAsync<AgentLaunchBlockedException>(fixture.LaunchInteractiveAsync());
+        adapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
+        adapter.SentPrompts.ShouldBeEmpty();
+        await using var db = LaunchFixture.CreateContext();
+        var session = card is { } id ? await db.AgentSessions.SingleAsync(s => s.CardId == id)
+            : await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        session.Status.ShouldBe(SessionStatus.Failed);
+        session.LaunchBlock.ShouldBe(SessionLaunchBlock.EffortDialogNotCleared);
+        session.FailureReason.ShouldBe(reason);
+        session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
+        if (card is { } c) (await db.RunAttempts.SingleAsync(a => a.CardId == c)).Phase.ShouldBe(RunPhase.Failed);
+    }
+
     [Test]
     public async Task Grok_failed_startup_stays_owned_and_recoverable_until_kill_is_confirmed()
     {

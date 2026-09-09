@@ -11,7 +11,7 @@ internal sealed class EffortTestScreen
 {
     public static string Capture(int index)
     {
-        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("Card0449.EffortCaptures.json")!;
+        using var stream = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream("Card0449.EffortCaptures.json")!;
         using var json = JsonDocument.Parse(stream);
         var capture = json.RootElement.GetProperty("captures")[index];
         var screen = capture.GetProperty("renderedScreen").GetString()!;

@@ -50,7 +50,7 @@ public class ComposerInputProbeTests
             ComposerProbeOptions.FromMilliseconds(250, 10, 1, 60), null, s => s == "SENTINEL MODAL", CancellationToken.None);
         result.Outcome.ShouldBe(ComposerProbeOutcome.InterruptedByModal, checkpoint);
         string[] allowed = checkpoint == "BeforeFirstToken" ? [] : checkpoint is "BeforeClearRetry" or "BeforeResponsive" ? ["zzdeadbeef", "\x15"] : ["zzdeadbeef"];
-        writes.ShouldBe(allowed, checkpoint);
+        writes.ToArray().ShouldBe(allowed, customMessage: checkpoint);
     }
 
     private static ComposerProbeOptions FastOptions(

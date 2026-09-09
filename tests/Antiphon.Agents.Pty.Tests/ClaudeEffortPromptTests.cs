@@ -158,7 +158,7 @@ public class ClaudeEffortPromptTests
 
     [Test, Arguments("1. Yes"), Arguments("2. No"), Arguments("Enter to confirm"), Arguments("Esc to cancel"), Arguments("")]
     public void Legacy_choice_markers_keep_their_existing_classification(string marker) =>
-        ClaudeBlockingPromptDetector.Detect("Choose an option?\n" + marker)?.Kind
+        ((ClaudeBlockingPromptKind?)ClaudeBlockingPromptDetector.Detect("Choose an option?\n" + marker)?.Kind)
             .ShouldBe(marker == "" ? null : ClaudeBlockingPromptKind.Choice);
 
     [Test, Arguments("model"), Arguments("effort"), Arguments("keep"), Arguments("switch"), Arguments("prose"), Arguments("fences"), Arguments("model-list"), Arguments("effort-list"), Arguments("permission")]

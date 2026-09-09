@@ -1,0 +1,146 @@
+using Antiphon.Agents.Pty;
+using Antiphon.Agents.Pty.Tests;
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
+using Microsoft.Extensions.Options;
+using Shouldly;
+using TUnit.Core;
+namespace Antiphon.Tests.Agents;
+
+[Category("Unit")]
+public class RunnerClaudeAdapterEffortPromptTests
+{
+    internal static AgentRegistrySettings Settings(int probe = 12000) => new()
+    {
+        ClaudeReadyQuietPeriodMs = 100, ClaudeReadyMaxWaitMs = 7000, ClaudeReadyMinTotalWaitMs = 0,
+        ClaudeEffortPromptSettleMs = 7000, ClaudeInputProbeTimeoutMs = probe,
+        ClaudeInputProbePollIntervalMs = 25, ClaudeInputProbeRetypeIntervalMs = 1000, ClaudeInputProbeClearTimeoutMs = 500
+    };
+    internal static AgentLaunchSpec Spec() => new("claude", AgentKind.ClaudeCode, "claude.exe",
+        ["--model", "fable", "--effort", "xhigh"], new Dictionary<string,string>(), @"C:\test-owned", 120, 30, SessionId: Guid.NewGuid());
+
+    [Test, Arguments(0), Arguments(1), Arguments(2)]
+    public async Task Each_captured_dialog_clears_before_the_composer_probe(int capture)
+    {
+        var fake = new EffortTestScreen(capture);
+        var client = new Client(fake);
+        await using var adapter = new RunnerClaudeAdapter(client, Options.Create(Settings()));
+        await adapter.StartAsync(Spec(), CancellationToken.None);
+        var premature = false;
+        fake.AfterWrite = (f, key) => { if (key.StartsWith("zz") && f.ClearObservations < 2) premature = true; };
+        try
+        {
+            (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue(fake.Evidence);
+            fake.AppliedEffort.ShouldBe("xhigh"); fake.AcceptedOption.ShouldBe(1);
+            fake.Writes.First(w => w.Key == "\r").Highlight.ShouldBe(1);
+            premature.ShouldBeFalse(); fake.TokenWrites.ShouldBe(1); fake.Composer.ShouldBeEmpty();
+            adapter.LaunchBlock.ShouldBeNull();
+        }
+        finally { await adapter.KillAsync(TimeSpan.FromSeconds(1), CancellationToken.None); await adapter.Exited; }
+    }
+
+    [Test]
+    public async Task Attach_without_launch_effort_preserves_current()
+    {
+        var fake = new EffortTestScreen { Highlight = 2 };
+        var client = new Client(fake);
+        await using var adapter = new RunnerClaudeAdapter(client, Options.Create(Settings()));
+        await adapter.AttachAsync(Guid.NewGuid(), CancellationToken.None);
+        try { (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue(fake.Evidence); fake.AppliedEffort.ShouldBe("xhigh"); }
+        finally { await adapter.KillAsync(TimeSpan.FromSeconds(1), CancellationToken.None); await adapter.Exited; }
+    }
+
+    [Test]
+    public async Task A_dialog_appearing_during_the_minimum_floor_is_resolved()
+    {
+        var fake = new EffortTestScreen { Dialog = false };
+        var client = new Client(fake);
+        var settings = Settings(); settings.ClaudeReadyMinTotalWaitMs = 800;
+        await using var adapter = new RunnerClaudeAdapter(client, Options.Create(settings));
+        await adapter.StartAsync(Spec(), CancellationToken.None);
+        var early = false; var appeared = false;
+        fake.OnSnapshot = f => { if (f.Clock.ElapsedMilliseconds < 400) early = true;
+            else if (!appeared) { appeared = true; f.Dialog = true; } };
+        try
+        {
+            (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue(fake.Evidence);
+            early.ShouldBeTrue(); appeared.ShouldBeTrue(); fake.AppliedEffort.ShouldBe("xhigh");
+            fake.Writes.First(w => w.Key.StartsWith("zz")).At.TotalMilliseconds.ShouldBeGreaterThanOrEqualTo(800);
+        }
+        finally { await adapter.KillAsync(TimeSpan.FromSeconds(1), CancellationToken.None); await adapter.Exited; }
+    }
+
+    [Test]
+    public async Task An_effort_dialog_that_never_clears_fails_within_its_budget()
+    {
+        var fake = new EffortTestScreen { SwallowEnters = 100 };
+        var client = new Client(fake);
+        await using var adapter = new RunnerClaudeAdapter(client, Options.Create(Settings()));
+        await adapter.StartAsync(Spec(), CancellationToken.None);
+        using var cts = new CancellationTokenSource();
+        var task = adapter.WaitForReadyAsync(cts.Token);
+        try
+        {
+            (await Task.WhenAny(task, Task.Delay(9000))).ShouldBe(task, "operation completed before watchdog");
+            (await task).ShouldBeFalse(fake.Evidence);
+            adapter.LaunchBlock.ShouldNotBeNull(); adapter.LaunchBlock.Kind.ShouldBe(AgentLaunchBlockKind.EffortDialogNotCleared);
+            foreach (var field in new[] { "requested=xhigh", "current=xhigh", "suggested=high", "selected=Keep", "Enter=3" }) adapter.LaunchBlock.Reason.ShouldContain(field);
+            fake.Writes.Count.ShouldBe(3); fake.Writes.All(w => w.Key == "\r").ShouldBeTrue(); fake.TokenWrites.ShouldBe(0);
+        }
+        finally { await cts.CancelAsync(); try { await task; } catch (OperationCanceledException) { }
+            await adapter.KillAsync(TimeSpan.FromSeconds(1), CancellationToken.None); await adapter.Exited; }
+    }
+
+    [Test, Arguments(false), Arguments(true)]
+    public async Task Disabling_the_probe_does_not_disable_effort_resolution(bool stuck)
+    {
+        var fake = new EffortTestScreen { SwallowEnters = stuck ? 100 : 0 };
+        var client = new Client(fake);
+        await using var adapter = new RunnerClaudeAdapter(client, Options.Create(Settings(0)));
+        await adapter.StartAsync(Spec(), CancellationToken.None);
+        using var cts = new CancellationTokenSource();
+        var task = adapter.WaitForReadyAsync(cts.Token);
+        try
+        {
+            (await Task.WhenAny(task, Task.Delay(9000))).ShouldBe(task, "operation completed before watchdog");
+            (await task).ShouldBe(!stuck, fake.Evidence); fake.TokenWrites.ShouldBe(0);
+            if (stuck) adapter.LaunchBlock!.Kind.ShouldBe(AgentLaunchBlockKind.EffortDialogNotCleared);
+            else fake.AppliedEffort.ShouldBe("xhigh");
+        }
+        finally { await cts.CancelAsync(); try { await task; } catch (OperationCanceledException) { }
+            await adapter.KillAsync(TimeSpan.FromSeconds(1), CancellationToken.None); await adapter.Exited; }
+    }
+
+    internal sealed class Client(EffortTestScreen screen) : ISessionRunnerClient
+    {
+        private readonly DateTime _startedAt = DateTime.UtcNow;
+        private long _sequence;
+        private bool _exited;
+        public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct) => GetAsync(sessionId, ct);
+        public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
+        public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) => Task.FromResult(new SessionRunnerSessionDto(sessionId, 4321,
+            _startedAt, _exited ? "Exited" : "Running", _exited ? 0 : null, AgentExitReason.Unknown, _sequence));
+        public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct) => Task.FromResult(new SessionRunnerBufferDto(sessionId, screen.Raw, _sequence));
+        public async Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
+            new(sessionId, screen.Raw, await screen.SnapshotAsync(ct), _sequence, _startedAt);
+        public async Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) { _sequence++; await screen.WriteAsync(input, ct); }
+        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
+            Task.FromResult(new SessionRunnerTranscriptDto(sessionId, [], 0));
+
+        public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) => Task.CompletedTask;
+
+        public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) => Task.CompletedTask;
+
+        public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct) { _exited = true; return GetAsync(sessionId, ct); }
+
+        public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
+    }
+}
