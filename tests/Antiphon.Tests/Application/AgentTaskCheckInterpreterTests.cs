@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -480,6 +481,90 @@ public class AgentTaskCheckInterpreterTests
             "no live marker of anyone else's task may ride into the specialist's session");
         row.Goal.ShouldContain(CheckInterpretation.OutputFormatReminder);
         row.Goal.ShouldContain("never `blocked`");
+    }
+
+    // ---- CARD-0415: the request graph is wired in, but a DECLARATION is what routes to it -------
+
+    /// <summary>
+    /// Program.cs registers <see cref="SpecialistRequestService"/> unconditionally and this service
+    /// has one constructor, so the injected instance is never null in production. Routing on its
+    /// mere presence sent EVERY check into a graph with no routing row, no candidate row and no
+    /// certified envelope: nothing could qualify, so every check came back
+    /// "interpreter unavailable: No declared candidate is currently eligible for this Check."
+    /// The plan is the opposite — "null routing configuration preserves the current primary" — and
+    /// no harness caught it because every construction of this service omitted the request service
+    /// that production always supplies. This test supplies it.
+    /// </summary>
+    [Test]
+    public async Task an_undeclared_chain_still_runs_the_legacy_interpreter()
+    {
+        await using var h = await Harness.CreateAsync(wireRequests: true);
+        var specialist = await h.EnsureSpecialistAsync();
+        var seed = await h.SeedDelegateAsync();
+        await h.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
+
+        var run = Task.Run(() => h.Checks.RunCheckAsync(seed.Task.Id, CancellationToken.None));
+        // The proof is structural: an interpretation task only exists if the LEGACY runner ran.
+        var interpretation = await h.WaitForInterpretationAsync(specialist.Id);
+        await h.SettleInterpretationAsync(interpretation.Id, "DOING — it is mid-turn.", 0.0031m);
+        await h.PumpClockAsync(run);
+        (await run).ShouldBe(AgentTaskCheckService.CheckOutcome.Delivered);
+
+        var note = (await h.NotesToCallerAsync(seed.CallerSessionId)).ShouldHaveSingleItem();
+        note.ShouldContain("DOING — it is mid-turn.");
+        note.ShouldNotContain("unverified digest", customMessage:
+            "an undeclared chain is not a degraded interpreter — it is the primary, working");
+        (await h.RequestRowsAsync(seed.Task.Id)).ShouldBe(0, "nothing was asked of the request graph");
+    }
+
+    /// <summary>
+    /// A declaration whose candidate has not qualified is still not a chain that can answer, so it
+    /// keeps the primary too. This is the arm that stops the gate from being satisfied by the
+    /// routing row alone: declaring a chain must not silently disable interpretation while
+    /// qualification is still pending.
+    /// </summary>
+    [Test]
+    public async Task a_declared_but_unqualified_chain_still_runs_the_legacy_interpreter()
+    {
+        await using var h = await Harness.CreateAsync(wireRequests: true);
+        var specialist = await h.EnsureSpecialistAsync();
+        await h.DeclareRoutingAsync(specialist.Id, StandingSpecialistCandidateStatus.Unqualified);
+        var seed = await h.SeedDelegateAsync();
+        await h.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
+
+        var run = Task.Run(() => h.Checks.RunCheckAsync(seed.Task.Id, CancellationToken.None));
+        var interpretation = await h.WaitForInterpretationAsync(specialist.Id);
+        await h.SettleInterpretationAsync(interpretation.Id, "DOING — it is mid-turn.", 0.0031m);
+        await h.PumpClockAsync(run);
+        (await run).ShouldBe(AgentTaskCheckService.CheckOutcome.Delivered);
+
+        (await h.NotesToCallerAsync(seed.CallerSessionId)).ShouldHaveSingleItem()
+            .ShouldContain("DOING — it is mid-turn.");
+        (await h.RequestRowsAsync(seed.Task.Id)).ShouldBe(0);
+    }
+
+    /// <summary>
+    /// And the gate does open. A declared, enabled chain with a qualified candidate routes through
+    /// the request graph — here it degrades, because the candidate has no running seat, and that IS
+    /// a degraded interpreter worth saying so about. Without this arm the fix could be "never
+    /// route" and still look green.
+    /// </summary>
+    [Test]
+    public async Task a_declared_and_qualified_chain_routes_through_the_request_graph()
+    {
+        await using var h = await Harness.CreateAsync(wireRequests: true);
+        var specialist = await h.EnsureSpecialistAsync();
+        await h.DeclareRoutingAsync(specialist.Id, StandingSpecialistCandidateStatus.Qualified);
+        var seed = await h.SeedDelegateAsync();
+        await h.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
+
+        (await h.Checks.RunCheckAsync(seed.Task.Id, CancellationToken.None))
+            .ShouldBe(AgentTaskCheckService.CheckOutcome.Delivered);
+
+        (await h.RequestRowsAsync(seed.Task.Id)).ShouldBe(1, "the declared chain owns this check");
+        (await h.InterpretationCountAsync(specialist.Id)).ShouldBe(0, "the legacy runner did not also run");
+        (await h.NotesToCallerAsync(seed.CallerSessionId)).ShouldHaveSingleItem()
+            .ShouldContain("unverified digest", customMessage: "the digest still ships, and says why");
     }
 
     // ---- CARD-0035 slice 5: the reading is STORED, not just delivered ---------------------------
@@ -970,6 +1055,11 @@ public class AgentTaskCheckInterpreterTests
             now, task, session, [], Git: null, [], [], Card: card);
     }
 
+    private sealed class NeverHeld : IModelAvailability
+    {
+        public Task<bool> IsHeldAsync(AgentKind kind, string alias, CancellationToken ct) => Task.FromResult(false);
+    }
+
     private sealed record Seeded(AgentTask Task, Guid DelegateSessionId, Guid CallerSessionId);
 
     /// <summary>
@@ -988,12 +1078,18 @@ public class AgentTaskCheckInterpreterTests
         private readonly string _scratch;
         private readonly DelegationSettings _settings;
 
-        public static async Task<Harness> CreateAsync(Action<DelegationSettings>? configure = null)
+        /// <param name="wireRequests">
+        /// Register <see cref="SpecialistRequestService"/> exactly as Program.cs does — that is,
+        /// unconditionally. This is the composition the wiring regression needs: the graph is
+        /// PRESENT, and whether a check routes through it must still depend on a declaration.
+        /// </param>
+        public static async Task<Harness> CreateAsync(
+            Action<DelegationSettings>? configure = null, bool wireRequests = false)
         {
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             try
             {
-                return new Harness(schema, configure);
+                return new Harness(schema, configure, wireRequests);
             }
             catch
             {
@@ -1002,7 +1098,7 @@ public class AgentTaskCheckInterpreterTests
             }
         }
 
-        private Harness(IsolatedTestSchema schema, Action<DelegationSettings>? configure)
+        private Harness(IsolatedTestSchema schema, Action<DelegationSettings>? configure, bool wireRequests = false)
         {
             _schema = schema;
             _scratch = Directory.CreateTempSubdirectory("antiphon-interp-wire").FullName;
@@ -1058,6 +1154,17 @@ public class AgentTaskCheckInterpreterTests
             services.AddScoped<CheckInterpreterProvisioner>();
             services.AddScoped<IAlertService, AlertService>();
             services.AddScoped<IAlertRouter, NullAlertRouter>();
+            if (wireRequests)
+            {
+                services.AddSingleton<ISpecialistExecutionEvidenceReader>(
+                    new SpecialistExecutionEvidenceReader(Options.Create(new SupervisionSettings())));
+                services.AddScoped<IModelAvailability, NeverHeld>();
+                services.AddSingleton(Options.Create(new SubscriptionQuotaGateSettings { Enabled = false }));
+                services.AddScoped<SubscriptionUsageReader>();
+                services.AddScoped<SubscriptionQuotaGate>();
+                services.AddScoped<SpecialistRequestService>();
+                services.AddScoped<StandingSpecialistHealthService>();
+            }
             services.AddScoped<AgentTaskCheckService>();
             services.AddSingleton<AgentTaskReplyService>();
             services.AddScoped<AgentTaskDispatcher>();
@@ -1110,6 +1217,46 @@ public class AgentTaskCheckInterpreterTests
                     dead, Options.Create(_settings), Clock,
                     NullLogger<CheckInterpreterProvisioner>.Instance),
                 alerts: _provider.CreateScope().ServiceProvider.GetRequiredService<IAlertService>());
+        }
+
+        /// <summary>Declare a routing chain for the standing Check owner, as the routing API does.</summary>
+        public async Task DeclareRoutingAsync(Guid ownerId, StandingSpecialistCandidateStatus status)
+        {
+            await using var db = CreateContext();
+            var owner = await db.Agents.AsNoTracking().SingleAsync(a => a.Id == ownerId);
+            var now = Clock.GetUtcNow().UtcDateTime;
+            db.StandingSpecialistRoutings.Add(new StandingSpecialistRouting
+            {
+                Id = Guid.NewGuid(),
+                AgentId = ownerId,
+                CandidatesJson = JsonSerializer.Serialize(new[] { new { kind = owner.Kind.ToString(), modelLevel = owner.ModelLevel.ToString() } }),
+                Enabled = true,
+                ConcurrencyToken = Guid.NewGuid(),
+                CreatedAt = now,
+                UpdatedAt = now,
+            });
+            db.StandingSpecialistCandidateStates.Add(new StandingSpecialistCandidateState
+            {
+                Id = Guid.NewGuid(),
+                AgentId = ownerId,
+                PhysicalAgentId = ownerId,
+                AgentKind = owner.Kind,
+                ModelLevel = owner.ModelLevel,
+                ModelAlias = "haiku",
+                Enabled = true,
+                Status = status,
+                QualifiedAt = status == StandingSpecialistCandidateStatus.Qualified ? now : null,
+                QualificationAuthorization = Guid.NewGuid(),
+                DeclaredAt = now,
+                UpdatedAt = now,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        public async Task<int> RequestRowsAsync(Guid checkedTaskId)
+        {
+            await using var db = CreateContext();
+            return await db.SpecialistRequests.AsNoTracking().CountAsync(r => r.CheckedTaskId == checkedTaskId);
         }
 
         public async Task<List<AgentIncident>> InterpreterIncidentsAsync(Guid specialistId)
