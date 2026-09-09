@@ -181,6 +181,7 @@ public sealed class StandingSpecialistRoutingService(
 
     private async Task<StandingSpecialistRoutingDto> DescribeAsync(Agent owner, CancellationToken ct)
     {
+        var health = await db.StandingSpecialistHealths.AsNoTracking().SingleOrDefaultAsync(h => h.AgentId == owner.Id, ct);
         var routing = await db.StandingSpecialistRoutings.AsNoTracking().SingleOrDefaultAsync(r => r.AgentId == owner.Id, ct);
         var states = await db.StandingSpecialistCandidateStates.AsNoTracking().Where(c => c.AgentId == owner.Id)
             .OrderBy(c => c.DeclaredAt).ThenBy(c => c.Id).ToListAsync(ct);
@@ -188,7 +189,9 @@ public sealed class StandingSpecialistRoutingService(
             DispatchModelAlias.Resolve(owner.Kind, owner.ModelLevel, owner.ModelId),
             RoutingCandidate.Parse(routing?.CandidatesJson), states.Select(c => new StandingSpecialistCandidateDto(
                 c.Id, c.AgentKind, c.ModelLevel, c.ModelAlias, c.PhysicalAgentId, c.Enabled, c.Status,
-                c.Reason, c.DeclaredAt, c.UnprovisionedAt, c.LastAdmissionRefusedAt, c.NextEligibleAt, c.TransientFailures)).ToArray());
+                c.Reason, c.DeclaredAt, c.UnprovisionedAt, c.LastAdmissionRefusedAt, c.NextEligibleAt, c.TransientFailures)).ToArray(),
+            health is null ? null : new(health.Status, health.Reason, health.LastValidCheckAt, health.ConsecutiveFailedRequests,
+                health.UnavailableSince, health.LastAttemptTaskId));
     }
 
     private async Task PublishAsync(Guid agentId, CancellationToken ct)

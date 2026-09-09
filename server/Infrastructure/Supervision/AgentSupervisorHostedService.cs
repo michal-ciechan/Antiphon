@@ -113,6 +113,7 @@ public sealed class AgentSupervisorHostedService : BackgroundService
                     await using var scope = _scopeFactory.CreateAsyncScope();
                     var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
                     await scope.ServiceProvider.GetRequiredService<StandingSpecialistSeatService>().ReconcileAsync(stoppingToken);
+                    await scope.ServiceProvider.GetRequiredService<StandingSpecialistHealthService>().ReconcileAsync(stoppingToken);
 
                     // CARD-0334 D6: kill→start must finish before the supervisor tick, or the
                     // tick sees a Stopped AlwaysOn agent and grows the backoff ladder.

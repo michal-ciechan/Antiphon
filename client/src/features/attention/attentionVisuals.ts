@@ -237,6 +237,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     icon: TbClockPause,
     hint: 'Inspect the latest wall and continue manually. Automatic capacity recovery will not retry this episode.',
   },
+  StandingSpecialistHealth: {
+    label: 'Check interpreter',
+    color: 'warning',
+    icon: TbClockPause,
+    hint: 'Inspect candidate readiness and the latest Check attempt. Qualification alone does not resolve a service outage.',
+  },
 }
 
 export type AttentionGroupKey = 'now' | 'broken' | 'suspect' | 'failures'

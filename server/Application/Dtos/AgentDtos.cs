@@ -73,7 +73,8 @@ public sealed record AgentSummaryDto(
     PolicyDrift? PolicyDrift = null,
     // CARD-0384: optional herdr placement labels. Null = unpinned / project default.
     string? HerdrWorkspaceLabel = null,
-    string? HerdrTabLabel = null);
+    string? HerdrTabLabel = null,
+    Guid? StandingSpecialistOwnerId = null);
 
 public sealed record AgentDetailDto(
     Guid Id,
@@ -132,7 +133,8 @@ public sealed record AgentDetailDto(
     PolicyDrift? PolicyDrift = null,
     // CARD-0384: optional herdr placement labels. Null = unpinned / project default.
     string? HerdrWorkspaceLabel = null,
-    string? HerdrTabLabel = null);
+    string? HerdrTabLabel = null,
+    Guid? StandingSpecialistOwnerId = null);
 
 /// <summary>
 /// What of a live session's standing instructions the repo has moved past (CARD-0334).
