@@ -139,7 +139,7 @@ describe('ProjectSetupModal', () => {
       return HttpResponse.json({
         project: { id: 'project-1', name: 'starter', localRepositoryPath: directory },
         board: { id: 'board-1', projectId: 'project-1', projectName: 'starter', name: 'starter' },
-        agent: { id: 'agent-1', name: 'starter Orchestrator' },
+        agent: { id: 'agent-1', name: 'starter Orchestrator', replyStyle: request.agent?.replyStyle ?? 'Normal' },
         readiness,
         notes: [],
       })
