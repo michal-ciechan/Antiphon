@@ -126,3 +126,58 @@ CARD-0167 instead of bypassing the prerequisite or silently substituting a provi
 
 The native-order investigation and mutation controls for these new guards are
 still ongoing. These results do not release V5/V26 or the Codex dependency.
+
+## Native ordering gate and new mutation controls
+
+Claude Code 2.1.263 executable SHA-256:
+`0B35DF94C1307004F07B738390BFEF8DFCA5E9AF29AAF6517F305BF086B95B03`.
+The repeated `c415-fad-cli-native-grid.trx` executed 12 cases: 7 passed, 5 failed,
+zero skips. Failure rows vary between runs, so isolated passing repeats cannot
+certify this combination. The native JSONL itself contains assistant/system before
+user/attachments; the assistant parent chain eventually connects to that user.
+The existing transcript consumers assign sequence in file order. Do not work
+around this by treating screen evidence or task Result as delivery/qualification.
+A sanitized structural excerpt is checked in at
+`docs/investigations/fixtures/card-0415-claude-2.1.263-out-of-order.jsonl`.
+Its user body is omitted; full-byte synthetic originals remain under
+`.antiphon/acceptance/fad77641/native-grid/`. The 32768-byte proposal is uncertified.
+V26 authenticated model spend remains gated off.
+
+At `5ed99208`, exact-method mutation controls completed:
+
+| Control | Mutation | Red | Restored green |
+|---|---|---:|---:|
+| PC12 warm receipt | full-inline warm confirmation stops pulling native transcript | 1 failed | 1 passed |
+| PC24 active edit | active managed identity refusal disabled | 3 failed | 3 passed |
+| PC36 older health | older request ordering guard disabled | 2 failed | 2 passed |
+
+All sources were restored byte-for-byte with fresh timestamps. Red failures were
+expected assertions, not build/fixture errors. Ledger and command script:
+`.antiphon/acceptance/fad77641/continuation-controls.jsonl` and
+`run-continuation-controls.ps1`.
+
+## Current-result and declared-fallback graph
+
+- `c415-fad-current-completion.trx`: 3/3 passed (newer Check number, replaced
+  generation, live-caller evidence timeout). Stale native completion cannot win;
+  an HTTP-style TaskCanceledException with a live caller is a transient outcome.
+- `c415-fad-fallback-graph-fixed.trx`: 1/1 passed. Primary and declared alternate
+  each earn two synthetic semantic qualification turns through the real graph;
+  the primary's invalid real-purpose reading quarantines it; the alternate wins
+  the same logical request/deadline and health projects UsingFallback. The earlier
+  failed fixture used ordinary JSON serialization instead of RoutingCandidate.Serialize.
+- `c415-fad-lost-capability.trx`: 1/1 passed. Loss of verifiable capability removes
+  Qualified before more paid work, with no extra task or synthetic-certificate transfer.
+- `c415-fad-cancel-outcomes.trx`: 2/2 passed. Caller cancellation and host shutdown
+  durably close pending attempts with distinct neutral outcomes and cancel only
+  unsubmitted owned tasks. These rows do not claim active-process cancellation coverage.
+- `c415-fad-launch-final.trx`: named launch/provisioner regression found four stale
+  fixtures whose AlwaysOn=false now correctly hits the managed-owner guard first.
+  Corrected the fixture to an authorized standing Check. The exact affected class
+  rerun `c415-fad-launch-final-fixed.trx` passed 4/4.
+
+Request admission now enforces the configured logical Check backlog under the
+counted-task/owner locks, includes compaction settings/watermark in its execution
+fingerprint, and rechecks the database generation after external evidence reads.
+The full backlog/compaction/concurrency mutation matrix is still outstanding;
+these additions are not a completed V8/V13/V14/S5b acceptance claim.

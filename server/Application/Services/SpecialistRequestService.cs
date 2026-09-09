@@ -16,7 +16,8 @@ namespace Antiphon.Server.Application.Services;
 /// </summary>
 public sealed partial class SpecialistRequestService(AppDbContext db, IOptions<DelegationSettings> settings,
     TimeProvider time, IModelAvailability availability, ISpecialistExecutionEvidenceReader evidenceReader,
-    SubscriptionQuotaGate quota, AgentSessionRuntime runtime, IEventBus events, ILogger<SpecialistRequestService> logger)
+    SubscriptionQuotaGate quota, AgentSessionRuntime runtime, IEventBus events, ILogger<SpecialistRequestService> logger,
+    IHostApplicationLifetime? lifetime = null)
 {
     public async Task<SpecialistRun> RunCheckAsync(AgentTask checkedTask, int checkNumber, string digest, CancellationToken ct,
         DelegateCheckProbe.CheckFacts? snapshot = null)
@@ -78,7 +79,8 @@ public sealed partial class SpecialistRequestService(AppDbContext db, IOptions<D
             // Persist the caller's loss of interest; active work remains owned and may settle its
             // own task. It can never become this request's winner after cancellation.
             using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await CancelAsync(requestId, SpecialistAttemptOutcome.CallerCanceled, cleanup.Token);
+            await CancelAsync(requestId, lifetime?.ApplicationStopping.IsCancellationRequested == true
+                ? SpecialistAttemptOutcome.HostShutdown : SpecialistAttemptOutcome.CallerCanceled, cleanup.Token);
             throw;
         }
     }
@@ -146,7 +148,7 @@ public sealed partial class SpecialistRequestService(AppDbContext db, IOptions<D
                 { refusal = SpecialistAttemptOutcome.QuotaUnavailable; continue; }
                 evidence = await evidenceReader.ReadAsync(seat, session, ct);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
                 logger.LogWarning(ex, "Check eligibility could not be verified for candidate {CandidateId}", candidate.Id);
                 refusal = SpecialistAttemptOutcome.Held; // unavailable evidence never authorizes work
@@ -187,7 +189,12 @@ public sealed partial class SpecialistRequestService(AppDbContext db, IOptions<D
         var attempts = await db.SpecialistAttempts.AsNoTracking().Where(a => a.RequestId == request.Id).ToListAsync(ct);
         var now = time.GetUtcNow().UtcDateTime;
         var qualification = request.Purpose == SpecialistRequestPurpose.Qualification;
+        var physicalSeats = db.Agents.Where(a => a.StandingSpecialistOwnerId == expected.AgentId).Select(a => a.Id);
+        var backlog = await db.AgentTasks.CountAsync(t => t.Role == AgentTaskRole.Check && t.AgentId != null
+            && physicalSeats.Contains(t.AgentId.Value) && (t.Status == AgentTaskStatus.Queued
+                || t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Blocked), ct);
         if (request.CompletedAt is not null || now >= request.DeadlineAt || attempts.Count >= 2
+            || backlog >= Math.Max(1, settings.Value.CheckInterpreterMaxBacklog)
             || attempts.Any(a => a.CompletedAt == null || (!qualification && a.CandidateId == selected.Id))
             || candidate is not { Enabled: true }
             || candidate.Status != (qualification ? StandingSpecialistCandidateStatus.Qualifying : StandingSpecialistCandidateStatus.Qualified)
@@ -249,17 +256,33 @@ public sealed partial class SpecialistRequestService(AppDbContext db, IOptions<D
         var seat = await db.Agents.AsNoTracking().SingleOrDefaultAsync(a => a.Id == attempt.PhysicalAgentId, ct);
         var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == attempt.SessionId, ct);
         SpecialistExecutionEvidence? current = null;
-        if (seat is not null && session is not null) current = await evidenceReader.ReadAsync(seat, session, ct);
+        var evidenceUnavailable = false;
+        try
+        {
+            if (seat is not null && session is not null) current = await evidenceReader.ReadAsync(seat, session, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            logger.LogWarning(ex, "Check execution evidence is temporarily unavailable for attempt {AttemptId}", attempt.Id);
+            evidenceUnavailable = true;
+        }
         var sameGeneration = seat?.PersistentSessionId == attempt.SessionId.ToString() && session?.StartedAt == attempt.SessionStartedAt
-            && current?.Fingerprint == attempt.Fingerprint;
+            && (current?.Fingerprint == attempt.Fingerprint || evidenceUnavailable);
         SpecialistAttemptVerdict? verdict;
-        if (!sameGeneration) verdict = new(SpecialistAttemptOutcome.IdentityMismatch, Reason: "The selected execution generation changed.");
+        if (evidenceUnavailable) verdict = new(SpecialistAttemptOutcome.TaskFailedTransport, Reason: "Current execution evidence could not be read.");
+        else if (!sameGeneration) verdict = new(SpecialistAttemptOutcome.IdentityMismatch, Reason: "The selected execution generation changed.");
         else if (task is null) verdict = new(SpecialistAttemptOutcome.TaskFailedUnknown, Reason: "The owned Check task is missing.");
         else
         {
             // A missing streamed row is not proof of missing input: pull the native transcript
             // before deciding delivery, timeout, tools or final-response absence.
-            await runtime.CatchUpTranscriptAsync(attempt.SessionId, ct);
+            try { await runtime.CatchUpTranscriptAsync(attempt.SessionId, ct); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // HttpClient timeouts do not cancel the caller or stop the worker. Preserve
+                // ownership and let the original deadline govern another observation.
+                return;
+            }
             var message = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.ExecutionTaskId == task.Id)
                 .OrderByDescending(m => m.Sequence).FirstOrDefaultAsync(ct);
             var entries = await db.TranscriptEntries.AsNoTracking().Where(e => e.AgentSessionId == attempt.SessionId
@@ -275,10 +298,26 @@ public sealed partial class SpecialistRequestService(AppDbContext db, IOptions<D
         if (liveAttempt.CompletedAt is not null || liveRequest.CompletedAt is not null)
         { db.Entry(liveRequest).State = EntityState.Detached; db.Entry(liveAttempt).State = EntityState.Detached; return; }
         var now = time.GetUtcNow().UtcDateTime;
+        // External reads precede the owner transaction. Recheck the database incarnation
+        // after acquiring it so a concurrent restart/edit cannot publish an old win.
+        var currentSeat = await db.Agents.AsNoTracking().SingleOrDefaultAsync(a => a.Id == attempt.PhysicalAgentId, ct);
+        var currentSession = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == attempt.SessionId, ct);
+        sameGeneration &= currentSeat is not null && currentSession is not null
+            && currentSeat.PersistentSessionId == seat?.PersistentSessionId && currentSeat.UpdatedAt == seat?.UpdatedAt
+            && currentSession.StartedAt == session?.StartedAt && currentSession.Status == SessionStatus.Running
+            && currentSession.EffectiveModelId == session?.EffectiveModelId
+            && currentSession.TuiProfileRevisionId == session?.TuiProfileRevisionId
+            && currentSession.CompactionRecoveryWatermark == session?.CompactionRecoveryWatermark;
         var owner = await db.Agents.AsNoTracking().SingleOrDefaultAsync(a => a.Id == request.AgentId, ct);
         var routing = await db.StandingSpecialistRoutings.AsNoTracking().SingleOrDefaultAsync(r => r.AgentId == request.AgentId, ct);
         var publicationAllowed = owner is not null && routing?.ConcurrencyToken == request.ConfigurationRevision
             && await StandingSpecialistSeatPolicy.StartRefusalAsync(db, owner, settings.Value, true, ct) is null;
+        if (request.Purpose == SpecialistRequestPurpose.Check)
+        {
+            var checkedTask = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == request.CheckedTaskId, ct);
+            publicationAllowed &= checkedTask is not null && Math.Max(1, checkedTask.CheckCount) == request.CheckNumber
+                && !AgentTaskService.IsSettled(checkedTask.Status);
+        }
         if (now >= attempt.DeadlineAt && verdict.Outcome == SpecialistAttemptOutcome.ValidReading)
             verdict = new(SpecialistAttemptOutcome.TimedOutAfterDispatch, Reason: "The reading arrived after its deadline.");
         liveAttempt.CompletedAt = now;
@@ -413,10 +452,14 @@ public sealed partial class SpecialistRequestService(AppDbContext db, IOptions<D
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         await LockOwnerAsync(request.AgentId, ct);
         var now = time.GetUtcNow().UtcDateTime;
-        await db.SpecialistRequests.Where(r => r.Id == requestId && r.CompletedAt == null).ExecuteUpdateAsync(s =>
+        var canceled = await db.SpecialistRequests.Where(r => r.Id == requestId && r.CompletedAt == null).ExecuteUpdateAsync(s =>
             s.SetProperty(r => r.Status, SpecialistRequestStatus.Canceled).SetProperty(r => r.Outcome, outcome).SetProperty(r => r.CompletedAt, now), ct);
+        if (canceled == 0) { await transaction.CommitAsync(ct); return; }
         var tasks = await db.SpecialistAttempts.Where(a => a.RequestId == requestId && a.CompletedAt == null).Select(a => a.TaskId).ToListAsync(ct);
         foreach (var taskId in tasks) await CancelUnsubmittedAsync(taskId, now, ct);
+        await db.SpecialistAttempts.Where(a => a.RequestId == requestId && a.CompletedAt == null).ExecuteUpdateAsync(s =>
+            s.SetProperty(a => a.CompletedAt, now).SetProperty(a => a.Outcome, outcome)
+                .SetProperty(a => a.Reason, "The owning request stopped waiting; active task ownership is retained."), ct);
         if (request.Purpose == SpecialistRequestPurpose.Qualification)
             await db.StandingSpecialistCandidateStates.Where(c => c.Id == request.QualificationCandidateId
                 && c.Status == StandingSpecialistCandidateStatus.Qualifying && c.ClaimedQualificationAuthorization == request.QualificationAuthorization)
