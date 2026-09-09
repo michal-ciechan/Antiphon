@@ -18,6 +18,35 @@ namespace Antiphon.Tests.Application;
 public class StandingSpecialistHealthPolicyTests
 {
     [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public void Card0415_V17_older_completion_cannot_resolve_or_reopen_a_newer_episode(bool olderSuccess)
+    {
+        var now = DateTime.UtcNow;
+        var health = new StandingSpecialistHealth();
+        var winner = new SpecialistAttempt { Id = Guid.NewGuid(), CandidateId = Guid.NewGuid(),
+            Outcome = SpecialistAttemptOutcome.ValidReading, CompletedAt = now };
+        SpecialistRequest Request(bool success, DateTime started) => new() { Id = Guid.NewGuid(),
+            Purpose = SpecialistRequestPurpose.Check, StartedAt = started, DeadlineAt = now.AddMinutes(1), CompletedAt = now,
+            Status = success ? SpecialistRequestStatus.Succeeded : SpecialistRequestStatus.Failed,
+            Outcome = success ? SpecialistAttemptOutcome.ValidReading : SpecialistAttemptOutcome.TimedOutAfterDispatch,
+            WinnerAttemptId = success ? winner.Id : null, Reason = success ? null : "newer provider silence" };
+        var newer = Request(!olderSuccess, now.AddSeconds(-2));
+        StandingSpecialistHealthPolicy.ApplyRealCheck(health, newer, olderSuccess ? null : winner, now);
+        if (olderSuccess) health.UnavailableSince = now;
+        var originalCount = health.ConsecutiveFailedRequests;
+        var originalFailure = health.FirstFailureAt;
+        var originalUnavailable = health.UnavailableSince;
+        var older = Request(olderSuccess, now.AddSeconds(-5));
+        StandingSpecialistHealthPolicy.ApplyRealCheck(health, older, olderSuccess ? winner : null, now.AddSeconds(1));
+        older.HealthAppliedAt.ShouldNotBeNull();
+        health.LastRequestId.ShouldBe(newer.Id);
+        health.ConsecutiveFailedRequests.ShouldBe(originalCount);
+        health.FirstFailureAt.ShouldBe(originalFailure);
+        health.UnavailableSince.ShouldBe(originalUnavailable);
+    }
+
+    [Test]
     public void Card0415_V16_failure_clock_and_precedence_are_fixed_and_qualification_cannot_clear_outage()
     {
         var now = new DateTime(2026, 9, 9, 0, 0, 0, DateTimeKind.Utc);

@@ -15,6 +15,7 @@ public class StandingSpecialistHealth
     public DateTime? LastValidCheckAt { get; set; }
     public int ConsecutiveFailedRequests { get; set; }
     public Guid? LastRequestId { get; set; }
+    public DateTime? LastRequestStartedAt { get; set; }
     public Guid? LastAttemptTaskId { get; set; }
     public string? Reason { get; set; }
     public string? CandidateSummary { get; set; }

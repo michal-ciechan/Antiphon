@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -17,6 +18,62 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 public class StandingSpecialistSeatTests
 {
+    [Test]
+    [Arguments(AgentTaskStatus.Dispatched)]
+    [Arguments(AgentTaskStatus.Working)]
+    [Arguments(AgentTaskStatus.Blocked)]
+    public async Task Card0415_V08_active_identity_edit_is_refused_without_mutating_the_certificate(AgentTaskStatus status)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var settings = new DelegationSettings();
+        await using var h = await BridgeQueueHarness.CreateAsync(new() { ConnectionString = schema.ConnectionString, Delegation = settings });
+        await using var scope = h.Provider.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var owner = await OwnerAsync(h, db, settings);
+        var taskId = Guid.NewGuid();
+        db.AgentTasks.Add(new() { Id = taskId, RootTaskId = taskId, AgentId = owner.Id,
+            Role = AgentTaskRole.Check, Status = status, CreatedAt = DateTime.UtcNow });
+        db.StandingSpecialistCandidateStates.Add(new() { Id = Guid.NewGuid(), AgentId = owner.Id,
+            PhysicalAgentId = owner.Id, AgentKind = owner.Kind, ModelLevel = owner.ModelLevel, ModelAlias = "haiku",
+            Status = StandingSpecialistCandidateStatus.Qualified, QualifiedAt = DateTime.UtcNow, Fingerprint = "original" });
+        await db.SaveChangesAsync();
+        var request = new UpdateAgentRequest(owner.Name, owner.WorkingDirectory, owner.Details,
+            owner.DefaultWorkflowTemplateId, owner.AssignmentPolicy, SystemPromptAppend: "changed contract");
+        var error = await Should.ThrowAsync<ConflictException>(() => scope.ServiceProvider.GetRequiredService<AgentService>()
+            .UpdateAsync(owner.Id, request, CancellationToken.None));
+        error.Message.ShouldContain("active work");
+        db.ChangeTracker.Clear();
+        (await db.Agents.SingleAsync(a => a.Id == owner.Id)).SystemPromptAppend.ShouldNotBe("changed contract");
+        (await db.StandingSpecialistCandidateStates.SingleAsync()).Status.ShouldBe(StandingSpecialistCandidateStatus.Qualified);
+        h.Adapter.Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task Card0415_V13_delete_retains_a_live_or_task_owned_managed_seat(bool liveSession)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var settings = new DelegationSettings();
+        await using var h = await BridgeQueueHarness.CreateAsync(new() { ConnectionString = schema.ConnectionString, Delegation = settings });
+        await using var scope = h.Provider.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var owner = await OwnerAsync(h, db, settings);
+        if (!liveSession)
+        {
+            await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Stopped));
+            var taskId = Guid.NewGuid();
+            db.AgentTasks.Add(new() { Id = taskId, RootTaskId = taskId, AgentId = owner.Id,
+                Role = AgentTaskRole.Check, Status = AgentTaskStatus.Queued, CreatedAt = DateTime.UtcNow });
+            await db.SaveChangesAsync();
+        }
+        var error = await Should.ThrowAsync<ConflictException>(() => scope.ServiceProvider.GetRequiredService<AgentService>()
+            .DeleteAsync(owner.Id, CancellationToken.None));
+        error.Message.ShouldContain("owned work settle");
+        (await db.Agents.AsNoTracking().AnyAsync(a => a.Id == owner.Id)).ShouldBeTrue();
+        h.Adapter.Inputs.ShouldBeEmpty();
+    }
+
     private static async Task<Agent> OwnerAsync(BridgeQueueHarness h, AppDbContext db, DelegationSettings settings)
     {
         var owner = await db.Agents.SingleAsync(a => a.Id == h.AgentId);
