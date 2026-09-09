@@ -36,6 +36,11 @@ tests/Antiphon.E2E/TestOutput/
 # local dotnet pack output
 out/
 
+# Local perf-monitor scratch output and a stray empty file (blocked a land with
+# target_dirty_or_unknown until ignored)
+.perfmon/
+/\[\]
+
 # Alternate build output dirs used while daemons lock bin/ (see CLAUDE.md gotchas).
 # Deliberately a wildcard: this was an enumerated list of one-off names, and the first
 # --property:OutputPath=bin-orch/ that nobody had thought of got committed by a git add -A.
