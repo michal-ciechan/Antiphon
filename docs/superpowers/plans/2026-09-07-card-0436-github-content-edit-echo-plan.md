@@ -481,3 +481,14 @@ verifying it is below the worktree root. Do not remove another checkout's output
 - Readiness: executable design complete. Land this documentation task before
   dispatching Code from the updated target, then implement S-1/S-2 and execute
   every V/R/PC item. The existing-row operator choice remains independent.
+
+## Code verification evidence (2026-09-09)
+
+[Code report](2026-09-09-card-0436-code-report.md) maps all V/R/PC entries to fresh
+execution evidence for code/test commit `5619b3b8`. The final class passed 30/30;
+all 12 controls failed at their expected assertion and passed after restoration.
+The required 26 invocations executed 84 cases (72 passes and 12 intentional
+failures), with zero skips or unexpected failures. Evidence is preserved at
+`C:\Antiphon\evidence\card-0436-bcb6899f`. Historical rows were untouched.
+Automatic approval review blocked removal of the 14 task-owned `bin-c436`
+directories; their exact inventory and cleanup limitation are in the report.
