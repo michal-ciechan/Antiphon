@@ -13,6 +13,19 @@ namespace Antiphon.Agents.Pty;
 /// character that is already correct), <see cref="AnsiStripper"/> leaves a gap
 /// whereas <see cref="TerminalScreen"/> preserves the character from the previous
 /// paint — which is the correct, human-visible result.
+///
+/// <para>Deferred (last-column) wrap is a hard requirement of any terminal that consumes ConPTY
+/// output, not an optimisation. A printable in the last column leaves the cursor ON that row with
+/// a wrap pending; only the NEXT printable moves to the following row. xterm, Windows Terminal and
+/// ConPTY's own VT renderer all behave this way, and the renderer relies on it: after a full-width
+/// row it emits CR and a relative move (<c>ESC [ 1 B</c>) and expects the next text one row below
+/// that row. Wrapping immediately instead pushes the cursor one row too far, so every row-relative
+/// move after a full-width row lands one row off and erase-and-repaint leaves stale rows behind
+/// (CARD-0449: a dismissed startup dialog left a ghost title on the grid and the readiness gate
+/// blocked for its whole budget).</para>
+///
+/// <para>Not modelled: DECAWM off (<c>ESC [ ? 7 l</c>), which disables wrapping entirely. Private
+/// modes are skipped, and ConPTY has not been observed emitting it.</para>
 /// </summary>
 public sealed class TerminalScreen
 {
@@ -22,6 +35,7 @@ public sealed class TerminalScreen
 	private int _cursorCol;    // 0-based, clamped to [0, Cols)
 	private int _scrollTop;    // scroll region top (0-based, inclusive)
 	private int _scrollBottom; // scroll region bottom (0-based, inclusive)
+	private bool _pendingWrap; // deferred wrap: the last column is filled, the wrap is owed
 
 	public int Cols { get; }
 	public int Rows { get; }
@@ -29,7 +43,10 @@ public sealed class TerminalScreen
 	/// <summary>Current cursor row (0-based).</summary>
 	public int CursorRow => _cursorRow;
 
-	/// <summary>Current cursor column (0-based).</summary>
+	/// <summary>
+	/// Current cursor column (0-based).  Stays at <c>Cols - 1</c> while a deferred wrap is
+	/// pending — the cursor has not left the row yet.
+	/// </summary>
 	public int CursorCol => _cursorCol;
 
 	public TerminalScreen(int cols = 120, int rows = 30)
@@ -65,20 +82,27 @@ public sealed class TerminalScreen
 			else switch (c)
 			{
 				case '\r':
+					_pendingWrap = false;
 					_cursorCol = 0;
 					i++;
 					break;
 				case '\n':
+					_pendingWrap = false;
 					LineFeed();
 					i++;
 					break;
 				case '\b':
+					_pendingWrap = false;
 					if (_cursorCol > 0) _cursorCol--;
 					i++;
 					break;
 				case '\t':
 				{
-					int next = (_cursorCol / 8 + 1) * 8;
+					// A tab cancels a pending wrap without leaving the row, and can never advance past
+					// the last column — otherwise a tab issued in the last column would spin forever
+					// now that WriteChar stops advancing there.
+					_pendingWrap = false;
+					int next = Math.Min((_cursorCol / 8 + 1) * 8, Cols - 1);
 					while (_cursorCol < next) WriteChar(' ');
 					i++;
 					break;
@@ -147,15 +171,20 @@ public sealed class TerminalScreen
 
 	private void WriteChar(char c)
 	{
-		if (_cursorRow >= 0 && _cursorRow < Rows && _cursorCol >= 0 && _cursorCol < Cols)
-			_cells[_cursorRow][_cursorCol] = c;
-
-		_cursorCol++;
-		if (_cursorCol >= Cols)
+		// Deferred wrap: the previous printable filled the last column and owes a wrap.  Pay
+		// it here, before this character lands — through LineFeed, so the scroll region holds.
+		if (_pendingWrap)
 		{
+			_pendingWrap = false;
 			_cursorCol = 0;
 			LineFeed();
 		}
+
+		if (_cursorRow >= 0 && _cursorRow < Rows && _cursorCol >= 0 && _cursorCol < Cols)
+			_cells[_cursorRow][_cursorCol] = c;
+
+		if (_cursorCol >= Cols - 1) _pendingWrap = true;
+		else _cursorCol++;
 	}
 
 	private void LineFeed()
@@ -262,6 +291,12 @@ public sealed class TerminalScreen
 
 		int p1 = psCount > 0 ? ps[0] : 0;
 		int p2 = psCount > 1 ? ps[1] : 0;
+
+		// Every cursor-positioning move cancels a pending wrap: the cursor is being placed
+		// explicitly, so the owed wrap is void.  Erase (J K X), insert/delete (L M P @), scroll
+		// (S T) and SGR leave it armed — they do not move the cursor.
+		if (final is 'A' or 'B' or 'C' or 'D' or 'E' or 'F' or 'G' or 'H' or 'f' or 'd' or 'r')
+			_pendingWrap = false;
 
 		switch (final)
 		{

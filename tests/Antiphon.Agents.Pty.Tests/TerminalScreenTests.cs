@@ -33,6 +33,18 @@ public class TerminalScreenTests
 	/// <summary>Erase entire line.</summary>
 	private const string EraseLine = "\x1b[2K";
 
+	/// <summary>Carriage return.</summary>
+	private const string CR = "\r";
+
+	/// <summary>Line feed.</summary>
+	private const string LF = "\n";
+
+	/// <summary>Backspace.</summary>
+	private const string BSP = "\b";
+
+	/// <summary>Horizontal tab.</summary>
+	private const string TAB = "\t";
+
 	// ── Plain text ──────────────────────────────────────────────────────────────
 
 	[Test]
@@ -311,6 +323,139 @@ public class TerminalScreenTests
 		s.Feed("AB\r\nCD");
 		s.CursorRow.ShouldBe(1);
 		s.CursorCol.ShouldBe(2);
+	}
+
+	// ── Deferred (last-column) wrap ──────────────────────────────────────────────
+	//
+	// ConPTY's renderer assumes delayed EOL wrap: a printable in the last column leaves the
+	// cursor ON that row, and only the NEXT printable moves down. Wrapping immediately puts
+	// every row-relative move after a full-width row one row off (CARD-0449).
+
+	[Test]
+	public void Writing_the_last_column_keeps_the_cursor_on_the_row()
+	{
+		var s = S(10, 3);
+		s.Feed("ABCDEFGHIJ");
+		s.GetRow(0).ShouldBe("ABCDEFGHIJ");
+		s.GetRow(1).ShouldBe("", "the wrap is deferred: nothing has landed on row 1 yet");
+		s.CursorRow.ShouldBe(0);
+		s.CursorCol.ShouldBe(9);
+	}
+
+	[Test]
+	public void The_next_printable_after_a_full_row_wraps_first()
+	{
+		var s = S(10, 3);
+		s.Feed("ABCDEFGHIJK");
+		s.GetRow(0).ShouldBe("ABCDEFGHIJ");
+		s.GetRow(1).ShouldBe("K");
+		s.CursorRow.ShouldBe(1);
+		s.CursorCol.ShouldBe(1);
+	}
+
+	[Test]
+	public void A_carriage_return_after_a_full_row_stays_on_that_row()
+	{
+		var s = S(10, 3);
+		s.Feed("ABCDEFGHIJ" + CR + "X");
+		s.GetRow(0).ShouldBe("XBCDEFGHIJ", "CR cancels the owed wrap; X overwrites column 0 of the same row");
+		s.GetRow(1).ShouldBe("");
+		s.CursorRow.ShouldBe(0);
+		s.CursorCol.ShouldBe(1);
+	}
+
+	[Test]
+	public void A_full_row_then_CRLF_advances_exactly_one_row()
+	{
+		var s = S(10, 3);
+		s.Feed("ABCDEFGHIJ" + CR + LF + "X");
+		s.GetRow(1).ShouldBe("X");
+		s.GetRow(2).ShouldBe("", "CRLF after a full row must advance ONE row, not two");
+		s.CursorRow.ShouldBe(1);
+		s.CursorCol.ShouldBe(1);
+	}
+
+	[Test]
+	public void Backspace_after_a_full_row_steps_back_on_that_row()
+	{
+		var s = S(10, 3);
+		s.Feed("ABCDEFGHIJ" + BSP + "X");
+		s.GetRow(0).ShouldBe("ABCDEFGHXJ");
+		s.GetRow(1).ShouldBe("");
+		s.CursorRow.ShouldBe(0);
+		s.CursorCol.ShouldBe(9);
+	}
+
+	[Test]
+	[Arguments("A", "1A", 0, "         X"), Arguments("B", "1B", 2, "         X"),
+	 Arguments("C", "1C", 1, "ABCDEFGHIX"), Arguments("D", "1D", 1, "ABCDEFGHXJ"),
+	 Arguments("E", "1E", 2, "X"), Arguments("F", "1F", 0, "X"),
+	 Arguments("G", "3G", 1, "ABXDEFGHIJ"), Arguments("H", "3;2H", 2, " X"),
+	 Arguments("f", "3;2f", 2, " X"), Arguments("d", "3d", 2, "         X"),
+	 Arguments("r", "1;3r", 0, "X")]
+	public void Cursor_moves_clear_a_pending_wrap(string name, string seq, int landing, string expected)
+	{
+		var s = S(10, 3);
+		s.Feed(CursorPos(2, 1) + "ABCDEFGHIJ" + Csi(seq) + "X");
+		s.GetRow(landing).ShouldBe(expected, $"{name}: X must land where the move put the cursor");
+		for (var r = 0; r < 3; r++)
+		{
+			if (r == landing) continue;
+			s.GetRow(r).ShouldBe(r == 1 ? "ABCDEFGHIJ" : "",
+				$"{name}: row {r} must be untouched — X must not have arrived there by wrapping");
+		}
+	}
+
+	[Test]
+	[Timeout(5000)]
+	[Arguments("pending", "ABCDEFGHIJ", "ABCDEFGHIX"), Arguments("landing", "ABCDEFGHI", "ABCDEFGHIX"),
+	 Arguments("middle", "AB", "AB      X")]
+	public async Task A_tab_in_the_last_column_clears_the_wrap_and_terminates(
+		string name, string prefix, string expected, CancellationToken cancellationToken)
+	{
+		var s = S(10, 3);
+		// The tab loop must be bounded by the last column: WriteChar no longer advances past
+		// Cols - 1, so an unbounded "write spaces until the next stop" loop never terminates.
+		// Run it off-thread so a regression fails this test instead of hanging the whole run.
+		await Task.Run(() => s.Feed(prefix + TAB + "X"), CancellationToken.None).WaitAsync(cancellationToken);
+		s.GetRow(0).ShouldBe(expected, name);
+		s.GetRow(1).ShouldBe("", $"{name}: the tab must not re-arm the wrap");
+		s.CursorRow.ShouldBe(0, name);
+		s.CursorCol.ShouldBe(9, name);
+	}
+
+	[Test]
+	[Arguments("K", "K", "ABCDEFGHI", "X"), Arguments("J", "J", "ABCDEFGHI", "X"),
+	 Arguments("X", "X", "ABCDEFGHI", "X"), Arguments("P", "P", "ABCDEFGHI", "X"),
+	 Arguments("@", "@", "ABCDEFGHI", "X"), Arguments("m", "m", "ABCDEFGHIJ", "X"),
+	 Arguments("L", "L", "", "XBCDEFGHIJ"), Arguments("M", "M", "", "X"),
+	 Arguments("S", "S", "", "X"), Arguments("T", "T", "", "XBCDEFGHIJ")]
+	public void Non_moving_sequences_keep_a_pending_wrap(string name, string seq, string row0, string row1)
+	{
+		var s = S(10, 3);
+		s.Feed("ABCDEFGHIJ" + Csi(seq));
+		s.CursorRow.ShouldBe(0, $"{name}: must not move the cursor");
+		s.CursorCol.ShouldBe(9, $"{name}: must not move the cursor");
+		s.Feed("X");
+		s.GetRow(0).ShouldBe(row0, $"{name}: row 0");
+		s.GetRow(1).ShouldBe(row1, $"{name}: row 1 — the wrap was still owed");
+	}
+
+	[Test]
+	public void A_deferred_wrap_at_the_scroll_bottom_scrolls_the_region()
+	{
+		var s = S(10, 4);
+		s.Feed(Csi("2;4r") + CursorPos(4, 1) + "ABCDEFGHIJ");
+		s.GetRow(3).ShouldBe("ABCDEFGHIJ");
+		s.GetRow(2).ShouldBe("");
+		s.CursorRow.ShouldBe(3);
+		s.CursorCol.ShouldBe(9);
+		s.Feed("K");
+		s.GetRow(2).ShouldBe("ABCDEFGHIJ", "paying the wrap must scroll WITHIN the region");
+		s.GetRow(3).ShouldBe("K");
+		s.GetRow(0).ShouldBe("", "row 0 is outside the scroll region and must not shift");
+		s.CursorRow.ShouldBe(3);
+		s.CursorCol.ShouldBe(1);
 	}
 
 	// ── OSC / SGR passthrough ────────────────────────────────────────────────────
