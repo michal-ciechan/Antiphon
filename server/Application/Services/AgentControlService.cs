@@ -332,10 +332,18 @@ public sealed class AgentControlService
         var spec = resolved.Spec;
         var definitionName = spec.DefinitionName;
         var isStandingSpecialist = StandingSpecialistSeatPolicy.IsCheck(agent, _delegationSettings);
-        if (isStandingSpecialist)
+        // The hard launch policy follows the TYPED relation only, never the configured slug.
+        // The slug is a compatibility discovery path (CARD-0415: keep logical ownership typed,
+        // do not detect seats by name), so an ordinary agent that merely carries the interpreters
+        // name is a lookalike: it stays ordinary instead of being refused a start for not holding
+        // a contract it was never provisioned with. A renamed real seat keeps its typed relation
+        // and stays protected. The softer specialist behaviours below still follow the slug,
+        // exactly as they did before this policy existed.
+        var isProvisionedSeat = StandingSpecialistSeatPolicy.IsCheck(agent);
+        if (isProvisionedSeat)
             spec = CheckSpecialistLaunchPolicy.Apply(spec,
                 CheckInterpreterProvisioner.Spec(_delegationSettings) with { WorkingDirectory = cwd }, agent.SessionBackend);
-        var specialistLaunchEvidence = isStandingSpecialist ? SpecialistExecutionEvidenceReader.CaptureLaunch(spec) : null;
+        var specialistLaunchEvidence = isProvisionedSeat ? SpecialistExecutionEvidenceReader.CaptureLaunch(spec) : null;
         GrokLaunchArgs.EnsureWindowsRulesArgv(spec.Args, spec.Kind, agent.SessionBackend, spec.Env, $"Agent '{agent.Name}'");
 
         // Bootstrap/restart notes ride on every launch of a preamble-configured agent; the launch

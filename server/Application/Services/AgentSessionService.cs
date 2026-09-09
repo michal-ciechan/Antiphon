@@ -2421,8 +2421,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 return;
 
             // Check has a no-tool standing contract; a generic liveness probe is neither
-            // behavioral qualification nor authorized specialist work.
-            if (StandingSpecialistSeatPolicy.IsCheck(agent, _delegationSettings))
+            // behavioral qualification nor authorized specialist work. Typed relation only:
+            // an ordinary agent that merely carries the configured slug is a lookalike and
+            // keeps CARD-0312 S2 rung 5, which is the only evidence anyone has for it.
+            if (StandingSpecialistSeatPolicy.IsCheck(agent))
                 return;
 
             var unattended = agent.AlwaysOn
