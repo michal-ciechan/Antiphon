@@ -37,7 +37,8 @@ public sealed class SpecialistExecutionEvidenceReader(IOptions<SupervisionSettin
         SpecialistLaunchEvidence? launch;
         try { launch = JsonSerializer.Deserialize<SpecialistLaunchEvidence>(session.SpecialistLaunchEvidenceJson); }
         catch (JsonException) { return null; }
-        if (launch is null || launch.PolicyFingerprint != PolicyFingerprint) return null;
+        if (launch is null || launch.PolicyFingerprint != PolicyFingerprint
+            || !CheckSpecialistLaunchPolicy.IsArmed(seat.WorkingDirectory)) return null;
         var key = launch.ExecutableSha256 + ":" + launch.PolicyFingerprint;
         if (!CertifiedEnvelopes.TryGetValue(key, out var max)) return null;
         try

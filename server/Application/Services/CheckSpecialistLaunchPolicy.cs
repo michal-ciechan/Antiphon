@@ -8,6 +8,20 @@ namespace Antiphon.Server.Application.Services;
 /// <summary>Claude Check launch protection. Arming is not capability certification.</summary>
 public static class CheckSpecialistLaunchPolicy
 {
+    public static bool IsArmed(string workingDirectory)
+    {
+        try
+        {
+            var expected = JsonNode.Parse(CheckInterpretation.DenyAllToolsSettingsJson)!.AsObject();
+            expected["disableAllHooks"] = false;
+            expected["remoteControlAtStartup"] = false;
+            return JsonNode.DeepEquals(expected, JsonNode.Parse(File.ReadAllText(Path.Combine(workingDirectory, ".antiphon", "check-tool-policy-v1.json"))))
+                && JsonNode.DeepEquals(JsonNode.Parse("{\"mcpServers\":{}}"),
+                    JsonNode.Parse(File.ReadAllText(Path.Combine(workingDirectory, ".antiphon", "check-no-mcp-v1.json"))));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException) { return false; }
+    }
+
     public static AgentLaunchSpec Apply(AgentLaunchSpec launch, SpecialistSpec specialist, SessionBackend backend)
     {
         StandingSpecialistProvisioner.RequireCheckLaunchToolPolicy(specialist, launch.Kind);

@@ -181,3 +181,20 @@ counted-task/owner locks, includes compaction settings/watermark in its executio
 fingerprint, and rechecks the database generation after external evidence reads.
 The full backlog/compaction/concurrency mutation matrix is still outstanding;
 these additions are not a completed V8/V13/V14/S5b acceptance claim.
+
+## Stop intent and launch regressions
+
+`SpecialistStartIntentTests.Card0415_V22_human_stop_wins_against_queued_and_inflight_Check_launch`
+passed 3/3 in `c415-fad-stop-intent-fixed.trx`: Stop before launch creates no
+adapter; Stop during readiness kills the started owned adapter and retains the
+suspension/audit; the authorized control reaches Running without input.
+The initial before-launch fixture lacked a runner Kill response; it was corrected
+with the existing FakeSessionRunnerClient. No real process is spawned by this test.
+
+`c415-fad-start-regression.trx` passed 103/103 across the four named classes
+AgentControlServiceIntegrationTests, AgentSessionLaunchFailureTests,
+SpecialistToolPolicyLaunchTests and CheckSpecialistLaunchPolicyTests. This includes
+the two owned settings/MCP-file tamper checks. Current capability verification now
+requires both owned policy files to remain armed. Check launch rechecks human intent
+before starting and after readiness; automatic start cannot lift a Check suspension.
+A missing native Check resume target no longer silently starts a fresh conversation.
