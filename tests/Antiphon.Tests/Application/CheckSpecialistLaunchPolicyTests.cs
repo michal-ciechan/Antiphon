@@ -12,6 +12,22 @@ namespace Antiphon.Tests.Application;
 [Category("Unit")]
 public class CheckSpecialistLaunchPolicyTests
 {
+    [Test]
+    [Arguments("check-tool-policy-v1.json")]
+    [Arguments("check-no-mcp-v1.json")]
+    public void Card0415_V08_changed_owned_policy_file_invalidates_arming(string file)
+    {
+        using var scratch = new TempWorkspace();
+        var spec = CheckInterpreterProvisioner.Spec(new()) with { WorkingDirectory = scratch.Path };
+        CheckSpecialistLaunchPolicy.Apply(Launch(spec), spec, SessionBackend.PtyHost);
+        CheckSpecialistLaunchPolicy.IsArmed(scratch.Path).ShouldBeTrue();
+        var path = Path.Combine(scratch.Path, ".antiphon", file);
+        File.WriteAllText(path, "{}");
+        CheckSpecialistLaunchPolicy.IsArmed(scratch.Path).ShouldBeFalse();
+        CheckSpecialistLaunchPolicy.Apply(Launch(spec), spec, SessionBackend.PtyHost);
+        CheckSpecialistLaunchPolicy.IsArmed(scratch.Path).ShouldBeTrue();
+    }
+
     private sealed class TempWorkspace : IDisposable
     {
         public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "antiphon-c415-launch", Guid.NewGuid().ToString("N"));

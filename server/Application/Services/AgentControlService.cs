@@ -184,7 +184,8 @@ public sealed class AgentControlService
             // intent supervision waits for. The failure counter is deliberately NOT reset here (only
             // sustained healthy uptime resets it), so a manual retry of a still-broken agent doesn't
             // collapse the backoff ladder back to 5s.
-            await ClearSupervisionLatchAsync(agent, ct);
+            if (!automatic || !StandingSpecialistSeatPolicy.IsCheck(agent, _delegationSettings))
+                await ClearSupervisionLatchAsync(agent, ct);
         }
 
         // Already running — leave the existing process (and its remote-control state) untouched.
@@ -509,6 +510,13 @@ public sealed class AgentControlService
                 agent.Name, agent.Id, session.Id);
         }
 
+        // The background worker validates the current Check incarnation before starting.
+        // Persist its owner link before enqueue can schedule that worker.
+        if (StandingSpecialistSeatPolicy.IsCheck(agent, _delegationSettings))
+        {
+            agent.PersistentSessionId = session.Id.ToString("D");
+            await _db.SaveChangesAsync(ct);
+        }
         _launchQueue.EnqueueInteractiveSession(
             session.Id, agent.Id, spec, remoteControlName, notes: notes, initialPrompt: initialPrompt);
         return session.Id;
@@ -760,6 +768,32 @@ public sealed class AgentControlService
     public async Task<AgentDetailDto> StopAsync(Guid agentId, CancellationToken ct)
     {
         var agent = await LockAgentAsync(agentId, ct);
+
+        if (StandingSpecialistSeatPolicy.IsCheck(agent, _delegationSettings))
+        {
+            // Record human intent before the runner RPC. A launch already queued but not
+            // yet started must see the stop even when there is no process to kill yet.
+            await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+            var ownerId = agent.StandingSpecialistOwnerId ?? agent.Id;
+            await _db.Agents.FromSqlInterpolated($"SELECT * FROM \"Agents\" WHERE \"Id\" = {ownerId} FOR UPDATE")
+                .AsNoTracking().SingleOrDefaultAsync(ct);
+            await _db.Entry(agent).ReloadAsync(ct);
+            var intent = await GetOrCreateSupervisionStateAsync(agent.Id, ct);
+            if (!intent.Suspended)
+                _db.AgentIncidents.Add(new AgentIncident { Id = Guid.NewGuid(), AgentId = agent.Id,
+                    Kind = AgentIncidentKind.SuspendedByUser, Severity = AlertSeverity.Info,
+                    Message = "Stopped by user; always-on supervision suspended until the next manual start.", CreatedAt = UtcNow() });
+            intent.Suspended = true;
+            intent.NextRestartAt = null;
+            intent.UpdatedAt = UtcNow();
+            agent.Status = AgentStatus.Stopped;
+            agent.UpdatedAt = UtcNow();
+            if (Guid.TryParse(agent.PersistentSessionId, out var stoppingId))
+                await _db.AgentSessions.Where(s => s.Id == stoppingId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(x => x.TerminationSource, SessionTerminationSource.OperatorRequest), ct);
+            await _db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+        }
 
         if (Guid.TryParse(agent.PersistentSessionId, out var sessionId)
             && await _db.AgentSessions.AnyAsync(s => s.Id == sessionId && LiveSessionStatuses.Contains(s.Status), ct))

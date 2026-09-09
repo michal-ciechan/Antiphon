@@ -350,6 +350,9 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             }
             catch (ResumeTargetMissingException)
             {
+                if (await _db.Agents.AsNoTracking().AnyAsync(a => a.Id == agentId
+                    && (a.StandingSpecialistRole == AgentTaskRole.Check || a.Slug == CheckInterpreterProvisioner.Slug(_delegationSettings)), ct))
+                    throw;
                 await _db.Entry(session).ReloadAsync(ct);
                 session.HerdrSupervisionFailureKind = null;
                 session.TerminationSource = SessionTerminationSource.Unknown;
@@ -380,7 +383,9 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // evidence so an unrelated catch cannot overwrite its proven timeout.
             await _db.Entry(session).ReloadAsync(CancellationToken.None);
             HerdrSupervisionFailureEvidence.Record(session, HerdrSupervisionFailureEvidence.FromLaunchFailure(ex));
-            session.Status = SessionStatus.Failed;
+            var stoppedCheck = ex is ConflictException { Code: "specialist_start_intent_revoked" }
+                && session.TerminationSource == SessionTerminationSource.OperatorRequest;
+            session.Status = stoppedCheck ? SessionStatus.Stopped : SessionStatus.Failed;
             session.FailureReason = ex.Message;
             session.EndedAt = UtcNow();
             session.LastSeenAt = session.EndedAt.Value;
@@ -400,7 +405,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 && agent.Status == AgentStatus.Running
                 && string.Equals(agent.PersistentSessionId, sessionId.ToString("D"), StringComparison.OrdinalIgnoreCase))
             {
-                agent.Status = AgentStatus.Failed;
+                agent.Status = stoppedCheck ? AgentStatus.Stopped : AgentStatus.Failed;
                 agent.UpdatedAt = UtcNow();
             }
 
@@ -428,6 +433,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         IAgentProtocolAdapter? adapter = null;
         try
         {
+            await RequireCurrentCheckLaunchAsync(session, agentId, ct);
             resumeMode = ApplyEffectiveResumeMode(session, launchSpec, resumeMode);
             adapter = _adapterFactory.Create(session.AgentKind);
             var spec = await BuildRuntimeLaunchSpecAsync(launchSpec, session, session.Cwd, resumeMode, ct);
@@ -436,6 +442,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
             await CaptureGrokRulesReceiptAsync(session, ct);
             await WaitForReadyOrThrowAsync(adapter, session.Id, ct);
+            await RequireCurrentCheckLaunchAsync(session, agentId, ct);
             session.Status = SessionStatus.Running;
             session.LastSeenAt = UtcNow();
             await _db.SaveChangesAsync(ct);
@@ -518,6 +525,19 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
             throw;
         }
+    }
+
+    private async Task RequireCurrentCheckLaunchAsync(AgentSession expected, Guid agentId, CancellationToken ct)
+    {
+        var agent = await _db.Agents.AsNoTracking().SingleOrDefaultAsync(a => a.Id == agentId, ct);
+        if (agent is null) throw new NotFoundException(nameof(Agent), agentId);
+        if (!StandingSpecialistSeatPolicy.IsCheck(agent, _delegationSettings)) return;
+        var current = await _db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == expected.Id, ct);
+        if (agent.PersistentSessionId != expected.Id.ToString("D") || current?.StartedAt != expected.StartedAt
+            || current.Status is not (SessionStatus.Starting or SessionStatus.Running)
+            || current.TerminationSource == SessionTerminationSource.OperatorRequest
+            || await StandingSpecialistSeatPolicy.StartRefusalAsync(_db, agent, _delegationSettings, true, ct) is not null)
+            throw new ConflictException("The Check launch is no longer authorized for this generation.", "specialist_start_intent_revoked");
     }
 
     /// <summary>
