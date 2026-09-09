@@ -57,7 +57,8 @@ public sealed record SpecialistInputPolicy(
 
     public void RequireSession(AgentSession session)
     {
-        if (session.Id != SessionId || session.StartedAt != SessionStartedAt || session.AgentKind != Kind)
+        if (session.Id != SessionId || session.StartedAt != SessionStartedAt || session.AgentKind != Kind
+            || session.SessionBackend != SessionBackend.PtyHost)
             throw new SpecialistInputUnsupportedException("Specialist input capability belongs to a different session generation.");
     }
 

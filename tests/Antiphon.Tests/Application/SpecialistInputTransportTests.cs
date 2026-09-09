@@ -5,6 +5,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -50,7 +51,7 @@ public class SpecialistInputTransportTests
             ExecutionDeadlineAt = DateTime.UtcNow.AddMinutes(2) };
         var body = DelegationReportFormatter.BuildBrief(task, new()).ReplaceLineEndings("\n").Trim();
         task.SpecialistInputPolicyJson = new SpecialistInputPolicy(1, id, session.Id,
-            session.StartedAt!.Value, session.AgentKind, DeliveryBackend.ModernConPty,
+            session.StartedAt, session.AgentKind, DeliveryBackend.ModernConPty,
             maxBytes ?? Encoding.UTF8.GetByteCount(body), "synthetic-transport-fixture-only").Serialize();
         db.AgentTasks.Add(task);
         await db.SaveChangesAsync();
@@ -58,7 +59,7 @@ public class SpecialistInputTransportTests
     }
 
     private static string Fit(AgentTask task) => AgentTaskDispatcher.FitBriefForTyping(task, new(),
-        new(DeliveryBackend.ModernConPty, 128, 20000, 128, "synthetic envelope"), agentKind: task.AgentKind);
+        new(DeliveryBackend.ModernConPty, 128, 3000, 128, "synthetic envelope"), agentKind: task.AgentKind);
 
     private static Task<SessionQueueDto> EnqueueAsync(BridgeQueueHarness h, AgentTask task, string body, bool deliver = true) =>
         h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None,

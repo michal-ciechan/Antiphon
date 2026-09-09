@@ -1923,7 +1923,7 @@ public sealed class SessionMessageQueueService
         {
             await SpillQueueBodyAsync(sessionId, body, "", null, db, ct, ceilings,
                 head.SpecialistInputPolicyJson);
-            if (await CancelExpiredBriefsAsync(db, run, ct)) return FlushResult.Nothing;
+            if (head.ExecutionDeadlineAt <= UtcNow()) return FlushResult.Nothing;
         }
         var observable = head.LastDeliveryBaselineSequence is not null;
         var baseline = new TranscriptBaseline(observable, head.LastDeliveryBaselineSequence ?? 0);
@@ -1957,7 +1957,7 @@ public sealed class SessionMessageQueueService
         {
             outcome = await WaitForTranscriptConfirmAsync(
                 sessionId, body, baseline, submitBaseline.Sequence, before.RenderedScreen, kind,
-                ct, ceilings, unobservableFrom);
+                ct, ceilings, unobservableFrom, firstInputDeadlineAt: FirstInputDeadline(run));
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -2534,7 +2534,7 @@ public sealed class SessionMessageQueueService
         {
             return await WaitForTranscriptConfirmAsync(
                 sessionId, trimmed, baseline, submitBaseline.Sequence, submitBaseline.Screen, kind,
-                ct, ceilings, unobservableConfirmFrom);
+                ct, ceilings, unobservableConfirmFrom, firstInputDeadlineAt);
         }
 
         // TranscriptConfirmEnabled off: legacy screen-only path (unchanged).
@@ -2575,12 +2575,15 @@ public sealed class SessionMessageQueueService
     private async Task<DeliveryOutcome> WaitForTranscriptConfirmAsync(
         Guid sessionId, string body, TranscriptBaseline baseline, long? sequenceBeforeSubmit,
         string screenBeforeSubmit, AgentKind? kind, CancellationToken ct,
-        PtyDeliveryCeilings? ceilings = null, DateTime? unobservableConfirmFrom = null)
+        PtyDeliveryCeilings? ceilings = null, DateTime? unobservableConfirmFrom = null,
+        DateTime? firstInputDeadlineAt = null)
     {
         var strong = PromptSubmissionMatch.RequiresTextMatch(body);
         var fullInline = await RequiresCompleteSpecialistPromptAsync(sessionId, body, ct);
         var observable = baseline.Observable;
         var deadline = UtcNow() + TimeSpan.FromSeconds(_verification.TranscriptConfirmTimeoutSeconds);
+        if (fullInline && firstInputDeadlineAt is { } inputDeadline && inputDeadline < deadline)
+            deadline = inputDeadline;
         var reEnterAfter = TimeSpan.FromSeconds(Math.Max(0, _verification.ReEnterIntervalSeconds));
         var lastEnter = UtcNow();
         var entersSent = 1; // the caller's submitting Enter
