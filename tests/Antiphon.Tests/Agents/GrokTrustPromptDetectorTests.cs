@@ -59,4 +59,50 @@ public class GrokTrustPromptDetectorTests
         GrokTrustPromptDetector.IsVisible("").ShouldBeFalse();
         GrokTrustPromptDetector.IsVisibleOnScreen("> ").ShouldBeFalse();
     }
+
+    // Flattened from session 5d666d9a (CARD-0016 Grok pool launch, grok 1.0.24 --no-alt-screen).
+    // y was accepted (trusted_folders.toml decided_at == firstInputAtUtc) and the composer
+    // painted; the trust question stayed in scrollback. Settle treated leftover text as
+    // still-blocking and killed the session at GrokTrustPromptSettleMs.
+    private const string Grok1024TrustScrollbackWithComposer = """
+        Do you trust the contents of this directory?
+            D:\src\k8s-deployments
+
+        Grok Build may run or modify contents in this directory,
+                         posing security risks.
+
+                     Yes, proceed                 y
+                     No, quit                     n
+
+                                                   Grok Build  1.0.24 [stable]
+        | Starting session… 0.0s
+        ╭──────────────────────────────────────────╮
+        │ >                                        │
+        ╰──────────────── grok-4.6 · always-approve ─╯
+        Shift+Tab:mode  │  Ctrl+x:shortcuts
+        """;
+
+    [Test]
+    public void Leftover_1_0_24_trust_text_with_composer_is_not_the_dialog()
+    {
+        GrokTrustPromptDetector.IsVisibleOnScreen(Grok1024TrustScrollbackWithComposer)
+            .ShouldBeFalse("composer chrome means the modal already left; leftover --no-alt-screen text is not blocking");
+        GrokTrustPromptDetector.IsVisible(Grok1024TrustScrollbackWithComposer)
+            .ShouldBeFalse("raw that already includes the composer is the same leftover, not a standing modal");
+    }
+
+    [Test]
+    public void Standing_1_0_24_trust_dialog_without_composer_is_still_the_dialog()
+    {
+        const string standing = """
+            Do you trust the contents of this directory?
+                D:\src\k8s-deployments
+
+                             Yes, proceed                 y
+                             No, quit                     n
+
+                                                           Grok Build  1.0.24 [stable]
+            """;
+        GrokTrustPromptDetector.IsVisibleOnScreen(standing).ShouldBeTrue();
+    }
 }

@@ -74,6 +74,8 @@ public class RunnerGrokAdapterTrustPromptTests
 
         ready.ShouldBeFalse("reporting ready on a standing trust dialog is how CARD-0315 died");
         client.Inputs.ShouldBe([GrokTrustPromptDetector.AffirmativeKey]);
+        adapter.LaunchBlock.ShouldNotBeNull();
+        adapter.LaunchBlock!.Kind.ShouldBe(AgentLaunchBlockKind.TrustDialogNotCleared);
     }
 
     [Test]
@@ -87,6 +89,37 @@ public class RunnerGrokAdapterTrustPromptTests
             "both Yes and No render bold on the live screen; Enter is not safe");
         client.Inputs.ShouldNotContain("\r");
         client.Inputs.ShouldBe([GrokTrustPromptDetector.AffirmativeKey]);
+    }
+
+    // Session 5d666d9a: y accepted, composer painted, trust question stayed in --no-alt-screen
+    // scrollback. Settle used to treat leftover text as still-blocking and kill the session.
+    private const string TrustScrollbackWithComposer = """
+        Do you trust the contents of this directory?
+            D:\src\k8s-deployments
+
+                     Yes, proceed                 y
+                     No, quit                     n
+
+        ╭──────────────────────────────────────────╮
+        │ >                                        │
+        ╰──────────────── grok-4.6 · always-approve ─╯
+        Shift+Tab:mode  │  Ctrl+x:shortcuts
+        """;
+
+    [Test]
+    public async Task Leftover_trust_text_after_y_with_composer_is_ready()
+    {
+        var client = new ScreenScriptedRunnerClient(
+            TrustScreen, clearedBy: "y", thenShowing: TrustScrollbackWithComposer);
+        var adapter = NewAdapter(client);
+        await adapter.StartAsync(NewSpec(), CancellationToken.None);
+
+        var ready = await adapter.WaitForReadyAsync(CancellationToken.None);
+
+        ready.ShouldBeTrue("y was accepted; leftover --no-alt-screen trust text is not a standing modal");
+        client.Inputs.ShouldBe([GrokTrustPromptDetector.AffirmativeKey]);
+        GrokTrustPromptDetector.IsVisibleOnScreen(adapter.SnapshotRenderedScreen())
+            .ShouldBeFalse();
     }
 
     private static RunnerGrokAdapter NewAdapter(ISessionRunnerClient client) => new(

@@ -396,6 +396,12 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter, IAttachableProtoc
             catch (OperationCanceledException) { return false; }
         }
 
+        _launchBlock = new AgentLaunchBlock(
+            AgentLaunchBlockKind.TrustDialogNotCleared,
+            "Grok's directory-trust dialog is still on screen after answering y. "
+            + "Nothing can be delivered to this session. Trust the canonical git root "
+            + "(junction cwd is not the path Grok shows) in ~/.grok/trusted_folders.toml "
+            + "or accept the dialog interactively, then re-dispatch.");
         _logger?.LogError(
             "Session {SessionId} is still blocked on Grok's directory-trust dialog after answering it. Nothing can be delivered to this session.",
             _terminal.SessionId);

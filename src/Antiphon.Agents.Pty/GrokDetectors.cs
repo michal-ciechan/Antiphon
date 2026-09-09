@@ -3,10 +3,12 @@ using System.Text.RegularExpressions;
 namespace Antiphon.Agents.Pty;
 
 /// <summary>
-/// Grok Build 1.0.13's first-use directory-trust dialog. A brand-new cwd — including every
-/// Antiphon <c>-Worktree</c> path under <c>C:\Antiphon\worktrees\card-task-*</c> — parks the TUI
-/// on this modal. It is quiet, so <c>WaitForQuietAfterVisibleAsync</c> calls the session ready
-/// and the brief is then typed into the dialog (CARD-0315).
+/// Grok Build 1.0.13+'s first-use directory-trust dialog. A brand-new cwd — including every
+/// Antiphon <c>-Worktree</c> path under <c>C:\Antiphon\worktrees\card-task-*</c> and a junction
+/// whose canonical git root has never been trusted — parks the TUI on this modal. It is quiet,
+/// so <c>WaitForQuietAfterVisibleAsync</c> calls the session ready and the brief is then typed
+/// into the dialog (CARD-0315). Grok 1.0.24 with <c>--no-alt-screen</c> leaves the question in
+/// scrollback after <c>y</c> is accepted; leftover text plus composer chrome is not the modal.
 /// </summary>
 /// <remarks>
 /// The question text is the same as Codex's, but the choices are not: Grok wants the letter
@@ -34,9 +36,20 @@ public static class GrokTrustPromptDetector
 
         var compact = Regex.Replace(text, @"\s+", "", RegexOptions.CultureInvariant)
             .ToLowerInvariant();
-        return compact.Contains("doyoutrustthecontentsofthisdirectory")
-            && compact.Contains("yes,proceed");
+        if (!compact.Contains("doyoutrustthecontentsofthisdirectory")
+            || !compact.Contains("yes,proceed"))
+            return false;
+
+        // Grok 1.0.24 with --no-alt-screen leaves the dialog text in scrollback after y
+        // is accepted; the composer then paints under it (session 5d666d9a). That leftover
+        // is not a standing modal.
+        return !HasComposerChrome(compact);
     }
+
+    private static bool HasComposerChrome(string compact) =>
+        compact.Contains("shift+tab:mode")
+        || compact.Contains("ctrl+x:shortcuts")
+        || compact.Contains("always-approve");
 }
 
 /// <summary>

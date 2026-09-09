@@ -276,8 +276,11 @@ synthetic `/api-key` credential hit. See the [measurement record](investigations
   workspaces: trusting `C:\src\Antiphon` covers `C:\src\Antiphon\server` (same repo), but
   trusting `C:\Antiphon\worktrees` does **not** cover `C:\Antiphon\worktrees\card-task-*`
   (`grok inspect --json` `projectTrusted`, measured 1.0.13). Exact-path seed of the worktree
-  itself does. `GrokTrustPromptDetector` answers `y` in `RunnerGrokAdapter.WaitForReadyAsync`
-  after the quiet wait (CARD-0315); Enter is not safe because both options render bold. An
+  itself does. A Windows junction is the same: cwd
+  `D:\src\project\predictionMarkets\k8s-deployments` still prompts for canonical
+  `D:\src\k8s-deployments` (session `5d666d9a`, 1.0.24). `GrokTrustPromptDetector` answers `y` in `RunnerGrokAdapter.WaitForReadyAsync`
+  after the quiet wait (CARD-0315); leftover `--no-alt-screen` trust text under a painted
+  composer is not the modal. Enter is not safe because both options render bold. An
   **unauthenticated `GROK_HOME` parks on Grok 1.0.13's OAuth device-approval screen**
   (`Approve in your browser to finish signing in` / `Waiting for approval...`) or the
   welcome token input (`Paste your token here`) — sign-in gates the trust dialog, so
