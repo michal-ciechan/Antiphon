@@ -26,24 +26,25 @@ public class ComposerInputProbeTests
         var phaseReads = 0;
         var modal = false;
         var rendered = false;
-        Task<string> Snapshot(CancellationToken ct)
+        async Task<string> Snapshot(CancellationToken ct)
         {
             ct.ThrowIfCancellationRequested();
             phaseReads++;
+            if (checkpoint == "BeforeClearRetry" && writes.Count == 2 && phaseReads == 1) await Task.Delay(30, ct);
             modal |= checkpoint switch
             {
                 "BeforeFirstToken" => writes.Count == 0,
                 "AwaitingToken" => writes.Count == 1,
                 "BeforeRetype" => writes.Count == 1 && phaseReads >= 2,
                 "BeforeFirstClear" => rendered,
-                "BeforeClearRetry" => writes.Count >= 2 && phaseReads >= 3,
+                "BeforeClearRetry" => writes.Count >= 2 && phaseReads >= 2,
                 "BeforeResponsive" => writes.Count >= 2 && phaseReads >= 2,
                 _ => false
             };
-            if (modal) return Task.FromResult("SENTINEL MODAL");
+            if (modal) return "SENTINEL MODAL";
             var show = writes.Count > 0 && checkpoint != "BeforeRetype" && (writes.Count < 2 || checkpoint == "BeforeClearRetry");
             rendered |= show;
-            return Task.FromResult(show ? "zzdeadbeef" : "");
+            return show ? "zzdeadbeef" : "";
         }
         Task Write(string key, CancellationToken ct) { ct.ThrowIfCancellationRequested(); writes.Add(key); phaseReads = 0; return Task.CompletedTask; }
         var result = await ComposerInputProbe.RunAsync("zzdeadbeef", Snapshot, Write,
