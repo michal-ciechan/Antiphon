@@ -73,6 +73,7 @@ public sealed class AgentTaskCheckService
     private readonly PtyDeliveryProfile? _ptyProfile;
     private readonly CheckInterpreterProvisioner? _interpreter;
     private readonly SpecialistTaskRunner _runner;
+    private readonly SpecialistRequestService? _requests;
 
     public AgentTaskCheckService(
         AppDbContext db,
@@ -90,7 +91,8 @@ public sealed class AgentTaskCheckService
         // Optional so a harness that wires no alerting still delivers the digest. The incident is
         // the record; the alert is what reaches someone.
         IAlertService? alerts = null,
-        SpecialistTaskRunner? runner = null)
+        SpecialistTaskRunner? runner = null,
+        SpecialistRequestService? requests = null)
     {
         _db = db;
         _probe = probe;
@@ -102,6 +104,7 @@ public sealed class AgentTaskCheckService
         _ptyProfile = ptyProfile;
         _interpreter = interpreter;
         _runner = runner ?? new SpecialistTaskRunner(db, timeProvider, logger, alerts);
+        _requests = requests;
     }
 
     /// <summary>What one check did — for the worker's logging and for the tests.</summary>
@@ -373,18 +376,20 @@ public sealed class AgentTaskCheckService
     private async Task<Interpretation> InterpretAsync(
         AgentTask task, DelegateCheckProbe.CheckFacts facts, string digest, CancellationToken ct)
     {
-        if (_interpreter is null || !_settings.CheckInterpreterEnabled)
+        if ((_interpreter is null && _requests is null) || !_settings.CheckInterpreterEnabled)
             return Interpretation.NotWiredIn;
 
         var spec = CheckInterpreterProvisioner.Spec(_settings);
         var wait = TimeSpan.FromSeconds(Math.Max(1, _settings.CheckInterpreterWaitSeconds));
-        var run = await _runner.RunAsync(
+        var run = _requests is not null
+            ? await _requests.RunCheckAsync(task, facts.Task.CheckNumber, digest, ct)
+            : await _runner.RunAsync(
             spec,
             CheckInterpretation.BuildTitle(task, facts.Task.CheckNumber),
             CheckInterpretation.BuildGoal(task, facts.Task.CheckNumber, digest),
             wait,
             _settings.CheckInterpreterMaxBacklog,
-            _interpreter.EnsureAsync,
+            _interpreter!.EnsureAsync,
             ct,
             createdDetail: $"Interpretation of check #{facts.Task.CheckNumber} on task "
                 + $"{DelegationReportFormatter.Short(task.Id)}.");

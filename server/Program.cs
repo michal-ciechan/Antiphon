@@ -489,6 +489,8 @@ try
     builder.Services.AddScoped<StandingSpecialistRoutingService>();
     builder.Services.AddScoped<StandingSpecialistSeatService>();
     builder.Services.AddScoped<StandingSpecialistHealthService>();
+builder.Services.AddScoped<ISpecialistExecutionEvidenceReader, SpecialistExecutionEvidenceReader>();
+builder.Services.AddScoped<SpecialistRequestService>();
     // CARD-0090: complexity chains. Scoped like the pin/availability readers the walker consumes.
     builder.Services.AddScoped<ComplexityRoutingService>();
     builder.Services.AddScoped<ComplexityChainService>();

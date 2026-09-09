@@ -1298,7 +1298,8 @@ public sealed class SessionMessageQueueService
             message.Status = QueuedMessageStatus.Canceled;
             message.CanceledAt = UtcNow();
             await db.AgentTasks.Where(t => t.Id == message.ExecutionTaskId
-                    && t.Role == AgentTaskRole.Distill && t.Status == AgentTaskStatus.Dispatched)
+                    && (t.Role == AgentTaskRole.Distill || (t.Role == AgentTaskRole.Check && t.SpecialistInputPolicyJson != null))
+                    && t.Status == AgentTaskStatus.Dispatched)
                 .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, AgentTaskStatus.Canceled)
                     .SetProperty(t => t.CompletedAt, UtcNow())
                     .SetProperty(t => t.FailureReason, "Optional work expired before execution.")

@@ -334,6 +334,7 @@ public sealed class AgentControlService
         if (isStandingSpecialist)
             spec = CheckSpecialistLaunchPolicy.Apply(spec,
                 CheckInterpreterProvisioner.Spec(_delegationSettings) with { WorkingDirectory = cwd }, agent.SessionBackend);
+        var specialistLaunchEvidence = isStandingSpecialist ? SpecialistExecutionEvidenceReader.CaptureLaunch(spec) : null;
         GrokLaunchArgs.EnsureWindowsRulesArgv(spec.Args, spec.Kind, agent.SessionBackend, spec.Env, $"Agent '{agent.Name}'");
 
         // Bootstrap/restart notes ride on every launch of a preamble-configured agent; the launch
@@ -371,6 +372,7 @@ public sealed class AgentControlService
                 CardId = null,
                 DefinitionName = definitionName,
                 AgentKind = spec.Kind,
+                SpecialistLaunchEvidenceJson = specialistLaunchEvidence,
             };
             var paneTitle = HerdrLaunchContextResolver.PaneTitleFor(agent, probe);
             var resolver = _herdrContext ?? new HerdrLaunchContextResolver(_db);
@@ -427,6 +429,7 @@ public sealed class AgentControlService
             WorktreeId = null,
             DefinitionName = definitionName,
             AgentKind = spec.Kind,
+            SpecialistLaunchEvidenceJson = specialistLaunchEvidence,
             // CARD-0160: snapshot the agent's backend at creation — a later PATCH must not rewrite
             // how THIS session was launched.
             SessionBackend = agent.SessionBackend,
