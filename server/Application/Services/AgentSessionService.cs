@@ -1,4 +1,4 @@
-using Antiphon.Agents.Pty;
+﻿using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -350,8 +350,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             }
             catch (ResumeTargetMissingException)
             {
-                if (await _db.Agents.AsNoTracking().AnyAsync(a => a.Id == agentId
-                    && (a.StandingSpecialistRole == AgentTaskRole.Check || a.Slug == CheckInterpreterProvisioner.Slug(_delegationSettings)), ct))
+                if (await _db.Agents.AsNoTracking().Where(a => a.Id == agentId)
+                    .AnyAsync(StandingSpecialistSeatPolicy.SeatOrSlug(_delegationSettings), ct))
                     throw;
                 await _db.Entry(session).ReloadAsync(ct);
                 session.HerdrSupervisionFailureKind = null;
@@ -477,8 +477,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // queue the auto-continue for the interrupted turn. WhenIdle deliberately serialises it
             // AFTER the launch note's turn — enqueued any earlier it would race the remote-control
             // commands and the note into one garbled composer.
-            var checkSeat = await _db.Agents.AsNoTracking().AnyAsync(a => a.Id == agentId
-                && (a.StandingSpecialistRole == AgentTaskRole.Check || a.Slug == CheckInterpreterProvisioner.Slug(_delegationSettings)), ct);
+            var checkSeat = await _db.Agents.AsNoTracking().Where(a => a.Id == agentId)
+                .AnyAsync(StandingSpecialistSeatPolicy.SeatOrSlug(_delegationSettings), ct);
             if (interruptedTurn && resumeMode == AgentSessionResumeMode.Resume && !checkSeat)
                 typedSomething |= await EnqueueResumeContinueAsync(session.Id, ct);
 

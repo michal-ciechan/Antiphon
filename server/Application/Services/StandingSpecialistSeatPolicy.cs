@@ -1,3 +1,4 @@
+﻿using System.Linq.Expressions;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -8,7 +9,45 @@ namespace Antiphon.Server.Application.Services;
 
 public static class StandingSpecialistSeatPolicy
 {
-    public static bool IsCheck(Agent agent) => agent.StandingSpecialistRole == AgentTaskRole.Check;
+    /// <summary>
+    /// CARD-0352 S1 allowlist entry (<c>SpecialistRoleContractTests</c>). V1's standing-specialist
+    /// subsystem — routing, candidate states, health, physical seats and the task rows admitted to
+    /// them — is Check-only by schema, and this file is the single place that says so. Every other
+    /// service asks the members below instead of comparing the role itself, so declaring a second
+    /// standing specialist is an edit here, not a hunt through eight services.
+    /// </summary>
+    public const AgentTaskRole Role = AgentTaskRole.Check;
+
+    /// <summary>Any physical seat: the logical owner or one of its declared alternates.</summary>
+    public static readonly Expression<Func<Agent, bool>> Seat = a => a.StandingSpecialistRole == Role;
+
+    /// <summary>The logical owner — the seat that owns itself.</summary>
+    public static readonly Expression<Func<Agent, bool>> Owner =
+        a => a.StandingSpecialistRole == Role && a.StandingSpecialistOwnerId == a.Id;
+
+    /// <summary>A declared alternate — a physical seat whose owner is somebody else.</summary>
+    public static readonly Expression<Func<Agent, bool>> Alternate =
+        a => a.StandingSpecialistRole == Role && a.StandingSpecialistOwnerId != a.Id;
+
+    /// <summary>Work admitted to a standing seat.</summary>
+    public static readonly Expression<Func<AgentTask, bool>> SeatWork = t => t.Role == Role;
+
+    /// <summary>EF twin of <see cref="IsCheck(Agent, DelegationSettings)"/>, compatibility slug included.</summary>
+    public static Expression<Func<Agent, bool>> SeatOrSlug(DelegationSettings settings)
+    {
+        var slug = CheckInterpreterProvisioner.Slug(settings);
+        return a => a.StandingSpecialistRole == Role || a.Slug == slug;
+    }
+
+    /// <summary>EF twin of the logical-owner lookup, compatibility slug included.</summary>
+    public static Expression<Func<Agent, bool>> OwnerOrSlug(DelegationSettings settings)
+    {
+        var slug = CheckInterpreterProvisioner.Slug(settings);
+        return a => a.Slug == slug
+            || (a.StandingSpecialistRole == Role && a.StandingSpecialistOwnerId == a.Id);
+    }
+
+    public static bool IsCheck(Agent agent) => agent.StandingSpecialistRole == Role;
     public static bool IsAlternate(Agent agent) => IsCheck(agent)
         && agent.StandingSpecialistOwnerId is { } owner && owner != agent.Id;
 

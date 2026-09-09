@@ -1,4 +1,4 @@
-using Antiphon.Server.Domain.Enums;
+﻿using Antiphon.Server.Domain.Enums;
 using Shouldly;
 using TUnit.Core;
 
@@ -20,6 +20,10 @@ public class SpecialistRoleContractTests
         "Application/Services/AgentTaskReplyService.cs",
         "Application/Services/DelegationReportFormatter.cs",
         "Application/Services/CheckInterpreterProvisioner.cs",
+        // CARD-0415: the V1 standing-specialist subsystem (routing, candidates, health, physical
+        // seats, admitted task rows) is Check-only by schema. This file owns that fact as typed
+        // predicates and a role constant; the eight services built on it ask this file instead.
+        "Application/Services/StandingSpecialistSeatPolicy.cs",
     ];
 
     [Test]

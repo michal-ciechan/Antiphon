@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -23,8 +23,7 @@ public sealed partial class SpecialistRequestService(AppDbContext db, IOptions<D
         DelegateCheckProbe.CheckFacts? snapshot = null)
     {
         var began = time.GetUtcNow().UtcDateTime;
-        var owner = await db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.StandingSpecialistOwnerId == a.Id
-            && a.StandingSpecialistRole == AgentTaskRole.Check, ct);
+        var owner = await db.Agents.AsNoTracking().Where(StandingSpecialistSeatPolicy.Owner).FirstOrDefaultAsync(ct);
         if (owner is null) return new(SpecialistRunOutcome.ProvisionFailed, null, 0, 0, null, "No managed interpreter exists.");
         Guid requestId;
         await using (var transaction = await db.Database.BeginTransactionAsync(ct))
@@ -190,7 +189,7 @@ public sealed partial class SpecialistRequestService(AppDbContext db, IOptions<D
         var now = time.GetUtcNow().UtcDateTime;
         var qualification = request.Purpose == SpecialistRequestPurpose.Qualification;
         var physicalSeats = db.Agents.Where(a => a.StandingSpecialistOwnerId == expected.AgentId).Select(a => a.Id);
-        var backlog = await db.AgentTasks.CountAsync(t => t.Role == AgentTaskRole.Check && t.AgentId != null
+        var backlog = await db.AgentTasks.Where(StandingSpecialistSeatPolicy.SeatWork).CountAsync(t => t.AgentId != null
             && physicalSeats.Contains(t.AgentId.Value) && (t.Status == AgentTaskStatus.Queued
                 || t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Blocked), ct);
         if (request.CompletedAt is not null || now >= request.DeadlineAt || attempts.Count >= 2
@@ -225,7 +224,7 @@ public sealed partial class SpecialistRequestService(AppDbContext db, IOptions<D
         var task = new AgentTask
         {
             Id = taskId, RootTaskId = taskId, Title = request.Title, Goal = goal,
-            Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Check, AgentKind = seat.Kind, ModelLevel = seat.ModelLevel,
+            Kind = AgentTaskKind.Worker, Role = StandingSpecialistSeatPolicy.Role, AgentKind = seat.Kind, ModelLevel = seat.ModelLevel,
             SpecialistModelAlias = selected.ModelAlias, SpecialistModelId = seat.ModelId,
             SpecialistEffectiveModelId = session.EffectiveModelId, SpecialistSessionId = session.Id,
             SpecialistSessionStartedAt = session.StartedAt, SpecialistProfileRevisionId = session.TuiProfileRevisionId,

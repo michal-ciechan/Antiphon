@@ -1,4 +1,4 @@
-using Antiphon.Server.Application.Exceptions;
+﻿using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
@@ -73,7 +73,10 @@ public class SpecialistToolPolicyTests
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
         File.WriteAllText(Path.Combine(workspace.Root, ".claude"), "obstruct directory creation");
 
-        var agent = await workspace.Provisioner(db).EnsureAsync(workspace.Spec with { Role = role }, CancellationToken.None);
+        // A second standing specialist declares its own seat properties; it is not the Check spec
+        // wearing another role label. Without ToolPolicyRequired, failed preparation warns and continues.
+        var other = workspace.Spec with { Role = role, OwnsStandingSeat = false, ToolPolicyRequired = false };
+        var agent = await workspace.Provisioner(db).EnsureAsync(other, CancellationToken.None);
 
         agent.ShouldNotBeNull();
     }
