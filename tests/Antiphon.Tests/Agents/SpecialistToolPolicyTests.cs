@@ -166,7 +166,13 @@ public class SpecialistToolPolicyTests
             {
                 var resultHit = await stub.Requests.WaitForAsync(r => r.Path == "/v1/messages" && r.Body.Contains(callId), TimeSpan.FromSeconds(30));
                 resultHit.ShouldNotBeNull("the real CLI must return a native result for the scripted tool request");
-                var resultBody = JsonSerializer.Deserialize<JsonElement>(resultHit!.Body).GetProperty("messages").ToString();
+                var resultBody = string.Join("\n", JsonSerializer.Deserialize<JsonElement>(resultHit!.Body)
+                    .GetProperty("messages").EnumerateArray()
+                    .Where(m => m.TryGetProperty("content", out var c) && c.ValueKind == JsonValueKind.Array)
+                    .SelectMany(m => m.GetProperty("content").EnumerateArray())
+                    .Where(c => c.TryGetProperty("type", out var type) && type.GetString() == "tool_result"
+                        && c.TryGetProperty("tool_use_id", out var id) && id.GetString() == callId)
+                    .Select(c => c.GetProperty("content").ToString()));
                 if (protectedSeat)
                 {
                     resultBody.ShouldContain(CheckInterpretation.DenyHookStderr);
