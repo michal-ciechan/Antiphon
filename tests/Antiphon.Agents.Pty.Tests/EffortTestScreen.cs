@@ -17,6 +17,7 @@ internal sealed class EffortTestScreen
         var screen = capture.GetProperty("renderedScreen").GetString()!;
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(screen))).ToLowerInvariant()
             .ShouldBe(capture.GetProperty("renderedScreenSha256").GetString());
+        Console.WriteLine($"CARD-0449 capture {index + 1}: {capture.GetProperty("sessionId").GetString()} SHA256={capture.GetProperty("renderedScreenSha256").GetString()}");
         return screen;
     }
 

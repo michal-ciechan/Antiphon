@@ -61,13 +61,13 @@ public class ClaudeAdapterEffortPromptTests
         }
         finally
         {
+            Environment.SetEnvironmentVariable("ANTIPHON_PTY_BACKEND", prior);
             if (adapter.Pid is not null)
             {
                 (await adapter.KillAsync(TimeSpan.FromSeconds(5), CancellationToken.None)).ShouldBeTrue();
                 await adapter.Exited.WaitAsync(TimeSpan.FromSeconds(5));
             }
             await adapter.DisposeAsync();
-            Environment.SetEnvironmentVariable("ANTIPHON_PTY_BACKEND", prior);
             DeleteScratch(scratch);
         }
     }
