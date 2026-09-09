@@ -297,13 +297,20 @@ public sealed class TrackerBidirectionalSyncService
                     origin.ExternalUrl ??= comment.Url;
                     continue; // echo closes the link — zero new rows
                 }
+                // Older content-edit posts used revision IDs instead of discussion IDs.
+                if (await _db.CardRevisions.AnyAsync(r => r.Id == markerId
+                        && r.CardId == issueRef.CardId
+                        && r.Kind == CardRevisionKind.ContentEdit, ct))
+                {
+                    continue; // legacy generated comment — no row or link to create
+                }
                 // Unknown marker → fail-open to visible External import below.
             }
 
             if (TrackerSyncMarkers.TryReadTrailingSystemCommentMarker(comment.Body, out var cardId)
                 && cardId == issueRef.CardId)
             {
-                continue; // card-state echo — zero synthetic CardComment rows
+                continue; // generated card comment echo — zero synthetic CardComment rows
             }
 
             var exists = await _db.CardComments
@@ -457,7 +464,7 @@ public sealed class TrackerBidirectionalSyncService
                 + "\n\n"
                 + $"**Title:** {card.Title}\n\n{card.Description}\n\n"
                 + "_The issue body remains authoritative on this import-origin link._";
-            var marked = TrackerSyncMarkers.AppendCommentMarker(body, edit.Id);
+            var marked = TrackerSyncMarkers.AppendSystemCommentMarker(body, issueRef.CardId);
             try
             {
                 await tracker.PostCommentAsync(config, issueRef.ExternalId, marked, ct);

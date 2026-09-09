@@ -75,6 +75,20 @@ Work on {{ issue.identifier }}.
   exception, never a failed sync, because the writes have already committed. A per-board
   `error` is not a change and is never announced; `github-sync.ps1` exits 1 for it instead.
 
+## Comment identity and echoes (CARD-0436)
+
+Discussion markers identify stored CardComments and repair their external ID/URL links on
+echo. Generated state and content-edit comments use the same-card system-comment marker;
+they do not create synthetic discussion rows. Older content-edit posts used revision-ID
+discussion markers: after the discussion lookup misses, a persisted revision with that ID,
+the issue's CardId and ContentEdit kind identifies an echo. Recognition does not depend on
+the author, timestamps, outbound cursor or current import/export origin.
+
+Unresolved markers remain visible as External discussion imports, with external-ID dedup
+as the replay fallback. Human comments remain eligible even when their author also posts
+sync comments. Deployment prevents further recognized echoes; it does not remove, hide or
+rewrite historical duplicates. Their treatment remains a separate operator decision.
+
 ## Field authority for importance (CARD-0327)
 
 `Card.ImportanceProvenance` (`Auto | Human`) says who last set `importance`. `Auto` means a
