@@ -80,7 +80,7 @@ internal sealed class RepositoryChildJournal
                     return true;
                 // A dead/reused root PID is not an acknowledged exit of its process tree.
                 // Only the owning invocation removes its journal after awaiting its child.
-                // A crash orphan needs explicit recovery inspection, never automatic admission.
+                // recover-repository-children.ps1 provides explicit recovery after descendant inspection.
                 return true;
             }
             return false;

@@ -317,10 +317,18 @@ public sealed class RepositoryMutationLeaseTests
                 mainAdmission.ShouldBeNull();
             child.HasExited.ShouldBeFalse();
             unrelated.HasExited.ShouldBeFalse("worker recovery must not terminate an unrelated fixture process");
+            await RecoverChildrenAsync(fixture.Source, 3, "-Execute", "-ConfirmDescendantsExited");
+            child.HasExited.ShouldBeFalse("recovery must preserve the live recorded child");
             child.Kill(true);
             await child.WaitForExitAsync();
-            await using var after = await provider.TryAcquireAsync(fixture.Repository, CancellationToken.None);
-            after.ShouldBeNull("worker death left no acknowledged child/tree completion; recovery must remain visibly held");
+            await using (var after = await provider.TryAcquireAsync(fixture.Repository, CancellationToken.None))
+                after.ShouldBeNull("worker death alone cannot acknowledge descendant completion");
+            await RecoverChildrenAsync(fixture.Source, 3); // Preview retains even confirmed-dead records.
+            await RecoverChildrenAsync(fixture.Source, 3, "-Execute"); // Descendant confirmation is required.
+            await RecoverChildrenAsync(fixture.Source, 0, "-Execute", "-ConfirmDescendantsExited");
+            await using var recovered = await provider.TryAcquireAsync(fixture.Repository, CancellationToken.None);
+            recovered.ShouldNotBeNull("explicit recovery after the owned tree exits must restore repository admission");
+            File.Exists(Path.Combine(common, "antiphon", "landing.lock")).ShouldBeTrue();
             unrelated.HasExited.ShouldBeFalse();
             await fixture.AssertRemoteSourceAsync();
         }
@@ -333,6 +341,57 @@ public sealed class RepositoryMutationLeaseTests
             if (!unrelated.HasExited) unrelated.Kill(true);
             await unrelated.WaitForExitAsync();
         }
+    }
+
+    [Test]
+    [Arguments("alive")]
+    [Arguments("reused")]
+    [Arguments("unknown")]
+    [Arguments("malformed")]
+    [Arguments("torn")]
+    [Arguments("wrong-repository")]
+    [Arguments("busy")]
+    public async Task C448_D1_RecoveryPreservesLiveOrAmbiguousEvidence(string state)
+    {
+        using var repo = new ScratchGitRepo("antiphon-journal-recovery");
+        var git = new LandingGit();
+        var common = await git.CommonDirectoryAsync(repo.Path, CancellationToken.None);
+        var provider = new RepositoryMutationLease(git);
+        await using var busy = state == "busy" ? await provider.TryAcquireAsync(repo.Path, CancellationToken.None) : null;
+        var journal = await RepositoryChildJournal.BeginAsync(repo.Path, CancellationToken.None);
+        using var child = StartSleeper();
+        try
+        {
+            if (state != "unknown")
+                await journal.StartedAsync(child.Id, child.StartTime.ToUniversalTime().Ticks + (state == "reused" ? 1 : 0), CancellationToken.None);
+            var path = Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children"), "*.json").Single();
+            if (state == "malformed") await File.WriteAllTextAsync(path, "invalid json");
+            if (state == "torn") File.Move(path, path + ".tmp");
+            if (state == "wrong-repository")
+                await File.WriteAllTextAsync(path, System.Text.Json.JsonSerializer.Serialize(
+                    new RepositoryChildJournal.ChildRecord(1, repo.WorktreeRoot, child.Id, child.StartTime.ToUniversalTime().Ticks)));
+            var recoverable = state == "reused";
+            await RecoverChildrenAsync(repo.Path, recoverable ? 0 : 3, "-Execute", "-ConfirmDescendantsExited");
+            Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children")).Count().ShouldBe(recoverable ? 0 : 1);
+            child.HasExited.ShouldBeFalse("recovery never kills a live or reused PID");
+            await using var admission = await provider.TryAcquireAsync(repo.Path, CancellationToken.None);
+            if (recoverable) admission.ShouldNotBeNull();
+            else admission.ShouldBeNull();
+        }
+        finally
+        {
+            if (!child.HasExited) child.Kill(true);
+            await child.WaitForExitAsync();
+        }
+    }
+
+    private static async Task RecoverChildrenAsync(string repository, int expectedExit, params string[] options)
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "Antiphon.sln"))) root = root.Parent;
+        root.ShouldNotBeNull();
+        await RunChildAsync("pwsh", ["-NoProfile", "-File",
+            Path.Combine(root.FullName, "scripts", "recover-repository-children.ps1"), "-Repository", repository, .. options], expectedExit);
     }
 
     [Test]
