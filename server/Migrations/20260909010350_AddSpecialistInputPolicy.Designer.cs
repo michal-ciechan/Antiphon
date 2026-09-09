@@ -3,6 +3,7 @@ using System;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Antiphon.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260909010350_AddSpecialistInputPolicy")]
+    partial class AddSpecialistInputPolicy
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -480,9 +483,6 @@ namespace Antiphon.Server.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<Guid?>("ActiveLandingId")
-                        .HasColumnType("uuid");
-
                     b.Property<Guid?>("AgentId")
                         .HasColumnType("uuid");
 
@@ -827,8 +827,6 @@ namespace Antiphon.Server.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ActiveLandingId");
-
                     b.HasIndex("AgentSessionId")
                         .HasDatabaseName("IX_AgentTasks_AgentSessionId");
 
@@ -876,18 +874,6 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("character varying(4000)");
 
-                    b.Property<int?>("LandingCleanup")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("LandingMode")
-                        .HasColumnType("integer");
-
-                    b.Property<Guid?>("LandingOperationId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int?>("LandingPublication")
-                        .HasColumnType("integer");
-
                     b.Property<int?>("ModelLevel")
                         .HasColumnType("integer");
 
@@ -900,198 +886,6 @@ namespace Antiphon.Server.Migrations
                         .HasDatabaseName("IX_AgentTaskEvents_AgentTaskId_At");
 
                     b.ToTable("AgentTaskEvents", (string)null);
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentTaskLanding", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<bool>("Active")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("BranchRemoved")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("ChildOperation")
-                        .HasColumnType("text");
-
-                    b.Property<int?>("ChildProcessId")
-                        .HasColumnType("integer");
-
-                    b.Property<long?>("ChildProcessStartTicks")
-                        .HasColumnType("bigint");
-
-                    b.Property<int>("Cleanup")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("CleanupCompletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("CleanupStartedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CommonDirectory")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<Guid>("ConcurrencyToken")
-                        .IsConcurrencyToken()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("ConfirmationMethod")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("DestinationFullRef")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<bool>("DirectoryRemoved")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("ExpectedDeletionSha")
-                        .HasColumnType("text");
-
-                    b.Property<string>("GitDirectory")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("LastReason")
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<string>("LocalTargetAfterSha")
-                        .HasColumnType("text");
-
-                    b.Property<int>("Mode")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("ObservedRemoteTargetSha")
-                        .HasColumnType("text");
-
-                    b.Property<string>("OriginalSourceSha")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<int>("Phase")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("PreparedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("PreparedPinned")
-                        .HasColumnType("boolean");
-
-                    b.Property<int>("Publication")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("PushExitCode")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("PushStartedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("RebaseStartedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("RebasedSourceSha")
-                        .HasColumnType("text");
-
-                    b.Property<string>("RecoveryRefPrefix")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<bool>("RegistrationRemoved")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("RemoteBeforeSha")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("RemoteConfirmedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("RemoteFingerprint")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("RemoteName")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("RepositoryPath")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<int>("SchemaVersion")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("SourceFullRef")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<bool>("SourcePinned")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("TargetBeforeSha")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("TargetCheckoutPath")
-                        .HasColumnType("text");
-
-                    b.Property<bool>("TargetCheckoutRecorded")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("TargetFullRef")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<bool>("TargetPinned")
-                        .HasColumnType("boolean");
-
-                    b.Property<Guid>("TaskId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("VerificationCommand")
-                        .HasColumnType("text");
-
-                    b.Property<string>("VerificationFilter")
-                        .HasMaxLength(400)
-                        .HasColumnType("character varying(400)");
-
-                    b.Property<bool>("VerificationPassed")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("VerificationSkipReason")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("VerificationStartedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("VerifiedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("VerifiedSourceSha")
-                        .HasColumnType("text");
-
-                    b.Property<string>("WorktreePath")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("TaskId")
-                        .IsUnique()
-                        .HasFilter("\"Active\" = TRUE");
-
-                    b.ToTable("AgentTaskLandings");
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentTuiModel", b =>
@@ -4842,11 +4636,6 @@ namespace Antiphon.Server.Migrations
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentTask", b =>
                 {
-                    b.HasOne("Antiphon.Server.Domain.Entities.AgentTaskLanding", null)
-                        .WithMany()
-                        .HasForeignKey("ActiveLandingId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.HasOne("Antiphon.Server.Domain.Entities.Card", "Card")
                         .WithMany()
                         .HasForeignKey("CardId")
@@ -4876,15 +4665,6 @@ namespace Antiphon.Server.Migrations
                         .IsRequired();
 
                     b.Navigation("AgentTask");
-                });
-
-            modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentTaskLanding", b =>
-                {
-                    b.HasOne("Antiphon.Server.Domain.Entities.AgentTask", null)
-                        .WithMany()
-                        .HasForeignKey("TaskId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentTuiModel", b =>

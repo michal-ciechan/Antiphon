@@ -103,11 +103,19 @@ public sealed class SessionMessageQueueService
         string? channelEnvelope,
         AppDbContext? db,
         CancellationToken ct,
-        PtyDeliveryCeilings? ceilings = null)
+        PtyDeliveryCeilings? ceilings = null, string? specialistInputPolicyJson = null)
     {
         ceilings ??= db is not null
             ? await CeilingsForSessionAsync(db, sessionId, ct)
             : Ceilings;
+        if (SpecialistInputPolicy.Read(specialistInputPolicyJson) is { } inputPolicy)
+        {
+            if (db is null)
+                throw new SpecialistInputUnsupportedException("Specialist input requires a durable queue owner.");
+            var inputSession = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sessionId, ct);
+            inputPolicy.RequireSession(inputSession);
+            return inputPolicy.Fit(body, inputSession.AgentKind, ceilings.Backend);
+        }
         if (System.Text.Encoding.UTF8.GetByteCount(body) <= ceilings.SingleWriteMaxBytes)
             return body;
 
@@ -184,6 +192,22 @@ public sealed class SessionMessageQueueService
             throw new ValidationException(nameof(body), "Message must not be empty.");
 
         var kind = await RequireSessionKindAsync(sessionId, ct);
+        string? specialistInputPolicyJson = null;
+        if (executionTaskId is { } inputTaskId)
+        {
+            await using var inputScope = _scopeFactory.CreateAsyncScope();
+            var inputDb = inputScope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var inputTask = await inputDb.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == inputTaskId, ct);
+            specialistInputPolicyJson = inputTask?.SpecialistInputPolicyJson;
+            if (SpecialistInputPolicy.Read(specialistInputPolicyJson) is { } policy)
+            {
+                if (mode != MessageSendMode.WhenIdle || inputTask!.Role != AgentTaskRole.Check
+                    || policy.TaskId != inputTaskId || origin != QueuedMessageOrigin.Delegation)
+                    throw new SpecialistInputUnsupportedException("Specialist input requires its durable Check brief queue.");
+                trimmed = await SpillQueueBodyAsync(sessionId, trimmed, "", null, inputDb, ct,
+                    specialistInputPolicyJson: specialistInputPolicyJson);
+            }
+        }
         if (TryGetForbiddenReason(kind, trimmed, out var forbiddenReason))
             throw new ValidationException(nameof(body), forbiddenReason);
 
@@ -359,6 +383,7 @@ public sealed class SessionMessageQueueService
                 HoldUntil = holdUntil,
                 ExecutionDeadlineAt = executionDeadlineAt,
                 ExecutionTaskId = executionTaskId,
+                SpecialistInputPolicyJson = specialistInputPolicyJson,
                 CapacityRecoveryActionKey = capacityRecoveryActionKey,
                 CapacityWaitId = capacityWaitId,
             };
@@ -838,7 +863,7 @@ public sealed class SessionMessageQueueService
                 message.Origin == QueuedMessageOrigin.Channel
                     ? TypedBodySpill.TryReadChannelEnvelope(message.Body)
                     : null,
-                db, ct);
+                db, ct, specialistInputPolicyJson: message.SpecialistInputPolicyJson);
             if (sendNowBody != message.Body)
                 message.Body = sendNowBody;
             if (await CancelExpiredBriefsAsync(db, [message], ct))
@@ -1521,6 +1546,7 @@ public sealed class SessionMessageQueueService
         // run could push 100k into a TUI in a single paste. The overflow simply rides the next
         // turn-end, which the queue already does naturally.
         var batches = _bridgeSettings.BatchingEnabled
+            && head.SpecialistInputPolicyJson is null
             && head.ConversationKey is not null
             && head.Origin is QueuedMessageOrigin.Channel or QueuedMessageOrigin.Delegation;
 
@@ -1533,7 +1559,8 @@ public sealed class SessionMessageQueueService
 
             foreach (var m in pending.Skip(1))
             {
-                if (m.Origin != head.Origin || m.ConversationKey != head.ConversationKey)
+                if (m.SpecialistInputPolicyJson is not null
+                    || m.Origin != head.Origin || m.ConversationKey != head.ConversationKey)
                     break;
                 if (used + m.Body.Length > budget)
                     break;
@@ -1557,7 +1584,8 @@ public sealed class SessionMessageQueueService
             ? TypedBodySpill.TryReadChannelEnvelope(run[^1].Body)
             : null;
         var body = await SpillQueueBodyAsync(
-            sessionId, composed, head.Id.ToString("D"), channelEnvelope, db, ct, ceilings);
+            sessionId, composed, head.Id.ToString("D"), channelEnvelope, db, ct, ceilings,
+            head.SpecialistInputPolicyJson);
         var spilled = !ReferenceEquals(body, composed) && body != composed;
 
         // CARD-0340 S3 / CARD-0342: a previously typed body still standing in the composer gets
@@ -1891,6 +1919,12 @@ public sealed class SessionMessageQueueService
     {
         var kind = await TryGetSessionKindAsync(sessionId, ct);
         var head = run[0];
+        if (head.SpecialistInputPolicyJson is not null)
+        {
+            await SpillQueueBodyAsync(sessionId, body, "", null, db, ct, ceilings,
+                head.SpecialistInputPolicyJson);
+            if (await CancelExpiredBriefsAsync(db, run, ct)) return FlushResult.Nothing;
+        }
         var observable = head.LastDeliveryBaselineSequence is not null;
         var baseline = new TranscriptBaseline(observable, head.LastDeliveryBaselineSequence ?? 0);
         DateTime? unobservableFrom = null;
@@ -2134,12 +2168,27 @@ public sealed class SessionMessageQueueService
     {
         public static TranscriptConfirm None { get; } = new(false, false, null);
 
-        public static TranscriptConfirm Classify(string? body, string? recordText)
+        public static TranscriptConfirm Classify(string? body, string? recordText, bool fullInline = false)
         {
             if (!PromptSubmissionMatch.IsConfirmedBy(body, recordText))
                 return None;
-            return new(true, PromptSubmissionMatch.IsCompleteIn(body, recordText), recordText);
+            return new(true, fullInline
+                ? SpecialistInputPolicy.CompletePromptEquals(body!, recordText)
+                : PromptSubmissionMatch.IsCompleteIn(body, recordText), recordText);
         }
+    }
+
+    private static Task<bool> RequiresCompleteSpecialistPromptAsync(
+        AppDbContext db, Guid sessionId, string body, CancellationToken ct) =>
+        db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == sessionId
+            && m.Body == body && m.SpecialistInputPolicyJson != null, ct);
+
+    private async Task<bool> RequiresCompleteSpecialistPromptAsync(
+        Guid sessionId, string body, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        return await RequiresCompleteSpecialistPromptAsync(
+            scope.ServiceProvider.GetRequiredService<AppDbContext>(), sessionId, body, ct);
     }
 
     private sealed class LateConfirmCollector
@@ -2315,6 +2364,20 @@ public sealed class SessionMessageQueueService
         // successful spill must not reach here.
         // CARD-0161: caller threads per-session ceilings; fall back to process-wide for tests.
         ceilings ??= Ceilings;
+        await using (var inputScope = _scopeFactory.CreateAsyncScope())
+        {
+            var inputDb = inputScope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var inputPolicyJson = await inputDb.SessionQueuedMessages.AsNoTracking()
+                .Where(m => m.AgentSessionId == sessionId && m.Body == trimmed && m.SpecialistInputPolicyJson != null)
+                .Select(m => m.SpecialistInputPolicyJson).FirstOrDefaultAsync(ct);
+            if (SpecialistInputPolicy.Read(inputPolicyJson) is { } policy)
+            {
+                var inputSession = await inputDb.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sessionId, ct);
+                policy.RequireSession(inputSession);
+                policy.Fit(trimmed, inputSession.AgentKind, ceilings.Backend);
+                ceilings = ceilings with { SingleWriteMaxBytes = policy.MaxUtf8Bytes };
+            }
+        }
         var bodyBytes = System.Text.Encoding.UTF8.GetByteCount(trimmed);
         if (bodyBytes > ceilings.SingleWriteMaxBytes)
         {
@@ -2357,10 +2420,11 @@ public sealed class SessionMessageQueueService
         // loop — an unobservable baseline runs a wall-clock-floored variant that looks for the
         // FIRST matching UserPrompt, with the screen-only verdict retained only as the deadline
         // fallback (bind-failed sessions still degrade-Delivered rather than hard-failing).
-        var baseline = verify && _verification.TranscriptConfirmEnabled
+        var fullInline = await RequiresCompleteSpecialistPromptAsync(sessionId, trimmed, ct);
+        var baseline = fullInline || (verify && _verification.TranscriptConfirmEnabled)
             ? stampedBaseline ?? await CaptureTranscriptBaselineAsync(sessionId, ct)
             : default;
-        var confirmTranscript = verify && _verification.TranscriptConfirmEnabled;
+        var confirmTranscript = fullInline || (verify && _verification.TranscriptConfirmEnabled);
         // Captured BEFORE the body write — same shape as BootConfirmClockTolerance (CARD-0056).
         DateTime? unobservableConfirmFrom = null;
         if (confirmTranscript && !baseline.Observable)
@@ -2514,6 +2578,7 @@ public sealed class SessionMessageQueueService
         PtyDeliveryCeilings? ceilings = null, DateTime? unobservableConfirmFrom = null)
     {
         var strong = PromptSubmissionMatch.RequiresTextMatch(body);
+        var fullInline = await RequiresCompleteSpecialistPromptAsync(sessionId, body, ct);
         var observable = baseline.Observable;
         var deadline = UtcNow() + TimeSpan.FromSeconds(_verification.TranscriptConfirmTimeoutSeconds);
         var reEnterAfter = TimeSpan.FromSeconds(Math.Max(0, _verification.ReEnterIntervalSeconds));
@@ -2609,6 +2674,8 @@ public sealed class SessionMessageQueueService
 
             if (UtcNow() >= deadline)
             {
+                if (fullInline)
+                    return DeliveryOutcome.Of(DeliveryVerdict.NoTranscriptRecord);
                 if (!observable)
                 {
                     // CARD-0299: the durable last frame is the deadline's ground truth. A
@@ -2730,6 +2797,7 @@ public sealed class SessionMessageQueueService
     private static async Task<TranscriptConfirm> TryFindUnobservableConfirmingRecordAsync(
         AppDbContext db, Guid sessionId, string body, DateTime confirmFrom, CancellationToken ct)
     {
+        var fullInline = await RequiresCompleteSpecialistPromptAsync(db, sessionId, body, ct);
         var candidates = await db.TranscriptEntries
             .AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId
@@ -2739,6 +2807,7 @@ public sealed class SessionMessageQueueService
                         && (t.ToolName == GrokQuestionTool.AskUserQuestionName
                             || (t.Text != null
                                 && t.Text.StartsWith(GrokQuestionTool.CompletedAnswerPrefix)))))
+                && (!fullInline || t.Kind == TranscriptKinds.UserPrompt)
                 && t.Timestamp != null
                 && t.Timestamp >= confirmFrom)
             .OrderBy(t => t.Sequence)
@@ -2747,7 +2816,7 @@ public sealed class SessionMessageQueueService
 
         foreach (var text in candidates)
         {
-            var match = TranscriptConfirm.Classify(body, text);
+            var match = TranscriptConfirm.Classify(body, text, fullInline);
             if (match.Identity)
                 return match;
         }
@@ -2874,6 +2943,7 @@ public sealed class SessionMessageQueueService
     private static async Task<TranscriptConfirm> TryFindConfirmingRecordAsync(
         AppDbContext db, Guid sessionId, string body, long baselineSequence, CancellationToken ct)
     {
+        var fullInline = await RequiresCompleteSpecialistPromptAsync(db, sessionId, body, ct);
         var texts = await db.TranscriptEntries
             .AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId
@@ -2886,6 +2956,7 @@ public sealed class SessionMessageQueueService
                         && (t.ToolName == GrokQuestionTool.AskUserQuestionName
                             || (t.Text != null
                                 && t.Text.StartsWith(GrokQuestionTool.CompletedAnswerPrefix)))))
+                && (!fullInline || t.Kind == TranscriptKinds.UserPrompt)
                 && t.Sequence > baselineSequence)
             .OrderBy(t => t.Sequence)
             .Select(t => t.Text)
@@ -2893,7 +2964,7 @@ public sealed class SessionMessageQueueService
 
         foreach (var text in texts)
         {
-            var match = TranscriptConfirm.Classify(body, text);
+            var match = TranscriptConfirm.Classify(body, text, fullInline);
             if (match.Identity)
                 return match;
         }

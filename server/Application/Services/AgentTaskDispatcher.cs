@@ -3498,6 +3498,12 @@ public sealed class AgentTaskDispatcher
         var limits = (ceilings ?? settings.CeilingsFor(PtyBackend.InboxConhost, "no pty profile — assuming the default backend"))
             .ForAgentKind(agentKind);
         var brief = DelegationReportFormatter.BuildBrief(task, settings, limits.ReplyInlineMaxChars, refocus);
+        if (SpecialistInputPolicy.Read(task.SpecialistInputPolicyJson) is { } inputPolicy)
+        {
+            if (task.Role != AgentTaskRole.Check || inputPolicy.TaskId != task.Id || refocus)
+                throw new SpecialistInputUnsupportedException("Full-inline input is restricted to the owning Check task.");
+            return inputPolicy.Fit(brief, agentKind, limits.Backend);
+        }
         // UTF-8 bytes, not string.Length: the read quantum the TUI drops whole is measured in bytes,
         // and an em-dash costs 3 of them (CARD-0027).
         var briefBytes = System.Text.Encoding.UTF8.GetByteCount(brief);
