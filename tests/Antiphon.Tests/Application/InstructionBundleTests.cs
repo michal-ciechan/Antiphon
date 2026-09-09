@@ -71,7 +71,7 @@ public class InstructionBundleTests
             "stage-code", "stage-investigate", "stage-plan", "stage-review", "stage-test-design",
             // One per AgentReplyStyle value (CARD-0060), style-normal included — see AgentReplyStyles
             // for why the one that is never composed still ships as a file.
-            "style-brief", "style-caveman", "style-explanatory", "style-normal", "style-terse",
+            "style-brief", "style-caveman", "style-explanatory", "style-normal", "style-phone", "style-terse",
         ]);
     }
 

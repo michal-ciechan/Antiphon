@@ -41,7 +41,7 @@ public class AgentBundleAttachmentTests
         var attachable = InstructionBundles.Attachable.Select(b => b.Key).ToList();
 
         attachable.ShouldBe([
-            "board-api", "check-interpreter", "delegate-basics", "diagnose", "orchestrator",
+            "board-api", "check-interpreter", "delegate-basics", "diagnose", "orchestrator", "output-distiller",
             "stage-code", "stage-investigate", "stage-plan", "stage-review", "stage-test-design",
         ]);
         attachable.ShouldContain(
