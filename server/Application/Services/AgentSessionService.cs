@@ -1787,7 +1787,11 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         if (adapter.LaunchBlock is { } block)
             throw new AgentLaunchBlockedException(block);
 
-        throw new InvalidOperationException(NotReadyMessage(await TryReadFullnessAsync(sessionId, ct)));
+        // Readiness has already failed. A canceled optional diagnostic must not replace that
+        // failure with OCE and bypass the launch caller's KillAndDisposeAsync catch.
+        throw new InvalidOperationException(ct.IsCancellationRequested
+            ? NotReadyBase
+            : NotReadyMessage(await TryReadFullnessAsync(sessionId, ct)));
     }
 
     internal const string NotReadyBase = "Agent process did not become ready.";
