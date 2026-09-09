@@ -29,6 +29,77 @@ namespace Antiphon.Tests.Application;
 public class PolicyRefreshServiceTests
 {
     [Test]
+    public async Task Phone_refresh_records_loaded_stamp()
+    {
+        await using var h = await CreateHarnessAsync();
+        await SeedPhoneDriftAsync(h);
+        using var scope = h.Provider.CreateScope();
+        var result = await scope.ServiceProvider.GetRequiredService<AgentControlService>()
+            .RefreshPolicyAsync(h.AgentId, force: false, CancellationToken.None);
+        result.Refreshed.ShouldBeTrue();
+        result.Notified.ShouldBeFalse();
+        await WaitForLaunchAsync(h);
+        var adapter = Factory(h).Created.ShouldHaveSingleItem();
+        adapter.Started.ShouldBeTrue();
+        adapter.StartedArgs.ShouldContain("--resume");
+        var args = adapter.StartedArgs.ToList();
+        args[args.IndexOf("--append-system-prompt") + 1].Split("[bundle:style-phone").Length.ShouldBe(2);
+        await using var db = CreateContext();
+        (await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId)).ComposedBundleStamp.ShouldBe(
+            InstructionBundleComposer.Compose([InstructionBundles.BoardApi], "style-phone").StampLine);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Phone_notify_or_working_keeps_loaded_stamp(bool working)
+    {
+        await using var h = await CreateHarnessAsync();
+        var oldStamp = await SeedPhoneDriftAsync(h);
+        if (working) await h.MarkWorkingAsync();
+        else
+        {
+            await using var db = CreateContext();
+            await db.Agents.Where(a => a.Id == h.AgentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.PolicyRefreshMode, PolicyRefreshMode.Notify));
+        }
+        using var scope = h.Provider.CreateScope();
+        var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
+        if (working)
+        {
+            var ex = await Should.ThrowAsync<ConflictException>(() => control.RefreshPolicyAsync(h.AgentId, true, default));
+            ex.StatusCode.ShouldBe(409);
+            ex.Code.ShouldBe(PolicyRefreshService.SessionWorkingCode);
+        }
+        else
+        {
+            var result = await control.RefreshPolicyAsync(h.AgentId, false, default);
+            result.Refreshed.ShouldBeFalse();
+            result.Notified.ShouldBeTrue();
+        }
+        h.Adapter.Killed.ShouldBeFalse();
+        Factory(h).Created.ShouldBeEmpty();
+        await using var verify = CreateContext();
+        (await verify.AgentSessions.SingleAsync(s => s.Id == h.SessionId)).ComposedBundleStamp.ShouldBe(oldStamp);
+        var detail = await scope.ServiceProvider.GetRequiredService<AgentService>().GetByIdAsync(h.AgentId, default);
+        detail.ComposedBundles.ShouldContain(InstructionBundles.Get("style-phone").Stamp);
+    }
+
+    private static async Task<string> SeedPhoneDriftAsync(BridgeQueueHarness h)
+    {
+        await SeedRelaunchReadyAsync(h);
+        var oldStamp = InstructionBundles.Get(InstructionBundles.BoardApi).Stamp;
+        var files = InstructionFileStamps.Compute(Path.Combine(h.TempRoot, "workspace"), PolicyRefreshSettings.DefaultInstructionFiles);
+        await using var db = CreateContext();
+        await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u
+            .SetProperty(s => s.ComposedBundleStamp, oldStamp)
+            .SetProperty(s => s.InstructionFileStamp, files.StampLine));
+        (await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == h.SessionId)).ComposedBundleStamp.ShouldBe(oldStamp);
+        await db.Agents.Where(a => a.Id == h.AgentId).ExecuteUpdateAsync(u => u.SetProperty(a => a.ReplyStyle, AgentReplyStyle.Phone));
+        return oldStamp;
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task Grok_legacy_policy_drift_refuses_before_kill_queue_or_stamp_mutation(bool removingAllRules)

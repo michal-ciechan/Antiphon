@@ -1,7 +1,7 @@
 namespace Antiphon.Server.Domain.Enums;
 
 /// <summary>
-/// How an agent writes (CARD-0060). One choice on a scale, resolved at launch into one instruction
+/// How an agent writes (CARD-0060). One explicit choice, resolved at launch into one instruction
 /// block appended after the agent's bundles and before its own <c>SystemPromptAppend</c>.
 ///
 /// <para><see cref="Normal"/> is 0 deliberately, and it is the migration default: every agent that
@@ -25,4 +25,7 @@ public enum AgentReplyStyle
 
     /// <summary>Short bullets. Minimum words. Only what changes a decision.</summary>
     Brief = 4,
+
+    /// <summary>Minimal human replies in Telegram or Slack; internal reports keep their contracts.</summary>
+    Phone = 5,
 }

@@ -32,6 +32,60 @@ namespace Antiphon.Tests.Application;
 public class AgentTaskReplyIntegrationTests
 {
     [Test]
+    [Arguments(AgentReplyStyle.Normal)]
+    [Arguments(AgentReplyStyle.Phone)]
+    public async Task Phone_parent_preserves_worker_table_and_stage_handoff(AgentReplyStyle style)
+    {
+        using var workspace = new TempWorkspace();
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var parentId = await SeedAgentAsync(workspace.Path, $"phone-parent-{Guid.NewGuid():N}", poolDelegate: false);
+        var workerId = await SeedAgentAsync(workspace.Path, $"phone-worker-{Guid.NewGuid():N}");
+        await using (var db = CreateContext())
+        {
+            await db.Agents.Where(a => a.Id == parentId).ExecuteUpdateAsync(u => u
+                .SetProperty(a => a.PersistentSessionId, parentSessionId.ToString())
+                .SetProperty(a => a.ReplyStyle, style));
+        }
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, parentSessionId, t =>
+        {
+            t.Role = AgentTaskRole.Code;
+            t.AgentId = workerId;
+        });
+        const string report = """
+            Phone support implemented; live acceptance remains pending.
+
+            dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-card0417/
+
+            | Check | Passed | Failed |
+            | --- | --- | --- |
+            | V-1 | 6 | 0 |
+            | R-1 | 1 | 0 |
+            | PC-1 | 1 | 0 |
+
+            Caveat: real channel replies still need a reviewer before any fleet rollout can proceed safely.
+
+            --- next stage ---
+            next: review
+            handoff: verify all evidence before accepting channel rollout
+            artifact: docs/superpowers/plans/2026-09-07-card-0417-channel-reply-conciseness-plan.md
+            """;
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), report);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.Result.ShouldBe(report);
+        settled.NextStage.ShouldBe(PipelineHandoffKind.Review);
+        settled.NextHandoff.ShouldBe("verify all evidence before accepting channel rollout");
+        PipelineHandoff.TryParse(settled.Result)!.ArtifactPath.ShouldBe(
+            "docs/superpowers/plans/2026-09-07-card-0417-channel-reply-conciseness-plan.md");
+        var note = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == parentSessionId && m.Origin == QueuedMessageOrigin.Delegation);
+        note.Body.ShouldContain("next=review");
+        note.Body.ShouldContain(report);
+        (await verify.Agents.SingleAsync(a => a.Id == parentId)).ReplyStyle.ShouldBe(style);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task Grok_rules_refresh_with_task_marker_neither_settles_nor_nudges(bool late)

@@ -25,6 +25,41 @@ public class AgentReplyStyleTests
     // ---- the no-op that the migration rests on ---------------------------------------------------
 
     [Test]
+    public void Phone_enum_and_audience_contract_are_explicit()
+    {
+        new[] { (int)AgentReplyStyle.Normal, (int)AgentReplyStyle.Terse,
+            (int)AgentReplyStyle.Caveman, (int)AgentReplyStyle.Explanatory,
+            (int)AgentReplyStyle.Brief, (int)AgentReplyStyle.Phone }.ShouldBe([0, 1, 2, 3, 4, 5]);
+        AgentReplyStyles.BundleKey(AgentReplyStyle.Phone).ShouldBe("style-phone");
+        AgentReplyStyles.ComposedKey(AgentReplyStyle.Phone).ShouldBe("style-phone");
+        InstructionBundles.All.Keys.Count(k => k == "style-phone").ShouldBe(1);
+        var text = InstructionBundles.TextOf("style-phone");
+        text.Length.ShouldBeLessThan(3000);
+        text.ShouldContain("""
+            Use this style only for replies delivered to a human in Telegram or Slack,
+            including chat follow-ups to Antiphon task reports, checks, and scheduled prompts.
+            For delegate/worker reports, delegation briefs, stage artifacts, specialist outputs,
+            and terminal-only replies, follow their own contracts; the phone rules below do
+            not apply. Do not pass these phone rules to delegates.
+            """);
+        text.ShouldContain("""
+            - If the user asks for detail, provide the requested detail in short sections
+              and bullets. Put a requested table or wide artifact in a file, with a short
+              chat summary and the required attachment marker.
+            """);
+        text.ShouldContain("""
+              and next actions. Never shorten an exact name, path, command, flag, identifier,
+              quote, or attachment marker to meet the word or line target. Put long exact
+              material in an appropriate attachment when needed; do not break it arbitrarily.
+            """);
+        text.ShouldContain("""
+            - Follow the channel's delivery and attachment contract. When that contract calls
+              for silence, reply exactly NO_REPLY, without bullets or extra text.
+            """);
+        text.ShouldEndWith(AgentReplyStyles.CorrectnessSentence);
+    }
+
+    [Test]
     public void normal_composes_to_nothing_so_every_existing_agent_launches_identically()
     {
         const string own = "You are Antiphon-Opus. Channels: {channels}.\r\n\r\nTrailing space kept. ";
@@ -61,6 +96,7 @@ public class AgentReplyStyleTests
     // ---- the blocks themselves --------------------------------------------------------------------
 
     [Test]
+    [Arguments(AgentReplyStyle.Phone)]
     [Arguments(AgentReplyStyle.Normal)]
     [Arguments(AgentReplyStyle.Terse)]
     [Arguments(AgentReplyStyle.Caveman)]
@@ -89,6 +125,7 @@ public class AgentReplyStyleTests
     }
 
     [Test]
+    [Arguments(AgentReplyStyle.Phone, "style-phone")]
     [Arguments(AgentReplyStyle.Terse, "style-terse")]
     [Arguments(AgentReplyStyle.Caveman, "style-caveman")]
     [Arguments(AgentReplyStyle.Brief, "style-brief")]
@@ -99,6 +136,7 @@ public class AgentReplyStyleTests
             styleBundleKey: AgentReplyStyles.ComposedKey(style));
 
         composed.Bundles.Select(b => b.Key).ShouldBe([key]);
+        composed.Stamps.ShouldBe([InstructionBundles.Get(key).Stamp]);
         composed.Text.ShouldStartWith($"[bundle:{key} v");
         composed.Text.ShouldContain(AgentReplyStyles.CorrectnessSentence);
     }

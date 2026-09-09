@@ -21,6 +21,18 @@ namespace Antiphon.Tests.Application;
 public class InstructionBundleTests
 {
     [Test]
+    public void Phone_with_attachments_and_append_keeps_the_command_line_budget_guard()
+    {
+        var composed = InstructionBundleComposer.Compose(
+            [InstructionBundles.BoardApi], "style-phone", "Keep the exact path C:\\src\\phone evidence. ");
+        Should.NotThrow(() => InstructionBundleComposer.EnsureWithinCommandLineBudget(
+            composed, ["--name", "Phone"], new DelegationSettings().CommandLineBudgetChars, "Phone"));
+        var ex = Should.Throw<InvalidOperationException>(() => InstructionBundleComposer.EnsureWithinCommandLineBudget(
+            composed, ["--name", "Phone"], 200, "Phone"));
+        ex.Message.ShouldContain("Nothing was truncated");
+    }
+
+    [Test]
     public void the_orchestrator_preset_prompt_is_embedded_and_not_attachable()
     {
         var text = AgentPresets.LoadOrchestratorTemplate();

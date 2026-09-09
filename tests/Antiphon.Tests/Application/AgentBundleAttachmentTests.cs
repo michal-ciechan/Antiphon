@@ -53,12 +53,14 @@ public class AgentBundleAttachmentTests
     }
 
     [Test]
-    public void a_style_is_rejected_by_name_rather_than_treated_as_a_typo()
+    [Arguments("style-caveman")]
+    [Arguments("style-phone")]
+    public void a_style_is_rejected_by_name_rather_than_treated_as_a_typo(string key)
     {
         // It IS a real bundle, so "unknown key" would be a lie and would send an operator looking for
         // a spelling mistake they did not make. The reason is that ReplyStyle already picks one.
         var ex = Should.Throw<ValidationException>(
-            () => AgentBundleAttachments.Validate(["board-api", "style-caveman"]));
+            () => AgentBundleAttachments.Validate(["board-api", key]));
 
         ex.StatusCode.ShouldBe(422);
         ex.Errors.Values.SelectMany(e => e).ShouldContain(e => e.Contains("two voices"));
@@ -210,6 +212,8 @@ public class AgentBundleAttachmentTests
             [], AgentReplyStyles.ComposedKey(AgentReplyStyle.Caveman));
 
         InstructionBundleComposer.IsOutOfDate(terse.StampLine, caveman).ShouldBeTrue();
+        var phone = InstructionBundleComposer.Compose([], AgentReplyStyles.ComposedKey(AgentReplyStyle.Phone));
+        InstructionBundleComposer.IsOutOfDate(terse.StampLine, phone).ShouldBeTrue();
     }
 
     // ---- the rows -------------------------------------------------------------------------------

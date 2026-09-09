@@ -21,6 +21,34 @@ namespace Antiphon.Tests.Application;
 public class ProjectSetupServiceTests
 {
     [Test]
+    public async Task Phone_catalog_and_explicit_setup_preserve_defaults()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db);
+        var catalog = await service.GetCatalogAsync(default);
+        catalog.ReplyStyles.Select(s => s.Key).ShouldBe(["Normal", "Terse", "Caveman", "Brief", "Phone", "Explanatory"]);
+        catalog.ReplyStyles.Single(s => s.Key == "Phone").Description.ShouldBe(
+            "Minimal Telegram/Slack replies. Short bullets, about 5–7 words; no tables. Delegate reports keep their own contracts.");
+        await SeededWorkflowTemplates.EnsureFullFeaturePipelineAsync(db);
+        foreach (var preset in new[] { AgentPresets.Worker, AgentPresets.Orchestrator })
+        foreach (var style in new AgentReplyStyle?[] { null, AgentReplyStyle.Phone })
+        {
+            var directory = NewTemp();
+            try
+            {
+                Directory.CreateDirectory(directory);
+                var result = await service.SetupAsync(new ProjectSetupRequest(directory,
+                    Agent: new ProjectSetupAgentRequest(Preset: preset, ReplyStyle: style, AlwaysOn: false)), default);
+                result.Agent!.ReplyStyle.ShouldBe(style ?? AgentReplyStyle.Normal);
+                await using var read = CreateContext();
+                (await read.Agents.AsNoTracking().SingleAsync(a => a.Id == result.Agent.Id))
+                    .ReplyStyle.ShouldBe(style ?? AgentReplyStyle.Normal);
+            }
+            finally { Cleanup(directory); }
+        }
+    }
+
+    [Test]
     public async Task Fresh_git_setup_installs_ignore_without_enabling_board_and_readiness_stays_read_only()
     {
         await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();

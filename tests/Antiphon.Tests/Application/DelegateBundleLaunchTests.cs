@@ -28,6 +28,55 @@ namespace Antiphon.Tests.Application;
 public class DelegateBundleLaunchTests
 {
     [Test]
+    [Arguments(AgentTaskRole.Code)]
+    [Arguments(AgentTaskRole.Check)]
+    [Arguments(AgentTaskRole.Diagnose)]
+    [Arguments(AgentTaskRole.Distill)]
+    public void Phone_delegate_launch_and_brief_keep_stage_contracts(AgentTaskRole role)
+    {
+        var (dispatcher, provider) = CreateHarness();
+        using var owned = provider;
+        var task = TaskFor(AgentTaskKind.Worker, role);
+        var normal = SpecOf(dispatcher, task, [InstructionBundles.BoardApi]).Args.ToList();
+        var phone = SpecOf(dispatcher, task, [InstructionBundles.BoardApi],
+            style: AgentReplyStyle.Phone, append: "PHONE SENTINEL").Args.ToList();
+        if (role == AgentTaskRole.Code)
+        {
+            var text = phone[phone.IndexOf("--append-system-prompt") + 1];
+            text.ShouldBe(normal[normal.IndexOf("--append-system-prompt") + 1]);
+            foreach (var key in new[] { InstructionBundles.StageCode, InstructionBundles.DelegateBasics })
+            {
+                text.ShouldContain(InstructionBundles.TextOf(key));
+                text.Split("[bundle:" + key).Length.ShouldBe(2);
+            }
+            text.ShouldNotContain("style-phone");
+            text.ShouldNotContain("PHONE SENTINEL");
+        }
+        else phone.ShouldNotContain("--append-system-prompt");
+        var brief = DelegationReportFormatter.BuildBrief(task, new DelegationSettings());
+        brief.ShouldContain(task.Goal);
+        brief.ShouldNotContain("Reply style: phone");
+        brief.ShouldNotContain("phone rules");
+        if (role == AgentTaskRole.Code) brief.ShouldContain("--- next stage ---");
+    }
+
+    [Test]
+    public void Phone_mixed_composition_exempts_internal_reports()
+    {
+        var text = InstructionBundleComposer.Compose(
+            [InstructionBundles.StageCode, InstructionBundles.DelegateBasics], "style-phone", "Write the complete internal report.").Text;
+        text.ShouldContain(InstructionBundles.TextOf(InstructionBundles.StageCode));
+        text.ShouldContain("report every item pass/fail in a table");
+        text.ShouldContain("Run each V-n and R-n. Run each PC-n");
+        text.ShouldContain("""
+            For delegate/worker reports, delegation briefs, stage artifacts, specialist outputs,
+            and terminal-only replies, follow their own contracts; the phone rules below do
+            not apply. Do not pass these phone rules to delegates.
+            """);
+        text.ShouldEndWith("Write the complete internal report.");
+    }
+
+    [Test]
     public void a_worker_launches_with_the_delegate_basics_bundle_under_its_versioned_header()
     {
         var (dispatcher, _) = CreateHarness();
@@ -271,7 +320,7 @@ public class DelegateBundleLaunchTests
 
     private static AgentLaunchSpec SpecOf(
         AgentTaskDispatcher dispatcher, AgentTask task, IReadOnlyList<string>? attached = null,
-        AgentKind kind = AgentKind.ClaudeCode)
+        AgentKind kind = AgentKind.ClaudeCode, AgentReplyStyle style = AgentReplyStyle.Normal, string? append = null)
     {
         var agent = new Agent
         {
@@ -281,6 +330,8 @@ public class DelegateBundleLaunchTests
             WorkingDirectory = task.WorkingDirectory,
             Kind = kind,
             IsPoolDelegate = true,
+            ReplyStyle = style,
+            SystemPromptAppend = append,
         };
         var session = new AgentSession
         {

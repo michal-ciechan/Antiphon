@@ -33,6 +33,71 @@ public class AgentSystemPromptLaunchTests
     private const string RenderedForHarnessAgent = "You are BridgeQueue. Channels: none yet.";
 
     [Test]
+    [Arguments("telegram")]
+    [Arguments("slack")]
+    public async Task Phone_fresh_launch_preserves_order_append_and_stamp(string channel)
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        var own = ChannelPreamble.PresetTemplateFor(channel) + "\r\nExact C:\\src\\long project\\evidence-file-0417.md  ";
+        await SetPreambleAsync(h, own);
+        await AttachAsync(h, InstructionBundles.BoardApi);
+        await SetStyleAsync(h, AgentReplyStyle.Phone);
+        await EndSessionAsync(h, SessionStatus.Failed);
+        var started = await StartAsync(h, fresh: true);
+        await AssertPhoneLaunchAsync(h, started, own);
+    }
+
+    [Test]
+    [Arguments("telegram")]
+    [Arguments("slack")]
+    public async Task Phone_resume_replaces_loaded_stamp_without_changing_append(string channel)
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        var own = ChannelPreamble.PresetTemplateFor(channel) + "\r\nExact C:\\src\\long project\\evidence-file-0417.md  ";
+        await SetPreambleAsync(h, own);
+        await AttachAsync(h, InstructionBundles.BoardApi);
+        await EndSessionAsync(h, SessionStatus.Failed);
+        var started = await StartAsync(h, fresh: true);
+        var live = Guid.Parse(started.PersistentSessionId!);
+        var adapter = Factory(h).Created.ShouldHaveSingleItem();
+        var count = adapter.SubmittedBodies.Count;
+        await SetStyleAsync(h, AgentReplyStyle.Phone);
+        using (var scope = h.Provider.CreateScope())
+        {
+            var detail = await scope.ServiceProvider.GetRequiredService<AgentService>().GetByIdAsync(h.AgentId, default);
+            detail.ComposedBundles.ShouldContain(InstructionBundles.Get("style-phone").Stamp);
+        }
+        await using (var db = CreateContext())
+            (await db.AgentSessions.SingleAsync(s => s.Id == live)).ComposedBundleStamp
+                .ShouldBe(InstructionBundles.Get(InstructionBundles.BoardApi).Stamp);
+        Factory(h).Created.Count.ShouldBe(1);
+        adapter.SubmittedBodies.Count.ShouldBe(count);
+        await EndSessionAsync(h, live, SessionStatus.Stopped);
+        await h.Runtime.DisposeSessionAsync(live);
+        var resumed = await StartAsync(h, fresh: false);
+        resumed.PersistentSessionId.ShouldBe(started.PersistentSessionId);
+        Factory(h).Created[^1].StartedArgs.ShouldContain("--resume");
+        Factory(h).Created[^1].SubmittedBodies.ShouldBe([ChannelPreamble.WithSessionTag(ChannelPreamble.RestartResumeBody, live)]);
+        await AssertPhoneLaunchAsync(h, resumed, own);
+    }
+
+    private static async Task AssertPhoneLaunchAsync(BridgeQueueHarness h, AgentDetailDto started, string own)
+    {
+        var args = Factory(h).Created[^1].StartedArgs.ToList();
+        args.Count(a => a == "--append-system-prompt").ShouldBe(1);
+        var text = args[args.IndexOf("--append-system-prompt") + 1];
+        var expected = InstructionBundleComposer.Compose([InstructionBundles.BoardApi], "style-phone",
+            own.Replace("{agentName}", "BridgeQueue").Replace("{channels}", "none yet"));
+        text.ShouldBe(expected.Text);
+        text.Split("[bundle:style-phone").Length.ShouldBe(2);
+        text.ShouldContain("Keep replies phone-sized.");
+        await using var db = CreateContext();
+        (await db.Agents.SingleAsync(a => a.Id == h.AgentId)).SystemPromptAppend.ShouldBe(own);
+        (await db.AgentSessions.SingleAsync(s => s.Id == Guid.Parse(started.PersistentSessionId!)))
+            .ComposedBundleStamp.ShouldBe(expected.StampLine);
+    }
+
+    [Test]
     public async Task Start_with_system_prompt_append_passes_flag_on_fresh_launch()
     {
         await using var h = await CreateHarnessAsync(alwaysOn: true);
@@ -472,12 +537,14 @@ public class AgentSystemPromptLaunchTests
     }
 
     [Test]
-    public async Task A_style_alone_produces_the_flag_but_still_no_launch_notes()
+    [Arguments(AgentReplyStyle.Terse)]
+    [Arguments(AgentReplyStyle.Phone)]
+    public async Task A_style_alone_produces_the_flag_but_still_no_launch_notes(AgentReplyStyle style)
     {
         // Adding a style must not start handing a workspace ritual to agents that never had one: the
         // notes gate stays keyed on SystemPromptAppend, not on "composes something".
         await using var h = await CreateHarnessAsync(alwaysOn: true);
-        await SetStyleAsync(h, AgentReplyStyle.Terse);
+        await SetStyleAsync(h, style);
         await EndSessionAsync(h, SessionStatus.Failed);
 
         var started = await StartAsync(h, fresh: true);
@@ -486,7 +553,7 @@ public class AgentSystemPromptLaunchTests
         var args = adapter.StartedArgs;
         var flagIndex = args.ToList().IndexOf("--append-system-prompt");
         flagIndex.ShouldBeGreaterThanOrEqualTo(0);
-        args[flagIndex + 1].ShouldBe(InstructionBundles.Get("style-terse").Render());
+        args[flagIndex + 1].ShouldBe(InstructionBundles.Get(AgentReplyStyles.BundleKey(style)).Render());
         adapter.SubmittedBodies.ShouldBeEmpty("the launch types nothing and is not held");
         await using var db = CreateContext();
         (await db.SessionQueuedMessages

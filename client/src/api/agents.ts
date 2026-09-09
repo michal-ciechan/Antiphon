@@ -21,7 +21,7 @@ export type AgentAssignmentPolicy = 'AutoPick' | 'ManualConfirm' | 'Paused'
  * How the agent writes (CARD-0060). `Normal` composes to NOTHING at launch — it is the default and
  * the migration backfill, so choosing it changes an agent's launch arguments by exactly zero bytes.
  */
-export type AgentReplyStyle = 'Normal' | 'Terse' | 'Caveman' | 'Brief' | 'Explanatory'
+export type AgentReplyStyle = 'Normal' | 'Terse' | 'Caveman' | 'Brief' | 'Phone' | 'Explanatory'
 
 /**
  * Which lane hosts the interactive child (CARD-0160). `PtyHost` is the default — Herdr is opt-in
@@ -47,7 +47,7 @@ export const SESSION_BACKEND_OPTIONS: Array<{
   },
 ]
 
-/** Picker options, least to most words. Normal is the default and is deliberately first. */
+/** Picker options for voice and audience. Normal is the default and is deliberately first. */
 export const AGENT_REPLY_STYLE_OPTIONS: Array<{
   value: AgentReplyStyle
   label: string
@@ -72,6 +72,11 @@ export const AGENT_REPLY_STYLE_OPTIONS: Array<{
     value: 'Brief',
     label: 'Brief',
     description: 'Short bullets, minimum words, only what changes a decision. Paths, flags and code still exact.',
+  },
+  {
+    value: 'Phone',
+    label: 'Phone',
+    description: 'Minimal Telegram/Slack replies. Short bullets, about 5–7 words; no tables. Delegate reports keep their own contracts.',
   },
   {
     value: 'Explanatory',
