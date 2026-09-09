@@ -1,8 +1,11 @@
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
+using Antiphon.Tests.Agents;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -14,6 +17,23 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 public class StandingSessionOwnershipTests
 {
+    [Test]
+    public async Task Deleting_and_recreating_the_same_name_does_not_adopt_historical_ownership()
+    {
+        await using var f = new StandingRecoveryFixture(new FakeAgentProtocolAdapter());
+        await f.SeedAsync();
+        await f.Harness.AgentService.DeleteAsync(f.Agent.Id, default);
+        var replacement = await f.Harness.AgentService.CreateAsync(new CreateAgentRequest(f.Agent.Name, f.Root), default);
+        replacement.Id.ShouldNotBe(f.Agent.Id);
+        (await f.Harness.Control.GetSessionsAsync(replacement.Id, 25, null, default)).Items.ShouldBeEmpty();
+        (await Should.ThrowAsync<ConflictException>(() => f.Harness.Control.StartAsync(replacement.Id,
+            new StartAgentRequest(ResumeSessionId: f.A.Id), default))).Code.ShouldBe("standing_resume_not_owned");
+        await using var verify = f.Db();
+        (await verify.AgentSessions.FindAsync(f.A.Id))!.StandingAgentId.ShouldBe(f.Agent.Id);
+        (await verify.AgentSessions.FindAsync(f.B.Id))!.StandingAgentId.ShouldBe(f.Agent.Id);
+        (await verify.Agents.FindAsync(replacement.Id))!.PersistentSessionId.ShouldBeNull();
+    }
+
     [Test]
     public async Task Upgrade_backfills_only_unambiguous_owners_and_preserves_recovery_state()
     {

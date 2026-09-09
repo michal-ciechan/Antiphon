@@ -9,8 +9,8 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-0383 S1: Grok resume vs create is decided from the on-disk session directory, never from
-/// the row. <see cref="AgentSessionService.EffectiveResumeMode"/> is the one funnel.
+/// CARD-0383 card-only compatibility: missing native directories retain the old downgrade.
+/// Standing interactive launches bypass this helper and always ask for strict resume.
 /// </summary>
 [Category("Unit")]
 public class GrokNativeSessionResumeTests
@@ -39,7 +39,7 @@ public class GrokNativeSessionResumeTests
     }
 
     [Test]
-    public void Resume_with_no_directory_downgrades_to_create()
+    public void Card_resume_with_no_directory_retains_legacy_create_policy()
     {
         var id = Guid.NewGuid();
         var home = EmptyHome();
@@ -127,7 +127,7 @@ public class GrokNativeSessionResumeTests
         }
     }
 
-    private static AgentSession GrokSession(Guid id) => new() { Id = id, AgentKind = AgentKind.Grok };
+    private static AgentSession GrokSession(Guid id) => new() { Id = id, CardId = Guid.NewGuid(), AgentKind = AgentKind.Grok };
 
     private static AgentLaunchSpec Spec(string grokHome) =>
         new("grok", AgentKind.Grok, "grok.exe", [],

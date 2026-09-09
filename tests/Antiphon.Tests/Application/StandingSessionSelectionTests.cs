@@ -15,11 +15,23 @@ namespace Antiphon.Tests.Application;
 public class StandingSessionSelectionTests
 {
     [Test]
-    public async Task Legacy_historical_owner_can_resume_after_pointer_moved()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Legacy_historical_owner_can_resume_after_pointer_moved(bool executionOnly)
     {
         var adapter = new FakeAgentProtocolAdapter();
         await using var f = new StandingRecoveryFixture(adapter);
         await f.SeedAsync(legacy: true);
+        if (executionOnly)
+        {
+            await using var db = f.Db();
+            await db.AgentIncidents.Where(i => i.SessionId == f.A.Id).ExecuteDeleteAsync();
+            var taskId = Guid.NewGuid();
+            db.AgentTasks.Add(new AgentTask { Id = taskId, RootTaskId = taskId, AgentId = f.Agent.Id,
+                AgentSessionId = f.A.Id, Title = "Historical execution", Goal = "Synthetic history",
+                WorkingDirectory = f.Root, Status = AgentTaskStatus.Succeeded, CreatedAt = DateTime.UtcNow });
+            await db.SaveChangesAsync();
+        }
         var history = await f.Harness.Control.GetSessionsAsync(f.Agent.Id, 25, null, default);
         history.Items.ShouldContain(s => s.Id == f.A.Id && s.OwnershipEvidence == "Legacy");
         await using (var db = f.Db()) (await db.AgentSessions.FindAsync(f.A.Id))!.StandingAgentId.ShouldBeNull();

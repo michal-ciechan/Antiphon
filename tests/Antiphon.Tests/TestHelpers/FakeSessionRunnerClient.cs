@@ -18,6 +18,7 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
     public Func<HerdrPlacementCheckRequest, Task<HerdrPlacementCheckResult>>? PlacementCheck { get; set; }
 
     public Func<ConflictException>? StartRefusal { get; set; }
+    public Func<CancellationToken, Task<IReadOnlyList<SessionRunnerSessionDto>>>? ListOverride { get; set; }
 
     public bool AdvertiseHerdr { get; set; } = true;
     public bool AdvertiseGrokRules { get; set; }
@@ -81,7 +82,7 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
     }
 
     public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
+        ListOverride?.Invoke(ct) ?? Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
 
     public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
         Task.FromResult(new SessionRunnerSessionDto(

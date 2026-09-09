@@ -18,6 +18,23 @@ function history() {
 }
 
 describe('standing conversation recovery', () => {
+  it('opening history only reads and keeps ineligible history inspectable', async () => {
+    const requests: unknown[] = []
+    server.use(http.get('/api/agents/standing/sessions', () => HttpResponse.json({ items: [{
+      id: 'busy-history', kind: 'ClaudeCode', cwd: 'C:\\standing', status: 'Starting', eligible: false,
+      createdAt: '2026-09-08', ownershipEvidence: 'Stamped', refusalCode: 'standing_resume_target_active',
+    }], nextBefore: null })))
+    server.use(http.post('/api/agents/standing/start', async ({ request }) => {
+      requests.push(await request.json())
+      return HttpResponse.json(agent)
+    }))
+    renderWithProviders(<StandingSessionRecovery agent={agent} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Resume previous conversation' }))
+    expect(await screen.findByRole('button', { name: 'Select busy-history' })).toBeDisabled()
+    expect(screen.getByRole('link', { name: 'Open busy-history' })).toHaveAttribute('href', '/sessions/busy-history')
+    expect(requests).toEqual([])
+  })
+
   it.each([
     ['Retry after repair', { retryContinuity: true }],
     ['Start fresh', { fresh: true }],

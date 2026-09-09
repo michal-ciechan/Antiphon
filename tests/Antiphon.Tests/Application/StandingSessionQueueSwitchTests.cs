@@ -14,6 +14,37 @@ namespace Antiphon.Tests.Application;
 public class StandingSessionQueueSwitchTests
 {
     [Test]
+    [Arguments(AgentTaskStatus.Dispatched)]
+    [Arguments(AgentTaskStatus.Working)]
+    [Arguments(AgentTaskStatus.Blocked)]
+    public async Task Open_execution_on_either_history_or_current_target_refuses_selection(AgentTaskStatus status)
+    {
+        foreach (var shape in new[] { "source", "target", "same-current" })
+        {
+            var adapter = new FakeAgentProtocolAdapter();
+            await using var f = new StandingRecoveryFixture(adapter);
+            await f.SeedAsync(held: true);
+            var taskId = Guid.NewGuid();
+            var execution = shape == "target" ? f.A.Id : f.B.Id;
+            await using (var db = f.Db())
+            {
+                db.AgentTasks.Add(new AgentTask { Id = taskId, RootTaskId = taskId, AgentId = f.Agent.Id,
+                    AgentSessionId = execution, Title = "Open execution", Goal = "Synthetic assignment",
+                    WorkingDirectory = f.Root, Status = status, CreatedAt = DateTime.UtcNow });
+                await db.SaveChangesAsync();
+            }
+            var target = shape == "same-current" ? f.B.Id : f.A.Id;
+            (await Should.ThrowAsync<ConflictException>(() => f.StartAsync(new(ResumeSessionId: target))))
+                .Code.ShouldBe("standing_resume_work_in_flight");
+            adapter.Started.ShouldBeFalse();
+            await using var verify = f.Db();
+            (await verify.Agents.FindAsync(f.Agent.Id))!.PersistentSessionId.ShouldBe(f.B.Id.ToString("D"));
+            (await verify.AgentTasks.FindAsync(taskId))!.AgentSessionId.ShouldBe(execution);
+            (await verify.AgentSupervisionStates.FindAsync(f.Agent.Id))!.ContinuityHeldAt.ShouldNotBeNull();
+        }
+    }
+
+    [Test]
     public async Task Any_prior_delivery_evidence_refuses_switch_and_fresh()
     {
         Action<SessionQueuedMessage>[] evidence = [m => m.DeliveryAttempts = 1,

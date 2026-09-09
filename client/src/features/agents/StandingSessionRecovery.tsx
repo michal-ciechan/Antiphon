@@ -44,6 +44,7 @@ export function StandingSessionRecovery({ agent }: { agent: AgentSummaryDto }) {
         {history.data?.items.map(session => <Stack key={session.id} gap={4}>
           <Text size="sm">{session.id} · {session.kind} · {session.status}</Text>
           <Text size="xs">{session.cwd}</Text>
+          <Button component="a" href={`/sessions/${session.id}`} variant="subtle">Open {session.id}</Button>
           <Button variant="light" disabled={!session.eligible || !!agent.liveSession || start.isPending}
             onClick={() => setDecision({ resumeSessionId: session.id })}>Select {session.id}</Button>
           {!session.eligible && <Text size="xs">Unavailable: {session.refusalCode}</Text>}

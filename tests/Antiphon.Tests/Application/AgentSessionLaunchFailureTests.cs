@@ -368,12 +368,10 @@ public class AgentSessionLaunchFailureTests
     }
 
     /// <summary>
-    /// The resume-not-found fallback relaunches under the SAME session id. Until the kill landed
-    /// first, that only worked when the first process happened to have died on its own; now it is
-    /// correct by construction.
+    /// Missing native history ends the one resume attempt and leaves an explicit durable decision.
     /// </summary>
     [Test]
-    public async Task Resume_not_found_kills_the_first_process_before_the_fallback_relaunch()
+    public async Task Resume_not_found_kills_the_process_and_holds_without_fallback()
     {
         // The needle Claude prints when the conversation it was asked to resume is gone.
         var resumeAdapter = new FakeAgentProtocolAdapter
@@ -389,40 +387,38 @@ public class AgentSessionLaunchFailureTests
             await seed.AgentSessions.Where(s => s.Id == fixture.SessionId).ExecuteUpdateAsync(u => u
                 .SetProperty(s => s.HerdrSupervisionFailureKind, HerdrSupervisionFailureKind.PaneClosed));
 
-        await fixture.LaunchInteractiveAsync(resume: true);
-
-        resumeAdapter.Lifecycle.ShouldBe(
-            ["Kill", "Dispose"],
-            "the abandoned --resume process must be killed before its id is reused");
-        freshAdapter.Started.ShouldBeTrue();
-        freshAdapter.StartedArgs.ShouldNotContain("--resume", "the fallback starts a fresh conversation");
-        freshAdapter.Killed.ShouldBeFalse();
-
+        await Should.ThrowAsync<AgentSessionService.ResumeTargetMissingException>(fixture.LaunchInteractiveAsync(resume: true));
+        resumeAdapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
+        freshAdapter.Started.ShouldBeFalse();
         await using var db = LaunchFixture.CreateContext();
         var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
-        session.Status.ShouldBe(SessionStatus.Running);
-        session.HerdrSupervisionFailureKind.ShouldBeNull();
+        session.Status.ShouldBe(SessionStatus.Failed);
+        session.RestartFailureKind.ShouldBe(RestartFailureKind.ContinuityUnavailable);
+        session.InteractiveLaunchCompletedAt.ShouldBeNull();
+        (await db.AgentSupervisionStates.SingleAsync(s => s.AgentId == fixture.AgentId)).ContinuityReason
+            .ShouldBe(StandingContinuityReason.NativeSessionMissing);
     }
 
     [Test]
-    public async Task A_missing_resume_fallback_that_then_times_out_stamps_DetectTimeout_on_the_same_row()
+    public async Task Missing_resume_does_not_launch_a_second_process_or_invent_its_Herdr_timeout()
     {
         var resume = new FakeAgentProtocolAdapter { StartupOutput = "No conversation found with session ID: 0b5f2f7e", ReadyResult = false };
         var fresh = new FakeAgentProtocolAdapter { ThrowOnStart = HerdrSupervisionBackoffTests.Timeout() };
         await using var fixture = await LaunchFixture.CreateAsync(resume, fresh);
-        await Should.ThrowAsync<ConflictException>(fixture.LaunchInteractiveAsync(resume: true));
+        await Should.ThrowAsync<AgentSessionService.ResumeTargetMissingException>(fixture.LaunchInteractiveAsync(resume: true));
+        fresh.Started.ShouldBeFalse();
         await using var db = LaunchFixture.CreateContext();
         var row = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
         row.Status.ShouldBe(SessionStatus.Failed);
-        row.HerdrSupervisionFailureKind.ShouldBe(HerdrSupervisionFailureKind.DetectTimeout);
+        row.HerdrSupervisionFailureKind.ShouldBeNull();
+        row.RestartFailureKind.ShouldBe(RestartFailureKind.ContinuityUnavailable);
     }
 
     /// <summary>
-    /// CARD-0383: a Grok row whose native directory is missing launches <c>--session-id</c>, not
-    /// a dead <c>--resume</c>. The same session id is kept.
+    /// Standing Grok passes strict resume to the runner even when the server sees no native directory.
     /// </summary>
     [Test]
-    public async Task Grok_resume_of_a_row_with_no_native_session_launches_with_session_id()
+    public async Task Standing_Grok_missing_local_directory_keeps_resume_for_the_authoritative_runner()
     {
         var adapter = new FakeAgentProtocolAdapter();
         await using var fixture = await LaunchFixture.CreateAsync(adapter);
@@ -437,9 +433,9 @@ public class AgentSessionLaunchFailureTests
                 spec: GrokSpec(fixture.Workspace, grokHome));
 
             adapter.Started.ShouldBeTrue();
-            adapter.StartedArgs.ShouldContain("--session-id");
+            adapter.StartedArgs.ShouldContain("--resume");
             adapter.StartedArgs.ShouldContain(fixture.SessionId.ToString("D"));
-            adapter.StartedArgs.ShouldNotContain("--resume");
+            adapter.StartedArgs.ShouldNotContain("--session-id");
         }
         finally
         {
@@ -449,12 +445,10 @@ public class AgentSessionLaunchFailureTests
 
     /// <summary>
     /// CARD-0383: runner 409 <c>herdr_grok_native_session_missing</c> on a Resume launch is the
-    /// same fallback as Claude's "No conversation found" — kill the first process, relaunch the
-    /// same row with <c>--session-id</c>. The native directory is seeded so layer 1 keeps Resume
-    /// and the runner code is what fires (GROK_HOME skew).
+    /// same continuity decision as Claude's missing conversation. Never create using the same id.
     /// </summary>
     [Test]
-    public async Task Grok_runner_native_session_missing_falls_back_to_create()
+    public async Task Grok_runner_native_session_missing_holds_without_create()
     {
         var resumeAdapter = new FakeAgentProtocolAdapter
         {
@@ -472,19 +466,16 @@ public class AgentSessionLaunchFailureTests
         Directory.CreateDirectory(Path.Combine(grokHome, "sessions", encoded, fixture.SessionId.ToString("D")));
         try
         {
-            await fixture.LaunchInteractiveAsync(
-                resume: true,
-                spec: GrokSpec(fixture.Workspace, grokHome));
-
+            await Should.ThrowAsync<AgentSessionService.ResumeTargetMissingException>(() => fixture.LaunchInteractiveAsync(
+                resume: true, spec: GrokSpec(fixture.Workspace, grokHome)));
             resumeAdapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
-            freshAdapter.Started.ShouldBeTrue();
-            freshAdapter.StartedArgs.ShouldContain("--session-id");
-            freshAdapter.StartedArgs.ShouldNotContain("--resume");
-            freshAdapter.Killed.ShouldBeFalse();
-
+            freshAdapter.Started.ShouldBeFalse();
             await using var db = LaunchFixture.CreateContext();
             var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
-            session.Status.ShouldBe(SessionStatus.Running);
+            session.Status.ShouldBe(SessionStatus.Failed);
+            session.RestartFailureKind.ShouldBe(RestartFailureKind.ContinuityUnavailable);
+            (await db.AgentSupervisionStates.SingleAsync(s => s.AgentId == fixture.AgentId)).ContinuityReason
+                .ShouldBe(StandingContinuityReason.NativeSessionMissing);
         }
         finally
         {
@@ -667,36 +658,25 @@ public class AgentSessionLaunchFailureTests
     }
 
     /// <summary>
-    /// Killing an already-killed process is a no-op, not an error — the runner answers false for a
-    /// session it no longer knows. Driven through the real double-teardown path: a --resume launch
-    /// is killed as not-found, and the fallback relaunch of the SAME process fails too.
+    /// A runner that already reaped the failed process returns false from Kill; disposal still runs.
     /// </summary>
     [Test]
-    public async Task A_second_kill_of_an_already_killed_process_is_harmless()
+    public async Task Killing_an_already_reaped_missing_resume_is_harmless()
     {
         var adapter = new FakeAgentProtocolAdapter
         {
             StartupOutput = "No conversation found with session ID: 0b5f2f7e",
             ReadyResult = false,
-            // What the runner really answers once the process is gone.
             KillResult = false,
         };
-        // One adapter instance for BOTH launches: the fallback re-enters teardown on a handle that
-        // has already been killed once.
-        await using var fixture = await LaunchFixture.CreateAsync(new SharedAdapterFactory(adapter));
-
-        var launch = fixture.LaunchInteractiveAsync(resume: true);
-
-        await Should.ThrowAsync<InvalidOperationException>(
-            launch,
-            "the fallback's own failure surfaces, not the not-found marker");
-        adapter.KillCount.ShouldBe(2);
-        adapter.Lifecycle.ShouldBe(["Kill", "Dispose", "Kill", "Dispose"]);
-
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        await Should.ThrowAsync<AgentSessionService.ResumeTargetMissingException>(fixture.LaunchInteractiveAsync(resume: true));
+        adapter.KillCount.ShouldBe(1);
+        adapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
         await using var db = LaunchFixture.CreateContext();
         var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
         session.Status.ShouldBe(SessionStatus.Failed);
-        session.FailureReason.ShouldBe("Agent process did not become ready.");
+        session.RestartFailureKind.ShouldBe(RestartFailureKind.ContinuityUnavailable);
     }
 
     /// <summary>

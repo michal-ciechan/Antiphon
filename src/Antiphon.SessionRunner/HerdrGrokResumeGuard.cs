@@ -8,7 +8,7 @@ namespace Antiphon.SessionRunner;
 /// CARD-0383: a herdr Grok launch whose argv carries <c>--resume &lt;uuid&gt;</c> with no native
 /// session directory is refused before the runner touches herdr. grok 1.0.13 then exits 1 after a
 /// remote 404 and herdr never detects it. Defensive of server/runner <c>GROK_HOME</c> skew — the
-/// server is the primary decision (same-row create). Title-shaped <c>--resume</c> values and
+/// runner makes the authoritative native-store probe. Title-shaped <c>--resume</c> values and
 /// every <c>--session-id</c> pass through.
 /// </summary>
 internal static class HerdrGrokResumeGuard

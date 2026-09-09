@@ -49,7 +49,7 @@ public sealed class StandingSessionOwnership(AppDbContext db)
         if (agent.IsPoolDelegate || session.CardId is not null || session.WorktreeId is not null)
             return "standing_resume_ineligible";
         if (kind is not (AgentKind.ClaudeCode or AgentKind.Grok)) return "standing_resume_unsupported";
-        if (session.AgentKind != kind || !string.Equals(Path.GetFullPath(session.Cwd), Path.GetFullPath(cwd),
+        if (session.AgentKind != kind || !string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(session.Cwd)), Path.TrimEndingDirectorySeparator(Path.GetFullPath(cwd)),
                 OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
             return "standing_resume_incompatible";
         return session.Status is SessionStatus.Stopped or SessionStatus.Failed ? null : "standing_resume_target_active";

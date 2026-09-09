@@ -359,7 +359,7 @@ public sealed class AgentControlService
         GrokLaunchArgs.EnsureWindowsRulesArgv(spec.Args, spec.Kind, agent.SessionBackend, spec.Env, $"Agent '{agent.Name}'");
 
         // Bootstrap/restart notes ride on every launch of a preamble-configured agent; the launch
-        // path picks FreshBody vs ResumeBody where the fresh/resume/fallback truth lives.
+        // path picks FreshBody for explicit creation and ResumeBody for strict resume.
         //
         // Except the standing check interpreter. The gate here is "has a SystemPromptAppend", which
         // when these notes were written meant "has a channel preamble" — CARD-0047 then started
@@ -377,7 +377,7 @@ public sealed class AgentControlService
         {
             // CARD-0334: an orchestrator seat without a channel preamble must still be told
             // why it was relaunched. Resume body is the policy note regardless of preamble;
-            // a resume→fresh fallback keeps BootstrapBody when one was already composed.
+            // an explicit Fresh request keeps BootstrapBody when one was already composed.
             var policyBody = ChannelPreamble.PolicyRefreshResumeBody(policyRefreshDelta);
             notes = new LaunchNotes(
                 FreshBody: notes?.FreshBody ?? ChannelPreamble.BootstrapBody,
@@ -466,12 +466,12 @@ public sealed class AgentControlService
             }
             var switching = sourceId is not null && sourceId != chosenSessionId;
             var pending = new List<SessionQueuedMessage>();
+            if (resumeSessionId is not null && await _db.AgentTasks.AnyAsync(t => t.AgentSessionId != null
+                && involved.Contains(t.AgentSessionId.Value)
+                && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Blocked), ct))
+                throw new ConflictException("Settle execution assignments before selecting history.", "standing_resume_work_in_flight");
             if (switching)
             {
-                if (resumeSessionId is not null && await _db.AgentTasks.AnyAsync(t => t.AgentSessionId != null
-                    && involved.Contains(t.AgentSessionId.Value)
-                    && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Blocked), ct))
-                    throw new ConflictException("Settle execution assignments before selecting history.", "standing_resume_work_in_flight");
                 pending = await _db.SessionQueuedMessages.Where(m => m.AgentSessionId == sourceId
                     && m.Status == QueuedMessageStatus.Pending && m.RulesRefreshKey == null).OrderBy(m => m.Sequence).ThenBy(m => m.Id).ToListAsync(ct);
                 if (pending.Any(m => !StandingQueueSwitchPolicy.NeverAttempted(m)))
@@ -550,7 +550,7 @@ public sealed class AgentControlService
             await _db.SaveChangesAsync(ct);
 
             // A NEW session id strands any messages still queued on the previous conversation's session
-            // (fresh fallback after repeated failures, or a non-resumable previous session). Carry the
+            // (explicit Fresh, or an unsupported native-resume kind). Carry the
             // pending ones over so they deliver into the new conversation instead of vanishing.
             if (Guid.TryParse(agent.PersistentSessionId, out var previousSessionId)
                 && previousSessionId != session.Id)
@@ -569,7 +569,7 @@ public sealed class AgentControlService
                         "Agent {AgentName}: re-pointed {Count} in-flight task(s) from session {Previous} to new session {New}",
                         agent.Name, remapped, previousSessionId, session.Id);
 
-                // CARD-0224 D3: a Fresh (or FreshAfterResumeFailures) new-row launch still targets
+                // CARD-0224 D3: an explicit Fresh new-row launch still targets
                 // the agent's last pane. Capture the previous id NOW — PersistentSessionId is
                 // overwritten to the new row after this method returns, before the queued launch
                 // runs. Never set on the resume arm (same id) or on card spawns.
@@ -631,7 +631,7 @@ public sealed class AgentControlService
                             : resumeSessionId is not null || retryContinuity ? AgentIncidentKind.StandingResumeSelected : AgentIncidentKind.ResumeUnsupported,
                         Severity = AlertSeverity.Info,
                         CreatedAt = UtcNow(),
-                        Message = $"Accepted {(fresh ? "explicit fresh conversation" : "resume selection")}: {expectedPointer ?? "none"} -> {accepted.Id:D}; launch queued.",
+                        Message = $"Accepted {(fresh ? "explicit fresh conversation" : retryContinuity ? "repaired-target retry" : "resume selection")}: {expectedPointer ?? "none"} -> {accepted.Id:D}; launch queued.",
                     });
                 await _db.SaveChangesAsync(ct);
             }
@@ -710,7 +710,11 @@ public sealed class AgentControlService
     {
         if (selected is null && string.IsNullOrWhiteSpace(agent.PersistentSessionId))
         {
-            if (!agent.IsPoolDelegate && await _db.AgentSessions.AnyAsync(s => s.StandingAgentId == agent.Id, ct))
+            if (!agent.IsPoolDelegate && await _db.AgentSessions.AnyAsync(s => s.CardId == null && s.WorktreeId == null
+                && (s.StandingAgentId == agent.Id || s.StandingAgentId == null
+                    && (_db.AgentTasks.Any(t => t.AgentId == agent.Id && t.AgentSessionId == s.Id)
+                        || _db.AgentIncidents.Any(i => i.AgentId == agent.Id && i.SessionId == s.Id
+                            && (i.Kind == AgentIncidentKind.Crash || i.Kind == AgentIncidentKind.RestartScheduled || i.Kind == AgentIncidentKind.Recovered)))), ct))
             {
                 await new StandingContinuityState(_db, _timeProvider).HoldAsync(agent.Id, null,
                     StandingContinuityReason.TargetMissing, ct);

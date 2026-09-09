@@ -13,6 +13,22 @@ namespace Antiphon.SessionRunner.Tests;
 public class HerdrGrokResumeGuardTests
 {
     [Test]
+    public void Unavailable_store_is_an_IO_failure_and_does_not_claim_missing_history()
+    {
+        var home = EmptyHome();
+        try
+        {
+            File.WriteAllText(Path.Combine(home, "sessions"), "synthetic non-directory storage failure");
+            var id = Guid.NewGuid();
+            var request = GrokRequest(id, home, ["--resume", id.ToString("D")]);
+            var error = Should.Throw<IOException>(() => HerdrGrokResumeGuard.Require(id, request, HerdrAgentKinds.Grok, NullLogger.Instance));
+            error.Message.ShouldContain("unavailable");
+            error.Message.ShouldNotContain("missing");
+        }
+        finally { BestEffortDelete(home); }
+    }
+
+    [Test]
     public void Guid_resume_with_no_directory_throws_the_named_code()
     {
         var sessionId = Guid.NewGuid();
@@ -27,8 +43,8 @@ public class HerdrGrokResumeGuardTests
             ex.Code.ShouldBe(HerdrProblemTypes.GrokNativeSessionMissing);
             ex.Message.ShouldContain(resumeId.ToString("D"));
             ex.Message.ShouldContain(sessionId.ToString("D"));
-            ex.Message.ShouldContain(Path.Combine(home, "sessions"));
-            ex.Message.ShouldContain("--session-id");
+            ex.Message.ShouldContain("explicit fresh start");
+            ex.Message.ShouldNotContain("--session-id");
         }
         finally
         {

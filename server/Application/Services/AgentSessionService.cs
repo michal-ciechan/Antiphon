@@ -452,10 +452,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // Best-effort: this session has no purpose that a monitoring command's failure invalidates.
             await SendRemoteControlCommandsAsync(adapter, remoteControlName, session, agentId, resumeMode, ct);
 
-            // Channel-facing agents get a launch note: bootstrap on a fresh conversation (including
-            // the resume-not-found fallback, which re-enters here with resumeMode=null), the cheaper
-            // restart note on a successful resume. This branch point is where the truth lives —
-            // AgentControlService cannot know whether a resume will fall back.
+            // Channel-facing agents get the bootstrap note for explicit creation and the cheaper
+            // restart note for strict resume. Missing history never falls through to creation.
             var typedSomething = await DeliverLaunchNoteAsync(session.Id, resumeMode, notes, ct);
 
             // LAST, and only on a genuine --resume (a fresh conversation has nothing to continue):
@@ -539,10 +537,6 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     /// a catch that only disposed left a real, billable agent running while its row read Failed and
     /// the always-on supervisor started a replacement: two such sessions were found live on
     /// 2026-08-16, one of them three days old (CARD-0056).
-    ///
-    /// This also makes the resume-not-found fallback correct by construction: that fallback
-    /// relaunches under the SAME session id, which until now only worked if the first process
-    /// happened to have died on its own.
     ///
     /// <see cref="CancellationToken.None"/> matches the cleanup posture of the callers' catches
     /// (their own token may already be cancelled). A kill failure is swallowed: it must never
@@ -2346,7 +2340,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
     // Delivers the launch note (bootstrap on fresh/effective-fresh, restart note on resume) through
     // the queue's verified path. Now-mode, NOT WhenIdle: the session just reached Running and is
-    // idle by construction, but on the resume/fallback paths the reused session row can carry a
+    // idle by construction, but on the resume paths the reused session row can carry a
     // stale mid-turn transcript that makes IsWorkingAsync read true — a WhenIdle enqueue would skip
     // the idle fast-path, no turn-end is coming, and the stranded watchdog only covers always-on
     // agents. CARD-0233: if a Channel-origin row is still owed a reply (Pending, or Sent with
