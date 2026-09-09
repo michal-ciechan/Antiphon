@@ -2399,6 +2399,11 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             if (agent is null)
                 return;
 
+            // Check has a no-tool standing contract; a generic liveness probe is neither
+            // behavioral qualification nor authorized specialist work.
+            if (string.Equals(agent.Slug, CheckInterpreterProvisioner.Slug(_delegationSettings), StringComparison.OrdinalIgnoreCase))
+                return;
+
             var unattended = agent.AlwaysOn
                 || string.Equals(
                     agent.Slug,
