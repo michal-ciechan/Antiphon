@@ -83,7 +83,7 @@ public class StandingSpecialistSeatTests
         alternate.AlwaysOn.ShouldBeTrue();
         alternate.IsPoolDelegate.ShouldBeFalse();
         alternate.TuiProfileId.ShouldBeNull();
-        alternate.LaunchEnvJson.ShouldBeNull();
+        AgentLaunchEnv.Parse(alternate.LaunchEnvJson).ShouldBeEmpty();
         alternate.BoardId.ShouldBeNull();
         alternate.RemoteControlEnabled.ShouldBeFalse();
         alternate.WorkingDirectory.ShouldNotBe(owner.WorkingDirectory);
