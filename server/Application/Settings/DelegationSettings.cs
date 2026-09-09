@@ -629,6 +629,16 @@ public sealed class DelegationSettings
     public int CheckInterpreterWaitSeconds { get; set; } = 60;
 
     /// <summary>
+    /// Requested first-candidate allocation. Null preserves the full remaining request budget.
+    /// A value below the total also requires current latency calibration for the exact execution
+    /// fingerprint; configuration alone never authorizes early cutover (CARD-0415).
+    /// </summary>
+    public int? CheckInterpreterFirstAttemptSeconds { get; set; }
+
+    /// <summary>Consecutive current-generation transient failures before quarantine (CARD-0415).</summary>
+    public int CheckInterpreterTransientFailureThreshold { get; set; } = 3;
+
+    /// <summary>
     /// At or above this many unfinished interpretation tasks on the specialist, a check skips
     /// creating one and degrades immediately. There is ONE specialist and many delegates can come
     /// due together; without this the queue grows and every check pays the full wait behind a pile.
@@ -1048,6 +1058,11 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
     public ValidateOptionsResult Validate(string? name, DelegationSettings options)
     {
         var failures = new List<string>();
+        if (options.CheckInterpreterFirstAttemptSeconds is { } firstAttempt
+            && (firstAttempt <= 0 || firstAttempt > options.CheckInterpreterWaitSeconds))
+            failures.Add("Delegation:CheckInterpreterFirstAttemptSeconds must be positive and no greater than CheckInterpreterWaitSeconds, or null.");
+        if (options.CheckInterpreterTransientFailureThreshold is < 2 or > 10)
+            failures.Add("Delegation:CheckInterpreterTransientFailureThreshold must be between 2 and 10.");
         if (options.LandSweepSeconds is < 1 or > 60)
         {
             failures.Add("Delegation:LandSweepSeconds must be between 1 and 60.");
