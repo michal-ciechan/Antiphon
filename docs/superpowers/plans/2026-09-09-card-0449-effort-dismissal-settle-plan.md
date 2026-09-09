@@ -490,3 +490,84 @@ dotnet run --project tests/Antiphon.Tests --property:OutputPath=$out -- --treeno
 # PC cycle shape (method-scoped; one example)
 dotnet run --project tests/Antiphon.Agents.Pty.Tests --property:OutputPath=$out -- --treenode-filter "/*/*/ClaudeEffortDismissalReplayTests/Resolver_clears_a_replayed_dismissal"
 ```
+
+## Verification record
+
+Appended by Code task `567cc113` (High, shared checkout) against base `ff72feae`. Slices landed
+S1 -> S3 -> S2 -> S4 as `33fe840f`, `d7f98404` (fixtures), `e38b62f7` (replay tests), `4f311c02`,
+`95845d34`. Built to `bin-c449b/` throughout; all `bin-c449b` directories deleted afterwards.
+
+### The incident, reproduced offline
+
+With PC-1's mutation applied (immediate wrap restored) the committed replay of the real failing
+stream produces the production failure verbatim, and the new D-4 summary names its cause:
+
+```text
+requested=xhigh; current=xhigh; suggested=high; selected=Keep; Enter=1; settle deadline exhausted
+[polls=106 clear=0 last=remnant:"Use Fable 5.1 at high effort by default?" composer=live].
+Inspect the effort picker and relaunch with a supported explicit effort.
+```
+
+Restoring the deferred wrap turns the same replay green with `Enter=1`, one `\r` written, and
+`two settled clear observations`. That is the whole card in two runs.
+
+### V rows
+
+| Rows | Result |
+|---|---|
+| V-1..V-10 | `TerminalScreenTests` **56/56** — includes 11 `Cursor_moves_clear_a_pending_wrap` rows, 10 `Non_moving_sequences_keep_a_pending_wrap` rows, 3 bounded-tab rows under `[Timeout(5000)]`. No pre-existing assertion pinned the immediate wrap (V-10: nothing to correct). |
+| V-11..V-13, V-21 | `ClaudeEffortDismissalReplayTests` **30/30** — 12 dialog rows, 6 dismissal rows, 6 resolver rows, 5 hash rows, 1 derivation. Every pinned row index, the pinned cursor `(6,2)`, the pinned intermediate banner row at column 52 and `IsSettled(intermediate, final) == false` all reproduced exactly as TestDesign predicted from pyte. Chunk invariance holds for all five fixtures in both non-`whole` chunkings. |
+| V-14..V-17 | `ClaudeEffortPromptTests` **64/64**. |
+| V-19, V-20 | `ClaudeStartupReadinessTests` **17/17**; `ClaudeScreenTests` 9/9, `ComposerInputProbeTests` 15/15, `ClaudeStartupTrustPromptTests` 16/16. |
+| V-18, V-23 | `RunnerClaudeAdapterEffortPromptTests` **10/10**, `RunnerClaudeAdapterTrustPromptTests` **8/8**, `AgentSessionLaunchFailureTests` **48/48**, `ClaudeGoldenReplayTests` **4/4**. `Antiphon.Tests` `[Category=Unit]` lane **1949/1953, 1 skipped, 3 failed**. |
+| V-22 | `Gotcha #90` 1 hit; `deferred` 2 hits in the invariants doc and 4 in `TerminalScreen.cs`; `DECAWM` 1 hit; `polls=` 1 hit; `two positive clear frames` **0**; `two positive dismissal frames` **0**. |
+
+The three `[Category=Unit]` failures are **pre-existing at `ff72feae`** — each re-run
+method-scoped in a detached worktree at the base commit and red there too:
+`InstructionBundleTests.delegate_basics_carries_the_standing_rules_and_none_of_the_days_state`,
+`UnmarkedWaitingContractTests.unmarked_waiting_attention_kind_is_appended_after_report_unsettled`,
+`DelegationHarnessCensusTests.RuleB_dispatcher_harnesses_call_AddDelegationWorktreeGraph`. None
+touches this card's files.
+
+### Positive controls
+
+Seven batches as designed, plus one extra PC-1-only cycle (`X1`) because PC-10 shares B1 and strips
+the very summary PC-1's evidence is read from. Every control: mutate the committed source, build,
+run the named methods, confirm the **named** assertion red, `git checkout --`, rebuild, run green.
+
+| PC | Red at | Result |
+|---|---|---|
+| PC-1 | `s.CursorRow`; `rows[5]` (all 12 dialog rows); `rows[6]`/`HasRemnant` (all 6 dismissal rows); `result.Cleared` (all 6 resolver rows) | red / restored green |
+| PC-2 | `s.GetRow(0)` = `ABCDEFGHIJ`, wanted `XBCDEFGHIJ` | red / green |
+| PC-3 | `s.GetRow(landing)` on the **`G` row only**; the other 10 rows stayed green | red / green |
+| PC-4 | `pending` and `landing` tripped `[Timeout(5000)]` at 5.0 s; `middle` stayed green; the run finished and moved on — never a hung run | red / green |
+| PC-5 | `s.GetRow(2)` — the region did not scroll | red / green |
+| PC-6 | both rows: `fake.Snapshots - atEnter` (exhausts) and `result.Cleared` (outlasts-budget) | red / green |
+| PC-7 | `result.Cleared` and existing `Malformed_effort_remnants_do_not_count_as_clearance` | red / green |
+| PC-8 | `result.Detail` on the `last=remnant:"Use ` field while `Cleared` was still false | red / green |
+| PC-9 | `(await fake.ReadyAsync()).Outcome` not `EffortFailed` | red / green |
+| PC-10 | `summary.Success`; adapter `LaunchBlock.Reason` missing `polls=` (reason read `...; Enter=3; settle deadline exhausted. I...`) | red / green |
+| PC-11 | `result.Cleared` — a hint-less composer never clears | red / green |
+| PC-12a | `phased` row: `resolver.Length` (zero resolver lines) | red / green |
+| PC-12b | `static-hold` row: `resolver.Length` above 6 (one line per poll) | red / green |
+| PC-13 | the `effort-dialog-787bfee2.ansi` hash row **only** (1 of 5) while `Real_dialog_paints_directly_under_its_rule` stayed 12/12 — the hash guards bytes, not the render | red / green |
+
+Final combined regression on the restored tree: 211 tests across the eight `Antiphon.Agents.Pty.Tests`
+classes, 0 failed.
+
+### Deviations from the design, and what is still open
+
+- **D-1's tab rule was implemented as the decision text says** (clears the flag, does not move) with
+  the loop bounded at `Cols - 1`. Without that bound the loop never terminates for a tab in the last
+  column, because `WriteChar` no longer advances there; V-7 pins it and PC-4 proves the bound.
+- **`ESC M` (RI) does not clear the pending wrap.** D-1 enumerates only the CSI moves and
+  `CR/LF/BS/TAB`, so it was left alone; none of the five fixtures contains `ESC M`. A real terminal
+  would clear it on any cursor movement — worth a line on a future card, not a change made unpinned.
+- **`docs/agent-kinds.md` was edited too**, which S4's file list does not mention: V-22 requires its
+  `two positive dismissal frames` count to reach 0.
+- **Acceptance still open** (not gates): the headed real-CLI lanes `ClaudeInteractionTests` /
+  `ClaudeTuiModeTests` (these are `[Category("Headed")]` real-CLI tests, not FakeClaude as the S1
+  exit-evidence note says) and `ClaudeEffortPromptCanaryTests`; the real banner-absent dismissal
+  capture; and the live proof. **The live dismissal path's record is still 0 successes / 1 failure.**
+  The next Frontier dispatch whose `Claude startup:` line reads `two settled clear observations`
+  with `clear=2`, and whose launch block is absent, is its first success.
