@@ -159,10 +159,16 @@ public sealed class RunnerClaudeAdapter : IAgentProtocolAdapter, IAttachableProt
             }
         }
         var remaining = TimeSpan.FromMilliseconds(_settings.ClaudeReadyMinTotalWaitMs) - (DateTime.UtcNow - _terminal.StartedAt);
-        if (remaining > TimeSpan.Zero) await Task.Delay(remaining, ct);
+        if (remaining > TimeSpan.Zero)
+        {
+            try { await Task.Delay(remaining, ct); }
+            catch (OperationCanceledException) { return false; }
+        }
 
+        var probeToken = ComposerInputProbe.TokenFor(_terminal.SessionId);
+        var probeClock = System.Diagnostics.Stopwatch.StartNew();
         var result = await ClaudeStartupReadiness.RunAsync(
-            ComposerInputProbe.TokenFor(_terminal.SessionId),
+            probeToken,
             _terminal.SnapshotScreenAsync, _terminal.WriteAsync, _effortIntent,
             new ClaudeReadinessOptions(
                 ComposerProbeOptions.FromMilliseconds(_settings.ClaudeInputProbeTimeoutMs,
@@ -177,7 +183,14 @@ public sealed class RunnerClaudeAdapter : IAgentProtocolAdapter, IAttachableProt
         else if (result.Outcome == ClaudeReadinessOutcome.TrustFailed)
             _launchBlock = new(AgentLaunchBlockKind.TrustDialogNotCleared,
                 ClaudeBlockingPromptDetector.FormatTrustDialogNotClearedReason(_cwd, result.TrustLayout, result.Detail));
-        if (!result.Ready) _logger?.LogError("Claude startup failed: {Outcome}; {Detail}", result.Outcome, result.Detail);
+        if (result.Outcome == ClaudeReadinessOutcome.ProbeFailed)
+            _logger?.LogError(
+                "Session {SessionId} is NOT reading input: the probe token '{Token}' failed ({Detail}) after "
+                + "{Elapsed:F1}s and {Writes} write(s). The TUI is painted but deaf; reporting the launch "
+                + "as not ready rather than typing a boot prompt into it. Screen:\n{Screen}",
+                _terminal.SessionId, probeToken, result.Detail, probeClock.Elapsed.TotalSeconds, result.Writes,
+                await _terminal.SnapshotScreenAsync(ct));
+        else if (!result.Ready) _logger?.LogError("Claude startup failed: {Outcome}; {Detail}", result.Outcome, result.Detail);
         return result.Ready;
     }
 

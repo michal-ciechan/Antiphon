@@ -84,10 +84,15 @@ public static class ClaudeStartupReadiness
                 if (!enabled) return new(ClaudeReadinessOutcome.Ready, "probe disabled; startup gate cleared", writes);
                 active = ClaudeReadinessOutcome.ProbeFailed;
                 if (writes >= options.Probe.MaxWrites) return new(active, "cumulative token-write limit exhausted", writes);
-                var probe = await ComposerInputProbe.RunAsync(probeToken, snapshotScreen, write,
+                async Task ProbeWriteAsync(string input, CancellationToken inputToken)
+                {
+                    await write(input, inputToken);
+                    // Retain successful token writes even when the shared deadline cancels the probe.
+                    if (input == probeToken) writes++;
+                }
+                var probe = await ComposerInputProbe.RunAsync(probeToken, snapshotScreen, ProbeWriteAsync,
                     options.Probe with { Timeout = budget - clock.Elapsed, MaxWrites = options.Probe.MaxWrites - writes },
                     log, ClaudeBlockingPromptDetector.IsBlocked, token);
-                writes += probe.Writes;
                 if (probe.Outcome == ComposerProbeOutcome.InterruptedByModal)
                     continue; // Discard all pre-modal proof; the next probe must render and clear anew.
                 return new(probe.Responsive ? ClaudeReadinessOutcome.Ready : active, probe.Outcome.ToString(), writes);

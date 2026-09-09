@@ -122,8 +122,10 @@ public sealed class ClaudeAdapter : IAgentProtocolAdapter
         if (!await _readyDetector.WaitAsync(_runner, ct))
             return false;
 
+        var probeToken = ComposerInputProbe.TokenFor(_sessionId);
+        var probeClock = System.Diagnostics.Stopwatch.StartNew();
         var result = await ClaudeStartupReadiness.RunAsync(
-            ComposerInputProbe.TokenFor(_sessionId),
+            probeToken,
             _ => Task.FromResult(_runner.SnapshotScreen()), (input, token) => _runner.WriteAsync(input, token), _effortIntent,
             new ClaudeReadinessOptions(
                 ComposerProbeOptions.FromMilliseconds(_settings.ClaudeInputProbeTimeoutMs,
@@ -138,7 +140,12 @@ public sealed class ClaudeAdapter : IAgentProtocolAdapter
         else if (result.Outcome == ClaudeReadinessOutcome.TrustFailed)
             _launchBlock = new(AgentLaunchBlockKind.TrustDialogNotCleared,
                 ClaudeBlockingPromptDetector.FormatTrustDialogNotClearedReason(_cwd, result.TrustLayout, result.Detail));
-        if (!result.Ready) _logger?.LogError("Claude startup failed: {Outcome}; {Detail}", result.Outcome, result.Detail);
+        if (result.Outcome == ClaudeReadinessOutcome.ProbeFailed)
+            _logger?.LogError(
+                "Session {SessionId} is NOT reading input: the probe token '{Token}' failed ({Detail}) after "
+                + "{Elapsed:F1}s and {Writes} write(s). The TUI is painted but deaf; reporting the launch as not ready.",
+                _sessionId, probeToken, result.Detail, probeClock.Elapsed.TotalSeconds, result.Writes);
+        else if (!result.Ready) _logger?.LogError("Claude startup failed: {Outcome}; {Detail}", result.Outcome, result.Detail);
         return result.Ready;
     }
 
