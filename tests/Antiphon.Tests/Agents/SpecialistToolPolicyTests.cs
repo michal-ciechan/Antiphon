@@ -24,8 +24,7 @@ namespace Antiphon.Tests.Agents;
 [Explicit]
 [Category("Integration")]
 [Category("RealCliStubProxy")]
-[NotInParallel("Headed")]
-[NotInParallel("RealCliStubProxy")]
+[NotInParallel(["Headed", "RealCliStubProxy"])]
 [ParallelLimiter<ProcessSpawnLimit>]
 public class SpecialistToolPolicyTests
 {
@@ -85,7 +84,7 @@ public class SpecialistToolPolicyTests
             await using var runner = new DirectSessionRunnerClient(Path.Combine(root, "runner"), "modern", claudeTranscript: true);
             await using var h = await BridgeQueueHarness.CreateAsync(new()
             {
-                ConnectionString = schema.ConnectionString, Delegation = delegation,
+                ConnectionString = schema.ConnectionString, Delegation = delegation, AlwaysOn = protectedSeat,
                 ConfigureDeliveryVerification = v =>
                 {
                     v.TranscriptConfirmTimeoutSeconds = 30;
@@ -127,6 +126,7 @@ public class SpecialistToolPolicyTests
                 tool is not null && body.Contains(nonce, StringComparison.Ordinal) && !body.Contains(callId, StringComparison.Ordinal)
                     ? new ScriptedFunctionCall(tool, arguments, callId) : new ScriptedTextTurn(reply));
             await scope.ServiceProvider.GetRequiredService<AgentControlService>().StartAsync(agent.Id, new(Fresh: true, RemoteControl: false), CancellationToken.None);
+            await h.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(60), CancellationToken.None);
             await db.Entry(agent).ReloadAsync();
             var sessionId = Guid.Parse(agent.PersistentSessionId!);
             var session = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sessionId);
