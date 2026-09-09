@@ -180,6 +180,7 @@ export interface AgentSummaryDto {
   herdrWorkspaceLabel?: string | null
   /** CARD-0384: optional dedicated herdr tab label. Null = last-pane then allocator. */
   herdrTabLabel?: string | null
+  standingSpecialistOwnerId?: string | null
   /**
    * The live session was launched with instruction bundles the repo has since moved on from — an
    * edited bundle file, an attachment added or removed, a changed reply style (CARD-0058).
