@@ -36,8 +36,8 @@ public class AgentSessionServiceIntegrationTests
     public async Task Cancellation_during_claude_minimum_floor_kills_the_started_runner_session()
     {
         await using var db = CreateContext();
-        using var scratch = new TemporaryDirectory("c449-floor");
-        var graph = CreateGraph(scratch.Path);
+        var scratch = Directory.CreateTempSubdirectory("c449-floor-");
+        var graph = CreateGraph(scratch.FullName);
         db.Add(graph.Project);
         await db.SaveChangesAsync();
         var screen = new Antiphon.Agents.Pty.Tests.EffortTestScreen { Dialog = false };
@@ -50,11 +50,11 @@ public class AgentSessionServiceIntegrationTests
         await using var adapter = new RunnerClaudeAdapter(client, Options.Create(settings));
         await using var provider = BuildProvider();
         var (service, _) = BuildServiceWithFakes(db, new MockEventBus(), provider, adapter,
-            Path.Combine(scratch.Path, "worktree"), new AgentSessionSettings
-            { KillGraceMs = 100, SessionLogPath = Path.Combine(scratch.Path, "logs") });
+            Path.Combine(scratch.FullName, "worktree"), new AgentSessionSettings
+            { KillGraceMs = 100, SessionLogPath = Path.Combine(scratch.FullName, "logs") });
         using var cancel = new CancellationTokenSource();
         var launch = service.StartAsync(new StartAgentSessionRequest(graph.Card.Id, "claude", AgentKind.ClaudeCode, "do not send"),
-            RunnerClaudeAdapterEffortPromptTests.Spec() with { Cwd = scratch.Path }, cancel.Token);
+            RunnerClaudeAdapterEffortPromptTests.Spec() with { Cwd = scratch.FullName }, cancel.Token);
         try
         {
             await atFloor.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -78,6 +78,7 @@ public class AgentSessionServiceIntegrationTests
             try { await launch; } catch (Exception) { }
             await adapter.KillAsync(TimeSpan.FromSeconds(1), CancellationToken.None);
             await adapter.Exited.WaitAsync(TimeSpan.FromSeconds(2));
+            DeleteDirectoryBestEffort(scratch.FullName);
         }
     }
 
