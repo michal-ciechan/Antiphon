@@ -55,6 +55,13 @@ composition is kept current automatically: an idle seat with drifted bundles is 
 `--resume` at its next idle window (CARD-0334), so a bundle edit reaches it without a manual
 restart.
 
+For a channel-facing standing agent, `Phone` is an explicit reply-style option for its
+human Telegram/Slack summaries, including task completions, checks and scheduled prompts.
+The full worker report and stage handoff retain their own contracts; do not put Phone
+rules into delegation briefs. AlwaysOn or an Orchestrator name alone does not select it.
+See [CARD-0417](superpowers/plans/2026-09-07-card-0417-channel-reply-conciseness-plan.md)
+for the required real-reply canary before expansion.
+
 **Also delegated: the landing mechanics.** For a delegated Worktree task, the orchestrator orders
 the landing with `delegate.ps1 -Land <id>` (optionally `-Verify <filter>`); the server fetches,
 rebases, verifies when required, fast-forwards, pushes, and cleans up. The resulting

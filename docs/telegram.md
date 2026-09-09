@@ -27,6 +27,13 @@ and `ChannelReplyLost` incident pages) also arrive through the same outbound top
 *inbound* message; `lastReplyAt` is the last *outbound* reply — idle between notes is waiting,
 not dead.
 
+`ReplyStyle.Phone` opts an agent into minimal human Telegram/Slack replies; select it
+explicitly in agent settings or setup. Its [embedded bundle](../server/Bundles/style-phone.md)
+owns the wording. Channel preamble, NO_REPLY, attachment and renderer contracts remain
+unchanged, and internal worker reports retain their full evidence. Support availability
+does not mean live acceptance: [CARD-0417](superpowers/plans/2026-09-07-card-0417-channel-reply-conciseness-plan.md)
+requires reviewed before/after replies from a real bound agent before wider rollout.
+
 ## Outbound formatting (Markdown → Telegram HTML)
 
 Agents write standard Markdown. Since 2026-07-28 the gateway renders it to **Telegram HTML**

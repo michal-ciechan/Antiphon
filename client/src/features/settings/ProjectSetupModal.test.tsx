@@ -132,7 +132,7 @@ describe('ProjectSetupModal', () => {
     expect(screen.getByRole('textbox', { name: 'Project directory' })).toBeInTheDocument()
   })
 
-  it('defaults the first-agent chip to Standing orchestrator and submits preset plus remote control', async () => {
+  it.each(['Normal', 'Phone'] as const)('submits the first-agent preset with explicit %s style', async (style) => {
     let submitted: ProjectSetupRequest | null = null
     seed((request) => {
       submitted = request
@@ -194,6 +194,11 @@ describe('ProjectSetupModal', () => {
 
     expect(await screen.findByText('Standing orchestrator')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByRole('switch', { name: /Remote control/i })).toBeChecked())
+    expect(screen.getByRole('radio', { name: 'Normal' })).toBeChecked()
+    await userEvent.click(screen.getByRole('radio', { name: style }))
+    await userEvent.click(screen.getByRole('button', { name: 'Back' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByRole('radio', { name: style })).toBeChecked()
 
     await userEvent.click(screen.getByRole('button', { name: 'Next' }))
     await userEvent.click(screen.getByRole('button', { name: 'Next' }))
@@ -202,6 +207,7 @@ describe('ProjectSetupModal', () => {
     await waitFor(() => expect(submitted).not.toBeNull())
     expect(submitted!.agent).toMatchObject({
       preset: 'orchestrator',
+      replyStyle: style,
       remoteControlEnabled: true,
       alwaysOn: true,
       bundleKeys: ['orchestrator', 'board-api'],

@@ -75,7 +75,13 @@ the new version composes; rollback is `git revert` plus the same restart.
 ## Reply styles
 
 The `style-*` files (`style-normal`, `style-terse`, `style-caveman`, `style-brief`,
-`style-explanatory`) are chosen through `Agent.ReplyStyle`, never attached — `bundleKeys` refuses
+`style-phone`, `style-explanatory`) are chosen through `Agent.ReplyStyle`, never attached — `bundleKeys` refuses
 them with 422 because two voices at once has nothing to dedup against. `Normal` composes to
 nothing (the file still ships so every enum value has a block). The style block sits after
 attachments and before the agent's own `SystemPromptAppend`, which keeps the last word.
+
+`Phone` is explicit opt-in for human Telegram/Slack replies, including task/check/scheduled
+follow-ups. Its sole wording owner is [style-phone.md](style-phone.md). Worker reports,
+briefs, stage artifacts, specialists and terminal replies keep their own contracts.
+Normal and both presets remain unchanged. See the [CARD-0417 plan](../../docs/superpowers/plans/2026-09-07-card-0417-channel-reply-conciseness-plan.md)
+for the support-only deployment boundary and mandatory reviewed real-reply trial.

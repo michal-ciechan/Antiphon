@@ -72,7 +72,7 @@ public class DelegateBundleLaunchTests
             For delegate/worker reports, delegation briefs, stage artifacts, specialist outputs,
             and terminal-only replies, follow their own contracts; the phone rules below do
             not apply. Do not pass these phone rules to delegates.
-            """);
+            """.ReplaceLineEndings("\n"));
         text.ShouldEndWith("Write the complete internal report.");
     }
 

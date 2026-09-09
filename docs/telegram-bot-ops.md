@@ -7,6 +7,14 @@ workspace convention: [agent-workspaces.md](agent-workspaces.md).
 Slack uses the same gateway shape but its own app manifest and Socket Mode procedure; see
 [slack-bot-ops.md](slack-bot-ops.md).
 
+For human Telegram/Slack replies, choose `Phone` explicitly through Reply style; the
+preamble preset changes append text only. Preserve existing append bytes and other
+settings when changing a live style. Follow the preserving PATCH, idle refresh and
+actual loaded-stamp procedure in [CARD-0417](superpowers/plans/2026-09-07-card-0417-channel-reply-conciseness-plan.md).
+Notify-only refresh is not activation. Review one real canary before expanding to other
+intended enabled bindings. Roll back by restoring its recorded old style and verifying
+that style is loaded; reset all Phone rows before downgrading to a binary without Phone.
+
 ## Per-bot deployment model
 
 One `Antiphon.Messaging.Service` instance per bot token (bot name = persona). The `family`

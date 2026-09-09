@@ -41,21 +41,21 @@ public class AgentReplyStyleTests
             For delegate/worker reports, delegation briefs, stage artifacts, specialist outputs,
             and terminal-only replies, follow their own contracts; the phone rules below do
             not apply. Do not pass these phone rules to delegates.
-            """);
+            """.ReplaceLineEndings("\n"));
         text.ShouldContain("""
             - If the user asks for detail, provide the requested detail in short sections
               and bullets. Put a requested table or wide artifact in a file, with a short
               chat summary and the required attachment marker.
-            """);
+            """.ReplaceLineEndings("\n"));
         text.ShouldContain("""
               and next actions. Never shorten an exact name, path, command, flag, identifier,
               quote, or attachment marker to meet the word or line target. Put long exact
               material in an appropriate attachment when needed; do not break it arbitrarily.
-            """);
+            """.ReplaceLineEndings("\n"));
         text.ShouldContain("""
             - Follow the channel's delivery and attachment contract. When that contract calls
               for silence, reply exactly NO_REPLY, without bullets or extra text.
-            """);
+            """.ReplaceLineEndings("\n"));
         text.ShouldEndWith(AgentReplyStyles.CorrectnessSentence);
     }
 

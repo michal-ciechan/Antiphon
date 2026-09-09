@@ -148,6 +148,12 @@ These outrank every configured env layer and **may not be overridden** from a ta
 overlay — `ANTIPHON_*` is refused 422 by name. See
 [agent-credentials.md](agent-credentials.md).
 
+Select `ReplyStyle.Phone` explicitly for human Telegram/Slack replies. The
+[Phone bundle](../server/Bundles/style-phone.md) exempts internal reports and terminal
+work. Binding an agent or applying a channel preamble never selects it automatically.
+A saved style or Notify response is not loaded policy: verify the actual session stamp
+and successful supported launch/resume before collecting after replies.
+
 ## 3. Model levels
 
 Antiphon dispatches at a *tier* (`Frontier` / `High` / `Medium` / `Low`), not a model id.

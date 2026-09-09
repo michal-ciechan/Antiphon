@@ -1,5 +1,6 @@
 import { HttpResponse, http } from 'msw'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { AGENT_REPLY_STYLE_OPTIONS } from '../../api/agents'
 import type { AgentDetailDto, AgentSummaryDto, UpdateAgentRequest } from '../../api/agents'
 import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
@@ -89,7 +90,7 @@ describe('AgentSettingsModal reply style', () => {
     await waitFor(() => expect(screen.getByRole('radio', { name: 'Normal' })).toBeChecked())
   })
 
-  it('submits the chosen style with the update', async () => {
+  it.each(['Terse', 'Phone'] as const)('submits and reloads %s with the update', async (style) => {
     let submitted: UpdateAgentRequest | null = null
     server.use(
       ...handlers(),
@@ -99,15 +100,19 @@ describe('AgentSettingsModal reply style', () => {
       }),
     )
 
-    renderWithProviders(
+    const view = renderWithProviders(
       <AgentSettingsModal agent={agent} opened onClose={() => {}} onDeleted={() => {}} />,
     )
-    await screen.findByRole('radio', { name: 'Terse' })
-    await userEvent.click(screen.getByRole('radio', { name: 'Terse' }))
+    await screen.findByRole('radio', { name: style })
+    await userEvent.click(screen.getByRole('radio', { name: style }))
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(submitted).not.toBeNull())
-    expect(submitted!.replyStyle).toBe('Terse')
+    expect(submitted!.replyStyle).toBe(style)
+    view.unmount()
+    server.use(...handlers([{ ...agent, replyStyle: style }], { ...detail, replyStyle: style }))
+    renderWithProviders(<AgentSettingsModal agent={{ ...agent, replyStyle: style }} opened onClose={() => {}} onDeleted={() => {}} />)
+    await waitFor(() => expect(screen.getByRole('radio', { name: style })).toBeChecked())
   })
 
   it('lists the bundles the next launch will carry', async () => {
@@ -137,12 +142,12 @@ describe('AgentSettingsModal reply style', () => {
 })
 
 describe('reply style chip', () => {
-  it('renders the style on the agent card', async () => {
-    server.use(...handlers([{ ...agent, replyStyle: 'Explanatory' }]))
+  it.each(['Explanatory', 'Phone'] as const)('renders %s on the agent card', async (style) => {
+    server.use(...handlers([{ ...agent, replyStyle: style }]))
 
     renderWithProviders(<AgentsPage />)
 
-    expect(await screen.findByText('explanatory')).toBeInTheDocument()
+    expect(await screen.findByText(style.toLowerCase())).toBeInTheDocument()
   })
 
   it('renders nothing at all for Normal', async () => {
@@ -191,5 +196,34 @@ describe('AgentSettingsModal policy refresh mode', () => {
 
     await waitFor(() => expect(submitted).not.toBeNull())
     expect(submitted!.policyRefreshMode).toBe('Notify')
+  })
+})
+
+
+describe('Phone audience selection', () => {
+  it('describes the channel audience explicitly', () => {
+    expect(AGENT_REPLY_STYLE_OPTIONS.find(s => s.value === 'Phone')?.description).toBe(
+      'Minimal Telegram/Slack replies. Short bullets, about 5–7 words; no tables. Delegate reports keep their own contracts.',
+    )
+  })
+
+  it.each(['Phone', 'Brief'] as const)('channel preamble buttons preserve %s', async (style) => {
+    let submitted: UpdateAgentRequest | null = null
+    server.use(...handlers(),
+      http.get('/api/agents/preamble-preset', ({ request }) => HttpResponse.json({ template: `Channel ${new URL(request.url).searchParams.get('provider')}` })),
+      http.patch('/api/agents/:id', async ({ request }) => {
+        submitted = await request.json() as UpdateAgentRequest
+        return HttpResponse.json({ ...detail, replyStyle: style })
+      }),
+    )
+    renderWithProviders(<AgentSettingsModal agent={agent} opened onClose={() => {}} onDeleted={() => {}} />)
+    await userEvent.click(await screen.findByRole('radio', { name: style }))
+    for (const channel of ['Telegram', 'Slack']) {
+      await userEvent.click(screen.getByRole('button', { name: `Use ${channel} preset` }))
+      await waitFor(() => expect(screen.getByRole('textbox', { name: 'System prompt (appended)' })).toHaveValue(`Channel ${channel.toLowerCase()}`))
+      expect(screen.getByRole('radio', { name: style })).toBeChecked()
+    }
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(submitted?.replyStyle).toBe(style))
   })
 })

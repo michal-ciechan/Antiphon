@@ -109,6 +109,7 @@ describe('AgentCreateModal presets', () => {
     await waitFor(() => expect(submitted).not.toBeNull())
     expect(submitted).toMatchObject({
       preset: 'orchestrator',
+      replyStyle: 'Normal',
       alwaysOn: true,
       bundleKeys: ['orchestrator', 'board-api'],
       remoteControlEnabled: true,
@@ -130,9 +131,22 @@ describe('AgentCreateModal presets', () => {
     await waitFor(() => expect(submitted).not.toBeNull())
     expect(submitted).toMatchObject({
       preset: 'worker',
+      replyStyle: 'Normal',
       alwaysOn: false,
       bundleKeys: [],
       remoteControlEnabled: false,
     })
   })
+})
+
+
+it('creates an explicitly Phone agent', async () => {
+  let submitted: CreateAgentRequest | null = null
+  seedCreate(request => { submitted = request })
+  renderWithProviders(<AgentCreateModal opened onClose={() => {}} />)
+  await userEvent.click(await screen.findByRole('radio', { name: 'Phone' }))
+  await fillRequiredFields()
+  expect(screen.getByRole('radio', { name: 'Phone' })).toBeChecked()
+  await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+  await waitFor(() => expect(submitted?.replyStyle).toBe('Phone'))
 })
