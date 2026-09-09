@@ -64,6 +64,9 @@ public sealed class StandingSpecialistProvisioner
     public async Task<Agent> EnsureAsync(SpecialistSpec spec, CancellationToken ct)
     {
         var existing = await _db.Agents.FirstOrDefaultAsync(a => a.Slug == spec.Slug, ct);
+        if (existing is null && spec.Role == AgentTaskRole.Check)
+            existing = await _db.Agents.FirstOrDefaultAsync(a => a.StandingSpecialistRole == AgentTaskRole.Check
+                && a.StandingSpecialistOwnerId == a.Id, ct);
         if (existing is not null)
         {
             await ReconcileAsync(existing, spec, ct);
@@ -89,6 +92,11 @@ public sealed class StandingSpecialistProvisioner
             CreatedAt = now,
             UpdatedAt = now,
         };
+        if (spec.Role == AgentTaskRole.Check)
+        {
+            agent.StandingSpecialistOwnerId = agent.Id;
+            agent.StandingSpecialistRole = spec.Role;
+        }
         _db.Agents.Add(agent);
         await _db.SaveChangesAsync(ct);
 
@@ -103,7 +111,7 @@ public sealed class StandingSpecialistProvisioner
             try
             {
                 await _control.StartAsync(
-                    agent.Id, new StartAgentRequest(IgnoreSubscriptionQuota: true), ct);
+                    agent.Id, new StartAgentRequest(IgnoreSubscriptionQuota: true), ct, automatic: true);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -118,6 +126,12 @@ public sealed class StandingSpecialistProvisioner
 
     private async Task ReconcileAsync(Agent agent, SpecialistSpec spec, CancellationToken ct)
     {
+        if (spec.Role == AgentTaskRole.Check && agent.StandingSpecialistOwnerId is null)
+        {
+            agent.StandingSpecialistOwnerId = agent.Id;
+            agent.StandingSpecialistRole = spec.Role;
+            await _db.SaveChangesAsync(ct);
+        }
         PrepareWorkspace(spec with { WorkingDirectory = agent.WorkingDirectory });
         _workspace?.Provision(agent);
 

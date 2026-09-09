@@ -56,6 +56,13 @@ internal static class AgentLaunchResolution
         options = await AttachProjectContextAsync(
             options, agent.BoardId, apiKeyEnvResolver, cancellationToken);
 
+        if (StandingSpecialistSeatPolicy.IsAlternate(agent))
+        {
+            if (agent.TuiProfileId is not null || agent.ModelId is not null || agent.SessionBackend != SessionBackend.PtyHost)
+                throw new ConflictException("Specialist alternates use declared registry definitions in PtyHost.", "specialist_profile_unsupported");
+            return await ResolveLegacyAsync(agentRegistry, options, agent, apiKeyEnvResolver, cancellationToken);
+        }
+
         if (launchResolver is null)
         {
             if (agent.TuiProfileId is not null)
@@ -145,7 +152,9 @@ internal static class AgentLaunchResolution
         ApiKeyEnvResolver? apiKeyEnvResolver,
         CancellationToken cancellationToken)
     {
-        var spec = agentRegistry.Resolve(agentRegistry.Settings.DefaultDefinition, options);
+        var definition = agent is not null && StandingSpecialistSeatPolicy.IsAlternate(agent)
+            ? agentRegistry.DefinitionNameForKind(agent.Kind) : agentRegistry.Settings.DefaultDefinition;
+        var spec = agentRegistry.Resolve(definition, options);
         if (apiKeyEnvResolver is not null)
         {
             var projectId = options.ApiKeyProjectId

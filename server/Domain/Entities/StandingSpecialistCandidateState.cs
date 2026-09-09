@@ -22,6 +22,8 @@ public class StandingSpecialistCandidateState
     public DateTime? SessionStartedAt { get; set; }
     public Guid? ProfileRevisionId { get; set; }
     public string? Fingerprint { get; set; }
+    public string? CapabilityFingerprint { get; set; }
+    public int? MaxInputUtf8Bytes { get; set; }
     public string? QualificationEvidenceJson { get; set; }
     public DateTime? QualifiedAt { get; set; }
     public int TransientFailures { get; set; }

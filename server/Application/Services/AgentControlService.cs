@@ -136,9 +136,15 @@ public sealed class AgentControlService
     /// is supplied. <see cref="Agent.Details"/> is standing-job metadata (CLAUDE.md) and is never
     /// typed as that prompt (CARD-0283).
     /// </summary>
-    public async Task<AgentDetailDto> StartAsync(Guid agentId, StartAgentRequest request, CancellationToken ct)
+    public async Task<AgentDetailDto> StartAsync(Guid agentId, StartAgentRequest request, CancellationToken ct, bool automatic = false)
     {
         var agent = await LockAgentAsync(agentId, ct);
+
+        if (await StandingSpecialistSeatPolicy.StartRefusalAsync(_db, agent, _delegationSettings, automatic || request.CapacityRecovery, ct) is { } specialistRefusal)
+            throw new ConflictException(specialistRefusal, "specialist_start_refused");
+        if (StandingSpecialistSeatPolicy.IsCheck(agent, _delegationSettings)
+            && (request.RemoteControl == true || !string.IsNullOrWhiteSpace(request.Prompt)))
+            throw new ConflictException("The Check seat accepts correlated specialist tasks only.", "specialist_start_prompt_refused");
 
         var herdrState = await _herdrSupervision.ObserveAsync(agentId, request.ResetHerdrFailureHold, false, ct);
         await _db.Entry(agent).ReloadAsync(ct);
@@ -324,8 +330,7 @@ public sealed class AgentControlService
             _apiKeyEnvResolver);
         var spec = resolved.Spec;
         var definitionName = spec.DefinitionName;
-        var isStandingSpecialist = string.Equals(
-            agent.Slug, CheckInterpreterProvisioner.Slug(_delegationSettings), StringComparison.OrdinalIgnoreCase);
+        var isStandingSpecialist = StandingSpecialistSeatPolicy.IsCheck(agent, _delegationSettings);
         if (isStandingSpecialist)
             spec = CheckSpecialistLaunchPolicy.Apply(spec,
                 CheckInterpreterProvisioner.Spec(_delegationSettings) with { WorkingDirectory = cwd }, agent.SessionBackend);

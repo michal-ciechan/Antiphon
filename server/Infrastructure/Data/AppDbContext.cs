@@ -828,6 +828,7 @@ public class AppDbContext : DbContext
             // PtyHost from the INSERT. Migration column default backfills existing rows; model never
             // relies on it (same shape as ReplyStyle / ModelLevel).
             entity.Property(a => a.SessionBackend).IsRequired();
+            entity.HasIndex(a => a.StandingSpecialistOwnerId);
             entity.Property(a => a.HerdrWorkspaceLabel).HasMaxLength(Agent.HerdrLabelMaxLength);
             entity.Property(a => a.HerdrTabLabel).HasMaxLength(Agent.HerdrLabelMaxLength);
             // CARD-0334. Nullable: null means Auto. No HasDefaultValue — Auto is 0, and a
@@ -1715,6 +1716,7 @@ public class AppDbContext : DbContext
             entity.Property(c => c.ModelAlias).HasMaxLength(256);
             entity.Property(c => c.Reason).HasMaxLength(400);
             entity.Property(c => c.Fingerprint).HasMaxLength(128);
+            entity.Property(c => c.CapabilityFingerprint).HasMaxLength(128);
             entity.Property(c => c.QualificationEvidenceJson).HasMaxLength(16000);
             // No cascading FK: removing an agent must retain the candidate's audit history.
         });

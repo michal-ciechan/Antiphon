@@ -225,6 +225,8 @@ public sealed class PolicyRefreshService
 
         if (lane == Lane.Notify)
         {
+            if (StandingSpecialistSeatPolicy.IsCheck(agent))
+                return Refuse(throwOnBlock, "The Check interpreter needs idle requalification; no workspace-reading notification is sent.");
             return await NotifyAsync(
                 scope, db, agent, session, composed.StampLine, files.StampLine, ct);
         }
@@ -393,7 +395,7 @@ public sealed class PolicyRefreshService
                     Fresh: false,
                     IgnoreSubscriptionQuota: true,
                     PolicyRefreshDelta: delta),
-                ct);
+                ct, automatic: true);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

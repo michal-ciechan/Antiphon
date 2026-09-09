@@ -31,6 +31,10 @@ public class Agent
     /// <summary>Supervised: auto-started at boot and auto-restarted on crash (never-give-up backoff ladder).</summary>
     public bool AlwaysOn { get; set; }
 
+    /// <summary>Typed standing-specialist ownership. The primary owns itself; alternates retain their logical owner even after removal.</summary>
+    public Guid? StandingSpecialistOwnerId { get; set; }
+    public AgentTaskRole? StandingSpecialistRole { get; set; }
+
     /// <summary>
     /// Remote control is part of this agent's normal setup: every start path (manual, channel
     /// bridge, supervised) arms /remote-control when true and the request doesn't override.

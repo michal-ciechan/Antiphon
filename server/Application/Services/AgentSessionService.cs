@@ -470,7 +470,9 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // queue the auto-continue for the interrupted turn. WhenIdle deliberately serialises it
             // AFTER the launch note's turn — enqueued any earlier it would race the remote-control
             // commands and the note into one garbled composer.
-            if (interruptedTurn && resumeMode == AgentSessionResumeMode.Resume)
+            var checkSeat = await _db.Agents.AsNoTracking().AnyAsync(a => a.Id == agentId
+                && (a.StandingSpecialistRole == AgentTaskRole.Check || a.Slug == CheckInterpreterProvisioner.Slug(_delegationSettings)), ct);
+            if (interruptedTurn && resumeMode == AgentSessionResumeMode.Resume && !checkSeat)
                 typedSomething |= await EnqueueResumeContinueAsync(session.Id, ct);
 
             // CARD-0283: optional cardless work body, after notes and the resume-continue so a
@@ -2394,14 +2396,13 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
             var agent = await _db.Agents.AsNoTracking()
                 .Where(a => a.Id == agentId)
-                .Select(a => new { a.Id, a.AlwaysOn, a.Slug })
                 .FirstOrDefaultAsync(ct);
             if (agent is null)
                 return;
 
             // Check has a no-tool standing contract; a generic liveness probe is neither
             // behavioral qualification nor authorized specialist work.
-            if (string.Equals(agent.Slug, CheckInterpreterProvisioner.Slug(_delegationSettings), StringComparison.OrdinalIgnoreCase))
+            if (StandingSpecialistSeatPolicy.IsCheck(agent, _delegationSettings))
                 return;
 
             var unattended = agent.AlwaysOn

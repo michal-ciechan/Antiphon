@@ -575,6 +575,23 @@ public sealed class AgentService
         // is applied so a Kind change in the same PATCH is checked against Herdr.
         var finalBackend = request.SessionBackend ?? agent.SessionBackend;
         var finalKind = await ResolveFinalKindAsync(agent, request, ct);
+        var specialistIdentityChanged = StandingSpecialistSeatPolicy.IsCheck(agent)
+            && (request.Name.Trim() != agent.Name || request.WorkingDirectory.Trim() != agent.WorkingDirectory
+                || finalKind != agent.Kind || finalBackend != agent.SessionBackend
+                || (request.ModelLevel is { } level && level != agent.ModelLevel)
+                || (request.TuiProfileId is { } profile && profile != agent.TuiProfileId)
+                || (request.ModelId is { } model && model != agent.ModelId)
+                || request.LaunchEnv is not null || request.BundleKeys is not null
+                || (request.SystemPromptAppend is { } prompt && prompt != agent.SystemPromptAppend)
+                || (request.ReplyStyle is { } style && style != agent.ReplyStyle));
+        if (specialistIdentityChanged && await _db.AgentTasks.AsNoTracking().AnyAsync(t => t.AgentId == id
+            && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Blocked), ct))
+            throw new ConflictException("The specialist still owns active work; execution identity cannot be edited.", "specialist_identity_busy");
+        if (StandingSpecialistSeatPolicy.IsAlternate(agent)
+            && (finalKind != agent.Kind || finalBackend != SessionBackend.PtyHost
+                || (request.ModelLevel is { } alternateLevel && alternateLevel != agent.ModelLevel)
+                || request.TuiProfileId is not null || request.ModelId is not null))
+            throw new ConflictException("Edit the declared specialist routing to change this alternate's pair.", "specialist_identity_managed");
         ValidateSessionBackendPairing(finalBackend, finalKind);
         RemoteControlPolicy.Require(
             finalKind,
@@ -647,6 +664,10 @@ public sealed class AgentService
             agent.HerdrTabLabel = NormalizeHerdrLabel(request.HerdrTabLabel, nameof(request.HerdrTabLabel));
         agent.UpdatedAt = UtcNow();
 
+        if (specialistIdentityChanged)
+            await _db.StandingSpecialistCandidateStates.Where(c => c.PhysicalAgentId == agent.Id)
+                .ExecuteUpdateAsync(u => u.SetProperty(c => c.QualifiedAt, (DateTime?)null)
+                    .SetProperty(c => c.Status, StandingSpecialistCandidateStatus.Unqualified), ct);
         await SaveChangesOrConflictAsync($"Agent '{agent.Name}' was modified by another operation.", ct);
         await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
 
@@ -670,7 +691,7 @@ public sealed class AgentService
         // backfill for everyone behind it. This runs during startup; failing the whole sweep on one
         // bad row is the worst available outcome.
         var orphanIds = await _db.Agents
-            .Where(a => a.BoardId == null && !a.IsPoolDelegate)
+            .Where(a => a.BoardId == null && !a.IsPoolDelegate && a.StandingSpecialistRole == null)
             .Select(a => a.Id)
             .ToListAsync(ct);
 
