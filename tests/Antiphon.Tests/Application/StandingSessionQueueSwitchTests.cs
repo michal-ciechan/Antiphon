@@ -17,7 +17,7 @@ public class StandingSessionQueueSwitchTests
     public async Task Any_prior_delivery_evidence_refuses_switch_and_fresh()
     {
         Action<SessionQueuedMessage>[] evidence = [m => m.DeliveryAttempts = 1,
-            m => m.LastDeliveryStartedAt = DateTime.UtcNow, m => m.LastDeliveryBaselineSequence = 0,
+            m => m.LastDeliveryBaselineSequence = 0, m => m.LastDeliveryStartedAt = DateTime.UtcNow,
             m => m.DeliveryVerdict = DeliveryVerdict.NoSubmitOutput, m => m.DeliveryVerdictAt = DateTime.UtcNow,
             m => m.SentAt = DateTime.UtcNow, m => m.ChannelReplySettledAt = DateTime.UtcNow];
         foreach (var fresh in new[] { false, true })

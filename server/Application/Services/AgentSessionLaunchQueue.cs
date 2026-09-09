@@ -84,6 +84,8 @@ public sealed class AgentSessionLaunchQueue : ILaunchOwnership
                     if (interactive)
                     {
                         _logger.LogWarning(task.Exception, "Queued interactive session launch failed for session {SessionId}", sessionId);
+                        if (new RestartFailurePolicy().Classify(task.Exception) == RestartFailureKind.ContinuityUnavailable)
+                            return; // The durable continuity decision already owns operator attention.
                         _ = RaiseLaunchAlertAsync(
                             $"Interactive launch failed for agent session {sessionId}",
                             task.Exception.GetBaseException().Message,

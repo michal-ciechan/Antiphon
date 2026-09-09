@@ -414,7 +414,12 @@ public sealed class AgentControlService
             throw new ServiceUnavailableException("Runner liveness cannot be verified.", "standing_resume_runner_unavailable");
         if (_sessionRunner is not null && involved.Length > 0)
         {
-            var processes = await _sessionRunner.ListAsync(ct);
+            IReadOnlyList<SessionRunnerSessionDto> processes;
+            try { processes = await _sessionRunner.ListAsync(ct); }
+            catch (Exception ex) when (!ct.IsCancellationRequested && new RestartFailurePolicy().Classify(ex) == RestartFailureKind.Infrastructure)
+            {
+                throw new ServiceUnavailableException("Runner liveness is unavailable; refresh and retry.", "standing_resume_runner_unavailable", ex);
+            }
             if (processes.Any(p => involved.Contains(p.SessionId) && p.Status != "Exited" && p.ExitCode is null))
                 throw new ConflictException("An involved conversation still has a live runner process.", "standing_resume_target_active");
         }
@@ -700,7 +705,16 @@ public sealed class AgentControlService
     private async Task<AgentSession?> FindResumableSessionAsync(
         Agent agent, AgentKind kind, string cwd, Guid? selected, CancellationToken ct)
     {
-        if (selected is null && string.IsNullOrWhiteSpace(agent.PersistentSessionId)) return null;
+        if (selected is null && string.IsNullOrWhiteSpace(agent.PersistentSessionId))
+        {
+            if (!agent.IsPoolDelegate && await _db.AgentSessions.AnyAsync(s => s.StandingAgentId == agent.Id, ct))
+            {
+                await new StandingContinuityState(_db, _timeProvider).HoldAsync(agent.Id, null,
+                    StandingContinuityReason.TargetMissing, ct);
+                throw new ConflictException("The current pointer is missing but owned history remains. Select history explicitly.", StandingContinuityState.HeldCode);
+            }
+            return null;
+        }
         var previousId = selected ?? (Guid.TryParse(agent.PersistentSessionId, out var parsed) ? parsed : Guid.Empty);
         var previous = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == previousId, ct);
         if (selected is null && kind is not (AgentKind.ClaudeCode or AgentKind.Grok)

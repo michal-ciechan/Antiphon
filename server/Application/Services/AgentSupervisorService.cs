@@ -216,7 +216,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             if (dead is not null)
                 new RestartFailurePolicy().Observe(state, dead);
 
-            var attempt = state.RestartBackoffFailures + 1;
+            var attempt = Math.Min(state.RestartBackoffFailures, int.MaxValue - 1) + 1;
             var delay = Backoff(state.RestartBackoffFailures);
             state.NextRestartAt = now + delay;
             state.UpdatedAt = now;
@@ -248,7 +248,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             return await CompleteAsync(false);
 
         // Due: attempt the restart.
-        var attemptNumber = state.RestartBackoffFailures + 1;
+        var attemptNumber = Math.Min(state.RestartBackoffFailures, int.MaxValue - 1) + 1;
         var beforeAttempt = await FindPersistentSessionAsync(agent, statuses: null, ct);
         var beforeId = beforeAttempt?.Id;
         var beforeStartedAt = beforeAttempt?.StartedAt;
@@ -478,7 +478,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             ct: ct);
         _logger.LogError(
             "Agent {AgentName}: supervision backoff escalated to {Cadence} after {Failures} consecutive failures",
-            agent.Name, cadence, state.ConsecutiveFailures);
+            agent.Name, cadence, state.RestartBackoffFailures);
     }
 
     public async Task<AgentSupervisionState> GetOrCreateStateAsync(Guid agentId, CancellationToken ct)

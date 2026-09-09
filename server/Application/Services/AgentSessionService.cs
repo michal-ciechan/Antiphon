@@ -325,8 +325,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     /// (optionally the remote-control commands are, if requested). Agent.Details is standing-job
     /// metadata and is never used as this body (CARD-0283).
     /// With <paramref name="resume"/> the agent's previous Claude conversation (same session id) is
-    /// resumed; if Claude reports the conversation no longer exists, a fresh conversation is started
-    /// under the same id so the terminal still opens.
+    /// resumed strictly; unavailable continuity is held for an explicit operator decision.
     /// </summary>
     public async Task LaunchInteractiveAsync(
         Guid sessionId,
@@ -423,6 +422,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             adapter = _adapterFactory.Create(session.AgentKind);
             var spec = await BuildRuntimeLaunchSpecAsync(launchSpec, session, session.Cwd, resumeMode, ct);
             EnsureHerdrLaunchAllowed(session, spec);
+            await RequireCurrentCheckLaunchAsync(session, agentId, ct);
             await adapter.StartAsync(spec, ct);
 
             await CaptureGrokRulesReceiptAsync(session, ct);

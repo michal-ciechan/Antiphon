@@ -180,6 +180,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         var useHerdr = string.Equals(backend, SessionBackends.Herdr, StringComparison.OrdinalIgnoreCase);
         EnsureGrokRulesArgvSafe(request, useHerdr);
+        if (!useHerdr && string.Equals(request.TranscriptFormat, TranscriptFormats.Grok, StringComparison.OrdinalIgnoreCase))
+            HerdrGrokResumeGuard.Require(request.SessionId, request, HerdrAgentKinds.Grok, _logger);
         if (useHerdr && request.Herdr is null)
             throw new ArgumentException("Herdr launch requires HerdrLaunchOptions.", nameof(request));
         if (useHerdr && _herdrClient is null)
