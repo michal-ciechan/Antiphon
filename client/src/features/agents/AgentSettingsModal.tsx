@@ -41,6 +41,7 @@ import { envToText, parseEnvironmentText } from '../../shared/environmentText'
 import { AgentTuiSelection } from './AgentTuiSelection'
 import { useRemoteControlSupport } from './useRemoteControlSupport'
 import { ReplyStyleControl } from './ReplyStyleControl'
+import { SpecialistRoutingPanel } from './SpecialistRoutingPanel'
 
 const ASSIGNMENT_POLICIES: Array<{ value: AgentAssignmentPolicy; label: string }> = [
   { value: 'AutoPick', label: 'Auto pick' },
@@ -472,6 +473,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
           </Button>
         </Group>
 
+        {agent && agent.standingSpecialistOwnerId === agent.id && <SpecialistRoutingPanel agentId={agent.id} />}
         <Divider label="Danger zone" labelPosition="center" />
 
         {confirmingDelete ? (
