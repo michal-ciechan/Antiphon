@@ -181,8 +181,18 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             return await CompleteAsync(false);
         }
 
-        if (await TryHandleCapacityWaitAsync(agent, state, ct) is { } capacityHandled)
-            return await CompleteAsync(capacityHandled);
+        // A provider redemption takes the global/provider locks. Release the consumer lock
+        // before entering that lane, and before any launch I/O. The redemption and Start each
+        // recheck ownership; this observation itself grants no authority.
+        if (_capacityRecovery is { IsEnabled: true } && await _db.CapacityRecoveryWaits.AnyAsync(
+            w => (w.AgentId == agent.Id || w.ConsumerKey == $"agent:{agent.Id:N}")
+                && w.State != CapacityRecoveryWaitState.Progressed && w.State != CapacityRecoveryWaitState.Canceled
+                && w.State != CapacityRecoveryWaitState.Superseded && w.State != CapacityRecoveryWaitState.Exhausted, ct))
+        {
+            await CompleteAsync(false);
+            await transaction.DisposeAsync();
+            return await TryHandleCapacityWaitAsync(agent, state, ct) ?? false;
+        }
 
         // Not running. Schedule a restart if none is pending.
         if (state.NextRestartAt is null)
@@ -402,8 +412,8 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         await _db.SaveChangesAsync(ct);
         await _control.StartAsync(
             agent.Id,
-            new StartAgentRequest(Fresh: false, IgnoreSubscriptionQuota: true, CapacityRecovery: true),
-            ct);
+            new StartAgentRequest(Fresh: false, IgnoreSubscriptionQuota: !StandingSpecialistSeatPolicy.IsAlternate(agent), CapacityRecovery: true),
+            ct, automatic: true);
         return true;
     }
 

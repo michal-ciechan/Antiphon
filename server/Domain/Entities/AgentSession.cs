@@ -8,6 +8,7 @@ public class AgentSession
     public string? GrokRulesExpectedSha256 { get; set; }
     public int? GrokRulesExpectedByteCount { get; set; }
     public string? GrokRulesReceiptJson { get; set; }
+    public string? SpecialistLaunchEvidenceJson { get; set; }
     public GrokRulesState GrokRulesState { get; set; }
     public string? GrokRulesFailure { get; set; }
     public DateTime? GrokRulesReadyAt { get; set; }
