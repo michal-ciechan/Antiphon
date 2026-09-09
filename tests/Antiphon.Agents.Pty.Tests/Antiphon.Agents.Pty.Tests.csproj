@@ -39,15 +39,25 @@
   </ItemGroup>
 
   <Target Name="CopyFakeClaude" AfterTargets="Build">
+    <!-- Query each producer's output: artifacts builds have project-specific absolute paths,
+         while normal and alternate OutputPath builds use paths relative to each project. -->
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeClaude\Antiphon.FakeClaude.csproj"
+             Targets="GetTargetPath"
+             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
+      <Output TaskParameter="TargetOutputs" ItemName="_FakeClaudeTargetPath" />
+    </MSBuild>
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeGrok\Antiphon.FakeGrok.csproj"
+             Targets="GetTargetPath"
+             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
+      <Output TaskParameter="TargetOutputs" ItemName="_FakeGrokTargetPath" />
+    </MSBuild>
+    <PropertyGroup>
+      <_FakeClaudeOutputDir>@(_FakeClaudeTargetPath->'%(RootDir)%(Directory)')</_FakeClaudeOutputDir>
+      <_FakeGrokOutputDir>@(_FakeGrokTargetPath->'%(RootDir)%(Directory)')</_FakeGrokOutputDir>
+    </PropertyGroup>
     <ItemGroup>
-      <!-- $(OutputPath), not a hardcoded bin\$(Configuration)\net9.0: builds here routinely pass
-           the OutputPath=bin-fake/ property because the always-on daemons lock bin\, and that global
-           property reaches the referenced FakeClaude project too — so its output lands at the SAME
-           relative path under its own directory. Globbing the hardcoded path staged a STALE
-           fakeclaude.exe, or (in a fresh worktree) none at all, which silently SKIPPED every test
-           that needs it. -->
-      <FakeClaudeOutput Include="..\..\src\Antiphon.FakeClaude\$(OutputPath)**\*" />
-      <FakeGrokOutput Include="..\..\src\Antiphon.FakeGrok\$(OutputPath)**\*" />
+      <FakeClaudeOutput Include="$(_FakeClaudeOutputDir)**\*" />
+      <FakeGrokOutput Include="$(_FakeGrokOutputDir)**\*" />
     </ItemGroup>
     <Copy SourceFiles="@(FakeClaudeOutput)"
           DestinationFiles="@(FakeClaudeOutput->'$(OutDir)fakeclaude\%(RecursiveDir)%(Filename)%(Extension)')"
