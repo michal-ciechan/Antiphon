@@ -46,8 +46,19 @@ public static class ClaudeStartupReadiness
                 if (prompt?.Kind == ClaudeBlockingPromptKind.EffortChoice)
                 {
                     active = ClaudeReadinessOutcome.EffortFailed;
+                    var menu = ClaudeEffortPrompt.Parse(screen)!;
+                    var selected = menu.Select(intent);
+                    var enters = 0;
+                    string EffortDetail() => $"requested={(intent.Invalid ? "invalid" : intent.Value ?? "absent (Keep option)")}; current={menu.Current}; suggested={menu.Suggested}; selected={selected}; Enter={enters}; inspect the effort picker and relaunch with a supported explicit effort";
+                    detail = EffortDetail();
+                    async Task EffortWrite(string key, CancellationToken keyToken)
+                    {
+                        await write(key, keyToken);
+                        if (key == "\r") enters++;
+                        detail = EffortDetail();
+                    }
                     var remaining = budget - clock.Elapsed;
-                    var result = await ClaudeEffortPrompt.ResolveAsync(snapshotScreen, write, intent,
+                    var result = await ClaudeEffortPrompt.ResolveAsync(snapshotScreen, EffortWrite, intent,
                         remaining < options.EffortBudget ? remaining : options.EffortBudget, token);
                     detail = result.Detail;
                     log?.Invoke(detail);

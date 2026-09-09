@@ -10,7 +10,9 @@ public class ClaudeEffortPromptTests
     public void Captured_screens_are_effort_choices(int capture)
     {
         var screen = EffortTestScreen.Capture(capture);
-        ClaudeBlockingPromptDetector.Detect(screen)!.Kind.ShouldBe(ClaudeBlockingPromptKind.EffortChoice);
+        var detected = ClaudeBlockingPromptDetector.Detect(screen);
+        detected.ShouldNotBeNull();
+        detected.Kind.ShouldBe(ClaudeBlockingPromptKind.EffortChoice);
         ClaudeBlockingPromptDetector.IsBlocked(screen).ShouldBeTrue();
         ClaudeEffortPrompt.Parse(screen).ShouldBe(new("Fable 5.1", "xhigh", "high", ClaudeEffortOption.Keep));
     }
@@ -98,11 +100,10 @@ public class ClaudeEffortPromptTests
         var fake = new EffortTestScreen { Highlight = 2 };
         var armed = false;
         fake.AfterWrite = (f, key) => { if (key == "j") armed = true; };
-        var seenSelected = false;
-        fake.OnSnapshot = f =>
+        fake.AfterSnapshot = f =>
         {
             if (!armed) return;
-            if (!seenSelected) { seenSelected = true; return; }
+            armed = false;
             if (row == "permission") f.Override = "Do you want to proceed?\n1. Yes\n2. No";
             else f.Model = "Nimble 9";
         };
@@ -136,6 +137,26 @@ public class ClaudeEffortPromptTests
         (await fake.ResolveAsync()).Cleared.ShouldBeTrue(fake.Evidence);
         fake.Writes.Count(w => w.Key == "\r").ShouldBe(2);
         fake.AppliedEffort.ShouldBe("xhigh");
+    }
+
+    [Test, Arguments("highlight"), Arguments("identity")]
+    public async Task Retry_revalidates_the_target_and_withholds_later_Enter(string row)
+    {
+        var fake = new EffortTestScreen { SwallowEnters = 100 };
+        fake.AfterWrite = (f, key) => { if (key != "\r") return;
+            if (row == "highlight") f.Highlight = 2; else f.Model = "Nimble 9"; };
+        (await fake.ResolveAsync()).Cleared.ShouldBeFalse(fake.Evidence);
+        fake.Writes.Select(w => w.Key).ShouldBe(["\r"], fake.Evidence);
+        fake.AppliedEffort.ShouldBeNull();
+    }
+
+    [Test, Arguments("\x1b[B"), Arguments("\x0e")]
+    public async Task Navigation_candidates_are_observed_before_confirmation(string key)
+    {
+        var fake = new EffortTestScreen { Highlight = 2, MovesOn = key };
+        (await fake.ResolveAsync()).Cleared.ShouldBeTrue(fake.Evidence);
+        fake.AppliedEffort.ShouldBe("xhigh");
+        fake.Writes.First(w => w.Key == "\r").Highlight.ShouldBe(1);
     }
 
     [Test]

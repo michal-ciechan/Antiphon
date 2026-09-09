@@ -229,6 +229,12 @@ outside `TranscriptTailer`.
 **Behaviour worth knowing:**
 - First launch into a directory nobody has run Claude in parks on the **trust dialog**, which makes
   no output and therefore reads as "ready" to every quiet-period detector. `ClaudeBlockingPromptDetector` answers it by layout in both Claude adapters (digit `"1"` on the numbered menu; on 2.1.258's unnumbered list, `j` then Enter **after** "Yes, I trust this folder" is highlighted — measured modern ConPTY only; inbox conhost does not deliver the Select binding). Standing specialists seed `hasTrustDialogAccepted` at provision; a stuck dialog is `LaunchBlock: TrustDialogNotCleared`. Worktrees inherit trust from the canonical repo root.
+- Claude can show an effort-default picker even with `--effort`. Both adapters preserve the
+  resolved launch value (or Keep when no value was supplied), verify the selected highlight
+  and two positive dismissal frames, then complete the composer round trip. The bounded
+  failure is `LaunchBlock: EffortDialogNotCleared`. `ClaudeEffortPromptSettleMs` defaults to
+  15,000 ms; the shared startup/probe deadline never restarts for recurring dialogs.
+  This is a narrow startup exception, not authorization to confirm arbitrary choice menus.
 - Remote control (`/remote-control`) is supported and is what puts a session in the claude.ai
   session list. A failed `/remote-control` degrades to an `RcDegraded` incident; it never fails the
   launch.

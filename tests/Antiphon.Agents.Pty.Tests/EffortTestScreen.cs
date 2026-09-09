@@ -39,6 +39,7 @@ internal sealed class EffortTestScreen
     public int Snapshots { get; private set; }
     public int ClearObservations { get; set; }
     public int TokenWrites { get; private set; }
+    public Action<EffortTestScreen>? AfterSnapshot { get; set; }
     public Action<EffortTestScreen>? OnSnapshot { get; set; }
     public Action<EffortTestScreen, string>? AfterWrite { get; set; }
     public List<(string Key, TimeSpan At, bool Dialog, int Highlight)> Writes { get; } = [];
@@ -60,6 +61,7 @@ internal sealed class EffortTestScreen
         if (!Dialog && Override is null) ClearObservations++;
         Trace.Add($"{Clock.ElapsedMilliseconds}: read {Snapshots}, dialog={Dialog}, highlight={Highlight}, applied={AppliedEffort}, text={Composer}");
         Raw += "\n" + screen;
+        AfterSnapshot?.Invoke(this);
         return Task.FromResult(screen);
     }
 

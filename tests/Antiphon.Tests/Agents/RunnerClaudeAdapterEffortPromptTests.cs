@@ -6,6 +6,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
 using Shouldly;
 using TUnit.Core;
 namespace Antiphon.Tests.Agents;
@@ -47,9 +48,10 @@ public class RunnerClaudeAdapterEffortPromptTests
     {
         var fake = new EffortTestScreen { Highlight = 2 };
         var client = new Client(fake);
-        await using var adapter = new RunnerClaudeAdapter(client, Options.Create(Settings()));
+        var logger = new StartupLogger();
+        await using var adapter = new RunnerClaudeAdapter(client, Options.Create(Settings()), logger: logger);
         await adapter.AttachAsync(Guid.NewGuid(), CancellationToken.None);
-        try { (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue(fake.Evidence); fake.AppliedEffort.ShouldBe("xhigh"); }
+        try { (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue(fake.Evidence); fake.AppliedEffort.ShouldBe("xhigh"); logger.Messages.ShouldContain(m => m.Contains("absent (Keep option)")); }
         finally { await adapter.KillAsync(TimeSpan.FromSeconds(1), CancellationToken.None); await adapter.Exited; }
     }
 
@@ -112,6 +114,29 @@ public class RunnerClaudeAdapterEffortPromptTests
         }
         finally { await cts.CancelAsync(); try { await task; } catch (OperationCanceledException) { }
             await adapter.KillAsync(TimeSpan.FromSeconds(1), CancellationToken.None); await adapter.Exited; }
+    }
+
+    [Test]
+    public async Task Process_exit_during_the_effort_dialog_stops_readiness_input()
+    {
+        var fake = new EffortTestScreen();
+        var client = new Client(fake);
+        await using var adapter = new RunnerClaudeAdapter(client, Options.Create(Settings()));
+        var spec = Spec();
+        await adapter.StartAsync(spec, CancellationToken.None);
+        var task = adapter.WaitForReadyAsync(CancellationToken.None);
+        await adapter.KillAsync(TimeSpan.FromSeconds(1), CancellationToken.None);
+        await adapter.Exited.WaitAsync(TimeSpan.FromSeconds(2));
+        (await task.WaitAsync(TimeSpan.FromSeconds(2))).ShouldBeFalse();
+        fake.Writes.ShouldBeEmpty();
+    }
+
+    private sealed class StartupLogger : ILogger
+    {
+        public List<string> Messages { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel level) => true;
+        public void Log<TState>(LogLevel level, EventId id, TState state, Exception? exception, Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
     }
 
     internal sealed class Client(EffortTestScreen screen) : ISessionRunnerClient
