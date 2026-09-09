@@ -28,9 +28,10 @@ public class OutputDistillationMigrationTests
                 CreatedAt = DateTime.UtcNow, FeedbackNote = "original" });
         await db.SaveChangesAsync();
         var migrations = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
-        migrations[^1].ShouldEndWith("AddDistillationDeadlines");
+        var position = Array.FindIndex(migrations, m => m.EndsWith("_AddDistillationDeadlines", StringComparison.Ordinal));
+        position.ShouldBeGreaterThan(0);
         var migrator = db.GetService<IMigrator>();
-        await migrator.MigrateAsync(migrations[^2]);
+        await migrator.MigrateAsync(migrations[position - 1]);
         await db.Database.ExecuteSqlInterpolatedAsync(
             $"UPDATE \"OutputDistillations\" SET \"FeedbackNote\" = 'legacy write' WHERE \"TaskId\" = {id}");
         await migrator.MigrateAsync();

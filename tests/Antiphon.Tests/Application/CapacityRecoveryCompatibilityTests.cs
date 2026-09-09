@@ -62,9 +62,10 @@ public class CapacityRecoveryCompatibilityTests
         await db.SaveChangesAsync();
 
         var migrations = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
-        migrations[^1].ShouldContain("Card0412CapacityRecovery");
+        var position = Array.FindIndex(migrations, m => m.EndsWith("_Card0412CapacityRecovery", StringComparison.Ordinal));
+        position.ShouldBeGreaterThan(0);
         var migrator = db.GetService<IMigrator>();
-        await migrator.MigrateAsync(migrations[^2]);
+        await migrator.MigrateAsync(migrations[position - 1]);
         await db.Database.ExecuteSqlInterpolatedAsync(
             $"UPDATE \"ModelAvailabilityHolds\" SET \"Reason\" = 'legacy write' WHERE \"Id\" = {holdId}");
         await migrator.MigrateAsync();
