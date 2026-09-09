@@ -313,80 +313,80 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
     private async Task<bool> RecordStartFailureAsync(Guid agentId, Exception ex, DateTime now, int attemptNumber,
         Guid? beforeId, DateTime? beforeStartedAt, CancellationToken ct)
     {
-            var agent = await _db.Agents.SingleAsync(a => a.Id == agentId, ct);
-            var refreshed = await GetOrCreateStateAsync(agent.Id, ct);
-            if (refreshed.ContinuityHeldAt is not null || refreshed.Suspended) return false;
-            if (Guid.TryParse(agent.PersistentSessionId, out var owned) && _launchQueue.Owns(owned)) return true;
-            if (ex is ModelDisabledException held)
+        var agent = await _db.Agents.SingleAsync(a => a.Id == agentId, ct);
+        var refreshed = await GetOrCreateStateAsync(agent.Id, ct);
+        if (refreshed.ContinuityHeldAt is not null || refreshed.Suspended) return false;
+        if (Guid.TryParse(agent.PersistentSessionId, out var owned) && _launchQueue.Owns(owned)) return true;
+        if (ex is ModelDisabledException held)
+        {
+            if (_capacityRecovery is not null)
             {
-                if (_capacityRecovery is not null)
+                await _capacityRecovery.EnsureWaitOnAsync(_db, new CapacityWaitRegistration
                 {
-                    await _capacityRecovery.EnsureWaitOnAsync(_db, new CapacityWaitRegistration
-                    {
-                        ConsumerKey = $"agent:{agent.Id:N}",
-                        ConsumerKind = CapacityWaitConsumerKind.StandingStart,
-                        ExecutionKind = agent.Kind,
-                        RequestedKind = agent.Kind,
-                        RequestedAlias = held.Hold.ModelAlias,
-                        AgentId = agent.Id,
-                        HoldId = held.Hold.Id,
-                        HoldRevision = held.Hold.Revision,
-                        BlockedAt = UtcNow(),
-                    }, ct);
-                    refreshed.UpdatedAt = UtcNow();
-                    await _db.SaveChangesAsync(ct);
-                    return true;
-                }
-
-                new RestartFailurePolicy().Charge(refreshed, RestartFailureKind.Unknown);
-                var heldDelay = Backoff(refreshed.RestartBackoffFailures);
-                refreshed.NextRestartAt = UtcNow() + heldDelay;
-                refreshed.LastAttemptAt = now;
+                    ConsumerKey = $"agent:{agent.Id:N}",
+                    ConsumerKind = CapacityWaitConsumerKind.StandingStart,
+                    ExecutionKind = agent.Kind,
+                    RequestedKind = agent.Kind,
+                    RequestedAlias = held.Hold.ModelAlias,
+                    AgentId = agent.Id,
+                    HoldId = held.Hold.Id,
+                    HoldRevision = held.Hold.Revision,
+                    BlockedAt = UtcNow(),
+                }, ct);
                 refreshed.UpdatedAt = UtcNow();
-                var holdKey = held.Hold.Id.ToString("D");
-                var already = await _db.AgentIncidents.AsNoTracking().AnyAsync(
-                    i => i.AgentId == agent.Id
-                        && i.Kind == AgentIncidentKind.StartFailure
-                        && i.FailureReason == holdKey, ct);
-                if (!already)
-                {
-                    await RecordIncidentAsync(
-                        agent.Id, null, AgentIncidentKind.StartFailure, AlertSeverity.Error,
-                        $"held: {held.Hold.ModelAlias} is disabled (per-model cap); no fallback declared — next retry {refreshed.NextRestartAt:u} (backing off {Describe(heldDelay)}).",
-                        failureReason: holdKey,
-                        ct: ct);
-                }
-
-                await EscalateIfTierCrossedAsync(agent, refreshed, heldDelay, ct);
+                await _db.SaveChangesAsync(ct);
+                return true;
             }
-            else
+
+            new RestartFailurePolicy().Charge(refreshed, RestartFailureKind.Unknown);
+            var heldDelay = Backoff(refreshed.RestartBackoffFailures);
+            refreshed.NextRestartAt = UtcNow() + heldDelay;
+            refreshed.LastAttemptAt = now;
+            refreshed.UpdatedAt = UtcNow();
+            var holdKey = held.Hold.Id.ToString("D");
+            var already = await _db.AgentIncidents.AsNoTracking().AnyAsync(
+                i => i.AgentId == agent.Id
+                    && i.Kind == AgentIncidentKind.StartFailure
+                    && i.FailureReason == holdKey, ct);
+            if (!already)
             {
-                new RestartFailurePolicy().Charge(refreshed, new RestartFailurePolicy().Classify(ex));
-                var incarnation = await FindPersistentSessionAsync(agent, statuses: null, ct);
-                if (incarnation is not null && (incarnation.Id != beforeId || incarnation.StartedAt != beforeStartedAt))
-                {
-                    refreshed.LastObservedRestartSessionId = incarnation.Id;
-                    refreshed.LastObservedRestartStartedAt = incarnation.StartedAt;
-                }
-                var delay = Backoff(refreshed.RestartBackoffFailures);
-                refreshed.NextRestartAt = UtcNow() + delay;
-                refreshed.LastAttemptAt = now;
-                refreshed.UpdatedAt = UtcNow();
                 await RecordIncidentAsync(
                     agent.Id, null, AgentIncidentKind.StartFailure, AlertSeverity.Error,
-                    $"Start attempt {attemptNumber} failed: {ex.Message} — next retry {refreshed.NextRestartAt:u} (backing off {Describe(delay)}).",
+                    $"held: {held.Hold.ModelAlias} is disabled (per-model cap); no fallback declared — next retry {refreshed.NextRestartAt:u} (backing off {Describe(heldDelay)}).",
+                    failureReason: holdKey,
                     ct: ct);
-                await EscalateIfTierCrossedAsync(agent, refreshed, delay, ct);
             }
 
-            _logger.LogWarning(ex,
-                "Agent {AgentName}: start attempt {Attempt} failed; next retry {NextRestartAt:u} (backoff {Delay})",
-                agent.Name, attemptNumber, refreshed.NextRestartAt,
-                refreshed.NextRestartAt is { } next ? Describe(next - UtcNow()) : "none");
+            await EscalateIfTierCrossedAsync(agent, refreshed, heldDelay, ct);
+        }
+        else
+        {
+            new RestartFailurePolicy().Charge(refreshed, new RestartFailurePolicy().Classify(ex));
+            var incarnation = await FindPersistentSessionAsync(agent, statuses: null, ct);
+            if (incarnation is not null && (incarnation.Id != beforeId || incarnation.StartedAt != beforeStartedAt))
+            {
+                refreshed.LastObservedRestartSessionId = incarnation.Id;
+                refreshed.LastObservedRestartStartedAt = incarnation.StartedAt;
+            }
+            var delay = Backoff(refreshed.RestartBackoffFailures);
+            refreshed.NextRestartAt = UtcNow() + delay;
+            refreshed.LastAttemptAt = now;
+            refreshed.UpdatedAt = UtcNow();
+            await RecordIncidentAsync(
+                agent.Id, null, AgentIncidentKind.StartFailure, AlertSeverity.Error,
+                $"Start attempt {attemptNumber} failed: {ex.Message} — next retry {refreshed.NextRestartAt:u} (backing off {Describe(delay)}).",
+                ct: ct);
+            await EscalateIfTierCrossedAsync(agent, refreshed, delay, ct);
+        }
 
-            await _db.SaveChangesAsync(ct);
-            await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
-            return true;
+        _logger.LogWarning(ex,
+            "Agent {AgentName}: start attempt {Attempt} failed; next retry {NextRestartAt:u} (backoff {Delay})",
+            agent.Name, attemptNumber, refreshed.NextRestartAt,
+            refreshed.NextRestartAt is { } next ? Describe(next - UtcNow()) : "none");
+
+        await _db.SaveChangesAsync(ct);
+        await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
+        return true;
     }
 
     /// <summary>

@@ -1,4 +1,4 @@
-﻿using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
@@ -478,8 +478,8 @@ public sealed class AgentControlService
                     throw new ConflictException($"Resolve attempted pending input in /sessions/{sourceId}/queue before switching.", "standing_resume_delivery_pending");
             }
 
-        if (previous is not null)
-        {
+            if (previous is not null)
+            {
                 GrokRulesLaunchValidation.Validate(spec with { Backend = agent.SessionBackend }, _grokRulesSettings);
                 GrokRulesRefreshService.PreflightResume(previous, spec.GrokRulesPayload);
                 var resumeNow = UtcNow();
@@ -511,127 +511,130 @@ public sealed class AgentControlService
                 previous.SessionBackend = agent.SessionBackend;
                 await _db.SaveChangesAsync(ct);
 
-            await AcceptAsync(previous);
-            await reservation.CommitAsync(ct);
-            await _db.Entry(previous).ReloadAsync(ct);
-            _launchQueue.EnqueueInteractiveSession(
-                previous.Id, agent.Id, spec, remoteControlName, resume: true, notes: notes,
-                initialPrompt: initialPrompt);
-            return previous.Id;
-        }
-
-        var now = UtcNow();
-        var session = new AgentSession
-        {
-            Id = chosenSessionId,
-            StandingAgentId = agent.IsPoolDelegate ? null : agent.Id,
-            CardId = null,
-            WorktreeId = null,
-            DefinitionName = definitionName,
-            AgentKind = spec.Kind,
-            SpecialistLaunchEvidenceJson = specialistLaunchEvidence,
-            // CARD-0160: snapshot the agent's backend at creation — a later PATCH must not rewrite
-            // how THIS session was launched.
-            SessionBackend = agent.SessionBackend,
-            Status = SessionStatus.Starting,
-            Cwd = cwd,
-            Cols = 120,
-            Rows = 30,
-            CreatedAt = now,
-            StartedAt = now,
-            LastSeenAt = now,
-            DelegationTokenHash = composition.DelegationTokenHash,
-            TuiProfileRevisionId = resolved.ProfileRevisionId,
-            EffectiveModelId = resolved.EffectiveModelId,
-            ComposedBundleStamp = composition.ComposedStamp,
-            InstructionFileStamp = composition.InstructionFileStamp,
-        };
-        _db.AgentSessions.Add(session);
-        await _db.SaveChangesAsync(ct);
-
-        // A NEW session id strands any messages still queued on the previous conversation's session
-        // (fresh fallback after repeated failures, or a non-resumable previous session). Carry the
-        // pending ones over so they deliver into the new conversation instead of vanishing.
-        if (Guid.TryParse(agent.PersistentSessionId, out var previousSessionId)
-            && previousSessionId != session.Id)
-        {
-            // Same follow-through for in-flight tasks: OnTurnEndAsync looks up the open task by
-            // AgentSessionId of the session that just ended the turn. Leaving Dispatched/Working
-            // rows on the previous id is how CARD-0079's check interpreter answered on the new
-            // session and never settled (the occupancy lock then blocked every later check).
-            var remapped = !StandingSpecialistSeatPolicy.IsCheck(agent, _delegationSettings) ? 0 : await _db.AgentTasks
-                .Where(t => t.AgentId == agent.Id
-                    && t.AgentSessionId == previousSessionId
-                    && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working))
-                .ExecuteUpdateAsync(s => s.SetProperty(t => t.AgentSessionId, session.Id), ct);
-            if (remapped > 0)
-                _logger.LogInformation(
-                    "Agent {AgentName}: re-pointed {Count} in-flight task(s) from session {Previous} to new session {New}",
-                    agent.Name, remapped, previousSessionId, session.Id);
-
-            // CARD-0224 D3: a Fresh (or FreshAfterResumeFailures) new-row launch still targets
-            // the agent's last pane. Capture the previous id NOW — PersistentSessionId is
-            // overwritten to the new row after this method returns, before the queued launch
-            // runs. Never set on the resume arm (same id) or on card spawns.
-            if (agent.SessionBackend == SessionBackend.Herdr)
-            {
-                spec = spec with
-                {
-                    Herdr = spec.Herdr is { } existing
-                        ? existing with { ReusePaneOfSessionId = previousSessionId }
-                        : new HerdrLaunchOptions(
-                            WorkspaceKey: "none",
-                            WorkspaceLabel: "Antiphon",
-                            WorkspaceCwd: null,
-                            PaneTitle: "agent",
-                            ReusePaneOfSessionId: previousSessionId),
-                };
+                await AcceptAsync(previous);
+                await reservation.CommitAsync(ct);
+                await _db.Entry(previous).ReloadAsync(ct);
+                _launchQueue.EnqueueInteractiveSession(
+                    previous.Id, agent.Id, spec, remoteControlName, resume: true, notes: notes,
+                    initialPrompt: initialPrompt);
+                return previous.Id;
             }
-        }
 
-        if (initialPrompt is null && !string.IsNullOrWhiteSpace(agent.Details))
-        {
-            // CARD-0283: Details is standing-job metadata (CLAUDE.md), not a first prompt. A caller
-            // that stuffed a task into Details and then started has done the gym-stat-weightsteps
-            // shape — Running with an empty transcript, no error. Say so in the log rather than
-            // silently matching a healthy idle AlwaysOn / UI Start.
-            _logger.LogInformation(
-                "Cardless start of {AgentName} ({AgentId}): Details is not delivered as a prompt. "
-                + "Session {SessionId} stays idle until POST /api/sessions/{{id}}/messages or StartAgentRequest.Prompt",
-                agent.Name, agent.Id, session.Id);
-        }
-
-        await AcceptAsync(session);
-        await reservation.CommitAsync(ct);
-        _launchQueue.EnqueueInteractiveSession(
-            session.Id, agent.Id, spec, remoteControlName, notes: notes, initialPrompt: initialPrompt);
-        return session.Id;
-
-        async Task AcceptAsync(AgentSession accepted)
-        {
-            if (pending.Count > 0)
+            var now = UtcNow();
+            var session = new AgentSession
             {
-                var sequence = await _db.SessionQueuedMessages.Where(m => m.AgentSessionId == accepted.Id)
-                    .MaxAsync(m => (long?)m.Sequence, ct) ?? 0;
-                foreach (var message in pending) { message.AgentSessionId = accepted.Id; message.Sequence = ++sequence; }
-            }
-            agent.PersistentSessionId = accepted.Id.ToString("D");
-            agent.Status = AgentStatus.Running;
-            agent.CurrentCardId = null;
-            agent.UpdatedAt = UtcNow();
-            new StandingContinuityState(_db, _timeProvider).Clear(intent);
-            if (!automatic) await ClearSupervisionLatchAsync(agent, ct);
-            if (fresh || resumeSessionId is not null || retryContinuity || spec.Kind is not (AgentKind.ClaudeCode or AgentKind.Grok))
-                _db.AgentIncidents.Add(new AgentIncident
-                {
-                    Id = Guid.NewGuid(), AgentId = agent.Id, SessionId = accepted.Id,
-                    Kind = fresh ? AgentIncidentKind.StandingFreshSelected
-                        : resumeSessionId is not null || retryContinuity ? AgentIncidentKind.StandingResumeSelected : AgentIncidentKind.ResumeUnsupported,
-                    Severity = AlertSeverity.Info, CreatedAt = UtcNow(),
-                    Message = $"Accepted {(fresh ? "explicit fresh conversation" : "resume selection")}: {expectedPointer ?? "none"} -> {accepted.Id:D}; launch queued.",
-                });
+                Id = chosenSessionId,
+                StandingAgentId = agent.IsPoolDelegate ? null : agent.Id,
+                CardId = null,
+                WorktreeId = null,
+                DefinitionName = definitionName,
+                AgentKind = spec.Kind,
+                SpecialistLaunchEvidenceJson = specialistLaunchEvidence,
+                // CARD-0160: snapshot the agent's backend at creation — a later PATCH must not rewrite
+                // how THIS session was launched.
+                SessionBackend = agent.SessionBackend,
+                Status = SessionStatus.Starting,
+                Cwd = cwd,
+                Cols = 120,
+                Rows = 30,
+                CreatedAt = now,
+                StartedAt = now,
+                LastSeenAt = now,
+                DelegationTokenHash = composition.DelegationTokenHash,
+                TuiProfileRevisionId = resolved.ProfileRevisionId,
+                EffectiveModelId = resolved.EffectiveModelId,
+                ComposedBundleStamp = composition.ComposedStamp,
+                InstructionFileStamp = composition.InstructionFileStamp,
+            };
+            _db.AgentSessions.Add(session);
             await _db.SaveChangesAsync(ct);
-        }
+
+            // A NEW session id strands any messages still queued on the previous conversation's session
+            // (fresh fallback after repeated failures, or a non-resumable previous session). Carry the
+            // pending ones over so they deliver into the new conversation instead of vanishing.
+            if (Guid.TryParse(agent.PersistentSessionId, out var previousSessionId)
+                && previousSessionId != session.Id)
+            {
+                // Same follow-through for in-flight tasks: OnTurnEndAsync looks up the open task by
+                // AgentSessionId of the session that just ended the turn. Leaving Dispatched/Working
+                // rows on the previous id is how CARD-0079's check interpreter answered on the new
+                // session and never settled (the occupancy lock then blocked every later check).
+                var remapped = !StandingSpecialistSeatPolicy.IsCheck(agent, _delegationSettings) ? 0 : await _db.AgentTasks
+                    .Where(t => t.AgentId == agent.Id
+                        && t.AgentSessionId == previousSessionId
+                        && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working))
+                    .ExecuteUpdateAsync(s => s.SetProperty(t => t.AgentSessionId, session.Id), ct);
+                if (remapped > 0)
+                    _logger.LogInformation(
+                        "Agent {AgentName}: re-pointed {Count} in-flight task(s) from session {Previous} to new session {New}",
+                        agent.Name, remapped, previousSessionId, session.Id);
+
+                // CARD-0224 D3: a Fresh (or FreshAfterResumeFailures) new-row launch still targets
+                // the agent's last pane. Capture the previous id NOW — PersistentSessionId is
+                // overwritten to the new row after this method returns, before the queued launch
+                // runs. Never set on the resume arm (same id) or on card spawns.
+                if (agent.SessionBackend == SessionBackend.Herdr)
+                {
+                    spec = spec with
+                    {
+                        Herdr = spec.Herdr is { } existing
+                            ? existing with { ReusePaneOfSessionId = previousSessionId }
+                            : new HerdrLaunchOptions(
+                                WorkspaceKey: "none",
+                                WorkspaceLabel: "Antiphon",
+                                WorkspaceCwd: null,
+                                PaneTitle: "agent",
+                                ReusePaneOfSessionId: previousSessionId),
+                    };
+                }
+            }
+
+            if (initialPrompt is null && !string.IsNullOrWhiteSpace(agent.Details))
+            {
+                // CARD-0283: Details is standing-job metadata (CLAUDE.md), not a first prompt. A caller
+                // that stuffed a task into Details and then started has done the gym-stat-weightsteps
+                // shape — Running with an empty transcript, no error. Say so in the log rather than
+                // silently matching a healthy idle AlwaysOn / UI Start.
+                _logger.LogInformation(
+                    "Cardless start of {AgentName} ({AgentId}): Details is not delivered as a prompt. "
+                    + "Session {SessionId} stays idle until POST /api/sessions/{{id}}/messages or StartAgentRequest.Prompt",
+                    agent.Name, agent.Id, session.Id);
+            }
+
+            await AcceptAsync(session);
+            await reservation.CommitAsync(ct);
+            _launchQueue.EnqueueInteractiveSession(
+                session.Id, agent.Id, spec, remoteControlName, notes: notes, initialPrompt: initialPrompt);
+            return session.Id;
+
+            async Task AcceptAsync(AgentSession accepted)
+            {
+                if (pending.Count > 0)
+                {
+                    var sequence = await _db.SessionQueuedMessages.Where(m => m.AgentSessionId == accepted.Id)
+                        .MaxAsync(m => (long?)m.Sequence, ct) ?? 0;
+                    foreach (var message in pending) { message.AgentSessionId = accepted.Id; message.Sequence = ++sequence; }
+                }
+                agent.PersistentSessionId = accepted.Id.ToString("D");
+                agent.Status = AgentStatus.Running;
+                agent.CurrentCardId = null;
+                agent.UpdatedAt = UtcNow();
+                new StandingContinuityState(_db, _timeProvider).Clear(intent);
+                if (!automatic) await ClearSupervisionLatchAsync(agent, ct);
+                if (fresh || resumeSessionId is not null || retryContinuity || spec.Kind is not (AgentKind.ClaudeCode or AgentKind.Grok))
+                    _db.AgentIncidents.Add(new AgentIncident
+                    {
+                        Id = Guid.NewGuid(),
+                        AgentId = agent.Id,
+                        SessionId = accepted.Id,
+                        Kind = fresh ? AgentIncidentKind.StandingFreshSelected
+                            : resumeSessionId is not null || retryContinuity ? AgentIncidentKind.StandingResumeSelected : AgentIncidentKind.ResumeUnsupported,
+                        Severity = AlertSeverity.Info,
+                        CreatedAt = UtcNow(),
+                        Message = $"Accepted {(fresh ? "explicit fresh conversation" : "resume selection")}: {expectedPointer ?? "none"} -> {accepted.Id:D}; launch queued.",
+                    });
+                await _db.SaveChangesAsync(ct);
+            }
         }
         finally { for (var i = acquired - 1; i >= 0; i--) queueLocks[i].Release(); }
     }
@@ -957,9 +960,15 @@ public sealed class AgentControlService
             await _db.Entry(agent).ReloadAsync(ct);
             var intent = await GetOrCreateSupervisionStateAsync(agent.Id, ct);
             if (!intent.Suspended)
-                _db.AgentIncidents.Add(new AgentIncident { Id = Guid.NewGuid(), AgentId = agent.Id,
-                    Kind = AgentIncidentKind.SuspendedByUser, Severity = AlertSeverity.Info,
-                    Message = "Stopped by user; always-on supervision suspended until the next manual start.", CreatedAt = UtcNow() });
+                _db.AgentIncidents.Add(new AgentIncident
+                {
+                    Id = Guid.NewGuid(),
+                    AgentId = agent.Id,
+                    Kind = AgentIncidentKind.SuspendedByUser,
+                    Severity = AlertSeverity.Info,
+                    Message = "Stopped by user; always-on supervision suspended until the next manual start.",
+                    CreatedAt = UtcNow()
+                });
             intent.Suspended = true;
             intent.NextRestartAt = null;
             intent.UpdatedAt = UtcNow();
