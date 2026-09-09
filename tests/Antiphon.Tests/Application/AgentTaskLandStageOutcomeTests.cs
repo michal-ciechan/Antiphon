@@ -274,7 +274,7 @@ public class AgentTaskLandStageOutcomeTests
             .FirstAsync();
         cleanup.Detail.ShouldContain("mode=CleanupRetry");
         cleanup.Detail.ShouldContain("cleanup=Complete");
-        cleanup.LandingMode.ShouldBe(LandingExecutionMode.CleanupRetry);
+        cleanup.LandingMode.ShouldBe(LandOperationMode.CleanupRetry);
         (await db.AgentTaskEvents.CountAsync(e =>
             e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.LandRefused)).ShouldBe(0);
         await AssertPendingClearedAsync(db, task.Id, attempt: 2);
