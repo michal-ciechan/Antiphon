@@ -12,12 +12,12 @@ namespace Antiphon.Tests.Agents;
 [Category("Integration"), NotInParallel, ParallelLimiter<ProcessSpawnLimit>]
 public class ClaudeAdapterEffortPromptTests
 {
-    [Test]
-    public Task Local_adapter_keeps_requested_effort_and_probes_after_clearance() => RunAsync(false);
+    [Test, Arguments("xhigh"), Arguments("high")]
+    public Task Local_adapter_keeps_requested_effort_and_probes_after_clearance(string requested) => RunAsync(false, requested);
     [Test]
     public Task Local_adapter_names_an_uncleared_effort_dialog() => RunAsync(true);
 
-    private static async Task RunAsync(bool stuck)
+    private static async Task RunAsync(bool stuck, string requested = "xhigh")
     {
         var prior = Environment.GetEnvironmentVariable("ANTIPHON_PTY_BACKEND");
         var scratch = Path.Combine(Path.GetTempPath(), "c449-local-" + Guid.NewGuid().ToString("N"));
@@ -32,8 +32,8 @@ public class ClaudeAdapterEffortPromptTests
             var spec = RunnerClaudeAdapterEffortPromptTests.Spec() with
             {
                 Exe = "pwsh.exe", Cwd = scratch,
-                Args = ["-NoProfile", "-File", Path.Combine(AppContext.BaseDirectory, "Agents", "Fixtures", "claude-effort-dialog.ps1"), "--effort", "xhigh"],
-                Env = new Dictionary<string,string> { ["C449_CAPTURE"] = capture, ["C449_TRACE"] = trace, ["C449_STUCK"] = stuck ? "1" : "0" }
+                Args = ["-NoProfile", "-File", Path.Combine(AppContext.BaseDirectory, "Agents", "Fixtures", "claude-effort-dialog.ps1"), "--effort", requested],
+                Env = new Dictionary<string,string> { ["C449_CAPTURE"] = capture, ["C449_TRACE"] = trace, ["C449_STUCK"] = stuck ? "1" : "0", ["C449_REQUESTED"] = requested }
             };
             await adapter.StartAsync(spec, CancellationToken.None);
             using var cts = new CancellationTokenSource();
@@ -50,7 +50,7 @@ public class ClaudeAdapterEffortPromptTests
                 }
                 else
                 {
-                    json.RootElement.GetProperty("applied").GetString().ShouldBe("xhigh");
+                    json.RootElement.GetProperty("applied").GetString().ShouldBe(requested);
                     json.RootElement.GetProperty("composer").GetString().ShouldBe("");
                     var keys = json.RootElement.GetProperty("keys").EnumerateArray().Select(k => k.GetString()).ToArray();
                     keys[0].ShouldBe("j"); keys[1].ShouldBe("Enter"); keys.Last().ShouldBe("Ctrl+U");

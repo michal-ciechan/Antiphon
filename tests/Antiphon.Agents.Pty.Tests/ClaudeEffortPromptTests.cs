@@ -107,8 +107,9 @@ public class ClaudeEffortPromptTests
             if (row == "permission") f.Override = "Do you want to proceed?\n1. Yes\n2. No";
             else f.Model = "Nimble 9";
         };
-        (await fake.ResolveAsync()).Cleared.ShouldBeFalse(fake.Evidence);
+        var result = await fake.ResolveAsync();
         fake.Writes.Select(w => w.Key).ShouldBe(["j"], fake.Evidence);
+        result.Cleared.ShouldBeFalse(fake.Evidence);
     }
 
     [Test]

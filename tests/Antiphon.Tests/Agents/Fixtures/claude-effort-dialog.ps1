@@ -1,7 +1,7 @@
 # Test-owned console peer. Unicode provider captures are loaded, never retyped here.
 $capture = Get-Content -LiteralPath $env:C449_CAPTURE -Raw | ConvertFrom-Json
 $template = $capture.screen
-$highlight = 2
+$highlight = if ($env:C449_REQUESTED -eq 'high') { 1 } else { 2 }
 $dialog = $true
 $composer = ''
 $applied = $null
