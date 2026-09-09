@@ -198,3 +198,28 @@ the two owned settings/MCP-file tamper checks. Current capability verification n
 requires both owned policy files to remain armed. Check launch rechecks human intent
 before starting and after readiness; automatic start cannot lift a Check suspension.
 A missing native Check resume target no longer silently starts a fresh conversation.
+
+## Bounded chain, backlog and missing-resume checks
+
+At `0b8fa92f` plus the retained test additions:
+
+- `c415-fad-bounded-chain.trx`: 2/2 passed. Exhausting both declared qualified
+  seats makes health Unavailable; a three-seat chain still stops at two attempts
+  and leaves the third qualified seat unused. Attempts share the original facts
+  and deadline.
+- `c415-fad-backlog-graph.trx`: 2/2 passed. A full owner backlog produces Busy with
+  no attempt. An oldest active Check older than five minutes makes health
+  Unavailable without a transient failure increment; a later successful real
+  Check clears that starvation episode after capacity is released.
+- `c415-fad-missing-resume.trx`: 1/1 passed. A missing native Check resume target
+  creates exactly one adapter, kills it on startup failure, and never retries a
+  fresh conversation.
+
+Exact-method PC46 stop controls ran at `0b8fa92f` in the extra checkout. Removing
+only the pre-start intent check produced one expected assertion failure among
+three cases; restored source passed 3/3. Removing only the post-readiness check
+likewise produced one expected assertion failure, then restored source passed
+3/3. Both source restorations used original bytes and fresh timestamps. Script
+and per-phase results: `L/run-start-controls.ps1`, `L/start-controls.jsonl`;
+TRX copies: `L/extra-results/c415-fad-pc46-stop-*-red.trx` and `*-green.trx`.
+These controls cover the two implemented launch barriers, not all PC46 races.

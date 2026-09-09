@@ -29,7 +29,12 @@ public class SpecialistStartIntentTests
     [Arguments("before")]
     [Arguments("during-ready")]
     [Arguments("authorized")]
-    public async Task Card0415_V22_human_stop_wins_against_queued_and_inflight_Check_launch(string stop)
+    public Task Card0415_V22_human_stop_wins_against_queued_and_inflight_Check_launch(string stop) => ExerciseAsync(stop);
+
+    [Test]
+    public Task Card0415_V20_missing_native_Check_resume_never_replays_a_fresh_launch() => ExerciseAsync("missing-resume");
+
+    private static async Task ExerciseAsync(string stop)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var factory = new Factory();
@@ -65,10 +70,15 @@ public class SpecialistStartIntentTests
         }
         if (stop == "before") await StopAsync();
         if (stop == "during-ready") factory.Adapter.ReadyHold = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (stop == "missing-resume")
+        {
+            factory.Adapter.ReadyResult = false;
+            factory.Adapter.StartupOutput = "No conversation found with session ID: " + sessionId;
+        }
         await using var launchScope = h.Provider.CreateAsyncScope();
         var launch = launchScope.ServiceProvider.GetRequiredService<AgentSessionService>().LaunchInteractiveAsync(
             sessionId, h.AgentId, new("owned-test", AgentKind.ClaudeCode, "synthetic-no-process", [],
-                new Dictionary<string, string>(), cwd, 120, 30), null, false, null, CancellationToken.None);
+                new Dictionary<string, string>(), cwd, 120, 30), null, stop == "missing-resume", null, CancellationToken.None);
         if (stop == "during-ready")
         {
             await SpecialistTaskRunnerDeadlineTests.UntilAsync(() => Task.FromResult(factory.Adapter.Started));
@@ -76,15 +86,16 @@ public class SpecialistStartIntentTests
             factory.Adapter.ReadyHold!.TrySetResult(true);
         }
         if (stop == "authorized") await launch;
+        else if (stop == "missing-resume") await Should.ThrowAsync<AgentSessionService.ResumeTargetMissingException>(async () => await launch);
         else (await Should.ThrowAsync<ConflictException>(async () => await launch)).Code.ShouldBe("specialist_start_intent_revoked");
         await using var verifyScope = h.Provider.CreateAsyncScope();
         var verify = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
         var session = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
-        session.Status.ShouldBe(stop == "authorized" ? SessionStatus.Running : SessionStatus.Stopped);
+        session.Status.ShouldBe(stop == "authorized" ? SessionStatus.Running : stop == "missing-resume" ? SessionStatus.Failed : SessionStatus.Stopped);
         factory.Creates.ShouldBe(stop == "before" ? 0 : 1);
-        factory.Adapter.Killed.ShouldBe(stop == "during-ready");
+        factory.Adapter.Killed.ShouldBe(stop is "during-ready" or "missing-resume");
         factory.Adapter.Inputs.ShouldBeEmpty();
-        if (stop != "authorized")
+        if (stop is "before" or "during-ready")
         {
             (await verify.AgentSupervisionStates.SingleAsync(s => s.AgentId == h.AgentId)).Suspended.ShouldBeTrue();
             (await verify.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.SuspendedByUser)).ShouldBe(1);

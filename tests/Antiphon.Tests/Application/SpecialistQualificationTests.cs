@@ -60,6 +60,17 @@ public class SpecialistQualificationTests
     public Task Card0415_V24_failed_primary_uses_only_the_qualified_declared_alternate_and_resolves_service_health() => ExerciseAsync(false, true, "fallback");
 
     [Test]
+    [Arguments("exhausted")]
+    [Arguments("two-attempts")]
+    public Task Card0415_V12_two_attempts_are_bounded_and_exhausted_chain_becomes_unavailable(string change) => ExerciseAsync(false, true, change);
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public Task Card0415_V13_backlog_is_bounded_and_oldest_starvation_requires_a_real_Check_to_clear(bool starved) =>
+        ExerciseAsync(false, true, starved ? "backlog-starved" : "backlog");
+
+    [Test]
     [Arguments("newer-check")]
     [Arguments("new-generation")]
     [Arguments("transport-timeout")]
@@ -136,7 +147,12 @@ public class SpecialistQualificationTests
             var answer = wrongSemanticAnswer ? "On track, unrelated amber tests are still running."
                 : nonce.StartsWith("violet") ? $"On track, {nonce} change has seven focused passes; integration remains pending."
                 : $"Needs attention, {nonce} provider has not answered; the harness deadline retries once.";
-            if (change == "fallback" && task.AgentId == h.AgentId && submitted.Count > 4) answer = "ready";
+            if (change is "fallback" or "exhausted" or "two-attempts")
+            {
+                var purpose = await db.SpecialistAttempts.Where(a => a.TaskId == task.Id).Join(db.SpecialistRequests,
+                    a => a.RequestId, r => r.Id, (a, r) => r.Purpose).SingleAsync();
+                if (purpose == SpecialistRequestPurpose.Check && (task.AgentId == h.AgentId || change != "fallback")) answer = "ready";
+            }
             var next = (await db.TranscriptEntries.Where(e => e.AgentSessionId == executingSession).MaxAsync(e => (long?)e.Sequence) ?? 0) + 1;
             var call = Guid.NewGuid().ToString("N");
             var now = DateTime.UtcNow;
@@ -185,7 +201,8 @@ public class SpecialistQualificationTests
         }
         if (realCheck)
         {
-            Guid? alternateSession = change == "fallback" ? await AddAndQualifyAlternateAsync(h) : null;
+            Guid? alternateSession = change is "fallback" or "exhausted" or "two-attempts" or "backlog" or "backlog-starved" ? await AddAndQualifyAlternateAsync(h) : null;
+            Guid? thirdSession = change == "two-attempts" ? await AddAndQualifyAlternateAsync(h, AgentModelLevel.High) : null;
             var qualificationTurns = submitted.Count;
             if (change == "lost-capability")
             {
@@ -204,10 +221,20 @@ public class SpecialistQualificationTests
             var checkedTask = new AgentTask { Id = Guid.NewGuid(), Title = "checked delegate", Role = AgentTaskRole.Code,
                 Status = AgentTaskStatus.Working, CreatedAt = DateTime.UtcNow, CheckCount = 1 };
             checkedTask.RootTaskId = checkedTask.Id;
+            Guid? blockerId = null;
             await using (var scope = h.Provider.CreateAsyncScope())
             {
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                 db.AgentTasks.Add(checkedTask);
+                if (change?.StartsWith("backlog") == true)
+                {
+                    settings.CheckInterpreterMaxBacklog = 1;
+                    var id = Guid.NewGuid();
+                    blockerId = id;
+                    db.AgentTasks.Add(new() { Id = id, RootTaskId = id, AgentId = h.AgentId, AgentSessionId = h.SessionId,
+                        Role = AgentTaskRole.Check, Status = AgentTaskStatus.Working,
+                        CreatedAt = DateTime.UtcNow.AddMinutes(change == "backlog-starved" ? -6 : 0) });
+                }
                 await db.SaveChangesAsync();
             }
             var nonce = "violet-" + Guid.NewGuid().ToString("N")[..12];
@@ -220,6 +247,42 @@ public class SpecialistQualificationTests
                 await using var scope = h.Provider.CreateAsyncScope();
                 return await scope.ServiceProvider.GetRequiredService<AppDbContext>().AgentTasks.CountAsync(t => t.Role == AgentTaskRole.Check) == qualificationTurns + 1;
             });
+            if (blockerId is Guid blocker)
+            {
+                (await pending.WaitAsync(TimeSpan.FromSeconds(10))).Outcome.ShouldBe(SpecialistRunOutcome.Busy);
+                await using var scope = h.Provider.CreateAsyncScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                (await db.SpecialistAttempts.CountAsync(a => a.RequestId == db.SpecialistRequests
+                    .Where(r => r.Purpose == SpecialistRequestPurpose.Check).Select(r => r.Id).Single())).ShouldBe(0);
+                var healthService = new StandingSpecialistHealthService(db, Options.Create(settings), TimeProvider.System, h.EventBus,
+                    NullLogger<StandingSpecialistHealthService>.Instance);
+                await healthService.ReconcileOwnerAsync(h.AgentId, CancellationToken.None);
+                var health = await db.StandingSpecialistHealths.SingleAsync();
+                health.Status.ShouldBe(change == "backlog-starved" ? StandingSpecialistHealthStatus.Unavailable : StandingSpecialistHealthStatus.Healthy);
+                health.ConsecutiveFailedRequests.ShouldBe(0);
+                (await db.AgentTasks.SingleAsync(t => t.Id == blocker)).Status.ShouldBe(AgentTaskStatus.Working);
+                submitted.Count.ShouldBe(qualificationTurns);
+                await db.AgentTasks.Where(t => t.Id == blocker).ExecuteUpdateAsync(u => u.SetProperty(t => t.Status, AgentTaskStatus.Succeeded)
+                    .SetProperty(t => t.CompletedAt, DateTime.UtcNow));
+                checkedTask.CheckCount = 2;
+                await db.AgentTasks.Where(t => t.Id == checkedTask.Id).ExecuteUpdateAsync(u => u.SetProperty(t => t.CheckCount, 2));
+                var recovery = requestService.RunCheckAsync(checkedTask, 2, $"{nonce}: seven focused passes; integration pending.", caller.Token);
+                await SpecialistTaskRunnerDeadlineTests.UntilAsync(async () =>
+                {
+                    await using var next = h.Provider.CreateAsyncScope();
+                    return await next.ServiceProvider.GetRequiredService<AppDbContext>().AgentTasks.AnyAsync(t => t.Status == AgentTaskStatus.Queued);
+                });
+                await using (var dispatch = h.Provider.CreateAsyncScope())
+                    await dispatch.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
+                await h.Provider.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(h.SessionId, CancellationToken.None);
+                (await recovery.WaitAsync(TimeSpan.FromSeconds(10))).Outcome.ShouldBe(SpecialistRunOutcome.Succeeded);
+                await healthService.ReconcileOwnerAsync(h.AgentId, CancellationToken.None);
+                health.Status.ShouldBe(StandingSpecialistHealthStatus.Healthy);
+                health.StarvedSince.ShouldBeNull();
+                health.UnavailableSince.ShouldBeNull();
+                submitted.Count.ShouldBe(qualificationTurns + 1);
+                return;
+            }
             if (change?.StartsWith("cancel-") == true)
             {
                 if (change == "cancel-host") lifetime.StopApplication();
@@ -264,6 +327,24 @@ public class SpecialistQualificationTests
                 var candidate = await db.StandingSpecialistCandidateStates.SingleAsync(c => c.Id == candidateId);
                 candidate.TransientFailures.ShouldBe(change == "transport-timeout" ? 1 : 0);
                 (await db.AgentTasks.SingleAsync(t => t.Id == submitted.Last())).Status.ShouldBe(AgentTaskStatus.Succeeded);
+                if (change is "exhausted" or "two-attempts")
+                {
+                    var attempts = await db.SpecialistAttempts.Where(a => a.RequestId == request.Id).OrderBy(a => a.Ordinal).ToListAsync();
+                    attempts.Count.ShouldBe(2);
+                    attempts.All(a => a.Outcome == SpecialistAttemptOutcome.InvalidReading && a.DeadlineAt <= request.DeadlineAt).ShouldBeTrue();
+                    submitted.Count.ShouldBe(qualificationTurns + 2);
+                    var taskIds = attempts.Select(a => a.TaskId).ToArray();
+                    (await db.AgentTasks.Where(t => taskIds.Contains(t.Id)).Select(t => t.Goal).Distinct().CountAsync()).ShouldBe(1);
+                    await new StandingSpecialistHealthService(db, Options.Create(settings), TimeProvider.System, h.EventBus,
+                        NullLogger<StandingSpecialistHealthService>.Instance).ReconcileOwnerAsync(h.AgentId, CancellationToken.None);
+                    (await db.StandingSpecialistHealths.SingleAsync()).Status.ShouldBe(thirdSession is null
+                        ? StandingSpecialistHealthStatus.Unavailable : StandingSpecialistHealthStatus.Suspect);
+                    if (thirdSession is not null)
+                    {
+                        attempts.ShouldNotContain(a => a.SessionId == thirdSession.Value);
+                        (await db.StandingSpecialistCandidateStates.SingleAsync(c => c.SessionId == thirdSession.Value)).Status.ShouldBe(StandingSpecialistCandidateStatus.Qualified);
+                    }
+                }
                 return;
             }
             result.Outcome.ShouldBe(SpecialistRunOutcome.Succeeded, result.Reason);
@@ -296,7 +377,7 @@ public class SpecialistQualificationTests
         }
     }
 
-    private static async Task<Guid> AddAndQualifyAlternateAsync(BridgeQueueHarness h)
+    private static async Task<Guid> AddAndQualifyAlternateAsync(BridgeQueueHarness h, AgentModelLevel level = AgentModelLevel.Medium)
     {
         var seatId = Guid.NewGuid();
         var sessionId = Guid.NewGuid();
@@ -306,19 +387,26 @@ public class SpecialistQualificationTests
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var owner = await db.Agents.SingleAsync(a => a.Id == h.AgentId);
             var now = DateTime.UtcNow;
-            var cwd = owner.WorkingDirectory + "-alternate";
+            var cwd = owner.WorkingDirectory + "-alternate-" + level;
             db.Agents.Add(new() { Id = seatId, Name = "declared alternate", Slug = "alternate-" + seatId.ToString("N"),
-                WorkingDirectory = cwd, Kind = AgentKind.ClaudeCode, ModelLevel = AgentModelLevel.Medium,
+                WorkingDirectory = cwd, Kind = AgentKind.ClaudeCode, ModelLevel = level,
                 StandingSpecialistOwnerId = owner.Id, StandingSpecialistRole = AgentTaskRole.Check, AlwaysOn = true,
                 PersistentSessionId = sessionId.ToString(), Status = AgentStatus.Running, CreatedAt = now, UpdatedAt = now });
             db.AgentSessions.Add(new() { Id = sessionId, AgentKind = AgentKind.ClaudeCode, Cwd = cwd,
                 SessionBackend = SessionBackend.PtyHost, Status = SessionStatus.Running, CreatedAt = now, StartedAt = now, LastSeenAt = now });
             db.StandingSpecialistCandidateStates.Add(new() { Id = candidateId, AgentId = owner.Id, PhysicalAgentId = seatId,
-                AgentKind = AgentKind.ClaudeCode, ModelLevel = AgentModelLevel.Medium, ModelAlias = "sonnet", Enabled = true,
+                AgentKind = AgentKind.ClaudeCode, ModelLevel = level, ModelAlias = level == AgentModelLevel.Medium ? "sonnet" : "opus", Enabled = true,
                 Status = StandingSpecialistCandidateStatus.Unqualified, QualificationAuthorization = Guid.NewGuid(), DeclaredAt = now, UpdatedAt = now });
-            db.StandingSpecialistRoutings.Add(new() { Id = Guid.NewGuid(), AgentId = owner.Id, Enabled = true,
-                ConcurrencyToken = Guid.NewGuid(), CandidatesJson = RoutingCandidate.Serialize(new RoutingCandidate[]
-                    { new(owner.Kind, owner.ModelLevel), new(AgentKind.ClaudeCode, AgentModelLevel.Medium) }), CreatedAt = now, UpdatedAt = now });
+            var routing = await db.StandingSpecialistRoutings.SingleOrDefaultAsync(r => r.AgentId == owner.Id);
+            if (routing is null)
+            {
+                routing = new() { Id = Guid.NewGuid(), AgentId = owner.Id, Enabled = true, CreatedAt = now,
+                    CandidatesJson = RoutingCandidate.Serialize([new(owner.Kind, owner.ModelLevel)]) };
+                db.StandingSpecialistRoutings.Add(routing);
+            }
+            routing.CandidatesJson = RoutingCandidate.Serialize([.. RoutingCandidate.Parse(routing.CandidatesJson), new(AgentKind.ClaudeCode, level)]);
+            routing.ConcurrencyToken = Guid.NewGuid();
+            routing.UpdatedAt = now;
             await db.SaveChangesAsync();
         }
         h.Runtime.Register(sessionId, new FakeAgentProtocolAdapter { OnSubmitted = h.Adapter.OnSubmitted });
