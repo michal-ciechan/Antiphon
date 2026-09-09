@@ -13,6 +13,8 @@ namespace Antiphon.Server.Domain.Entities;
 /// </summary>
 public class AgentTask
 {
+    /// <summary>Internal no-tool Check transport capability. Never accepted from the public task API.</summary>
+    public string? SpecialistInputPolicyJson { get; set; }
     /// <summary>Original optional-work deadline. Null preserves historical dispatch behavior.</summary>
     public DateTime? ExecutionDeadlineAt { get; set; }
     /// <summary>Internal specialist execution snapshot. Null preserves legacy/public pin behavior.</summary>

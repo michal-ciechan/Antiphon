@@ -10,6 +10,8 @@ namespace Antiphon.Server.Domain.Entities;
 /// </summary>
 public class SessionQueuedMessage
 {
+    /// <summary>Versioned full-inline capability; survives retries and reloads. Null is ordinary delivery.</summary>
+    public string? SpecialistInputPolicyJson { get; set; }
     /// <summary>Deadline/identity of an optional specialist brief, never a completion note.</summary>
     public DateTime? ExecutionDeadlineAt { get; set; }
     public Guid? ExecutionTaskId { get; set; }
