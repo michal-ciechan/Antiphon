@@ -194,6 +194,9 @@ POST   /api/projects/setup                          ProjectSetupResultDto
 
 ```
 GET    /api/agents  |  /api/agents/{id}
+GET    /api/agents/{id}/specialist-routing   declared Check routing, exact primary alias, retained candidate reasons; null revision means no explicit chain
+PUT    /api/agents/{id}/specialist-routing   { concurrencyToken: guid|null, enabled: bool, candidates: [{ agentKind, modelLevel }] }; 1-3 unique complete ClaudeCode/Codex pairs, primary-matching head; stale revision 409 specialist_routing_stale, invalid declaration 422
+POST   /api/agents/{id}/specialist-routing/revalidate  { concurrencyToken: guid }; rotates qualification authorization only, never stamps Qualified or starts a process; disabled feature/configuration 409 specialist_routing_disabled
 GET    /api/agents/definitions               the configured Agents:Definitions catalogue
 GET    /api/agents/preamble-preset?provider=  telegram | slack (404 for anything else)
 GET    /api/agents/bundles                   attachable instruction bundles (read-only; the catalog is code)
