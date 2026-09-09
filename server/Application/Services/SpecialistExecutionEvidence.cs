@@ -11,7 +11,7 @@ namespace Antiphon.Server.Application.Services;
 
 public enum SpecialistEvidenceProvenance { Unverified = 0, Synthetic = 1, RealProvider = 2 }
 public sealed record SpecialistExecutionEvidence(string CapabilityFingerprint, string Fingerprint,
-    int MaxInputUtf8Bytes, SpecialistEvidenceProvenance Provenance);
+    int MaxInputUtf8Bytes, SpecialistEvidenceProvenance Provenance, int? CertifiedFirstAttemptSeconds = null);
 public sealed record SpecialistQualificationEvidence(string Fingerprint, SpecialistEvidenceProvenance Provenance,
     IReadOnlyList<Guid> TaskIds, IReadOnlyList<string> EvidenceNonces);
 public sealed record SpecialistLaunchEvidence(string Executable, string ExecutableSha256, string PolicyFingerprint,
@@ -77,7 +77,8 @@ public sealed class SpecialistExecutionEvidenceReader(IOptions<SupervisionSettin
             using var stream = File.OpenRead(launch.Exe);
             var hash = Convert.ToHexString(SHA256.HashData(stream));
             var provenance = SpecialistEvidenceProvenance.RealProvider;
-            if (launch.Env.TryGetValue("ANTHROPIC_BASE_URL", out var url) && !string.IsNullOrWhiteSpace(url))
+            var url = launch.Env.TryGetValue("ANTHROPIC_BASE_URL", out var configured) ? configured : Environment.GetEnvironmentVariable("ANTHROPIC_BASE_URL");
+            if (!string.IsNullOrWhiteSpace(url))
                 provenance = Uri.TryCreate(url, UriKind.Absolute, out var parsed) && parsed.Host == "api.anthropic.com"
                     ? SpecialistEvidenceProvenance.RealProvider : SpecialistEvidenceProvenance.Synthetic;
             return JsonSerializer.Serialize(new SpecialistLaunchEvidence(launch.Exe, hash, PolicyFingerprint, provenance));

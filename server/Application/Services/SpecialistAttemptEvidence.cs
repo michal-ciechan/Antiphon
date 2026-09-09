@@ -30,8 +30,10 @@ public static class SpecialistAttemptEvidence
             return new(SpecialistAttemptOutcome.AuthenticationUnavailable, Reason: "Provider authentication is required.");
         if (task.FailureCode == AgentTaskFailureCode.SpecialistIdentityMismatch)
             return new(SpecialistAttemptOutcome.IdentityMismatch, Reason: "Execution identity changed.");
-        if (prompt is null || message?.DeliveryVerdict != DeliveryVerdict.Delivered)
+        if (prompt is null)
             return new(SpecialistAttemptOutcome.DeliveryUnconfirmed, Reason: "No complete native Check input receipt.");
+        if (message?.DeliveryVerdict is not (DeliveryVerdict.Delivered or DeliveryVerdict.LateConfirmed))
+            return new(SpecialistAttemptOutcome.DeliveryUnconfirmed, Reason: $"The queue has not confirmed Check delivery ({message?.DeliveryVerdict?.ToString() ?? "unknown"}).");
         if (task.Status != AgentTaskStatus.Succeeded)
             return new(SpecialistAttemptOutcome.TaskFailedUnknown, Reason: "The Check task did not succeed.", PromptSequence: prompt.Sequence);
         var boundary = turn.LastOrDefault(e => TranscriptKinds.IsReportBoundary(e.Kind, e.StopReason));
