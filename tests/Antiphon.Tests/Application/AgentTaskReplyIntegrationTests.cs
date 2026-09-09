@@ -51,7 +51,7 @@ public class AgentTaskReplyIntegrationTests
             t.Role = AgentTaskRole.Code;
             t.AgentId = workerId;
         });
-        const string report = """
+        var report = """
             Phone support implemented; live acceptance remains pending.
 
             dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-card0417/
@@ -68,7 +68,7 @@ public class AgentTaskReplyIntegrationTests
             next: review
             handoff: verify all evidence before accepting channel rollout
             artifact: docs/superpowers/plans/2026-09-07-card-0417-channel-reply-conciseness-plan.md
-            """;
+            """.ReplaceLineEndings("\n");
         await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), report);
         await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
         await using var verify = CreateContext();
