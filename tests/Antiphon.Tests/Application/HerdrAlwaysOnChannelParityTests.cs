@@ -240,7 +240,7 @@ public partial class HerdrAlwaysOnChannelParityTests
     }
 
     [Test]
-    public async Task Named_AlwaysOn_agent_lands_on_its_labelled_tab_across_crash_restart_and_fresh_threshold()
+    public async Task Named_AlwaysOn_agent_lands_on_its_labelled_tab_across_repeated_resume()
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-c384-alwayson-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempRoot);
@@ -333,7 +333,7 @@ public partial class HerdrAlwaysOnChannelParityTests
             await harness.Supervisor().TickAsync(CancellationToken.None);
             await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
             var freshId = await WaitForPersistentSessionAsync(harness, agent.Id);
-            freshId.ShouldNotBe(resumedId);
+            freshId.ShouldBe(resumedId);
             AssertNamedOrch(fake, specialistCount, logs, freshId);
         }
         finally

@@ -1048,7 +1048,7 @@ public class AgentControlServiceIntegrationTests
             await using var harness = BuildHarness(tempRoot, [firstAdapter, freshAdapter], defaultKind: "ClaudeCode");
 
             var agent = await harness.AgentService.CreateAsync(
-                new CreateAgentRequest("AlwaysOn Specialist", workspace, AlwaysOn: true),
+                new CreateAgentRequest("antiphon-check-interpreter", workspace, AlwaysOn: true),
                 CancellationToken.None);
 
             var first = await harness.Control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);

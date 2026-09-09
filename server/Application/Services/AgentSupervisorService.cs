@@ -7,6 +7,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
@@ -28,6 +29,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
     private static readonly TimeSpan HourlyTier = TimeSpan.FromHours(1);
     private static readonly TimeSpan DailyTier = TimeSpan.FromDays(1);
 
+    private readonly IServiceScopeFactory? _scopeFactory;
     private readonly AppDbContext _db;
     private readonly AgentControlService _control;
     private readonly ISessionRunnerClient _runnerClient;
@@ -53,8 +55,10 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         AgentSessionLaunchQueue launchQueue,
         HerdrSupervisionStateService? herdrSupervision = null,
         CapacityRecoveryService? capacityRecovery = null,
-        IOptions<DelegationSettings>? delegation = null)
+        IOptions<DelegationSettings>? delegation = null,
+        IServiceScopeFactory? scopeFactory = null)
     {
+        _scopeFactory = scopeFactory;
         _db = db;
         _control = control;
         _runnerClient = runnerClient;
@@ -245,6 +249,9 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
 
         // Due: attempt the restart.
         var attemptNumber = state.RestartBackoffFailures + 1;
+        var beforeAttempt = await FindPersistentSessionAsync(agent, statuses: null, ct);
+        var beforeId = beforeAttempt?.Id;
+        var beforeStartedAt = beforeAttempt?.StartedAt;
         state.LastAttemptAt = now;
         state.UpdatedAt = now;
         await _db.SaveChangesAsync(ct);
@@ -281,7 +288,35 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
+            // A failed Start may leave its context/transaction unusable. Bookkeeping uses a
+            // fresh scope; if storage also refuses this write, the hosted tick logs and retries.
+            if (_scopeFactory is not null)
+            {
+                await using var failureScope = _scopeFactory.CreateAsyncScope();
+                return await failureScope.ServiceProvider.GetRequiredService<AgentSupervisorService>()
+                    .RecordStartFailureAsync(agent.Id, ex, now, attemptNumber, beforeId, beforeStartedAt, ct);
+            }
+            _db.ChangeTracker.Clear();
+            return await RecordStartFailureAsync(agent.Id, ex, now, attemptNumber, beforeId, beforeStartedAt, ct);
+        }
+
+        async Task<bool> CompleteAsync(bool result)
+        {
+            await _db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+            if (previouslyHeld != state.HerdrFailureHeldAt)
+                await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
+            return result;
+        }
+    }
+
+    private async Task<bool> RecordStartFailureAsync(Guid agentId, Exception ex, DateTime now, int attemptNumber,
+        Guid? beforeId, DateTime? beforeStartedAt, CancellationToken ct)
+    {
+            var agent = await _db.Agents.SingleAsync(a => a.Id == agentId, ct);
             var refreshed = await GetOrCreateStateAsync(agent.Id, ct);
+            if (refreshed.ContinuityHeldAt is not null || refreshed.Suspended) return false;
+            if (Guid.TryParse(agent.PersistentSessionId, out var owned) && _launchQueue.Owns(owned)) return true;
             if (ex is ModelDisabledException held)
             {
                 if (_capacityRecovery is not null)
@@ -328,7 +363,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             {
                 new RestartFailurePolicy().Charge(refreshed, new RestartFailurePolicy().Classify(ex));
                 var incarnation = await FindPersistentSessionAsync(agent, statuses: null, ct);
-                if (incarnation is not null && incarnation.StartedAt >= now)
+                if (incarnation is not null && (incarnation.Id != beforeId || incarnation.StartedAt != beforeStartedAt))
                 {
                     refreshed.LastObservedRestartSessionId = incarnation.Id;
                     refreshed.LastObservedRestartStartedAt = incarnation.StartedAt;
@@ -352,16 +387,6 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             await _db.SaveChangesAsync(ct);
             await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
             return true;
-        }
-
-        async Task<bool> CompleteAsync(bool result)
-        {
-            await _db.SaveChangesAsync(ct);
-            await transaction.CommitAsync(ct);
-            if (previouslyHeld != state.HerdrFailureHeldAt)
-                await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
-            return result;
-        }
     }
 
     /// <summary>
