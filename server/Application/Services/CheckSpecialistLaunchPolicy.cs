@@ -20,7 +20,7 @@ public static class CheckSpecialistLaunchPolicy
                 or "--system-prompt" or "--system-prompt-file" or "--append-system-prompt-file"
                 or "--system-prompt-snapshot" or "--agent" or "--agents"
                 or "--allowedTools" or "--allowed-tools" or "--disallowedTools" or "--disallowed-tools"
-                or "--tools" or "--mcp-config" or "--plugin-dir" or "--chrome")
+                or "--tools" or "--mcp-config" or "--strict-mcp-config" or "--plugin-dir" or "--chrome")
                 throw Refused($"Check launch contains an inherited policy override ({flag}).");
         }
         foreach (var name in new[] { "CLAUDE_CODE_SIMPLE", "CLAUDE_CODE_SAFE_MODE" })
@@ -43,16 +43,25 @@ public static class CheckSpecialistLaunchPolicy
         settings["disableAllHooks"] = false;
         settings["remoteControlAtStartup"] = false;
         var path = Path.Combine(specialist.WorkingDirectory, ".antiphon", "check-tool-policy-v1.json");
+        var mcpPath = Path.Combine(specialist.WorkingDirectory, ".antiphon", "check-no-mcp-v1.json");
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.WriteAllText(path, settings.ToJsonString());
+            File.WriteAllText(mcpPath, "{\"mcpServers\":{}}");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             throw new ConflictException("Check launch policy could not be armed.", "specialist_tool_policy_unavailable");
         }
-        return launch with { Args = [.. launch.Args, "--settings", path] };
+        var env = launch.Env.ToDictionary(p => p.Key, p => p.Value);
+        env["CLAUDE_CODE_SIMPLE"] = "";
+        env["CLAUDE_CODE_SAFE_MODE"] = "";
+        return launch with
+        {
+            Args = [.. launch.Args, "--setting-sources", "", "--strict-mcp-config", "--mcp-config", mcpPath, "--settings", path],
+            Env = env,
+        };
     }
 
     private static ConflictException Refused(string reason) => new(reason, "specialist_tool_policy_unsupported");

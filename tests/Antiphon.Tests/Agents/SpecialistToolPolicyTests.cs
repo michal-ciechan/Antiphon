@@ -43,6 +43,8 @@ public class SpecialistToolPolicyTests
     [Arguments("Write", false)]
     [Arguments("Bash", true)]
     [Arguments("Bash", false)]
+    [Arguments("mcp__fixture__receipt", true)]
+    [Arguments("mcp__fixture__receipt", false)]
     public Task Card0415_V05_Claude_native_tool_denial_and_disposable_receipt_controls(string tool, bool protectedSeat) =>
         RunAsync(protectedSeat, tool, 0);
 
@@ -76,6 +78,29 @@ public class SpecialistToolPolicyTests
                     Kind = "ClaudeCode", Exe = exe, ArgsTemplate = [..prefix, "--dangerously-skip-permissions"],
                 } },
             };
+            if (!protectedSeat && tool == "mcp__fixture__receipt")
+            {
+                var helper = Path.Combine(root, "mcp-fixture.cjs");
+                File.WriteAllText(helper, """
+                    const fs = require('fs');
+                    const rl = require('readline').createInterface({ input: process.stdin });
+                    rl.on('line', line => {
+                      let m; try { m = JSON.parse(line); } catch { return; }
+                      if (m.id === undefined) return;
+                      let result = {};
+                      if (m.method === 'initialize') result = { protocolVersion: m.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1' } };
+                      if (m.method === 'tools/list') result = { tools: [{ name: 'receipt', description: 'Write an owned disposable test receipt', inputSchema: { type: 'object', properties: {} } }] };
+                      if (m.method === 'tools/call') { fs.writeFileSync(process.argv[2], process.argv[3]); result = { content: [{ type: 'text', text: 'receipt written' }] }; }
+                      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result }) + '\n');
+                    });
+                    """);
+                var mcpConfig = Path.Combine(root, "mcp-control.json");
+                File.WriteAllText(mcpConfig, JsonSerializer.Serialize(new { mcpServers = new { fixture = new
+                {
+                    command = "node", args = new[] { helper, receiptPath, secretReceipt },
+                } } }));
+                registry.Definitions["c415-stub"].ArgsTemplate = [..prefix, "--dangerously-skip-permissions", "--strict-mcp-config", "--mcp-config", mcpConfig];
+            }
             var delegation = new DelegationSettings
             {
                 CheckInterpreterAgentSlug = "c415-" + Guid.NewGuid().ToString("N"),
@@ -175,7 +200,14 @@ public class SpecialistToolPolicyTests
                     .Select(c => c.GetProperty("content").ToString()));
                 if (protectedSeat)
                 {
-                    resultBody.ShouldContain(CheckInterpretation.DenyHookStderr);
+                    if (tool.StartsWith("mcp__", StringComparison.Ordinal))
+                    {
+                        JsonSerializer.Deserialize<JsonElement>(hit.Body).GetProperty("tools").EnumerateArray()
+                            .ShouldNotContain(t => t.GetProperty("name").GetString() == tool);
+                        resultBody.ShouldContain("tool");
+                        resultBody.ShouldNotBeEmpty("an unexposed forced tool must be rejected by the native CLI");
+                    }
+                    else resultBody.ShouldContain(CheckInterpretation.DenyHookStderr);
                     resultBody.ShouldNotContain(secretReceipt);
                     if (tool != "Read") File.Exists(receiptPath).ShouldBeFalse();
                 }
