@@ -9,6 +9,37 @@ namespace Antiphon.FakeLlmApi;
 /// </summary>
 public static class AnthropicSse
 {
+    public static async Task WriteToolTurnAsync(HttpResponse response, ScriptedFunctionCall call, CancellationToken ct)
+    {
+        response.StatusCode = StatusCodes.Status200OK;
+        response.ContentType = "text/event-stream; charset=utf-8";
+        response.Headers.CacheControl = "no-cache";
+        await WriteEventAsync(response, "message_start", new
+        {
+            type = "message_start",
+            message = new { id = $"msg_stub_{Guid.NewGuid():N}", type = "message", role = "assistant",
+                content = Array.Empty<object>(), model = "claude-stub", stop_reason = (string?)null,
+                stop_sequence = (string?)null, usage = new { input_tokens = 10, output_tokens = 1 } },
+        }, ct);
+        await WriteEventAsync(response, "content_block_start", new
+        {
+            type = "content_block_start", index = 0,
+            content_block = new { type = "tool_use", id = call.CallId, name = call.Name, input = new { } },
+        }, ct);
+        await WriteEventAsync(response, "content_block_delta", new
+        {
+            type = "content_block_delta", index = 0,
+            delta = new { type = "input_json_delta", partial_json = call.Arguments },
+        }, ct);
+        await WriteEventAsync(response, "content_block_stop", new { type = "content_block_stop", index = 0 }, ct);
+        await WriteEventAsync(response, "message_delta", new
+        {
+            type = "message_delta", delta = new { stop_reason = "tool_use", stop_sequence = (string?)null },
+            usage = new { output_tokens = 20 },
+        }, ct);
+        await WriteEventAsync(response, "message_stop", new { type = "message_stop" }, ct);
+    }
+
     public static async Task WriteTextTurnAsync(HttpResponse response, string text, CancellationToken ct)
     {
         response.StatusCode = StatusCodes.Status200OK;

@@ -12,6 +12,15 @@ namespace Antiphon.Tests.Application;
 [Category("Unit")]
 public class CheckSpecialistLaunchPolicyTests
 {
+    private sealed class TempWorkspace : IDisposable
+    {
+        public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "antiphon-c415-launch", Guid.NewGuid().ToString("N"));
+        public void Dispose()
+        {
+            if (Directory.Exists(Path)) Directory.Delete(Path, true);
+        }
+    }
+
     private static AgentLaunchSpec Launch(SpecialistSpec spec, params string[] extra) => new(
         "synthetic-claude", AgentKind.ClaudeCode, "claude", ["--append-system-prompt", spec.Contract, ..extra],
         new Dictionary<string, string> { ["CLAUDE_CODE_SIMPLE"] = "0", ["CLAUDE_CODE_SAFE_MODE"] = "false" },
