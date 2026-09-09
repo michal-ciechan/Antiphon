@@ -285,3 +285,208 @@ dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c449b/ -- --
 Modelling DECAWM off; the Herdr pane path (`herdr.ReadScreenAsync`, its own renderer); any change to poll
 interval or budgets; the UI's terminal view (xterm.js consumes raw bytes, not `renderedScreen`); a fix for the
 emulator's ignored DECSC/DECRC (`\e7`/`\e8`), which the streams here use only around the initial clear.
+
+## Verification design
+
+Appended 2026-09-09 by TestDesign task `f27a1212` against plan commit `47fdc804`. D-1..D-7 and S1..S4 above
+remain the fix design; this section is executable work for Code. The row indices and hashes below were pinned by
+replaying the four retained streams through pyte (deferred wrap), the plan's reference emulator, in all three
+chunkings; they are the post-fix expectation for `TerminalScreen`, not what it renders today. Next stage: **code**.
+
+### Harness contract
+
+**Fixtures.** `tests/Antiphon.Agents.Pty.Tests/golden/card-0449/`, each real file copied byte-for-byte from
+`C:\logs\antiphon\session-runner\<id>.ansi.log` (binary copy, no re-encoding). Before the fixture commit add
+`tests/Antiphon.Agents.Pty.Tests/golden/card-0449/*.ansi -text` to `.gitattributes` — the repo's `* text=auto`
+under `core.autocrlf=true` may otherwise rewrite the `\r\n` pairs — and confirm with
+`git ls-files --eol tests/Antiphon.Agents.Pty.Tests/golden/card-0449/` that every row shows `attr/-text`.
+
+| File | Bytes | SHA-256 | Provenance |
+|---|---:|---|---|
+| `effort-dismissal-23b5663c.ansi` | 3,957 | `18c89534612034390d52a09b2e96093687b4be379f98a2d03684620f01ee9d4c` | real; banner-present dismissal |
+| `effort-dismissal-23b5663c-banner-excised.ansi` | 3,868 | `15f7381f74850dc508e26eb0b32810bf87e7bc11d95e86c0bac4e0c637f9b23b` | **synthetic**: the real file with the 89-byte span at byte offsets 3694–3782 removed and nothing else. The span is exactly `\e[53G\e[38;2;255;193;7mYou've used 83% of your weekly limit · resets 12am (Europe/London)` (`·` is two bytes); it occurs once. |
+| `effort-dialog-9184ec6d.ansi` | 2,637 | `791729350b491bb6805e72e2b79dc7e3b706fe2a37c9a72b44a07b11c72d03b2` | real; dialog paint, no dismissal |
+| `effort-dialog-2968433b.ansi` | 2,631 | `cb41ba5defe7afa6089a93dff943d714c02391deb9812ccddf97fa39cbcd77e1` | real |
+| `effort-dialog-787bfee2.ansi` | 2,631 | `c478644172a24472166370c4af7470ddf5442957e35583b0623ce2db98a21a30` | real |
+
+`README.md` beside them repeats this table, the excision span, and the derivation rule (`excised == real[..3694] + real[3783..]`).
+Byte-exact structure markers, present in every file: Ink frames start at `\e[?25l` (three in the dismissal
+stream, two in each dialog-only stream); the dismissal begins at the **first `\e[2K\e[1A`** (byte 2636 of the real
+dismissal file; absent from the dialog-only files). The dialog frame of the dismissal stream is everything before
+that marker. No `\r` from the Enter key is echoed in the stream, so no fixture editing is needed to split it.
+
+**Chunkings** — `[Arguments]` rows named `"whole"`, `"frames"`, `"pieces"`. Decode a file once with
+`Encoding.UTF8.GetString` (the files carry no BOM). `whole`: one `Feed`. `frames`: split *before* each
+`\e[?25l`, empty pieces dropped. `pieces`: successive 256-char slices, except that a slice that would end between
+an ESC and the final byte of its sequence (CSI final byte `@`..`~`; OSC terminator BEL or `\e\`; the second char of
+a two-char ESC sequence) is extended to include that final byte. The extension is required: in every fixture a
+plain 256-byte cut lands inside an escape sequence (real dismissal: byte offsets 1024, 2048, 2560, 3840) and
+inside a UTF-8 multibyte character (offset 256), and `TerminalScreen.Feed` keeps no parser state between calls, so
+a naive cut would fail on the parser, not on deferred wrap. Every replay test asserts **chunk invariance**:
+`GetRows()` after `frames` and after `pieces` equals `GetRows()` after `whole`.
+
+**Pinned rows** (post-fix; 0-based, as `TerminalScreen.GetRows()` / `FindRow` index them):
+
+- *Dialog frame* (all four streams; the dismissal stream's is the bytes before the first `\e[2K\e[1A`): row 5 is
+  120 × `─`; row 6 is ` Use Fable 5.1 at high effort by default?`; rows 8–9 the explanatory text; row 11 contains
+  `estimated cost`; row 13 trims to `> Keep xhigh`; row 14 trims to `Switch Fable 5.1 to high effort`.
+  `Parse` → Model `Fable 5.1`, Current `xhigh`, Suggested `high`, Highlight `Keep`. `HasRemnant` true.
+- *Final frame* (both dismissal fixtures, every chunking): row 5 ends with ` task-f418105f ─`; row 6 contains
+  `Try "how do I log an error?"`; row 7 is 120 × `─`; row 8 contains `bypass permissions on` and
+  `◉ xhigh · /effort`; rows 9–29 empty. `HasRemnant` false, `Parse` null, `ClaudeScreen.ComposerIsLive` true,
+  `CurrentEffort` = `xhigh`, `CursorRow == 6`, `CursorCol == 2`.
+- *Intermediate frame* (banner-present fixture, `frames` chunking, after the piece that starts at the first
+  `\e[2K\e[1A` and ends before the last `\e[?25l`): as the final frame, plus row 9 =
+  `You've used 83% of your weekly limit · resets 12am (Europe/London)` starting at column 52, and row 8 without
+  `◉ xhigh · /effort`. `ClaudeScreen.IsSettled(intermediate, final)` is **false** (the banner row survives
+  `Stable`), so in this chunking the resolver's settle pair spans one extra poll.
+
+**Resolver replay driver** (S3). `screen = new TerminalScreen(120, 30)`; feed the dialog frame; queue the
+dismissal in the chosen chunking. `snapshot`: once a `\r` has been written, feed one queued piece (if any), then
+return `GetScreenText()`. `write`: record the key. Intent `ClaudeEffortIntent.Read(["--effort", "xhigh"])`,
+budget 8,000 ms, no sleeps — the resolver's own 50 ms cadence paces the pieces.
+
+**D-1 clarification (tab).** D-1's decision text governs: `\t` clears a pending wrap without moving. The
+design-detail sentence "tab naturally consumes a pending wrap first" describes the pre-fix path and is superseded.
+Code must also bound the tab loop: today `\t` calls `WriteChar(' ')` until the next stop, and once `WriteChar`
+stops advancing past `Cols - 1` that loop never terminates for a tab issued in the last column. Rule: spaces are
+written for the columns strictly before `min(next stop, Cols - 1)`, the cursor stops there, and the flag is not
+re-armed. V-7 pins it with a `[Timeout(5000)]`.
+
+**`last=remnant` excerpt.** The first `HasRemnant`-matching row after `Row()` trimming (spaces, tabs, `│┃║`),
+truncated to 60 chars. For the incident: `Use Fable 5.1 at high effort by default?`. The summary
+` [polls=P clear=C last=G composer=live|absent]` is appended to every `Result` (success and failure) between the
+cause and its full stop; `last` starts as `none`; `composer` is `ComposerIsLive` of the last polled screen.
+
+**`EffortTestScreen` knobs** (D-6, additive only). `HintBar` (`string`, default `"? for shortcuts"`; rendered as
+the cleared screen's last line, `""` renders no hint line) and `Churn` (`IReadOnlyList<string>`; after the
+accepting Enter each snapshot serves the next element until the list is exhausted, then the normal cleared
+screen; churn screens count as neither `ClearObservations` nor `Dialog`).
+
+### Proves it works now
+
+Unless marked existing, every method is new. Parameterised methods report each named row. `TS` =
+`TerminalScreenTests` (helper `S(cols, rows)`), `RP` = `ClaudeEffortDismissalReplayTests` (new, `[Category("Unit")]`,
+no process), `E` = `ClaudeEffortPromptTests`, `SR` = `ClaudeStartupReadinessTests`, `A` =
+`RunnerClaudeAdapterEffortPromptTests`. Cursor tuples are `(CursorRow, CursorCol)`.
+
+- V-1: a printable in the last column leaves the cursor on that row | unit | TS.`Writing_the_last_column_keeps_the_cursor_on_the_row` — `S(10,3)`, feed `ABCDEFGHIJ` | row 0 `ABCDEFGHIJ`, cursor (0,9), row 1 empty
+- V-2: the next printable wraps first | unit | TS.`The_next_printable_after_a_full_row_wraps_first` — feed `ABCDEFGHIJK` | row 0 `ABCDEFGHIJ`, row 1 `K`, cursor (1,1)
+- V-3: `\r` after a full row stays on that row | unit | TS.`A_carriage_return_after_a_full_row_stays_on_that_row` — feed `ABCDEFGHIJ\rX` | row 0 `XBCDEFGHIJ`, row 1 empty, cursor (0,1)
+- V-4: CRLF after a full row advances exactly one row | unit | TS.`A_full_row_then_CRLF_advances_exactly_one_row` — feed `ABCDEFGHIJ\r\nX` | row 1 `X`, row 2 empty, cursor (1,1)
+- V-5: `\b` after a full row steps back on that row | unit | TS.`Backspace_after_a_full_row_steps_back_on_that_row` — feed `ABCDEFGHIJ\bX` | row 0 `ABCDEFGHXJ`, row 1 empty, cursor (0,9)
+- V-6: cursor-positioning CSI clears the flag | unit | TS.`Cursor_moves_clear_a_pending_wrap`, rows `A B C D E F G H f d r` — `S(10,3)`, feed `\e[2;1H` + `ABCDEFGHIJ` + the sequence + `X` | A `\e[1A` → row 0 `         X`; B `\e[1B` → row 2 `         X`; C `\e[1C` → row 1 `ABCDEFGHIX`; D `\e[1D` → row 1 `ABCDEFGHXJ`; E `\e[1E` → row 2 `X`; F `\e[1F` → row 0 `X`; G `\e[3G` → row 1 `ABXDEFGHIJ`; H `\e[3;2H` → row 2 ` X`; f `\e[3;2f` → row 2 ` X`; d `\e[3d` → row 2 `         X`; r `\e[1;3r` → row 0 `X`. In every row the other two rows are unchanged and no row received `X` by wrapping.
+- V-7: `\t` clears the flag without moving and cannot hang | unit | TS.`A_tab_in_the_last_column_clears_the_wrap_and_terminates` `[Timeout(5000)]`, rows `"pending"` (`ABCDEFGHIJ\tX`), `"landing"` (`ABCDEFGHI\tX`), `"middle"` (`AB\tX`) | feed returns; pending and landing: row 0 `ABCDEFGHIX`, row 1 empty, cursor (0,9); middle: row 0 `AB      X`, cursor (0,9)
+- V-8: non-moving sequences keep the flag | unit | TS.`Non_moving_sequences_keep_a_pending_wrap`, rows `K J X P @ L M m S T` — `S(10,3)`, feed `ABCDEFGHIJ` + `\e[<row>`, assert cursor (0,9), then feed `X` | K, J, X, P, @: row 0 `ABCDEFGHI`, row 1 `X`; m: row 0 `ABCDEFGHIJ`, row 1 `X`; L: row 0 empty, row 1 `XBCDEFGHIJ`; M: row 0 empty, row 1 `X`; S: row 0 empty, row 1 `X`; T: row 0 empty, row 1 `XBCDEFGHIJ`
+- V-9: a deferred wrap at the scroll bottom scrolls the region on the next printable | unit | TS.`A_deferred_wrap_at_the_scroll_bottom_scrolls_the_region` — `S(10,4)`, feed `\e[2;4r` + `\e[4;1H` + `ABCDEFGHIJ`; assert row 3 `ABCDEFGHIJ`, row 2 empty, cursor (3,9); then feed `K` | row 2 `ABCDEFGHIJ`, row 3 `K`, row 0 empty, cursor (3,1)
+- V-10: every existing `TerminalScreen` behaviour holds | unit | `--treenode-filter "/*/*/TerminalScreenTests/*"` | all green; any pre-existing assertion that pinned the immediate wrap is corrected per S1 and named in the Code report
+- V-11: real dialog paints put the title directly under the rule | unit | RP.`Real_dialog_paints_directly_under_its_rule`, 4 fixtures × 3 chunkings (12 rows; the dismissal fixture contributes its dialog frame) | the pinned dialog rows; `FindRow("Use Fable 5.1") == 6` and row 5 is 120 × `─`; `Parse` fields as pinned; `HasRemnant` true; chunk invariance
+- V-12: a real dismissal leaves no dialog rows | unit | RP.`Real_dismissal_leaves_no_dialog_rows`, 2 fixtures × 3 chunkings (6 rows) | the pinned final rows; `FindRow("Try \"how do I log an error?\"") == FindRow("task-f418105f") + 1`; `HasRemnant` false; `Parse` null; `ComposerIsLive` true; cursor (6,2); chunk invariance; the banner-present `frames` row also asserts the pinned intermediate frame and `IsSettled(intermediate, final) == false`
+- V-13: the resolver clears a replayed dismissal with one Enter | unit | RP.`Resolver_clears_a_replayed_dismissal`, 2 × 3 (6 rows) via the replay driver | `Cleared` true; writes exactly `["\r"]`; `Detail` contains `Enter=1` and `two settled clear observations` and matches `\[polls=\d+ clear=2 last=\S+ composer=live\]`; the banner-present `frames` row took ≥ 3 post-Enter snapshots
+- V-14: clearance no longer needs composer chrome | unit | E.`Clearance_does_not_require_composer_chrome` — `new EffortTestScreen { HintBar = "" }`, `ResolveAsync()` | `Cleared` true; writes exactly `["\r"]`; `TokenWrites == 0`; `AppliedEffort == "xhigh"`; `Detail` contains `two settled clear observations`
+- V-15: an unsettled pair never clears and a settled pair does | unit | E.`An_unsettled_pair_never_clears_and_a_settled_pair_does`, rows `"exhausts"` (`Churn` = `[a, b]` × 10 with `a = "> \n? for shortcuts"`, `b = "> \nSome output line\n? for shortcuts"`, budget 8,000) and `"outlasts-budget"` (`Churn` = `[a, m]` × 100 with `m = "Do you want to proceed?\n1. Yes\n2. No"`, budget 2,600) | exhausts: `Cleared` true, `Enter=1`, snapshots after the Enter ≥ 22, `clear=2`; outlasts-budget: `Cleared` false, `Detail` contains `settle deadline exhausted`, `last=unsettled`, `Enter=1`; `TokenWrites == 0` in both
+- V-16: a lone ghost title still blocks and is named | unit | E.`A_lone_ghost_title_still_blocks_and_is_named` — `AfterWrite` on `\r` sets `Override = "Fable 5.1 with xhigh effort · Claude Max\n────\n Use Fable 5.1 at high effort by default?\n> \n────\n? for shortcuts"`, budget 2,600 | `Cleared` false; writes exactly `["\r"]`; `Detail` contains `Enter=1`, `settle deadline exhausted`, `last=remnant:"Use Fable 5.1 at high effort by default?"`, `clear=0`, `composer=live`; `TokenWrites == 0`
+- V-17: a settle failure summarises its polls | unit | E.`Settle_failure_detail_summarises_the_polls` — `SwallowEnters = 100`, `ResolveAsync()` | `Cleared` false; `Detail` matches `Enter=3; settle deadline exhausted \[polls=(\d+) clear=0 last=parse composer=absent\]` with the captured polls ≥ 40; the remedy sentence still follows
+- V-18: the launch-block reason carries the summary | unit, production adapter | A.`An_effort_dialog_that_never_clears_fails_within_its_budget` (existing, extended) | existing fields plus `polls=` and `last=parse` in `LaunchBlock.Reason`
+- V-19: the trace fires on gate changes, not per poll, and is wired from `RunAsync` | unit | SR.`Settle_trace_fires_on_gate_changes_not_per_poll`, rows `"static-hold"` (`SwallowEnters = 100`, `ReadyAsync(totalMs: 5500, maxWrites: 100)` under the same watchdog shape as `Recurring_dialogs_cannot_renew_the_readiness_deadline`) and `"phased"` (after the Enter, `OnSnapshot` serves `""`, then `">\n? for shortcuts"`, then `Template`, then `null` — the `Redraw_is_not_clearance_before_the_probe` shape) | resolver-originated lines are `fake.Trace` entries that neither match `^\d+: (read|write) ` nor start with `requested=`; static-hold: `fake.Snapshots ≥ 40` and such lines ≤ 6; phased: `result.Ready` true, such lines ≥ 2, one containing `parse` and one containing `unsettled`
+- V-20: existing resolver and readiness behaviour is intact under D-2 | unit | classes `ClaudeEffortPromptTests`, `ClaudeStartupReadinessTests`, `ClaudeScreenTests`, `ComposerInputProbeTests`, `ClaudeStartupTrustPromptTests` | all green, including `Malformed_effort_remnants_do_not_count_as_clearance`, `Requested_effort_is_applied`, `Retries_respect_settle_and_attempt_limits`, `Redraw_is_not_clearance_before_the_probe`, `A_contradictory_resulting_effort_fails_readiness`, `A_scrolled_away_effort_banner_does_not_block_confirmed_clearance`, and `Startup_dialog_chains_preserve_each_gate` (its effort-then-modal rows are the "next modal that holds still" case D-2 accepts by the same rule)
+- V-21: fixture bytes are pinned and the synthetic one is derived | unit | RP.`Fixture_hashes_are_pinned`, 5 rows, plus RP.`Banner_excised_fixture_is_derived_from_the_real_one` | per row: size and SHA-256 of `Path.Combine(AppContext.BaseDirectory, "golden", "card-0449", name)` equal the table; excised bytes == real bytes with `[3694, 3783)` removed
+- V-22: the docs and class comment say it | docs check | `grep -n "Gotcha #90" docs/session-runtime-invariants.md`; `grep -n -i "deferred" docs/session-runtime-invariants.md src/Antiphon.Agents.Pty/TerminalScreen.cs`; `grep -n "DECAWM" src/Antiphon.Agents.Pty/TerminalScreen.cs`; `grep -n "polls=" docs/session-runtime-invariants.md`; `grep -c "two positive clear frames" docs/session-runtime-invariants.md`; `grep -c "two positive dismissal frames" docs/agent-kinds.md` | the first four ≥ 1 hit each (the new gotcha follows `### Gotcha #89`); the last two return 0 — the existing CARD-0449 paragraph in the invariants doc and the effort bullet in `docs/agent-kinds.md` now describe two consecutive settled, remnant-free, non-parsing frames and the `[polls= clear= last= composer=]` summary
+- V-23: the shared emulator still serves its other consumers | unit / Pty | classes `ClaudeGoldenReplayTests`; `Antiphon.Tests` classes `RunnerClaudeAdapterEffortPromptTests`, `RunnerClaudeAdapterTrustPromptTests`, `AgentSessionLaunchFailureTests`; then `"/*/*/*/*[Category=Unit]"` | all green; a red anywhere is triaged against the base commit before it is attributed
+
+Acceptance, not gates: (a) headed real-CLI lanes `ClaudeInteractionTests` and `ClaudeTuiModeTests`
+(`ANTIPHON_HEADED_TESTS=1`, `claude`/`cl` on PATH — they drive the real CLI, not FakeClaude, contrary to the
+lane note above); (b) `ClaudeEffortPromptCanaryTests` when its gates pass; (c) the real banner-absent dismissal
+capture from D-5 — never fabricated; (d) the next Frontier dispatch whose `Claude startup:` line reads
+`two settled clear observations` with `clear=2` and whose launch block is absent. Until (d) the live record stays
+0 successes / 1 failure.
+
+### Guards the regression
+
+- R-1: `WriteChar` is "simplified" back to advance-then-wrap, or a new grid class copies the old loop | caught by V-1, V-12, V-13 because the cursor sits one row low after every full-width row and the ghost title returns; V-13 fails on `Cleared` with `last=remnant:"Use Fable 5.1 at high effort by default?"` — the incident
+- R-2: a refactored or newly added control/CSI handler forgets to clear `_pendingWrap` | caught by V-3, V-5, V-6 because `X` wraps one row too far
+- R-3: a handler that must leave the flag alone starts clearing it ("reset cursor state on SGR") | caught by V-8 because `X` lands on row 0 instead of wrapping
+- R-4: the tab loop is unbounded again or re-arms the flag | caught by V-7 because the `[Timeout]` trips or row 1 receives `X`
+- R-5: the wrap-first line feed bypasses the scroll region | caught by V-9 because row 2 stays empty
+- R-6: the clearance gate regains a chrome dependency (`ComposerIsLive`, hint-bar wording) | caught by V-14 because a hint-less composer never clears
+- R-7: the settle pair is dropped or weakened (one qualifying frame; `IsSettled` replaced by raw equality or `true`) | caught by V-15 because "outlasts-budget" clears and "exhausts" clears before the churn ends
+- R-8: `HasRemnant` leaves the gate or is loosened to option rows | caught by V-16 and existing `Malformed_effort_remnants_do_not_count_as_clearance` because a title-only screen clears
+- R-9: an immediate-accept path for a "next modal" is reintroduced without the settle pair | caught by V-15 "outlasts-budget" because the alternating permission modal clears
+- R-10: the summary or the remnant excerpt drop out of `Detail` / `LaunchBlock.Reason` in a `Result` refactor | caught by V-16, V-17, V-18 because the `polls=` / `last=remnant:"Use ` assertions fail
+- R-11: `RunAsync` stops passing `log` as `trace`, or the trace becomes per-poll | caught by V-19 because the phased row sees no resolver lines / the static-hold row sees more than 6
+- R-12: git normalisation or a hand edit changes fixture bytes | caught by V-21 because the SHA-256 differs
+- R-13: the emulator becomes chunk-order dependent (a future partial-sequence buffer that mishandles a boundary) | caught by the chunk-invariance assertions in V-11, V-12 because `frames`/`pieces` rows differ from `whole`
+- R-14: Claude reformats the dialog geometry | caught by V-11 naming the rows — re-capture, never loosen (the `ClaudeGoldenReplayTests` rule)
+
+### Positive controls
+
+Each control: apply the mutation to the committed fixed source, build to `bin-c449b/`, run only the named
+methods with `--treenode-filter "/*/*/<Class>/<Method>"` (a parameterised method runs all its rows; the report
+names which rows went red), confirm the **named** assertion failed (not a build error, fixture error or zero-test
+run), restore with `git checkout -- <file>` (which refreshes the timestamp), rebuild, run the same methods green.
+Report all three results per PC.
+
+- PC-1: break the deferred wrap by restoring `_cursorCol++; if (_cursorCol >= Cols) { _cursorCol = 0; LineFeed(); }` in `TerminalScreen.WriteChar` (flag never set); expect red: TS.`Writing_the_last_column_keeps_the_cursor_on_the_row` (`CursorRow` 1), RP.`Real_dialog_paints_directly_under_its_rule` (title row 9, every row), RP.`Real_dismissal_leaves_no_dialog_rows` (`HasRemnant` true, every row), RP.`Resolver_clears_a_replayed_dismissal` (`Cleared` false; `Detail` shows `last=remnant:"Use Fable 5.1 at high effort by default?"`) — the incident reproduced offline
+- PC-2: break `\r` by removing its `_pendingWrap = false` in `Feed`; expect TS.`A_carriage_return_after_a_full_row_stays_on_that_row` red (row 1 is `X`)
+- PC-3: break `G` by removing its flag clear in `HandleCsi`; expect TS.`Cursor_moves_clear_a_pending_wrap` red on the `G` row only (row 2 receives `X`), the other ten rows green
+- PC-4: break the tab bound by removing the `Cols - 1` limit from the tab loop; expect TS.`A_tab_in_the_last_column_clears_the_wrap_and_terminates` red on `pending` and `landing` by `[Timeout(5000)]` (or by row 1 receiving `X`), never a hung run
+- PC-5: break the region by replacing the wrap-first `LineFeed()` with `_cursorRow++`; expect TS.`A_deferred_wrap_at_the_scroll_bottom_scrolls_the_region` red (row 2 empty after `K`)
+- PC-6: break the settle pair by replacing `ClaudeScreen.IsSettled(kept, screen)` with `true` in `ResolveAsync`; expect E.`An_unsettled_pair_never_clears_and_a_settled_pair_does` red on both rows (exhausts: fewer than 22 post-Enter snapshots; outlasts-budget: `Cleared` true)
+- PC-7: break the remnant gate by dropping `!HasRemnant(screen)` from the qualifying test; expect E.`A_lone_ghost_title_still_blocks_and_is_named` red (`Cleared` true) and existing E.`Malformed_effort_remnants_do_not_count_as_clearance` red
+- PC-8: break the excerpt by emitting `last=remnant` without the quoted row; expect E.`A_lone_ghost_title_still_blocks_and_is_named` red on the `last=remnant:"Use ` assertion while `Cleared` is still false — the report names that assertion
+- PC-9: break the contradiction check by disabling the `CurrentEffort` branch; expect SR.`A_contradictory_resulting_effort_fails_readiness` red (`Outcome` not `EffortFailed`) — the prior plan's PC-8, re-run to prove D-2 kept it
+- PC-10: break the summary by omitting ` [polls=… composer=…]` from `Result`; expect E.`Settle_failure_detail_summarises_the_polls` red and A.`An_effort_dialog_that_never_clears_fails_within_its_budget` red on `polls=` (build `Antiphon.Tests` to `bin-c449b/` once for this control)
+- PC-11: break D-2 by re-requiring `ClaudeScreen.ComposerIsLive(screen)` in the qualifying test; expect E.`Clearance_does_not_require_composer_chrome` red (`Cleared` false, settle deadline)
+- PC-12a: break the wiring by passing `null` instead of `log` as `trace` in `ClaudeStartupReadiness.RunAsync`; expect SR.`Settle_trace_fires_on_gate_changes_not_per_poll` `phased` row red (zero resolver lines)
+- PC-12b: break the cadence by invoking `trace` on every poll in `ResolveAsync`; expect the `static-hold` row red (more than 6 lines)
+- PC-13: break the fixture by changing the first `38;2;136;136;136m` in `effort-dialog-787bfee2.ansi` to `38;2;136;136;137m`; expect RP.`Fixture_hashes_are_pinned` red for that row only while RP.`Real_dialog_paints_directly_under_its_rule` stays green for that fixture (rows unchanged — the hash guards bytes, not the render); restore with `git checkout --`
+
+Batches (different files, no masking): B1 = PC-1 + PC-10 + PC-12a; B2 = PC-2 + PC-6; B3 = PC-3 + PC-7;
+B4 = PC-4 + PC-8; B5 = PC-5 + PC-9; B6 = PC-11 + PC-13; B7 = PC-12b alone. Controls in the same file or method
+(`TerminalScreen.cs` among PC-1..PC-5; `ResolveAsync` among PC-6, PC-7, PC-8, PC-10, PC-11, PC-12b) never share a
+cycle. Seven cycles.
+
+### Out of scope
+
+- DECAWM off (`\e[?7l`) stays unmodelled (D-1); no test.
+- Escape sequences and multibyte characters split across `Feed` calls. `TerminalScreen.Feed` keeps no parser
+  state between calls and `PtyAgentRunner.ReadLoopAsync` decodes each ≤4,096-byte read with a stateless
+  `Encoding.UTF8.GetString`, so a read boundary inside a CSI or a multibyte character corrupts the grid today;
+  the fixtures show such boundaries at every 256-byte cut. Not this card (D-6); it deserves its own card. The
+  `pieces` chunking is escape-safe precisely so this hazard cannot masquerade as a deferred-wrap failure.
+- DECSC/DECRC (`\e7`/`\e8`) stay ignored; the fixtures use them only around the initial clear (plan Out of scope).
+- The real banner-absent dismissal capture (D-5): an acceptance item, never fabricated from rendered screens.
+- The headed real-CLI lanes and the canary: acceptance when eligible; they spawn the real CLI and are not gates.
+- Poll interval, `HighlightSettle`, the three-Enter cap and `ClaudeEffortPromptSettleMs`: unchanged and already
+  pinned by `Retries_respect_settle_and_attempt_limits` and `An_effort_dialog_that_never_clears_fails_within_its_budget`.
+- The Herdr pane renderer, xterm.js in the UI, and the Codex/Grok adapters' own detectors: they consume
+  `TerminalScreen` only indirectly; the whole-class Pty lane is their guard.
+- `Parse`, intent, selection, `ClaudeBlockingPromptDetector`, `ClaudeScreen.Stable` (D-6): unchanged; their
+  existing tests re-run in V-20.
+
+### Cost
+
+- suites forced: `Antiphon.Agents.Pty.Tests` classes `TerminalScreenTests`, `ClaudeEffortDismissalReplayTests`,
+  `ClaudeEffortPromptTests`, `ClaudeStartupReadinessTests`, `ClaudeScreenTests`, `ComposerInputProbeTests`,
+  `ClaudeStartupTrustPromptTests`, `ClaudeGoldenReplayTests` (one class per invocation, `--report-trx`);
+  `Antiphon.Tests` classes `RunnerClaudeAdapterEffortPromptTests`, `RunnerClaudeAdapterTrustPromptTests`,
+  `AgentSessionLaunchFailureTests` (Integration; needs the dev Postgres), then `"/*/*/*/*[Category=Unit]"`
+  (~65 s, 778 tests per CARD-0110). Output path `bin-c449b/` with a forward slash; never the two assemblies
+  concurrently; delete every `bin-c449b` directory at the end.
+- verification floor ~ 35 min: ~3 min builds, ~5 min Pty lane, ~5 min Tests lanes (adapter ~1.5, trust ~0.5,
+  launch-failure ~1, Unit ~1.1), seven PC cycles at ~3 min. About 45 min if the headed acceptance lane runs.
+
+```powershell
+$out = 'bin-c449b/'
+foreach ($c in 'TerminalScreenTests','ClaudeEffortDismissalReplayTests','ClaudeEffortPromptTests','ClaudeStartupReadinessTests','ClaudeScreenTests','ComposerInputProbeTests','ClaudeStartupTrustPromptTests','ClaudeGoldenReplayTests') {
+    dotnet run --project tests/Antiphon.Agents.Pty.Tests --property:OutputPath=$out -- --treenode-filter "/*/*/$c/*" --report-trx --report-trx-filename "c449b-$c.trx"
+    if ($LASTEXITCODE -ne 0) { throw "Failed: $c (exit $LASTEXITCODE)" }
+}
+foreach ($c in 'RunnerClaudeAdapterEffortPromptTests','RunnerClaudeAdapterTrustPromptTests','AgentSessionLaunchFailureTests') {
+    dotnet run --project tests/Antiphon.Tests --property:OutputPath=$out -- --treenode-filter "/*/*/$c/*" --report-trx --report-trx-filename "c449b-$c.trx"
+    if ($LASTEXITCODE -ne 0) { throw "Failed: $c (exit $LASTEXITCODE)" }
+}
+dotnet run --project tests/Antiphon.Tests --property:OutputPath=$out -- --treenode-filter "/*/*/*/*[Category=Unit]" --report-trx --report-trx-filename "c449b-unit.trx"
+# PC cycle shape (method-scoped; one example)
+dotnet run --project tests/Antiphon.Agents.Pty.Tests --property:OutputPath=$out -- --treenode-filter "/*/*/ClaudeEffortDismissalReplayTests/Resolver_clears_a_replayed_dismissal"
+```
