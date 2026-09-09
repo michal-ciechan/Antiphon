@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
@@ -74,6 +75,7 @@ public sealed class AgentTaskCheckService
     private readonly CheckInterpreterProvisioner? _interpreter;
     private readonly SpecialistTaskRunner _runner;
     private readonly SpecialistRequestService? _requests;
+    private readonly StandingSpecialistHealthService? _specialistHealth;
 
     public AgentTaskCheckService(
         AppDbContext db,
@@ -92,7 +94,8 @@ public sealed class AgentTaskCheckService
         // the record; the alert is what reaches someone.
         IAlertService? alerts = null,
         SpecialistTaskRunner? runner = null,
-        SpecialistRequestService? requests = null)
+        SpecialistRequestService? requests = null,
+        StandingSpecialistHealthService? specialistHealth = null)
     {
         _db = db;
         _probe = probe;
@@ -105,6 +108,7 @@ public sealed class AgentTaskCheckService
         _interpreter = interpreter;
         _runner = runner ?? new SpecialistTaskRunner(db, timeProvider, logger, alerts);
         _requests = requests;
+        _specialistHealth = specialistHealth;
     }
 
     /// <summary>What one check did — for the worker's logging and for the tests.</summary>
@@ -147,7 +151,13 @@ public sealed class AgentTaskCheckService
         if (task.ReplyTo != AgentTaskReplyTo.Session || task.ParentSessionId is not Guid parentSession)
             return CheckOutcome.NoRecipient;
 
-        var facts = await _probe.GatherAsync(task, ct);
+        var previousRequest = _requests is null ? null : await _db.SpecialistRequests.AsNoTracking()
+            .SingleOrDefaultAsync(r => r.Purpose == SpecialistRequestPurpose.Check && r.CheckedTaskId == task.Id
+                && r.CheckNumber == Math.Max(1, task.CheckCount), ct);
+        if (previousRequest?.CallerPublishedAt is not null) return CheckOutcome.Delivered;
+        var facts = previousRequest?.FactsSnapshotJson is { } snapshot
+            ? JsonSerializer.Deserialize<DelegateCheckProbe.CheckFacts>(snapshot)!
+            : await _probe.GatherAsync(task, ct);
         var digest = DelegateCheckProbe.RenderDigest(facts);
 
         // The ONE new path (CARD-0047 slice 4C). Everything it can return other than an
@@ -168,7 +178,24 @@ public sealed class AgentTaskCheckService
         var body = BuildNote(
             task, facts, digest, interpretation.Text, interpretation.DegradedReason, supersededBanner);
 
-        if (!suppress)
+        if (interpretation.RequestId is Guid requestId)
+        {
+            try
+            {
+                var ownerId = await _db.SpecialistRequests.Where(r => r.Id == requestId).Select(r => r.AgentId).SingleAsync(ct);
+                if (_specialistHealth is null) throw new InvalidOperationException("Specialist health must be wired with durable Check publication.");
+                await _specialistHealth.ReconcileOwnerAsync(ownerId, ct);
+                await _queue.PublishCheckRequestAsync(requestId, parentSession, body,
+                    ComposeEventDetail(interpretation.Text, interpretation.EventLine,
+                        supersededBanner is null ? digest : $"{supersededBanner}\n\n{digest}"), suppress, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Durable Check publication {RequestId} will be retried", requestId);
+                return CheckOutcome.DeliveryFailed;
+            }
+        }
+        else if (!suppress)
         {
             try
             {
@@ -192,17 +219,17 @@ public sealed class AgentTaskCheckService
         // interpretation of facts nobody recorded is not reviewable. What the interpreter cost is
         // recorded HERE as well as on the interpretation task's own row, so the question "what did
         // watching this task cost" is answerable from the timeline without a join (§1.6).
-        _db.AgentTaskEvents.Add(new AgentTaskEvent
+        if (interpretation.RequestId is null)
         {
-            Id = Guid.NewGuid(),
-            AgentTaskId = task.Id,
-            Type = AgentTaskEventType.Check,
-            Detail = ComposeEventDetail(
-                interpretation.Text, interpretation.EventLine,
-                supersededBanner is null ? digest : $"{supersededBanner}\n\n{digest}"),
-            At = _timeProvider.GetUtcNow().UtcDateTime,
-        });
-        await _db.SaveChangesAsync(ct);
+            _db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(), AgentTaskId = task.Id, Type = AgentTaskEventType.Check,
+                Detail = ComposeEventDetail(interpretation.Text, interpretation.EventLine,
+                    supersededBanner is null ? digest : $"{supersededBanner}\n\n{digest}"),
+                At = _timeProvider.GetUtcNow().UtcDateTime,
+            });
+            await _db.SaveChangesAsync(ct);
+        }
 
         await _eventBus.PublishToAllAsync(
             "AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
@@ -349,7 +376,7 @@ public sealed class AgentTaskCheckService
     /// produces the pre-slice-4 note byte for byte.
     /// </param>
     /// <param name="EventLine">The interpreter line for the checked task's timeline, if one ran.</param>
-    private readonly record struct Interpretation(string? Text, string? DegradedReason, string? EventLine)
+    private readonly record struct Interpretation(string? Text, string? DegradedReason, string? EventLine, Guid? RequestId = null)
     {
         public static Interpretation NotWiredIn { get; } = new(null, null, null);
 
@@ -376,13 +403,13 @@ public sealed class AgentTaskCheckService
     private async Task<Interpretation> InterpretAsync(
         AgentTask task, DelegateCheckProbe.CheckFacts facts, string digest, CancellationToken ct)
     {
-        if ((_interpreter is null && _requests is null) || !_settings.CheckInterpreterEnabled)
+        if (_requests is null && (_interpreter is null || !_settings.CheckInterpreterEnabled))
             return Interpretation.NotWiredIn;
 
         var spec = CheckInterpreterProvisioner.Spec(_settings);
         var wait = TimeSpan.FromSeconds(Math.Max(1, _settings.CheckInterpreterWaitSeconds));
         var run = _requests is not null
-            ? await _requests.RunCheckAsync(task, facts.Task.CheckNumber, digest, ct)
+            ? await _requests.RunCheckAsync(task, facts.Task.CheckNumber, digest, ct, facts)
             : await _runner.RunAsync(
             spec,
             CheckInterpretation.BuildTitle(task, facts.Task.CheckNumber),
@@ -397,7 +424,7 @@ public sealed class AgentTaskCheckService
         var shortId = run.RunTaskId is Guid id ? DelegationReportFormatter.Short(id) : null;
         var line = shortId is null ? null : $"interpreter: task {shortId}, ${run.CostUsd:0.0000}";
 
-        return run.Outcome switch
+        var interpretation = run.Outcome switch
         {
             SpecialistRunOutcome.Disabled => Interpretation.NotWiredIn,
             SpecialistRunOutcome.Busy => Interpretation.Degraded("interpreter busy"),
@@ -415,6 +442,7 @@ public sealed class AgentTaskCheckService
             SpecialistRunOutcome.Succeeded => new Interpretation(run.Result, null, line),
             _ => Interpretation.Degraded("interpreter unavailable: the interpretation failed", line),
         };
+        return interpretation with { RequestId = run.RequestId };
     }
 
     /// <summary>

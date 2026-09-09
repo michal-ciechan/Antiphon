@@ -34,7 +34,8 @@ public sealed record SpecialistRun(
     string? AvailabilityAlias = null,
     AgentKind? AvailabilityKind = null,
     DateTime? AvailabilityObservedAt = null,
-    DateTime? RunCreatedAt = null);
+    DateTime? RunCreatedAt = null,
+    Guid? RequestId = null);
 
 /// <summary>Explicit opt-in; Check and Diagnose retain the original RunAsync contract.</summary>
 public sealed record SpecialistExecutionPolicy(DateTimeOffset DeadlineAt);

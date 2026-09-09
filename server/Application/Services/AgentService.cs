@@ -570,6 +570,15 @@ public sealed class AgentService
         var agent = await _db.Agents
             .FirstOrDefaultAsync(a => a.Id == id, ct)
             ?? throw new NotFoundException(nameof(Agent), id);
+        await using var specialistTransaction = StandingSpecialistSeatPolicy.IsCheck(agent)
+            ? await _db.Database.BeginTransactionAsync(ct) : null;
+        if (specialistTransaction is not null)
+        {
+            var ownerId = agent.StandingSpecialistOwnerId ?? agent.Id;
+            await _db.Agents.FromSqlInterpolated($"SELECT * FROM \"Agents\" WHERE \"Id\" = {ownerId} FOR UPDATE")
+                .AsNoTracking().SingleOrDefaultAsync(ct);
+            await _db.Entry(agent).ReloadAsync(ct);
+        }
 
         // CARD-0160 / CARD-0187: resolve the REQUEST's final SessionBackend / Kind BEFORE any field
         // is applied so a Kind change in the same PATCH is checked against Herdr.
@@ -667,8 +676,10 @@ public sealed class AgentService
         if (specialistIdentityChanged)
             await _db.StandingSpecialistCandidateStates.Where(c => c.PhysicalAgentId == agent.Id)
                 .ExecuteUpdateAsync(u => u.SetProperty(c => c.QualifiedAt, (DateTime?)null)
-                    .SetProperty(c => c.Status, StandingSpecialistCandidateStatus.Unqualified), ct);
+                    .SetProperty(c => c.Status, c => c.Status == StandingSpecialistCandidateStatus.Quarantined
+                        ? StandingSpecialistCandidateStatus.Quarantined : StandingSpecialistCandidateStatus.Unqualified), ct);
         await SaveChangesOrConflictAsync($"Agent '{agent.Name}' was modified by another operation.", ct);
+        if (specialistTransaction is not null) await specialistTransaction.CommitAsync(ct);
         await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
 
         return await GetByIdAsync(agent.Id, ct);
@@ -752,6 +763,20 @@ public sealed class AgentService
         var agent = await _db.Agents
             .FirstOrDefaultAsync(a => a.Id == id, ct)
             ?? throw new NotFoundException(nameof(Agent), id);
+        await using var specialistTransaction = StandingSpecialistSeatPolicy.IsCheck(agent)
+            ? await _db.Database.BeginTransactionAsync(ct) : null;
+        if (specialistTransaction is not null)
+        {
+            var ownerId = agent.StandingSpecialistOwnerId ?? agent.Id;
+            await _db.Agents.FromSqlInterpolated($"SELECT * FROM \"Agents\" WHERE \"Id\" = {ownerId} FOR UPDATE")
+                .AsNoTracking().SingleOrDefaultAsync(ct);
+            await _db.Entry(agent).ReloadAsync(ct);
+            if (await _db.AgentTasks.AnyAsync(t => t.AgentId == id && (t.Status == AgentTaskStatus.Queued
+                || t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Blocked), ct)
+                || (Guid.TryParse(agent.PersistentSessionId, out var specialistSession)
+                    && await _db.AgentSessions.AnyAsync(s => s.Id == specialistSession && LiveSessionStatuses.Contains(s.Status), ct)))
+                throw new ConflictException("Stop the specialist and let its owned work settle before deleting it.", "specialist_delete_busy");
+        }
 
         // Release the agent's hold on any cards and drop its workflow runs. CardWorkflowRun.AgentId
         // uses Restrict, so the runs must be removed explicitly before the agent can be deleted.
@@ -783,6 +808,7 @@ public sealed class AgentService
         _db.CardWorkflowRuns.RemoveRange(runs);
         _db.Agents.Remove(agent);
         await SaveChangesOrConflictAsync($"Agent '{agent.Name}' was modified by another operation.", ct);
+        if (specialistTransaction is not null) await specialistTransaction.CommitAsync(ct);
 
         await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(id), ct);
         foreach (var card in assignedCards)

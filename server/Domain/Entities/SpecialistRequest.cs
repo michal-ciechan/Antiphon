@@ -18,12 +18,14 @@ public class SpecialistRequest
     public DateTime DeadlineAt { get; set; }
     public string Title { get; set; } = "";
     public string Facts { get; set; } = "";
+    public string? FactsSnapshotJson { get; set; }
     public Guid? WinnerAttemptId { get; set; }
     public string? Reading { get; set; }
     public string? Reason { get; set; }
     public DateTime? CompletedAt { get; set; }
     public DateTime? HealthAppliedAt { get; set; }
     public Guid? CallerMessageId { get; set; }
+    public DateTime? CallerPublishedAt { get; set; }
 }
 
 public class SpecialistAttempt

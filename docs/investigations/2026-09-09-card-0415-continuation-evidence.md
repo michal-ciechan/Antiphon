@@ -30,6 +30,7 @@ All paths below are absolute after expanding these evidence roots:
 | V7, `SpecialistAttemptEvidenceTests` | 12 / 12 / 0 | T/c415-fad-attempt-evidence.trx | Native-turn validator units; these do not claim actual model qualification. |
 | V7, `SpecialistQualificationTests.Card0415_V07_authorized_batch_uses_real_dispatch_queue_and_settlement_once` | 2 / 2 / 0 | T/c415-fad-qualification-native-clock.trx | Injected external evidence/model I/O only; actual request producer, dispatcher, full-inline queue, timestamped native records and reply settlement. Successful batch once; wrong semantic answer quarantines, stops batch and cannot reset logical health. |
 | V7, `SpecialistQualificationTests.Card0415_V07_production_verifier_refuses_synthetic_qualification_provenance` | 1 / 1 / 0 | T/c415-fad-qualification.trx | The other two cases in that initial run failed harness setup. Subsequent harness attempts exposed omitted native prompt timestamps; no setup failure is counted as a positive control. |
+| V14 publication boundary, `SpecialistPublicationTests.Card0415_V14_publication_rolls_back_and_two_queue_instances_reuse_one_durable_identity` | 1 / 1 / 0 | T/c415-fad-publication.trx | Injected write failure rolls back note/timeline/publication bit; two real queue instances retry the same logical publication once. This is a publication-boundary integration test, not full end-to-end Check acceptance. |
 | CARD-0412 regression, `CapacityRecoverySupervisionTests.Card0412_D8_stalled_standing_start_rearms_and_actually_starts_again` | 1 / 1 / 0 | T/c415-fad-capacity-handoff.trx | Matching rearmed grant actually starts; full S5b lock/concurrency acceptance still due. |
 | `SpecialistRoutingPanel.test.tsx`, `attentionVisuals.test.ts` | 15 / 14 / 1 initially | L/client-routing.log | Stale-edit test had wrong fireEvent import; dependency UI and all 13 visual cases passed. |
 | Exact client case `retains the edited revision` | 1 / 1 / 0 (one other case filtered out) | L/client-stale-green.log | Corrected import; actual requests preserve stale revision during query refresh and require explicit reload. |
@@ -39,6 +40,14 @@ The V5 stub endpoint is synthetic and isolated. Passing those cells does not
 certify model behavior. The production capability catalog is intentionally empty
 until the complete finite capability matrix is measured; there is no API switch
 that installs synthetic behavioral qualification.
+
+The expanded finite grid (`U/c415-fad-cli-grid.trx`, `L/cli-grid.log`) executed
+12 cases: 2 passed (the M+1 refusal arms), 10 failed. Small first-turn receipts
+were retained in `L/grid`, but warm repeats and larger complete envelopes did
+not satisfy native full-prompt/turn-end confirmation. Proposed M=32768 is **not
+certified**. A separate exact warm-small diagnostic is being investigated;
+these failures are measured capability gaps, not positive controls or accepted
+grid coverage.
 
 ## Positive controls completed in this pass
 
