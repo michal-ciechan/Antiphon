@@ -18,6 +18,37 @@ function history() {
 }
 
 describe('standing conversation recovery', () => {
+  it('deduplicates pending confirmation and refreshes history and attention after acceptance', async () => {
+    let release!: () => void
+    const pending = new Promise<void>(resolve => { release = resolve })
+    let reads = 0
+    let starts = 0
+    server.use(http.get('/api/agents/standing/sessions', () => {
+      reads++
+      return HttpResponse.json({ items: [], nextBefore: null })
+    }))
+    server.use(http.post('/api/agents/standing/start', async () => {
+      starts++
+      await pending
+      return HttpResponse.json(agent)
+    }))
+    const { queryClient } = renderWithProviders(<StandingSessionRecovery agent={agent} />)
+    queryClient.setQueryData(['attention'], { items: [] })
+    await userEvent.click(screen.getByRole('button', { name: 'Retry after repair' }))
+    await waitFor(() => expect(reads).toBe(1))
+    const confirm = screen.getByRole('button', { name: 'Confirm resume' })
+    try {
+      await userEvent.dblClick(confirm)
+      await waitFor(() => expect(starts).toBe(1))
+      expect(confirm).toBeDisabled()
+      expect(screen.queryByText(/Launch queued/)).not.toBeInTheDocument()
+    } finally { release() }
+    expect(await screen.findByText(/Launch queued/)).toBeInTheDocument()
+    await waitFor(() => expect(reads).toBe(2))
+    expect(queryClient.getQueryState(['attention'])?.isInvalidated).toBe(true)
+    expect(starts).toBe(1)
+  })
+
   it('opening history only reads and keeps ineligible history inspectable', async () => {
     const requests: unknown[] = []
     server.use(http.get('/api/agents/standing/sessions', () => HttpResponse.json({ items: [{

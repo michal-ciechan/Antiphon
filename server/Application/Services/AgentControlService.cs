@@ -438,6 +438,8 @@ public sealed class AgentControlService
                     .AsNoTracking().SingleOrDefaultAsync(ct);
             if (agent.PersistentSessionId != expectedPointer)
                 throw new ConflictException("The current conversation changed; refresh and retry.", "standing_resume_current_changed");
+            if (previous is not null && previous.Id != sourceId && _launchQueue.Owns(previous.Id))
+                throw new ConflictException("A launch still owns the selected conversation.", "standing_resume_target_active");
             if (await HasLiveSessionAsync(agent, ct) || involved.Any(id => _launchQueue.Owns(id)))
             {
                 if (!fresh && previous?.Id == sourceId) return previous!.Id;
@@ -476,6 +478,11 @@ public sealed class AgentControlService
                     && m.Status == QueuedMessageStatus.Pending && m.RulesRefreshKey == null).OrderBy(m => m.Sequence).ThenBy(m => m.Id).ToListAsync(ct);
                 if (pending.Any(m => !StandingQueueSwitchPolicy.NeverAttempted(m)))
                     throw new ConflictException($"Resolve attempted pending input in /sessions/{sourceId}/queue before switching.", "standing_resume_delivery_pending");
+                if (pending.Count > 0)
+                {
+                    var sourceSession = await _db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sourceId, ct);
+                    await new StandingSessionOwnership(_db).RequireAsync(agent, sourceSession, ct);
+                }
             }
 
             if (previous is not null)
@@ -631,7 +638,7 @@ public sealed class AgentControlService
                             : resumeSessionId is not null || retryContinuity ? AgentIncidentKind.StandingResumeSelected : AgentIncidentKind.ResumeUnsupported,
                         Severity = AlertSeverity.Info,
                         CreatedAt = UtcNow(),
-                        Message = $"Accepted {(fresh ? "explicit fresh conversation" : retryContinuity ? "repaired-target retry" : "resume selection")}: {expectedPointer ?? "none"} -> {accepted.Id:D}; launch queued.",
+                        Message = $"Accepted {(fresh ? "explicit fresh conversation" : retryContinuity ? "repaired-target retry" : resumeSessionId is not null ? "resume selection" : "new session (native resume unsupported)")}: {expectedPointer ?? "none"} -> {accepted.Id:D}; launch queued.",
                     });
                 await _db.SaveChangesAsync(ct);
             }
@@ -708,13 +715,16 @@ public sealed class AgentControlService
     private async Task<AgentSession?> FindResumableSessionAsync(
         Agent agent, AgentKind kind, string cwd, Guid? selected, CancellationToken ct)
     {
+        var ownedHistory = _db.AgentSessions.Where(s => s.CardId == null && s.WorktreeId == null
+            && (s.StandingAgentId == agent.Id || s.StandingAgentId == null
+                && (_db.AgentTasks.Any(t => t.AgentId == agent.Id && t.AgentSessionId == s.Id)
+                    || _db.AgentIncidents.Any(i => i.AgentId == agent.Id && i.SessionId == s.Id
+                        && (i.Kind == AgentIncidentKind.Crash || i.Kind == AgentIncidentKind.RestartScheduled || i.Kind == AgentIncidentKind.Recovered)))));
+        var supportsNativeResume = kind is AgentKind.ClaudeCode or AgentKind.Grok;
         if (selected is null && string.IsNullOrWhiteSpace(agent.PersistentSessionId))
         {
-            if (!agent.IsPoolDelegate && await _db.AgentSessions.AnyAsync(s => s.CardId == null && s.WorktreeId == null
-                && (s.StandingAgentId == agent.Id || s.StandingAgentId == null
-                    && (_db.AgentTasks.Any(t => t.AgentId == agent.Id && t.AgentSessionId == s.Id)
-                        || _db.AgentIncidents.Any(i => i.AgentId == agent.Id && i.SessionId == s.Id
-                            && (i.Kind == AgentIncidentKind.Crash || i.Kind == AgentIncidentKind.RestartScheduled || i.Kind == AgentIncidentKind.Recovered)))), ct))
+            if (!agent.IsPoolDelegate && await ownedHistory.AnyAsync(s => supportsNativeResume
+                || s.AgentKind == AgentKind.ClaudeCode || s.AgentKind == AgentKind.Grok, ct))
             {
                 await new StandingContinuityState(_db, _timeProvider).HoldAsync(agent.Id, null,
                     StandingContinuityReason.TargetMissing, ct);
@@ -724,8 +734,10 @@ public sealed class AgentControlService
         }
         var previousId = selected ?? (Guid.TryParse(agent.PersistentSessionId, out var parsed) ? parsed : Guid.Empty);
         var previous = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == previousId, ct);
-        if (selected is null && kind is not (AgentKind.ClaudeCode or AgentKind.Grok)
-            && previous?.AgentKind is not (AgentKind.ClaudeCode or AgentKind.Grok)) return null;
+        if (selected is null && !supportsNativeResume
+            && previous?.AgentKind is not (AgentKind.ClaudeCode or AgentKind.Grok)
+            && (previous is not null || !await ownedHistory.AnyAsync(s =>
+                s.AgentKind == AgentKind.ClaudeCode || s.AgentKind == AgentKind.Grok, ct))) return null;
         if (previous is null)
         {
             if (selected is not null) throw new NotFoundException(nameof(AgentSession), previousId);
@@ -830,10 +842,13 @@ public sealed class AgentControlService
                 && owner is not null
                 && owner.Id == agent.Id
                 && existing.CardId is null
+                && existing.WorktreeId is null
                 && existing.Status is SessionStatus.Stopped or SessionStatus.Failed
                 && string.Equals(
                     Path.GetFullPath(existing.Cwd), cwd,
                     OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+            if (ours && !agent.IsPoolDelegate)
+                ours = (await new StandingSessionOwnership(_db).ResolveAsync(existing, ct)).Owner == agent.Id;
             if (!ours)
             {
                 var ownerName = existing.CardId is not null
@@ -853,6 +868,8 @@ public sealed class AgentControlService
             session.EndedAt = null;
             session.ExitCode = null;
             session.FailureReason = null;
+            session.RestartFailureKind = null;
+            session.InteractiveLaunchCompletedAt = null;
             session.SessionBackend = SessionBackend.Herdr;
             session.AgentKind = agent.Kind;
             session.Cwd = cwd;

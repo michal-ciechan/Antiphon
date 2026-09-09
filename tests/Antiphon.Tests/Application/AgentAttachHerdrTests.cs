@@ -70,6 +70,7 @@ public class AgentAttachHerdrTests
             {
                 var row = await db.AgentSessions.SingleAsync(s => s.Id == nativeId);
                 row.Status.ShouldBe(SessionStatus.Running);
+                row.StandingAgentId.ShouldBe(agent.Id);
                 row.ComposedBundleStamp.ShouldBeNull();
                 row.CardId.ShouldBeNull();
                 var queued = await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == nativeId);
@@ -93,7 +94,8 @@ public class AgentAttachHerdrTests
     }
 
     [Test]
-    public async Task Restamps_the_agents_own_stopped_row_with_the_same_id()
+    [Arguments("owned")] [Arguments("foreign-stamp")] [Arguments("conflicting-legacy")] [Arguments("pool")] [Arguments("worktree")]
+    public async Task Restamps_the_agents_own_stopped_row_with_the_same_id(string shape)
     {
         var tempRoot = NewTemp();
         await using var fake = StartFake();
@@ -125,12 +127,40 @@ public class AgentAttachHerdrTests
                     LastSeenAt = now,
                     EndedAt = now,
                     ExitCode = 0,
+                    RestartFailureKind = RestartFailureKind.Infrastructure,
+                    InteractiveLaunchCompletedAt = now,
                 });
                 var row = await db.Agents.SingleAsync(a => a.Id == agent.Id);
                 row.PersistentSessionId = nativeId.ToString("D");
+                if (shape == "pool") row.IsPoolDelegate = true;
+                if (shape == "foreign-stamp") db.AgentSessions.Local.Single(s => s.Id == nativeId).StandingAgentId = Guid.NewGuid();
+                if (shape == "conflicting-legacy")
+                {
+                    var foreign = new Agent { Id = Guid.NewGuid(), Name = "Foreign", Slug = $"foreign-{Guid.NewGuid():N}",
+                        WorkingDirectory = cwd, CreatedAt = now, UpdatedAt = now };
+                    db.Agents.Add(foreign);
+                    db.AgentIncidents.Add(new AgentIncident { Id = Guid.NewGuid(), AgentId = foreign.Id, SessionId = nativeId,
+                        Kind = AgentIncidentKind.Crash, Message = "Historical foreign owner", CreatedAt = now });
+                }
+                if (shape == "worktree")
+                {
+                    var card = StandingSessionSelectionTests.SeedCard(db, tempRoot);
+                    var tree = new Worktree { Id = Guid.NewGuid(), CardId = card.Id, Path = cwd, RepoPath = cwd,
+                        Branch = "synthetic", CreatedAt = now, LastTouchedAt = now };
+                    db.Worktrees.Add(tree); db.AgentSessions.Local.Single(s => s.Id == nativeId).WorktreeId = tree.Id;
+                }
                 await db.SaveChangesAsync();
             }
 
+            if (shape is "foreign-stamp" or "conflicting-legacy" or "worktree" or "pool")
+            {
+                (await Should.ThrowAsync<ConflictException>(() => harness.Control.AttachHerdrAsync(
+                    agent.Id, new AttachHerdrPaneRequest(pane.PaneId), default))).Code.ShouldBe(HerdrProblemTypes.SessionIdTaken);
+                await using var verify = CreateContext();
+                (await verify.AgentSessions.FindAsync(nativeId))!.Status.ShouldBe(SessionStatus.Stopped);
+                fake.Requests.Any(r => r.GetProperty("method").GetString() == "pane.send_text").ShouldBeFalse();
+                return;
+            }
             var detail = await harness.Control.AttachHerdrAsync(
                 agent.Id, new AttachHerdrPaneRequest(pane.PaneId), CancellationToken.None);
             detail.LiveSession!.Id.ShouldBe(nativeId);
@@ -140,6 +170,9 @@ public class AgentAttachHerdrTests
                 (await db.AgentSessions.CountAsync(s => s.Cwd == cwd)).ShouldBe(1);
                 var row = await db.AgentSessions.SingleAsync(s => s.Id == nativeId);
                 row.Status.ShouldBe(SessionStatus.Running);
+                row.RestartFailureKind.ShouldBeNull();
+                row.InteractiveLaunchCompletedAt.ShouldBeNull();
+                row.StandingAgentId.ShouldBe(shape == "pool" ? null : agent.Id);
                 row.EndedAt.ShouldBeNull();
             }
         }

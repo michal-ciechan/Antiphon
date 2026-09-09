@@ -133,6 +133,27 @@ internal static class Program
         var burstGapMs = int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_FAKE_BURST_MS"), out var g) ? g : 12;
         var compactAfterTurns = int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_FAKE_COMPACT_AFTER_TURNS"), out var cat) ? cat : 0;
         var transcriptPath = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_TRANSCRIPT_PATH");
+        // Opt-in native identity fixture. Normal fake-CLI callers retain their existing behavior.
+        // This store belongs to the test and never reads a user's Claude home.
+        if (Environment.GetEnvironmentVariable("ANTIPHON_FAKE_NATIVE_HOME") is { Length: > 0 } nativeHome)
+        {
+            var resume = GetArg(args, "--resume");
+            var identity = resume ?? GetArg(args, "--session-id");
+            if (!Guid.TryParse(identity, out var nativeId)) return 2;
+            var nativeDirectory = Path.Combine(nativeHome, nativeId.ToString("D"));
+            if (resume is not null && !Directory.Exists(nativeDirectory))
+            {
+                Console.Error.WriteLine($"No conversation found with session ID: {nativeId:D}");
+                return 1;
+            }
+            Directory.CreateDirectory(nativeDirectory);
+            var marker = Path.Combine(nativeDirectory, "history-marker.txt");
+            if (!File.Exists(marker)) File.WriteAllText(marker, $"native-history:{nativeId:D}");
+            File.AppendAllText(Path.Combine(nativeDirectory, "launches.jsonl"),
+                JsonSerializer.Serialize(new { mode = resume is null ? "create" : "resume", sessionId = nativeId }) + "\n");
+            transcriptPath = Path.Combine(nativeDirectory, "conversation.jsonl");
+            if (!File.Exists(transcriptPath)) File.WriteAllText(transcriptPath, "");
+        }
         // OPT-IN (CARD-0046): write the turn-ending response as the TWO records real Claude writes —
         // a signature-only thinking record, then the text record, sharing one message.id. Default
         // OFF, like the clip model: the one-record shape is also real (f2bf457c settled correctly

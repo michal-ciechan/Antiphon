@@ -18,13 +18,21 @@ public class RestartFailureClassificationTests
         Exception[] evidence = [postgres, new DbUpdateException("save", postgres),
             new Exception("No conversation found with session ID", new DbUpdateException("wrapped", postgres)),
             new AggregateException(new Exception("other"), new AggregateException(postgres)),
-            new HttpRequestException("connection refused"), new TimeoutException(), new TaskCanceledException(),
+            new SyntheticTransientDbException(),
+            new HttpRequestException("connection refused", new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.ConnectionRefused)),
+            new AggregateException(new AgentSessionService.ResumeTargetMissingException(), postgres),
+            new TimeoutException(), new TaskCanceledException(),
             new OperationCanceledException()];
         var policy = new RestartFailurePolicy();
         foreach (var error in evidence) policy.Classify(error).ShouldBe(RestartFailureKind.Infrastructure);
         policy.Classify(new Exception("57P03 No conversation found with session ID")).ShouldBe(RestartFailureKind.Unknown);
         policy.Classify(new PostgresException("bad config", "ERROR", "ERROR", "42601")).ShouldBe(RestartFailureKind.Unknown);
         policy.Classify(new AgentSessionService.ResumeTargetMissingException()).ShouldBe(RestartFailureKind.ContinuityUnavailable);
+    }
+
+    private sealed class SyntheticTransientDbException : System.Data.Common.DbException
+    {
+        public override bool IsTransient => true;
     }
 
     [Test]

@@ -17,6 +17,30 @@ namespace Antiphon.Tests.Application;
 public class StandingSessionQueueSwitchTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_corrupt_current_pointer_cannot_transfer_another_owners_pending_input(bool fresh)
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var f = new StandingRecoveryFixture(adapter); await f.SeedAsync(held: true);
+        var messageId = Guid.NewGuid();
+        await using (var db = f.Db())
+        {
+            (await db.AgentSessions.FindAsync(f.B.Id))!.StandingAgentId = Guid.NewGuid();
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage { Id = messageId, AgentSessionId = f.B.Id,
+                Body = "Another owner's pending input", Sequence = 1, CreatedAt = DateTime.UtcNow });
+            await db.SaveChangesAsync();
+        }
+        (await Should.ThrowAsync<ConflictException>(() => f.StartAsync(fresh ? new(Fresh: true) : new(ResumeSessionId: f.A.Id))))
+            .Code.ShouldBe("standing_resume_not_owned");
+        adapter.Started.ShouldBeFalse();
+        await using var verify = f.Db();
+        (await verify.SessionQueuedMessages.FindAsync(messageId))!.AgentSessionId.ShouldBe(f.B.Id);
+        (await verify.Agents.FindAsync(f.Agent.Id))!.PersistentSessionId.ShouldBe(f.B.Id.ToString("D"));
+        (await verify.AgentSupervisionStates.FindAsync(f.Agent.Id))!.ContinuityHeldAt.ShouldNotBeNull();
+    }
+
+    [Test]
     public async Task Target_late_confirmation_and_open_task_guards_remain_intact()
     {
         var adapter = new FakeAgentProtocolAdapter();
@@ -95,7 +119,8 @@ public class StandingSessionQueueSwitchTests
         Action<SessionQueuedMessage>[] evidence = [m => m.DeliveryAttempts = 1,
             m => m.LastDeliveryBaselineSequence = 0, m => m.LastDeliveryStartedAt = DateTime.UtcNow,
             m => m.DeliveryVerdict = DeliveryVerdict.NoSubmitOutput, m => m.DeliveryVerdictAt = DateTime.UtcNow,
-            m => m.SentAt = DateTime.UtcNow, m => m.ChannelReplySettledAt = DateTime.UtcNow];
+            m => m.SentAt = DateTime.UtcNow, m => m.ChannelReplySettledAt = DateTime.UtcNow,
+            m => m.CanceledAt = DateTime.UtcNow, m => m.DeliveryAttempts = int.MaxValue];
         foreach (var fresh in new[] { false, true })
         foreach (var stamp in evidence)
         {
@@ -105,16 +130,27 @@ public class StandingSessionQueueSwitchTests
             var row = new SessionQueuedMessage { Id = Guid.NewGuid(), AgentSessionId = f.B.Id,
                 Body = "Ambiguous input", Sequence = 1, CreatedAt = DateTime.UtcNow };
             stamp(row);
-            await using (var db = f.Db()) { db.SessionQueuedMessages.Add(row); await db.SaveChangesAsync(); }
+            var safe = new SessionQueuedMessage { Id = Guid.NewGuid(), AgentSessionId = f.B.Id,
+                Body = "Safe but must not move partially", Sequence = 2, CreatedAt = DateTime.UtcNow };
+            string before;
+            await using (var db = f.Db())
+            {
+                db.SessionQueuedMessages.AddRange(row, safe); await db.SaveChangesAsync(); await db.Entry(row).ReloadAsync();
+                before = System.Text.Json.JsonSerializer.Serialize(db.Entry(row).CurrentValues.Properties
+                    .ToDictionary(p => p.Name, p => db.Entry(row).CurrentValues[p]));
+            }
             var error = await Should.ThrowAsync<ConflictException>(() => f.StartAsync(fresh ? new(Fresh: true) : new(ResumeSessionId: f.A.Id)));
             error.Code.ShouldBe("standing_resume_delivery_pending");
             adapter.Started.ShouldBeFalse();
             await using var verify = f.Db();
             var stored = (await verify.SessionQueuedMessages.FindAsync(row.Id))!;
+            System.Text.Json.JsonSerializer.Serialize(verify.Entry(stored).CurrentValues.Properties
+                .ToDictionary(p => p.Name, p => verify.Entry(stored).CurrentValues[p])).ShouldBe(before);
             stored.AgentSessionId.ShouldBe(f.B.Id);
             stored.LastDeliveryBaselineSequence.ShouldBe(row.LastDeliveryBaselineSequence);
             stored.DeliveryAttempts.ShouldBe(row.DeliveryAttempts);
             stored.DeliveryVerdict.ShouldBe(row.DeliveryVerdict);
+            (await verify.SessionQueuedMessages.FindAsync(safe.Id))!.AgentSessionId.ShouldBe(f.B.Id);
             (await verify.Agents.FindAsync(f.Agent.Id))!.PersistentSessionId.ShouldBe(f.B.Id.ToString("D"));
             (await verify.AgentSupervisionStates.FindAsync(f.Agent.Id))!.ContinuityHeldAt.ShouldNotBeNull();
             (await verify.AgentSessions.CountAsync(s => s.StandingAgentId == f.Agent.Id)).ShouldBe(2);
@@ -127,6 +163,17 @@ public class StandingSessionQueueSwitchTests
         var adapter = new FakeAgentProtocolAdapter();
         await using var f = new StandingRecoveryFixture(adapter);
         await f.SeedAsync();
+        adapter.RegisterOnStart = f.Harness.Provider.GetRequiredService<AgentSessionRuntime>();
+        adapter.OnSubmitted = async body =>
+        {
+            await using var db = f.Db();
+            var sequence = await db.TranscriptEntries.Where(e => e.AgentSessionId == f.A.Id).MaxAsync(e => (long?)e.Sequence) ?? 0;
+            db.TranscriptEntries.AddRange(new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = f.A.Id, Sequence = ++sequence,
+                Kind = TranscriptKinds.UserPrompt, Text = body, Timestamp = DateTime.UtcNow, CreatedAt = DateTime.UtcNow },
+                new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = f.A.Id, Sequence = ++sequence,
+                    Kind = TranscriptKinds.TurnEnd, StopReason = "end_turn", Timestamp = DateTime.UtcNow, CreatedAt = DateTime.UtcNow });
+            await db.SaveChangesAsync();
+        };
         var now = DateTime.UtcNow;
         var existing = new SessionQueuedMessage { Id = Guid.NewGuid(), AgentSessionId = f.A.Id, Sequence = 8,
             Body = "Existing", CreatedAt = now, HoldUntil = now.AddDays(1) };
@@ -135,8 +182,18 @@ public class StandingSessionQueueSwitchTests
             ConversationKey = "fake:recovery" };
         var sent = new SessionQueuedMessage { Id = Guid.NewGuid(), AgentSessionId = f.B.Id, Sequence = 2,
             Body = "Sent", CreatedAt = now, Status = QueuedMessageStatus.Sent, SentAt = now };
-        await using (var db = f.Db()) { db.SessionQueuedMessages.AddRange(existing, move, sent); await db.SaveChangesAsync(); }
-        await f.StartAsync(new(ResumeSessionId: f.A.Id)); await f.IdleAsync();
+        var extras = new[] { QueuedMessageOrigin.Ui, QueuedMessageOrigin.Delegation, QueuedMessageOrigin.Scheduled }
+            .Select((origin, i) => new SessionQueuedMessage { Id = Guid.NewGuid(), AgentSessionId = f.B.Id,
+                Sequence = i + 3, Body = $"Safe {origin}", CreatedAt = now, HoldUntil = now.AddDays(2), Origin = origin,
+                NoteHeader = "synthetic header", ContentDigest = "synthetic digest" }).ToArray();
+        var canceled = new SessionQueuedMessage { Id = Guid.NewGuid(), AgentSessionId = f.B.Id, Sequence = 6,
+            Body = "Canceled", CreatedAt = now, Status = QueuedMessageStatus.Canceled, CanceledAt = now };
+        var rules = new SessionQueuedMessage { Id = Guid.NewGuid(), AgentSessionId = f.B.Id, Sequence = 7,
+            Body = "Rules", CreatedAt = now, RulesRefreshKey = "synthetic refresh", HoldUntil = now.AddDays(2) };
+        await using (var db = f.Db())
+        { db.SessionQueuedMessages.AddRange(existing, move, sent, canceled, rules); db.SessionQueuedMessages.AddRange(extras); await db.SaveChangesAsync(); }
+        const string initial = "Explicit recovery input once";
+        await f.StartAsync(new(ResumeSessionId: f.A.Id, Prompt: initial)); await f.IdleAsync();
         await using var verify = f.Db();
         var moved = (await verify.SessionQueuedMessages.FindAsync(move.Id))!;
         moved.AgentSessionId.ShouldBe(f.A.Id); moved.Sequence.ShouldBe(9);
@@ -144,6 +201,32 @@ public class StandingSessionQueueSwitchTests
         moved.HoldUntil!.Value.ShouldBe(move.HoldUntil!.Value, TimeSpan.FromMilliseconds(1));
         (await verify.SessionQueuedMessages.FindAsync(existing.Id))!.Sequence.ShouldBe(8);
         (await verify.SessionQueuedMessages.FindAsync(sent.Id))!.AgentSessionId.ShouldBe(f.B.Id);
-        adapter.SentInput.ShouldBeEmpty();
+        (await verify.SessionQueuedMessages.FindAsync(canceled.Id))!.AgentSessionId.ShouldBe(f.B.Id);
+        (await verify.SessionQueuedMessages.FindAsync(rules.Id))!.AgentSessionId.ShouldBe(f.B.Id);
+        for (var i = 0; i < extras.Length; i++)
+        {
+            var preserved = (await verify.SessionQueuedMessages.FindAsync(extras[i].Id))!;
+            preserved.AgentSessionId.ShouldBe(f.A.Id); preserved.Sequence.ShouldBe(10 + i);
+            preserved.Body.ShouldBe(extras[i].Body); preserved.Origin.ShouldBe(extras[i].Origin);
+            preserved.NoteHeader.ShouldBe(extras[i].NoteHeader); preserved.ContentDigest.ShouldBe(extras[i].ContentDigest);
+            preserved.HoldUntil!.Value.ShouldBe(extras[i].HoldUntil!.Value, TimeSpan.FromMilliseconds(1));
+        }
+        adapter.SubmittedBodies.ShouldBe(new[] { initial }, "future-held input must stay pending at launch");
+        var ordinary = new[] { existing, move }.Concat(extras).ToArray();
+        var ids = ordinary.Select(m => m.Id).ToArray();
+        await verify.SessionQueuedMessages.Where(m => ids.Contains(m.Id))
+            .ExecuteUpdateAsync(m => m.SetProperty(x => x.HoldUntil, DateTime.UtcNow.AddMinutes(-1)));
+        var queue = f.Harness.Provider.GetRequiredService<SessionMessageQueueService>();
+        foreach (var message in ordinary) await queue.FlushSessionAsync(f.A.Id, default);
+        adapter.SubmittedBodies.ShouldBe(new[] { initial }.Concat(ordinary.Select(m => m.Body)).ToArray());
+        verify.ChangeTracker.Clear();
+        foreach (var message in ordinary)
+        {
+            var delivered = (await verify.SessionQueuedMessages.FindAsync(message.Id))!;
+            delivered.Status.ShouldBe(QueuedMessageStatus.Sent); delivered.DeliveryAttempts.ShouldBe(1);
+            delivered.LastDeliveryBaselineSequence.ShouldNotBeNull();
+            (await verify.TranscriptEntries.AnyAsync(e => e.AgentSessionId == f.A.Id && e.Kind == TranscriptKinds.UserPrompt
+                && e.Sequence > delivered.LastDeliveryBaselineSequence && e.Text == message.Body)).ShouldBeTrue();
+        }
     }
 }

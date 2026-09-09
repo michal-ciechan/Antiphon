@@ -41,6 +41,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [Category("Integration")]
 [NotInParallel]
+[ParallelLimiter<ProcessSpawnLimit>]
 public partial class HerdrAlwaysOnChannelParityTests
 {
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
@@ -596,7 +597,9 @@ public partial class HerdrAlwaysOnChannelParityTests
         IReadOnlyList<FakeAgentProtocolAdapter> ptyAdapters,
         AgentKind launchKind = AgentKind.ClaudeCode,
         int launchDetectTimeoutMs = 60_000,
-        IProcessLivenessProbe? processLiveness = null)
+        IProcessLivenessProbe? processLiveness = null,
+        bool nativePty = false,
+        bool fixtureTranscriptPump = false)
     {
         var clock = new MutableTimeProvider(DateTimeOffset.UtcNow);
         var services = new ServiceCollection();
@@ -711,19 +714,21 @@ public partial class HerdrAlwaysOnChannelParityTests
         services.AddLogging();
 
         DirectSessionRunnerClient? runner = null;
-        if (backend == SessionBackend.Herdr)
+        if (backend == SessionBackend.Herdr || nativePty)
         {
-            fake.ShouldNotBeNull();
-            var herdrClient = new HerdrClient(Options.Create(new HerdrSettings
+            if (backend == SessionBackend.Herdr) fake.ShouldNotBeNull();
+            var herdrClient = fake is null ? null : new HerdrClient(Options.Create(new HerdrSettings
             {
                 Enabled = true,
-                Session = fake.Session,
+                Session = fake!.Session,
                 LaunchDetectTimeoutMs = launchDetectTimeoutMs,
             }));
             runner = new DirectSessionRunnerClient(
                 Path.Combine(tempRoot, "session-logs"),
+                ptyBackend: nativePty ? "inbox" : null,
                 herdrClient: herdrClient,
-                processLiveness: processLiveness ?? new FakeHerdrPowershellProbe());
+                processLiveness: processLiveness ?? new FakeHerdrPowershellProbe(),
+                grokTranscript: !fixtureTranscriptPump);
             services.AddSingleton<ISessionRunnerClient>(runner);
             services.AddSingleton<IAgentProtocolAdapterFactory>(sp =>
                 new AgentProtocolAdapterFactory(

@@ -15,7 +15,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [NotInParallel]
-public class StandingSessionSwitchConcurrencyTests
+public partial class StandingSessionSwitchConcurrencyTests
 {
     [Test]
     public async Task Failure_after_reservation_writes_rolls_back_owner_pointer_hold_queue_and_decision()
@@ -63,7 +63,8 @@ public class StandingSessionSwitchConcurrencyTests
     }
 
     [Test]
-    public async Task Concurrent_selections_reserve_one_generation_without_locking_during_runner_probe()
+    [Arguments("selection")] [Arguments("default")] [Arguments("automatic")] [Arguments("fresh")]
+    public async Task Concurrent_starts_and_supervisor_reserve_one_generation(string competitor)
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -78,12 +79,20 @@ public class StandingSessionSwitchConcurrencyTests
             await release.Task.WaitAsync(ct);
             return [];
         };
-        async Task<bool> Start()
+        async Task<bool> Start(bool second)
         {
-            try { await f.StartAsync(new(ResumeSessionId: f.A.Id, Prompt: "One accepted prompt")); return true; }
-            catch (ConflictException ex) when (ex.Code == "standing_resume_current_changed") { return false; }
+            var request = !second || competitor == "selection" ? new StartAgentRequest(ResumeSessionId: f.A.Id, Prompt: "One accepted prompt")
+                : new StartAgentRequest(Fresh: competitor == "fresh", Prompt: "One accepted prompt");
+            try
+            {
+                await using var scope = f.Harness.Provider.CreateAsyncScope();
+                await scope.ServiceProvider.GetRequiredService<AgentControlService>().StartAsync(f.Agent.Id, request, default,
+                    automatic: second && competitor == "automatic");
+                return true;
+            }
+            catch (ConflictException ex) when (ex.Code is "standing_resume_current_changed" or "standing_resume_current_active") { return false; }
         }
-        var first = Start(); var second = Start();
+        var first = Start(false); var second = Start(true);
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -98,12 +107,14 @@ public class StandingSessionSwitchConcurrencyTests
             var accepted = await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(10));
             accepted.Count(x => x).ShouldBe(1);
             ready.TrySetResult(true); await f.IdleAsync();
-            adapter.StartedArgs.ShouldContain("--resume");
-            adapter.StartedSessionId.ShouldBe(f.A.Id);
             await using var verify = f.Db();
-            (await verify.Agents.FindAsync(f.Agent.Id))!.PersistentSessionId.ShouldBe(f.A.Id.ToString("D"));
-            (await verify.AgentIncidents.CountAsync(i => i.AgentId == f.Agent.Id && i.Kind == AgentIncidentKind.StandingResumeSelected)).ShouldBe(1);
-            (await verify.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == f.A.Id && m.Body == "One accepted prompt")).ShouldBe(1);
+            var winner = Guid.Parse((await verify.Agents.FindAsync(f.Agent.Id))!.PersistentSessionId!);
+            adapter.StartedSessionId.ShouldBe(winner);
+            adapter.StartedArgs.ShouldContain(winner == f.A.Id || winner == f.B.Id ? "--resume" : "--session-id");
+            (await verify.AgentSessions.FindAsync(winner))!.StandingAgentId.ShouldBe(f.Agent.Id);
+            (await verify.AgentIncidents.CountAsync(i => i.AgentId == f.Agent.Id &&
+                (i.Kind == AgentIncidentKind.StandingResumeSelected || i.Kind == AgentIncidentKind.StandingFreshSelected))).ShouldBe(winner == f.B.Id ? 0 : 1);
+            (await verify.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == winner && m.Body == "One accepted prompt")).ShouldBe(1);
         }
         finally { release.TrySetResult(); ready.TrySetResult(true); await Task.WhenAll(first, second); await f.IdleAsync(); }
     }
@@ -113,6 +124,8 @@ public class StandingSessionSwitchConcurrencyTests
     [Arguments("execution")]
     [Arguments("delivery")]
     [Arguments("owner")]
+    [Arguments("generation")]
+    [Arguments("card")]
     public async Task Reservation_rechecks_changes_committed_after_runner_preflight(string change)
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -128,6 +141,12 @@ public class StandingSessionSwitchConcurrencyTests
             await using (var db = f.Db())
             {
                 if (change == "pointer") (await db.Agents.FindAsync(f.Agent.Id))!.PersistentSessionId = f.A.Id.ToString("D");
+                if (change == "generation") (await db.AgentSessions.FindAsync(f.A.Id))!.StartedAt = DateTime.UtcNow;
+                if (change == "card")
+                {
+                    var card = StandingSessionSelectionTests.SeedCard(db, f.Root);
+                    card.AssignedAgentId = f.Agent.Id; card.AgentQueuePosition = 1;
+                }
                 if (change == "delivery") db.SessionQueuedMessages.Add(new SessionQueuedMessage { Id = Guid.NewGuid(),
                     AgentSessionId = f.B.Id, Sequence = 1, Body = "Previously submitted", LastDeliveryBaselineSequence = 0, CreatedAt = DateTime.UtcNow });
                 if (change == "execution")
@@ -145,7 +164,8 @@ public class StandingSessionSwitchConcurrencyTests
             release.TrySetResult();
             var refusal = await Should.ThrowAsync<ConflictException>(start);
             refusal.Code.ShouldBe(change switch { "pointer" => "standing_resume_current_changed", "delivery" => "standing_resume_delivery_pending",
-                "execution" => "standing_resume_work_in_flight", _ => "standing_resume_owner_unproven" });
+                "execution" => "standing_resume_work_in_flight", "generation" => "standing_resume_target_active",
+                "card" => "standing_resume_card_work_pending", _ => "standing_resume_owner_unproven" });
             adapter.Started.ShouldBeFalse();
             await using var verify = f.Db();
             (await verify.AgentSupervisionStates.FindAsync(f.Agent.Id))!.ContinuityHeldAt.ShouldNotBeNull();

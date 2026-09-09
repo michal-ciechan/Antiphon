@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.Agents;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Shouldly;
 using TUnit.Core;
@@ -88,7 +89,9 @@ public class StandingContinuityRecoveryTests
         {
             id.ShouldNotBe(f.A.Id); id.ShouldNotBe(f.B.Id);
             first.StartedArgs.ShouldContain("--session-id");
-            await f.StartAsync(new()); await f.IdleAsync();
+            await using (var scope = f.Harness.Provider.CreateAsyncScope())
+                await scope.ServiceProvider.GetRequiredService<AgentControlService>().StartAsync(f.Agent.Id, new(), default, automatic: true);
+            await f.IdleAsync();
             resumed.StartedSessionId.ShouldBe(id); resumed.StartedArgs.ShouldContain("--resume");
             resumed.StartedArgs.ShouldNotContain("--session-id");
             await using var verify = f.Db();
@@ -99,6 +102,21 @@ public class StandingContinuityRecoveryTests
             id.ShouldBe(decision == "retry" ? f.B.Id : f.A.Id);
             first.StartedArgs.ShouldContain("--resume"); first.StartedArgs.ShouldNotContain("--session-id");
         }
+    }
+
+    [Test]
+    public async Task An_unsuccessful_explicit_retry_restores_the_same_continuity_hold()
+    {
+        var missing = new FakeAgentProtocolAdapter { ReadyResult = false,
+            StartupOutput = "No conversation found with session ID: synthetic repaired target still missing" };
+        await using var f = new StandingRecoveryFixture(missing); await f.SeedAsync(held: true);
+        await f.StartAsync(new(RetryContinuity: true)); await f.IdleAsync();
+        missing.StartedSessionId.ShouldBe(f.B.Id); missing.StartedArgs.ShouldContain("--resume");
+        missing.StartedArgs.ShouldNotContain("--session-id"); missing.Killed.ShouldBeTrue(); missing.Disposed.ShouldBeTrue();
+        await using var db = f.Db();
+        var hold = (await db.AgentSupervisionStates.FindAsync(f.Agent.Id))!;
+        hold.ContinuityReason.ShouldBe(StandingContinuityReason.NativeSessionMissing); hold.ContinuitySessionId.ShouldBe(f.B.Id);
+        (await db.AgentSessions.CountAsync(s => s.StandingAgentId == f.Agent.Id)).ShouldBe(2);
     }
 
     [Test]

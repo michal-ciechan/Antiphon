@@ -287,9 +287,9 @@ public sealed class BootReplyWatchdogService
             }
             else
             {
-                // The EXISTING ladder: Backoff, FreshAfterResumeFailures (so the second restart is
-                // a fresh conversation — the measured cure) and EscalateIfTierCrossedAsync all
-                // apply with no new policy. SuperviseAsync only schedules a restart when the
+                // Preserve the existing bounded liveness intervention budget. The supervisor
+                // retries the same conversation with capped backoff; no probe failure permits
+                // Fresh. SuperviseAsync only schedules a restart when the
                 // agent has no live session, so a hung-but-Running session must be stopped here
                 // (same stopper the task arm uses for a "produced nothing" kill) or this increment
                 // is a no-op. A session that is producing output was never armed.
@@ -316,7 +316,7 @@ public sealed class BootReplyWatchdogService
 
     /// <summary>
     /// Stops the hung standing-agent session so the supervisor's not-running branch applies its
-    /// normal backoff / <c>FreshAfterResumeFailures</c> policy. Resolved from the sweep scope
+    /// normal capped backoff and strict conversation continuity policy. Resolved from the sweep scope
     /// because this service is a singleton and <see cref="IDelegateSessionStopper"/> is scoped.
     /// A missing stopper (a harness that did not register one) is a no-op, not a throw.
     /// </summary>

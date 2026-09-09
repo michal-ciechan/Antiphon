@@ -395,7 +395,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // Let the UI refetch: the now-Failed session is no longer "live", so the agent card returns
             if (evidenceTransaction is not null)
                 await evidenceTransaction.CommitAsync(CancellationToken.None);
-            // to offering a fresh start instead of a dead terminal.
+            // to offering recovery controls instead of a dead terminal.
             await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), CancellationToken.None);
 
             throw;
@@ -436,6 +436,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // mid-turn, the old process died before its TurnEnd — state the truth (boundary
             // record) so working/idle, the queue and the cards all read idle, not "Working"
             // forever (live miss 2026-08-08).
+            await RequireCurrentCheckLaunchAsync(session, agentId, ct);
             var interruptedTurn = await WriteRestartBoundaryIfInterruptedAsync(session.Id, ct);
             await InitializeGrokRulesAsync(session, ct);
 
@@ -450,10 +451,12 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // Interactive: no work prompt — the human drives the agent via the terminal. We only push
             // the agent into remote-control mode if asked, so it can also be monitored from elsewhere.
             // Best-effort: this session has no purpose that a monitoring command's failure invalidates.
+            await RequireCurrentCheckLaunchAsync(session, agentId, ct);
             await SendRemoteControlCommandsAsync(adapter, remoteControlName, session, agentId, resumeMode, ct);
 
             // Channel-facing agents get the bootstrap note for explicit creation and the cheaper
             // restart note for strict resume. Missing history never falls through to creation.
+            await RequireCurrentCheckLaunchAsync(session, agentId, ct);
             var typedSomething = await DeliverLaunchNoteAsync(session.Id, resumeMode, notes, ct);
 
             // LAST, and only on a genuine --resume (a fresh conversation has nothing to continue):
@@ -463,7 +466,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             var checkSeat = await _db.Agents.AsNoTracking().Where(a => a.Id == agentId)
                 .AnyAsync(StandingSpecialistSeatPolicy.SeatOrSlug(_delegationSettings), ct);
             if (interruptedTurn && resumeMode == AgentSessionResumeMode.Resume && !checkSeat)
+            {
+                await RequireCurrentCheckLaunchAsync(session, agentId, ct);
                 typedSomething |= await EnqueueResumeContinueAsync(session.Id, ct);
+            }
 
             // CARD-0283: optional cardless work body, after notes and the resume-continue so a
             // channel bootstrap / interrupted-turn continue still go first. WhenIdle: a live idle
@@ -472,6 +478,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // callers that want work on start pass StartAgentRequest.Prompt.
             if (!string.IsNullOrWhiteSpace(initialPrompt))
             {
+                await RequireCurrentCheckLaunchAsync(session, agentId, ct);
                 await _messageQueue.EnqueueAsync(
                     session.Id, initialPrompt.Trim(), MessageSendMode.WhenIdle, ct,
                     origin: QueuedMessageOrigin.Ui);
@@ -483,6 +490,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // probe, which then kills a healthy delegate — live miss 2026-08-09), so a delegation
             // brief enqueued at dispatch time is sitting Pending right now. If the launch note
             // above started a turn, this no-ops and the turn-end flush takes over.
+            await RequireCurrentCheckLaunchAsync(session, agentId, ct);
             await _messageQueue.FlushSessionAsync(session.Id, ct);
 
             // CARD-0312 S2, LAST: the one launch shape that ends with Status=Running, an

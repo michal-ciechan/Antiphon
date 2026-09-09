@@ -18,10 +18,12 @@ internal sealed class StandingRecoveryFixture : IAsyncDisposable
     public AgentSession A { get; private set; } = null!;
     public AgentSession B { get; private set; } = null!;
     public StandingRecoveryFixture(params FakeAgentProtocolAdapter[] adapters) : this(null, adapters) { }
-    public StandingRecoveryFixture(Action<IServiceCollection>? configureServices, params FakeAgentProtocolAdapter[] adapters)
+    public StandingRecoveryFixture(bool profiles, params FakeAgentProtocolAdapter[] adapters) : this(null, profiles, adapters) { }
+    public StandingRecoveryFixture(Action<IServiceCollection>? configureServices, params FakeAgentProtocolAdapter[] adapters) : this(configureServices, false, adapters) { }
+    internal StandingRecoveryFixture(Action<IServiceCollection>? configureServices, bool profiles, params FakeAgentProtocolAdapter[] adapters)
     {
         Directory.CreateDirectory(Root);
-        Harness = AgentControlServiceIntegrationTests.BuildHarness(Root, adapters, defaultKind: "ClaudeCode", configureServices: configureServices);
+        Harness = AgentControlServiceIntegrationTests.BuildHarness(Root, adapters, defaultKind: "ClaudeCode", includeLaunchResolver: profiles, configureServices: configureServices);
     }
     public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions());
     public async Task SeedAsync(bool legacy = false, bool held = false)

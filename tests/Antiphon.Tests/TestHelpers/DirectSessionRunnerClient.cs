@@ -22,6 +22,7 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
     private readonly IProcessLivenessProbe? _processLiveness;
     private readonly bool _codexTranscript;
     private readonly bool _claudeTranscript;
+    private readonly bool _grokTranscript;
 
     /// <summary>
     /// CARD-0186 S4: production runner teardown detaches without killing. Tests that simulate a
@@ -29,6 +30,8 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
     /// </summary>
     public Action? BeforeStart { get; set; }
     public int KillCalls { get; private set; }
+    private readonly System.Collections.Concurrent.ConcurrentQueue<RunnerLaunchRequest> _startRequests = new();
+    public IReadOnlyList<RunnerLaunchRequest> StartRequests => _startRequests.ToArray();
 
     // Exercise the production replay/liveness verifier against FakeHerdrServer.
     public HerdrEventPumpService CreateEventPump() => new(
@@ -83,10 +86,12 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
         bool codexTranscript = false,
         bool claudeTranscript = false,
         HerdrClient? herdrClient = null,
-        IProcessLivenessProbe? processLiveness = null)
+        IProcessLivenessProbe? processLiveness = null,
+        bool grokTranscript = true)
     {
         _codexTranscript = codexTranscript;
         _claudeTranscript = claudeTranscript;
+        _grokTranscript = grokTranscript;
         _herdrClient = herdrClient;
         _processLiveness = processLiveness;
         _runnerSettings = new Antiphon.SessionRunner.SessionRunnerSettings
@@ -139,7 +144,7 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
         var isGrok = kind == Antiphon.Server.Domain.Enums.AgentKind.Grok;
         var isCodex = _codexTranscript && kind == Antiphon.Server.Domain.Enums.AgentKind.Codex;
         var isClaude = _claudeTranscript && kind == Antiphon.Server.Domain.Enums.AgentKind.ClaudeCode;
-        var transcriptEnabled = isGrok || isCodex || isClaude;
+        var transcriptEnabled = isGrok && _grokTranscript || isCodex || isClaude;
         string? transcriptFormat = isGrok
             ? TranscriptFormats.Grok
             : isCodex
@@ -161,6 +166,7 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             GrokRulesPayload: spec.GrokRulesPayload,
             CommandLineBudgetChars: spec.CommandLineBudgetChars);
 
+        _startRequests.Enqueue(request);
         BeforeStart?.Invoke();
         try
         {

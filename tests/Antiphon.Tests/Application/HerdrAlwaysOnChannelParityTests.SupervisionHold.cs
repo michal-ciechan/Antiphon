@@ -8,6 +8,9 @@ using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.SessionRunner.Tests;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using Antiphon.Server.Application.Settings;
 using Shouldly;
 using TUnit.Core;
 
@@ -109,7 +112,9 @@ public partial class HerdrAlwaysOnChannelParityTests
 
             fake.LaunchScriptAgentKind = HerdrAgentKinds.Grok;
             requests = fake.Requests.Count;
-            await h.Control.StartAsync(agent.Id, new StartAgentRequest(RemoteControl: false, ResetHerdrFailureHold: true), CancellationToken.None);
+            await using (var retryScope = h.Provider.CreateAsyncScope())
+                await retryScope.ServiceProvider.GetRequiredService<AgentControlService>().StartAsync(agent.Id,
+                    new StartAgentRequest(RemoteControl: false, ResetHerdrFailureHold: true), CancellationToken.None);
             await DrainLaunch(h);
             var repaired = await WaitForPersistentSessionAsync(h, agent.Id);
             (await h.Runner.GetAsync(repaired, CancellationToken.None)).Status.ShouldBe("Running");
@@ -132,7 +137,11 @@ public partial class HerdrAlwaysOnChannelParityTests
             await using var fake = new FakeHerdrServer();
             fake.Start(); await fake.WaitUntilListeningAsync();
             await using var h = BuildHarness(root, SessionBackend.Herdr, fake, [], AgentKind.Grok, 500);
-            var agent = await CreateHoldSeat(h, root, named: true, unsafeRules: true);
+            var agent = await CreateHoldSeat(h, root, named: true);
+            // SystemPromptAppend uses the rules-file transport now. Exercise an actually unsafe
+            // raw CLI argument so this remains a pre-pane refusal test.
+            h.Provider.GetRequiredService<IOptionsMonitor<AgentRegistrySettings>>().CurrentValue
+                .Definitions["grok"].ArgsTemplate = ["--rules", "first line\nsecond line"];
             var requests = fake.Requests.Count;
             var ex = await Should.ThrowAsync<ConflictException>(() => h.Control.StartAsync(
                 agent.Id, new StartAgentRequest(Fresh: true, RemoteControl: false), CancellationToken.None));
@@ -208,6 +217,15 @@ public partial class HerdrAlwaysOnChannelParityTests
     {
         await h.Control.StartAsync(id, new StartAgentRequest(Fresh: true, RemoteControl: false), CancellationToken.None);
         await DrainLaunch(h);
+        await using var db = CreateContext();
+        var sessionId = await PersistedSessionId(id);
+        var row = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
+        if (row.Status == SessionStatus.Running && row.AgentKind == AgentKind.Grok)
+        {
+            // FakeHerdr emulates detection, not the provider's filesystem. This hold fixture
+            // needs existing native history so its independent Herdr failures remain the cause.
+            Directory.CreateDirectory(Path.Combine(row.Cwd, "grok-home", "sessions", Uri.EscapeDataString(Path.GetFullPath(row.Cwd)), row.Id.ToString("D")));
+        }
     }
 
     private static async Task DrainLaunch(Harness h)

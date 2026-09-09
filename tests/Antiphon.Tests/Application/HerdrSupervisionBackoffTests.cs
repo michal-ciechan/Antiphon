@@ -47,7 +47,9 @@ public class HerdrSupervisionBackoffTests
         await f.TickAsync();
         (await f.StateAsync()).HerdrConsecutiveFailures.ShouldBe(2);
         await f.DueAsync();
-        (await f.SessionAsync()).Id.ShouldNotBe(first.Id);
+        (await f.SessionAsync()).Id.ShouldBe(first.Id);
+        a3.StartedArgs.ShouldContain("--resume");
+        a3.StartedArgs.ShouldNotContain("--session-id");
         await f.ExitAsync(AgentExitReason.HerdrChildGone);
         await f.TickAsync();
         var held = await f.StateAsync();
@@ -576,7 +578,9 @@ public class HerdrSupervisionBackoffTests
             await f.DueAsync();
             (await f.StateAsync()).HerdrConsecutiveFailures.ShouldBe(2);
             (await db.AgentSessions.CountAsync(s => s.Cwd == f.Root)).ShouldBe(1);
-            (await db.AgentIncidents.AnyAsync(i => i.AgentId == f.AgentId && i.Kind == AgentIncidentKind.StartFailure)).ShouldBeTrue();
+            (await db.CapacityRecoveryWaits.AnyAsync(w => w.AgentId == f.AgentId
+                && w.ConsumerKind == CapacityWaitConsumerKind.StandingStart)).ShouldBeTrue();
+            (await db.AgentIncidents.AnyAsync(i => i.AgentId == f.AgentId && i.Kind == AgentIncidentKind.StartFailure)).ShouldBeFalse();
         }
         finally { await db.ModelAvailabilityHolds.Where(h => h.Id == hold.Id).ExecuteDeleteAsync(); }
     }

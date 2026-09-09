@@ -18,7 +18,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [NotInParallel]
-public class StandingRestartAccountingTests
+public partial class StandingRestartAccountingTests
 {
     [Test]
     public async Task Real_failures_cap_escalate_and_reset_only_after_healthy_completion()
@@ -292,6 +292,7 @@ public class StandingRestartAccountingTests
         public Guid AgentId { get; set; }
         public int Remaining { get; set; }
         public int Hits { get; private set; }
+        public Func<Exception>? Failure { get; set; }
         public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
             CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
         {
@@ -299,7 +300,7 @@ public class StandingRestartAccountingTests
                 && command.Parameters.Cast<DbParameter>().Any(p => p.Value is IEnumerable<Guid> ids && ids.Contains(AgentId)))
             {
                 Remaining--; Hits++;
-                throw new DbUpdateException("composition storage", new PostgresException("starting", "FATAL", "FATAL", "57P03"));
+                throw Failure?.Invoke() ?? new DbUpdateException("composition storage", new PostgresException("starting", "FATAL", "FATAL", "57P03"));
             }
             return ValueTask.FromResult(result);
         }
