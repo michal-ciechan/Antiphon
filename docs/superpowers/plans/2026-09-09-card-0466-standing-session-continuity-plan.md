@@ -1,6 +1,6 @@
 # CARD-0466: preserve standing-session continuity through infrastructure failures
 
-Status: Plan complete; separate TestDesign required before Code.
+Status: Plan and TestDesign complete; ready for Code.
 Date: 2026-09-09. Task: `81da7ca2-944c-442e-80ab-f21b1c72f8f8`.
 Source checkout: `4e0ae76a` (`feat/card-task-81da7ca2`).
 
@@ -384,11 +384,236 @@ No tests/builds ran during Plan; this artifact changes no runtime code. Code mus
 as applicable. TestDesign owns the precise filters and PC list. Do not start the shared
 stack, migrate the live database or perform actual orchestrator recovery for acceptance.
 
+## Verification design
+
+Authored by TestDesign task `7b848110` against Plan commit `569ce66f`. The V rows
+below are requirements for Code, not executed-test evidence. New class/method names
+are prescribed targets; update this mapping if implementation needs to rename them.
+All new backend classes below live in `tests/Antiphon.Tests/Application/` and use
+namespace `Antiphon.Tests.Application`. Keep D-1 through D-8 unchanged.
+
+### Evidence and fixtures
+
+- Use real PostgreSQL through `TestDbFixture`, fresh service scopes for each tick or
+  competing request, and fresh `AsNoTracking` reads for assertions. Reuse
+  `AgentSupervisionTests.BuildHarness` and the control/Herdr parity fixtures, extending
+  their adapter and runner seams. Whole-supervisor sweeps require ungrouped
+  `[NotInParallel]`; all assertions and cleanup identify fixture-owned agents/rows.
+  Migration tests use `TestDbFixture.CreateIsolatedSchemaAsync`, never downgrade the
+  shared schema. Tag pure classifiers Unit and database/worker/HTTP tests Integration.
+- Inject a real `Npgsql.PostgresException` with SQLSTATE `57P03` at the intended
+  composition/read/save seam; do not stop PostgreSQL to produce it. EF interceptors
+  must identify the operation and fixture row, not fail every command or the nth
+  unrelated save. Gate worker start/ready and runner calls with bounded
+  `TaskCompletionSource` barriers. Verify each injection/barrier was reached, release
+  barriers in `finally`, and await every worker before disposing its fixture.
+- Record adapter construction, start specs (including native identity flags), kills,
+  disposal and typed input. A preflight failure can correctly have zero process
+  attempts; an asynchronous missing-target failure must have exactly one resume
+  attempt and zero create attempts. Check both, rather than merely counting DB rows.
+  Use only synthetic environment values in captured specs and assertions.
+- For each attempt record the persisted `(SessionId, StartedAt)` before observation,
+  `RestartFailureKind`, `InteractiveLaunchCompletedAt`, both failure counters,
+  consumed generation, `NextRestartAt`, escalation and continuity hold. Compare the
+  database-rounded generation, not an unpersisted timestamp. Advance enough to create
+  distinct generations on the same row. Rebuild the service provider for durability
+  cases so in-memory deduplication cannot make them pass.
+- Supervisor-only arithmetic may use a controlled clock. Any clock reaching queue
+  polling must advance over real time or use the approved auto-advancing fake. Assert
+  due-time deltas within a small stated tolerance for that clock; do not sleep through
+  real backoff. At count `n`, expect `min(5 seconds * 2^n, 30 days)` under default
+  settings. An initial observation with no failed attempt schedules at count zero.
+- A rejected selection compares pre/post pointer, status, owner, session generation,
+  continuity/human/liveness latches, queue rows, execution links, transcripts and
+  accepted-decision incidents; expect no mutation, no enqueue, no spawn, no kill and
+  no typing. Test an independently requested Herdr reset under its existing policy;
+  continuity flags themselves never acknowledge it.
+- Queue success requires a matching owning `UserPrompt` after the recorded baseline,
+  plus the expected number/order of writes. API 200, Running before boot completion,
+  a stable session GUID, a changed bundle stamp or a screen redraw alone cannot pass
+  a recovery test. Fake-native history markers and argv establish identity in these
+  tests; they do not claim live-model policy adoption or restore overwritten history.
+
+### V rows: classification, pacing and durable outcomes
+
+| ID / decision | Exact test target | Setup and required verdict |
+|---|---|---|
+| V-01 / D-2 | `RestartFailureClassificationTests.Infrastructure_wrappers_and_cancellation_are_classified_by_evidence` | Parameterize actual 57P03, `DbUpdateException` and ordinary wrappers around it, nested/multi-leaf `AggregateException`, transient `DbException`, `HttpRequestException` with connection-refused inner exception, timeout, and unrequested `TaskCanceledException`/`OperationCanceledException`. Expect Infrastructure through all wrappers. Repeat with stale missing-session screen text: it cannot win. Requested caller/host cancellation propagates in service tests and is not a failed attempt. Nontransient database/configuration failure and a message merely containing `57P03` or a missing-session phrase are negative controls for positive native-loss evidence. Typed native-missing evidence is ContinuityUnavailable; unclassified evidence is Unknown. |
+| V-02 / D-1, D-2 | `StandingRestartAccountingTests.Wrapped_57P03_retries_preserve_identity_and_grow_only_backoff` | Seed stopped owned Claude A with ordinary count 7, an already-consumed terminal generation and a due retry. Fail three successive synchronous composition attempts with wrapped 57P03 before restamping/enqueue; recover on the fourth. Ordinary count stays 7, backoff advances once per failed attempt, no continuity hold and no new session. Ticks before due do not call Start; due retry finally starts exactly `--resume A`, never create. Repeat settings `FreshAfterResumeFailures=0,1,2,int.MaxValue`; no value restores Fresh. |
+| V-03 / D-3 | `StandingRestartAccountingTests.Async_infrastructure_failure_is_consumed_once_across_recreation` | Start returns while the worker is gated. Fail after enqueue, including after the early Running save but before boot completion. Original Infrastructure outcome persists; completion remains null; cleanup kills/disposes its adapter. Deliver the cleanup exit, repeat ticks, reconstruct all services, then tick again. Exactly one backoff charge and zero ordinary charges for that generation; exit must not overwrite the cause. Retry restamps the same row, clears old evidence/completion, and a second failed generation can be charged exactly once. An owned worker has no terminal charge while still classifying its catch. |
+| V-04 / D-3 | `StandingRestartAccountingTests.Sync_failure_after_restamp_is_not_charged_again_by_terminal_observation` | Inject synchronous failure after a reservation/restamp has committed but before enqueue. Accounting records and consumes that generation once. A later dead-row observation does not add a second charge. Contrast failure before restamp with an older consumed death: retain the old consume key and do not charge the old death again. Use separate contexts for the catch and observer. |
+| V-05 / D-2, D-3 | `StandingRestartAccountingTests.Failed_outcome_save_recovers_as_unknown_without_fresh_authority` | Let a worker fail, then fail its outcome save and subsequent bookkeeping while storage is unavailable. Observe bounded hosted-tick retries/logging, no loop saving the same failed context, no catch-path second launch, and no invented outcome/completion. Restore storage, reconstruct scopes, and observe a terminal incarnation through reconciliation. Charge Unknown at most once only when terminal evidence exists, keep ordinary count unchanged, and eventually resume A. Do not require an exact durable failure count during the database outage; D-3 explicitly excludes that promise. |
+| V-06 / D-2 | `StandingRestartAccountingTests.Timeout_retries_but_requested_cancellation_does_not_charge` | Exercise runner probe, synchronous Start and worker timeout with active request tokens; each loop remains usable and the failed-attempt path backs off without ordinary increments. Cancel the supplied caller/host token at the equivalent gates: cancellation propagates and records no failed-attempt charge/continuity hold. If a process already started, assert cleanup/ownership. A failed observation-only runner probe authorizes no launch and invents no failed incarnation. |
+| V-07 / D-2, D-3 | `StandingRestartAccountingTests.Real_failures_cap_escalate_and_reset_only_after_healthy_completion` | Complete boot, then deliver independent process exits on distinct persisted generations; also inject a confirmed non-infrastructure launch failure. Both counters increase once per failure, repeated observations do not. Exercise exponential boundaries, hourly/daily escalation once per tier, and the 30-day cap with large counts (no overflow). Successful enqueue/Starting and early Running before boot completion do not reset; just before healthy uptime does not reset; completed boot plus healthy interval resets both counters, due time and escalation once. Resume identity remains A throughout. |
+| V-08 / D-1, D-8 | `StandingContinuityRecoveryTests.Default_start_distinguishes_first_launch_from_unavailable_prior_identity` | A genuinely new agent can create its first row. Missing/malformed nonempty pointer, incompatible prior kind/cwd, and unresolved prior ownership refuse/hold without create. Native-unsupported kinds retain their ordinary behavior with `ResumeUnsupported` audit, but explicit selection is refused; changing an existing supported conversation to an unsupported kind requires explicit Fresh. No lookup of the newest historical session substitutes for a user selection. |
+
+### V rows: explicit decisions and strict native resume
+
+| ID / decision | Exact test target | Setup and required verdict |
+|---|---|---|
+| V-09 / D-1, D-4 | `StandingContinuityRecoveryTests.Missing_native_target_holds_after_one_resume_without_create` | Seed owned cardless A with native identity and history marker. Raise typed `ResumeTargetMissingException` after its adapter starts. Exactly one resume spec, no second adapter/create, no new row and no rewritten native history; normal cleanup completes. Persist NativeSessionMissing hold for A, no ordinary increment, and no automatic launches across repeated due ticks/service recreation. Retain TabLabel and the proper resume placement hints. |
+| V-10 / D-2, D-4 | `StandingContinuityRecoveryTests.Grok_strict_resume_distinguishes_missing_from_unavailable_storage` | Standing Grok cases cover Found, authoritative Missing, and I/O/access Unavailable. Found emits only `--resume A`; Missing holds without `--session-id A`; Unavailable takes Infrastructure recovery without a continuity-loss verdict or create. Include the runner's `GrokNativeSessionMissing` refusal and rules-migration refusal: the latter keeps its existing explicit-migration policy and never becomes native-missing or permission to Fresh. Bind effective launch home rather than the test process home. Preserve explicitly card-scoped legacy behavior in R-03. |
+| V-11 / D-4, D-8 | `StandingContinuityRecoveryTests.Held_retry_selection_and_fresh_have_separate_accepted_decisions` | While held, ordinary Start yields 409 `standing_continuity_held`. Repair A then accept `retryContinuity:true`: one resume A and one retry decision. Select owned C: one selected-resume decision with old/new targets. Accept explicit Fresh: one new B row and explicit discard reason, preserve A/owner/history, and clear continuity hold only with accepted reservation. Fail B afterward: subsequent automatic attempts resume B and do not create C. Failed retry restores/updates the hold; queue acceptance and completed resume are separate facts. |
+| V-12 / D-4, D-6 | `StandingSessionSelectionTests.Recovery_options_cannot_bypass_existing_start_guards` | Parameterize retry, selection and Fresh against applicable quota, sign-in, model/capacity, configuration, specialist and Herdr holds; test automatic/capacity callers separately from manual callers. Existing allowed supervisor quota policy remains intact. Rejected recovery retains continuity hold and has the rejection snapshot above. Continuity flags do not clear human/liveness intent before validation or reset Herdr; a valid manual start may perform its established latch clear at acceptance. Cover both AlwaysOn values. |
+| V-13 / D-4 | `StandingContinuityAttentionTests.Hold_survives_pruning_recreation_and_always_on_off_without_duplicate_alerts` | Persist each hold reason, prune its incident, recreate services and disable AlwaysOn. Exactly one row-scoped StandingContinuityDecision remains with agent/target/cause/open links. Stop and alert acknowledgement do not resolve it. Hold/selection/Fresh incidents use `raiseAlert:false`, create no duplicate incident-derived Attention and preserve unrelated infrastructure alerts. Only accepted retry/selection/Fresh resolves the durable row; a rejected attempt does not. Evidence is bounded and uses synthetic metadata, with no transcript/environment payload. |
+
+### V rows: historical ownership and Start selection
+
+| ID / decision | Exact test target | Setup and required verdict |
+|---|---|---|
+| V-14 / D-5, S1 | `StandingSessionOwnershipTests.Upgrade_backfills_only_unambiguous_owners_and_preserves_recovery_state` | In an isolated schema migrate to the predecessor, seed legacy data using the old schema, then apply the actual CLI-generated migration. Counts 0/2/large move to RestartBackoffFailures, ordinary counts reset to zero, due/escalation and human/liveness/capacity/Herdr state remain. No invented completion/outcome/continuity hold. Backfill current-pointer, historical execution-only and allowed lifecycle-incident-only ownership when unique, including A whose pointer moved to B. Multiple agreeing sources are allowed; contradictory owners, ParentSessionId-only, unrelated incident kinds, pool/card/worktree and no evidence remain unstamped. Assert index/model alignment and no pending model changes. |
+| V-15 / D-5 | `StandingSessionOwnershipTests.Stamped_owner_survives_pointer_change_attach_and_agent_recreation` | Normal standing creation and validated Herdr attach stamp the physical agent before enqueue; resume preserves it. Moving pointer to B preserves A's owner. Delete the agent through the existing flow and create the same name/cwd with a new GUID: history is neither cascaded nor reassigned and the new agent cannot select A. Pool/card creation never gains a standing owner; conflicting stamped ownership cannot be overwritten through attach, Start or generic PATCH. |
+| V-16 / D-5, D-6 | `StandingSessionSelectionTests.Legacy_historical_owner_can_resume_after_pointer_moved` | Release-critical sequence: seed legacy A with null owner and only an allowed historical execution link (repeat allowed incident-only), current pointer on stopped B. GET history discovers A without writing its owner. POST Start with `resumeSessionId:A` revalidates evidence, stamps owner atomically, queues the shared resume path and ultimately starts native A with current composition. Preserve A/B transcripts and task history; a child task pointing to A only as ParentSessionId neither proves ownership nor blocks otherwise-proven parent recovery. |
+| V-17 / D-5 | `StandingSessionSelectionTests.Foreign_conflicting_or_unproven_ownership_refuses_without_side_effects` | Foreign stamped owner returns `standing_resume_not_owned`; absent/pruned/contradictory legacy evidence returns `standing_resume_owner_unproven`. Test current pointer to A by another agent, competing historical execution/lifecycle links, same cwd/name, and caller knowledge of A's GUID. No bypass or history adoption; enforce the full rejection snapshot. Add conflicting evidence between GET/preflight and reservation to prove Start rechecks. |
+| V-18 / D-6 | `StandingSessionSelectionTests.Invalid_or_busy_targets_refuse_before_reservation` | Data cases: missing A (404); nonexclusive option pairs (422); unsupported/wrong kind or canonical cwd mismatch; pool/card/worktree target; target Created/Starting/Running/Stopping, owned worker, or DB-dead but runner-live; unavailable runner probe; other current live/queued session (409 `standing_resume_current_active`); spawnable current/queued card (409 `standing_resume_card_work_pending`). Assert stable Problem Details codes and the full rejection snapshot. Equivalent canonical paths accepted under existing OS comparison are the positive control. |
+| V-19 / D-6, D-7 | `StandingSessionSelectionTests.Owned_history_uses_current_composition_and_native_resume_identity` | A -> explicit Fresh B -> Stop -> select A, for Claude/Grok and AlwaysOn on/off. Between A and selection change bundles/profile/model/synthetic environment, notes and backend placement. Assert fresh current stamps/specs, A's native resume flag exactly once, A as persistent pointer before worker execution, B retained, and no historical argv/environment reused. Grok uses current receipt/rules barrier; remote-control and interrupted-turn continuation retain existing order. A second identical request cannot duplicate the launch/prompt/accepted-decision incident. |
+| V-20 / D-6 | `StandingSessionRecoveryHttpTests.History_and_start_preserve_wire_contract_and_revalidate_eligibility` | Use a guarded real Program test host with fake/refusing runner. Exercise camelCase flags and invalid combinations through HTTP, not only direct service calls. History is bounded/stably paged (including equal CreatedAt values and cursor boundaries), read-only and excludes foreign history; expose only prescribed metadata/eligibility/refusal codes. No secrets, hashes, environment or transcript content. Change eligibility after GET: Start refuses rather than trusting the response. Accepted Start returns normal AgentDetailDto as queued; force later worker failure and observe its durable hold. |
+
+### V rows: concurrency and safe queued work
+
+| ID / decision | Exact test target | Setup and required verdict |
+|---|---|---|
+| V-21 / D-7 | `StandingSessionSwitchConcurrencyTests.Concurrent_starts_and_supervisor_reserve_one_generation` | Independent PostgreSQL contexts contend: two selections of A; selection A versus default/supervised Start; selection A versus Fresh. Gate both after preflight, then race reservation. One accepted generation/enqueue/prompt/decision; same-target repeats are no-ops, incompatible loser refuses/revalidates. Reload committed pointer, owner and generation. Pause the fake runner/composer RPC and prove another context can acquire the agent lock within a bounded timeout: no transaction spans external I/O. |
+| V-22 / D-7 | `StandingSessionSwitchConcurrencyTests.Stop_supersedes_launch_before_spawn_and_before_typing` | Stop at gates before worker spawn, while start RPC is pending, and after ready before boot writes. Release the obsolete worker: before-spawn case launches nothing; late-created process is killed/disposed; no obsolete notes/RC/prompt and no overwrite of stopped status/latch. Repeat with a newly accepted B generation after Stop: only B is authorized/owned and A's late completion cannot erase it. Verify actual process/fake-adapter ownership, not only final DB status. |
+| V-23 / D-7 | `StandingSessionSwitchConcurrencyTests.Reservation_rechecks_source_pointer_work_and_delivery_evidence` | Gate selection after preflight and independently change B's pointer/generation, add an execution assignment/spawnable card, add a competing ownership claim, or start delivery of B's pending message before reservation. Request refuses or revalidates from the new state; it must never move stale B messages or launch using stale authority. Include the reverse order: reservation wins, stale queue delivery cannot type the moved row on B. Gate rollback during reservation save: pointer/owner/hold/queue/decision all roll back and no worker is enqueued. |
+| V-24 / D-7 | `StandingSessionQueueSwitchTests.Only_unattempted_messages_move_atomically_and_keep_order_and_routing` | B has never-attempted Pending Ui/Channel/completion/scheduled messages, future holds, Sent/Canceled rows and rules-refresh rows; A already has its own queue and transcript. Accepted selection moves exactly the safe non-rules set with original IDs/body/origin/correlations/hold times/parking policy. Preserve each source's FIFO order and keep existing A work ahead of appended B work; allocate collision-free target Sequence values where needed, without changing A's existing sequences. Sent/Canceled/rules/history/task reply links stay put. After readiness/notes/continuation, flush ordinary input in the resulting order, initial prompt once, and confirm matching owning UserPrompts. Future-held messages retain their existing eligibility semantics. |
+| V-25 / D-7 | `StandingSessionQueueSwitchTests.Any_prior_delivery_evidence_refuses_switch_and_fresh` | For selection and manual Fresh, vary one B Pending field at a time: DeliveryAttempts > 0, LastDeliveryStartedAt, LastDeliveryBaselineSequence (including zero), DeliveryVerdict, DeliveryVerdictAt, residual SentAt/settlement evidence; include attempted-at-limit parked input and a mixed safe/unsafe queue. Return `standing_resume_delivery_pending` with queue links; no partial safe-row move, no new Fresh row, no reset/cancel/retype of ambiguous input. Byte-for-byte evidence and pointer/latches remain. A Sent row with null verdict remains on B for existing interrupted-attempt recovery, never copied as fresh input. |
+| V-26 / D-7 | `StandingSessionQueueSwitchTests.Target_late_confirmation_and_open_task_guards_remain_intact` | A has attempted Pending input with stored baseline and a later matching UserPrompt. Selecting A retains that evidence; late-confirm marks it without typing again, and an unconfirmed parked A row remains parked. Open execution assignments Dispatched/Working/Blocked on either A or B refuse selection with `standing_resume_work_in_flight`, without task remapping. Completed historical executions and child ParentSessionId references do not block. Keep existing specialist Fresh migration behavior scoped to its established policy. |
+| V-27 / D-4, D-6 | `client/src/features/agents/StandingSessionRecovery.test.tsx` (new) and `attentionVisuals.test.ts` | Test named user interactions: `retry sends only retryContinuity`, `history selection sends the Antiphon session id`, `fresh shows the discard consequence and sends only fresh`, `refusal retains the hold and never retries as fresh`, `queued start is not shown as recovered`, and `missing and unproven history have distinct explanations`. Verify selected target display, disabled ineligible choices/open links, loading/double-click dedupe and query refresh after a decision. Exercise AgentsPage wiring too; merely opening history/Attention performs reads and no Start/mutation calls. |
+| V-28 / D-1, D-4, D-6 | `HerdrAlwaysOnChannelParityTests.Standing_history_recovery_preserves_native_identity_and_queued_reply` | Small integration matrix: Claude/Grok across PtyHost and Herdr using isolated fake provider/runner lanes (extend the existing parity harness; its PtyHost stub alone is not native-wire evidence). Run missing-target/no-create and owned A -> B -> Stop -> A recovery, including preserved native-history marker and current safe queued channel input/reply. Assert actual runner launch request/provider argv, one authorized process, native A history, matched input and one fake-gateway reply. Herdr tab/last-pane behavior and rules barriers remain valid. Never point fake traffic at the live broker. |
+
+V-24 makes relative queue ordering explicit: moved B rows append after A's existing
+queue, preserving B order; per-session numeric Sequence values are not portable IDs.
+The accepted-reservation rollback and delivery race in V-23 must exercise the same
+database/queue synchronization that production uses, not a sequential mock substitute.
+
+### Positive controls
+
+Run these seven defect mutations red then restored green during Code. They target
+independent safety failures; do not substitute broad baseline regressions. Each row
+names exactly one method. With the common command below, replace `<Class>/<Method>`
+with that row's target and record the mutation, executed cases, assertion and result.
+
+```powershell
+dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c466/ -- --treenode-filter "/*/*/<Class>/<Method>" --report-trx --report-trx-filename <unique-pc-phase>.trx
+```
+
+| ID | Mutation | Exact class/method and required red assertion |
+|---|---|---|
+| PC-1 | Classify wrapped actual 57P03 as LaunchOrProcessFailure at the policy boundary. | `StandingRestartAccountingTests/Wrapped_57P03_retries_preserve_identity_and_grow_only_backoff`: ordinary count changes from 7, failing the unchanged-count assertion. |
+| PC-2 | Bypass consumed `(SessionId, StartedAt)` comparison for terminal Infrastructure evidence. | `StandingRestartAccountingTests/Async_infrastructure_failure_is_consumed_once_across_recreation`: repeated/reconstructed observation charges the same incarnation twice. |
+| PC-3 | Restore the standing `ResumeTargetMissingException` same-ID create fallback. | `StandingContinuityRecoveryTests/Missing_native_target_holds_after_one_resume_without_create`: a second/create spec or missing hold fails, even if the session ID is unchanged. |
+| PC-4 | Accept historical ownership without checking distinct conflicting owners. | `StandingSessionSelectionTests/Foreign_conflicting_or_unproven_ownership_refuses_without_side_effects`: contradictory historical-link case accepts/stamps/enqueues instead of refusing. |
+| PC-5 | Skip the worker's post-ready pointer/generation/intent check. | `StandingSessionSwitchConcurrencyTests/Stop_supersedes_launch_before_spawn_and_before_typing`: the post-ready Stop case types stale work or revives an obsolete generation. |
+| PC-6 | Treat Pending plus zero attempts alone as safe, ignoring baseline/timestamp/verdict evidence. | `StandingSessionQueueSwitchTests/Any_prior_delivery_evidence_refuses_switch_and_fresh`: zero-attempt baseline-only case moves or starts instead of refusing. |
+| PC-7 | Clear the continuity hold before normal Start guards accept the reservation. | `StandingSessionSelectionTests/Recovery_options_cannot_bypass_existing_start_guards`: rejected model/auth/config case loses the hold. |
+
+Follow [testing and build: Code-stage positive-control execution](../../testing-and-build.md#code-stage-positive-control-execution-card-0451):
+exact-method filters for both phases, unique fresh TRX, nonzero executed counts and
+expected assertion failures. Build/fixture errors, zero tests or list-tests output
+are not red evidence. Batch only mutations in independent files/methods; PC-5 and
+PC-7 may overlap the worker/control refactor and must be checked before batching.
+Restore every mutation, refresh source timestamps and rebuild so green executes the
+fixed DLL. Do not edit files while their test/build runs. Finish with regression on
+the unmutated implementation; report every PC separately.
+
+### R rows and exact execution filters
+
+Each class below is an exact regression target, not a namespace-wide recommendation.
+Run the commands sequentially, checking exit status and fresh executed counts per
+class; stop to diagnose a failure. New-class names must match the V mapping.
+
+```powershell
+$card466Classes = @(
+    'RestartFailureClassificationTests',
+    'StandingRestartAccountingTests',
+    'StandingContinuityRecoveryTests',
+    'StandingContinuityAttentionTests',
+    'StandingSessionOwnershipTests',
+    'StandingSessionSelectionTests',
+    'StandingSessionRecoveryHttpTests',
+    'StandingSessionSwitchConcurrencyTests',
+    'StandingSessionQueueSwitchTests',
+    'AttentionServiceTests',
+    'AgentSupervisionTests',
+    'AgentControlServiceIntegrationTests',
+    'GrokNativeSessionResumeTests',
+    'GrokRulesResumeMigrationTests',
+    'AgentSessionLaunchFailureTests',
+    'AgentSessionRuntimeTests',
+    'SessionReconciliationServiceTests',
+    'HerdrSupervisionBackoffTests',
+    'HerdrSupervisionAttentionTests',
+    'CapacityRecoverySupervisionTests',
+    'PolicyRefreshServiceTests',
+    'GrokRulesReadyOrderingTests',
+    'SessionMessageQueueDeliveryVerificationTests',
+    'SessionMessageQueueInterruptedAttemptTests',
+    'SessionMessageQueueSupervisionTests',
+    'HerdrAlwaysOnChannelParityTests'
+)
+foreach ($card466Class in $card466Classes) {
+    dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c466/ -- --treenode-filter "/*/*/$card466Class/*" --report-trx --report-trx-filename "c466-$card466Class.trx"
+    if ($LASTEXITCODE -ne 0) { throw "CARD-0466 failed: $card466Class (exit $LASTEXITCODE)" }
+}
+```
+
+Use a new evidence directory/run identity or unique suffix when rerunning; do not
+reuse an old TRX as evidence. `AttentionServiceTests` covers shared feed behavior
+alongside the focused continuity cases. Do not widen to all Application.
+
+| Regression | Targets from the command / additional exact filter | What must remain true |
+|---|---|---|
+| R-01: ordinary supervision and Start | `AgentSupervisionTests`, `AgentControlServiceIntegrationTests` | First launch, intentional Stop/liveness latch, current composition/notes/RC, explicit Fresh and placement. Replace the old automatic-threshold and two missing-target-fallback assertions with strict resume/hold cases; retain a separate explicit-Fresh TabLabel/pane-hint case. Rewrite counter-only crash fixtures to seed actual terminal generation evidence. |
+| R-02: lifecycle and cleanup | `AgentSessionLaunchFailureTests`, `AgentSessionRuntimeTests`, `SessionReconciliationServiceTests` | Failure cleanup preserves original classification/termination source. Unclaimed live sessions are not killed. Reconciliation and ordinary runtime exits remain correct. Do not change/retest launch-extra replay as a new feature. |
+| R-03: Grok policy boundary | `GrokNativeSessionResumeTests`, `GrokRulesResumeMigrationTests`, `GrokRulesReadyOrderingTests` | Existing missing-directory downgrade tests must explicitly exercise the retained card policy; new standing strict cases must pass through real callers. Native ID flag sanitation, launch-home precedence, explicit rules migration and queue barriers remain. |
+| R-04: independent holds | `AttentionServiceTests`, `HerdrSupervisionBackoffTests`, `HerdrSupervisionAttentionTests`, `CapacityRecoverySupervisionTests` | Shared feed filtering/deduplication and existing hold precedence, once-per-incarnation accounting, human reset, capacity grants/pacing and no silent reroute. Continuity acknowledgement is not Herdr acknowledgement. |
+| R-05: refresh and delivery | `PolicyRefreshServiceTests`, `SessionMessageQueueDeliveryVerificationTests`, `SessionMessageQueueInterruptedAttemptTests`, `SessionMessageQueueSupervisionTests` | Current composition on resume, matching UserPrompt evidence, Enter-only/late-confirm semantics, attempts/parking and working-session guards survive switching changes. Existing interrupted-message verification is distinct from excluded interrupted-startup durability. |
+| R-06: backend parity | `HerdrAlwaysOnChannelParityTests` | Rename/update `Named_AlwaysOn_agent_lands_on_its_labelled_tab_across_crash_restart_and_fresh_threshold` to repeated same-conversation resume, with manual Fresh separate. Existing held-shell, placement and channel behavior plus V-28's native-wire assertions pass. |
+| R-07: runner/native seam, when S3 touches it | `Antiphon.SessionRunner.Tests`: `/*/*/HerdrGrokResumeGuardTests/*`, `/*/*/GrokRulesRunnerRefusalTests/*`, `/*/*/GrokRulesStoreFailureTests/*`, `/*/*/PromptSubmissionMatchTests/*` | Invoke each with `dotnet run --project tests/Antiphon.SessionRunner.Tests --property:OutputPath=bin-c466/ -- --treenode-filter "<filter>"` and fresh TRX. Missing/unavailable distinction and argv refusals survive the HTTP boundary; no production runner or native home. Add only other directly touched class filters. |
+| R-08: client | Commands below | Recovery payloads, Attention presentation, AgentsPage integration and type/build compatibility. Run `AgentsPage.test.tsx` for page wiring/shared start behavior as well as the focused component cases. |
+
+```powershell
+pwsh -File scripts/test-client.ps1 StandingSessionRecovery.test
+pwsh -File scripts/test-client.ps1 attentionVisuals.test
+pwsh -File scripts/test-client.ps1 AgentsPage.test
+npm --prefix client run build
+```
+
+For an adapter/native-store change in `Antiphon.Agents.Pty`, add the exact changed
+class filter using `dotnet run --project tests/Antiphon.Agents.Pty.Tests
+--property:OutputPath=bin-c466/ -- --treenode-filter "/*/*/<TouchedClass>/*"`.
+Run after Antiphon.Tests, never concurrently. Process-spawning fixtures require their
+assembly-local `[ParallelLimiter<ProcessSpawnLimit>]`; no headed/live-model canary is
+required by this card. Use the existing production-runner guard for real Program
+hosts; V-28 owns isolated fake lanes and temporary stores. No AppHost restart, live
+migration, broker traffic or real standing-session recovery is an acceptance step.
+
+### Completion evidence for Code and Review
+
+Provide the implementation commit, V-to-method mapping (including parameter cases),
+per-class executed/passed/failed/skipped counts, fresh result paths, seven PC red/green
+verdicts, and client/build results. Explicitly account for every required row; an
+unexecuted native-wire arm or legacy historical-only recovery case is an acceptance
+gap, not a passing claim. Review verifies no operative FreshAfterResumeFailures read
+remains, explicit configuration emits only the planned startup warning, migration
+preserves old recovery state, and current owner docs describe strict Start/history.
+Unsupported-kind compatibility and card-only behavior remain explicit boundaries.
+
+Interrupted-startup replay, persisted launch extras/durable launch jobs, automatic
+ownership adoption and live production recovery remain excluded. Service recreation
+in V-03/V-05/V-13 proves stored evidence/holds survive; it does not authorize resuming
+an interrupted named launch or claim its lost boot inputs became durable.
+
+TestDesign changed only this plan. No tests/builds were run at this stage; document
+structure, target names and whitespace are checked before handoff.
+
 ## Completion and landing
 
-Plan is complete under D-1 through D-8; no operator answer is required to author it.
-Next stage is TestDesign. The caller must land this plan task through
-`scripts/delegate.ps1 -Land 81da7ca2` before dispatching TestDesign in a new worktree,
-so that worktree contains the committed artifact. Implementation should receive the
-resulting plan plus verification section; interrupted-startup durability stays a
-separate follow-up.
+Plan and TestDesign are complete under D-1 through D-8; no operator answer is required.
+Next stage is Code. The TestDesign worktree initially lacked the artifact, so its
+branch was fast-forwarded to the existing Plan commit `569ce66f` before editing;
+the TestDesign branch contains both stages. The caller must land this task through
+`scripts/delegate.ps1 -Land 7b848110` before dispatching Code in a new worktree, and
+confirm that dispatch base contains the combined artifact. Interrupted-startup
+durability stays a separate follow-up.
