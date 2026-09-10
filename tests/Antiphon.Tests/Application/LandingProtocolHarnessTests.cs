@@ -117,7 +117,7 @@ public sealed class LandingProtocolHarnessTests
         var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == h.Git.TaskId);
         await h.RestartServicesAsync();
         var recreated = await h.OperationAsync();
-        recreated?.Id.ShouldBe(before?.Id);
+        (recreated?.Id).ShouldBe(before?.Id);
         var retained = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == h.Git.TaskId);
         retained.LandAttempt.ShouldBe(task.LandAttempt);
         retained.LandRequestedAt.ShouldBe(task.LandRequestedAt);
