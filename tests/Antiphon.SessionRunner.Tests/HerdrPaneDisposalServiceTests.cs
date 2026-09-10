@@ -120,6 +120,40 @@ public sealed class HerdrPaneDisposalServiceTests
     }
 
     [Test]
+    public async Task Preview_capacity_is_bounded_and_returned_arrays_cannot_change_stored_target()
+    {
+        await using var h = new HerdrPaneDisposalFixture();
+        await h.StartAsync();
+        var first = await h.PreviewAsync();
+        for (var i = 0; i < 256; i++) await h.PreviewAsync();
+        var evicted = await Should.ThrowAsync<HerdrLaunchException>(() => h.Service.ExecuteAsync(
+            new(Guid.NewGuid(), first.PreviewId, "evicted"), CancellationToken.None));
+        evicted.Code.ShouldBe(HerdrPaneDisposalCodes.PreviewInvalid);
+        var latest = await h.PreviewAsync();
+        ((string[])latest.Blockers)[0] = "caller changed this array";
+        var receipt = await h.Service.ExecuteAsync(new(Guid.NewGuid(), latest.PreviewId, "refuse"), CancellationToken.None);
+        receipt.Code.ShouldBe(HerdrPaneDisposalCodes.GuardUnavailable);
+        receipt.PaneId.ShouldBe(h.PaneId);
+        h.Methods.ShouldNotContain("pane.close");
+    }
+
+    [Test]
+    public async Task Invalid_reason_or_ids_never_create_a_receipt()
+    {
+        await using var h = new HerdrPaneDisposalFixture();
+        foreach (var request in new[]
+        {
+            new HerdrPaneDisposalRequest(Guid.Empty, Guid.NewGuid(), "reason"),
+            new(Guid.NewGuid(), Guid.Empty, "reason"),
+            new(Guid.NewGuid(), Guid.NewGuid(), " \r\n"),
+            new(Guid.NewGuid(), Guid.NewGuid(), new string('x', 4097)),
+        })
+            await Should.ThrowAsync<ArgumentException>(() => h.Service.ExecuteAsync(request, CancellationToken.None));
+        h.Methods.ShouldBeEmpty();
+        Directory.Exists(h.Settings.SessionLogPath).ShouldBeFalse();
+    }
+
+    [Test]
     public async Task All_readable_locator_claims_survive_preview_and_refusal()
     {
         await using var h = new HerdrPaneDisposalFixture();
