@@ -32,7 +32,7 @@ internal static class LandQueueRaceWorker
         await File.WriteAllTextAsync(Path.Combine(settings.Root, $"{Environment.ProcessId}.result.json"),
             JsonSerializer.Serialize(new { row, pid = Environment.ProcessId, mvid = typeof(LandQueueRaceWorker).Assembly.ManifestModule.ModuleVersionId, inputs = h.Adapter.Inputs.Count }));
         // No shared TestDbFixture was started in this child. Dispose only its provider; parent owns the database.
-        await h.Provider.DisposeAsync();
+        h.Scope.Dispose(); await h.Provider.DisposeAsync();
     }
 
     internal static async Task<(Guid First, Guid Second)> RunPairAsync(string connection, Guid session, Guid task, Guid note)

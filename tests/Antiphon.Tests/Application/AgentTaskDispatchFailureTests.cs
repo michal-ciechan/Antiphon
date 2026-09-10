@@ -22,6 +22,31 @@ namespace Antiphon.Tests.Application;
 public class AgentTaskDispatchFailureTests
 {
     [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task C467_V14_LandReceiptCannotDisarmMissingReportReminder(bool landNote)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var session = Guid.NewGuid(); var taskId = Guid.NewGuid(); var rowId = Guid.NewGuid(); var now = DateTime.UtcNow;
+        db.AgentSessions.Add(new AgentSession { Id = session, Status = SessionStatus.Running, Cwd = Path.GetTempPath(), CreatedAt = now, LastSeenAt = now });
+        db.AgentTasks.Add(new AgentTask { Id = taskId, RootTaskId = taskId, Title = "C467 missing report", Goal = "consumer exclusion",
+            WorkingDirectory = Path.GetTempPath(), Status = AgentTaskStatus.Failed, ReplyTo = AgentTaskReplyTo.Session,
+            ParentSessionId = session, FailureReason = "owned pre-dispatch failure", CreatedAt = now.AddMinutes(-10),
+            CompletedAt = now.AddMinutes(-10), NextCheckAt = now.AddMinutes(-1) });
+        db.SessionQueuedMessages.Add(new SessionQueuedMessage { Id = rowId, AgentSessionId = session, SourceTaskId = taskId,
+            SourceLandNotificationId = landNote ? Guid.NewGuid() : null, Body = "existing immutable note", Origin = QueuedMessageOrigin.Delegation,
+            Status = QueuedMessageStatus.Sent, SentAt = now.AddMinutes(-5), CreatedAt = now.AddMinutes(-6), DeliveryAttempts = 1 });
+        await db.SaveChangesAsync();
+        var (dispatcher, provider) = CreateHarness(connection: schema.ConnectionString);
+        await using (provider) await dispatcher.RemindUnacknowledgedFailuresAsync(CancellationToken.None);
+        var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        stored.CheckCount.ShouldBe(landNote ? 1 : 0);
+        (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == rowId)).Body.ShouldBe("existing immutable note");
+        (await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == taskId && m.Id != rowId)).ShouldBe(landNote ? 1 : 0);
+    }
+
+    [Test]
     public async Task a_dispatch_that_throws_before_a_session_exists_tells_the_caller()
     {
         using var notGit = new TempWorkspace();
@@ -312,12 +337,12 @@ public class AgentTaskDispatchFailureTests
     }
 
     private static (AgentTaskDispatcher Dispatcher, ServiceProvider Provider) CreateHarness(
-        int worktreeAddTimeoutSeconds = 180)
+        int worktreeAddTimeoutSeconds = 180, string? connection = null)
     {
         var stopper = new RecordingSessionStopper();
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
+        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connection ?? TestDbFixture.ConnectionString));
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton(Options.Create(new SupervisionSettings()));

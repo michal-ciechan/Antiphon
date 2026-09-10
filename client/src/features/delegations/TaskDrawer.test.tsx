@@ -130,10 +130,16 @@ describe('TaskDrawer', () => {
       id: 'note-1', kind: 'Outcome', state: 'AwaitingReceipt', destinationSessionId: 'caller-1', queueMessageId: 'queue-1',
       lastErrorCode: null, confirmedAt: null, confirmingPromptSequence: null,
     }] }) }), [http.get('/api/sessions/caller-1/messages', () => HttpResponse.json({ sessionId: 'caller-1', working: true,
-      messages: [{ id: 'queue-1', body: 'immutable outcome evidence', status: 'Pending', deliveryAttempts: 0 }] }))])
+      messages: [{ id: 'queue-1', body: 'immutable outcome evidence', status: 'Pending', deliveryAttempts: 0 }] })),
+      http.get('/api/sessions/caller-1/transcript', () => HttpResponse.json({ sessionId: 'caller-1', lastSequence: 1,
+        entries: [{ sequence: 1, kind: 'UserPrompt', text: 'owned caller transcript evidence', timestamp: '2026-09-09T11:00:00Z', role: 'user' }] }))])
     renderWithProviders(<TaskDrawer taskId={TASK_ID} onClose={() => {}} />)
     expect(await screen.findByRole('link', { name: 'Open holding task' })).toHaveAttribute('href', '/orchestrator?tab=delegations&task=holder-9')
     expect(screen.getByRole('button', { name: 'Open caller transcript' })).toBeVisible()
+    await userEvent.click(screen.getByRole('button', { name: 'Open caller transcript' }))
+    expect(await screen.findByText('owned caller transcript evidence')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Send now' })).not.toBeInTheDocument()
+    await userEvent.keyboard('{Escape}')
     await userEvent.click(screen.getByRole('button', { name: 'Inspect queued note' }))
     expect(await screen.findByText('immutable outcome evidence')).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Send now' })).not.toBeInTheDocument()
