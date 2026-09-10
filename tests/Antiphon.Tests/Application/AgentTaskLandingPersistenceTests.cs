@@ -73,7 +73,7 @@ public sealed class AgentTaskLandingPersistenceTests
         var migrations = db.Database.GetMigrations().ToArray();
         var landingIndex = Array.FindIndex(migrations, m => m.EndsWith("_AddAgentTaskLandingEvidence", StringComparison.Ordinal));
         landingIndex.ShouldBeGreaterThan(0);
-        migrations[^1].ShouldEndWith("_AddLandingTargetAndStageTiming");
+        migrations.ShouldContain(m => m.EndsWith("_AddLandingTargetAndStageTiming", StringComparison.Ordinal));
         await db.GetService<IMigrator>().MigrateAsync(migrations[landingIndex - 1]);
         (await db.Database.GetAppliedMigrationsAsync()).ShouldNotContain(migrations[landingIndex]);
         var intact = Guid.NewGuid();

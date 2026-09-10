@@ -36,6 +36,16 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
             }
             if (note.QueueMessageId is null)
             {
+                var destinationStatus = await db.AgentSessions.Where(s => s.Id == session).Select(s => s.Status).SingleAsync(ct);
+                if (destinationStatus is SessionStatus.Stopped or SessionStatus.Failed)
+                {
+                    note.State = LandNotificationState.DestinationUnavailable;
+                    note.LastErrorCode = "destination_" + destinationStatus.ToString().ToLowerInvariant();
+                    note.LastErrorAt = now;
+                    note.NextAttemptAt = now.AddMinutes(5);
+                    await db.SaveChangesAsync(ct);
+                    return;
+                }
                 // A scanning worker can see the commit before the producer leaves its lease.
                 // Probe only terminal/conflict handoffs; a held note must remain deliverable while a lease is occupied.
                 if (leases is not null && note.Kind is LandNotificationKind.Outcome or LandNotificationKind.Conflict)

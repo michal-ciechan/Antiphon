@@ -1655,13 +1655,14 @@ public sealed class AgentTaskReplyService
         }
 
         using var observation = new RuntimePhase(_logger, _timeProvider, parentSession, "settlement.parent-note-enqueue");
+        await using var factsScope = _scopeFactory.CreateAsyncScope();
         var note = DelegationReportFormatter.BuildCompletionNote(
             task, _settings, report, workspaceNote, ReplyInlineMaxChars, warning,
             await DescribeOverlappingRunningAsync(task, ct), drift,
             ReportEvidenceHeader(task.ReportEvidence), git,
             DescribeDeliverable(task),
             PipelineHandoff.HeaderBit(task.Role, PipelineHandoff.TryParse(report)),
-            await LandCompletionFacts.LoadAsync(_db, task, ct));
+            await LandCompletionFacts.LoadAsync(factsScope.ServiceProvider.GetRequiredService<AppDbContext>(), task, ct));
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();

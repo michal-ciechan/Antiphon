@@ -3,6 +3,9 @@ using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Dtos;
 
+/// <summary>Informational pre-outbox history. Never scheduled or inferred to be a receipt.</summary>
+public sealed record LegacyLandReceiptDto(Guid EventId, DateTime At, string State);
+
 public sealed record LandRequestStatusDto(
     Guid Id, LandRequestState State, DateTime RequestedAt, DateTime? StartedAt,
     DateTime LastEvaluatedAt, DateTime LastProgressAt, double AgeSeconds, double NoProgressSeconds,

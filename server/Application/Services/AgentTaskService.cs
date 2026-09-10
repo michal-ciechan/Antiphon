@@ -1444,6 +1444,10 @@ public sealed class AgentTaskService
             ? await _db.AgentTaskLandRequests.AsNoTracking().SingleOrDefaultAsync(r => r.Id == requestId, ct) : null;
         var landNotes = landRequest is null ? [] : await _db.AgentTaskLandNotifications.AsNoTracking()
             .Where(n => n.TaskId == task.Id).OrderBy(n => n.CreatedAt).ToListAsync(ct);
+        var legacyLand = await _db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == task.Id && e.LandRequestId == null
+            && (e.Type == AgentTaskEventType.Landed || e.Type == AgentTaskEventType.AlreadyPresent || e.Type == AgentTaskEventType.LandedWithResidue
+                || e.Type == AgentTaskEventType.LandingCleanup || e.Type == AgentTaskEventType.LandRefused))
+            .OrderByDescending(e => e.At).FirstOrDefaultAsync(ct);
         return new AgentTaskDetailDto(
             ToSummary(task, family, await LoadCardIdentifiersAsync([task], ct)), task.Goal, task.Result,
             task.ResultFilePath, task.DeliverablePath, task.DeliverableRef,
@@ -1451,7 +1455,9 @@ public sealed class AgentTaskService
             task.StandingAuthority, task.AutoContinueOnWait, task.NextStage, task.NextHandoff,
             task.DistilledResult, landing is null ? null : LandingEvidenceDto.From(landing),
             landRequest is null ? null : LandRequestStatusDto.From(landRequest, _timeProvider.GetUtcNow().UtcDateTime,
-                landNotes.Select(LandNotificationStatusDto.From).ToList()));
+                landNotes.Select(LandNotificationStatusDto.From).ToList()),
+            legacyLand is null ? null : new LegacyLandReceiptDto(legacyLand.Id, legacyLand.At,
+                task.ReplyTo == AgentTaskReplyTo.None ? "NotRequired" : "LegacyUnverified"));
     }
 
     /// <summary>Record the first operator read; repeat opens deliberately preserve that timestamp.</summary>

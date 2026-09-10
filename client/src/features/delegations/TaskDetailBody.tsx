@@ -355,6 +355,7 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
 
       <Section title="Land request">
         <Text size="sm">Delegate: {detail.summary.status}</Text>
+        {detail.legacyLandReceipt && <Text size="sm">Legacy receipt: {detail.legacyLandReceipt.state}; event {detail.legacyLandReceipt.eventId}</Text>}
         {detail.landRequest ? <>
           <Text size="sm">Land: {detail.landRequest.state}; attempt {detail.landRequest.attempt}</Text>
           <Text size="xs">Requested {detail.landRequest.requestedAt}; no progress for {Math.floor(detail.landRequest.noProgressSeconds)}s</Text>

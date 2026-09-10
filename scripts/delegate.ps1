@@ -399,6 +399,7 @@ switch ($PSCmdlet.ParameterSetName) {
         $s = $task.summary
         Write-Output ("{0}  {1}  {2}/{3}  {4}" -f $s.status, $s.title, $s.kind, $s.role, $s.modelLevel)
         Write-Output "Delegate: $($s.status)"
+        if ($task.legacyLandReceipt) { Write-Output "Legacy receipt: $($task.legacyLandReceipt.state); event $($task.legacyLandReceipt.eventId)" }
         if ($task.landRequest) {
             $r = $task.landRequest
             Write-Output ("Land: {0}; request {1}; requested {2}; attempt {3}; no progress for {4}s" -f $r.state, $r.id, $r.requestedAt, $r.attempt, [int]$r.noProgressSeconds)

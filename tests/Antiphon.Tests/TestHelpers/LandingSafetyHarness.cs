@@ -212,6 +212,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     {
         public LandPhase? Phase { get; set; }
         public Func<AgentTaskLanding, bool>? Matches { get; set; }
+        public string? TerminalCut { get; set; }
         public bool AfterCommit { get; set; }
         public bool Triggered { get; private set; }
         public Func<LandPhase, Task>? AfterAcknowledged { get; set; }
@@ -220,14 +221,18 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data,
             InterceptionResult<int> result, CancellationToken ct = default)
         {
-            _armed = !Triggered && data.Context!.ChangeTracker.Entries<AgentTaskLanding>()
+            _armed = !Triggered && (TerminalCut is not null
+                ? data.Context!.ChangeTracker.Entries<AgentTaskEvent>().Any(e => e.State == EntityState.Added && e.Entity.IsLandTerminal)
+                : data.Context!.ChangeTracker.Entries<AgentTaskLanding>()
                 .Any(e => e.State != EntityState.Unchanged
-                    && (Phase is not null && e.Entity.Phase == Phase || Matches?.Invoke(e.Entity) == true));
-            if (_armed && !AfterCommit) { Triggered = true; throw new InjectedSaveFailure(); }
+                    && (Phase is not null && e.Entity.Phase == Phase || Matches?.Invoke(e.Entity) == true)));
+            if (_armed && (TerminalCut == "before-save" || TerminalCut is null && !AfterCommit)) { Triggered = true; throw new InjectedSaveFailure(); }
             return ValueTask.FromResult(result);
         }
         public override async ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData data, int result, CancellationToken ct = default)
         {
+            if (_armed && TerminalCut == "after-save") { Triggered = true; throw new InjectedSaveFailure(); }
+            if (_armed && TerminalCut is "commit" or "after-commit") AwaitingCommit = true;
             if (_armed && AfterCommit)
             {
                 if (data.Context!.Database.CurrentTransaction is not null) AwaitingCommit = true;
@@ -245,10 +250,18 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
             Triggered = true;
             throw new InjectedSaveFailure();
         }
+        internal void Committing()
+        {
+            if (AwaitingCommit && TerminalCut == "commit")
+            { AwaitingCommit = false; Triggered = true; throw new InjectedSaveFailure(); }
+        }
     }
 
     private sealed class TransactionFault(SaveFault fault) : DbTransactionInterceptor
     {
+        public override ValueTask<InterceptionResult> TransactionCommittingAsync(System.Data.Common.DbTransaction transaction,
+            TransactionEventData eventData, InterceptionResult result, CancellationToken cancellationToken = default)
+        { fault.Committing(); return ValueTask.FromResult(result); }
         public override Task TransactionCommittedAsync(System.Data.Common.DbTransaction transaction,
             TransactionEndEventData eventData, CancellationToken cancellationToken = default)
         { fault.Committed(); return Task.CompletedTask; }

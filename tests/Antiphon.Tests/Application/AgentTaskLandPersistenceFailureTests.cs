@@ -11,6 +11,54 @@ namespace Antiphon.Tests.Application;
 public sealed class AgentTaskLandPersistenceFailureTests
 {
     [Test]
+    [Arguments("success", "before-save")]
+    [Arguments("success", "after-save")]
+    [Arguments("success", "commit")]
+    [Arguments("success", "after-commit")]
+    [Arguments("refusal", "before-save")]
+    [Arguments("refusal", "after-save")]
+    [Arguments("refusal", "commit")]
+    [Arguments("refusal", "after-commit")]
+    [Arguments("cleanup", "before-save")]
+    [Arguments("cleanup", "after-save")]
+    [Arguments("cleanup", "commit")]
+    [Arguments("cleanup", "after-commit")]
+    public async Task C467_V06_AtomicSettlementFaultMatrix(string outcome, string cut)
+    {
+        await using var h = new LandingSafetyHarness(); await h.InitializeAsync(); await h.AddSourceAsync();
+        if (outcome == "refusal")
+        {
+            await using var db = h.CreateContext();
+            await db.AgentTasks.Where(t => t.Id == h.Fixture.TaskId).ExecuteUpdateAsync(s => s.SetProperty(t => t.WorktreeBranch, (string?)null));
+        }
+        if (outcome == "cleanup")
+        {
+            var residue = Path.Combine(h.Fixture.Source, ".antiphon", "valuable.txt");
+            Directory.CreateDirectory(Path.GetDirectoryName(residue)!); await File.WriteAllTextAsync(residue, "preserve");
+            await h.RunAsync(); File.Delete(residue); await h.RepostAsync();
+        }
+        h.Fault.TerminalCut = cut;
+        await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.RunAsync());
+        h.Fault.Triggered.ShouldBeTrue();
+        await using (var observer = h.CreateContext())
+        {
+            var task = await observer.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            var request = await observer.AgentTaskLandRequests.SingleAsync(r => r.Id == task.CurrentLandRequestId);
+            request.IsPending.ShouldBe(cut != "after-commit");
+            (task.LandRequestedAt is null).ShouldBe(cut == "after-commit");
+            (await observer.AgentTaskEvents.CountAsync(e => e.LandRequestId == request.Id && e.IsLandTerminal)).ShouldBe(cut == "after-commit" ? 1 : 0);
+            (await observer.AgentTaskLandNotifications.CountAsync(n => n.RequestId == request.Id)).ShouldBe(cut == "after-commit" ? 1 : 0);
+        }
+        h.Fixture.Git.Trace.Clear();
+        await h.RestartServicesAsync();
+        if (cut == "after-commit") await h.FailAsync(new IOException("lost commit acknowledgement")); else await h.RunAsync();
+        await using var final = h.CreateContext();
+        var current = await final.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+        (await final.AgentTaskLandNotifications.CountAsync(n => n.RequestId == current.CurrentLandRequestId)).ShouldBe(1);
+        h.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("remove"));
+        if (outcome != "refusal") await h.Fixture.AssertRemoteSourceAsync();
+    }
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public Task C448_F07_PublicationSettlementIsAtomic(bool committed)
