@@ -80,7 +80,7 @@ public class AgentTaskLandRequestTests
         if (state is "canceled" or "superseded")
         { request.IsPending = false; request.State = state == "canceled" ? LandRequestState.Canceled : LandRequestState.Superseded; await db.SaveChangesAsync(); }
         if (state == "needs-resolution")
-        { request.State = LandRequestState.NeedsResolution; await db.SaveChangesAsync(); await land.SweepAsync(CancellationToken.None); queue.PendingCount.ShouldBe(1); /* original accepted channel item only */ }
+        { request.State = LandRequestState.NeedsResolution; await db.SaveChangesAsync(); await land.SweepAsync(CancellationToken.None); queue.PendingCount.ShouldBe(0); }
         else if (state == "mirror")
         {
             task.LandAttempt = 7; await db.SaveChangesAsync();

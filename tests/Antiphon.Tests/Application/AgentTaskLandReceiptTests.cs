@@ -53,7 +53,7 @@ public sealed class AgentTaskLandReceiptTests
         if (cut == "receipt-save")
         {
             await new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System, new ReceiptSaveFailure()).ReconcileAsync(note.Id, CancellationToken.None);
-            await db.Entry(note).ReloadAsync(); note.ConfirmedAt.ShouldBeNull();
+            (await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id)).ConfirmedAt.ShouldBeNull();
         }
         await using var restarted = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var recovery = new AgentTaskLandNotificationService(restarted, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System);

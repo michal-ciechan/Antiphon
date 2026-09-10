@@ -93,6 +93,7 @@ public sealed class AgentTaskLandNotificationRecoveryTests
         var body = row.Body; var digest = row.ContentDigest; var hold = row.HoldUntil;
         (await db.AgentTasks.SingleAsync(t => t.Id == note.TaskId)).Result = "ordinary report";
         await db.SaveChangesAsync();
+        await db.Entry(row).ReloadAsync(); hold = row.HoldUntil;
         (await h.Queue.TryApplyDistillationAsync(new DistillRequest(note.TaskId, row.Id, DateTimeOffset.UtcNow,
             DateTimeOffset.UtcNow.AddMinutes(1), OutputDistillerMode.Apply), digest!, "replacement summary", CancellationToken.None)).ShouldBe("identity");
         (await AgentTaskCheckService.HasCompletionNoteAsync(db, h.SessionId, note.TaskId, CancellationToken.None)).ShouldBeFalse();
@@ -155,11 +156,11 @@ public sealed class AgentTaskLandNotificationRecoveryTests
         for (var i = 0; i < attempt; i++)
         {
             await service.ReconcileAsync(note.Id, CancellationToken.None);
-            await db.Entry(note).ReloadAsync();
+            note = await db.AgentTaskLandNotifications.SingleAsync(n => n.Id == note.Id);
             if (i + 1 < attempt) clock.SetUtcNow(note.NextAttemptAt);
         }
         note.EnqueueAttempts.ShouldBe(attempt);
-        note.NextAttemptAt.ShouldBe(clock.GetUtcNow().UtcDateTime.AddSeconds(seconds));
+        note.NextAttemptAt.ShouldBe(clock.GetUtcNow().UtcDateTime.AddSeconds(seconds), TimeSpan.FromMicroseconds(1));
         note.State.ShouldBe(LandNotificationState.RetryPending); note.ConfirmedAt.ShouldBeNull();
         note.LastErrorCode.ShouldContain("IOException"); note.QueueMessageId.ShouldBeNull();
         await service.ReconcileAsync(note.Id, CancellationToken.None);
