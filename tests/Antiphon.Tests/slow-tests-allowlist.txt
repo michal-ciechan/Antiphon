@@ -29,3 +29,11 @@ SessionMessageQueueDeliveryVerificationTests
 ApiErrorRecoveryServiceTests
 WorkspaceHookRunnerTests
 GitIgnorePreviewTests
+# CARD-0475: retained real Git ref/index/sequencer/recovery-pin capstones.
+AgentTaskLandBoundaryTests
+# CARD-0475: real dispatch and repository-lease admission orderings.
+AgentTaskLandAdmissionTests
+# CARD-0475: real settlement, child-merge and writer/lease races.
+AgentTaskLandConcurrencyTests
+# CARD-0475: generated-project build/test/cancellation and private-output proofs.
+AgentTaskLandVerifierTests
