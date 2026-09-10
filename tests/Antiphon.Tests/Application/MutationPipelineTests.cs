@@ -18,8 +18,38 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
-public class MutationPipelineTests
+[ClassDataSource<AntiphonWebAppFactory>(Shared = SharedType.PerTestSession)]
+public class MutationPipelineTests(AntiphonWebAppFactory factory)
 {
+    [Test]
+    [NotInParallel]
+    public async Task C470_storage_and_http_enum_contract()
+    {
+        await factory.ResetAsync();
+        using var client = factory.CreateClient();
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        using var workspace = new TempWorkspace();
+        foreach (var role in new[] { AgentTaskRole.Code, AgentTaskRole.Review, AgentTaskRole.Mutation })
+        {
+            var task = await SeedTaskAsync(db, workspace.Path, role, AgentTaskStatus.Succeeded,
+                "storage " + role, nextStage: role == AgentTaskRole.Mutation ? PipelineHandoffKind.Mutation : PipelineHandoffKind.Review);
+            using var readScope = factory.Services.CreateScope();
+            var read = readScope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var persisted = await read.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            persisted.Role.ShouldBe(role);
+            persisted.NextStage.ShouldBe(task.NextStage);
+            var response = await client.GetAsync("/api/agent-tasks/" + task.Id);
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            json.RootElement.GetProperty("summary").GetProperty("role").GetString().ShouldBe(role.ToString());
+            json.RootElement.GetProperty("nextStage").GetString().ShouldBe(task.NextStage.ToString());
+        }
+        using var pipeline = JsonDocument.Parse(await client.GetStringAsync("/api/agent-tasks/pipeline"));
+        var stage = pipeline.RootElement.GetProperty("stages").EnumerateArray().Single(s => s.GetProperty("role").GetString() == "Mutation");
+        stage.GetProperty("recommendedInFlight").GetInt32().ShouldBe(1);
+    }
+
     [Test]
     [Arguments(AgentTaskStatus.Queued)]
     [Arguments(AgentTaskStatus.Working)]
