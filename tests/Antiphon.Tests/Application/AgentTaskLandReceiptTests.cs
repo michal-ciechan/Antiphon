@@ -52,7 +52,7 @@ public sealed class AgentTaskLandReceiptTests
             if (evidence == "wrong-session")
             {
                 session = Guid.NewGuid();
-                db.AgentSessions.Add(new AgentSession { Id = session, WorkingDirectory = h.TempRoot, CreatedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow });
+                db.AgentSessions.Add(new AgentSession { Id = session, CreatedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow });
             }
             var text = evidence switch
             {
