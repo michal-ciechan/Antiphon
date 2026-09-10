@@ -1475,8 +1475,55 @@ public class UnmarkedWaitingContractTests
         ((int)AttentionKind.ScheduleMisfired).ShouldBe(26);
         ((int)AttentionKind.LivenessProbeFailed).ShouldBe(27);
         ((int)AttentionKind.ImportedIssueNeedsReview).ShouldBe(28);
-        Enum.GetValues<AttentionKind>().Max(v => (int)v).ShouldBe(28,
-            "CARD-0327 S3 must append after LivenessProbeFailed=27; do not renumber");
+
+        // CARD-0475 S1: the 0..28 prefix is a frozen name/value map. Later members may append
+        // with values > 28; they must not reuse or renumber a prefix slot.
+        var prefix = new Dictionary<string, int>
+        {
+            ["BlockedQuestion"] = 0,
+            ["ParkedMessage"] = 1,
+            ["DeadSession"] = 2,
+            ["NeverStarted"] = 3,
+            ["UncorrelatedReport"] = 4,
+            ["PastExpectedIdle"] = 5,
+            ["ChecksSpent"] = 6,
+            ["SessionDisagreement"] = 7,
+            ["RecentCriticalIncident"] = 8,
+            ["RecentFailure"] = 9,
+            ["Overdue"] = 10,
+            ["BriefUndelivered"] = 11,
+            ["ProgressStalled"] = 12,
+            ["CardNeedsDecision"] = 13,
+            ["CardStalled"] = 14,
+            ["FailureUnacknowledged"] = 15,
+            ["OrchestratorInvestigation"] = 16,
+            ["InboundUnconsumed"] = 17,
+            ["CallerNoteUndelivered"] = 18,
+            ["CardlessDetailsNoPrompt"] = 19,
+            ["QueuedInputStuck"] = 20,
+            ["AgentOutlivedTask"] = 21,
+            ["ReportUnsettled"] = 22,
+            ["UnmarkedWaiting"] = 23,
+            ["ModelAvailabilityHold"] = 24,
+            ["RoutingExhausted"] = 25,
+            ["ScheduleMisfired"] = 26,
+            ["LivenessProbeFailed"] = 27,
+            ["ImportedIssueNeedsReview"] = 28,
+        };
+        foreach (var (name, value) in prefix)
+        {
+            Enum.IsDefined(typeof(AttentionKind), value).ShouldBeTrue(name + " must keep value " + value);
+            Enum.Parse<AttentionKind>(name).ShouldBe((AttentionKind)value);
+            ((int)Enum.Parse<AttentionKind>(name)).ShouldBe(value);
+        }
+        foreach (var name in Enum.GetNames<AttentionKind>())
+        {
+            var value = (int)Enum.Parse<AttentionKind>(name);
+            if (prefix.TryGetValue(name, out var expected))
+                value.ShouldBe(expected, name + " is in the protected 0..28 prefix");
+            else
+                value.ShouldBeGreaterThan(28, name + " must append after ImportedIssueNeedsReview=28");
+        }
     }
 
     [Test]

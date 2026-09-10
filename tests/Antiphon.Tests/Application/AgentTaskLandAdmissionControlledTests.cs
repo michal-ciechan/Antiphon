@@ -14,21 +14,36 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
-public sealed class AgentTaskLandAdmissionTests
+public sealed class AgentTaskLandAdmissionControlledTests
 {
     [Test]
     [Arguments("shared", "Fresh", "land-first")]
-    [Arguments("follow-up", "Fresh", "dispatch-first")]
-    [Arguments("shared", "AlreadyPresent", "dispatch-before-acquire")]
-    [Arguments("follow-up", "AlreadyPresent", "land-first")]
-    [Arguments("shared", "ResumePublication", "dispatch-first")]
-    [Arguments("follow-up", "ResumePublication", "dispatch-before-acquire")]
+    [Arguments("shared", "AlreadyPresent", "land-first")]
+    [Arguments("shared", "ResumePublication", "land-first")]
     [Arguments("shared", "CleanupRetry", "land-first")]
+    [Arguments("follow-up", "Fresh", "land-first")]
+    [Arguments("follow-up", "AlreadyPresent", "land-first")]
+    [Arguments("follow-up", "ResumePublication", "land-first")]
+    [Arguments("follow-up", "CleanupRetry", "land-first")]
+    [Arguments("shared", "Fresh", "dispatch-first")]
+    [Arguments("shared", "AlreadyPresent", "dispatch-first")]
+    [Arguments("shared", "ResumePublication", "dispatch-first")]
+    [Arguments("shared", "CleanupRetry", "dispatch-first")]
+    [Arguments("follow-up", "Fresh", "dispatch-first")]
+    [Arguments("follow-up", "AlreadyPresent", "dispatch-first")]
+    [Arguments("follow-up", "ResumePublication", "dispatch-first")]
     [Arguments("follow-up", "CleanupRetry", "dispatch-first")]
-    public async Task C448_V14_RealDispatchAdmissionAndEveryLandModeExcludeEachOther(string writerKind, string mode, string order)
+    [Arguments("shared", "Fresh", "dispatch-before-acquire")]
+    [Arguments("shared", "AlreadyPresent", "dispatch-before-acquire")]
+    [Arguments("shared", "ResumePublication", "dispatch-before-acquire")]
+    [Arguments("shared", "CleanupRetry", "dispatch-before-acquire")]
+    [Arguments("follow-up", "Fresh", "dispatch-before-acquire")]
+    [Arguments("follow-up", "AlreadyPresent", "dispatch-before-acquire")]
+    [Arguments("follow-up", "ResumePublication", "dispatch-before-acquire")]
+    [Arguments("follow-up", "CleanupRetry", "dispatch-before-acquire")]
+    public async Task C448_V14_DispatchAdmissionAndEveryLandModeExcludeEachOther(string writerKind, string mode, string order)
     {
-        await using var h = new LandingSafetyHarness();
+        await using var h = new LandingProtocolHarness();
         var admissionLease = new InterceptedLease(new Antiphon.Server.Infrastructure.Git.RepositoryMutationLease(h.Fixture.Git));
         h.ConfigureServices = services =>
         {
@@ -58,7 +73,7 @@ public sealed class AgentTaskLandAdmissionTests
         {
             h.Fault.Phase = LandPhase.LocalTargetAdvanced;
             h.Fault.AfterCommit = true;
-            await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.RunAsync());
+            await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunAsync());
         }
         if (mode == "CleanupRetry")
         {

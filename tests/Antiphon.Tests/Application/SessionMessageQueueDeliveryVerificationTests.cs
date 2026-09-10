@@ -2435,6 +2435,41 @@ public class SessionMessageQueueDeliveryVerificationTests
         h.Adapter.Killed.ShouldBeFalse();
     }
 
+    [Test]
+    public async Task C475_OverlayRecoveryDisabledNeverEscapes()
+    {
+        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            AlwaysOn = true,
+            ConfigureDeliveryVerification = v => v.OverlayRecoveryEnabled = false,
+        });
+        await h.InsertTurnAsync("prior", "answer");
+        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        h.Adapter.OverlayOpen = true;
+        h.Adapter.EchoTypedInputToScreen = false;
+        await h.Queue.EnqueueAsync(h.SessionId, "no overlay recovery", MessageSendMode.WhenIdle, CancellationToken.None);
+        h.Adapter.Inputs.ShouldNotContain("\u001b");
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task C475_OverlayRecoveryPullsBeforeWorkingDecision()
+    {
+        await using var h = await ObservableHarnessAsync();
+        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        h.Runner.SetTranscript(new SessionRunnerTranscriptDto(
+            h.SessionId,
+            [new SessionRunnerTranscriptEvent(
+                h.SessionId, 2, TranscriptKinds.AssistantText, Guid.NewGuid().ToString("N"), null,
+                DateTimeOffset.UtcNow, "assistant", "fresh assistant text after catch-up",
+                null, null, null, null, null)],
+            2));
+        h.Adapter.OverlayOpen = true;
+        await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ConflictException>(() =>
+            h.Queue.EnqueueAsync(h.SessionId, "caught up working", MessageSendMode.Now, CancellationToken.None));
+        h.Adapter.Inputs.ShouldNotContain("\u001b");
+    }
+
     private static async Task SetKindAsync(Guid sessionId, AgentKind kind)
     {
         await using var db = CreateContext();

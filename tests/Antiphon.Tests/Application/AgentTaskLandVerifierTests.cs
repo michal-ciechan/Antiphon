@@ -12,17 +12,8 @@ namespace Antiphon.Tests.Application;
 public sealed class AgentTaskLandVerifierTests
 {
     [Test]
-    [Arguments("pass")]
-    [Arguments("fail")]
-    [Arguments("cancel")]
-    public async Task C448_V35_RealVerifierPreservesPreExistingOutput(string outcome)
+    public async Task C448_V35_RealVerifierPreservesPreExistingOutput()
     {
-        if (outcome != "cancel")
-        {
-            await C448_V34_RealTUnitSelectionRequiresExecutedPassingTests(
-                outcome == "pass" ? "SelectedPass" : "SelectedFailure", outcome == "pass");
-            return;
-        }
         using var fixture = new ScratchGitRepo("antiphon-land-canceled-verifier");
         var privateFile = Path.Combine(fixture.Path, "bin-land", "keep.txt");
         Directory.CreateDirectory(Path.GetDirectoryName(privateFile)!);
