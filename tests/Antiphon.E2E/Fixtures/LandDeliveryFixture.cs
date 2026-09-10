@@ -205,6 +205,12 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
         await GitAsync(Remote, "merge-base", "--is-ancestor", SourceSha, "refs/heads/master");
         await File.WriteAllTextAsync(Path.Combine(Root, "remote-containment.txt"), $"{SourceSha} refs/heads/master exit=0");
     }
+    public async Task AssertSourceProtectedAsync()
+    {
+        Directory.Exists(Source).ShouldBeTrue();
+        await GitAsync(Repository, "show-ref", "--verify", "refs/heads/c467-source");
+        await GitAsync(Repository, "merge-base", "--is-ancestor", SourceSha, "refs/heads/c467-source");
+    }
     public async Task AssertOnePromptAsync(AgentTaskLandNotification note)
     {
         var scans = Directory.GetFiles(Root, "notification-scan-*.observation.json").Length;

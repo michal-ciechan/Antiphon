@@ -199,6 +199,17 @@ public class AgentTaskLandDeliveryE2ETests
             }
         }
         if (outcome is "landed" or "already-present" or "residue-cleanup") await f.AssertRemoteAsync();
+        if (outcome is "preoperation-refusal" or "operation-refusal" or "conflict") await f.AssertSourceProtectedAsync();
+        if (outcome is "preoperation-refusal" or "operation-refusal")
+        {
+            Directory.Exists(f.Source).ShouldBeTrue("refusal must retain the source worktree");
+            var retry = await f.RequestAsync(initial: false);
+            retry.ShouldNotBe(note.RequestId);
+            var repeated = await f.ReceiptAsync(requestId: retry);
+            repeated.Id.ShouldNotBe(note.Id);
+            repeated.QueueMessageId.ShouldNotBe(note.QueueMessageId);
+            await f.AssertOnePromptAsync(repeated);
+        }
         if (outcome == "residue-cleanup")
         {
             File.Delete(Path.Combine(f.Source, ".antiphon", "valuable.txt"));
@@ -234,6 +245,7 @@ public class AgentTaskLandDeliveryE2ETests
     public async Task C467_V32_StatusPollingCannotDischargeUnreceivedOutcome(string state)
     {
         await using var f = new LandDeliveryFixture(); await f.InitializeAsync(busy: state == "busy", cut: state == "attempt" ? "attempt" : "none");
+        await f.UseChildAsync(state == "attempt" ? "attempt" : "none");
         await f.RequestAsync(); await f.ReleaseExecutionAsync();
         await LandDeliveryFixture.UntilAsync(async () => {
             await using var db = f.CreateContext();
@@ -250,6 +262,12 @@ public class AgentTaskLandDeliveryE2ETests
         var owed = attention.Items.Single(i => i.TaskId == f.TaskId && i.Kind == AttentionKind.LandOutcomeUnconfirmed && i.Headline.Contains("Outcome"));
         owed.Severity.ShouldBe(AlertSeverity.Error);
         owed.Headline.ShouldContain(state == "busy" ? "busy" : "attempted");
+        await f.SnapshotAsync();
+        await f.KillChildAsync();
+        await f.UseChildAsync(state == "attempt" ? "attempt" : "none");
+        await f.StatusAsync();
+        var afterRestart = (await f.AttentionAsync()).Items.Single(i => i.LandNotificationId == owed.LandNotificationId && i.Kind == AttentionKind.LandOutcomeUnconfirmed);
+        afterRestart.Severity.ShouldBe(AlertSeverity.Error);
         await using (var db = f.CreateContext())
         {
             var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Outcome);
