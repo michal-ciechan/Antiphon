@@ -18,6 +18,29 @@ namespace Antiphon.Tests.Application;
 public class MutationAdmissionTests
 {
     [Test]
+    public async Task C470_concurrent_mutation_creates_admit_only_one()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        await using var first = CreateContext(schema);
+        await using var second = CreateContext(schema);
+        var project = await SeedProjectAsync(first);
+        var caller = new AgentTaskService.Caller(null, null, workspace.Path, ProjectId: project);
+        async Task<Exception?> Attempt(AppDbContext db)
+        {
+            try { await CreateService(db).CreateAsync(Request(Unique("race"), AgentTaskRole.Mutation), caller, default); return null; }
+            catch (Exception ex) { return ex; }
+        }
+        var results = await Task.WhenAll(Attempt(first), Attempt(second));
+        results.Count(r => r is null).ShouldBe(1);
+        var refusal = results.OfType<ConcurrencyLimitException>().ShouldHaveSingleItem();
+        refusal.Concurrency.Axis.ShouldBe("role");
+        refusal.Concurrency.Role.ShouldBe("Mutation");
+        await using var verify = CreateContext(schema);
+        (await verify.AgentTasks.CountAsync(t => t.ProjectId == project)).ShouldBe(1);
+    }
+
+    [Test]
     public async Task C470_mutation_routing_does_not_inherit_code()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();

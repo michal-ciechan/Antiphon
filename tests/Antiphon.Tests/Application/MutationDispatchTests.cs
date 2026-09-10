@@ -47,14 +47,16 @@ public class MutationDispatchTests
                 StartedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow });
             db.Agents.Add(new Agent { Id = oldAgent, Name = "warm-code", Slug = "warm-code", WorkingDirectory = retained,
                 Details = "Code A", Kind = AgentKind.ClaudeCode, ModelLevel = AgentModelLevel.Frontier,
-                IsPoolDelegate = true, Status = AgentStatus.Idle, PoolIdleSince = DateTime.UtcNow.AddMinutes(-1),
+                IsPoolDelegate = true, Status = AgentStatus.Idle, PoolIdleSince = DateTime.UtcNow.AddMinutes(-1), PoolProjectId = h.ProjectId,
                 LaunchEnvJson = "{}", PersistentSessionId = oldSession.ToString(), CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
             await db.SaveChangesAsync();
         }
+        var cards = await h.Cards();
         var code = await h.Seed(AgentTaskRole.Code, AgentTaskStatus.Succeeded, retained);
         await using (var db = h.Context())
         {
             var owner = await db.AgentTasks.SingleAsync(t => t.Id == code.Id);
+            owner.CardId = cards.A;
             owner.Workspace = WorkspaceMode.Worktree;
             owner.WorktreePath = retained;
             owner.WorktreeBranch = "code-a";
@@ -64,6 +66,11 @@ public class MutationDispatchTests
             await db.SaveChangesAsync();
         }
         var mutation = await h.Seed(AgentTaskRole.Mutation, AgentTaskStatus.Queued, retained);
+        await using (var db = h.Context())
+        {
+            (await db.AgentTasks.SingleAsync(t => t.Id == mutation.Id)).CardId = cards.A;
+            await db.SaveChangesAsync();
+        }
         await h.Tick();
         await using var verify = h.Context();
         var launched = await verify.AgentTasks.SingleAsync(t => t.Id == mutation.Id);
@@ -88,6 +95,7 @@ public class MutationDispatchTests
             await verify.SaveChangesAsync();
             var second = await h.Seed(AgentTaskRole.Code, AgentTaskStatus.Queued, h.Root);
             var secondRow = await verify.AgentTasks.SingleAsync(t => t.Id == second.Id);
+            secondRow.CardId = cards.B;
             secondRow.Workspace = WorkspaceMode.Worktree;
             await verify.SaveChangesAsync();
             await h.Tick();
@@ -161,6 +169,7 @@ public class MutationDispatchTests
         public required IsolatedTestSchema Schema { get; init; }
         public required BridgeQueueHarness Bridge { get; init; }
         public required CaptureFactory Factory { get; init; }
+        public Guid ProjectId { get; } = Guid.NewGuid();
         public string Root => Bridge.TempRoot;
         public AppDbContext Context() => new(TestDbFixture.CreateDbContextOptions(Schema.ConnectionString));
         public static async Task<Harness> CreateAsync(int cap = 6)
@@ -194,19 +203,38 @@ public class MutationDispatchTests
             await File.WriteAllTextAsync(Path.Combine(bridge.TempRoot, "base.txt"), "master");
             await Git(bridge.TempRoot, "add", "base.txt");
             await Git(bridge.TempRoot, "commit", "-m", "base");
-            return new() { Schema = schema, Bridge = bridge, Factory = factory };
+            var harness = new Harness { Schema = schema, Bridge = bridge, Factory = factory };
+            await using var db = harness.Context();
+            db.Projects.Add(new Project { Id = harness.ProjectId, Name = "c470-" + harness.ProjectId,
+                GitRepositoryUrl = "https://example.test/c470.git", LocalRepositoryPath = bridge.TempRoot, BaseBranch = "master",
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+            await db.SaveChangesAsync();
+            return harness;
         }
         public async Task<AgentTask> Seed(AgentTaskRole role, AgentTaskStatus status, string directory)
         {
             var id = Guid.NewGuid();
             var task = new AgentTask { Id = id, RootTaskId = id, Role = role, Kind = AgentTaskKind.Worker, Status = status,
-                Title = role.ToString(), Goal = "CARD-0470 " + id, WorkingDirectory = directory, RepoPath = directory,
+                Title = role.ToString(), Goal = "CARD-0470 " + id, ProjectId = ProjectId, WorkingDirectory = directory, RepoPath = directory,
                 Workspace = WorkspaceMode.Shared, Scope = "server/Application/**", AgentKind = AgentKind.ClaudeCode,
                 ModelLevel = AgentModelLevel.Frontier, Ephemeral = true, CreatedAt = DateTime.UtcNow };
             await using var db = Context();
             db.AgentTasks.Add(task);
             await db.SaveChangesAsync();
             return task;
+        }
+        public async Task<(Guid A, Guid B)> Cards()
+        {
+            await using var db = Context();
+            var now = DateTime.UtcNow;
+            var board = new Board { Id = Guid.NewGuid(), ProjectId = ProjectId, Name = "c470", MaxConcurrentSessions = 2, CreatedAt = now, UpdatedAt = now };
+            var column = new BoardColumn { Id = Guid.NewGuid(), BoardId = board.Id, Name = "In progress", StateKey = "inprogress", CardStatus = CardStatus.InProgress, CreatedAt = now, UpdatedAt = now };
+            Card Make(string identifier) => new() { Id = Guid.NewGuid(), BoardId = board.Id, BoardColumnId = column.Id,
+                Identifier = identifier, Title = identifier, Description = "fixture", Status = CardStatus.InProgress, CreatedAt = now, UpdatedAt = now };
+            var a = Make("CARD-0470"); var b = Make("CARD-0471");
+            db.AddRange(board, column, a, b);
+            await db.SaveChangesAsync();
+            return (a.Id, b.Id);
         }
         public async Task Tick()
         {
