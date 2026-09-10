@@ -31,9 +31,16 @@ public class MutationRoleContractTests
         var settings = new DelegationSettings();
         settings.RolePolicy["Code"].Level = AgentModelLevel.Low;
         settings.RolePolicy["Code"].RecommendedInFlight = 9;
+        settings.RolePolicy["Code"].TimeoutMinutes = 17;
         var mutation = settings.RolePolicy["Mutation"];
         mutation.Level.ShouldBe(AgentModelLevel.Frontier);
         mutation.RecommendedInFlight.ShouldBe(1);
+        TaskDeadlinePolicy.CeilingMinutes(settings, AgentTaskRole.Mutation).ShouldBe(240);
+        mutation.TimeoutMinutes = 73;
+        TaskDeadlinePolicy.CeilingMinutes(settings, AgentTaskRole.Mutation).ShouldBe(73);
+        settings.RolePolicy.Remove("Mutation");
+        settings.DefaultTimeoutMinutes = 91;
+        TaskDeadlinePolicy.CeilingMinutes(settings, AgentTaskRole.Mutation).ShouldBe(91);
         ComplexityRoutingService.RoutableRoles.ShouldContain(AgentTaskRole.Mutation);
     }
 }

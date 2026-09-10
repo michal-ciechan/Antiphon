@@ -61,12 +61,17 @@ function detail(): AgentTaskDetailDto {
 }
 
 
-it('C470 renders canonical mutation handoff', async () => {
+it.each([null, 'feat/card-task-ce744e22'])('C470 renders canonical mutation handoff with ref %s', async (deliverableRef) => {
   const task = { ...detail(), nextStage: 'Mutation', nextHandoff: 'PCs pending; original owner ce744e22',
-    deliverablePath: 'docs/superpowers/plans/2026-09-09-card-0470-code-mutation-split-plan.md' }
+    deliverablePath: 'docs/superpowers/plans/2026-09-09-card-0470-code-mutation-split-plan.md', deliverableRef }
   server.use(http.get('/api/agent-tasks/:id', () => HttpResponse.json(task)))
   renderWithProviders(<TaskDetailBody taskId={FLY_ID} onClose={() => {}} />)
   expect(await screen.findByText('next: mutation')).toBeInTheDocument()
   expect(screen.getByTestId('task-next-handoff')).toHaveTextContent('PCs pending; original owner ce744e22')
-  expect(screen.getByText(task.deliverablePath)).toBeInTheDocument()
+  const link = screen.getByRole('link', { name: task.deliverablePath })
+  const target = new URL(link.getAttribute('href')!, 'http://localhost')
+  expect(target.pathname).toBe('/plans')
+  expect(target.searchParams.get('file')).toBe(task.deliverablePath)
+  expect(target.searchParams.get('ref')).toBe(deliverableRef)
+  expect(target.searchParams.get('task')).toBe(FLY_ID)
 })

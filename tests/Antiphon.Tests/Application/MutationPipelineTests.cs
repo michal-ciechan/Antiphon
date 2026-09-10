@@ -94,12 +94,16 @@ public class MutationPipelineTests(AntiphonWebAppFactory factory)
     }
 
     [Test]
-    [Arguments(AgentTaskStatus.Queued)]
-    [Arguments(AgentTaskStatus.Working)]
-    public async Task C470_mutation_completion_consumes_ready(AgentTaskStatus openStatus)
+    [NotInParallel]
+    [Arguments(AgentTaskStatus.Queued, PipelineHandoffKind.Review)]
+    [Arguments(AgentTaskStatus.Working, PipelineHandoffKind.Review)]
+    [Arguments(AgentTaskStatus.Queued, PipelineHandoffKind.Land)]
+    [Arguments(AgentTaskStatus.Working, PipelineHandoffKind.Land)]
+    public async Task C470_mutation_completion_consumes_ready(AgentTaskStatus openStatus, PipelineHandoffKind destination)
     {
-        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var db = CreateContext(schema);
+        await factory.ResetAsync();
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         using var workspace = new TempWorkspace();
         var card = await SeedCardAsync(db, CardStatus.Review, "CARD-0470");
         var code = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Code, AgentTaskStatus.Succeeded,
@@ -110,22 +114,46 @@ public class MutationPipelineTests(AntiphonWebAppFactory factory)
         var mutation = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Mutation, openStatus,
             "mutation", cardId: card.Id, createdAt: DateTime.UtcNow.AddMinutes(-10));
         (await CreateService(db).GetAsync(default)).Stages.Single(s => s.Role == AgentTaskRole.Mutation).Ready.ShouldBeEmpty();
-        mutation.Status = AgentTaskStatus.Succeeded;
-        mutation.CompletedAt = DateTime.UtcNow.AddMinutes(-1);
+        var parent = Guid.NewGuid();
+        var session = Guid.NewGuid();
+        await SeedSessionAsync(db, parent, workspace.Path);
+        await SeedSessionAsync(db, session, workspace.Path);
+        mutation.Status = AgentTaskStatus.Working;
         mutation.DispatchedAt = DateTime.UtcNow.AddMinutes(-9);
-        mutation.NextStage = PipelineHandoffKind.Review;
-        mutation.NextHandoff = "original Code owner";
-        mutation.DeliverablePath = code.DeliverablePath;
+        mutation.AgentSessionId = session;
+        mutation.ParentSessionId = parent;
+        mutation.ReplyTo = AgentTaskReplyTo.Session;
+        var artifactFile = Path.Combine(workspace.Path, code.DeliverablePath!);
+        Directory.CreateDirectory(Path.GetDirectoryName(artifactFile)!);
+        await File.WriteAllTextAsync(artifactFile, "# Mutation verification fixture\n");
+        var token = destination == PipelineHandoffKind.Review ? "review" : "land";
+        var report = "Mutation complete.\n--- next stage ---\nnext: " + token
+            + "\nhandoff: original Code owner\nartifact: " + code.DeliverablePath
+            + "\n" + DelegationReportFormatter.ReportToken(mutation.Id, "done");
+        var entries = new[] { ("UserPrompt", DelegationReportFormatter.TaskMarker(mutation.Id)),
+            ("AssistantText", report), ("TurnEnd", (string?)null) };
+        for (var i = 0; i < entries.Length; i++)
+            db.TranscriptEntries.Add(new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = session,
+                Sequence = i + 1, Kind = entries[i].Item1, Text = entries[i].Item2, CreatedAt = DateTime.UtcNow,
+                StopReason = i == 2 ? "end_turn" : null });
         await db.SaveChangesAsync();
-        await using var verify = CreateContext(schema);
+        await factory.Services.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(session, default);
+        using var readScope = factory.Services.CreateScope();
+        var verify = readScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var settled = await verify.AgentTasks.Where(AgentTaskRoles.Stage).SingleAsync(t => t.Id == mutation.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.NextStage.ShouldBe(destination);
+        settled.NextHandoff.ShouldBe("original Code owner");
+        settled.DeliverablePath.ShouldBe(code.DeliverablePath);
+        var note = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == parent && m.Origin == QueuedMessageOrigin.Delegation);
+        note.Body.ShouldContain("next=" + token);
         var after = await CreateService(verify).GetAsync(default);
-        after.Stages.Single(s => s.Role == AgentTaskRole.Review).Ready.ShouldHaveSingleItem().SourcePlanTaskId.ShouldBe(mutation.Id);
+        var review = after.Stages.Single(s => s.Role == AgentTaskRole.Review).Ready;
+        if (destination == PipelineHandoffKind.Review)
+            review.ShouldHaveSingleItem().SourcePlanTaskId.ShouldBe(mutation.Id);
+        else
+            review.ShouldBeEmpty();
         after.Stages.Single(s => s.Role == AgentTaskRole.Mutation).Ready.ShouldBeEmpty();
-        mutation.NextStage = PipelineHandoffKind.Land;
-        await db.SaveChangesAsync();
-        var landed = await CreateService(db).GetAsync(default);
-        landed.Stages.Single(s => s.Role == AgentTaskRole.Review).Ready.ShouldBeEmpty();
-        landed.Stages.Single(s => s.Role == AgentTaskRole.Mutation).Ready.ShouldBeEmpty();
     }
 
     private static AgentTaskPipelineStatusService CreateService(

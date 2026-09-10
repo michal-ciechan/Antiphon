@@ -49,11 +49,15 @@ public class MutationAdmissionTests
         var options = Options.Create(new DelegationSettings());
         var routing = new ComplexityRoutingService(db, options, TimeProvider.System);
         var chains = new ComplexityChainService(db, TimeProvider.System, routing, options, NullLogger<ComplexityChainService>.Instance);
-        var pin = new RoutingPin { Id = Guid.NewGuid(), Role = AgentTaskRole.Code, AgentKind = AgentKind.Grok,
-            ModelLevel = AgentModelLevel.High, Provenance = RoutingPinProvenance.Human, Strength = RoutingPinStrength.Required,
-            Reason = "Code only", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
-        db.RoutingPins.Add(pin);
-        await db.SaveChangesAsync();
+        var pins = new RoutingPinService(db, TimeProvider.System, NullLogger<RoutingPinService>.Instance, routing);
+        var pin = await pins.UpsertAsync(new PutRoutingPinRequest(AgentTaskRole.Code,
+            AgentKind: AgentKind.Grok, ModelLevel: AgentModelLevel.High,
+            Provenance: RoutingPinProvenance.Human, Strength: RoutingPinStrength.Required, Reason: "Code only"), null, default);
+        var codePin = await db.RoutingPins.AsNoTracking().SingleAsync(p => p.Id == pin.Id);
+        await chains.UpsertAsync(AgentTaskRole.Code, TaskComplexity.Hard,
+            new PutComplexityChainRequest([new ComplexityCandidateRequest(AgentKind.ClaudeCode, AgentModelLevel.Low)],
+                RoutingPinProvenance.Human, "Code cell"), null, default);
+        var codeCell = await db.ComplexityChains.AsNoTracking().SingleAsync(c => c.Role == AgentTaskRole.Code);
         var put = new PutComplexityChainRequest([new ComplexityCandidateRequest(AgentKind.Codex, AgentModelLevel.Frontier)], RoutingPinProvenance.Human, "Mutation only");
         Exception? error = null;
         try { await chains.UpsertAsync(AgentTaskRole.Mutation, TaskComplexity.Hard, put, null, default); }
@@ -61,17 +65,48 @@ public class MutationAdmissionTests
         error.ShouldBeNull("Mutation cell API must accept the role: " + error);
         var service = new AgentTaskService(db, new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
             options, new MockEventBus(), new RecordingSessionStopper(), TimeProvider.System, NullLogger<AgentTaskService>.Instance,
-            routingPins: new RoutingPinService(db, TimeProvider.System, NullLogger<RoutingPinService>.Instance, routing), complexityRouting: routing);
-        var created = await service.CreateAsync(new CreateAgentTaskRequest(Goal: Unique("routing"), Role: AgentTaskRole.Mutation, Complexity: TaskComplexity.Hard), ManualCaller(workspace.Path), default);
-        await using var verify = CreateContext(schema);
-        var row = await verify.AgentTasks.SingleAsync(t => t.Id == created.Id);
-        row.AgentKind.ShouldBe(AgentKind.Codex);
-        row.ModelLevel.ShouldBe(AgentModelLevel.Frontier);
+            routingPins: pins, complexityRouting: routing);
+        async Task AssertRouted(AgentKind kind, AgentModelLevel level)
+        {
+            var created = await service.CreateAsync(new CreateAgentTaskRequest(Goal: Unique("routing"), Role: AgentTaskRole.Mutation,
+                Complexity: TaskComplexity.Hard), ManualCaller(workspace.Path), default);
+            await using var read = CreateContext(schema);
+            var row = await read.AgentTasks.SingleAsync(t => t.Id == created.Id);
+            row.AgentKind.ShouldBe(kind);
+            row.ModelLevel.ShouldBe(level);
+            row.Kind.ShouldBe(AgentTaskKind.Worker);
+            row.Status.ShouldBe(AgentTaskStatus.Queued);
+            row.RoutingPinId.ShouldBeNull("the Code pin must never govern Mutation");
+            row.Status = AgentTaskStatus.Succeeded;
+            await read.SaveChangesAsync();
+        }
+        await AssertRouted(AgentKind.Codex, AgentModelLevel.Frontier);
+        await chains.UpsertAsync(AgentTaskRole.Mutation, TaskComplexity.Hard,
+            put with { Candidates = [new ComplexityCandidateRequest(AgentKind.ClaudeCode, AgentModelLevel.Medium)] }, null, default);
+        await AssertRouted(AgentKind.ClaudeCode, AgentModelLevel.Medium);
+        await chains.UpsertAsync(TaskComplexity.Hard,
+            put with { Candidates = [new ComplexityCandidateRequest(AgentKind.Codex, AgentModelLevel.Low)] }, null, default);
         await chains.ClearAsync(AgentTaskRole.Mutation, TaskComplexity.Hard, default);
+        (await chains.GetEffectiveAsync(AgentTaskRole.Mutation, TaskComplexity.Hard, default)).ResolvedFrom.ShouldBe("any");
+        await AssertRouted(AgentKind.Codex, AgentModelLevel.Low);
+        await chains.ClearAsync(TaskComplexity.Hard, default);
+        options.Value.ComplexityChains["Hard"] = [new() { Kind = AgentKind.ClaudeCode, Level = AgentModelLevel.High }];
+        (await chains.GetEffectiveAsync(AgentTaskRole.Mutation, TaskComplexity.Hard, default)).ResolvedFrom.ShouldBe("config");
+        await AssertRouted(AgentKind.ClaudeCode, AgentModelLevel.High);
+        await using var verify = CreateContext(schema);
         var preserved = await verify.RoutingPins.SingleAsync(p => p.Id == pin.Id);
         preserved.Role.ShouldBe(AgentTaskRole.Code);
         preserved.AgentKind.ShouldBe(AgentKind.Grok);
         preserved.ClearedAt.ShouldBeNull();
+        preserved.ModelLevel.ShouldBe(AgentModelLevel.High);
+        preserved.UpdatedAt.ShouldBe(codePin.UpdatedAt);
+        var preservedCell = await verify.ComplexityChains.SingleAsync(c => c.Id == codeCell.Id);
+        preservedCell.CandidatesJson.ShouldBe(codeCell.CandidatesJson);
+        preservedCell.UpdatedAt.ShouldBe(codeCell.UpdatedAt);
+        preservedCell.ClearedAt.ShouldBeNull();
+        var mutationPin = await pins.UpsertAsync(new PutRoutingPinRequest(AgentTaskRole.Mutation,
+            AgentKind: AgentKind.Codex, ModelLevel: AgentModelLevel.Frontier, Reason: "Mutation role accepted"), null, default);
+        mutationPin.Role.ShouldBe(AgentTaskRole.Mutation);
     }
 
     [Test]
