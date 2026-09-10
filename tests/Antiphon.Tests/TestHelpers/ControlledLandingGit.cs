@@ -54,6 +54,7 @@ internal sealed class ControlledLandingGit : ILandingGit
     public string Fingerprint { get; }
     public List<string[]> Trace { get; } = [];
     public int NativeProcessStarts { get; private set; }
+    public Func<Task>? BeforeInspection { get; set; }
     public Func<string, IReadOnlyList<string>, Task<LandingGitResult?>>? BeforeCommand { get; set; }
     public Func<string, IReadOnlyList<string>, LandingGitResult, Task>? AfterCommand { get; set; }
     public Func<IReadOnlyList<string>, Task>? BeforeObservedCommand { get; set; }
@@ -179,6 +180,7 @@ internal sealed class ControlledLandingGit : ILandingGit
 
     public async Task<LandSourceInspection> InspectAsync(LandSourceCoordinates coordinates, CancellationToken ct)
     {
+        if (BeforeInspection is not null) await BeforeInspection();
         if (coordinates.SourceFullRef == coordinates.TargetFullRef)
             return new(null, "source_equals_target");
         if (!PathsEqual(coordinates.RepositoryPath, Repository))
@@ -191,13 +193,12 @@ internal sealed class ControlledLandingGit : ILandingGit
         var status = StatusOutput(source: true);
         if (status.Length != 0) return new(null, "source_dirty");
         var ignored = IgnoredPaths();
-        if (RejectInspection) return new(null, "source_rejected");
         var snapshot = new LandSourceSnapshot(coordinates,
             Path.GetFullPath(OverrideCommonDirectory ?? CommonDir),
             Path.GetFullPath(OverrideRegisteredPath ?? Source),
             Path.GetFullPath(OverrideGitDirectory ?? SourceGitDirectory),
             _sourceBranch, _sourceHead, _sourceHead, status, ignored);
-        return new(snapshot, null);
+        return new(snapshot, RejectInspection ? "source_rejected" : null);
     }
 
     public Task<LandingDestination> DestinationAsync(string repository, string targetFullRef, CancellationToken ct)

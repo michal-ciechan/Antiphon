@@ -109,7 +109,7 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
         await CreateLand(db, scope.ServiceProvider).FailAsync(Git.TaskId, error, CancellationToken.None);
     }
 
-    private AgentTaskLandService CreateLand(AppDbContext db, IServiceProvider services)
+    internal AgentTaskLandService CreateLand(AppDbContext db, IServiceProvider services)
     {
         var tasks = new AgentTaskService(db, new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
             Options.Create(new DelegationSettings { MaxTasksPerRoot = 40, MaxDepth = 5 }), Events,

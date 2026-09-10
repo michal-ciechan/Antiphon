@@ -59,6 +59,7 @@ public sealed class LandingProtocolGuardTests
     [Arguments("locked")]
     [Arguments("prunable")]
     [Arguments("unrecorded")]
+    [Arguments("valid")]
     public async Task C475_TargetRegistrationAuthority(string change)
     {
         await using var h = new LandingProtocolHarness();
@@ -76,7 +77,8 @@ public sealed class LandingProtocolGuardTests
         if (change == "ambiguous") h.Git.SetAmbiguousTargetRegistrations();
         if (change == "locked") h.Git.SetTargetLocked();
         if (change == "prunable") h.Git.SetTargetPrunable();
-        var protocol = new AgentTaskLandingProtocol(h.CreateContext(), h.Git,
+        await using var db = h.CreateContext();
+        var protocol = new AgentTaskLandingProtocol(db, h.Git,
             h.Services.GetRequiredService<Antiphon.Server.Application.Interfaces.IRepositoryMutationLease>(),
             h.Worktrees, h.Verifier, TimeProvider.System);
         var method = typeof(AgentTaskLandingProtocol).GetMethod("CheckTargetAsync",
@@ -118,18 +120,17 @@ public sealed class LandingProtocolGuardTests
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
         await h.AddSourceAsync();
-        var fetches = 0;
+        var observedAfterPush = false;
         h.Git.AfterCommand = async (_, args, result) =>
         {
-            if (args[0] == "fetch" && result.Succeeded)
-            {
-                fetches++;
-                if (fetches >= 2) h.Git.RewriteRemoteAwayFromSource();
-            }
+            if (args[0] == "push" && result.Succeeded) h.Git.RewriteRemoteAwayFromSource();
+            if (args[0] == "fetch" && h.Git.Trace.Any(a => a[0] == "push")) observedAfterPush = true;
         };
         await h.RunAsync();
         var op = (await h.OperationAsync()).ShouldNotBeNull();
         op.RemoteConfirmedAt.ShouldBeNull();
+        h.Git.Trace.Count(a => a[0] == "push").ShouldBe(1);
+        observedAfterPush.ShouldBeTrue();
         Directory.Exists(h.Git.Source).ShouldBeTrue();
     }
 
@@ -183,7 +184,8 @@ public sealed class LandingProtocolGuardTests
         };
         await h.RunAsync();
         var op = (await h.OperationAsync()).ShouldNotBeNull();
-        (op.LastReason is "task_coordinates_changed" or "verification_filter_changed").ShouldBeTrue(op.LastReason);
+        h.Verifier.Calls.ShouldBe(1);
+        op.LastReason.ShouldBe(change == "verification_filter" ? "verification_filter_changed" : "task_coordinates_changed");
         h.Git.Trace.ShouldNotContain(a => a.Contains("--ff-only") || a[0] == "push");
     }
 
@@ -213,8 +215,9 @@ public sealed class LandingProtocolGuardTests
         };
         await h.RunAsync();
         var op = (await h.OperationAsync()).ShouldNotBeNull();
+        h.Verifier.Calls.ShouldBe(1);
         op.RemoteConfirmedAt.ShouldBeNull();
-        h.Git.Trace.ShouldNotContain(a => a[0] == "push");
+        h.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("--ff-only") || a.Contains("remove"));
         if (change == "rejected") op.LastReason.ShouldBe("source_rejected");
         else op.LastReason.ShouldBe("source_changed");
     }

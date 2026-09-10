@@ -13,60 +13,26 @@ namespace Antiphon.Tests.Application;
 public sealed class LandingProtocolHarnessTests
 {
     private static readonly Regex Arguments = new(@"\[Arguments\((.*)\)\]", RegexOptions.Compiled);
-    private static readonly HashSet<(string Boundary, string Change, bool Contained)> RealV10Capstones =
-    [
-        ("remote", "advance", false), ("remote", "advance", true), ("remote", "switch", true),
-        ("BeforeRebaseIntent", "dirty", false), ("RebaseStarted", "staged", false),
-        ("Prepared", "untracked", false), ("Prepared", "metadata", false),
-        ("Verified", "switch", false), ("Verified", "metadata-path", false),
-        ("TargetAdvanceStarted", "advance", false), ("LocalTargetAdvanced", "dirty", false),
-        ("BeforePushIntent", "staged", false), ("BeforePushIntent", "metadata-target", false),
-        ("PushStarted", "untracked", false), ("PushStarted", "metadata-repository", false),
-    ];
-
     [Test]
     public void C475_CoverageAllocationMatchesTheLegacyTupleManifest()
     {
         C475LegacyLandTuples.All.Count.ShouldBe(169);
-        var controlledV10 = AttributeTuples("AgentTaskLandBoundaryControlledTests.cs", "C448_V10_EachAcknowledgedBoundaryRechecksSource");
-        var controlledFreeze = AttributeTuples("AgentTaskLandBoundaryControlledTests.cs", "C448_V10_VerificationCannotFreezeOldTaskCoordinates");
-        var realV10 = AttributeTuples("AgentTaskLandBoundaryTests.cs", "C448_V10_EachAcknowledgedBoundaryRechecksSource");
-        var admissionControlled = AttributeTuples("AgentTaskLandAdmissionControlledTests.cs", "C448_V14_DispatchAdmissionAndEveryLandModeExcludeEachOther");
-        var admissionReal = AttributeTuples("AgentTaskLandAdmissionTests.cs", "C448_V14_RealDispatchAdmissionAndEveryLandModeExcludeEachOther");
-        var concV14c = AttributeTuples("AgentTaskLandConcurrencyControlledTests.cs", "C448_V14_EveryModeHonoursWriterAndLeaseHolds");
-        var concV10c = AttributeTuples("AgentTaskLandConcurrencyControlledTests.cs", "C448_V10_VerificationDoesNotAuthorizeChangedSourceOrTarget");
-        var concV14r = AttributeTuples("AgentTaskLandConcurrencyTests.cs", "C448_V14_EveryModeHonoursWriterAndLeaseHolds");
-        var concV10r = AttributeTuples("AgentTaskLandConcurrencyTests.cs", "C448_V10_VerificationDoesNotAuthorizeChangedSourceOrTarget");
-
-        controlledV10.Count.ShouldBe(90);
-        controlledFreeze.Count.ShouldBe(4);
-        realV10.Count.ShouldBe(15);
-        admissionControlled.Count.ShouldBe(24);
-        admissionReal.Count.ShouldBe(8);
-        concV14c.Count.ShouldBe(12);
-        concV10c.Count.ShouldBe(10);
-        concV14r.Count.ShouldBe(4);
-        concV10r.Count.ShouldBe(4);
-
-        (controlledV10.Count + controlledFreeze.Count).ShouldBe(94);
-        (admissionControlled.Count).ShouldBe(24);
-        (concV14c.Count + concV10c.Count).ShouldBe(22);
-
-        var realBoundaryOther = CountMethods("AgentTaskLandBoundaryTests.cs",
-            "C448_V11_TargetMutationAfterFastForwardCannotBeAcknowledged",
-            "C448_V32_EachRecoveryPinFailureStopsDependentMutation",
-            "C448_V11_TargetAdvanceUsesTheCapturedCheckoutAndOldSha",
-            "C448_V32_RebaseConfigurationCannotStashOrRewriteUnrelatedRefs",
-            "C448_V36_CreationUsesTheRepositoryLeaseAndThreadsNestedOwnership",
-            "C448_V11_TargetSequencerBlocksPreparation",
-            "C448_V26_RecoveryPinsRemainPrerequisitesAfterVerification");
-        (realV10.Count + realBoundaryOther + admissionReal.Count + concV14r.Count + concV10r.Count
-            + CountMethods("AgentTaskLandConcurrencyTests.cs",
-                "C448_V36_SettlementLeasePrecedesItsFirstMutation",
-                "C448_V36_SettlementAndChildMergeExcludeLandingInBothOrders")).ShouldBe(60);
-
-        foreach (var cap in RealV10Capstones)
-            realV10.ShouldContain($"{cap.Boundary},{cap.Change},{cap.Contained}");
+        var expected = C475LegacyLandTuples.All.Where(r => r.Layer == "controlled")
+            .Concat(C475LegacyLandTuples.RealCapstones).ToList();
+        expected.Count.ShouldBe(200);
+        expected.Count(r => r.Layer == "controlled").ShouldBe(140);
+        C475LegacyLandTuples.RealCapstones.Count.ShouldBe(60);
+        C475LegacyLandTuples.All.Select(r => (r.OriginalClass, r.OriginalMethod, r.Arguments)).Distinct().Count().ShouldBe(169);
+        foreach (var group in expected.GroupBy(r => r.DestinationClass))
+        {
+            var source = File.ReadAllText(Path.Combine(RepoRoot, "tests", "Antiphon.Tests", "Application", group.Key + ".cs"));
+            var actualMethods = Regex.Matches(source, @"public async Task (C448_\w+)\(")
+                .Select(m => m.Groups[1].Value).ToList();
+            actualMethods.Order().ShouldBe(group.Select(r => r.DestinationMethod).Distinct().Order());
+            foreach (var method in actualMethods)
+                AttributeTuples(group.Key + ".cs", method).Order().ShouldBe(
+                    group.Where(r => r.DestinationMethod == method).Select(r => r.Arguments).Order());
+        }
     }
 
     [Test]
@@ -75,6 +41,18 @@ public sealed class LandingProtocolHarnessTests
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
         ReferenceEquals(h.RegisteredGit, h.Git).ShouldBeTrue();
+        await using var scope = h.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<Antiphon.Server.Infrastructure.Data.AppDbContext>();
+        var land = h.CreateLand(db, scope.ServiceProvider);
+        var protocol = scope.ServiceProvider.GetRequiredService<Antiphon.Server.Application.Services.AgentTaskLandingProtocol>();
+        var fields = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        ReferenceEquals(land.GetType().GetField("_landingGit", fields)!.GetValue(land), h.Git).ShouldBeTrue();
+        var gitField = protocol.GetType().GetFields(fields).Single(f => f.FieldType == typeof(ILandingGit));
+        ReferenceEquals(gitField.GetValue(protocol), h.Git).ShouldBeTrue();
+        await h.AddSourceAsync();
+        (await h.RunAsync()).ShouldBe(Antiphon.Server.Application.Services.LandRunResult.Complete);
+        h.Git.Trace.ShouldContain(a => a[0] == "push");
+        h.Git.Trace.ShouldContain(a => a.Contains("remove"));
         h.Git.NativeProcessStarts.ShouldBe(0);
     }
 
@@ -133,36 +111,22 @@ public sealed class LandingProtocolHarnessTests
     {
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
-        if (mode != "AlreadyPresent") await h.AddSourceAsync();
-        if (mode == "ResumePublication")
-        {
-            h.Fault.Phase = LandPhase.LocalTargetAdvanced;
-            h.Fault.AfterCommit = true;
-            await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunAsync());
-        }
-        if (mode == "CleanupRetry")
-        {
-            var sentinel = Path.Combine(h.Git.Source, ".antiphon", "report.md");
-            Directory.CreateDirectory(Path.GetDirectoryName(sentinel)!);
-            await File.WriteAllTextAsync(sentinel, "preserve");
-            await h.RunAsync();
-            await h.RepostAsync();
-        }
+        await PrepareModeAsync(h, mode);
         var before = await h.OperationAsync();
-        int attempt;
-        await using (var db = h.CreateContext())
-            attempt = await db.AgentTasks.Where(t => t.Id == h.Git.TaskId).Select(t => t.LandAttempt).SingleAsync();
+        await using var db = h.CreateContext();
+        var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == h.Git.TaskId);
         await h.RestartServicesAsync();
-        if (mode is "ResumePublication" or "CleanupRetry")
-        {
-            if (mode == "CleanupRetry") File.Delete(Path.Combine(h.Git.Source, ".antiphon", "report.md"));
-            await h.RunAsync();
-        }
-        else await h.RunAsync();
+        var recreated = await h.OperationAsync();
+        recreated?.Id.ShouldBe(before?.Id);
+        var retained = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == h.Git.TaskId);
+        retained.LandAttempt.ShouldBe(task.LandAttempt);
+        retained.LandRequestedAt.ShouldBe(task.LandRequestedAt);
+        if (mode == "CleanupRetry") File.Delete(Path.Combine(h.Git.Source, ".antiphon", "report.md"));
+        (await h.RunAsync()).ShouldBe(Antiphon.Server.Application.Services.LandRunResult.Complete);
         var after = (await h.OperationAsync()).ShouldNotBeNull();
         if (before is not null) after.Id.ShouldBe(before.Id);
-        await using var check = h.CreateContext();
-        (await check.AgentTasks.SingleAsync(t => t.Id == h.Git.TaskId)).LandAttempt.ShouldBeGreaterThanOrEqualTo(attempt);
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == h.Git.TaskId)).LandAttempt.ShouldBe(task.LandAttempt + 1);
+        after.Cleanup.ShouldBe(LandCleanupStatus.Complete);
     }
 
     [Test]
@@ -174,28 +138,21 @@ public sealed class LandingProtocolHarnessTests
     {
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
-        if (mode != "AlreadyPresent") await h.AddSourceAsync();
-        if (mode == "ResumePublication")
-        {
-            h.Fault.Phase = LandPhase.LocalTargetAdvanced;
-            h.Fault.AfterCommit = true;
-            await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunAsync());
-            (await h.OperationAsync())!.Phase.ShouldBe(LandPhase.LocalTargetAdvanced);
-            return;
-        }
-        if (mode == "CleanupRetry")
-        {
-            var sentinel = Path.Combine(h.Git.Source, ".antiphon", "report.md");
-            Directory.CreateDirectory(Path.GetDirectoryName(sentinel)!);
-            await File.WriteAllTextAsync(sentinel, "preserve");
-            await h.RunAsync();
-            (await h.OperationAsync())!.Cleanup.ShouldBe(LandCleanupStatus.Refused);
-            await h.RepostAsync();
-            File.Delete(sentinel);
-        }
-        await h.RunAsync();
+        await PrepareModeAsync(h, mode);
+        if (mode == "CleanupRetry") File.Delete(Path.Combine(h.Git.Source, ".antiphon", "report.md"));
+        var phases = new List<LandPhase>();
+        h.Fault.AfterAcknowledged = phase => { phases.Add(phase); return Task.CompletedTask; };
+        (await h.RunAsync()).ShouldBe(Antiphon.Server.Application.Services.LandRunResult.Complete);
         var op = (await h.OperationAsync()).ShouldNotBeNull();
         new Antiphon.Server.Application.Services.AgentTaskLandingState().HasPublication(op).ShouldBeTrue();
+        if (mode == "Fresh")
+        {
+            phases.ShouldContain(LandPhase.Prepared);
+            phases.ShouldContain(LandPhase.LocalTargetAdvanced);
+            h.Git.Trace.ShouldContain(a => a[0] == "push");
+        }
+        if (mode == "AlreadyPresent") h.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("rebase"));
+        if (mode == "CleanupRetry") h.Git.Trace.ShouldNotContain(a => a[0] == "push");
     }
 
     [Test]
@@ -210,7 +167,9 @@ public sealed class LandingProtocolHarnessTests
         await h.RunAsync();
         await h.RepostAsync();
         h.Git.RewriteRemoteAwayFromSource();
+        h.Git.Trace.Clear();
         await h.RunAsync();
+        h.Git.Trace.ShouldContain(a => a[0] == "fetch");
         var op = (await h.OperationAsync()).ShouldNotBeNull();
         op.Cleanup.ShouldBe(LandCleanupStatus.Refused);
         File.Exists(sentinel).ShouldBeTrue();
@@ -225,27 +184,55 @@ public sealed class LandingProtocolHarnessTests
     {
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
-        if (mode != "AlreadyPresent") await h.AddSourceAsync();
+        await PrepareModeAsync(h, mode);
         var leases = h.Services.GetRequiredService<IRepositoryMutationLease>();
-        var contended = false;
-        h.Git.BeforeCommand = async (_, args) =>
+        var acquired = new List<bool>();
+        h.Git.BeforeInspection = async () =>
         {
-            if (!contended && args[0] == "show-ref")
-            {
-                contended = true;
-                var stolen = await leases.TryAcquireAsync(h.Git.Repository, CancellationToken.None);
-                stolen.ShouldBeNull("landing must still hold the repository lease at first model query");
-            }
-            return null;
+            await using var contender = await leases.TryAcquireAsync(h.Git.Repository, CancellationToken.None);
+            acquired.Add(contender is not null);
         };
+        if (mode == "CleanupRetry") File.Delete(Path.Combine(h.Git.Source, ".antiphon", "report.md"));
+        Exception? failure = null;
+        try { await h.RunAsync(); } catch (Exception ex) { failure = ex; }
+        acquired.Count.ShouldBeGreaterThanOrEqualTo(2, "admission and an in-protocol inspection must both be observed");
+        acquired.ShouldAllBe(value => !value);
+        failure.ShouldBeNull();
+    }
+
+    private static async Task PrepareModeAsync(LandingProtocolHarness h, string mode)
+    {
+        if (mode != "AlreadyPresent") await h.AddSourceAsync();
         if (mode == "ResumePublication")
         {
             h.Fault.Phase = LandPhase.LocalTargetAdvanced;
             h.Fault.AfterCommit = true;
             await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunAsync());
+            h.Fault.Triggered.ShouldBeTrue();
+            var op = (await h.OperationAsync()).ShouldNotBeNull();
+            op.Phase.ShouldBe(LandPhase.LocalTargetAdvanced);
+            op.RemoteConfirmedAt.ShouldBeNull();
         }
-        try { await h.RunAsync(); } catch (LandingProtocolHarness.InjectedSaveFailure) { }
-        contended.ShouldBeTrue();
+        if (mode == "CleanupRetry")
+        {
+            var sentinel = Path.Combine(h.Git.Source, ".antiphon", "report.md");
+            Directory.CreateDirectory(Path.GetDirectoryName(sentinel)!);
+            await File.WriteAllTextAsync(sentinel, "preserve");
+            var phases = new List<LandPhase>();
+            h.Fault.AfterAcknowledged = phase => { phases.Add(phase); return Task.CompletedTask; };
+            await h.RunAsync();
+            phases.ShouldContain(LandPhase.Prepared);
+            phases.ShouldContain(LandPhase.LocalTargetAdvanced);
+            h.Git.Trace.ShouldContain(a => a[0] == "push");
+            var op = (await h.OperationAsync()).ShouldNotBeNull();
+            op.RemoteConfirmedAt.ShouldNotBeNull();
+            op.Cleanup.ShouldBe(LandCleanupStatus.Refused);
+            File.ReadAllText(sentinel).ShouldBe("preserve");
+            await h.RepostAsync();
+            (await h.OperationAsync())!.Id.ShouldBe(op.Id);
+            h.Fault.AfterAcknowledged = null;
+        }
+        h.Git.Trace.Clear();
     }
 
     private static List<string> AttributeTuples(string file, string method)
@@ -266,13 +253,11 @@ public sealed class LandingProtocolHarnessTests
                 }
                 if (lines[j].Contains("[Test]", StringComparison.Ordinal)) break;
             }
+            if (tuples.Count == 0) tuples.Add("");
             break;
         }
         return tuples;
     }
-
-    private static int CountMethods(string file, params string[] methods)
-        => methods.Sum(m => Math.Max(1, AttributeTuples(file, m).Count));
 
     private static string Normalize(string raw) =>
         raw.Replace("\"", "").Replace(" ", "").Replace("false", "False").Replace("true", "True");
