@@ -54,6 +54,12 @@ public sealed class LandingProtocolHarnessTests
         h.Git.Trace.ShouldContain(a => a[0] == "push");
         h.Git.Trace.ShouldContain(a => a.Contains("remove"));
         h.Git.NativeProcessStarts.ShouldBe(0);
+        h.Git.OwnedTrace.ShouldContain(a => a[0] == "push");
+        Console.WriteLine("C475_MODEL_TRACE:" + System.Text.Json.JsonSerializer.Serialize(new
+        {
+            model = h.RegisteredGit.GetType().FullName, commands = h.Git.Trace, owned = h.Git.OwnedTrace,
+            verifier = h.Verifier.GetType().FullName, verifierCalls = h.Verifier.Calls,
+        }));
     }
 
     [Test]

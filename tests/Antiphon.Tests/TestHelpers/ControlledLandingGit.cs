@@ -53,6 +53,7 @@ internal sealed class ControlledLandingGit : ILandingGit
     public string SeedSha { get; }
     public string Fingerprint { get; }
     public List<string[]> Trace { get; } = [];
+    public List<string[]> OwnedTrace { get; } = [];
     public int NativeProcessStarts { get; private set; }
     public Func<Task>? BeforeInspection { get; set; }
     public Func<string, IReadOnlyList<string>, Task<LandingGitResult?>>? BeforeCommand { get; set; }
@@ -281,6 +282,7 @@ internal sealed class ControlledLandingGit : ILandingGit
         if (BeforeObservedCommand is not null) await BeforeObservedCommand(arguments);
         if (started is not null)
         {
+            OwnedTrace.Add(arguments.ToArray());
             var pid = ++_pid;
             var ticks = DateTime.UtcNow.Ticks;
             await started(pid, ticks, ct);
