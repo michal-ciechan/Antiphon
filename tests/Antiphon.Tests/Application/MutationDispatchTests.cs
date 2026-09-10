@@ -22,15 +22,14 @@ namespace Antiphon.Tests.Application;
 public class MutationDispatchTests
 {
     [Test]
-    public async Task C470_retained_worktree_launch_is_fresh()
+    public Task C470_retained_worktree_launch_is_fresh() => RetainedLaunch(false);
+
+    [Test]
+    public Task C470_next_card_code_dispatches_during_mutation() => RetainedLaunch(true);
+
+    private static async Task RetainedLaunch(bool nextCode)
     {
         await using var h = await Harness.CreateAsync();
-        await Git(h.Root, "init", "-b", "master");
-        await Git(h.Root, "config", "user.name", "Mutation fixture");
-        await Git(h.Root, "config", "user.email", "mutation@example.test");
-        await File.WriteAllTextAsync(Path.Combine(h.Root, "base.txt"), "master");
-        await Git(h.Root, "add", "base.txt");
-        await Git(h.Root, "commit", "-m", "base");
         var master = await Git(h.Root, "rev-parse", "HEAD");
         var retained = Path.Combine(h.Root, "worktrees", "card-task-aabbccdd");
         await Git(h.Root, "worktree", "add", "-b", "code-a", retained);
@@ -83,6 +82,24 @@ public class MutationDispatchTests
         (await Git(retained, "diff", "--name-only")).ShouldBeEmpty();
         (await Git(retained, "diff", "--cached", "--name-only")).ShouldBeEmpty();
         (await Git(h.Root, "worktree", "list", "--porcelain")).Split("worktree ").Length.ShouldBe(3);
+        if (nextCode)
+        {
+            launched.Status = AgentTaskStatus.Working;
+            await verify.SaveChangesAsync();
+            var second = await h.Seed(AgentTaskRole.Code, AgentTaskStatus.Queued, h.Root);
+            var secondRow = await verify.AgentTasks.SingleAsync(t => t.Id == second.Id);
+            secondRow.Workspace = WorkspaceMode.Worktree;
+            await verify.SaveChangesAsync();
+            await h.Tick();
+            await using var after = h.Context();
+            var dispatched = await after.AgentTasks.SingleAsync(t => t.Id == second.Id);
+            dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched, dispatched.FailureReason);
+            dispatched.WorktreePath.ShouldNotBeNull().ShouldNotBe(retained);
+            h.Factory.Adapters.Count.ShouldBe(2);
+            (await after.AgentTasks.SingleAsync(t => t.Id == mutation.Id)).Status.ShouldBe(AgentTaskStatus.Working);
+            (await after.AgentTasks.SingleAsync(t => t.Id == code.Id)).Status.ShouldBe(AgentTaskStatus.Succeeded);
+            (await Git(retained, "rev-parse", "HEAD")).ShouldBe(codeSha);
+        }
     }
 
     [Test]
@@ -99,7 +116,8 @@ public class MutationDispatchTests
         await h.Settle(mutation.Id);
         await h.Tick();
         await using var verify = h.Context();
-        (await verify.AgentTasks.SingleAsync(t => t.Id == code.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
+        var row = await verify.AgentTasks.SingleAsync(t => t.Id == code.Id);
+        row.Status.ShouldBe(AgentTaskStatus.Dispatched, row.FailureReason);
         h.Factory.Adapters.ShouldHaveSingleItem().Started.ShouldBeTrue();
     }
 
@@ -122,7 +140,8 @@ public class MutationDispatchTests
         await h.Settle(holder.Id);
         await h.Tick();
         await using var verify = h.Context();
-        (await verify.AgentTasks.SingleAsync(t => t.Id == waiting.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
+        var row = await verify.AgentTasks.SingleAsync(t => t.Id == waiting.Id);
+        row.Status.ShouldBe(AgentTaskStatus.Dispatched, row.FailureReason);
         h.Factory.Adapters.ShouldHaveSingleItem().Started.ShouldBeTrue();
     }
 
@@ -168,6 +187,13 @@ public class MutationDispatchTests
                     services.AddScoped<AgentTaskDispatcher>();
                 }
             });
+            bridge.Provider.GetRequiredService<IOptions<GitSettings>>().Value.WorktreeBasePath = Path.Combine(bridge.TempRoot, "worktrees");
+            await Git(bridge.TempRoot, "init", "-b", "master");
+            await Git(bridge.TempRoot, "config", "user.name", "Mutation fixture");
+            await Git(bridge.TempRoot, "config", "user.email", "mutation@example.test");
+            await File.WriteAllTextAsync(Path.Combine(bridge.TempRoot, "base.txt"), "master");
+            await Git(bridge.TempRoot, "add", "base.txt");
+            await Git(bridge.TempRoot, "commit", "-m", "base");
             return new() { Schema = schema, Bridge = bridge, Factory = factory };
         }
         public async Task<AgentTask> Seed(AgentTaskRole role, AgentTaskStatus status, string directory)
