@@ -166,9 +166,14 @@ internal sealed class ControlledLandingGit : ILandingGit
     {
         ct.ThrowIfCancellationRequested();
         var rows = new List<LandingRegistration>();
-        if (_sourcePresent)
-            rows.Add(new(Source, _sourceBranch, _sourceHead, _sourceLocked, _sourcePrunable));
-        rows.Add(new(Repository, _targetBranch, _targetHead, _targetLocked, _targetPrunable));
+        foreach (var wt in _worktrees.Values)
+        {
+            var locked = PathsEqual(wt.Path, Source) ? _sourceLocked
+                : PathsEqual(wt.Path, Repository) ? _targetLocked : false;
+            var prunable = PathsEqual(wt.Path, Source) ? _sourcePrunable
+                : PathsEqual(wt.Path, Repository) ? _targetPrunable : false;
+            rows.Add(new(wt.Path, wt.Branch, wt.Head, locked, prunable));
+        }
         return Task.FromResult<IReadOnlyList<LandingRegistration>>(rows);
     }
 

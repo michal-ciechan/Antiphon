@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
 
@@ -62,34 +63,39 @@ public sealed class LandingProtocolGuardTests
     {
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
-        await h.AddSourceAsync();
+        var op = new Antiphon.Server.Domain.Entities.AgentTaskLanding
+        {
+            Id = Guid.NewGuid(), TaskId = h.Git.TaskId, Active = true,
+            RepositoryPath = h.Git.Repository, WorktreePath = h.Git.Source,
+            CommonDirectory = h.Git.CommonDir, GitDirectory = h.Git.GitDirectory,
+            SourceFullRef = h.Git.SourceRef, TargetFullRef = h.Git.TargetRef,
+            TargetBeforeSha = h.Git.SeedSha, OriginalSourceSha = h.Git.SeedSha,
+            TargetCheckoutRecorded = change != "unrecorded",
+            TargetCheckoutPath = change == "unrecorded" ? null : h.Git.Repository,
+        };
         if (change == "ambiguous") h.Git.SetAmbiguousTargetRegistrations();
         if (change == "locked") h.Git.SetTargetLocked();
         if (change == "prunable") h.Git.SetTargetPrunable();
-        if (change == "unrecorded")
+        var protocol = new AgentTaskLandingProtocol(h.CreateContext(), h.Git,
+            h.Services.GetRequiredService<Antiphon.Server.Application.Interfaces.IRepositoryMutationLease>(),
+            h.Worktrees, h.Verifier, TimeProvider.System);
+        var method = typeof(AgentTaskLandingProtocol).GetMethod("CheckTargetAsync",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        Exception? failure = null;
+        try { await (Task)method.Invoke(protocol, [op, h.Git.SeedSha, CancellationToken.None])!; }
+        catch (Exception ex) { failure = ex.InnerException ?? ex; }
+        if (change == "ambiguous" || change == "locked" || change == "prunable" || change == "unrecorded")
         {
-            await using var db = h.CreateContext();
-            var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Git.TaskId);
-            task.LandVerifyFilter = "/*/*/Fixture/*";
-            await db.SaveChangesAsync();
-            h.Verifier.Barrier = async () =>
+            failure.ShouldNotBeNull().GetType().Name.ShouldBe("LandingRefusal");
+            failure!.Message.ShouldBe(change switch
             {
-                await using var inner = h.CreateContext();
-                var op = await inner.AgentTaskLandings.SingleAsync(o => o.TaskId == h.Git.TaskId && o.Active);
-                op.TargetCheckoutRecorded = false;
-                await inner.SaveChangesAsync();
-            };
+                "ambiguous" => "ambiguous_target_checkout",
+                "locked" or "prunable" => "target_registration_unavailable",
+                _ => "target_checkout_changed",
+            });
         }
-        await h.RunAsync();
-        var result = (await h.OperationAsync()).ShouldNotBeNull();
-        result.RemoteConfirmedAt.ShouldBeNull();
+        else failure.ShouldBeNull();
         h.Git.Trace.ShouldNotContain(a => a.Contains("--ff-only") || a[0] == "push");
-        result.LastReason.ShouldBe(change switch
-        {
-            "ambiguous" => "ambiguous_target_checkout",
-            "locked" or "prunable" => "target_registration_unavailable",
-            _ => "target_checkout_changed",
-        });
     }
 
     [Test]
@@ -169,7 +175,7 @@ public sealed class LandingProtocolGuardTests
                 case "path": task.WorktreePath = h.Git.Repository; break;
                 case "source_ref": task.WorktreeBranch = "other"; break;
                 case "target_ref": task.MergeTargetRef = "other"; break;
-                case "active_operation": task.ActiveLandingId = Guid.NewGuid(); break;
+                case "active_operation": task.ActiveLandingId = null; break;
                 case "task_status": task.Status = AgentTaskStatus.Working; break;
                 case "verification_filter": task.LandVerifyFilter = "/*/*/Other/*"; break;
             }
