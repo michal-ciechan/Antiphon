@@ -69,11 +69,12 @@ public sealed class SessionQueueReceiptPlumbingTests
         else if (cut == "attempt-before-write")
         {
             world.Forward.BlockWrites = true;
+            SessionQueuedMessage? claimed = null;
             var attempt = world.Queue.EnqueueAsync(world.SessionId, text, MessageSendMode.WhenIdle, CancellationToken.None);
             try
             {
                 await world.Forward.WriteReached.Task.WaitAsync(TimeSpan.FromSeconds(15));
-                var claimed = (await world.RowsAsync()).ShouldHaveSingleItem();
+                claimed = (await world.RowsAsync()).ShouldHaveSingleItem();
                 claimed.Status.ShouldBe(QueuedMessageStatus.Sent);
                 claimed.DeliveryAttempts.ShouldBe(1);
                 claimed.LastDeliveryBaselineSequence.ShouldNotBeNull();
@@ -82,10 +83,20 @@ public sealed class SessionQueueReceiptPlumbingTests
             }
             finally
             {
+                world.Forward.CutBeforeWrite = true;
+                world.Fault.FailRevert = true;
                 world.Forward.BlockWrites = false;
                 world.Forward.ReleaseWrites();
-                await attempt;
+                await Should.ThrowAsync<InvalidOperationException>(() => attempt);
             }
+            world.Forward.CutBeforeWrite = false;
+            world.Fault.FailRevert = false;
+            world.Clock.Offset = TimeSpan.FromMinutes(2);
+            world.RecreateQueue();
+            await world.Queue.FlushSessionAsync(world.SessionId, CancellationToken.None);
+            var recovered = (await world.RowsAsync()).ShouldHaveSingleItem();
+            recovered.Id.ShouldBe(claimed.ShouldNotBeNull().Id);
+            recovered.DeliveryAttempts.ShouldBe(2, "the interrupted attempt is retained and retyping charges exactly one more");
         }
         else
         {
@@ -259,6 +270,11 @@ public sealed class SessionQueueReceiptPlumbingTests
                 seq.ShouldAllBe(s => s > 9);
                 (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == other)).ShouldBe(0);
             }
+            await using var identity = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            var receipt = (await identity.TranscriptEntries.Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt).ToListAsync()).ShouldHaveSingleItem();
+            receipt.Uuid.ShouldBe(uuid);
+            receipt.Text.ShouldBe("pump body");
+            (await identity.TranscriptEntries.AnyAsync(t => t.AgentSessionId == other)).ShouldBeFalse();
         }
         finally
         {
@@ -288,12 +304,14 @@ public sealed class SessionQueueReceiptPlumbingTests
         using var cts = new CancellationTokenSource();
         var pumping = SessionQueueTranscriptPump.RunAsync(path, sessionId, cts.Token,
             beforeRead: () => { entered.TrySetResult(); return Task.CompletedTask; }, hold: hold.Task);
+        var deleting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Task cleanup = Task.CompletedTask;
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
             cleanup = CleanupAsync();
             cleanup.IsCompleted.ShouldBeFalse();
+            deleting.Task.IsCompleted.ShouldBeFalse();
             await using var check = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             (await check.AgentSessions.AnyAsync(s => s.Id == sessionId)).ShouldBeTrue();
         }
@@ -312,6 +330,7 @@ public sealed class SessionQueueReceiptPlumbingTests
         {
             cts.Cancel();
             await pumping;
+            deleting.TrySetResult();
             await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).ExecuteDeleteAsync();
             await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
@@ -321,23 +340,19 @@ public sealed class SessionQueueReceiptPlumbingTests
     [Test]
     public async Task C475_ProactiveAndReactiveRecoveryShareOneEscBudget()
     {
-        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
-        {
-            AlwaysOn = true,
-            ConfigureDeliveryVerification = v => v.OverlayRecoveryEnabled = true,
-        });
-        await using (var db = BridgeQueueHarness.CreateContext())
-        {
-            var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
-            session.AgentKind = AgentKind.Grok;
-            await db.SaveChangesAsync();
-        }
-        h.Adapter.OverlayOpen = true;
-        h.Adapter.EchoTypedInputToScreen = false;
-        await h.Queue.EnqueueAsync(h.SessionId, "one esc", MessageSendMode.WhenIdle, CancellationToken.None);
-        h.Adapter.Inputs.Count(i => i == "\u001b").ShouldBe(1);
-        h.Adapter.Inputs.ShouldNotContain("\r");
-        (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(h.SessionId, 0)).ShouldBeEmpty();
+        if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
+        if (!File.Exists(FakeClaudeExe)) throw new SkipTestException("fakeclaude missing");
+        await using var world = await PtyWorld.StartAsync(overlay: true);
+        await world.Queue.EnqueueAsync(world.SessionId, "/usage", MessageSendMode.Now, CancellationToken.None);
+        await WaitUntilAsync(async () => (await world.Client.GetSnapshotAsync(world.SessionId, CancellationToken.None)).RawOutput.Contains("OVERLAY:open"));
+        var baseline = world.Forward.Writes.Count;
+        world.Forward.WithholdBodiesAfterEsc = true;
+        await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ConflictException>(() =>
+            world.Queue.EnqueueAsync(world.SessionId, "one esc complete body", MessageSendMode.Now, CancellationToken.None));
+        world.Forward.Writes.Skip(baseline).Count(i => i == "\u001b").ShouldBe(1);
+        world.Forward.Writes.Skip(baseline).ShouldNotContain("\r");
+        SessionQueueTranscriptPump.FileUserPrompts(world.TranscriptPath).ShouldBeEmpty();
+        (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(world.SessionId, 0)).ShouldBeEmpty();
     }
 
     [Test]
@@ -379,9 +394,10 @@ public sealed class SessionQueueReceiptPlumbingTests
         private Task _pumping = Task.CompletedTask;
         private ServiceProvider _provider = null!;
 
-        public static async Task<PtyWorld> StartAsync()
+        public static async Task<PtyWorld> StartAsync(bool overlay = false)
         {
             var sessionId = Guid.NewGuid();
+            var kind = overlay ? AgentKind.Grok : AgentKind.ClaudeCode;
             var cwd = Path.Combine(Path.GetTempPath(), $"c475-plumb-{sessionId:N}");
             Directory.CreateDirectory(cwd);
             var transcript = Path.Combine(Path.GetTempPath(), $"c475-plumb-{sessionId:N}.jsonl");
@@ -402,20 +418,20 @@ public sealed class SessionQueueReceiptPlumbingTests
             services.AddSingleton<IOptions<AgentSessionSettings>>(Options.Create(new AgentSessionSettings()));
             services.AddSingleton<IOptions<SupervisionSettings>>(Options.Create(new SupervisionSettings
             {
-                DeliveryVerification = new DeliveryVerificationSettings { Enabled = true, PollIntervalMs = 50, EvidenceTimeoutSeconds = 8 },
+                DeliveryVerification = new DeliveryVerificationSettings { Enabled = true, PollIntervalMs = 50, EvidenceTimeoutSeconds = 8, OverlayRecoveryEnabled = true, OverlaySettleMs = 50 },
             }));
             services.AddSingleton<ISessionRunnerClient>(forward);
             services.AddSingleton<AgentSessionRuntime>();
             services.AddTransient<SessionMessageQueueService>();
             services.AddLogging();
             var provider = services.BuildServiceProvider();
-            await inner.StartAsync(sessionId, new AgentLaunchSpec("fakeclaude", AgentKind.ClaudeCode, FakeClaudeExe, [],
-                new Dictionary<string, string> { ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = transcript }, cwd, 120, 30), CancellationToken.None);
+            await inner.StartAsync(sessionId, new AgentLaunchSpec("fakeclaude", kind, FakeClaudeExe, [],
+                new Dictionary<string, string> { ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = transcript, ["ANTIPHON_FAKE_OVERLAY_ON_COMMAND"] = overlay ? "/usage" : "" }, cwd, 120, 30), CancellationToken.None);
             await using (var scope = provider.CreateAsyncScope())
             {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                 var now = DateTime.UtcNow;
-                db.AgentSessions.Add(new AgentSession { Id = sessionId, DefinitionName = "fakeclaude", AgentKind = AgentKind.ClaudeCode, Status = SessionStatus.Running, Cwd = cwd, Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now });
+                db.AgentSessions.Add(new AgentSession { Id = sessionId, DefinitionName = "fakeclaude", AgentKind = kind, Status = SessionStatus.Running, Cwd = cwd, Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now });
                 db.TranscriptEntries.Add(new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = 1, Kind = Antiphon.SessionRunner.Contracts.TranscriptKinds.TurnEnd, StopReason = "end_turn", CreatedAt = now });
                 await db.SaveChangesAsync();
             }
@@ -495,6 +511,9 @@ public sealed class SessionQueueReceiptPlumbingTests
         public List<string> Payloads { get; } = [];
         public bool BlockWrites { get; set; }
         public string? CutAtEnter { get; set; }
+        public bool CutBeforeWrite { get; set; }
+        public bool WithholdBodiesAfterEsc { get; set; }
+        private bool _escaped;
         public TaskCompletionSource WriteReached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private TaskCompletionSource _writeGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public void ReleaseWrites() { _writeGate.TrySetResult(); _writeGate = new(TaskCreationOptions.RunContinuationsAsynchronously); }
@@ -512,6 +531,9 @@ public sealed class SessionQueueReceiptPlumbingTests
                 WriteReached.TrySetResult();
                 await _writeGate.Task.WaitAsync(ct);
             }
+            if (CutBeforeWrite) throw new InvalidOperationException("injected cut before any bytes");
+            if (WithholdBodiesAfterEsc && _escaped && input is not "\u001b" and not "\r") return;
+            if (input == "\u001b") _escaped = true;
             if (CutAtEnter == "before" && input == "\r") throw new InvalidOperationException("injected cut before Enter");
             Writes.Add(input);
             Payloads.Add(input);
