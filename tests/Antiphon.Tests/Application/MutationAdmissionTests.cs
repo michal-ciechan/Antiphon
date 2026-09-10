@@ -18,6 +18,40 @@ namespace Antiphon.Tests.Application;
 public class MutationAdmissionTests
 {
     [Test]
+    public async Task C470_mutation_routing_does_not_inherit_code()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var options = Options.Create(new DelegationSettings());
+        var routing = new ComplexityRoutingService(db, options, TimeProvider.System);
+        var chains = new ComplexityChainService(db, TimeProvider.System, routing, options, NullLogger<ComplexityChainService>.Instance);
+        var pin = new RoutingPin { Id = Guid.NewGuid(), Role = AgentTaskRole.Code, AgentKind = AgentKind.Grok,
+            ModelLevel = AgentModelLevel.High, Provenance = RoutingPinProvenance.Human, Strength = RoutingPinStrength.Required,
+            Reason = "Code only", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.RoutingPins.Add(pin);
+        await db.SaveChangesAsync();
+        var put = new PutComplexityChainRequest([new ComplexityCandidateRequest(AgentKind.Codex, AgentModelLevel.Frontier)], RoutingPinProvenance.Human, "Mutation only");
+        Exception? error = null;
+        try { await chains.UpsertAsync(AgentTaskRole.Mutation, TaskComplexity.Hard, put, null, default); }
+        catch (Exception ex) { error = ex; }
+        error.ShouldBeNull("Mutation cell API must accept the role: " + error);
+        var service = new AgentTaskService(db, new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
+            options, new MockEventBus(), new RecordingSessionStopper(), TimeProvider.System, NullLogger<AgentTaskService>.Instance,
+            routingPins: new RoutingPinService(db, TimeProvider.System, NullLogger<RoutingPinService>.Instance, routing), complexityRouting: routing);
+        var created = await service.CreateAsync(new CreateAgentTaskRequest(Goal: Unique("routing"), Role: AgentTaskRole.Mutation, Complexity: TaskComplexity.Hard), ManualCaller(workspace.Path), default);
+        await using var verify = CreateContext(schema);
+        var row = await verify.AgentTasks.SingleAsync(t => t.Id == created.Id);
+        row.AgentKind.ShouldBe(AgentKind.Codex);
+        row.ModelLevel.ShouldBe(AgentModelLevel.Frontier);
+        await chains.ClearAsync(AgentTaskRole.Mutation, TaskComplexity.Hard, default);
+        var preserved = await verify.RoutingPins.SingleAsync(p => p.Id == pin.Id);
+        preserved.Role.ShouldBe(AgentTaskRole.Code);
+        preserved.AgentKind.ShouldBe(AgentKind.Grok);
+        preserved.ClearedAt.ShouldBeNull();
+    }
+
+    [Test]
     [Arguments(AgentTaskStatus.Queued, false)]
     [Arguments(AgentTaskStatus.Dispatched, false)]
     [Arguments(AgentTaskStatus.Working, false)]

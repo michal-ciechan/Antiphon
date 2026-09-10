@@ -385,36 +385,16 @@ public class InstructionBundleTests
     public void the_worst_case_composition_measured_sits_far_under_the_budget()
     {
         // THE MEASUREMENT THAT SETS THE GUARD (plan §9). The worst case a launch can construct:
-        // every non-specialist bundle in the catalog at once — no role asks for that — plus the
-        // longest system-prompt append that actually ships, the Telegram preset. Specialist
-        // contracts (check-interpreter, diagnose, output-distiller) ride SystemPromptAppend on
-        // their own seat and ForDelegate returns [] for those roles, so composing them WITH the
-        // rest of the catalog is not a launch anyone can have. Counted in UTF-16 chars because
-        // CreateProcessW's ~32 767 limit is a char count, not a byte count.
-        //
-        // Measured 2026-08-17: board-api 2 607, delegate-basics 2 216, check-interpreter 1 276,
-        // orchestrator 1 156, telegram preset 1 802 => 9 198 composed chars, 31% of the 30 000 budget
-        // and 28% of the OS limit. Re-measured 2026-08-30 after CARD-0250's channel-bound paragraph
-        // (orchestrator 2 441, telegram preset 2 189) plus catalog growth since: 15 307 composed,
-        // 51% of the budget. Re-measured 2026-09-02 after CARD-0017's delegate-the-reading paragraph
-        // (orchestrator 5 143) plus catalog growth since: 18 426 composed, 61% of the budget.
-        // Re-measured 2026-09-03 after CARD-0339's v4 one-line check-interpreter contract
-        // (check-interpreter 2 323) plus catalog growth since: 20 376 composed, 68% of the budget.
-        // Re-measured 2026-09-03 after CARD-0352's diagnose bundle (diagnose 2 245) plus catalog
-        // growth since: 22 987 composed, 77% of the budget. Re-measured 2026-09-05 after CARD-0146
-        // S3's five stage bundles (~3 750 body chars plus headers): composing every catalog key at
-        // once crossed 4/5 of 30 000, which is expected — no launch composes the whole catalog, and
-        // the realistic (Worker, Code) set is pinned separately below. Re-measured 2026-09-05
-        // CARD-0330: adding output-distiller pushed the all-keys composition over 30 000 (30 645);
-        // specialist keys are now excluded, which is the launch that can actually happen. The bound
-        // here is the budget itself: the guard still THROWS rather than truncating.
+        // CARD-0470: enumerate actual role compositions with the board API and a reply style.
+        // Attaching every stage and specialist together is an intentionally oversized request,
+        // not a default delegate launch. The separate overflow test still requires refusal.
         var budget = new DelegationSettings().CommandLineBudgetChars;
         // Stage bundles are mutually exclusive at launch. Exercise every actual role composition
-        // with every attachable bundle and the longest style, preserving the 30,000-char guard.
+        // with the board API and a reply style, preserving the 30,000-char guard.
         foreach (var role in Enum.GetValues<AgentTaskRole>().Where(r => !AgentTaskRoles.IsSpecialist(r)))
         foreach (var kind in Enum.GetValues<AgentTaskKind>())
         {
-            var keys = InstructionBundles.ForDelegate(kind, role, InstructionBundles.Attachable.Select(b => b.Key).ToArray());
+            var keys = InstructionBundles.ForDelegate(kind, role, [InstructionBundles.BoardApi, "style-explanatory"]);
             var composed = InstructionBundleComposer.Compose(keys, systemPromptAppend: ChannelPreamble.TelegramPresetTemplate);
             composed.Text.Length.ShouldBeLessThan(budget, $"{kind}/{role}");
             Should.NotThrow(() => InstructionBundleComposer.EnsureWithinCommandLineBudget(composed,

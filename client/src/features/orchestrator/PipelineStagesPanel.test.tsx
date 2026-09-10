@@ -249,7 +249,7 @@ describe('PipelineStagesPanel', () => {
   it('C470 shows mutation ready running and cap', async () => {
     const dto = liveDto()
     dto.stages.push(stage({ role: 'Mutation', inFlight: [inFlight({ taskId: 'mutation-task' })], inFlightCount: 1,
-      ready: [ready({ targetRole: 'Mutation' })] }))
+      ready: [ready({ sourceRole: 'Code' })] }))
     servePipeline(dto)
     renderWithProviders(<PipelineStagesPanel />)
     const row = await screen.findByTestId('pipeline-stage-Mutation')
