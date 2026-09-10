@@ -96,6 +96,32 @@ public class MutationPipelineTests(AntiphonWebAppFactory factory)
 
     [Test]
     [NotInParallel]
+    [Arguments(AgentTaskStatus.Queued)]
+    [Arguments(AgentTaskStatus.Working)]
+    public async Task C470_open_mutation_consumes_ready(AgentTaskStatus openStatus)
+    {
+        await factory.ResetAsync();
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        using var workspace = new TempWorkspace();
+        var card = await SeedCardAsync(db, CardStatus.Review, "CARD-0470");
+        var code = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Code, AgentTaskStatus.Succeeded,
+            "code", cardId: card.Id, createdAt: DateTime.UtcNow.AddMinutes(-30), completedAt: DateTime.UtcNow.AddMinutes(-20),
+            nextStage: PipelineHandoffKind.Mutation);
+        var before = await CreateService(db).GetAsync(default);
+        before.Stages.Single(s => s.Role == AgentTaskRole.Mutation).Ready.Where(r => r.Card.Id == card.Id)
+            .ShouldHaveSingleItem().SourcePlanTaskId.ShouldBe(code.Id);
+
+        await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Mutation, openStatus,
+            "mutation", cardId: card.Id, createdAt: DateTime.UtcNow.AddMinutes(-10));
+
+        var after = await CreateService(db).GetAsync(default);
+        after.Stages.Single(s => s.Role == AgentTaskRole.Mutation).Ready.Where(r => r.Card.Id == card.Id)
+            .ShouldBeEmpty();
+    }
+
+    [Test]
+    [NotInParallel]
     [Arguments(AgentTaskStatus.Queued, PipelineHandoffKind.Review)]
     [Arguments(AgentTaskStatus.Working, PipelineHandoffKind.Review)]
     [Arguments(AgentTaskStatus.Queued, PipelineHandoffKind.Land)]
@@ -115,8 +141,6 @@ public class MutationPipelineTests(AntiphonWebAppFactory factory)
             .ShouldHaveSingleItem().SourcePlanTaskId.ShouldBe(code.Id);
         var mutation = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Mutation, openStatus,
             "mutation", cardId: card.Id, createdAt: DateTime.UtcNow.AddMinutes(-10));
-        (await CreateService(db).GetAsync(default)).Stages.Single(s => s.Role == AgentTaskRole.Mutation).Ready
-            .Where(r => r.Card.Id == card.Id).ShouldBeEmpty();
         var parent = Guid.NewGuid();
         var session = Guid.NewGuid();
         await SeedSessionAsync(db, parent, workspace.Path);
@@ -143,7 +167,9 @@ public class MutationPipelineTests(AntiphonWebAppFactory factory)
         await factory.Services.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(session, default);
         using var readScope = factory.Services.CreateScope();
         var verify = readScope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var settled = await verify.AgentTasks.Where(AgentTaskRoles.Stage).SingleAsync(t => t.Id == mutation.Id);
+        // Verify settlement independently of the stage predicate: PC-2b must reach the
+        // final pipeline projection, whose production query applies AgentTaskRoles.Stage.
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == mutation.Id);
         settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
         settled.NextStage.ShouldBe(destination);
         settled.NextHandoff.ShouldBe("original Code owner");
