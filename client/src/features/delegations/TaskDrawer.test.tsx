@@ -10,6 +10,16 @@ import { renderHookWithProviders } from '../../test/utils'
 import { useSignalRInvalidation } from '../../hooks/useSignalRInvalidation'
 
 vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
+vi.mock('@microsoft/signalr', async () => {
+  const actual = await vi.importActual<typeof import('@microsoft/signalr')>('@microsoft/signalr')
+  return { ...actual, HubConnectionBuilder: class {
+    withUrl() { return this }
+    withAutomaticReconnect() { return this }
+    configureLogging() { return this }
+    build() { return { state: actual.HubConnectionState.Connected, on: vi.fn(), off: vi.fn(), onreconnected: vi.fn(),
+      start: vi.fn().mockResolvedValue(undefined), stop: vi.fn().mockResolvedValue(undefined), invoke: vi.fn().mockResolvedValue(undefined) } }
+  } }
+})
 
 const TASK_ID = '77777777-7777-7777-7777-777777777777'
 
