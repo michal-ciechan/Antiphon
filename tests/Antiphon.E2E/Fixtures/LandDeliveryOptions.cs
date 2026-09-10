@@ -105,6 +105,12 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
         }
         public override async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
         {
+            var failCleanup = Path.Combine(root, "cleanup-io.fail");
+            if (arguments.Count >= 2 && arguments[0] == "worktree" && arguments[1] == "remove" && File.Exists(failCleanup))
+            {
+                File.Move(failCleanup, Path.Combine(root, "cleanup-io.failed"));
+                throw new IOException("Owned one-shot cleanup I/O failure before removal");
+            }
             var result = await base.RunAsync(repository, arguments, ct); await RecordAsync(repository, arguments, result); return result;
         }
         public override async Task<LandingGitResult> RunOwnedAsync(string repository, IReadOnlyList<string> arguments,

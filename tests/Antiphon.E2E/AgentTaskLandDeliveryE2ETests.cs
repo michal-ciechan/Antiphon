@@ -240,6 +240,26 @@ public class AgentTaskLandDeliveryE2ETests
     }
 
     [Test]
+    public async Task C467_V29_OneShotCleanupIoFailureKeepsPublicationAndDeliversRetry()
+    {
+        await using var f = new LandDeliveryFixture(); await f.InitializeAsync();
+        await File.WriteAllTextAsync(Path.Combine(f.Root, "cleanup-io.fail"), "owned one-shot failure");
+        await f.RequestAsync(); await f.ReleaseExecutionAsync();
+        var residue = await f.ReceiptAsync();
+        File.Exists(Path.Combine(f.Root, "cleanup-io.failed")).ShouldBeTrue();
+        await f.AssertRemoteAsync(); await f.AssertSourceProtectedAsync();
+        await using (var db = f.CreateContext())
+            (await db.AgentTaskEvents.SingleAsync(e => e.Id == residue.SourceEventId)).Type.ShouldBe(AgentTaskEventType.LandedWithResidue);
+        var retry = await f.RequestAsync(initial: false);
+        var cleaned = await f.ReceiptAsync(requestId: retry);
+        cleaned.Id.ShouldNotBe(residue.Id); cleaned.QueueMessageId.ShouldNotBe(residue.QueueMessageId);
+        cleaned.LandingOperationId.ShouldBe(residue.LandingOperationId);
+        await using (var db = f.CreateContext())
+            (await db.AgentTaskEvents.SingleAsync(e => e.Id == cleaned.SourceEventId)).Type.ShouldBe(AgentTaskEventType.LandingCleanup);
+        await f.AssertRemoteAsync(); await f.AssertOnePromptAsync(residue); await f.AssertOnePromptAsync(cleaned);
+    }
+
+    [Test]
     [Arguments("busy")]
     [Arguments("attempt")]
     public async Task C467_V32_StatusPollingCannotDischargeUnreceivedOutcome(string state)
