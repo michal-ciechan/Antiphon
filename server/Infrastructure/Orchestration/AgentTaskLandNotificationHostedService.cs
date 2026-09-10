@@ -21,7 +21,7 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
                     await using var scope = scopes.CreateAsyncScope();
                     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                     var query = db.AgentTaskLandNotifications.AsNoTracking().Where(n =>
-                        n.State != LandNotificationState.Confirmed && n.State != LandNotificationState.NotRequired);
+                        n.State != LandNotificationState.Confirmed && n.State != LandNotificationState.NotRequired && n.State != LandNotificationState.LegacyUnverified);
                     if (cursor is Guid after) query = query.Where(n => n.Id.CompareTo(after) > 0);
                     var ids = await query.OrderBy(n => n.Id).Select(n => n.Id).Take(128).ToListAsync(stoppingToken);
                     foreach (var id in ids)
@@ -38,6 +38,9 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
                     if (ids.Count < 128) break;
                     cursor = ids[^1];
                 }
+                await using var observation = scopes.CreateAsyncScope();
+                if (observation.ServiceProvider.GetService<LandDeliveryBoundary>() is { } boundary)
+                    await boundary.ReachedAsync("notification-scan", Guid.Empty, Guid.Empty, stoppingToken);
             }
             catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
             { logger.LogWarning(ex, "Land notification scan failed"); }

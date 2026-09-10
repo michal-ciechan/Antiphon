@@ -58,6 +58,9 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
             || options.Cut == "lost-request" && boundary == "land-request";
         public override async Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
         {
+            if (boundary is "completion-scan" or "notification-scan" or "queue-existing-key")
+                await File.WriteAllTextAsync(Path.Combine(options.Root, $"{boundary}-{Guid.NewGuid():N}.observation.json"),
+                    JsonSerializer.Serialize(new { boundary, taskId, identity, at = DateTime.UtcNow, pid = Environment.ProcessId }), ct);
             if (options.Cut == "enqueue-errors" && boundary == "before-enqueue" && Interlocked.Increment(ref _enqueueCalls) <= 2)
                 throw new IOException("Owned notification insert failure");
             var blocked = boundary == "before-execution" && !File.Exists(Path.Combine(options.Root, "execute.release"))

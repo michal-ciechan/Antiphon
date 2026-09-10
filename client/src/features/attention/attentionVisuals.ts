@@ -42,6 +42,7 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
   LandHeld: { label: 'Land held', color: 'warning', icon: TbClockPause, hint: 'An existing writer or repository lease holds landing.' },
   LandNoProgress: { label: 'Land aged', color: 'warning', icon: TbClockExclamation, hint: 'An accepted land has made no forward progress.' },
   LandOutcomeUnconfirmed: { label: 'Land receipt missing', color: 'danger', icon: TbMailExclamation, hint: 'The caller has no complete matching UserPrompt receipt.' },
+  LandLegacyUnverified: { label: 'Historical Land receipt unknown', color: 'gray', icon: TbMailExclamation, hint: 'Historical evidence only; no new delivery obligation is inferred.' },
   StandingContinuityDecision: {
     label: 'Conversation decision', color: 'danger', icon: TbHelpCircle,
     hint: 'Inspect the conversation, retry after repair, select owned history, or explicitly start fresh.',
@@ -297,7 +298,7 @@ export const ATTENTION_GROUPS: AttentionGroup[] = [
 ]
 
 export function groupOf(item: AttentionItemDto): AttentionGroupKey {
-  if (item.kind === 'RecentFailure') return 'failures'
+  if (item.kind === 'RecentFailure' || item.kind === 'LandLegacyUnverified') return 'failures'
   return severityGroup(item.severity)
 }
 

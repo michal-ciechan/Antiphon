@@ -22,6 +22,7 @@ const ALL_KINDS: AttentionKind[] = [
   'LandHeld',
   'LandNoProgress',
   'LandOutcomeUnconfirmed',
+  'LandLegacyUnverified',
   'HerdrSupervisionHeld',
   'StandingContinuityDecision',
   'BlockedQuestion',

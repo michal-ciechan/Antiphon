@@ -18,6 +18,7 @@ export type AttentionKind =
   | 'LandHeld'
   | 'LandNoProgress'
   | 'LandOutcomeUnconfirmed'
+  | 'LandLegacyUnverified'
   | 'StandingContinuityDecision'
   | 'HerdrSupervisionHeld'
   /** The delegate asked a question. Only a human answer moves this. */

@@ -18,7 +18,8 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
     {
         var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.Id == id, ct);
         await db.Entry(note).ReloadAsync(ct);
-        if (note.State is LandNotificationState.Confirmed or LandNotificationState.NotRequired) return;
+        if (note.State is LandNotificationState.Confirmed or LandNotificationState.NotRequired or LandNotificationState.LegacyUnverified) return;
+        if (note.IsLegacy && note.QueueMessageId is null) return; // Historical evidence never creates a new submission.
         var now = clock.GetUtcNow().UtcDateTime;
         if (note.QueueMessageId is null && note.NextAttemptAt > now) return;
         try

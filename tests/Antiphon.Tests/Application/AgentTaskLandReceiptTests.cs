@@ -10,6 +10,8 @@ using Antiphon.Server.Application.Settings;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Antiphon.Agents.Pty;
+using Antiphon.Server.Application.Dtos;
+using Antiphon.SessionRunner;
 using Shouldly;
 using TUnit.Core;
 
@@ -57,7 +59,7 @@ public sealed class AgentTaskLandReceiptTests
         var recovery = new AgentTaskLandNotificationService(restarted, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System);
         await recovery.ReconcileAsync(note.Id, CancellationToken.None); await recovery.ReconcileAsync(note.Id, CancellationToken.None);
         var saved = await restarted.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id);
-        saved.State.ShouldBe(LandNotificationState.Confirmed); saved.ConfirmingPromptSequence.ShouldBeGreaterThan(10);
+        saved.State.ShouldBe(LandNotificationState.Confirmed); saved.ConfirmingPromptSequence.ShouldNotBeNull().ShouldBeGreaterThan(10);
         (await restarted.TranscriptEntries.CountAsync(p => p.AgentSessionId == h.SessionId && p.Kind == TranscriptKinds.UserPrompt)).ShouldBe(1);
         h.Adapter.Inputs.ShouldBeEmpty("native catch-up and receipt persistence must not retype");
     }

@@ -348,6 +348,8 @@ public sealed partial class SessionMessageQueueService
                     if (existing.AgentSessionId != sessionId || existing.ContentDigest != contentDigest)
                         throw new ConflictException("Land notification identity has a different destination or payload.");
                     onCreated?.Invoke(existing.Id);
+                    if (scope.ServiceProvider.GetService<LandDeliveryBoundary>() is { } boundary)
+                        await boundary.ReachedAsync("queue-existing-key", sourceTaskId ?? Guid.Empty, existing.Id, ct);
                     return await GetQueueAsync(sessionId, ct);
                 }
             }

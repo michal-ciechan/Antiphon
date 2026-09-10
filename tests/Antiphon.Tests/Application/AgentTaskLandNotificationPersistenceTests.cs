@@ -9,6 +9,8 @@ using Antiphon.Server.Application.Services;
 using Npgsql;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.SessionRunner;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.Tests.Application;
 
@@ -49,6 +51,7 @@ public sealed class AgentTaskLandNotificationPersistenceTests
     public async Task C467_V17_UpgradeAndLegacyEvidence()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var bridge = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
         await using var db = new AppDbContext(options);
         var migrations = db.Database.GetMigrations().ToArray();
@@ -56,8 +59,9 @@ public sealed class AgentTaskLandNotificationPersistenceTests
         cut.ShouldBeGreaterThan(0);
         await db.GetService<IMigrator>().MigrateAsync(migrations[cut - 1]);
         var pending = Guid.NewGuid(); var legacy = Guid.NewGuid(); var none = Guid.NewGuid();
+        var unique = Guid.NewGuid(); var ambiguous = Guid.NewGuid();
         var old = DateTime.UtcNow.AddDays(-5);
-        foreach (var id in new[] { pending, legacy, none })
+        foreach (var id in new[] { pending, legacy, none, unique, ambiguous })
         {
             DateTime? requested = id == pending ? old : null;
             await db.Database.ExecuteSqlInterpolatedAsync($"""
@@ -68,6 +72,19 @@ public sealed class AgentTaskLandNotificationPersistenceTests
                     {(int)(id == none ? AgentTaskReplyTo.None : AgentTaskReplyTo.Session)}, {Guid.NewGuid()}, {old}, 0, 0, 0,
                     {(int)WorkspaceMode.Worktree}, 'feat/legacy', 'fixture', {requested}, 2, 'preserved-filter')
                 """);
+            if (id == unique || id == ambiguous)
+            {
+                await db.Database.ExecuteSqlInterpolatedAsync($"""
+                    UPDATE "AgentTasks" SET "ParentSessionId" = {bridge.SessionId} WHERE "Id" = {id}
+                    """);
+                for (var i = 0; i < (id == unique ? 1 : 2); i++)
+                    await db.Database.ExecuteSqlInterpolatedAsync($"""
+                        INSERT INTO "SessionQueuedMessages" ("Id", "AgentSessionId", "Body", "Status", "Sequence", "Origin", "ConversationKey",
+                            "CreatedAt", "DeliveryAttempts", "LastDeliveryBaselineSequence", "LastDeliveryStartedAt", "RulesFollowOnCount")
+                        VALUES ({Guid.NewGuid()}, {bridge.SessionId}, 'historical claim, no receipt', 1, {i + 1}, 3, {$"land:{id:N}"},
+                            {old.AddSeconds(1)}, 1, 10, {old}, 0)
+                        """);
+            }
             if (id != pending) await db.Database.ExecuteSqlInterpolatedAsync($"""
                 INSERT INTO "AgentTaskEvents" ("Id", "AgentTaskId", "Type", "Detail", "At")
                 VALUES ({Guid.NewGuid()}, {id}, {(int)AgentTaskEventType.Landed}, 'historical claim, no receipt', {old})
@@ -75,12 +92,24 @@ public sealed class AgentTaskLandNotificationPersistenceTests
         }
         await db.GetService<IMigrator>().MigrateAsync(); await db.GetService<IMigrator>().MigrateAsync();
         await using var observer = new AppDbContext(options);
-        var backfilled = await observer.AgentTaskLandRequests.SingleAsync();
+        var backfilled = await observer.AgentTaskLandRequests.SingleAsync(r => r.IsPending);
         backfilled.TaskId.ShouldBe(pending); backfilled.RequestedAt.ShouldBe(old, TimeSpan.FromMilliseconds(1));
         backfilled.LastProgressAt.ShouldBe(old, TimeSpan.FromMilliseconds(1)); backfilled.Attempt.ShouldBe(2);
         backfilled.VerifyFilter.ShouldBe("preserved-filter"); backfilled.State.ShouldBe(LandRequestState.Queued);
         (await observer.AgentTasks.SingleAsync(t => t.Id == pending)).CurrentLandRequestId.ShouldBe(backfilled.Id);
-        (await observer.AgentTaskLandNotifications.CountAsync()).ShouldBe(0, "history must not be replayed or guessed into an owed message");
+        var attached = await observer.AgentTaskLandNotifications.SingleAsync();
+        attached.TaskId.ShouldBe(unique); attached.IsLegacy.ShouldBeTrue(); attached.ConfirmedAt.ShouldBeNull();
+        attached.EnqueueAttempts.ShouldBe(0); attached.QueueMessageId.ShouldNotBeNull();
+        (await observer.SessionQueuedMessages.CountAsync(q => q.AgentSessionId == bridge.SessionId)).ShouldBe(3);
+        var notifier = new AgentTaskLandNotificationService(observer, bridge.Queue, new CompletionNoteFlushQueue(), bridge.Runtime, TimeProvider.System);
+        await notifier.ReconcileAsync(attached.Id, CancellationToken.None);
+        attached.ConfirmedAt.ShouldBeNull("a historical Sent row is not receipt evidence");
+        bridge.Runner.SetTranscript(new(bridge.SessionId, [new SessionRunnerTranscriptEvent(bridge.SessionId, 11, TranscriptKinds.UserPrompt,
+            "c467-legacy-evidence", null, DateTimeOffset.UtcNow, "user", attached.Body, null, null, null, null, null)], 11));
+        await notifier.ReconcileAsync(attached.Id, CancellationToken.None);
+        attached.State.ShouldBe(LandNotificationState.Confirmed); attached.ConfirmingPromptSequence.ShouldNotBeNull();
+        attached.EnqueueAttempts.ShouldBe(0); bridge.Adapter.Inputs.ShouldBeEmpty();
+        (await observer.SessionQueuedMessages.CountAsync(q => q.AgentSessionId == bridge.SessionId)).ShouldBe(3);
         (await observer.AgentTasks.Where(t => t.Id == legacy || t.Id == none).Select(t => t.CurrentLandRequestId).ToListAsync()).ShouldAllBe(id => id == null);
         await using var connection = new NpgsqlConnection(schema.ConnectionString); await connection.OpenAsync();
         await using var command = new NpgsqlCommand("SELECT count(*) FROM pg_indexes WHERE indexname IN ('IX_AgentTaskLandRequests_TaskId','IX_AgentTaskEvents_LandRequestId','IX_AgentTaskLandNotifications_SourceEventId','IX_SessionQueuedMessages_SourceLandNotificationId') AND indexdef LIKE '%UNIQUE%'", connection);

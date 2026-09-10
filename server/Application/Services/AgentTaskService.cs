@@ -1448,6 +1448,8 @@ public sealed class AgentTaskService
             && (e.Type == AgentTaskEventType.Landed || e.Type == AgentTaskEventType.AlreadyPresent || e.Type == AgentTaskEventType.LandedWithResidue
                 || e.Type == AgentTaskEventType.LandingCleanup || e.Type == AgentTaskEventType.LandRefused))
             .OrderByDescending(e => e.At).FirstOrDefaultAsync(ct);
+        var legacyNote = legacyLand is null ? null : await _db.AgentTaskLandNotifications.AsNoTracking()
+            .SingleOrDefaultAsync(n => n.SourceEventId == legacyLand.Id && n.IsLegacy, ct);
         return new AgentTaskDetailDto(
             ToSummary(task, family, await LoadCardIdentifiersAsync([task], ct)), task.Goal, task.Result,
             task.ResultFilePath, task.DeliverablePath, task.DeliverableRef,
@@ -1457,7 +1459,8 @@ public sealed class AgentTaskService
             landRequest is null ? null : LandRequestStatusDto.From(landRequest, _timeProvider.GetUtcNow().UtcDateTime,
                 landNotes.Select(LandNotificationStatusDto.From).ToList()),
             legacyLand is null ? null : new LegacyLandReceiptDto(legacyLand.Id, legacyLand.At,
-                task.ReplyTo == AgentTaskReplyTo.None ? "NotRequired" : "LegacyUnverified"));
+                legacyNote?.ConfirmedAt is not null ? "Confirmed" : task.ReplyTo == AgentTaskReplyTo.None ? "NotRequired" : "LegacyUnverified",
+                legacyNote?.QueueMessageId, legacyNote?.ConfirmedAt, legacyNote?.ConfirmingPromptSequence));
     }
 
     /// <summary>Record the first operator read; repeat opens deliberately preserve that timestamp.</summary>

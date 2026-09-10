@@ -13,4 +13,4 @@ public enum LandOperationMode { Fresh = 0, ResumePublication = 1, CleanupRetry =
 
 public enum LandRequestState { Queued, Held, Running, NeedsResolution, Completed, Superseded, Canceled }
 public enum LandNotificationKind { Held, Aged, Conflict, Outcome }
-public enum LandNotificationState { Queued, RetryPending, AwaitingReceipt, Confirmed, NotRequired, DestinationUnavailable, Canceled }
+public enum LandNotificationState { Queued, RetryPending, AwaitingReceipt, Confirmed, NotRequired, DestinationUnavailable, Canceled, LegacyUnverified }

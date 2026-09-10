@@ -119,6 +119,7 @@ public class AgentTaskLandDeliveryE2ETests
         }
         await f.SnapshotAsync(); await f.KillChildAsync(); await f.UseChildAsync("none"); await f.ReleaseBusyAsync();
         var received = await f.ReceiptAsync(); received.QueueMessageId.ShouldBe(queueId);
+        Directory.GetFiles(f.Root, "queue-existing-key-*.observation.json").ShouldNotBeEmpty();
         await f.AssertRemoteAsync(); await f.AssertOnePromptAsync(received);
     }
 
@@ -140,6 +141,7 @@ public class AgentTaskLandDeliveryE2ETests
         await using var f = new LandDeliveryFixture(); await f.InitializeAsync(cut: "lost-flush");
         await f.RequestAsync(); await f.ReleaseExecutionAsync();
         var note = await f.ReceiptAsync(); await f.AssertRemoteAsync(); await f.AssertOnePromptAsync(note);
+        Directory.GetFiles(f.Root, "completion-scan-*.observation.json").ShouldNotBeEmpty();
     }
 
     [Test]

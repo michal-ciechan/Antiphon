@@ -264,6 +264,7 @@ public enum AttentionKind
     LandHeld = 35,
     LandNoProgress = 36,
     LandOutcomeUnconfirmed = 37,
+    LandLegacyUnverified = 38,
 }
 
 /// <summary>
@@ -372,7 +373,7 @@ public sealed record AttentionSummaryDto(
     DateTime GeneratedAt)
 {
     public static AttentionSummaryDto From(AttentionDto attention) => new(
-        attention.Items.Count(item => item.Kind != AttentionKind.RecentFailure),
+        attention.Items.Count(item => item.Kind != AttentionKind.RecentFailure && item.Kind != AttentionKind.LandLegacyUnverified),
         attention.Items.Count(item => item.Kind == AttentionKind.CardNeedsDecision),
         attention.GeneratedAt);
 }

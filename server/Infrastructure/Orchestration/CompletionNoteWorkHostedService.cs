@@ -32,7 +32,12 @@ public sealed class CompletionNoteWorkHostedService(
                     .Select(m => m.AgentSessionId).Distinct().OrderBy(id => id)
                     .Skip(_scanOffset).Take(128).ToListAsync(ct);
                 _scanOffset = sessions.Count == 128 ? _scanOffset + 128 : 0;
-                foreach (var session in sessions) flushes.TryEnqueue(session);
+                foreach (var session in sessions)
+                {
+                    if (scope.ServiceProvider.GetService<LandDeliveryBoundary>() is { } boundary)
+                        await boundary.ReachedAsync("completion-scan", Guid.Empty, session, ct);
+                    flushes.TryEnqueue(session);
+                }
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             { logger.LogWarning(ex, "Completion note recovery scan failed"); }

@@ -39,7 +39,7 @@ public sealed class AgentTaskLandMonitorService(AppDbContext db, TimeProvider cl
             if (changed) await events.PublishToAllAsync("AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
         }
         // Publication is terminal, receipt is not. Its clock starts at the outcome commit.
-        var outcomes = await db.AgentTaskLandNotifications.AsNoTracking().Where(n => n.Kind == LandNotificationKind.Outcome
+        var outcomes = await db.AgentTaskLandNotifications.AsNoTracking().Where(n => !n.IsLegacy && n.Kind == LandNotificationKind.Outcome
             && n.ConfirmedAt == null && n.State != LandNotificationState.NotRequired && n.ErrorAt == null)
             .Select(n => new { n.Id, n.TaskId }).ToListAsync(ct);
         foreach (var outcome in outcomes)

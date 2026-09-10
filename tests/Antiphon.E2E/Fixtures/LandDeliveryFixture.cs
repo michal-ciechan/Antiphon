@@ -187,7 +187,9 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
     }
     public async Task AssertOnePromptAsync(AgentTaskLandNotification note)
     {
-        await Task.Delay(TimeSpan.FromSeconds(11));
+        var scans = Directory.GetFiles(Root, "notification-scan-*.observation.json").Length;
+        await UntilAsync(() => Task.FromResult(Directory.GetFiles(Root, "notification-scan-*.observation.json").Length >= scans + 2),
+            "two additional completed notification scans");
         await using var db = CreateContext();
         var prompts = await db.TranscriptEntries.Where(p => p.AgentSessionId == CallerId && p.Kind == TranscriptKinds.UserPrompt && p.Text != null).ToListAsync();
         prompts.Count(p => p.Text!.Contains("[land " + note.Id.ToString("N"))).ShouldBe(1);
@@ -250,6 +252,7 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
             notifications = await db.AgentTaskLandNotifications.AsNoTracking().Where(n => n.TaskId == TaskId).ToListAsync(),
             queue = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.SourceTaskId == TaskId).ToListAsync(),
             prompts = await db.TranscriptEntries.AsNoTracking().Where(p => p.AgentSessionId == CallerId && p.Kind == TranscriptKinds.UserPrompt).ToListAsync() }));
+        File.Copy(Path.Combine(Root, "delivery-evidence.json"), Path.Combine(Root, $"delivery-evidence-{TaskId:N}-{Guid.NewGuid():N}.json"));
     }
     public async Task ArrangeOutcomeAsync(string outcome)
     {
@@ -296,6 +299,8 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
     }
     public async ValueTask DisposeAsync()
     {
+        try { if (!string.IsNullOrEmpty(_connection)) await SnapshotAsync(); }
+        catch (Exception ex) { await File.WriteAllTextAsync(Path.Combine(Root, "snapshot-failure.txt"), ex.GetType().Name + ": " + ex.Message); }
         await KillChildAsync();
         if (_app is not null && !_shared) await _app.DisposeAsync();
         _http?.Dispose();

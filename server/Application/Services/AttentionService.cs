@@ -1199,7 +1199,7 @@ public sealed class AttentionService
             if (request.State == LandRequestState.Held && age >= _delegation.LandWarningSeconds)
                 items.Add(item with { Kind = AttentionKind.LandNoProgress, ConditionKey = $"land:{request.Id:N}:progress", SinceUtc = request.LastProgressAt });
         }
-        var notes = await _db.AgentTaskLandNotifications.AsNoTracking().Where(n => n.ConfirmedAt == null
+        var notes = await _db.AgentTaskLandNotifications.AsNoTracking().Where(n => !n.IsLegacy && n.ConfirmedAt == null
             && n.State != LandNotificationState.NotRequired).ToListAsync(ct);
         foreach (var note in notes)
         {
@@ -1218,6 +1218,19 @@ public sealed class AttentionService
                     + $"error={note.LastErrorCode}; parked={parked}; {note.Body}",
                 note.CreatedAt, null, [AttentionAction.OpenDrawer], task.CardId,
                 ConditionKey: $"land:{note.Id:N}:receipt", LandRequestId: note.RequestId, LandNotificationId: note.Id));
+        }
+        var legacy = await _db.AgentTaskEvents.AsNoTracking().Where(e => e.LandRequestId == null
+            && (e.Type == AgentTaskEventType.Landed || e.Type == AgentTaskEventType.AlreadyPresent || e.Type == AgentTaskEventType.LandedWithResidue
+                || e.Type == AgentTaskEventType.LandingCleanup || e.Type == AgentTaskEventType.LandRefused))
+            .GroupBy(e => e.AgentTaskId).Select(g => g.OrderByDescending(e => e.At).First()).ToListAsync(ct);
+        foreach (var source in legacy)
+        {
+            if (await _db.AgentTaskLandNotifications.AnyAsync(n => n.SourceEventId == source.Id && n.ConfirmedAt != null, ct)) continue;
+            var task = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == source.AgentTaskId, ct);
+            if (task.ReplyTo == AgentTaskReplyTo.None) continue;
+            items.Add(new AttentionItemDto(AttentionKind.LandLegacyUnverified, AlertSeverity.Info, task.Id, null, task.AgentId, null,
+                task.Title, "Historical Land receipt: LegacyUnverified", "Historical routing/receipt is unknown; no new message is inferred or replayed.",
+                source.At, null, [AttentionAction.OpenDrawer], task.CardId, ConditionKey: $"legacy-land:{source.Id:N}"));
         }
         return items;
     }

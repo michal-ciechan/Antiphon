@@ -237,7 +237,7 @@ export interface BlockedContextDto {
 }
 
 export interface AgentTaskDetailDto {
-  legacyLandReceipt?: { eventId: string; at: string; state: 'LegacyUnverified' | 'NotRequired' } | null
+  legacyLandReceipt?: { eventId: string; at: string; state: 'LegacyUnverified' | 'NotRequired' | 'Confirmed' } | null
   landRequest?: {
     id: string
     state: string
