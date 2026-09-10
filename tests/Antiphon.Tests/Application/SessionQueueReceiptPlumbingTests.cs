@@ -38,109 +38,108 @@ public sealed class SessionQueueReceiptPlumbingTests
         if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
         if (!File.Exists(FakeClaudeExe)) throw new SkipTestException("fakeclaude missing");
         await using var world = await PtyWorld.StartAsync();
-        switch (cut)
+        const string body = "CARD-0475 complete recipient body for " ;
+        var text = body + cut;
+        if (cut == "insert-fails")
         {
-            case "insert-fails":
+            world.Fault.FailNextInsert = true;
+            await Should.ThrowAsync<InvalidOperationException>(() =>
+                world.Queue.EnqueueAsync(world.SessionId, text, MessageSendMode.WhenIdle, CancellationToken.None));
+            (await world.RowsAsync()).ShouldBeEmpty();
+            world.Forward.Writes.ShouldBeEmpty();
+            SessionQueueTranscriptPump.FileUserPrompts(world.TranscriptPath).ShouldBeEmpty();
+            (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(world.SessionId, 0)).ShouldBeEmpty();
+            world.Fault.FailNextInsert = false;
+            world.RecreateQueue();
+            await world.Queue.EnqueueAsync(world.SessionId, text, MessageSendMode.WhenIdle, CancellationToken.None);
+        }
+        else if (cut == "pending-before-flush")
+        {
+            await world.AddActivityAsync(TranscriptKinds.AssistantText);
+            await world.Queue.EnqueueAsync(world.SessionId, text, MessageSendMode.WhenIdle, CancellationToken.None);
+            var pending = (await world.RowsAsync()).ShouldHaveSingleItem();
+            pending.Status.ShouldBe(QueuedMessageStatus.Pending);
+            pending.DeliveryAttempts.ShouldBe(0);
+            world.Forward.Writes.ShouldBeEmpty();
+            world.RecreateQueue();
+            await world.AddActivityAsync(TranscriptKinds.TurnEnd);
+            await world.Queue.FlushSessionAsync(world.SessionId, CancellationToken.None);
+            (await world.RowsAsync()).ShouldHaveSingleItem().Id.ShouldBe(pending.Id);
+        }
+        else if (cut == "attempt-before-write")
+        {
+            world.Forward.BlockWrites = true;
+            var attempt = world.Queue.EnqueueAsync(world.SessionId, text, MessageSendMode.WhenIdle, CancellationToken.None);
+            try
             {
-                world.Fault.FailNextInsert = true;
-                await Should.ThrowAsync<Exception>(() =>
-                    world.Queue.EnqueueAsync(world.SessionId, "never inserted", MessageSendMode.WhenIdle, CancellationToken.None));
-                await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
-                (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == world.SessionId)).ShouldBe(0);
+                await world.Forward.WriteReached.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                var claimed = (await world.RowsAsync()).ShouldHaveSingleItem();
+                claimed.Status.ShouldBe(QueuedMessageStatus.Sent);
+                claimed.DeliveryAttempts.ShouldBe(1);
+                claimed.LastDeliveryBaselineSequence.ShouldNotBeNull();
                 world.Forward.Writes.ShouldBeEmpty();
                 (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(world.SessionId, 0)).ShouldBeEmpty();
-                world.Fault.FailNextInsert = false;
-                await world.Queue.EnqueueAsync(world.SessionId, "after insert", MessageSendMode.WhenIdle, CancellationToken.None);
-                SessionQueueTranscriptPump.FileUserPrompts(world.TranscriptPath).ShouldContain("after insert");
-                break;
             }
-            case "pending-before-flush":
+            finally
             {
-                await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
-                    db.TranscriptEntries.Add(new TranscriptEntry
-                    {
-                        Id = Guid.NewGuid(), AgentSessionId = world.SessionId, Sequence = 1,
-                        Kind = Antiphon.SessionRunner.Contracts.TranscriptKinds.AssistantText,
-                        Text = "working", CreatedAt = DateTime.UtcNow,
-                    });
-                await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
-                {
-                    db.TranscriptEntries.Add(new TranscriptEntry
-                    {
-                        Id = Guid.NewGuid(), AgentSessionId = world.SessionId, Sequence = 1,
-                        Kind = Antiphon.SessionRunner.Contracts.TranscriptKinds.AssistantText,
-                        Text = "working", CreatedAt = DateTime.UtcNow,
-                    });
-                    await db.SaveChangesAsync();
-                }
-                await world.Queue.EnqueueAsync(world.SessionId, "held while busy", MessageSendMode.WhenIdle, CancellationToken.None);
-                await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
-                {
-                    var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == world.SessionId);
-                    row.Status.ShouldBe(QueuedMessageStatus.Pending);
-                }
-                world.Forward.Writes.ShouldBeEmpty();
-                await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
-                {
-                    db.TranscriptEntries.Add(new TranscriptEntry
-                    {
-                        Id = Guid.NewGuid(), AgentSessionId = world.SessionId, Sequence = 2,
-                        Kind = Antiphon.SessionRunner.Contracts.TranscriptKinds.TurnEnd,
-                        StopReason = "end_turn", CreatedAt = DateTime.UtcNow,
-                    });
-                    await db.SaveChangesAsync();
-                }
-                await world.Queue.OnTurnEndAsync(world.SessionId, CancellationToken.None);
-                SessionQueueTranscriptPump.FileUserPrompts(world.TranscriptPath).ShouldContain("held while busy");
-                break;
-            }
-            case "attempt-before-write":
-                world.Forward.BlockWrites = true;
-                var attempt = world.Queue.EnqueueAsync(world.SessionId, "blocked write", MessageSendMode.WhenIdle, CancellationToken.None);
-                await Task.Delay(300);
                 world.Forward.BlockWrites = false;
                 world.Forward.ReleaseWrites();
                 await attempt;
-                await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
-                {
-                    var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == world.SessionId);
-                    row.DeliveryAttempts.ShouldBeGreaterThanOrEqualTo(1);
-                    row.LastDeliveryBaselineSequence.ShouldNotBeNull();
-                }
-                break;
-            case "body-before-enter":
-                world.Forward.WithholdEnter = true;
-                await Should.ThrowAsync<Exception>(() =>
-                    world.Queue.EnqueueAsync(world.SessionId, "body stays", MessageSendMode.Now, CancellationToken.None));
-                (await world.Client.GetSnapshotAsync(world.SessionId, CancellationToken.None)).RawOutput
-                    .ShouldContain("body stays");
-                world.Forward.WithholdEnter = false;
-                await world.Queue.EnqueueAsync(world.SessionId, "body stays", MessageSendMode.Now, CancellationToken.None);
-                SessionQueueTranscriptPump.FileUserPrompts(world.TranscriptPath).Count(p => p == "body stays").ShouldBe(1);
-                break;
-            case "recipient-before-ingestion":
-                world.PumpHold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                await world.Queue.EnqueueAsync(world.SessionId, "ingest later", MessageSendMode.Now, CancellationToken.None);
-                world.PumpHold.SetResult();
-                await Task.Delay(400);
-                SessionQueueTranscriptPump.FileUserPrompts(world.TranscriptPath).ShouldContain("ingest later");
-                break;
-            case "receipt-before-verdict":
-                world.Fault.FailVerdict = true;
-                try
-                {
-                    await world.Queue.EnqueueAsync(world.SessionId, "late verdict", MessageSendMode.WhenIdle, CancellationToken.None);
-                }
-                catch { /* injected */ }
-                world.Fault.FailVerdict = false;
-                await world.Queue.EnqueueAsync(world.SessionId, "late verdict", MessageSendMode.WhenIdle, CancellationToken.None);
-                await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
-                {
-                    var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == world.SessionId);
-                    row.Status.ShouldBe(QueuedMessageStatus.Sent);
-                }
-                break;
+            }
         }
+        else
+        {
+            if (cut == "recipient-before-ingestion") await world.StopPumpAsync();
+            if (cut == "receipt-before-verdict") world.Fault.FailVerdict = true;
+            else
+            {
+                // A process cut leaves the already committed attempt intact. Refuse the
+                // graceful exception handler's revert as well as the selected transport cut.
+                world.Fault.FailRevert = true;
+                world.Forward.CutAtEnter = cut == "body-before-enter" ? "before" : "after";
+            }
+            await Should.ThrowAsync<InvalidOperationException>(() =>
+                world.Queue.EnqueueAsync(world.SessionId, text, MessageSendMode.WhenIdle, CancellationToken.None));
+            var interrupted = (await world.RowsAsync()).ShouldHaveSingleItem();
+            interrupted.Status.ShouldBe(QueuedMessageStatus.Sent);
+            interrupted.DeliveryVerdict.ShouldBeNull();
+            interrupted.DeliveryAttempts.ShouldBe(1);
+            interrupted.LastDeliveryBaselineSequence.ShouldNotBeNull();
+            if (cut == "body-before-enter")
+            {
+                (await world.Client.GetSnapshotAsync(world.SessionId, CancellationToken.None)).RawOutput.ShouldContain(text);
+                SessionQueueTranscriptPump.FileUserPrompts(world.TranscriptPath).ShouldBeEmpty();
+            }
+            else
+            {
+                await WaitUntilAsync(() => Task.FromResult(SessionQueueTranscriptPump.FileUserPrompts(world.TranscriptPath).Contains(text)));
+                if (cut == "recipient-before-ingestion")
+                {
+                    (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(world.SessionId, 0)).ShouldBeEmpty();
+                    world.StartPump();
+                }
+                await world.WaitForReceiptAsync(text);
+            }
+            var writes = world.Forward.Writes.Count;
+            world.Fault.FailVerdict = false;
+            world.Fault.FailRevert = false;
+            world.Forward.CutAtEnter = null;
+            world.Clock.Offset = TimeSpan.FromMinutes(2);
+            world.RecreateQueue();
+            await world.Queue.FlushSessionAsync(world.SessionId, CancellationToken.None);
+            var recovered = (await world.RowsAsync()).ShouldHaveSingleItem();
+            recovered.Id.ShouldBe(interrupted.Id);
+            recovered.DeliveryAttempts.ShouldBe(1);
+            recovered.LastDeliveryBaselineSequence.ShouldBe(interrupted.LastDeliveryBaselineSequence);
+            recovered.DeliveryVerdict.ShouldBe(cut == "body-before-enter" ? DeliveryVerdict.Delivered : DeliveryVerdict.LateConfirmed);
+            world.Forward.Writes.Skip(writes).ShouldBe(cut == "body-before-enter" ? new[] { "\r" } : Array.Empty<string>());
+        }
+        await world.WaitForReceiptAsync(text);
+        SessionQueueTranscriptPump.FileUserPrompts(world.TranscriptPath).ShouldBe([text]);
+        (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(world.SessionId, 0)).ShouldBe([text]);
+        var delivered = (await world.RowsAsync()).ShouldHaveSingleItem();
+        delivered.Status.ShouldBe(QueuedMessageStatus.Sent);
+        delivered.DeliveryVerdict.ShouldNotBeNull();
     }
 
     [Test]
@@ -180,16 +179,19 @@ public sealed class SessionQueueReceiptPlumbingTests
         using var cts = new CancellationTokenSource();
         var uuid = Guid.NewGuid().ToString("N");
         var line = "{\"type\":\"user\",\"uuid\":\"" + uuid + "\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"pump body\"}]}}\n";
+        Task pumping = Task.CompletedTask;
+        Task pumping2 = Task.CompletedTask;
+        using var cts2 = new CancellationTokenSource();
         try
         {
             if (cut == "partial-line")
             {
                 await File.WriteAllTextAsync(path, line.TrimEnd('\n'));
-                var pumping = SessionQueueTranscriptPump.RunAsync(path, sessionId, cts.Token);
+                pumping = SessionQueueTranscriptPump.RunAsync(path, sessionId, cts.Token);
                 await Task.Delay(250);
                 (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(sessionId, 0)).ShouldBeEmpty();
                 await File.AppendAllTextAsync(path, "\n");
-                await Task.Delay(300);
+                await WaitUntilAsync(async () => (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(sessionId, 0)).Count == 1);
                 cts.Cancel();
                 await pumping;
                 (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(sessionId, 0)).ShouldBe(["pump body"]);
@@ -197,14 +199,14 @@ public sealed class SessionQueueReceiptPlumbingTests
             else if (cut == "read-fails")
             {
                 var reads = 0;
-                var pumping = SessionQueueTranscriptPump.RunAsync(path, sessionId, cts.Token, beforeRead: () =>
+                pumping = SessionQueueTranscriptPump.RunAsync(path, sessionId, cts.Token, beforeRead: () =>
                 {
                     reads++;
                     if (reads == 1) throw new IOException("injected read");
                     return Task.CompletedTask;
                 });
                 await File.WriteAllTextAsync(path, line);
-                await Task.Delay(400);
+                await WaitUntilAsync(async () => (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(sessionId, 0)).Count == 1);
                 cts.Cancel();
                 await pumping;
                 (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(sessionId, 0)).ShouldBe(["pump body"]);
@@ -212,14 +214,14 @@ public sealed class SessionQueueReceiptPlumbingTests
             else if (cut == "save-fails")
             {
                 var saves = 0;
-                var pumping = SessionQueueTranscriptPump.RunAsync(path, sessionId, cts.Token, beforeSave: () =>
+                pumping = SessionQueueTranscriptPump.RunAsync(path, sessionId, cts.Token, beforeSave: () =>
                 {
                     saves++;
-                    if (saves == 1) throw new InvalidOperationException("injected save");
+                    if (saves == 1) throw new IOException("injected save");
                     return Task.CompletedTask;
                 });
                 await File.WriteAllTextAsync(path, line);
-                await Task.Delay(500);
+                await WaitUntilAsync(async () => (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(sessionId, 0)).Count == 1);
                 cts.Cancel();
                 await pumping;
                 (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(sessionId, 0)).ShouldBe(["pump body"]);
@@ -227,12 +229,11 @@ public sealed class SessionQueueReceiptPlumbingTests
             else if (cut == "restart-after-commit")
             {
                 await File.WriteAllTextAsync(path, line);
-                var pumping = SessionQueueTranscriptPump.RunAsync(path, sessionId, cts.Token);
-                await Task.Delay(300);
+                pumping = SessionQueueTranscriptPump.RunAsync(path, sessionId, cts.Token);
+                await WaitUntilAsync(async () => (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(sessionId, 0)).Count == 1);
                 cts.Cancel();
                 await pumping;
-                using var cts2 = new CancellationTokenSource();
-                var pumping2 = SessionQueueTranscriptPump.RunAsync(path, sessionId, cts2.Token);
+                pumping2 = SessionQueueTranscriptPump.RunAsync(path, sessionId, cts2.Token);
                 await Task.Delay(300);
                 cts2.Cancel();
                 await pumping2;
@@ -241,8 +242,8 @@ public sealed class SessionQueueReceiptPlumbingTests
             else
             {
                 await File.WriteAllTextAsync(path, line);
-                var pumping = SessionQueueTranscriptPump.RunAsync(path, sessionId, cts.Token);
-                await Task.Delay(300);
+                pumping = SessionQueueTranscriptPump.RunAsync(path, sessionId, cts.Token);
+                await WaitUntilAsync(async () => (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(sessionId, 0)).Count == 1);
                 cts.Cancel();
                 await pumping;
                 await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
@@ -254,6 +255,9 @@ public sealed class SessionQueueReceiptPlumbingTests
         }
         finally
         {
+            cts.Cancel();
+            cts2.Cancel();
+            await Task.WhenAll(pumping, pumping2);
             await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId || t.AgentSessionId == other).ExecuteDeleteAsync();
             await db.AgentSessions.Where(s => s.Id == sessionId || s.Id == other).ExecuteDeleteAsync();
@@ -272,25 +276,39 @@ public sealed class SessionQueueReceiptPlumbingTests
             db.AgentSessions.Add(new AgentSession { Id = sessionId, DefinitionName = "x", AgentKind = AgentKind.ClaudeCode, Status = SessionStatus.Running, Cwd = ".", Cols = 80, Rows = 24, CreatedAt = now, StartedAt = now, LastSeenAt = now });
             await db.SaveChangesAsync();
         }
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var cts = new CancellationTokenSource();
-        var pumping = SessionQueueTranscriptPump.RunAsync(path, sessionId, cts.Token, hold: hold.Task);
-        var cleanup = Task.Run(async () =>
+        var pumping = SessionQueueTranscriptPump.RunAsync(path, sessionId, cts.Token,
+            beforeRead: () => { entered.TrySetResult(); return Task.CompletedTask; }, hold: hold.Task);
+        Task cleanup = Task.CompletedTask;
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            cleanup = CleanupAsync();
+            cleanup.IsCompleted.ShouldBeFalse();
+            await using var check = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            (await check.AgentSessions.AnyAsync(s => s.Id == sessionId)).ShouldBeTrue();
+        }
+        finally
+        {
+            hold.TrySetResult();
+            cts.Cancel();
+            await pumping;
+            await cleanup;
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
+            File.Delete(path);
+        }
+
+        async Task CleanupAsync()
         {
             cts.Cancel();
             await pumping;
-        });
-        await Task.Delay(150);
-        cleanup.IsCompleted.ShouldBeFalse();
-        hold.SetResult();
-        await cleanup;
-        cleanup.IsCompleted.ShouldBeTrue();
-        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
-        {
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).ExecuteDeleteAsync();
             await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
         }
-        try { File.Delete(path); } catch { }
     }
 
     [Test]
@@ -312,7 +330,7 @@ public sealed class SessionQueueReceiptPlumbingTests
         await h.Queue.EnqueueAsync(h.SessionId, "one esc", MessageSendMode.WhenIdle, CancellationToken.None);
         h.Adapter.Inputs.Count(i => i == "\u001b").ShouldBe(1);
         h.Adapter.Inputs.ShouldNotContain("\r");
-        SessionQueueTranscriptPump.FileUserPrompts("missing").ShouldBeEmpty();
+        (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(h.SessionId, 0)).ShouldBeEmpty();
     }
 
     [Test]
@@ -328,16 +346,28 @@ public sealed class SessionQueueReceiptPlumbingTests
         SessionQueueTranscriptPump.FileUserPrompts(world.TranscriptPath).ShouldBe([body.Replace("\r\n", "\n")]);
     }
 
+    private static async Task WaitUntilAsync(Func<Task<bool>> condition)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        while (!await condition()) await Task.Delay(50, deadline.Token);
+    }
+
+    private sealed class OffsetClock : TimeProvider
+    {
+        public TimeSpan Offset { get; set; }
+        public override DateTimeOffset GetUtcNow() => DateTimeOffset.UtcNow + Offset;
+    }
+
     private sealed class PtyWorld : IAsyncDisposable
     {
         public required DirectSessionRunnerClient Client { get; init; }
         public required Guid SessionId { get; init; }
         public required string TranscriptPath { get; init; }
         public required string Cwd { get; init; }
-        public required SessionMessageQueueService Queue { get; init; }
+        public required SessionMessageQueueService Queue { get; set; }
         public required ForwardingClient Forward { get; init; }
         public required InsertFault Fault { get; init; }
-        public TaskCompletionSource? PumpHold { get; set; }
+        public required OffsetClock Clock { get; init; }
         private CancellationTokenSource _pump = new();
         private Task _pumping = Task.CompletedTask;
         private ServiceProvider _provider = null!;
@@ -360,7 +390,8 @@ public sealed class SessionQueueReceiptPlumbingTests
             });
             var bus = new MockEventBus();
             services.AddSingleton<IEventBus>(bus);
-            services.AddSingleton(TimeProvider.System);
+            var clock = new OffsetClock();
+            services.AddSingleton<TimeProvider>(clock);
             services.AddSingleton<IOptions<AgentSessionSettings>>(Options.Create(new AgentSessionSettings()));
             services.AddSingleton<IOptions<SupervisionSettings>>(Options.Create(new SupervisionSettings
             {
@@ -368,13 +399,14 @@ public sealed class SessionQueueReceiptPlumbingTests
             }));
             services.AddSingleton<ISessionRunnerClient>(forward);
             services.AddSingleton<AgentSessionRuntime>();
-            services.AddSingleton<SessionMessageQueueService>();
+            services.AddTransient<SessionMessageQueueService>();
             services.AddLogging();
             var provider = services.BuildServiceProvider();
             await inner.StartAsync(sessionId, new AgentLaunchSpec("fakeclaude", AgentKind.ClaudeCode, FakeClaudeExe, [],
                 new Dictionary<string, string> { ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = transcript }, cwd, 120, 30), CancellationToken.None);
-            await using (var db = provider.GetRequiredService<AppDbContext>())
+            await using (var scope = provider.CreateAsyncScope())
             {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                 var now = DateTime.UtcNow;
                 db.AgentSessions.Add(new AgentSession { Id = sessionId, DefinitionName = "fakeclaude", AgentKind = AgentKind.ClaudeCode, Status = SessionStatus.Running, Cwd = cwd, Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now });
                 db.TranscriptEntries.Add(new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = 1, Kind = Antiphon.SessionRunner.Contracts.TranscriptKinds.TurnEnd, StopReason = "end_turn", CreatedAt = now });
@@ -383,18 +415,59 @@ public sealed class SessionQueueReceiptPlumbingTests
             var world = new PtyWorld
             {
                 Client = inner, SessionId = sessionId, TranscriptPath = transcript, Cwd = cwd,
-                Queue = provider.GetRequiredService<SessionMessageQueueService>(), Forward = forward, Fault = fault,
+                Queue = provider.GetRequiredService<SessionMessageQueueService>(), Forward = forward, Fault = fault, Clock = clock,
             };
             world._provider = provider;
-            world._pumping = SessionQueueTranscriptPump.RunAsync(transcript, sessionId, world._pump.Token,
-                hold: world.PumpHold?.Task);
+            await WaitUntilAsync(async () => (await inner.GetSnapshotAsync(sessionId, CancellationToken.None)).RawOutput.Contains("Fake Claude ready"));
+            world.StartPump();
             return world;
         }
 
-        public async ValueTask DisposeAsync()
+        public void RecreateQueue() => Queue = _provider.GetRequiredService<SessionMessageQueueService>();
+
+        public void StartPump()
+        {
+            _pump.Dispose();
+            _pump = new CancellationTokenSource();
+            _pumping = SessionQueueTranscriptPump.RunAsync(TranscriptPath, SessionId, _pump.Token);
+        }
+
+        public async Task StopPumpAsync()
         {
             _pump.Cancel();
-            try { await _pumping; } catch { }
+            await _pumping;
+        }
+
+        public async Task<List<SessionQueuedMessage>> RowsAsync()
+        {
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            return await db.SessionQueuedMessages.AsNoTracking().Where(m => m.AgentSessionId == SessionId).ToListAsync();
+        }
+
+        public async Task AddActivityAsync(string kind)
+        {
+            await StopPumpAsync();
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            var seq = await SessionQueueTranscriptPump.MaxSequenceAsync(SessionId);
+            db.TranscriptEntries.Add(new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = SessionId,
+                Sequence = seq + 1, Kind = kind, Text = kind == TranscriptKinds.AssistantText ? "working" : null,
+                StopReason = kind == TranscriptKinds.TurnEnd ? "end_turn" : null, CreatedAt = DateTime.UtcNow });
+            await db.SaveChangesAsync();
+            StartPump();
+        }
+
+        public Task WaitForReceiptAsync(string text) => WaitUntilAsync(async () =>
+        {
+            if (_pumping.IsFaulted) await _pumping;
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            return await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == SessionId && t.Kind == TranscriptKinds.UserPrompt && t.Text == text)
+                && await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == SessionId && t.Sequence > 1 && t.Kind == TranscriptKinds.TurnEnd);
+        });
+
+        public async ValueTask DisposeAsync()
+        {
+            await StopPumpAsync();
+            _pump.Dispose();
             try { await Client.KillAsync(SessionId, CancellationToken.None); } catch { }
             await Client.DisposeAsync();
             await _provider.DisposeAsync();
@@ -414,7 +487,8 @@ public sealed class SessionQueueReceiptPlumbingTests
         public List<string> Writes { get; } = [];
         public List<string> Payloads { get; } = [];
         public bool BlockWrites { get; set; }
-        public bool WithholdEnter { get; set; }
+        public string? CutAtEnter { get; set; }
+        public TaskCompletionSource WriteReached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private TaskCompletionSource _writeGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public void ReleaseWrites() { _writeGate.TrySetResult(); _writeGate = new(TaskCreationOptions.RunContinuationsAsynchronously); }
         public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) => inner.ListAsync(ct);
@@ -426,11 +500,16 @@ public sealed class SessionQueueReceiptPlumbingTests
         public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid id, CancellationToken ct) => inner.GetTranscriptAsync(id, ct);
         public async Task SendInputAsync(Guid id, string input, CancellationToken ct)
         {
-            if (BlockWrites) await _writeGate.Task;
-            if (WithholdEnter && input == "\r") return;
+            if (BlockWrites)
+            {
+                WriteReached.TrySetResult();
+                await _writeGate.Task.WaitAsync(ct);
+            }
+            if (CutAtEnter == "before" && input == "\r") throw new InvalidOperationException("injected cut before Enter");
             Writes.Add(input);
             Payloads.Add(input);
             await inner.SendInputAsync(id, input, ct);
+            if (CutAtEnter == "after" && input == "\r") throw new InvalidOperationException("injected cut after Enter");
         }
         public Task ClearLiveBufferAsync(Guid id, CancellationToken ct) => inner.ClearLiveBufferAsync(id, ct);
         public Task ResizeAsync(Guid id, int c, int r, CancellationToken ct) => inner.ResizeAsync(id, c, r, ct);
@@ -442,8 +521,12 @@ public sealed class SessionQueueReceiptPlumbingTests
     {
         public bool FailNextInsert { get; set; }
         public bool FailVerdict { get; set; }
+        public bool FailRevert { get; set; }
         public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data, InterceptionResult<int> result, CancellationToken ct = default)
         {
+            if (FailRevert && data.Context!.ChangeTracker.Entries<SessionQueuedMessage>()
+                .Any(e => e.State == EntityState.Modified && e.Entity.Status == QueuedMessageStatus.Pending))
+                throw new InvalidOperationException("injected process cut prevents revert");
             if (FailNextInsert && data.Context!.ChangeTracker.Entries<SessionQueuedMessage>().Any(e => e.State == EntityState.Added))
                 throw new InvalidOperationException("injected insert failure");
             if (FailVerdict && data.Context!.ChangeTracker.Entries<SessionQueuedMessage>().Any(e => e.Entity.DeliveryVerdict is not null))
