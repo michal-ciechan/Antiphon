@@ -267,7 +267,7 @@ function serveRouting(options?: {
 describe('RoutingSettingsTab', () => {
   it('C470 mutation can be selected and saved independently', async () => {
     const put = vi.fn()
-    serveRouting({ list: { ...listDto, roles: [...listDto.roles, 'Mutation'] } })
+    serveRouting({ list: { ...listDto, roles: [...(listDto.roles ?? []), 'Mutation'] } })
     server.use(http.put('/api/complexity-chains/:role/:complexity', async ({ params, request }) => {
       put(params.role, await request.json())
       return HttpResponse.json(chain('Hard', { role: 'Mutation' }))
