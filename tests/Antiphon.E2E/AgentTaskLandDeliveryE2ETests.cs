@@ -73,7 +73,8 @@ public class AgentTaskLandDeliveryE2ETests
             return await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Aged && n.ConfirmedAt != null) == 2;
         }, "both hold age receipts");
         await f.SnapshotAsync(); await f.KillChildAsync(); await f.UseChildAsync("none");
-        (await f.AttentionAsync()).Items.ShouldContain(i => i.Kind == AttentionKind.LandHeld && i.LandRequestId == held.RequestId && i.HoldingTaskId == writer);
+        var heldAttention = (await f.AttentionAsync()).Items.Single(i => i.LandRequestId == held.RequestId && i.LandNotificationId == null);
+        heldAttention.Kind.ShouldBe(AttentionKind.LandHeld); heldAttention.HoldingTaskId.ShouldBe(writer);
         await using (var db = f.CreateContext())
         {
             var request = await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == f.TaskId);
@@ -254,6 +255,13 @@ public class AgentTaskLandDeliveryE2ETests
         {
             var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Outcome);
             note.ConfirmedAt.ShouldBeNull();
+            var aged = await db.AgentTaskLandNotifications.Where(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Aged).ToListAsync();
+            aged.Count.ShouldBe(2);
+            foreach (var warning in aged)
+            {
+                warning.Body.ShouldContain("\npublication=Landed; cleanup=Complete\n");
+                warning.LandingOperationId.ShouldBe(note.LandingOperationId);
+            }
             (await db.TranscriptEntries.AnyAsync(p => p.AgentSessionId == f.CallerId && p.Kind == TranscriptKinds.UserPrompt && p.Text!.Contains("[land " + note.Id.ToString("N")))).ShouldBeFalse();
         }
         if (state == "busy") await f.ReleaseBusyAsync(); else await f.ReleaseBoundaryAsync("queue-before-typing");

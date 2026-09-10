@@ -28,11 +28,14 @@ public sealed class AgentTaskLandMonitorService(AppDbContext db, TimeProvider cl
             request.ReconciliationError = task.CurrentLandRequestId != request.Id || task.LandRequestedAt != request.RequestedAt
                 || task.LandAttempt != request.Attempt ? "land_request_mirror_disagreement" : null;
             var age = (now - request.LastProgressAt).TotalSeconds;
+            var operation = age >= settings.Value.LandWarningSeconds && task.ActiveLandingId is Guid operationId
+                ? await db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.Id == operationId && o.TaskId == task.Id, ct)
+                : null;
             var changed = false;
             if (age >= settings.Value.LandWarningSeconds && request.WarningAt is null)
-            { request.WarningAt = now; AddAged(request, "Warning", now); changed = true; }
+            { request.WarningAt = now; AddAged(request, operation, "Warning", now); changed = true; }
             if (age >= settings.Value.LandErrorSeconds && request.ErrorAt is null)
-            { request.ErrorAt = now; AddAged(request, "Error", now); changed = true; }
+            { request.ErrorAt = now; AddAged(request, operation, "Error", now); changed = true; }
             request.ConcurrencyToken = Guid.NewGuid();
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
@@ -53,11 +56,12 @@ public sealed class AgentTaskLandMonitorService(AppDbContext db, TimeProvider cl
             var now = clock.GetUtcNow().UtcDateTime;
             var age = (now - note.CreatedAt).TotalSeconds;
             var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == note.RequestId, ct);
+            var original = await db.AgentTaskEvents.AsNoTracking().SingleAsync(e => e.Id == note.SourceEventId, ct);
             var changed = false;
             if (age >= settings.Value.LandWarningSeconds && note.WarningAt is null)
-            { note.WarningAt = now; AddReceiptAged(request, note, "Warning", now); changed = true; }
+            { note.WarningAt = now; AddReceiptAged(request, note, original, "Warning", now); changed = true; }
             if (age >= settings.Value.LandErrorSeconds && note.ErrorAt is null)
-            { note.ErrorAt = now; AddReceiptAged(request, note, "Error", now); changed = true; }
+            { note.ErrorAt = now; AddReceiptAged(request, note, original, "Error", now); changed = true; }
             if (!changed) continue;
             note.ConcurrencyToken = Guid.NewGuid();
             await db.SaveChangesAsync(ct);
@@ -67,21 +71,25 @@ public sealed class AgentTaskLandMonitorService(AppDbContext db, TimeProvider cl
         }
     }
 
-    private void AddReceiptAged(AgentTaskLandRequest request, AgentTaskLandNotification note, string severity, DateTime now)
+    private void AddReceiptAged(AgentTaskLandRequest request, AgentTaskLandNotification note, AgentTaskEvent original, string severity, DateTime now)
     {
         var source = new AgentTaskEvent { Id = Guid.NewGuid(), AgentTaskId = request.TaskId, LandRequestId = request.Id,
             Type = AgentTaskEventType.LandAged, At = now,
+            LandingOperationId = original.LandingOperationId, LandingPublication = original.LandingPublication,
+            LandingCleanup = original.LandingCleanup, LandingMode = original.LandingMode,
             Detail = $"{severity}: outcome receipt unconfirmed; notification={note.Id:N}; outcome committed={note.CreatedAt:O}; destination={note.ParentSessionId:N}; queue={note.QueueMessageId:N}; state={note.State}; error={note.LastErrorCode}." };
         db.AgentTaskEvents.Add(source);
         db.AgentTaskLandNotifications.Add(LandNotificationPayload.Create(request, source, LandNotificationKind.Aged));
     }
 
-    private void AddAged(AgentTaskLandRequest request, string severity, DateTime now)
+    private void AddAged(AgentTaskLandRequest request, AgentTaskLanding? operation, string severity, DateTime now)
     {
         var source = new AgentTaskEvent
         {
             Id = Guid.NewGuid(), AgentTaskId = request.TaskId, LandRequestId = request.Id,
             Type = AgentTaskEventType.LandAged, At = now,
+            LandingOperationId = operation?.Id, LandingPublication = operation?.Publication,
+            LandingCleanup = operation?.Cleanup, LandingMode = operation?.Mode,
             Detail = $"{severity}: Land {request.State}; requested {request.RequestedAt:O}; no progress since {request.LastProgressAt:O}; "
                 + $"attempt={request.Attempt}; reason={request.HoldReasonCode}; holder={request.HoldingTaskId:N} ({request.HoldingTaskStatus}).",
         };
