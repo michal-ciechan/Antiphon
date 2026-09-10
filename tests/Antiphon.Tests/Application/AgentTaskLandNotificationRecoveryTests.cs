@@ -7,6 +7,11 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Time.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Infrastructure.Orchestration;
 using Shouldly;
 using TUnit.Core;
 
@@ -15,6 +20,90 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 public sealed class AgentTaskLandNotificationRecoveryTests
 {
+    [Test]
+    [Arguments("none")]
+    [Arguments("missing")]
+    [Arguments("stopped")]
+    [Arguments("failed")]
+    [Arguments("deleted")]
+    [Arguments("destination-edit")]
+    public async Task C467_V08_DestinationSnapshotsRemainOwed(string state)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var destination = state == "missing" ? Guid.NewGuid() : h.SessionId;
+        var note = await AgentTaskLandReceiptTests.SeedAsync(db, destination, state == "none" ? AgentTaskReplyTo.None : AgentTaskReplyTo.Session);
+        if (state is "stopped" or "failed") await db.AgentSessions.Where(s => s.Id == destination).ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, state == "stopped" ? SessionStatus.Stopped : SessionStatus.Failed));
+        if (state == "deleted") await db.AgentSessions.Where(s => s.Id == destination).ExecuteDeleteAsync();
+        if (state == "destination-edit") await db.AgentTasks.Where(t => t.Id == note.TaskId).ExecuteUpdateAsync(s => s.SetProperty(t => t.ParentSessionId, (Guid?)Guid.NewGuid()));
+        await new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System).ReconcileAsync(note.Id, CancellationToken.None);
+        await db.Entry(note).ReloadAsync();
+        note.ParentSessionId.ShouldBe(destination); note.ConfirmedAt.ShouldBeNull();
+        note.State.ShouldBe(state == "none" ? LandNotificationState.NotRequired : state == "destination-edit" ? LandNotificationState.AwaitingReceipt : LandNotificationState.DestinationUnavailable);
+        if (state == "destination-edit") (await db.SessionQueuedMessages.SingleAsync(m => m.Id == note.QueueMessageId)).AgentSessionId.ShouldBe(destination);
+        else note.QueueMessageId.ShouldBeNull();
+        h.Adapter.Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task C467_V10_BootScanFairnessAndClearedPending()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString,
+            ConfigureServices = services => { services.AddSingleton<CompletionNoteFlushQueue>(); services.AddScoped<AgentTaskLandNotificationService>(); } });
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var notes = new List<AgentTaskLandNotification>();
+        for (var i = 0; i < 263; i++) notes.Add(await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId));
+        var ordered = notes.OrderBy(n => n.Id).ToArray();
+        ordered[0].ParentSessionId = null; // Poison head, whose missing destination must not starve later pages.
+        ordered[50].NextAttemptAt = DateTime.UtcNow.AddHours(1);
+        ordered[140].State = LandNotificationState.Confirmed; ordered[140].ConfirmedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+        var expected = notes.Where(n => n.Id != ordered[0].Id && n.Id != ordered[50].Id && n.Id != ordered[140].Id).Select(n => n.Id).ToArray();
+        var worker = new AgentTaskLandNotificationHostedService(h.Provider.GetRequiredService<IServiceScopeFactory>(), NullLogger<AgentTaskLandNotificationHostedService>.Instance);
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        await worker.StartAsync(stop.Token);
+        try
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(60);
+            while (DateTime.UtcNow < deadline && await db.AgentTaskLandNotifications.CountAsync(n => expected.Contains(n.Id) && n.QueueMessageId != null) < expected.Length)
+                await Task.Delay(100, stop.Token);
+            (await db.AgentTaskLandNotifications.CountAsync(n => expected.Contains(n.Id) && n.QueueMessageId != null)).ShouldBe(expected.Length);
+            (await db.AgentTasks.CountAsync(t => t.LandRequestedAt != null)).ShouldBe(0);
+            (await db.SessionQueuedMessages.CountAsync(m => m.SourceLandNotificationId != null)).ShouldBe(expected.Length);
+        }
+        finally { await worker.StopAsync(CancellationToken.None); worker.Dispose(); }
+        h.Adapter.Inputs.ShouldBeEmpty("this test proves hosted handoff, not caller receipt");
+    }
+
+    [Test]
+    public async Task C467_V14_LandNotesDoNotCountAsReports()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId);
+        await new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System).ReconcileAsync(note.Id, CancellationToken.None);
+        var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == note.QueueMessageId);
+        row.ConversationKey = $"task:{note.TaskId:N}"; row.HoldUntil = DateTime.UtcNow.AddHours(1);
+        var body = row.Body; var digest = row.ContentDigest; var hold = row.HoldUntil;
+        (await db.AgentTasks.SingleAsync(t => t.Id == note.TaskId)).Result = "ordinary report";
+        await db.SaveChangesAsync();
+        (await AgentTaskCheckService.HasCompletionNoteAsync(db, h.SessionId, note.TaskId, CancellationToken.None)).ShouldBeFalse();
+        var tasks = new AgentTaskService(db, new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance), Options.Create(new DelegationSettings()),
+            new MockEventBus(), new RecordingSessionStopper(), TimeProvider.System, NullLogger<AgentTaskService>.Instance);
+        await tasks.GetAsync(note.TaskId, CancellationToken.None, h.SessionId); await tasks.MarkReadAsync(note.TaskId, CancellationToken.None);
+        await new OutputDistillationService(db, null!, Options.Create(new DelegationSettings()), TimeProvider.System, NullLogger<OutputDistillationService>.Instance)
+            .ReleaseHoldAsync(row.Id, CancellationToken.None);
+        await db.Entry(row).ReloadAsync(); await db.Entry(note).ReloadAsync();
+        row.Body.ShouldBe(body); row.ContentDigest.ShouldBe(digest); row.HoldUntil.ShouldBe(hold); note.ConfirmedAt.ShouldBeNull();
+        await h.Queue.EnqueueAsync(h.SessionId, "ordinary report", MessageSendMode.WhenIdle, CancellationToken.None,
+            QueuedMessageOrigin.Delegation, $"task:{note.TaskId:N}", note.TaskId, DelegationNoteDigest.Compute("ordinary report"), deliverIfIdle: false);
+        (await AgentTaskCheckService.HasCompletionNoteAsync(db, h.SessionId, note.TaskId, CancellationToken.None)).ShouldBeTrue();
+        (await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == note.TaskId)).ShouldBe(2);
+        h.Adapter.Inputs.ShouldBeEmpty();
+    }
     [Test]
     public async Task C467_V09_KeyedQueueRacesAndDistinctEvents()
     {

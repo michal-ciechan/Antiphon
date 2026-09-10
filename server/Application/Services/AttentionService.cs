@@ -1186,7 +1186,7 @@ public sealed class AttentionService
             var age = (now - request.LastProgressAt).TotalSeconds;
             if (request.State != LandRequestState.Held && age < _delegation.LandWarningSeconds) continue;
             var task = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == request.TaskId, ct);
-            items.Add(new AttentionItemDto(request.State == LandRequestState.Held ? AttentionKind.LandHeld : AttentionKind.LandNoProgress,
+            var item = new AttentionItemDto(request.State == LandRequestState.Held ? AttentionKind.LandHeld : AttentionKind.LandNoProgress,
                 age >= _delegation.LandErrorSeconds ? AlertSeverity.Error : AlertSeverity.Warning,
                 task.Id, request.ParentSessionId, task.AgentId, null, task.Title,
                 $"Land {request.State}; attempt {request.Attempt}; no progress for {(int)age}s",
@@ -1194,7 +1194,10 @@ public sealed class AttentionService
                     + $"holder={request.HoldingTaskId:N} ({request.HoldingTaskStatus}); heldSince={request.HeldSince:O}; {request.HoldDetail}; {request.ReconciliationError}",
                 request.HeldSince ?? request.LastProgressAt, null, [AttentionAction.OpenDrawer], task.CardId,
                 ConditionKey: $"land:{request.Id:N}:{(request.State == LandRequestState.Held ? "held" : "progress")}",
-                LandRequestId: request.Id, HoldingTaskId: request.HoldingTaskId));
+                LandRequestId: request.Id, HoldingTaskId: request.HoldingTaskId);
+            items.Add(item);
+            if (request.State == LandRequestState.Held && age >= _delegation.LandWarningSeconds)
+                items.Add(item with { Kind = AttentionKind.LandNoProgress, ConditionKey = $"land:{request.Id:N}:progress", SinceUtc = request.LastProgressAt });
         }
         var notes = await _db.AgentTaskLandNotifications.AsNoTracking().Where(n => n.ConfirmedAt == null
             && n.State != LandNotificationState.NotRequired).ToListAsync(ct);

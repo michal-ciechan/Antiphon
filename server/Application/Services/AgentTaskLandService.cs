@@ -292,8 +292,11 @@ public sealed class AgentTaskLandService
         IReadOnlyList<string> warnings,
         CancellationToken ct)
     {
+        var expectedRequest = task.CurrentLandRequestId;
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
         await LockTaskAsync(task.Id, ct);
+        await _db.Entry(task).ReloadAsync(ct);
+        if (task.CurrentLandRequestId != expectedRequest) return;
         var request = await EnsureRequestAsync(task, ct);
         await _db.Entry(request).ReloadAsync(ct);
         if (request.TerminalEventId is not null) return;
@@ -476,8 +479,11 @@ public sealed class AgentTaskLandService
 
     private async Task PersistRefusalAsync(AgentTask task, string line, string warningDetail, CancellationToken ct)
     {
+        var expectedRequest = task.CurrentLandRequestId;
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
         await LockTaskAsync(task.Id, ct);
+        await _db.Entry(task).ReloadAsync(ct);
+        if (task.CurrentLandRequestId != expectedRequest) return;
         var request = await EnsureRequestAsync(task, ct);
         await _db.Entry(request).ReloadAsync(ct);
         if (request.TerminalEventId is not null) return;

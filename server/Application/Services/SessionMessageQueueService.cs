@@ -96,7 +96,7 @@ public sealed partial class SessionMessageQueueService
     /// ceiling, or if the file cannot be written (empty cwd, IO error), the original is
     /// returned so <see cref="DeliverAsync"/>'s tripwire still fires.
     /// </summary>
-    private async Task<string> SpillQueueBodyAsync(
+    internal async Task<string> SpillQueueBodyAsync(
         Guid sessionId,
         string body,
         string fileStem,

@@ -51,7 +51,9 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
         Directory.CreateDirectory(Repository);
         Directory.CreateDirectory(CallerDirectory);
         await GitAsync(Repository, "init", "-b", "master");
+        await GitAsync(Repository, "config", "core.longpaths", "true");
         await GitAsync(Root, "init", "--bare", Remote);
+        await GitAsync(Remote, "config", "core.longpaths", "true");
         await File.WriteAllTextAsync(Path.Combine(Repository, ".gitignore"), ".antiphon/\nbin/\nobj/\n");
         await File.WriteAllTextAsync(Path.Combine(Repository, "Owned.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework></PropertyGroup></Project>");
         await File.WriteAllTextAsync(Path.Combine(Repository, "Seed.cs"), "public class Seed {}\n");

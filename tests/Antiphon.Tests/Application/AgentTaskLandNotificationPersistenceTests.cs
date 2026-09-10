@@ -1,6 +1,12 @@
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
+using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Application.Services;
+using Npgsql;
 using Shouldly;
 using TUnit.Core;
 
@@ -10,6 +16,76 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class AgentTaskLandNotificationPersistenceTests
 {
+    [Test]
+    public async Task C467_V07_ConcurrentSettlementAndExplicitCleanup()
+    {
+        await using var h = new LandingSafetyHarness(); await h.InitializeAsync(); await h.AddSourceAsync(); await h.RunAsync();
+        h.Fixture.Git.Trace.Clear();
+        await Task.WhenAll(h.FailAsync(new IOException("lost acknowledgement A")), h.FailAsync(new IOException("lost acknowledgement B")));
+        await using var db = h.CreateContext();
+        var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == h.Fixture.TaskId);
+        (await db.AgentTaskEvents.CountAsync(e => e.LandRequestId == note.RequestId && e.IsLandTerminal)).ShouldBe(1);
+        h.Fixture.Git.Trace.ShouldBeEmpty();
+        db.AgentTaskLandNotifications.Add(new AgentTaskLandNotification { Id = Guid.NewGuid(), TaskId = note.TaskId,
+            RequestId = note.RequestId, SourceEventId = note.SourceEventId, CreatedAt = DateTime.UtcNow, NextAttemptAt = DateTime.UtcNow });
+        var duplicate = await Should.ThrowAsync<DbUpdateException>(() => db.SaveChangesAsync());
+        ((PostgresException)duplicate.InnerException!).SqlState.ShouldBe("23505"); db.ChangeTracker.Clear();
+        db.AgentTaskEvents.Add(new AgentTaskEvent { Id = Guid.NewGuid(), AgentTaskId = note.TaskId, LandRequestId = note.RequestId,
+            IsLandTerminal = true, Type = AgentTaskEventType.LandRefused, At = DateTime.UtcNow });
+        await Should.ThrowAsync<DbUpdateException>(() => db.SaveChangesAsync()); db.ChangeTracker.Clear();
+        db.AgentTaskLandRequests.Add(new AgentTaskLandRequest { Id = Guid.NewGuid(), TaskId = note.TaskId,
+            RequestedAt = DateTime.UtcNow, LastProgressAt = DateTime.UtcNow, LastEvaluatedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync(); db.ChangeTracker.Clear();
+        db.AgentTaskLandRequests.Add(new AgentTaskLandRequest { Id = Guid.NewGuid(), TaskId = note.TaskId,
+            RequestedAt = DateTime.UtcNow, LastProgressAt = DateTime.UtcNow, LastEvaluatedAt = DateTime.UtcNow });
+        await Should.ThrowAsync<DbUpdateException>(() => db.SaveChangesAsync()); db.ChangeTracker.Clear();
+        db.AgentTaskEvents.AddRange(new[] { AgentTaskEventType.Held, AgentTaskEventType.LandAged }.Select(type => new AgentTaskEvent {
+            Id = Guid.NewGuid(), AgentTaskId = note.TaskId, LandRequestId = note.RequestId, Type = type, At = DateTime.UtcNow }));
+        await db.SaveChangesAsync();
+        (await db.AgentTaskEvents.CountAsync(e => e.LandRequestId == note.RequestId && !e.IsLandTerminal)).ShouldBeGreaterThanOrEqualTo(2);
+    }
+
+    [Test]
+    public async Task C467_V17_UpgradeAndLegacyEvidence()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        await using var db = new AppDbContext(options);
+        var migrations = db.Database.GetMigrations().ToArray();
+        var cut = Array.FindIndex(migrations, m => m.EndsWith("_AddDurableLandDelivery", StringComparison.Ordinal));
+        cut.ShouldBeGreaterThan(0);
+        await db.GetService<IMigrator>().MigrateAsync(migrations[cut - 1]);
+        var pending = Guid.NewGuid(); var legacy = Guid.NewGuid(); var none = Guid.NewGuid();
+        var old = DateTime.UtcNow.AddDays(-5);
+        foreach (var id in new[] { pending, legacy, none })
+        {
+            DateTime? requested = id == pending ? old : null;
+            await db.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO "AgentTasks" ("Id", "RootTaskId", "Depth", "Title", "Goal", "Kind", "Role", "ModelLevel", "Attempt", "MaxAttempts",
+                    "WorkingDirectory", "Ephemeral", "Status", "ReplyTo", "ConcurrencyToken", "CreatedAt", "TokensIn", "TokensOut", "CostUsd",
+                    "Workspace", "WorktreeBranch", "WorktreePath", "LandRequestedAt", "LandAttempt", "LandVerifyFilter")
+                VALUES ({id}, {id}, 0, 'upgrade', 'upgrade fixture', 0, 0, 0, 0, 1, 'fixture', false, {(int)AgentTaskStatus.Succeeded},
+                    {(int)(id == none ? AgentTaskReplyTo.None : AgentTaskReplyTo.Session)}, {Guid.NewGuid()}, {old}, 0, 0, 0,
+                    {(int)WorkspaceMode.Worktree}, 'feat/legacy', 'fixture', {requested}, 2, 'preserved-filter')
+                """);
+            if (id != pending) await db.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO "AgentTaskEvents" ("Id", "AgentTaskId", "Type", "Detail", "At")
+                VALUES ({Guid.NewGuid()}, {id}, {(int)AgentTaskEventType.Landed}, 'historical claim, no receipt', {old})
+                """);
+        }
+        await db.GetService<IMigrator>().MigrateAsync(); await db.GetService<IMigrator>().MigrateAsync();
+        await using var observer = new AppDbContext(options);
+        var backfilled = await observer.AgentTaskLandRequests.SingleAsync();
+        backfilled.TaskId.ShouldBe(pending); backfilled.RequestedAt.ShouldBe(old, TimeSpan.FromMilliseconds(1));
+        backfilled.LastProgressAt.ShouldBe(old, TimeSpan.FromMilliseconds(1)); backfilled.Attempt.ShouldBe(2);
+        backfilled.VerifyFilter.ShouldBe("preserved-filter"); backfilled.State.ShouldBe(LandRequestState.Queued);
+        (await observer.AgentTasks.SingleAsync(t => t.Id == pending)).CurrentLandRequestId.ShouldBe(backfilled.Id);
+        (await observer.AgentTaskLandNotifications.CountAsync()).ShouldBe(0, "history must not be replayed or guessed into an owed message");
+        (await observer.AgentTasks.Where(t => t.Id == legacy || t.Id == none).Select(t => t.CurrentLandRequestId).ToListAsync()).ShouldAllBe(id => id == null);
+        await using var connection = new NpgsqlConnection(schema.ConnectionString); await connection.OpenAsync();
+        await using var command = new NpgsqlCommand("SELECT count(*) FROM pg_indexes WHERE indexname IN ('IX_AgentTaskLandRequests_TaskId','IX_AgentTaskEvents_LandRequestId','IX_AgentTaskLandNotifications_SourceEventId','IX_SessionQueuedMessages_SourceLandNotificationId') AND indexdef LIKE '%UNIQUE%'", connection);
+        Convert.ToInt32(await command.ExecuteScalarAsync()).ShouldBe(4);
+    }
     [Test]
     [Arguments("landed")]
     [Arguments("already-present")]
