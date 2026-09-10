@@ -1,7 +1,9 @@
 # CARD-0478: Run Mutation after Review and landing
 
-Date: 2026-09-10. Stage: Plan. Verification design is a separate TestDesign dispatch.
+Date: 2026-09-10. Stage: Plan, with the original TestDesign and a subsequent custody amendment.
 Inspected checkout: `9a913f012785728a6a75146adc54b3aa75293520`.
+
+**Current implementation authority:** [Runner custody amendment](2026-09-10-card-0478-runner-custody-amendment.md), written after Code task `62229bff` returned S3 to Plan. Its D-10..D-14 and folded verification design extend this plan's S1-S5. The combined inventory is **230 guards/PCs**, all pending for post-land Mutation; V-1..V-17 and R-1..R-15 apply. The 182-row inventory and cost tables below are the original subtotal, not the current total. Resume Code with both documents after this amendment lands.
 
 The default becomes Code -> Review -> Land -> asynchronous Mutation in a fresh worktree at the confirmed landed commit. The original implementation card may be Done while its linked verification card remains open. Mutation findings create linked remediation work; they never silently reland the original branch or revert master.
 
@@ -114,6 +116,8 @@ Method-scoped green -> compiling defect -> intended assertion red -> byte restor
 
 Cleanup is independent of publication and clean/failed test outcomes. Add a verification-specific typed removal purpose and an explicit cleanup entry point (`delegate.ps1 -CleanupVerification <mutation-task-id>`), not permission to call `-Land`. Reuse existing repository leases, process-ownership checks, creation identity and guarded removal infrastructure. Require a terminal task, no live owner/commands, exact managed branch/worktree registration, HEAD equal to L, clean index/tracked/untracked/ignored inventory after removing only task-owned outputs, no sequencer, and durable evidence outside the tree. Unknown files, moved HEAD, dirty source or uncertain children retain residue with an actionable reason. Capture/recheck all deletion coordinates under the lease. No force deletion, fake publication receipt, or transfer of the Code operation's cleanup authority to another worktree.
 
+The process requirement is now supplied by D-10..D-14 in the custody amendment: atomic native Job Object containment, runner-owned receipts bound to each accepted session generation, and a durable task seal freezing every launch attempt. Terminal status, kill success, current process census and worker restoration manifests are not descendant-exit authority. Unsupported backends explicitly refuse; missing/unknown custody retains residue. Reload validated receipts and all attempts through `IWorktreeRemovalEvidence` under the repository lease before any output deletion and at final removal. Cleanup never kills to obtain proof.
+
 A restored failed battery can be cleaned with the same explicit checks; task success is not deletion authority. Cleanup failure remains visible through existing residue reporting and does not turn the original land or a completed battery red. The caller records any retained residue in the verification verdict.
 
 ### D-7: Findings create remediation work; revert is a deliberate response
@@ -170,7 +174,7 @@ The Mutation brief carries the previous Review handoff verbatim, original/verifi
 
 ### D-9: Rollout preserves active work and old report meanings
 
-Land this plan and a separate TestDesign artifact before Code. Do not deploy a prose-only subset: SourceLanding validation, no-autosave/no-land protection, guarded cleanup, updated instructions and their tests ship together. The new metadata is additive; no historical reports/tasks, stage ordinals, card statuses, pins, holds or quotas are rewritten.
+Land this plan, its completed TestDesign and the runner-custody amendment before resuming Code. The requested custody TestDesign amendment is folded into that Plan artifact. Do not deploy a prose-only subset: SourceLanding validation, no-autosave/no-land protection, runner-owned custody, guarded cleanup, updated instructions and their tests ship together. The new metadata is additive; no historical reports/tasks, stage ordinals, card statuses, pins, holds or quotas are rewritten.
 
 For CARD-0478's own Code dispatch on the old server, explicitly override the old stage-code bundle in the file-backed brief: implement all slices, run V/R, commit/push and return `next: review`. This token is already understood. Give its ordinary Review the explicit pre-land contract. After Review, the caller records the verification card and lands Code. Deploy through the canonical main-checkout runbook and verify the loaded source-selector behavior and new Code/Review/Mutation bundle composition directly. Health alone is insufficient. Then use the new SourceLanding recipe for CARD-0478's own post-land battery. No ad hoc reset-based or legacy Shared fallback is the default bootstrap path.
 
@@ -186,11 +190,11 @@ Rolling back instructions affects future dispatches only. Keep additive metadata
 |---|---|---|
 | S1: Persist and admit a confirmed source | `server/Domain/Entities/AgentTask.cs`; `server/Application/Dtos/AgentTaskDtos.cs`; `AgentTaskService.cs`; `server/Infrastructure/Data/AppDbContext.cs`; CLI-generated migration and model snapshot; `scripts/delegate.ps1`; task-detail DTO/client type parity. Nullable source operation FK, structured publication/authorization/workspace checks, same-operation open-task admission, visible provenance. | New `PostLandMutationAdmissionTests`, existing `AgentTaskServiceIntegrationTests`, `MutationAdmissionTests`, script-body tests in `RoutingPinScriptTests`, schema/HTTP parity. |
 | S2: Exact snapshot and safe settlement | `DelegationWorktreeService.cs`, `AgentTaskDispatcher.cs`, `AgentTaskReplyService.cs`, `AgentTaskLandService.cs`; nearest no-progress/recovery owner if needed. Create at L independently of merge target, compose fresh bundle, validate recovery, prevent all automatic snapshot commit/merge/publication paths. | New `PostLandMutationWorktreeTests`, `MutationDispatchTests`, `DelegationWorktreeTests`, `DelegateBundleLaunchTests`, no-progress/retry regression tests and a real temporary Git repository. |
-| S3: Verification-only cleanup | `WorktreeRemovalRequest.cs`, `server/Infrastructure/Git/GuardedWorktreeRemoval.cs`, `IWorktreeRemovalEvidence.cs` / infrastructure evidence implementation, narrow task cleanup service/endpoint and `delegate.ps1` verb. Explicit identity-checked cleanup; evidence and unknown children/files retained. Follow existing boundary/style conventions rather than placing Git in the endpoint. | New `PostLandMutationCleanupTests`, existing `WorktreeRemovalAuthorityTests`, `WorktreeManagerTests`, landing-removal regressions. Exercise wrong task/path/repo/SHA and interruption boundaries, not just a success fake. |
+| S3: Verification-only cleanup | The custody amendment's S3a native container, S3b host/runner persistence/transport, and S3c guarded removal are required. Extend `WorktreeRemovalRequest.cs`, `GuardedWorktreeRemoval.cs`, `IWorktreeRemovalEvidence` and the cleanup service/API/CLI to consume sealed generation receipts. Unknown children/files and unsupported backends retain residue. | `PtyCustodyTests`, `HostCustodyTests`, `RunnerCustodyTests`, `PostLandMutationCustodyTests`, plus `PostLandMutationCleanupTests` and existing removal tests. V-17 proves real runner receipt to successful guarded removal. |
 | S4: Active stage contracts and workflow | All files in D-8's table; update `InstructionBundleTests`' CARD-0470 substring expectations where ownership/order changed. Preserve still-valid legacy role/token/dispatch tests. Add role-aware pre-land and post-land recipe coverage. | `InstructionBundleTests`, `DelegationReportFormatterTests`, `PipelineHandoffParseTests`, launch composition tests, and a targeted consistency audit excluding historical plans/reports. |
 | S5: End-to-end acceptance and rollout record | New `PostLandMutationWorkflowTests`, focused card/pipeline tests, updated operator docs and durable verification evidence. Prove original Done and companion progress independently; verify loaded runtime after the canonical deployment. | Actual task-create/dispatch/settlement and card services with isolated storage/runner, existing land notification and session delivery fixtures; bounded live post-deploy probe owned by caller. |
 
-Do not add a general base-ref picker, a new workflow engine, automatic card creation on ticks, a full PC-result parser, a new board status, or fleet-wide model/scheduling policy. A new required worktree/cleanup mechanism beyond these narrow seams returns to Plan rather than bypassing existing guards. The exact files for new fixtures/endpoints are implementation choices within the named owners; existing guard paths must be read before editing them.
+Do not add a general base-ref picker, a new workflow engine, automatic card creation on ticks, a full PC-result parser, a new board status, or fleet-wide model/scheduling policy. The runner-owned custody mechanism in the linked amendment is the approved expansion of these seams after the S3 design return. Further required mechanisms return to Plan rather than bypassing guards. The exact files for new fixtures/endpoints are implementation choices within the named owners; existing guard paths must be read before editing them.
 
 ## TestDesign handoff
 
@@ -211,12 +215,12 @@ Use `dotnet run --project tests/Antiphon.Tests` with the testing owner's isolate
 
 Cost must separately name Code authoring plus ordinary V/R, ordinary Review, post-land PC execution plus analysis, and the caller's loaded-runtime acceptance. Give suite/filter-backed numeric floors after fixture inspection. Expected critical-path savings are approximately the old PC floor, minus added ordinary Review and bookkeeping; total verification work is not removed and extra worktree/card handling adds cost. These are scheduling estimates, never deadlines or permission to skip controls.
 
-Plan completion is this committed/pushed artifact. The active guidance and runtime changes above belong to Code after the separate TestDesign stage; none are claimed implemented or tested here.
+Plan completion is the committed/pushed original artifact and its runner-custody amendment with completed verification design. The active guidance and runtime changes belong to Code; none are claimed implemented or tested here.
 
 
 ## Verification design
 
-Added by TestDesign on 2026-09-10 against plan commit `7123a71b`. This appendix specifies executable tests for Code to implement; it does not claim those tests, SourceLanding, or CleanupVerification already exist. D-1..D-9 and S1..S5 remain the implementation design. Use D-9's file-backed bootstrap override: Code returns `next: review`, ordinary Review precedes land, and the caller dispatches this battery to **Role Mutation after confirmed publication and deployment of the complete feature**.
+Added by TestDesign on 2026-09-10 against plan commit `7123a71b`, then amended by the linked runner-custody Plan/TestDesign amendment against `4fbb8e77`. These sections specify executable tests for Code to implement; they do not claim those tests, SourceLanding, or CleanupVerification already exist. D-1..D-14 and S1..S5 are the combined implementation design. Use D-9's file-backed bootstrap override: Code returns `next: review`, ordinary Review precedes land, and the caller dispatches all **230 PCs** to **Role Mutation after confirmed publication and deployment of the complete feature**.
 
 ### Inspection
 
@@ -271,7 +275,7 @@ Code first implements and runs every C478 guard method **unmutated**, as ordinar
 | V-3 | Dispatch/Git: `PostLandMutationWorktreeTests.C478_V03_CreateRestartAndMissingCommit` | O committed before worktree add; new managed path/branch, clean tracked source/index. Restart after accepted create and after provisioning; only exact identity is adopted. Missing L refuses. Ordinary top-level/nested Code lineage unchanged. |
 | V-4 | Launch/capacity: `PostLandMutationWorktreeTests.C478_V04_FreshLaunchAndConcurrentCode` | Real launch specs for supported ClaudeCode/Codex/Grok contain stage-mutation once; new session instead of stale warm/standing candidate. Next-card Code runs concurrently within unchanged global/project/provider/process limits and writer/resource constraints. |
 | V-5 | Settlement: `PostLandMutationWorktreeTests.C478_V05_SettlementNeverPublishesSnapshot` | Marked done/none report with deliberate tracked/staged/untracked mutant; real OnTurnEnd, repeat/catch-up, failure/cancel and direct lower-service paths. Assert HEAD/index hash/bytes/local and remote refs/registrations, zero commit/merge/rebase/push/remove and no land request. Restored no-commit success stays Succeeded. |
-| V-6 | Cleanup: `PostLandMutationCleanupTests.C478_V06_RestoredTerminalCleanupMatrix` | Explicit clean Succeeded/Failed/Canceled runs with external evidence; unrelated Code/sibling trees preserved. Every refusal guard, first/final inspection races, interrupted cleanup and Windows handle/remove failure. Success removes only authorized snapshot/ref; external evidence remains readable and identical. |
+| V-6 | Cleanup: `PostLandMutationCleanupTests.C478_V06_RestoredTerminalCleanupMatrix`; amendment V-17 | Explicit clean Succeeded/Failed/Canceled runs require durable runner-produced descendant-exit receipts for every accepted generation and a frozen task seal. The native V-17 positive removes exactly the authorized snapshot/ref; external evidence and unrelated trees remain. Dead root/live orphan, unknown/missing/unsupported custody, first/final races and interrupted removal retain residue. Seeded receipts test consumer policy only. |
 | V-7 | Card/task/pipeline: `PostLandMutationWorkflowTests.C478_V07_OriginalDoneCompanionOpen` | Append companion/reverse link, land and explicitly close original with pending wording, dispatch companion. Companion Queued/Dispatched/Working/Blocked/Failed/Succeeded stays visible; original never regresses. No automatic Done, new column or spawned card session. Null and explicit projects. |
 | V-8 | Triage: `PostLandMutationWorkflowTests.C478_V08_FindingDispositionMatrix` | Separate complete reports for coverage survivor, unmutated-L product defect, invalid/noncompiling/equivalent control and unavailable environment. Preserve severity/evidence and retrieve full report. Driver creates linked repairs only for actionable findings; verification stays open. L2 is a new O2/task; old Found/close history unchanged. Decision is revision/attention; alert sink empty. Proves explicit storage/actions, not automatic classification. |
 | V-9 | Real producers/queue: `PostLandMutationDeliveryTests.C478_V09a_LandProducerToCaller`, `C478_V09b_AcceptedTaskToWorker`, `C478_V09c_SettledMutationToCaller` | Execute delivery/crash/recipient matrix. Require complete matching UserPrompt at recipients. LandRefused reaches caller but commissions no battery; confirmed publication with residue may commission one. |
@@ -393,8 +397,8 @@ Worker-only preflight/caller policy guards (PostLandMutationContractTests) are e
 | G-86 | D-6 / S3 | Cleanup identity is exact Mutation task | PC-86 |
 | G-87 | D-6 / S3 | Cleanup target Role is Mutation | PC-87 |
 | G-88 | D-6 / S3 | Cleanup requires terminal task | PC-88 |
-| G-89 | D-6 / S3 | No live session owner may remain | PC-89 |
-| G-90 | D-6 / S3 | No live owned command may remain | PC-90 |
+| G-89 | D-6,D-14 / S3 | No live session, standing or pool owner may remain, independently of receipt | PC-89 |
+| G-90 | D-6,D-12 / S3 | Nonempty tracked job cannot authorize deletion, even after root exit | PC-90 |
 | G-91 | D-6 / S3 | Deletion repository matches task creation | PC-91 |
 | G-92 | D-6 / S3 | Deletion directory matches managed task path | PC-92 |
 | G-93 | D-6 / S3 | Common Git directory matches creation | PC-93 |
@@ -414,7 +418,7 @@ Worker-only preflight/caller policy guards (PostLandMutationContractTests) are e
 | G-107 | D-6 / S3 | Deletion authority requires current genuine repository lease | PC-107 |
 | G-108 | D-6 / S3 | Identity is rechecked under lease before removal | PC-108 |
 | G-109 | D-6 / S3 | Contents are rechecked before destructive operation | PC-109 |
-| G-110 | D-6 / S3 | Ownership is rechecked before removal | PC-110 |
+| G-110 | D-6,D-14 / S3 | Frozen attempt set, receipts and owner state are reloaded before removal | PC-110 |
 | G-111 | D-6 / S3 | Branch deletion is compare-and-swap against L | PC-111 |
 | G-112 | D-6 / S3 | Branch checked out elsewhere is not deleted | PC-112 |
 | G-113 | D-6 / S3 | Guarded cleanup never force deletes | PC-113 |
@@ -423,8 +427,8 @@ Worker-only preflight/caller policy guards (PostLandMutationContractTests) are e
 | G-116 | D-6 / S3 | Cleanup residue does not rewrite publication or battery result | PC-116 |
 | G-117 | D-6 / S3 | Cleanup requires Worktree workspace | PC-117 |
 | G-118 | D-6 / S3 | Cleanup requires recorded source operation O for this task | PC-118 |
-| G-119 | D-6 / S3 | Unknown process ownership cannot authorize deletion | PC-119 |
-| G-120 | D-6 / S3 | PID alone is not process ownership evidence | PC-120 |
+| G-119 | D-6,D-12..D-14 / S3 | Missing, unknown or unsupported custody cannot authorize deletion | PC-119 |
+| G-120 | D-6,D-12 / S3 | Gone/reused PID cannot replace original generation/container receipt | PC-120 |
 | G-121 | D-6 / S3 | Evidence belongs to O and Mutation task, with complete disposition | PC-121 |
 | G-122 | D-6 / S3 | Authority is reloaded after final inspection | PC-122 |
 | G-123 | D-6 / S3 | Branch deletion cannot follow a symbolic/ref alias | PC-123 |
@@ -603,8 +607,8 @@ For each row record: source O/L and task ID; exact patch/diff; baseline method n
 | PC-86: `PostLandMutationCleanupTests.C478_G086_Task` | omit authority TaskId comparison | Cross-task request retains both trees; destructive commands == 0 |
 | PC-87: `PostLandMutationCleanupTests.C478_G087_Mode` | omit Role Mutation cleanup eligibility | Code task with otherwise valid verification-shaped authority is refused |
 | PC-88: `PostLandMutationCleanupTests.C478_G088_Terminal` | omit terminal-status check | Queued/Dispatched/Working/Blocked retained; zero removal |
-| PC-89: `PostLandMutationCleanupTests.C478_G089_Owner` | omit live session ownership check | Running owner retains tree even after task Succeeded |
-| PC-90: `PostLandMutationCleanupTests.C478_G090_Children` | skip live-child refusal | Live child retains tree and evidence |
+| PC-89: `PostLandMutationCleanupTests.C478_G089_Owner` | omit live session/standing/pool ownership check | With otherwise valid sealed receipt, newly recorded live owner retains tree after task Succeeded; zero destructive requests |
+| PC-90: `PostLandMutationCleanupTests.C478_G090_Children` | treat Draining/nonempty-job custody as Exited in removal eligibility | Dead root plus live orphan descendant retains tree/evidence; zero destructive requests at first boundary; native counterpart V-17 proves it without seeded custody |
 | PC-91: `PostLandMutationCleanupTests.C478_G091_Repository` | omit canonical repository comparison | Cross-repository deletion refused |
 | PC-92: `PostLandMutationCleanupTests.C478_G092_Path` | omit canonical task worktree path comparison | Sibling, main checkout and escaped path retained |
 | PC-93: `PostLandMutationCleanupTests.C478_G093_CommonDirectory` | omit common-directory comparison | Crossed common directory refused |
@@ -624,7 +628,7 @@ For each row record: source O/L and task ID; exact patch/diff; baseline method n
 | PC-107: `PostLandMutationCleanupTests.C478_G107_Lease` | accept missing/disposed/foreign lease | Mutation-capable I/O fake records zero destructive requests |
 | PC-108: `PostLandMutationCleanupTests.C478_G108_FinalIdentity` | skip final coordinate/HEAD inspection | Barrier swaps coordinates/HEAD after first inspection: removal refused |
 | PC-109: `PostLandMutationCleanupTests.C478_G109_FinalContent` | reuse first clean-content result | Late dirty/untracked/ignored sentinel retained before next command |
-| PC-110: `PostLandMutationCleanupTests.C478_G110_FinalOwnership` | reuse initial child/owner census | Owner/child appearing at final barrier retains tree |
+| PC-110: `PostLandMutationCleanupTests.C478_G110_FinalOwnership` | reuse initially loaded frozen attempt set/receipt and owner state | Changed attempt membership, receipt integrity or live ownership at final barrier refuses before removal; do not substitute another census |
 | PC-111: `PostLandMutationCleanupTests.C478_G111_BranchCas` | drop expected SHA from update-ref -d | Branch advanced after directory removal survives with residue |
 | PC-112: `PostLandMutationCleanupTests.C478_G112_OtherCheckout` | skip final branch registration check | New sibling checkout survives; branch retained |
 | PC-113: `PostLandMutationCleanupTests.C478_G113_NoForce` | add --force to worktree remove or recursive fallback on failure | Trace excludes force/fallback; injected remove failure retains evidence/residue |
@@ -633,8 +637,8 @@ For each row record: source O/L and task ID; exact patch/diff; baseline method n
 | PC-116: `PostLandMutationCleanupTests.C478_G116_ResidueVerdict` | mark task Failed/land unconfirmed when removal fails | O remains HasPublication; completed result unchanged; residue reason visible |
 | PC-117: `PostLandMutationCleanupTests.C478_G117_Workspace` | omit Workspace == Worktree check | Shared Mutation cleanup refused |
 | PC-118: `PostLandMutationCleanupTests.C478_G118_SourceBinding` | omit source-operation identity comparison | Null/other operation authority refused despite same L |
-| PC-119: `PostLandMutationCleanupTests.C478_G119_UnknownChildren` | treat unavailable child census as no children | Unavailable census retains tree with actionable reason |
-| PC-120: `PostLandMutationCleanupTests.C478_G120_ProcessIdentity` | ignore process creation ticks when validating child result | Reused PID remains uncertain; tree retained |
+| PC-119: `PostLandMutationCleanupTests.C478_G119_UnknownChildren` | treat missing/Unknown/UnsupportedBackend custody as Exited | Each state retains tree with typed actionable reason, even with terminal task/session, empty census and commandsAwaited manifest |
+| PC-120: `PostLandMutationCleanupTests.C478_G120_ProcessIdentity` | synthesize Exited from missing or reused root PID instead of requiring original container receipt | Gone/reused PID without matching generation receipt retains tree; valid receipt still works after PID reuse, without inspecting/killing the unrelated process |
 | PC-121: `PostLandMutationCleanupTests.C478_G121_EvidenceScope` | accept evidence manifest for another operation/task or incomplete matrix | Wrong O/task or missing remaining-PC/restoration disposition retains tree |
 | PC-122: `PostLandMutationCleanupTests.C478_G122_FinalAuthority` | skip durable task/source/evidence reload before remove | Task reopens or evidence identity changes at barrier: zero removal |
 | PC-123: `PostLandMutationCleanupTests.C478_G123_BranchSymbolic` | omit symbolic-ref/no-deref safety | Alias to sibling ref not followed; sibling remains unchanged |
@@ -722,14 +726,14 @@ For each row record: source O/L and task ID; exact patch/diff; baseline method n
 | Admission race/retry | Same O, same and different companion, each Queued/Dispatched/Working/Blocked state; different O control; terminal success/fail/cancel explicit retry. Two contexts at a barrier and lost response/accepted row cases. Required pin/provider refusal plus separate Code/Mutation slots at normal caps and at saturation. |
 | Snapshot | Fresh and recorded-retry worlds; missing L; wrong base/HEAD/path/branch/registration; tracked versus index-only mutation; genuine fresh provider composition versus stale warm/standing candidates. Worker preflight is procedural and checked again at execution, not inferred from dispatch time. |
 | Settlement | Succeeded clean/no commits, Succeeded with dirty tracked/index/untracked files, failed, canceled, blocked/interrupted, catch-up and duplicate report. Source-bound and historical unsourced Role Mutation exercise the Role-level no-autosave/no-land guard. Ordinary Code positive control still autosaves where previously required. A blocked task is not cleanup eligible. |
-| Cleanup | Each authority/content/ownership defect at first and final inspection; changed branch after directory removal; fresh sibling checkout; dirty source plus live owner; unknown ignored/untracked/junction paths; evidence outside/inside/missing/cross-task/incomplete; true/false/unknown child census and PID reuse; every sequencer; Git nonzero/timeout/Windows handle; partial remove and retry. Mutation-capable fake plus real Git preservation test, not fake alone. Empty directories are explicitly inventoried by filesystem enumeration, since Git status does not list them. |
+| Cleanup | Each authority/content/ownership defect at first and final inspection; changed branch after directory removal; fresh sibling checkout; dirty source plus live owner; unknown ignored/untracked/junction paths; evidence outside/inside/missing/cross-task/incomplete; sealed Exited/Draining/Unknown/UnsupportedBackend and PID reuse; every sequencer; Git nonzero/timeout/Windows handle; partial remove and retry. Mutation-capable fake plus real Git preservation and native receipt-to-cleanup V-17, not fake alone. Empty directories are explicitly inventoried by filesystem enumeration, since Git status does not list them. |
 | Lifecycle/triage | Original Done and companion queued/working/blocked/failed/clean/found/canceled/superseded; no-dispatch 409 and response lost after acceptance. Coverage-only vs unmutated-L defect vs invalid control vs infrastructure failure; L2 explicitly supersedes applicable scope without rewriting L. Concurrent human description/revision changes are preserved. |
 | Delivery | Every producer/handoff cut x busy/eligible, plus wrong/partial/stale/absent receipts and late complete receipt. Persisted state is read from a new context; actual receiver UserPrompt comes from the real queue path's modeled/native recipient, never from the test inserting the expected final receipt by hand in a positive end-to-end case. Negative/catch-up tests may explicitly seed evidence and label that narrower purpose. |
 | Contracts | Complete composed Code/Review/Mutation/TestDesign/basics/orchestrator and every D-8 active file. Nonzero/zero PCs, clean/found/incomplete, unknown/unmarked/legacy tokens and helpers. Historical reports are excluded from active-text rejection but included in parser compatibility. |
 
 Use these commands from the task checkout **after Code implements the named methods**. Fail if a selected class/method has zero executed tests or if fresh TRX reports names outside the intended filter. The counts promised here are 182 control definitions plus the named V scenarios, not an invented eventual test count.
 
-§§§powershell
+```powershell
 $classes = @(
   'PostLandMutationAdmissionTests',
   'PostLandMutationPublicationTests',
@@ -743,7 +747,7 @@ foreach ($class in $classes) {
   dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c478-vr/ -- --treenode-filter "/*/*/$class/*" --report-trx --report-trx-filename "c478-$class.trx"
   if ($LASTEXITCODE -ne 0) { throw "Ordinary verification failed: $class" }
 }
-§§§
+```
 
 Run the touched existing compatibility classes once in the same way with class filters: MutationAdmissionTests, MutationDispatchTests, MutationPipelineTests, MutationRoleContractTests, DelegationWorktreeTests, WorktreeRemovalAuthorityTests, LandingRemovalPolicyControlTests, AgentTaskLandingStateTests, AgentTaskLandNotificationRecoveryTests, AgentTaskLandReceiptTests, InstructionBundleTests, DelegateBundleLaunchTests, PipelineHandoffParseTests and RoutingPinScriptTests. Include changed methods of AgentTaskReplyIntegrationTests/CardWorkTransitionServiceTests rather than widening to the whole namespace. Do not update still-valid historical `next: mutation` parser cases to hide a compatibility regression.
 
@@ -796,6 +800,8 @@ Default cost below assumes serial PC cycles. Batch only independent defects in d
 
 ### Cost
 
+These tables retain the **original 182-PC subtotal**. Use the linked custody amendment's combined estimates for dispatch: Code ExpectAbout >=516 minutes, Mutation ExpectAbout >=570 minutes, ordinary V/R 66 minutes, PC floor 540, total verification floor 606. The historical comparisons below do not include the new custody work.
+
 All numbers are **estimated minutes after fixture inspection**, not measured executions or deadlines. Nothing ran in this TestDesign stage beyond document inspection/consistency checks. Floors include fresh builds/results and assertion inspection; unexpected slow builds, repairs, new guards and invalid mutants add work.
 
 | Ordinary Code verification | Minutes | Filters / work |
@@ -830,6 +836,6 @@ For an equivalent 402-minute battery previously blocking land, the reordered cri
 
 ### TestDesign completion and handoff
 
-Census: **guards=182, mapped=182, defined PCs=182, missing=0, duplicate PC mappings=0**. V-1..V-12 cover positive behavior, R-1..R-11 map regression obligations, and every PC has an exact method, compiling defect and decisive assertion. Preserve this bijection when implementation reveals more guards. Contract checks are labeled and cannot be offered as native delivery, model-compliance or automatic-orchestration evidence.
+Census of this original appendix: **guards=182, mapped=182, defined PCs=182, missing=0, duplicate PC mappings=0**. With the custody amendment, the current total is **230 guards/PCs**, V-1..V-17 and R-1..R-15. Its cost section supersedes the original totals above: ordinary V/R 66 minutes, PC floor 540, combined verification floor 606. Preserve the bijection when implementation reveals more guards. Contract checks are labeled and cannot be offered as native delivery, custody, model-compliance or automatic-orchestration evidence.
 
-Code implements S1..S5 and these ordinary tests, runs the specified V/R, commits/pushes and returns **next: review**, with the complete **182-PC inventory pending for post-land Mutation**. Ordinary Review retains the original Code landing owner. Caller records companion obligation, lands the Code task, obtains confirmed O/L, deploys the full feature and verifies loaded behavior before explicitly commissioning Role Mutation at L. The separate Mutation worker owns every PC/variant, discovery, restoration and durable report; this TestDesign stage runs none of that battery.
+Code implements S1..S5 including the custody amendment's S3a-S3c, writes/runs all specified ordinary V/R, commits/pushes and returns **next: review**, with the complete **230-PC inventory pending for post-land Mutation**. Ordinary Review retains the original Code landing owner. Caller records companion obligation, lands the Code task, obtains confirmed O/L, deploys the full server/runner/host feature and verifies loaded behavior before explicitly commissioning Role Mutation at L. The separate Mutation worker owns every PC/variant, discovery, restoration and durable report; neither this Plan nor TestDesign runs that battery.
