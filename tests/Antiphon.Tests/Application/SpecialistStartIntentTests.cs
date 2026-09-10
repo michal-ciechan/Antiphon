@@ -101,7 +101,7 @@ public class SpecialistStartIntentTests
             (await verify.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.SuspendedByUser)).ShouldBe(1);
             await using var autoScope = h.Provider.CreateAsyncScope();
             (await Should.ThrowAsync<ConflictException>(() => autoScope.ServiceProvider.GetRequiredService<AgentControlService>()
-                .StartAsync(h.AgentId, new(Fresh: true), CancellationToken.None, automatic: true))).Code.ShouldBe("specialist_start_refused");
+                .StartAsync(h.AgentId, new(), CancellationToken.None, automatic: true))).Code.ShouldBe("specialist_start_refused");
         }
     }
 }

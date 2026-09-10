@@ -26,6 +26,7 @@ public partial class StandingSessionSwitchConcurrencyTests
         await f.SeedAsync();
         gate.AgentId = f.Agent.Id;
         var fresh = f.StartAsync(new(Fresh: true));
+        Task<AgentDetailDto>? laterResume = null;
         try
         {
             await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
@@ -49,10 +50,21 @@ public partial class StandingSessionSwitchConcurrencyTests
             }
             await using (var scope = f.Harness.Provider.CreateAsyncScope())
                 await scope.ServiceProvider.GetRequiredService<AgentControlService>().StopAsync(f.Agent.Id, default);
+            var resumePreflight = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            f.Harness.Runner.ListOverride = ct =>
+            {
+                resumePreflight.TrySetResult();
+                return Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
+            };
+            laterResume = f.StartAsync(new(ResumeSessionId: selected));
+            await resumePreflight.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            laterResume.IsCompleted.ShouldBeFalse("resume must wait for the Fresh reservation's target lock");
             gate.Release.TrySetResult();
             await fresh;
+            await laterResume.WaitAsync(TimeSpan.FromSeconds(15));
             await f.IdleAsync();
-            resumed.Started.ShouldBeFalse("Stop revoked the delayed Fresh worker before adapter creation");
+            // A request finding queue ownership may return the existing stopped row.
+            // Once the revoked worker settles, the next Start must resume it normally.
             await f.StartAsync(new(ResumeSessionId: selected));
             await f.IdleAsync();
             resumed.Started.ShouldBeTrue();
@@ -81,6 +93,7 @@ public partial class StandingSessionSwitchConcurrencyTests
         {
             gate.Release.TrySetResult();
             await fresh;
+            if (laterResume is not null) await laterResume.WaitAsync(TimeSpan.FromSeconds(15));
             await f.IdleAsync();
         }
     }
