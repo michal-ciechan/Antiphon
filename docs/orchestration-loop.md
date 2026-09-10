@@ -949,3 +949,14 @@ the preparation can be recorded or a local child merge can advance its parent.
 
 The CARD-0448 continuation is not rollout-ready until its complete verification matrix and
 creation-recovery/admission coverage are accepted. Do not deploy a checkpoint independently.
+
+## Land request and caller receipt (CARD-0467)
+
+An accepted request has its own identity before a landing operation exists. A hold
+records the current reason, writer and episode without consuming an attempt. Blocked
+writers still exclude landing. Publication, cleanup and caller receipt are separate
+facts; a Succeeded delegate is not evidence of publication. A terminal land transaction
+owes a durable notification, and an independent worker recovers the same keyed queue
+row. Only a complete correlated UserPrompt after the attempt floor confirms receipt.
+Status polling does not discharge it. The StageTestDesign delivery inventory and
+StageReview audit require producer-to-recipient evidence for changed asynchronous paths.

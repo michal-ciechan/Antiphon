@@ -2593,6 +2593,7 @@ public sealed class AgentTaskDispatcher
         var notes = await _db.SessionQueuedMessages.AsNoTracking()
             .Where(m => m.Origin == QueuedMessageOrigin.Delegation
                 && m.SourceTaskId != null
+                && m.SourceLandNotificationId == null
                 && ids.Contains(m.SourceTaskId.Value))
             .Select(m => new { m.SourceTaskId, m.Status, m.DeliveryAttempts })
             .ToListAsync(ct);

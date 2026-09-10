@@ -276,3 +276,10 @@ assignments. Only never-attempted pending non-rules input moves, appended in sou
 after the target queue. Any delivery baseline, timestamp, verdict or settlement evidence
 refuses the switch (including manual Fresh) with `standing_resume_delivery_pending`.
 Resolve that input using existing queue controls. Transcript and task history stay separate.
+
+Land outcome notifications use SourceLandNotificationId, separate from report identity.
+The outbox owes delivery across terminal settlement and queue insertion. Receipt requires
+a complete UserPrompt in the destination after LastDeliveryBaselineSequence, or the
+attempt timestamp when no sequence baseline exists. Sent/screen confirmation is not
+this proof. Recovery catches up transcript evidence; typing remains in the session queue.
+Unresolved keyed rows and their destination transcript are retained by ordinary pruning.

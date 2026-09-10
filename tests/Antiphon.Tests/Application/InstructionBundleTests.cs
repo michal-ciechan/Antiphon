@@ -345,7 +345,7 @@ public class InstructionBundleTests
 
         text.ShouldContain("FOREGROUND");
         text.ShouldContain("DO NOT SUB-DELEGATE");
-        text.ShouldContain("COMMIT AND PUSH EACH SLICE");
+        text.ShouldContain("COMMIT AND PUSH EACH MEANINGFUL SLICE OR FIX");
         text.ShouldContain("IS the explicit request");
         text.ShouldContain("never a \"next step\" to offer");
         text.ShouldContain("FORWARD slash");

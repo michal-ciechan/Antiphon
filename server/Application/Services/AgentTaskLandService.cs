@@ -65,6 +65,7 @@ public sealed class AgentTaskLandService
         await _db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM \"AgentTasks\" WHERE \"Id\" = {taskId} FOR UPDATE", ct);
         var task = await _db.AgentTasks.SingleOrDefaultAsync(t => t.Id == taskId, ct)
             ?? throw new NotFoundException(nameof(AgentTask), taskId.ToString());
+        await _db.Entry(task).ReloadAsync(ct);
         if (task.Workspace != WorkspaceMode.Worktree)
             throw new ConflictException("Only a Worktree task can be landed.");
         if (task.Status != AgentTaskStatus.Succeeded)
@@ -151,8 +152,9 @@ public sealed class AgentTaskLandService
             return LandRunResult.Held;
         }
         await _db.Entry(task).ReloadAsync(ct);
-        if (task.LandRequestedAt is null || task.Status != AgentTaskStatus.Succeeded)
+        if (task.LandRequestedAt is null || task.Status != AgentTaskStatus.Succeeded || task.CurrentLandRequestId != request.Id)
             return LandRunResult.Complete;
+        await _db.Entry(request).ReloadAsync(ct);
         var holder = await FindWriterAsync(task, lease.CommonDirectory, ct);
         if (holder is not null)
         {
@@ -568,6 +570,8 @@ public sealed class AgentTaskLandService
             request.HeldSince = now;
             request.HoldEpisode++;
             var held = Event(task.Id, AgentTaskEventType.Held, request.HoldDetail, now);
+            if (task.ActiveLandingId is Guid operationId)
+                SetLandingEvidence(held, await _db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.Id == operationId, ct));
             held.LandRequestId = request.Id;
             _db.AgentTaskEvents.Add(held);
             AddNotification(task, request, held, LandNotificationKind.Held);

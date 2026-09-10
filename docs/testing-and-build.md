@@ -189,3 +189,13 @@ pwsh -File scripts/test-client.ps1 BoardPage.test
 The clone is already at the sha the card names; or pass that filter against any
 checkout of the same commit. Headed tests and `Antiphon.E2E` stay off the
 schedule (`-Suites e2e` is a manual opt-in).
+
+## Asynchronous outcome delivery verification (CARD-0467)
+
+StageTestDesign requires a producer/destination/persistence/recovery/receipt inventory,
+joined by a durable identity. Real queue tests cover busy and already eligible callers
+and each crash/enqueue boundary; session receipt is a matching complete UserPrompt.
+StageReview rejects missing producer-to-recipient evidence. See
+[the standing bundle](../server/Bundles/stage-test-design.md) and its
+[review audit](../server/Bundles/stage-review.md). Text checks protect this rule;
+they do not prove transport delivery.
