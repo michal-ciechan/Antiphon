@@ -57,6 +57,7 @@ public class SessionMessageQueuePtyIntegrationTests
         if (!File.Exists(FakeClaudeExe))
             throw new SkipTestException($"fakeclaude.exe not staged at {FakeClaudeExe} — build the solution first");
 
+        var transcriptPath = Path.Combine(Path.GetTempPath(), $"antiphon-c475-queued-{Guid.NewGuid():N}.jsonl");
         var sessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-fake-pty-{Guid.NewGuid():N}");
         var client = new DirectSessionRunnerClient(sessionLogPath, ptyBackend: PinnedBackend);
 
@@ -81,13 +82,15 @@ public class SessionMessageQueuePtyIntegrationTests
         var sessionId = Guid.NewGuid();
         var cwd = Path.Combine(Path.GetTempPath(), $"antiphon-fake-cwd-{sessionId:N}");
         Directory.CreateDirectory(cwd);
+        using var pump = new CancellationTokenSource();
+        Task? pumping = null;
 
         var spec = new AgentLaunchSpec(
             DefinitionName: "fakeclaude",
             Kind: AgentKind.ClaudeCode,
             Exe: FakeClaudeExe,
             Args: Array.Empty<string>(),
-            Env: new Dictionary<string, string>(),
+            Env: new Dictionary<string, string> { ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = transcriptPath },
             Cwd: cwd,
             Cols: 120,
             Rows: 30);
@@ -120,20 +123,32 @@ public class SessionMessageQueuePtyIntegrationTests
                 await db.SaveChangesAsync();
             }
 
+            var baseline = await SessionQueueTranscriptPump.MaxSequenceAsync(sessionId);
+            pumping = SessionQueueTranscriptPump.RunAsync(transcriptPath, sessionId, pump.Token);
             var queue = provider.GetRequiredService<SessionMessageQueueService>();
-            await queue.EnqueueAsync(sessionId, "queued hello", MessageSendMode.Now, CancellationToken.None);
+            var dto = await queue.EnqueueAsync(sessionId, "queued hello", MessageSendMode.Now, CancellationToken.None);
 
             var submitted = await WaitForRawAsync(
                 client, sessionId, s => s.Contains("SUBMITTED:queued hello"), TimeSpan.FromSeconds(10));
             submitted.ShouldBeTrue("a queued message must submit through the real runtime -> runner -> PTY path");
+            dto.LastDelivery.ShouldNotBeNull().ConfirmedBy.ShouldBe(DeliveryConfirmedBy.Transcript);
+            SessionQueueTranscriptPump.FileUserPrompts(transcriptPath).ShouldBe(["queued hello"]);
+            (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(sessionId, baseline)).ShouldBe(["queued hello"]);
         }
         finally
         {
+            pump.Cancel();
+            if (pumping is not null) try { await pumping; } catch (OperationCanceledException) { }
             try { await client.KillAsync(sessionId, CancellationToken.None); } catch { /* best effort */ }
             await client.DisposeAsync();
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+            {
+                await db.SessionQueuedMessages.Where(m => m.AgentSessionId == sessionId).ExecuteDeleteAsync();
+                await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).ExecuteDeleteAsync();
                 await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
+            }
             try { Directory.Delete(cwd, recursive: true); } catch { /* best effort */ }
+            try { File.Delete(transcriptPath); } catch { /* best effort */ }
         }
     }
 
@@ -148,6 +163,7 @@ public class SessionMessageQueuePtyIntegrationTests
         if (!File.Exists(FakeClaudeExe))
             throw new SkipTestException($"fakeclaude.exe not staged at {FakeClaudeExe} — build the solution first");
 
+        var transcriptPath = Path.Combine(Path.GetTempPath(), $"antiphon-c475-overlay-{Guid.NewGuid():N}.jsonl");
         var sessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-fake-pty-{Guid.NewGuid():N}");
         var client = new DirectSessionRunnerClient(sessionLogPath, ptyBackend: PinnedBackend);
 
@@ -184,13 +200,19 @@ public class SessionMessageQueuePtyIntegrationTests
         var sessionId = Guid.NewGuid();
         var cwd = Path.Combine(Path.GetTempPath(), $"antiphon-fake-cwd-{sessionId:N}");
         Directory.CreateDirectory(cwd);
+        using var pump = new CancellationTokenSource();
+        Task? pumping = null;
 
         var spec = new AgentLaunchSpec(
             DefinitionName: "fakeclaude",
             Kind: AgentKind.Grok,
             Exe: FakeClaudeExe,
             Args: Array.Empty<string>(),
-            Env: new Dictionary<string, string> { ["ANTIPHON_FAKE_OVERLAY_ON_COMMAND"] = "/usage" },
+            Env: new Dictionary<string, string>
+            {
+                ["ANTIPHON_FAKE_OVERLAY_ON_COMMAND"] = "/usage",
+                ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = transcriptPath,
+            },
             Cwd: cwd,
             Cols: 120,
             Rows: 30);
@@ -214,24 +236,39 @@ public class SessionMessageQueuePtyIntegrationTests
                 await db.SaveChangesAsync();
             }
 
+            var baseline = await SessionQueueTranscriptPump.MaxSequenceAsync(sessionId);
+            pumping = SessionQueueTranscriptPump.RunAsync(transcriptPath, sessionId, pump.Token);
             var queue = provider.GetRequiredService<SessionMessageQueueService>();
             await queue.EnqueueAsync(sessionId, "/usage", MessageSendMode.Now, CancellationToken.None);
             (await WaitForRawAsync(client, sessionId, s => s.Contains("OVERLAY:open"), TimeSpan.FromSeconds(8)))
                 .ShouldBeTrue("the first /usage must leave the overlay standing");
 
-            await queue.EnqueueAsync(sessionId, "hello after overlay", MessageSendMode.Now, CancellationToken.None);
-
-            var submitted = await WaitForRawAsync(
-                client, sessionId, s => s.Contains("SUBMITTED:hello after overlay"), TimeSpan.FromSeconds(15));
-            submitted.ShouldBeTrue("S5/S6 must Esc the leftover overlay and deliver the real body");
+            var dto = await queue.EnqueueAsync(sessionId, "hello after overlay", MessageSendMode.Now, CancellationToken.None);
+            var snapshot = await client.GetSnapshotAsync(sessionId, CancellationToken.None);
+            var raw = snapshot.RawOutput ?? "";
+            raw.Contains("OVERLAY:open").ShouldBeTrue();
+            raw.Split("OVERLAY:closed", StringSplitOptions.None).Length.ShouldBe(2, "overlay closes once");
+            raw.Split("SUBMITTED:hello after overlay", StringSplitOptions.None).Length.ShouldBe(2, "exactly one body submit");
+            dto.LastDelivery.ShouldNotBeNull().ConfirmedBy.ShouldBe(DeliveryConfirmedBy.Transcript);
+            var filePrompts = SessionQueueTranscriptPump.FileUserPrompts(transcriptPath);
+            filePrompts.ShouldBe(["hello after overlay"]);
+            (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(sessionId, baseline))
+                .ShouldBe(["hello after overlay"]);
         }
         finally
         {
+            pump.Cancel();
+            if (pumping is not null) try { await pumping; } catch (OperationCanceledException) { }
             try { await client.KillAsync(sessionId, CancellationToken.None); } catch { /* best effort */ }
             await client.DisposeAsync();
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+            {
+                await db.SessionQueuedMessages.Where(m => m.AgentSessionId == sessionId).ExecuteDeleteAsync();
+                await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).ExecuteDeleteAsync();
                 await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
+            }
             try { Directory.Delete(cwd, recursive: true); } catch { /* best effort */ }
+            try { File.Delete(transcriptPath); } catch { /* best effort */ }
         }
     }
 
@@ -800,54 +837,8 @@ public class SessionMessageQueuePtyIntegrationTests
     /// which is what <c>WaitForTranscriptConfirmAsync</c> polls. Only whole lines are consumed; a
     /// half-written last line is left for the next pass.
     /// </summary>
-    private static async Task PumpTranscriptAsync(string path, Guid sessionId, CancellationToken ct)
-    {
-        var sequence = SeedSequence;
-        var consumed = 0;
-        while (!ct.IsCancellationRequested)
-        {
-            try
-            {
-                if (File.Exists(path))
-                {
-                    var text = await File.ReadAllTextAsync(path, CancellationToken.None);
-                    var lines = text.Split('\n');
-                    // The last element is either the empty tail after a final '\n' or a line still
-                    // being appended — either way it is not ours to consume yet.
-                    var complete = lines.Length - 1;
-                    for (var i = consumed; i < complete; i++)
-                    {
-                        foreach (var part in Antiphon.SessionRunner.TranscriptNormalizer.Normalize(lines[i]))
-                        {
-                            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
-                            db.TranscriptEntries.Add(new TranscriptEntry
-                            {
-                                Id = Guid.NewGuid(),
-                                AgentSessionId = sessionId,
-                                Sequence = ++sequence,
-                                Kind = part.Kind,
-                                Uuid = part.Uuid,
-                                Role = part.Role,
-                                Text = part.Text,
-                                StopReason = part.StopReason,
-                                Timestamp = part.Timestamp?.UtcDateTime,
-                                CreatedAt = DateTime.UtcNow,
-                            });
-                            await db.SaveChangesAsync(CancellationToken.None);
-                        }
-                    }
-                    consumed = complete;
-                }
-            }
-            catch (IOException)
-            {
-                // Mid-append; try again.
-            }
-
-            try { await Task.Delay(100, ct); }
-            catch (OperationCanceledException) { break; }
-        }
-    }
+    private static Task PumpTranscriptAsync(string path, Guid sessionId, CancellationToken ct)
+        => SessionQueueTranscriptPump.RunAsync(path, sessionId, ct);
 
     /// <summary>The user-prompt texts the fake actually recorded — ground truth, not screen matching.</summary>
     private static List<string> UserPromptsIn(string transcriptPath)

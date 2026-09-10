@@ -57,14 +57,28 @@
 
 ### Preserved Gotcha #74
 
-- **A full `Antiphon.Tests` run is ~25.5 minutes** (CARD-0110 re-measure 2026-09-03, 3893 tests, after S2 migrate-once and CARD-0238 connection-exhaustion fix; was ~28 min on 2026-08-29). The "last 15–18 minutes are the sequential tail" claim is **pre-S2** (CARD-0165): the biggest `[NotInParallel]` classes now do ~21–24 s of real work. The remaining serial pole is the 1-wide `ProcessSpawnLimit` lane (~9–10 min). TUnit still runs global `[NotInParallel]` last, and `--output Normal` prints nothing for passing tests, so a long quiet stretch is not a hang. Do not kill a full run before ~35 minutes; use `--output Detailed` or `pwsh -File scripts/run-tests-watched.ps1 -Exe <bin-x>/Antiphon.Tests.exe -Detailed`. Postgres `53300`/`53200` exhaustion is fixed (CARD-0238). **The local foreground loop is the Unit lane, not the full assembly** (CARD-0110 S7′): `--treenode-filter "/*/*/*/*[Category=Unit]"` — a category predicate works; it is not an OR.
+- **Do not treat 3,893 tests / ~25.5 minutes as a current full-suite duration.** That figure is CARD-0110's 2026-09-03 re-measure (after S2 migrate-once and CARD-0238 connection-exhaustion fix; was ~28 min on 2026-08-29). A newer 2026-09-10 profile discovered **7,072** cases; a clean Unit selection of **1,992** took 70.29s outer wall (1,988 pass, three fail, one skip); a **492-case** broad slice took **94m 23.46s** raw (491 pass, one fail). The 91m 35.3s "adjusted" broad figure substitutes one clean case for a diagnostic pause — arithmetic, not a clean rerun — and shared-host interference affected that sample. A current full-suite wall time was **not** measured. The old 35-minute observation threshold is **not** a kill deadline. TUnit still runs global `[NotInParallel]` last, and `--output Normal` prints nothing for passing tests, so a long quiet stretch is not a hang. Use `--output Detailed` or `pwsh -File scripts/run-tests-watched.ps1 -Exe <bin-x>/Antiphon.Tests.exe -Detailed`. Postgres `53300`/`53200` exhaustion is fixed (CARD-0238). **The local foreground loop is Unit plus named affected integration classes**, not the full assembly (CARD-0475 S5): `--treenode-filter "/*/*/*/*[Category=Unit]"` — a category predicate works; it is not an OR.
 
 ### Preserved Gotcha #75
 
 - **A `dotnet build` that sits for 20+ minutes at near-zero CPU is probably reading `obj/…/*.FileListAbsolute.txt`, not hung** (CARD-0222, same doc): every `--property:OutputPath=bin-<name>/` build shares the project's one `obj/` and appends to that ledger, `IncrementalClean` reads/filters/rewrites it on every build and prunes only entries under the CURRENT `OutDir`, so it grew to 228 MB / 770,706 lines for `Antiphon.SessionRunner` and 97 MB for `Antiphon.Tests` (nested `bin-X\bin-Y\…` trees from before CARD-0110's exclude). Measured: 157 s of a 181 s Tests build in `ReadLinesFromFile`+`FindUnderPath`; full graph 21m31s → 1m28s after a reset. `Directory.Build.targets` now deletes a ledger over 2 MB (`AntiphonCleanFileMaxBytes`, `0` to disable) with a warning naming the card. The tell from outside: the outer `dotnet` process has ~1 s of CPU, one MSBuild node ticks at ~10 % of a core in `FindUnderPath` (`dotnet-stack report -p <node>`), and no `Antiphon.Tests.exe` has been spawned yet — there is never a `testhost.exe` under the Microsoft.Testing.Platform runner.
 <!-- CARD-0254 preserved source ends -->
 
-## Fast lane (CARD-0110)
+## Fast lane (CARD-0110 / CARD-0475 S5)
+
+### Default Code/Review recipe
+
+Build once into a producer-owned isolated output (forward slash on `OutputPath`). Execute the Unit lane. Execute named affected integration classes together where the pinned TUnit 1.44 OR syntax allows. Inspect a **fresh TRX** for each intended class/method and nonzero counts. `--list-tests` is not execution evidence on this runner. Do not combine UID and tree selectors. Unit and named integrations may be separate invocations of the same built output; do not invent unverified mixed category/class filter syntax. Combined class-filter syntax lives in [Combined class filters (CARD-0403)](#combined-class-filters-card-0403).
+
+The brief/verification section must list coverage-to-class. Code and Review report the filters they ran and the actual expanded counts. Unit-only is insufficient for native delivery, landing, leases or persistence. A broad namespace/full-assembly exception names the affected cross-cutting invariant, the classes that cannot be bounded, and the expected cost **before** the run; missing rationale is a Review defect. CI/nightly keep the broad run. Per-PC Mutation stays method-scoped. Do not silently edit `LandVerifyFilter` or the production verifier as part of a documentation policy change.
+
+Example (directory names are examples — use a fresh empty results directory per invocation):
+
+```powershell
+dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c475/ --nologo
+dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c475/ -- --treenode-filter '/*/*/*/*[Category=Unit]' --report-trx --report-trx-filename unit.trx --results-directory .antiphon/c475-unit
+dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c475/ -- --treenode-filter '/*/*/(AgentTaskLandBoundaryControlledTests*)|(AgentTaskLandAdmissionControlledTests*)|(AgentTaskLandConcurrencyControlledTests*)/*' --report-trx --report-trx-filename controlled.trx --results-directory .antiphon/c475-controlled
+```
 
 ### Alternate-output cleanup safety (CARD-0448)
 
@@ -74,19 +88,13 @@ job deletes `bin-*` directories older than its configured age threshold, leaving
 The landing verifier writes to a unique external artifacts directory and retains it.
 Worktree removal's ignored-content policy remains separate (follow-up CARD-0452).
 
-The local default verification loop is the Unit category, not the full ~25.5 min assembly. A `[Category=X]` predicate works in `--treenode-filter` (measured; a single category is not an OR).
-
-```
-dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c110/ -- --treenode-filter "/*/*/*/*[Category=Unit]"
-```
-
-CI / nightly keep the full run. After a full run that wrote a TRX (`--report-trx --report-trx-filename run.trx`), check for new ≥5 s tests:
+A `[Category=X]` predicate works in `--treenode-filter` (measured; a single category is not an OR). CI / nightly keep the full run. After a TRX (`--report-trx --report-trx-filename run.trx`), check for new ≥5 s tests:
 
 ```
 pwsh -File scripts/test-duration-tripwire.ps1 -Trx path\to\run.trx
 ```
 
-The allowlist is `tests/Antiphon.Tests/slow-tests-allowlist.txt`. Every test class is tagged `Unit` xor `Integration` (`TestLaneCategoryGuardTests`).
+The allowlist is `tests/Antiphon.Tests/slow-tests-allowlist.txt` (exact simple or fully-qualified class names, case-insensitive). Every test class is tagged `Unit` xor `Integration` (`TestLaneCategoryGuardTests`).
 
 ## Combined class filters (CARD-0403)
 

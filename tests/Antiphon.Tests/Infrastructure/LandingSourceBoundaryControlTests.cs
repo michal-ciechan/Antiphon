@@ -16,7 +16,7 @@ public sealed class LandingSourceBoundaryControlTests
     [Arguments("metadata", false)]
     [Arguments("metadata", true)]
     public Task C448_V10_after_fetch(string change, bool contained)
-        => new AgentTaskLandBoundaryTests()
+        => new AgentTaskLandBoundaryControlledTests()
             .C448_V10_EachAcknowledgedBoundaryRechecksSource("remote", change, contained);
 
     [Test]
@@ -24,7 +24,7 @@ public sealed class LandingSourceBoundaryControlTests
     [Arguments("dirty", false)]
     [Arguments("metadata", false)]
     public Task C448_V10_before_rebase_intent(string change, bool contained)
-        => new AgentTaskLandBoundaryTests()
+        => new AgentTaskLandBoundaryControlledTests()
             .C448_V10_EachAcknowledgedBoundaryRechecksSource("BeforeRebaseIntent", change, contained);
 
     [Test]
@@ -32,7 +32,7 @@ public sealed class LandingSourceBoundaryControlTests
     [Arguments("dirty", false)]
     [Arguments("metadata", false)]
     public Task C448_V10_before_rebase_child(string change, bool contained)
-        => new AgentTaskLandBoundaryTests()
+        => new AgentTaskLandBoundaryControlledTests()
             .C448_V10_EachAcknowledgedBoundaryRechecksSource("RebaseStarted", change, contained);
 
     [Test]
@@ -40,7 +40,7 @@ public sealed class LandingSourceBoundaryControlTests
     [Arguments("dirty", false)]
     [Arguments("metadata", false)]
     public Task C448_V10_before_verification(string change, bool contained)
-        => new AgentTaskLandBoundaryTests()
+        => new AgentTaskLandBoundaryControlledTests()
             .C448_V10_EachAcknowledgedBoundaryRechecksSource("Prepared", change, contained);
 
     [Test]
@@ -48,7 +48,7 @@ public sealed class LandingSourceBoundaryControlTests
     [Arguments("dirty", false)]
     [Arguments("metadata", false)]
     public Task C448_V10_before_target_intent(string change, bool contained)
-        => new AgentTaskLandBoundaryTests()
+        => new AgentTaskLandBoundaryControlledTests()
             .C448_V10_EachAcknowledgedBoundaryRechecksSource("Verified", change, contained);
 
     [Test]
@@ -56,7 +56,7 @@ public sealed class LandingSourceBoundaryControlTests
     [Arguments("dirty", false)]
     [Arguments("metadata", false)]
     public Task C448_V10_before_target_mutation(string change, bool contained)
-        => new AgentTaskLandBoundaryTests()
+        => new AgentTaskLandBoundaryControlledTests()
             .C448_V10_EachAcknowledgedBoundaryRechecksSource("TargetAdvanceStarted", change, contained);
 
     [Test]
@@ -64,7 +64,7 @@ public sealed class LandingSourceBoundaryControlTests
     [Arguments("dirty", false)]
     [Arguments("metadata", false)]
     public Task C448_V10_before_publication_observation(string change, bool contained)
-        => new AgentTaskLandBoundaryTests()
+        => new AgentTaskLandBoundaryControlledTests()
             .C448_V10_EachAcknowledgedBoundaryRechecksSource("LocalTargetAdvanced", change, contained);
 
     [Test]
@@ -72,7 +72,7 @@ public sealed class LandingSourceBoundaryControlTests
     [Arguments("dirty", false)]
     [Arguments("metadata", false)]
     public Task C448_V10_before_push_intent(string change, bool contained)
-        => new AgentTaskLandBoundaryTests()
+        => new AgentTaskLandBoundaryControlledTests()
             .C448_V10_EachAcknowledgedBoundaryRechecksSource("BeforePushIntent", change, contained);
 
     [Test]
@@ -80,7 +80,7 @@ public sealed class LandingSourceBoundaryControlTests
     [Arguments("dirty", false)]
     [Arguments("metadata", false)]
     public Task C448_V10_before_push(string change, bool contained)
-        => new AgentTaskLandBoundaryTests()
+        => new AgentTaskLandBoundaryControlledTests()
             .C448_V10_EachAcknowledgedBoundaryRechecksSource("PushStarted", change, contained);
 
 }

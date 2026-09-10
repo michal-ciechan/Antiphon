@@ -7,6 +7,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
+[Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class DelegateScriptLandStatusTests
 {

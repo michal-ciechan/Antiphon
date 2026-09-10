@@ -1,0 +1,649 @@
+using System.Collections.Immutable;
+using System.Security.Cryptography;
+using System.Text;
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
+
+namespace Antiphon.Tests.TestHelpers;
+
+/// <summary>
+/// CARD-0475 S4: in-memory ILandingGit. Supported command shapes are explicit; unexpected
+/// calls throw. No default-success and no fallback to a real git process.
+/// </summary>
+internal sealed class ControlledLandingGit : ILandingGit
+{
+    private int _oid;
+    private int _pid = 2_000_000_000;
+    private int _observations;
+    private readonly Dictionary<string, string> _refs = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Commit> _objects = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _files = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _index = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _untracked = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _targetFiles = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _targetIndex = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _targetUntracked = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _sequencer = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _targetSequencer = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Worktree> _worktrees = new(StringComparer.OrdinalIgnoreCase);
+    private string _sourceHead;
+    private string _sourceBranch;
+    private string _targetHead;
+    private string _targetBranch;
+    private string _remoteTarget;
+    private string _remoteSource;
+    private string _endpoint;
+    private bool _sourceLocked;
+    private bool _sourcePrunable;
+    private bool _targetLocked;
+    private bool _targetPrunable;
+    private bool _sourcePresent = true;
+    private int? _existsErrorExit;
+
+    public string Root { get; }
+    public string Repository { get; }
+    public string Source { get; }
+    public string Remote { get; }
+    public string CommonDir { get; }
+    public string GitDirectory { get; }
+    public string SourceGitDirectory { get; }
+    public string SourceRef { get; }
+    public string TargetRef { get; }
+    public Guid TaskId { get; }
+    public string SeedSha { get; }
+    public string Fingerprint { get; }
+    public List<string[]> Trace { get; } = [];
+    public int NativeProcessStarts { get; private set; }
+    public Func<string, IReadOnlyList<string>, Task<LandingGitResult?>>? BeforeCommand { get; set; }
+    public Func<string, IReadOnlyList<string>, LandingGitResult, Task>? AfterCommand { get; set; }
+    public Func<IReadOnlyList<string>, Task>? BeforeObservedCommand { get; set; }
+    public Func<Task>? OnFirstRemoteObservation { get; set; }
+    public Func<Task>? OnSecondRemoteObservation { get; set; }
+    public Func<Task>? OnAncestorCheck { get; set; }
+    public int ShowRefExistsErrorExit { get => _existsErrorExit ?? 0; set => _existsErrorExit = value; }
+    public string? OverrideCommonDirectory { get; set; }
+    public string? OverrideGitDirectory { get; set; }
+    public string? OverrideRegisteredPath { get; set; }
+    public bool RejectInspection { get; set; }
+
+    public ControlledLandingGit(string? root = null, Guid? taskId = null)
+    {
+        Root = root ?? Path.Combine(Path.GetTempPath(), "antiphon-c475-" + Guid.NewGuid().ToString("N"));
+        TaskId = taskId ?? Guid.NewGuid();
+        Repository = Path.Combine(Root, "canonical");
+        Source = Path.Combine(Root, "trees", "source");
+        Remote = Path.Combine(Root, "remote.git");
+        CommonDir = Path.Combine(Root, "git-common");
+        GitDirectory = CommonDir;
+        SourceGitDirectory = Path.Combine(CommonDir, "worktrees", "source");
+        SourceRef = $"refs/heads/feat/card-task-{TaskId:N}";
+        TargetRef = "refs/heads/master";
+        Directory.CreateDirectory(Repository);
+        Directory.CreateDirectory(Source);
+        Directory.CreateDirectory(Remote);
+        Directory.CreateDirectory(CommonDir);
+        Directory.CreateDirectory(SourceGitDirectory);
+        Directory.CreateDirectory(Path.Combine(CommonDir, "antiphon"));
+        SeedSha = NextOid();
+        _objects[SeedSha] = new Commit(SeedSha, []);
+        _sourceHead = SeedSha;
+        _targetHead = SeedSha;
+        _sourceBranch = SourceRef;
+        _targetBranch = TargetRef;
+        _remoteTarget = SeedSha;
+        _remoteSource = SeedSha;
+        _refs[SourceRef] = SeedSha;
+        _refs[TargetRef] = SeedSha;
+        _endpoint = Remote.Replace('\\', '/');
+        Fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(_endpoint)));
+        File.WriteAllText(Path.Combine(Repository, "keep.txt"), "seed\n");
+        File.WriteAllText(Path.Combine(Source, "keep.txt"), "seed\n");
+        File.WriteAllText(Path.Combine(Repository, "fixture-owner.txt"), TaskId.ToString("N") + "\n");
+        File.WriteAllText(Path.Combine(Source, "fixture-owner.txt"), TaskId.ToString("N") + "\n");
+        _files["keep.txt"] = "seed\n";
+        _index["keep.txt"] = "seed\n";
+        _targetFiles["keep.txt"] = "seed\n";
+        _targetIndex["keep.txt"] = "seed\n";
+        _worktrees[Source] = new Worktree(Source, SourceRef, SeedSha);
+        _worktrees[Repository] = new Worktree(Repository, TargetRef, SeedSha);
+    }
+
+    public string SourceHead => _sourceHead;
+    public string TargetHead => _targetHead;
+    public string RemoteTarget => _remoteTarget;
+    public string RemoteSource => _remoteSource;
+
+    public void SetShowRefExistsError(int exit) => _existsErrorExit = exit;
+
+    public async Task<string> RequiredAsync(string path, params string[] arguments)
+    {
+        var result = await RunAsync(path, arguments, CancellationToken.None);
+        if (!result.Succeeded) throw new InvalidOperationException($"fixture_git_failed:{arguments[0]}:{result.ExitCode}");
+        return result.Output;
+    }
+
+    public Task AssertRemoteSourceAsync()
+    {
+        _remoteSource.ShouldRetain(SeedSha);
+        return Task.CompletedTask;
+    }
+
+    public Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
+        => ExecuteAsync(repository, arguments, null, ct);
+
+    public async Task<LandingGitResult> RunOwnedAsync(string repository, IReadOnlyList<string> arguments,
+        Func<int, long, CancellationToken, Task> started, CancellationToken ct)
+        => await ExecuteAsync(repository, arguments, started, ct);
+
+    public Task<bool?> IsProcessAliveAsync(int processId, long startTicks, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        return Task.FromResult<bool?>(false);
+    }
+
+    public Task<string> CanonicalDirectoryAsync(string path, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        return Task.FromResult(Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)));
+    }
+
+    public Task<string> CommonDirectoryAsync(string repository, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var full = Path.GetFullPath(repository);
+        if (PathsEqual(full, Remote)) return Task.FromResult(Path.GetFullPath(Remote));
+        return Task.FromResult(Path.GetFullPath(CommonDir));
+    }
+
+    public Task<bool> HasActiveSequencerAsync(string repository, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var set = IsSource(repository) ? _sequencer : _targetSequencer;
+        return Task.FromResult(set.Count > 0);
+    }
+
+    public Task<IReadOnlyList<LandingRegistration>> RegistrationsAsync(string repository, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var rows = new List<LandingRegistration>();
+        if (_sourcePresent)
+            rows.Add(new(Source, _sourceBranch, _sourceHead, _sourceLocked, _sourcePrunable));
+        rows.Add(new(Repository, _targetBranch, _targetHead, _targetLocked, _targetPrunable));
+        return Task.FromResult<IReadOnlyList<LandingRegistration>>(rows);
+    }
+
+    public async Task<LandSourceInspection> InspectAsync(LandSourceCoordinates coordinates, CancellationToken ct)
+    {
+        if (coordinates.SourceFullRef == coordinates.TargetFullRef)
+            return new(null, "source_equals_target");
+        if (!PathsEqual(coordinates.RepositoryPath, Repository))
+            return new(null, "wrong_repository");
+        if (!PathsEqual(coordinates.WorktreePath, Source) || !_sourcePresent)
+            return new(null, "registration_mismatch");
+        if (_sourceLocked || _sourcePrunable) return new(null, "registration_unavailable");
+        if (_sourceBranch != coordinates.SourceFullRef) return new(null, "source_branch_mismatch");
+        if (_sequencer.Count > 0) return new(null, "active_sequencer");
+        var status = StatusOutput(source: true);
+        if (status.Length != 0) return new(null, "source_dirty");
+        var ignored = IgnoredPaths();
+        if (RejectInspection) return new(null, "source_rejected");
+        var snapshot = new LandSourceSnapshot(coordinates,
+            Path.GetFullPath(OverrideCommonDirectory ?? CommonDir),
+            Path.GetFullPath(OverrideRegisteredPath ?? Source),
+            Path.GetFullPath(OverrideGitDirectory ?? SourceGitDirectory),
+            _sourceBranch, _sourceHead, _sourceHead, status, ignored);
+        return new(snapshot, null);
+    }
+
+    public Task<LandingDestination> DestinationAsync(string repository, string targetFullRef, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (targetFullRef != TargetRef) throw new ArgumentException("invalid_branch");
+        return Task.FromResult(new LandingDestination("origin", TargetRef, Fingerprint));
+    }
+
+    public async Task<LandingRemoteObservation> ObserveAsync(string repository, LandingDestination destination,
+        string sourceSha, string observationRef, CancellationToken ct)
+    {
+        _observations++;
+        if (_observations == 1 && OnFirstRemoteObservation is not null) await OnFirstRemoteObservation();
+        if (_observations == 2 && OnSecondRemoteObservation is not null) await OnSecondRemoteObservation();
+        var fetch = await RunAsync(repository,
+            ["fetch", "--no-tags", "--no-write-fetch-head", _endpoint, $"{destination.FullRef}:{observationRef}/pin"], ct);
+        if (!fetch.Succeeded) return new(null, false, "remote_fetch_failed");
+        var observed = _remoteTarget;
+        var ancestry = await RunAsync(repository, ["merge-base", "--is-ancestor", sourceSha, observed], ct);
+        return ancestry.ExitCode switch
+        {
+            0 => new(observed, true, null),
+            1 => new(observed, false, null),
+            _ => new(null, false, "remote_ancestry_error"),
+        };
+    }
+
+    public async Task<LandingGitResult> PinAsync(string repository, string recoveryRef, string sha, CancellationToken ct)
+    {
+        if (sha.Length is not (40 or 64)) return new(1, "", "invalid_recovery_identity");
+        if (_refs.TryGetValue(recoveryRef, out var existing))
+            return existing == sha ? new(0, "", "") : new(1, "", "recovery_ref_collision");
+        var existence = await RunAsync(repository, ["show-ref", "--exists", recoveryRef], ct);
+        if (existence.ExitCode != 2) return new(1, "", "recovery_ref_query_error");
+        return await RunAsync(repository, ["update-ref", recoveryRef, sha, new string('0', sha.Length)], ct);
+    }
+
+    public Task<LandingGitResult> PushAsync(string repository, LandingDestination destination, string sha, CancellationToken ct)
+        => RunAsync(repository, ["push", _endpoint, $"{sha}:{destination.FullRef}"], ct);
+
+    public Task<LandingGitResult> PushOwnedAsync(string repository, LandingDestination destination, string sha,
+        Func<int, long, CancellationToken, Task> started, CancellationToken ct)
+        => RunOwnedAsync(repository, ["push", _endpoint, $"{sha}:{destination.FullRef}"], started, ct);
+
+    public void SetRemoteContainsSource() => _remoteTarget = _sourceHead;
+
+    public void RewriteRemoteAwayFromSource()
+    {
+        var other = NextOid();
+        _objects[other] = new Commit(other, [_remoteTarget]);
+        _remoteTarget = other;
+    }
+
+    public void SetPin(string name, string sha) => _refs[name] = sha;
+
+    public void DeleteRef(string name) => _refs.Remove(name);
+
+    public void LockSource() => _sourceLocked = true;
+
+    public void SetSourcePrunable() => _sourcePrunable = true;
+
+    public void SetAmbiguousTargetRegistrations()
+    {
+        var extra = Path.Combine(Root, "canonical-alias");
+        Directory.CreateDirectory(extra);
+        _worktrees[extra] = new Worktree(extra, TargetRef, _targetHead);
+    }
+
+    public void SetTargetLocked() => _targetLocked = true;
+    public void SetTargetPrunable() => _targetPrunable = true;
+
+    private async Task<LandingGitResult> ExecuteAsync(string repository, IReadOnlyList<string> arguments,
+        Func<int, long, CancellationToken, Task>? started, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        Trace.Add(arguments.ToArray());
+        if (BeforeCommand is not null && await BeforeCommand(repository, arguments) is { } injected)
+            return injected;
+        if (BeforeObservedCommand is not null) await BeforeObservedCommand(arguments);
+        if (started is not null)
+        {
+            var pid = ++_pid;
+            var ticks = DateTime.UtcNow.Ticks;
+            await started(pid, ticks, ct);
+        }
+        var result = Dispatch(repository, arguments);
+        if (AfterCommand is not null) await AfterCommand(repository, arguments, result);
+        return result;
+    }
+
+    private LandingGitResult Dispatch(string repository, IReadOnlyList<string> args)
+    {
+        if (args.Count == 0) throw Unsupported(args);
+        if (args[0] == "rev-parse") return RevParse(repository, args);
+        if (args[0] == "symbolic-ref") return SymbolicRef(repository, args);
+        if (args[0] == "show-ref") return ShowRef(args);
+        if (args[0] == "status") return new(0, StatusOutput(IsSource(repository)), "");
+        if (args[0] == "ls-files") return new(0, string.Join('\0', IgnoredPaths()) + (IgnoredPaths().Length == 0 ? "" : "\0"), "");
+        if (args[0] == "worktree" && args.Count > 1 && args[1] == "list") return WorktreeList();
+        if (args[0] == "worktree" && args.Count > 1 && args[1] == "remove") return WorktreeRemove(args);
+        if (args[0] == "worktree" && args.Count > 1 && args[1] == "lock")
+        {
+            _sourceLocked = true;
+            return new(0, "", "");
+        }
+        if (args[0] == "check-ref-format") return new(0, "", "");
+        if (args[0] == "remote" && args.Contains("get-url")) return new(0, _endpoint + "\n", "");
+        if (args[0] == "ls-remote") return new(0, $"{_remoteTarget}\t{TargetRef}\n", "");
+        if (args[0] == "fetch")
+        {
+            var dest = args[^1];
+            var colon = dest.LastIndexOf(':');
+            if (colon > 0) _refs[dest[(colon + 1)..]] = _remoteTarget;
+            return new(0, "", "");
+        }
+        if (args[0] == "merge-base" && args.Contains("--is-ancestor"))
+        {
+            if (OnAncestorCheck is not null) OnAncestorCheck().GetAwaiter().GetResult();
+            var source = args[^2];
+            var observed = args[^1];
+            return new(IsAncestor(source, observed) ? 0 : 1, "", "");
+        }
+        if (args[0] == "update-ref") return UpdateRef(args);
+        if (args.Contains("rebase") && args.Contains("--abort")) return new(0, "", "");
+        if (args.Contains("rebase"))
+        {
+            var onto = args[^1];
+            var rebased = NextOid();
+            _objects[rebased] = new Commit(rebased, [onto]);
+            _sourceHead = rebased;
+            _refs[_sourceBranch] = rebased;
+            _worktrees[Source] = _worktrees[Source] with { Head = rebased };
+            return new(0, "", "") { RebaseHeadSha = rebased };
+        }
+        if (args.Contains("merge") && args.Contains("--ff-only"))
+        {
+            var sha = args[^1];
+            _targetHead = sha;
+            _refs[TargetRef] = sha;
+            _worktrees[Repository] = _worktrees[Repository] with { Head = sha };
+            if (_files.TryGetValue("feature.txt", out var feature))
+            {
+                _targetFiles["feature.txt"] = feature;
+                File.WriteAllText(Path.Combine(Repository, "feature.txt"), feature);
+            }
+            return new(0, "", "");
+        }
+        if (args[0] == "diff")
+        {
+            if (args.Contains("--cached"))
+            {
+                var staged = new StringBuilder();
+                foreach (var (path, content) in _index)
+                    if (!_files.TryGetValue(path, out var live) || live != content || content.Contains("new writer") || content.Contains("staged"))
+                        staged.Append(content);
+                foreach (var (path, content) in (IsSource(repository) ? _index : _targetIndex))
+                    staged.Append(content);
+                return new(0, staged.ToString(), "");
+            }
+            return new(0, "", "");
+        }
+        if (args[0] == "commit")
+        {
+            var sha = NextOid();
+            _objects[sha] = new Commit(sha, [HeadOf(repository)]);
+            SetHead(repository, sha);
+            return new(0, "", "");
+        }
+        if (args[0] == "checkout" && args.Contains("-b"))
+        {
+            var branch = args[^1];
+            var full = branch.StartsWith("refs/", StringComparison.Ordinal) ? branch : "refs/heads/" + branch;
+            _refs[full] = HeadOf(repository);
+            if (IsSource(repository))
+            {
+                _sourceBranch = full;
+                _worktrees[Source] = _worktrees[Source] with { Branch = full };
+            }
+            else
+            {
+                _targetBranch = full;
+                _worktrees[Repository] = _worktrees[Repository] with { Branch = full };
+            }
+            return new(0, "", "");
+        }
+        if (args[0] == "add")
+        {
+            var name = args[^1];
+            var map = IsSource(repository) ? _untracked : _targetUntracked;
+            var index = IsSource(repository) ? _index : _targetIndex;
+            var files = IsSource(repository) ? _files : _targetFiles;
+            if (map.TryGetValue(name, out var content) || files.TryGetValue(name, out content) || File.Exists(Path.Combine(WorktreePath(repository), name)))
+            {
+                content ??= File.ReadAllText(Path.Combine(WorktreePath(repository), name));
+                index[name] = content;
+                files[name] = content;
+                map.Remove(name);
+            }
+            return new(0, "", "");
+        }
+        if (args[0] == "push")
+        {
+            var spec = args[^1];
+            var colon = spec.IndexOf(':');
+            var sha = spec[..colon];
+            var dest = spec[(colon + 1)..];
+            if (dest == TargetRef || dest.EndsWith("/master", StringComparison.Ordinal)) _remoteTarget = sha;
+            if (dest == SourceRef) _remoteSource = sha;
+            return new(0, "", "");
+        }
+        if (args[0] == "stash") return new(0, "", "");
+        if (args[0] == "branch")
+        {
+            var name = args[^1];
+            var full = name.StartsWith("refs/", StringComparison.Ordinal) ? name : "refs/heads/" + name;
+            _refs[full] = args.Count > 2 ? args[^1] == name ? HeadOf(repository) : args[^1] : HeadOf(repository);
+            if (args.Count > 2 && LooksOid(args[^1]) is false && args[^2] != "branch")
+                _refs[full] = HeadOf(repository);
+            if (args.Count >= 3 && LooksOid(args[^1])) _refs["refs/heads/" + args[^2]] = args[^1];
+            return new(0, "", "");
+        }
+        if (args[0] == "config") return new(0, "", "");
+        if (args[0] == "commit-tree")
+        {
+            var sha = NextOid();
+            _objects[sha] = new Commit(sha, [_targetHead]);
+            return new(0, sha + "\n", "");
+        }
+        throw Unsupported(args);
+    }
+
+    private LandingGitResult RevParse(string repository, IReadOnlyList<string> args)
+    {
+        if (args.Contains("--git-common-dir") || args.Contains("--path-format=absolute") && args.Contains("--git-common-dir"))
+            return new(0, Path.GetFullPath(IsRemote(repository) ? Remote : CommonDir) + "\n", "");
+        if (args.Contains("--absolute-git-dir"))
+            return new(0, Path.GetFullPath(IsSource(repository) ? SourceGitDirectory : GitDirectory) + "\n", "");
+        var spec = args.Last(a => a != "rev-parse" && a != "--verify" && !a.StartsWith("--", StringComparison.Ordinal));
+        if (spec.EndsWith("^{commit}", StringComparison.Ordinal)) spec = spec[..^9];
+        if (spec is "HEAD") return new(0, HeadOf(repository) + "\n", "");
+        if (_refs.TryGetValue(spec, out var sha) || _refs.TryGetValue("refs/heads/" + spec, out sha))
+            return new(0, sha + "\n", "");
+        if (_objects.ContainsKey(spec)) return new(0, spec + "\n", "");
+        return new(128, "", "git_exit_128");
+    }
+
+    private LandingGitResult SymbolicRef(string repository, IReadOnlyList<string> args)
+    {
+        var name = args[^1];
+        if (name == "HEAD")
+        {
+            var branch = IsSource(repository) ? _sourceBranch : _targetBranch;
+            return new(0, branch + "\n", "");
+        }
+        return new(1, "", "");
+    }
+
+    private LandingGitResult ShowRef(IReadOnlyList<string> args)
+    {
+        var name = args[^1];
+        if (args.Contains("--exists"))
+        {
+            if (_existsErrorExit is int err && err != 0) return new(err, "", "git_exit_" + err);
+            return new(_refs.ContainsKey(name) ? 0 : 2, "", _refs.ContainsKey(name) ? "" : "git_exit_2");
+        }
+        if (_refs.TryGetValue(name, out var sha))
+            return new(0, args.Contains("--hash") || args.Contains("--verify") ? sha + "\n" : $"{sha} {name}\n", "");
+        return new(128, "", "git_exit_128");
+    }
+
+    private LandingGitResult UpdateRef(IReadOnlyList<string> args)
+    {
+        if (args.Contains("-d"))
+        {
+            var name = args.Last(a => a != "-d" && a != "--no-deref" && a != "update-ref");
+            _refs.Remove(name);
+            if (name == SourceRef) { _sourcePresent = false; }
+            return new(0, "", "");
+        }
+        var parts = args.Where(a => a is not "update-ref" and not "--no-deref").ToArray();
+        if (parts.Length >= 2)
+        {
+            var name = parts[0];
+            var sha = parts[1];
+            if (parts.Length >= 3)
+            {
+                var expected = parts[2];
+                var current = _refs.TryGetValue(name, out var have) ? have : new string('0', sha.Length);
+                if (current != expected) return new(1, "", "cas_failed");
+            }
+            _refs[name] = sha;
+            if (name == TargetRef) _targetHead = sha;
+            if (name == SourceRef) _sourceHead = sha;
+            return new(0, "", "");
+        }
+        throw Unsupported(args);
+    }
+
+    private LandingGitResult WorktreeList()
+    {
+        var sb = new StringBuilder();
+        foreach (var wt in _worktrees.Values)
+        {
+            sb.Append("worktree ").Append(wt.Path).Append('\0');
+            sb.Append("HEAD ").Append(wt.Head).Append('\0');
+            sb.Append("branch ").Append(wt.Branch).Append('\0');
+            if (PathsEqual(wt.Path, Source) && _sourceLocked) sb.Append("locked\0");
+            if (PathsEqual(wt.Path, Source) && _sourcePrunable) sb.Append("prunable\0");
+            if (PathsEqual(wt.Path, Repository) && _targetLocked) sb.Append("locked\0");
+            if (PathsEqual(wt.Path, Repository) && _targetPrunable) sb.Append("prunable\0");
+            sb.Append('\0');
+        }
+        return new(0, sb.ToString(), "");
+    }
+
+    private LandingGitResult WorktreeRemove(IReadOnlyList<string> args)
+    {
+        var path = args[^1];
+        _worktrees.Remove(path);
+        if (PathsEqual(path, Source))
+        {
+            _sourcePresent = false;
+            if (Directory.Exists(Source))
+            {
+                foreach (var file in Directory.EnumerateFiles(Source, "*", SearchOption.AllDirectories))
+                    File.SetAttributes(file, FileAttributes.Normal);
+                Directory.Delete(Source, true);
+            }
+        }
+        return new(0, "", "");
+    }
+
+    private string StatusOutput(bool source)
+    {
+        var files = source ? _files : _targetFiles;
+        var index = source ? _index : _targetIndex;
+        var untracked = source ? _untracked : _targetUntracked;
+        var root = source ? Source : Repository;
+        var sb = new StringBuilder();
+        foreach (var (path, content) in files)
+        {
+            var disk = Path.Combine(root, path);
+            var live = File.Exists(disk) ? File.ReadAllText(disk) : content;
+            var staged = index.TryGetValue(path, out var idx) ? idx : content;
+            if (live != staged) sb.Append(" M ").Append(path).Append('\0');
+            else if (staged != content) sb.Append("M  ").Append(path).Append('\0');
+        }
+        foreach (var path in Directory.Exists(root)
+                     ? Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+                     : [])
+        {
+            var rel = Path.GetRelativePath(root, path).Replace('\\', '/');
+            if (rel.StartsWith(".antiphon/", StringComparison.OrdinalIgnoreCase)
+                || rel.StartsWith(".claude/", StringComparison.OrdinalIgnoreCase)
+                || rel.StartsWith("bin-", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!files.ContainsKey(rel) && !index.ContainsKey(rel) && !untracked.ContainsKey(rel)
+                && Path.GetFileName(rel) is not ("keep.txt" or "fixture-owner.txt" or "feature.txt"))
+                sb.Append("?? ").Append(rel).Append('\0');
+        }
+        foreach (var path in untracked.Keys) sb.Append("?? ").Append(path).Append('\0');
+        foreach (var (path, content) in index)
+            if (!files.ContainsKey(path) || files[path] != content)
+                if (!sb.ToString().Contains(path, StringComparison.Ordinal))
+                    sb.Append("A  ").Append(path).Append('\0');
+        return sb.ToString();
+    }
+
+    private ImmutableArray<string> IgnoredPaths()
+    {
+        if (!Directory.Exists(Source)) return [];
+        var list = new List<string>();
+        foreach (var path in Directory.EnumerateFiles(Source, "*", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(Source, path).Replace('\\', '/');
+            if (rel.StartsWith(".antiphon/", StringComparison.OrdinalIgnoreCase)
+                || rel.StartsWith(".claude/", StringComparison.OrdinalIgnoreCase)
+                || rel.Contains("/bin-", StringComparison.OrdinalIgnoreCase)
+                || rel.StartsWith("bin-", StringComparison.OrdinalIgnoreCase))
+                list.Add(rel);
+        }
+        return [.. list];
+    }
+
+    private bool IsAncestor(string source, string observed)
+    {
+        if (source == observed) return true;
+        var queue = new Queue<string>();
+        queue.Enqueue(observed);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        while (queue.Count > 0)
+        {
+            var cur = queue.Dequeue();
+            if (!seen.Add(cur)) continue;
+            if (cur == source) return true;
+            if (_objects.TryGetValue(cur, out var commit))
+                foreach (var p in commit.Parents) queue.Enqueue(p);
+        }
+        return false;
+    }
+
+    private bool HasDirty(string repository)
+    {
+        var status = StatusOutput(IsSource(repository));
+        return status.Length > 0;
+    }
+
+    private string HeadOf(string repository) => IsSource(repository) ? _sourceHead : IsRemote(repository) ? _remoteTarget : _targetHead;
+
+    private void SetHead(string repository, string sha)
+    {
+        if (IsSource(repository))
+        {
+            _sourceHead = sha;
+            _refs[_sourceBranch] = sha;
+            _worktrees[Source] = _worktrees[Source] with { Head = sha };
+        }
+        else
+        {
+            _targetHead = sha;
+            _refs[_targetBranch] = sha;
+            _worktrees[Repository] = _worktrees[Repository] with { Head = sha };
+        }
+    }
+
+    private bool IsSource(string path) => PathsEqual(path, Source);
+    private bool IsRemote(string path) => PathsEqual(path, Remote);
+    private string WorktreePath(string repository) => IsSource(repository) ? Source : Repository;
+    private string NextOid()
+    {
+        _oid++;
+        return _oid.ToString("x").PadLeft(40, '0');
+    }
+    private static bool LooksOid(string value) => value.Length is 40 or 64 && value.All(char.IsAsciiHexDigit);
+    private static bool PathsEqual(string left, string right) => string.Equals(
+        Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
+        Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
+        StringComparison.OrdinalIgnoreCase);
+    private static InvalidOperationException Unsupported(IReadOnlyList<string> args) =>
+        new("unsupported controlled git command: " + string.Join(' ', args));
+
+    private sealed record Commit(string Sha, string[] Parents);
+    private sealed record Worktree(string Path, string Branch, string Head);
+}
+
+file static class RemoteSourceRetain
+{
+    public static void ShouldRetain(this string actual, string seed)
+    {
+        if (actual != seed)
+            throw new InvalidOperationException("the pre-published fixture remote source must retain its exact original commit");
+    }
+}
