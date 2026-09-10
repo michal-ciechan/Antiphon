@@ -56,6 +56,7 @@ internal sealed class ControlledLandingGit : ILandingGit
     public List<string[]> OwnedTrace { get; } = [];
     public int NativeProcessStarts { get; private set; }
     public Func<Task>? BeforeInspection { get; set; }
+    public Func<Task>? BeforeCommonDirectory { get; set; }
     public Func<string, IReadOnlyList<string>, Task<LandingGitResult?>>? BeforeCommand { get; set; }
     public Func<string, IReadOnlyList<string>, LandingGitResult, Task>? AfterCommand { get; set; }
     public Func<IReadOnlyList<string>, Task>? BeforeObservedCommand { get; set; }
@@ -149,12 +150,13 @@ internal sealed class ControlledLandingGit : ILandingGit
         return Task.FromResult(Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)));
     }
 
-    public Task<string> CommonDirectoryAsync(string repository, CancellationToken ct)
+    public async Task<string> CommonDirectoryAsync(string repository, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
+        if (BeforeCommonDirectory is not null) await BeforeCommonDirectory();
         var full = Path.GetFullPath(repository);
-        if (PathsEqual(full, Remote)) return Task.FromResult(Path.GetFullPath(Remote));
-        return Task.FromResult(Path.GetFullPath(CommonDir));
+        if (PathsEqual(full, Remote)) return Path.GetFullPath(Remote);
+        return Path.GetFullPath(CommonDir);
     }
 
     public Task<bool> HasActiveSequencerAsync(string repository, CancellationToken ct)
