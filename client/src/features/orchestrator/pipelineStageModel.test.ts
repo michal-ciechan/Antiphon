@@ -458,6 +458,7 @@ it('C470 mutation rows retain label counts and target', () => {
   const mutation = stage({ role: 'Mutation', inFlight: [inFlight()], inFlightCount: 1, ready: [readyRow] })
   expect(STAGE_LABEL.Mutation).toBe('Mutation')
   expect(stageCounts(mutation)).toMatchObject({ inFlight: 1, recommended: 1, ready: 1 })
-  expect(rowTarget({ kind: 'ready', row: readyRow })).toEqual(rowTarget({ kind: 'ready', row: { ...readyRow, sourceRole: 'Code' } }))
+  expect(rowTarget({ kind: 'ready', row: readyRow })).toEqual({ to: '/plans?file=docs%2Fsuperpowers%2Fplans%2F2026-09-02-card-0031-project-status-view-plan.md&task=plan-31' })
+  expect(rowTarget({ kind: 'inFlight', taskId: 'mutation-task' })).toEqual({ drawer: 'mutation-task' })
   expect(visibleStages(pipeline({ stages: [stage({ role: 'Mutation' })] })).idleCount).toBe(1)
 })
