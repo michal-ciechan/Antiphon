@@ -97,6 +97,27 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
     internal readonly record struct LiveHerdrPane(Guid SessionId, string PaneId, RunnerSession Session);
 
+    // Read-only locator census for refused disposal previews, not an acquisition/kill guard.
+    // Include all matching claims, even the requested session and exited runtime history.
+    internal IReadOnlyList<HerdrPaneDisposalClaim> InspectHerdrDisposalClaims(string paneId)
+    {
+        var claims = new List<HerdrPaneDisposalClaim>();
+        claims.AddRange(_placement.InspectPaneClaims(paneId)
+            .Select(id => new HerdrPaneDisposalClaim(id, "placement", HerdrPaneOrigins.Launched, true)));
+        foreach (var (id, session) in _sessions)
+        {
+            if (session.HerdrPaneId == paneId)
+                claims.Add(new(id, "runner", session.HerdrOrigin, !session.HasExited));
+            if (session.PendingSidecar is { } pending && pending.PaneId == paneId)
+                claims.Add(new(id, "pending-adoption", pending.Origin, true));
+        }
+        foreach (var sidecar in HerdrPaneSidecar.LoadAll(_settings.SessionLogPath).Where(s => s.PaneId == paneId))
+            claims.Add(new(sidecar.SessionId, "sidecar", sidecar.Origin, true));
+        foreach (var last in HerdrLastPane.LoadAll(_settings.SessionLogPath).Where(s => s.PaneId == paneId))
+            claims.Add(new(last.SessionId, "last-pane", last.Origin, false));
+        return claims;
+    }
+
     /// <summary>
     /// CARD-0382: refuse unsafe Grok rules before a <see cref="RunnerSession"/> is registered,
     /// a host starts, or Herdr is contacted. Herdr expands whole-argument <c>$env:NAME</c>

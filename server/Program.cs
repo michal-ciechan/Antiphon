@@ -594,6 +594,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddScoped<BlockedTaskNotifier>();
     builder.Services.AddScoped<DecisionCardNotifier>();
     builder.Services.AddScoped<IncidentPageNotifier>();
+    builder.Services.AddScoped<HerdrPaneDisposalService>();
     builder.Services.AddScoped<CostTrackingService>();
     builder.Services.AddScoped<FeatureStatusService>();
 
@@ -814,6 +815,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     app.MapDiagnosisEndpoints();
     app.MapDistillationEndpoints();
     app.MapAgentEndpoints();
+    app.MapHerdrPaneDisposalEndpoints();
     app.MapAgentTuiEndpoints();
     app.MapChannelEndpoints();
     app.MapWorkflowEndpoints();

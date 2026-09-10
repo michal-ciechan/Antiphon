@@ -36,6 +36,8 @@
          DirectSessionRunnerClient can talk to it without a test-project reference. -->
     <Compile Include="..\Antiphon.SessionRunner.Tests\FakeHerdrServer.cs"
              Link="TestHelpers\FakeHerdrServer.cs" />
+    <Compile Include="..\Antiphon.SessionRunner.Tests\HerdrPaneDisposalFixture.cs"
+             Link="TestHelpers\HerdrPaneDisposalFixture.cs" />
   </ItemGroup>
 
   <ItemGroup>

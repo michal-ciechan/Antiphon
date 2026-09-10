@@ -49,6 +49,7 @@ builder.Services.AddSingleton(sp => new RunnerStartupDiagnostics(
     int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_STARTUP_SUPERVISOR_PID"), out var supervisorPid) ? supervisorPid : null,
     Environment.GetEnvironmentVariable("ANTIPHON_STARTUP_SUPERVISOR_START")));
 builder.Services.AddSingleton<SessionRunnerRuntime>();
+builder.Services.AddSingleton<HerdrPaneDisposalService>();
 builder.Services.AddHealthChecks();
 // Prune PTY-audit dumps on startup and periodically, keeping them within the configured age + count caps
 // (regardless of whether auditing is enabled). A runaway audit dump here once filled a disk with ~894 GB.
@@ -176,7 +177,7 @@ app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings) =>
         ? [SessionBackends.PtyHost, SessionBackends.Herdr]
         : [SessionBackends.PtyHost];
     IReadOnlyList<string>? features = herdrSettings.Value.Enabled
-        ? [RunnerCapabilityFeatures.HerdrAttach, RunnerCapabilityFeatures.HerdrNamedTabPlacement, GrokRulesTransport.Capability]
+        ? [RunnerCapabilityFeatures.HerdrAttach, RunnerCapabilityFeatures.HerdrNamedTabPlacement, HerdrPaneDisposalCodes.Capability, GrokRulesTransport.Capability]
         : [GrokRulesTransport.Capability];
     return Results.Ok(new RunnerCapabilitiesDto(
         decision.Backend.ToString(), decision.Requested, decision.Reason, decision.FellBack,
@@ -186,6 +187,7 @@ app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings) =>
 });
 
 app.MapGet("/sessions", (SessionRunnerRuntime runtime) => Results.Ok(runtime.List()));
+app.MapHerdrPaneDisposalRoutes();
 
 app.MapGet("/sessions/{id:guid}", async (Guid id, SessionRunnerRuntime runtime, CancellationToken ct) =>
     Results.Ok(await runtime.GetAsync(id, ct)));

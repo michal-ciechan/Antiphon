@@ -564,6 +564,50 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             ?? throw new InvalidOperationException("Session runner returned an empty inspect response.");
     }
 
+    public async Task<HerdrPaneDisposalPreview> PreviewHerdrPaneDisposalAsync(
+        HerdrPaneDisposalPreviewRequest request, CancellationToken ct)
+    {
+        await RequirePaneDisposalCapabilityAsync(ct);
+        using var response = await _httpClient.PostAsJsonAsync("herdr/pane-disposals/preview", request, JsonOptions, ct);
+        return await ReadPaneDisposalAsync<HerdrPaneDisposalPreview>(response, ct);
+    }
+
+    public async Task<HerdrPaneDisposalReceipt> DisposeHerdrPaneAsync(
+        HerdrPaneDisposalRequest request, CancellationToken ct)
+    {
+        await RequirePaneDisposalCapabilityAsync(ct);
+        using var response = await _httpClient.PostAsJsonAsync("herdr/pane-disposals", request, JsonOptions, ct);
+        return await ReadPaneDisposalAsync<HerdrPaneDisposalReceipt>(response, ct);
+    }
+
+    public async Task<HerdrPaneDisposalReceipt> GetHerdrPaneDisposalAsync(Guid operationId, CancellationToken ct)
+    {
+        await RequirePaneDisposalCapabilityAsync(ct);
+        using var response = await _httpClient.GetAsync($"herdr/pane-disposals/{operationId:D}", ct);
+        return await ReadPaneDisposalAsync<HerdrPaneDisposalReceipt>(response, ct);
+    }
+
+    private async Task RequirePaneDisposalCapabilityAsync(CancellationToken ct)
+    {
+        if ((await GetCapabilitiesAsync(ct))?.Features?.Contains(HerdrPaneDisposalCodes.Capability, StringComparer.Ordinal) != true)
+            throw new ConflictException("The runner does not advertise pane disposal inspection.", HerdrProblemTypes.Refused);
+    }
+
+    private static async Task<T> ReadPaneDisposalAsync<T>(HttpResponseMessage response, CancellationToken ct)
+    {
+        if (response.IsSuccessStatusCode)
+            return await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct)
+                ?? throw new InvalidOperationException("Runner returned an empty disposal response.");
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions, ct);
+        var code = body.TryGetProperty("type", out var type) ? type.GetString() : "herdr_disposal_failed";
+        var detail = body.TryGetProperty("detail", out var message) ? message.GetString() : "Runner refused pane disposal.";
+        var extensions = new Dictionary<string, object?>();
+        foreach (var name in new[] { "operationId", "receipt" })
+            if (body.TryGetProperty(name, out var value)) extensions[name] = value.Clone();
+        throw new HerdrPaneDisposalException((int)response.StatusCode, detail ?? "Runner refused pane disposal.",
+            code ?? "herdr_disposal_failed", extensions);
+    }
+
     public async Task<HerdrPlacementCheckResult> CheckHerdrPlacementAsync(
         HerdrPlacementCheckRequest request, CancellationToken ct)
     {

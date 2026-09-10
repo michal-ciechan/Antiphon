@@ -65,6 +65,13 @@ internal sealed class HerdrPlacementCoordinator
         }
     }
 
+    internal IReadOnlyList<Guid> InspectPaneClaims(string paneId)
+    {
+        lock (_claimsGate)
+            return _claims.Where(c => !c.Released && c.PaneId == paneId)
+                .Select(c => c.SessionId).ToArray();
+    }
+
     internal void Release(PlacementClaim claim)
     {
         lock (_claimsGate)

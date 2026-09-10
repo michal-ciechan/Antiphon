@@ -41,6 +41,17 @@ public interface ISessionRunnerClient
     Task<HerdrPaneInspectDto> InspectHerdrPaneAsync(string paneId, CancellationToken ct) =>
         throw new NotSupportedException("This session-runner client cannot inspect herdr panes.");
 
+    Task<HerdrPaneDisposalPreview> PreviewHerdrPaneDisposalAsync(
+        HerdrPaneDisposalPreviewRequest request, CancellationToken ct) =>
+        throw new NotSupportedException("This runner cannot preview pane disposal.");
+
+    Task<HerdrPaneDisposalReceipt> DisposeHerdrPaneAsync(
+        HerdrPaneDisposalRequest request, CancellationToken ct) =>
+        throw new NotSupportedException("This runner cannot dispose panes.");
+
+    Task<HerdrPaneDisposalReceipt> GetHerdrPaneDisposalAsync(Guid operationId, CancellationToken ct) =>
+        throw new NotSupportedException("This runner cannot read disposal receipts.");
+
     /// <summary>CARD-0213: bind a standing session to an operator pane. Default throws.</summary>
     Task<SessionRunnerSessionDto> AttachHerdrAsync(HerdrAttachRequest request, CancellationToken ct) =>
         throw new NotSupportedException("This session-runner client cannot attach herdr panes.");
