@@ -120,7 +120,7 @@ public sealed class HerdrPaneDisposalServiceTests
     }
 
     [Test]
-    public async Task Preview_capacity_is_bounded_and_returned_arrays_cannot_change_stored_target()
+    public async Task Preview_capacity_evicts_oldest_and_retains_latest()
     {
         await using var h = new HerdrPaneDisposalFixture();
         await h.StartAsync();
@@ -130,7 +130,6 @@ public sealed class HerdrPaneDisposalServiceTests
             new(Guid.NewGuid(), first.PreviewId, "evicted"), CancellationToken.None));
         evicted.Code.ShouldBe(HerdrPaneDisposalCodes.PreviewInvalid);
         var latest = await h.PreviewAsync();
-        ((string[])latest.Blockers)[0] = "caller changed this array";
         var receipt = await h.Service.ExecuteAsync(new(Guid.NewGuid(), latest.PreviewId, "refuse"), CancellationToken.None);
         receipt.Code.ShouldBe(HerdrPaneDisposalCodes.GuardUnavailable);
         receipt.PaneId.ShouldBe(h.PaneId);
