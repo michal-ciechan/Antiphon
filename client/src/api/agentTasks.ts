@@ -593,6 +593,12 @@ export function useAgentTask(id: string | null) {
     queryKey: agentTaskKeys.detail(id ?? ''),
     queryFn: () => apiGet<AgentTaskDetailDto>(`/agent-tasks/${id}`),
     enabled: !!id,
+    refetchInterval: (query) => {
+      const land = query.state.data?.landRequest
+      return land && (['Queued', 'Held', 'Running', 'NeedsResolution'].includes(land.state)
+        || land.notifications.some((note) => !note.confirmedAt && !['NotRequired', 'LegacyUnverified'].includes(note.state)))
+        ? 15_000 : false
+    },
   })
 }
 

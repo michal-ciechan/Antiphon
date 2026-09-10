@@ -1,6 +1,7 @@
 import { HttpResponse, http } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentTaskDetailDto, AgentTaskSummaryDto } from '../../api/agentTasks'
+import { useAgentTask } from '../../api/agentTasks'
 import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { TaskDrawer } from './TaskDrawer'
@@ -103,6 +104,29 @@ describe('TaskDrawer', () => {
     noProgressSeconds: 300, attempt: 0, holdReasonCode: 'repository_or_source_writer', holdDetail: 'Waiting for blocked writer',
     holdingTaskId: 'holder-9', holdingTaskStatus: 'Blocked', heldSince: '2026-09-09T10:00:00Z', holdEpisode: 1,
     reconciliationError: null, notifications: [], ...overrides,
+  })
+
+  it.each(['Held', 'Completed'])('refreshes unresolved %s land without a task event and stops after receipt', async (state) => {
+    const note = { id: 'note-9', kind: 'Outcome', state: 'AwaitingReceipt', destinationSessionId: 'caller-9',
+      queueMessageId: 'queue-9', lastErrorCode: null, confirmedAt: null, confirmingPromptSequence: null }
+    let current = detail({ status: 'Succeeded' }, { landRequest: land({ state, notifications: state === 'Held' ? [] : [note] }) })
+    let requests = 0
+    server.use(http.get('/api/agent-tasks/:id', () => { requests++; return HttpResponse.json(current) }))
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    const view = renderHookWithProviders(() => useAgentTask(TASK_ID))
+    try {
+      await waitFor(() => expect(view.result.current.data?.landRequest?.state).toBe(state))
+      const before = requests
+      current = detail({ status: 'Succeeded' }, { landRequest: land({ state: 'Completed', notifications: [
+        { ...note, state: 'Confirmed', confirmedAt: '2026-09-10T03:00:00Z', confirmingPromptSequence: 9 },
+      ] }) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
+      await waitFor(() => expect(view.result.current.data?.landRequest?.notifications[0]?.state).toBe('Confirmed'))
+      expect(requests).toBeGreaterThan(before)
+      const confirmed = requests
+      await act(async () => { await vi.advanceTimersByTimeAsync(45_000) })
+      expect(requests).toBe(confirmed)
+    } finally { view.unmount(); vi.useRealTimers() }
   })
 
   it('shows a blocked land separately from delegate success', async () => {
