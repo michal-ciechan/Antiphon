@@ -115,13 +115,13 @@ describe('TaskDrawer', () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     const view = renderHookWithProviders(() => useAgentTask(TASK_ID))
     try {
-      await waitFor(() => expect(view.result.current.data?.landRequest?.state).toBe(state))
+      await vi.waitFor(() => expect(view.result.current.data?.landRequest?.state).toBe(state))
       const before = requests
       current = detail({ status: 'Succeeded' }, { landRequest: land({ state: 'Completed', notifications: [
         { ...note, state: 'Confirmed', confirmedAt: '2026-09-10T03:00:00Z', confirmingPromptSequence: 9 },
       ] }) })
       await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
-      await waitFor(() => expect(view.result.current.data?.landRequest?.notifications[0]?.state).toBe('Confirmed'))
+      await vi.waitFor(() => expect(view.result.current.data?.landRequest?.notifications[0]?.state).toBe('Confirmed'))
       expect(requests).toBeGreaterThan(before)
       const confirmed = requests
       await act(async () => { await vi.advanceTimersByTimeAsync(45_000) })
