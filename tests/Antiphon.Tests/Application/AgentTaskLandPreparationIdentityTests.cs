@@ -104,19 +104,30 @@ public sealed class AgentTaskLandPreparationIdentityTests
             refused.Id.ShouldBe(previous.Id, "automatic recovery cannot replace changed preparation");
             refused.RemoteConfirmedAt.ShouldBeNull();
         }
+        else
+        {
+            // A pending CARD-0467 request keeps its original age on repost. Settle
+            // the injected failure before asking for a fresh verification attempt.
+            await h.FailAsync(new LandingSafetyHarness.InjectedSaveFailure());
+            (await h.OperationAsync()).ShouldNotBeNull().Phase.ShouldBe(LandPhase.Verified);
+        }
         Directory.Exists(h.Fixture.Source).ShouldBeTrue();
-        await h.RepostAsync();
+        var selectedFilter = change == "verification-filter" ? "/*/*/NewSelectedFilter/*" : "/*/*/NewPreparation/*";
+        await h.RequestAsync(selectedFilter);
         await using (var db = h.CreateContext())
         {
             var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
-            task.LandVerifyFilter = change == "verification-filter" ? "/*/*/NewSelectedFilter/*" : "/*/*/NewPreparation/*";
-            await db.SaveChangesAsync();
+            task.LandRequestedAt!.Value.ShouldBeGreaterThan(previous.UpdatedAt);
+            task.LandVerifyFilter.ShouldBe(selectedFilter);
+            (await db.AgentTaskLandRequests.SingleAsync(r => r.Id == task.CurrentLandRequestId))
+                .VerifyFilter.ShouldBe(selectedFilter);
         }
         await h.RestartServicesAsync();
         await h.RunAsync();
         var completed = (await h.OperationAsync()).ShouldNotBeNull();
         completed.Id.ShouldNotBe(previous.Id, "an explicit fresh request must not strand changed work behind an unadvanced Verified checkpoint");
         completed.OriginalSourceSha.ShouldBe(currentSource);
+        completed.VerificationFilter.ShouldBe(selectedFilter);
         completed.Cleanup.ShouldBe(LandCleanupStatus.Complete);
         h.Verifier.Calls.ShouldBe(2, "the changed preparation must receive fresh verification");
         await using (var db = h.CreateContext())
