@@ -1488,6 +1488,7 @@ public class AppDbContext : DbContext
         {
             entity.ToTable("AgentTaskLandNotifications");
             entity.HasKey(n => n.Id);
+            entity.Property(n => n.ConcurrencyToken).IsConcurrencyToken();
             entity.Property(n => n.ContentDigest).HasMaxLength(128);
             entity.HasIndex(n => n.SourceEventId).IsUnique();
             entity.HasIndex(n => new { n.State, n.NextAttemptAt, n.Id });

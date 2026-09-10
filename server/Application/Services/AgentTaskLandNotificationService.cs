@@ -1,5 +1,6 @@
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -10,16 +11,19 @@ namespace Antiphon.Server.Application.Services;
 
 /// <summary>Durable handoff and transcript-only receipt. All typing belongs to the existing queue.</summary>
 public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMessageQueueService messages,
-    CompletionNoteFlushQueue flushes, AgentSessionRuntime runtime, TimeProvider clock)
+    CompletionNoteFlushQueue flushes, AgentSessionRuntime runtime, TimeProvider clock, LandDeliveryBoundary? boundary = null,
+    IRepositoryMutationLease? leases = null)
 {
     public async Task ReconcileAsync(Guid id, CancellationToken ct)
     {
         var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.Id == id, ct);
+        await db.Entry(note).ReloadAsync(ct);
         if (note.State is LandNotificationState.Confirmed or LandNotificationState.NotRequired) return;
         var now = clock.GetUtcNow().UtcDateTime;
         if (note.QueueMessageId is null && note.NextAttemptAt > now) return;
         try
         {
+            note.ConcurrencyToken = Guid.NewGuid();
             if (note.ParentSessionId is not Guid session
                 || !await db.AgentSessions.AnyAsync(s => s.Id == session, ct))
             {
@@ -32,16 +36,30 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
             }
             if (note.QueueMessageId is null)
             {
+                // A scanning worker can see the commit before the producer leaves its lease.
+                // Probe only terminal/conflict handoffs; a held note must remain deliverable while a lease is occupied.
+                if (leases is not null && note.Kind is LandNotificationKind.Outcome or LandNotificationKind.Conflict)
+                {
+                    var repository = await db.AgentTasks.Where(t => t.Id == note.TaskId).Select(t => t.RepoPath).SingleAsync(ct);
+                    if (repository is not null)
+                    {
+                        var released = await leases.TryAcquireAsync(repository, ct);
+                        if (released is null) return;
+                        await released.DisposeAsync();
+                    }
+                }
+                if (boundary is not null) await boundary.ReachedAsync("before-enqueue", note.TaskId, note.Id, ct);
                 note.EnqueueAttempts++;
                 await messages.EnqueueAsync(session, note.Body, MessageSendMode.WhenIdle, ct,
                     QueuedMessageOrigin.Delegation, $"land:{note.Id:N}", note.TaskId, note.ContentDigest,
                     note.Body.Split('\n')[0], onCreated: message => note.QueueMessageId = message,
-                    deliverIfIdle: false, sourceLandNotificationId: note.Id);
+                    deliverIfIdle: false, sourceLandNotificationId: note.Id,
+                    afterLandQueueInsert: boundary is null ? null : (queueId, token) => boundary.ReachedAsync("queue-inserted", note.TaskId, queueId, token));
                 note.EnqueuedAt = now;
                 note.State = LandNotificationState.AwaitingReceipt;
                 note.LastErrorCode = null;
                 await db.SaveChangesAsync(ct);
-                flushes.TryEnqueue(session);
+                if (boundary?.DropWakeup("completion", note.Id) != true) flushes.TryEnqueue(session);
             }
             var row = await db.SessionQueuedMessages.AsNoTracking().SingleOrDefaultAsync(m => m.Id == note.QueueMessageId, ct);
             if (row is null)
@@ -71,6 +89,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                         && PromptSubmissionMatch.IsCompleteIn(row.Body, p.Text!));
                 if (evidence is not null)
                 {
+                    if (boundary is not null) await boundary.ReachedAsync("receipt-before-save", note.TaskId, note.Id, ct);
                     note.ConfirmedAt = now;
                     note.ConfirmingPromptSequence = evidence.Sequence;
                     note.State = LandNotificationState.Confirmed;
@@ -86,6 +105,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
             note = await db.AgentTaskLandNotifications.SingleAsync(n => n.Id == id, ct);
             if (note.ConfirmedAt is not null) return;
             note.EnqueueAttempts++;
+            note.ConcurrencyToken = Guid.NewGuid();
             note.State = note.QueueMessageId is null ? LandNotificationState.RetryPending : LandNotificationState.AwaitingReceipt;
             note.LastErrorCode = "notification_reconcile_failed:" + ex.GetType().Name;
             note.LastErrorAt = now;

@@ -60,6 +60,7 @@ internal static class Program
     private static readonly byte[] PasteStartBytes = Encoding.ASCII.GetBytes("\x1b[200~");
     private static bool _turnInFlight;
     private static string? _inFlightPromptId;
+    private static string? _landBusyPromptId;
     private static bool _questionOpen;
     private static string? _questionToolCallId;
     private static string? _questionText;
@@ -356,6 +357,13 @@ internal static class Program
         while (true)
         {
             Thread.Sleep(3);
+            var landGate = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_BUSY_GATE");
+            if (_landBusyPromptId is not null && landGate is not null && File.Exists(landGate + ".release"))
+            {
+                AppendTurnCompleted(sessionDir, sessionId, _landBusyPromptId, "end_turn", withUsage: true);
+                _landBusyPromptId = null;
+                Write("Worked for 1.7s\r\n" + IdleTitle);
+            }
 
             List<(long AtMs, byte[] Bytes)>? drained = null;
             lock (gate)
@@ -502,6 +510,14 @@ internal static class Program
         write("\r\n");
         var escaped = text.Replace("\n", "\\n");
         write($"SUBMITTED:{escaped}\r\n");
+
+        var busyGate = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_BUSY_GATE");
+        if (busyGate is not null && text.StartsWith("[c467-busy]", StringComparison.Ordinal))
+        {
+            _landBusyPromptId = AppendPartialTurn(sessionDir, sessionId, text, "C467 busy gate held");
+            File.WriteAllText(busyGate + ".held", sessionId);
+            return;
+        }
 
         if (text.StartsWith("[antiphon-grok-rules:", StringComparison.Ordinal))
         {

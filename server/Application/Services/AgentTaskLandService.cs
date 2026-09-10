@@ -31,6 +31,7 @@ public sealed class AgentTaskLandService
     private readonly TimeProvider _clock;
     private readonly DelegationSettings _settings;
     private readonly ILogger<AgentTaskLandService> _logger;
+    private readonly LandDeliveryBoundary _boundary;
 
     public AgentTaskLandService(
         AppDbContext db,
@@ -42,9 +43,11 @@ public sealed class AgentTaskLandService
         TimeProvider clock,
         IOptions<DelegationSettings> settings,
         ILogger<AgentTaskLandService> logger,
-        AgentTaskLandingProtocol? protocol = null, IRepositoryMutationLease? leases = null, ILandingGit? landingGit = null)
+        AgentTaskLandingProtocol? protocol = null, IRepositoryMutationLease? leases = null, ILandingGit? landingGit = null,
+        LandDeliveryBoundary? boundary = null)
     {
         _protocol = protocol;
+        _boundary = boundary ?? new LandDeliveryBoundary();
         _leases = leases;
         _landingGit = landingGit;
         _db = db;
@@ -105,7 +108,7 @@ public sealed class AgentTaskLandService
         task.ConcurrencyToken = Guid.NewGuid();
         await _db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
-        _queue.TryEnqueue(taskId, filter, request.Id);
+        if (!_boundary.DropWakeup("land-request", request.Id)) _queue.TryEnqueue(taskId, filter, request.Id);
         await PublishAsync(task, ct);
         return new LandRequestResult(task.Id, requeued ? "requeued" : "queued", request.Id,
             request.ReplyTo == AgentTaskReplyTo.None ? "not-required" : "tracked");
@@ -126,6 +129,7 @@ public sealed class AgentTaskLandService
             return LandRunResult.Complete;
         var request = await EnsureRequestAsync(task, ct);
         if (!request.IsPending) return LandRunResult.Complete;
+        await _boundary.ReachedAsync("before-execution", taskId, request.Id, ct);
         request.LastEvaluatedAt = _clock.GetUtcNow().UtcDateTime;
         if (task.Status == AgentTaskStatus.Blocked)
             return LandRunResult.Complete;
@@ -162,6 +166,10 @@ public sealed class AgentTaskLandService
                 $"Landing waits for repository/source writer {holder.Id:N} ({holder.Status}).", ct);
             return LandRunResult.Held;
         }
+        await using (var admission = await _db.Database.BeginTransactionAsync(ct))
+        {
+        await LockTaskAsync(task.Id, ct);
+        await _db.Entry(request).ReloadAsync(ct);
         if (request.State == LandRequestState.Held)
         {
             var released = Event(task.Id, AgentTaskEventType.HeldReleased, "Land admitted; hold released.", _clock.GetUtcNow().UtcDateTime);
@@ -186,6 +194,8 @@ public sealed class AgentTaskLandService
         task.LandAttempt += 1;
         task.ConcurrencyToken = Guid.NewGuid();
         await _db.SaveChangesAsync(ct);
+        await admission.CommitAsync(ct);
+        }
         var result = await _protocol.RunAsync(task, lease, ct);
         if (result.Conflicts.Count > 0)
         {
@@ -306,6 +316,7 @@ public sealed class AgentTaskLandService
         ClearPending(task);
         await _db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
+        await _boundary.ReachedAsync("terminal-committed", task.Id, terminal.Id, ct);
         await PublishAsync(task, ct);
     }
 
@@ -483,6 +494,7 @@ public sealed class AgentTaskLandService
         ClearPending(task);
         await _db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
+        await _boundary.ReachedAsync("terminal-committed", task.Id, terminal.Id, ct);
         await PublishAsync(task, ct);
     }
 

@@ -28,4 +28,15 @@
     <ProjectReference Include="..\..\src\Antiphon.Agents.Pty\Antiphon.Agents.Pty.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Antiphon.FakeGrok\Antiphon.FakeGrok.csproj" />
+  </ItemGroup>
+  <Target Name="CopyLandFakeGrok" AfterTargets="Build">
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeGrok\Antiphon.FakeGrok.csproj" Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
+      <Output TaskParameter="TargetOutputs" ItemName="_LandFakeGrokTarget" />
+    </MSBuild>
+    <PropertyGroup><_LandFakeGrokDir>@(_LandFakeGrokTarget->'%(RootDir)%(Directory)')</_LandFakeGrokDir></PropertyGroup>
+    <ItemGroup><LandFakeGrokOutput Include="$(_LandFakeGrokDir)**\*" /></ItemGroup>
+    <Copy SourceFiles="@(LandFakeGrokOutput)" DestinationFiles="@(LandFakeGrokOutput->'$(OutDir)fakegrok\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
 </Project>

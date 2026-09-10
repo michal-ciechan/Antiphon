@@ -441,8 +441,11 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
 
     private async Task TransitionAsync(AgentTaskLanding op, LandPhase next, CancellationToken ct)
     {
+        await using var transaction = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
+        await db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM \"AgentTasks\" WHERE \"Id\" = {op.TaskId} FOR UPDATE", ct);
         _state.Transition(op, next, Now());
         var request = await db.AgentTaskLandRequests.SingleOrDefaultAsync(r => r.TaskId == op.TaskId && r.IsPending, ct);
+        if (request is not null) await db.Entry(request).ReloadAsync(ct);
         if (request is not null && next != LandPhase.Refused && (int)next > request.HighestProgress)
         {
             request.HighestProgress = (int)next;
@@ -452,6 +455,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             request.ConcurrencyToken = Guid.NewGuid();
         }
         await db.SaveChangesAsync(ct);
+        if (transaction is not null) await transaction.CommitAsync(ct);
     }
 
     private Task SaveAsync(AgentTaskLanding op, CancellationToken ct)

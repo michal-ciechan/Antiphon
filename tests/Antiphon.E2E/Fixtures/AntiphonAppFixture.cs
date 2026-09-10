@@ -50,6 +50,7 @@ public class AntiphonAppFixture
     /// </summary>
     public bool UseMockExecutor { get; set; }
     internal DistillerCanaryOptions? DistillerCanary { get; init; }
+    internal LandDeliveryOptions? LandDelivery { get; init; }
     internal string OwnedRunnerUrl => _isolatedSessionRunner?.BaseUrl ?? throw new InvalidOperationException("Runner not started");
     internal string OwnedRunnerDirectory => _isolatedSessionRunner?.RunDirectory ?? throw new InvalidOperationException("Runner not started");
     internal string OwnedDatabase => _container.GetConnectionString();
@@ -99,7 +100,7 @@ public class AntiphonAppFixture
             DiagnosticsDirectory = _diagnostics.Directory;
         }
 
-        _isolatedSessionRunner = new IsolatedSessionRunner(GetRandomAvailablePort, FindRepositoryRoot(), modernPty: DistillerCanary is not null);
+        _isolatedSessionRunner = new IsolatedSessionRunner(GetRandomAvailablePort, FindRepositoryRoot(), modernPty: DistillerCanary is not null || LandDelivery is not null);
         var runnerStartup = _isolatedSessionRunner.StartAsync();
         var containerStartup = _container.StartAsync();
         try
@@ -129,7 +130,7 @@ public class AntiphonAppFixture
             _workspacePath!,
             DiagnosticsDirectory,
             _isolatedSessionRunner!.BaseUrl,
-            DistillerCanary
+            DistillerCanary, LandDelivery
         );
 
         // Trigger host creation (WAF builds host on first access)
@@ -174,6 +175,17 @@ public class AntiphonAppFixture
         _kestrelHost.Dispose();
         await _factory!.DisposeAsync();
         await StartHostAsync(_container.GetConnectionString());
+    }
+
+    internal async Task SuspendLandHostAsync()
+    {
+        if (LandDelivery is null) throw new InvalidOperationException("Only the owned Land fixture may retain resources.");
+        HttpClient.Dispose();
+        await _kestrelHost!.StopAsync();
+        _kestrelHost.Dispose();
+        await _factory!.DisposeAsync();
+        _kestrelHost = null;
+        _factory = null;
     }
 
     /// <summary>
@@ -556,7 +568,7 @@ public class AntiphonAppFixture
     /// TestServer with Kestrel so the app listens on a real TCP port.
     /// A dummy TestServer host is returned to satisfy WAF internals.
     /// </summary>
-    private sealed class KestrelWebApplicationFactory : WebApplicationFactory<Program>
+    internal sealed class KestrelWebApplicationFactory : WebApplicationFactory<Program>
     {
         private readonly string? _clientDistPath;
         private readonly string _connectionString;
@@ -565,6 +577,7 @@ public class AntiphonAppFixture
         private readonly string? _diagnosticsDirectory;
         private readonly string _sessionRunnerBaseUrl;
         private readonly DistillerCanaryOptions? _canary;
+        private readonly LandDeliveryOptions? _land;
 
         public IHost? KestrelHost { get; private set; }
 
@@ -575,7 +588,7 @@ public class AntiphonAppFixture
             string workspacePath,
             string? diagnosticsDirectory,
             string sessionRunnerBaseUrl,
-            DistillerCanaryOptions? canary = null
+            DistillerCanaryOptions? canary = null, LandDeliveryOptions? land = null
         )
         {
             _clientDistPath = clientDistPath;
@@ -585,6 +598,7 @@ public class AntiphonAppFixture
             _diagnosticsDirectory = diagnosticsDirectory;
             _sessionRunnerBaseUrl = sessionRunnerBaseUrl;
             _canary = canary;
+            _land = land;
         }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -632,11 +646,13 @@ public class AntiphonAppFixture
                 }
 
                 _canary?.Configure(settings);
+                _land?.Configure(settings);
                 config.AddInMemoryCollection(settings);
             });
 
             builder.ConfigureServices(services =>
             {
+                _land?.ConfigureServices(services);
                 if (_canary is not null)
                 {
                     services.AddSingleton(p => new Antiphon.Server.Application.Services.PtyDeliveryProfile(

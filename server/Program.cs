@@ -319,6 +319,7 @@ try
     builder.Services.AddScoped<AgentTaskLandService>();
     builder.Services.AddScoped<AgentTaskLandNotificationService>();
     builder.Services.AddScoped<AgentTaskLandMonitorService>();
+    builder.Services.AddSingleton<LandDeliveryBoundary>();
     builder.Services.AddScoped<AgentTaskLandingProtocol>();
     builder.Services.AddSingleton<ILandingVerifier, LandingVerifier>();
     builder.Services.AddScoped<StageOutcomeService>();

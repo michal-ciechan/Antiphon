@@ -25,4 +25,7 @@ public sealed class AgentTaskLandNotification
     public DateTime? EnqueuedAt { get; set; }
     public DateTime? ConfirmedAt { get; set; }
     public long? ConfirmingPromptSequence { get; set; }
+    public DateTime? WarningAt { get; set; }
+    public DateTime? ErrorAt { get; set; }
+    public Guid ConcurrencyToken { get; set; } = Guid.NewGuid();
 }

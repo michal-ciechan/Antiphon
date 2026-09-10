@@ -186,7 +186,8 @@ public sealed partial class SessionMessageQueueService
         DateTime? executionDeadlineAt = null, Guid? executionTaskId = null,
         string? capacityRecoveryActionKey = null,
         Guid? capacityWaitId = null,
-        Guid? sourceLandNotificationId = null)
+        Guid? sourceLandNotificationId = null,
+        Func<Guid, CancellationToken, Task>? afterLandQueueInsert = null)
     {
         var trimmed = (body ?? string.Empty).Trim();
         if (trimmed.Length == 0)
@@ -418,6 +419,8 @@ public sealed partial class SessionMessageQueueService
                 return await GetQueueAsync(sessionId, ct);
             }
             onCreated?.Invoke(row.Id);
+            if (sourceLandNotificationId is not null && afterLandQueueInsert is not null)
+                await afterLandQueueInsert(row.Id, ct);
 
             // If the agent is already idle (waiting at the prompt), there is no upcoming turn-end to
             // flush on — deliver right away so the message isn't stranded. But NEVER into a session
