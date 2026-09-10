@@ -108,9 +108,10 @@ public sealed class AgentTaskLandMonitoringTests
             Type = AgentTaskEventType.Landed, IsLandTerminal = true, At = now, Detail = "confirmed publication",
             LandingOperationId = operation.Id, LandingPublication = publication, LandingCleanup = cleanup, LandingMode = operation.Mode };
         var outcome = LandNotificationPayload.Create(request, original, LandNotificationKind.Outcome);
-        db.AgentTasks.Add(new AgentTask { Id = taskId, RootTaskId = taskId, Title = "C467 aged evidence", Goal = "monitor fixture",
+        var task = new AgentTask { Id = taskId, RootTaskId = taskId, Title = "C467 aged evidence", Goal = "monitor fixture",
             WorkingDirectory = Path.GetTempPath(), Status = AgentTaskStatus.Succeeded, CreatedAt = now,
-            ActiveLandingId = operation.Id, CurrentLandRequestId = request.Id, LandRequestedAt = heldCleanup ? now : null });
+            CurrentLandRequestId = request.Id, LandRequestedAt = heldCleanup ? now : null };
+        db.AgentTasks.Add(task);
         db.AgentTaskLandings.Add(operation);
         db.AgentTaskLandRequests.Add(request);
         if (!heldCleanup)
@@ -122,6 +123,8 @@ public sealed class AgentTaskLandMonitoringTests
             // Receipt aging must use the outcome's immutable evidence, even after later cleanup changes.
             operation.Cleanup = cleanup == LandCleanupStatus.Complete ? LandCleanupStatus.Pending : LandCleanupStatus.Complete;
         }
+        await db.SaveChangesAsync();
+        task.ActiveLandingId = operation.Id;
         await db.SaveChangesAsync();
         foreach (var minutes in new[] { 5, 10 })
         {
