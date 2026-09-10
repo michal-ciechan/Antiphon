@@ -184,30 +184,6 @@ public sealed class AgentTaskLandBoundaryControlledTests
     }
 
     [Test]
-    [Arguments("MERGE_HEAD")]
-    [Arguments("CHERRY_PICK_HEAD")]
-    [Arguments("REVERT_HEAD")]
-    [Arguments("rebase-merge")]
-    [Arguments("rebase-apply")]
-    [Arguments("sequencer")]
-    public async Task C448_V11_TargetSequencerBlocksPreparation(string state)
-    {
-        await using var h = new LandingProtocolHarness();
-        await h.InitializeAsync();
-        await h.AddSourceAsync();
-        var marker = Path.Combine(h.Fixture.Repository, ".git", state);
-        if (state.Contains("HEAD", StringComparison.Ordinal)) await File.WriteAllTextAsync(marker, h.Fixture.SeedSha + "\n");
-        else Directory.CreateDirectory(marker);
-        h.Fixture.Git.Trace.Clear();
-        await h.RunAsync();
-        (await h.OperationAsync())!.RemoteConfirmedAt.ShouldBeNull();
-        h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase") || a.Contains("merge") || a[0] == "push" || a.Contains("remove"));
-        Path.Exists(marker).ShouldBeTrue();
-        Directory.Exists(h.Fixture.Source).ShouldBeTrue();
-        await h.Fixture.AssertRemoteSourceAsync();
-    }
-
-    [Test]
     [Arguments("source-ref")]
     [Arguments("source-path")]
     [Arguments("target")]

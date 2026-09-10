@@ -350,18 +350,23 @@ internal sealed class ControlledLandingGit : ILandingGit
         {
             if (args.Contains("--cached"))
             {
+                var index = IsSource(repository) ? _index : _targetIndex;
+                var files = IsSource(repository) ? _files : _targetFiles;
                 var staged = new StringBuilder();
-                foreach (var (path, content) in _index)
-                    if (!_files.TryGetValue(path, out var live) || live != content || content.Contains("new writer") || content.Contains("staged"))
+                foreach (var (path, content) in index)
+                    if (!files.TryGetValue(path, out var committed) || committed != content)
                         staged.Append(content);
-                foreach (var (path, content) in (IsSource(repository) ? _index : _targetIndex))
-                    staged.Append(content);
                 return new(0, staged.ToString(), "");
             }
             return new(0, "", "");
         }
         if (args[0] == "commit")
         {
+            var files = IsSource(repository) ? _files : _targetFiles;
+            var index = IsSource(repository) ? _index : _targetIndex;
+            foreach (var (path, content) in index.ToArray())
+                files[path] = content;
+            (IsSource(repository) ? _untracked : _targetUntracked).Clear();
             var sha = NextOid();
             _objects[sha] = new Commit(sha, [HeadOf(repository)]);
             SetHead(repository, sha);
@@ -386,16 +391,21 @@ internal sealed class ControlledLandingGit : ILandingGit
         }
         if (args[0] == "add")
         {
-            var name = args[^1];
+            var name = args[^1] == "." ? null : args[^1];
+            var root = WorktreePath(repository);
             var map = IsSource(repository) ? _untracked : _targetUntracked;
             var index = IsSource(repository) ? _index : _targetIndex;
-            var files = IsSource(repository) ? _files : _targetFiles;
-            if (map.TryGetValue(name, out var content) || files.TryGetValue(name, out content) || File.Exists(Path.Combine(WorktreePath(repository), name)))
+            IEnumerable<string> names = name is null
+                ? Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).Select(p => Path.GetRelativePath(root, p).Replace('\\', '/'))
+                : [name];
+            foreach (var item in names)
             {
-                content ??= File.ReadAllText(Path.Combine(WorktreePath(repository), name));
-                index[name] = content;
-                files[name] = content;
-                map.Remove(name);
+                var disk = Path.Combine(root, item);
+                string? content = File.Exists(disk) ? File.ReadAllText(disk)
+                    : map.TryGetValue(item, out var u) ? u : null;
+                if (content is null) continue;
+                index[item] = content;
+                map.Remove(item);
             }
             return new(0, "", "");
         }
@@ -473,9 +483,15 @@ internal sealed class ControlledLandingGit : ILandingGit
     {
         if (args.Contains("-d"))
         {
-            var name = args.Last(a => a != "-d" && a != "--no-deref" && a != "update-ref");
+            var name = args.First(a => a.StartsWith("refs/", StringComparison.Ordinal));
+            if (args.Count > args.ToList().IndexOf(name) + 1)
+            {
+                var expected = args.Last();
+                if (LooksOid(expected) && _refs.TryGetValue(name, out var have) && have != expected)
+                    return new(1, "", "cas_failed");
+            }
             _refs.Remove(name);
-            if (name == SourceRef) { _sourcePresent = false; }
+            if (name == SourceRef) _sourcePresent = false;
             return new(0, "", "");
         }
         var parts = args.Where(a => a is not "update-ref" and not "--no-deref").ToArray();
@@ -517,7 +533,8 @@ internal sealed class ControlledLandingGit : ILandingGit
     private LandingGitResult WorktreeRemove(IReadOnlyList<string> args)
     {
         var path = args[^1];
-        _worktrees.Remove(path);
+        foreach (var key in _worktrees.Keys.Where(k => PathsEqual(k, path)).ToArray())
+            _worktrees.Remove(key);
         if (PathsEqual(path, Source))
         {
             _sourcePresent = false;
