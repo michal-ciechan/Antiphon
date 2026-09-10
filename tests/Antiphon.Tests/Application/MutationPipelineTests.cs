@@ -23,6 +23,46 @@ public class MutationPipelineTests(AntiphonWebAppFactory factory)
 {
     [Test]
     [NotInParallel]
+    public async Task C470_code_settlement_persists_mutation_ready()
+    {
+        await factory.ResetAsync();
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        using var workspace = new TempWorkspace();
+        var card = await SeedCardAsync(db, CardStatus.InProgress, "CARD-0470");
+        var parent = Guid.NewGuid();
+        var session = Guid.NewGuid();
+        await SeedSessionAsync(db, parent, workspace.Path);
+        await SeedSessionAsync(db, session, workspace.Path);
+        var task = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Code, AgentTaskStatus.Dispatched,
+            "Code settlement", cardId: card.Id, sessionId: session, dispatchedAt: DateTime.UtcNow.AddMinutes(-1));
+        task.ParentSessionId = parent;
+        task.ReplyTo = AgentTaskReplyTo.Session;
+        const string artifact = "docs/superpowers/plans/2026-09-09-card-0470-code-mutation-split-plan.md";
+        var report = "Ordinary V/R complete.\n--- next stage ---\nnext: mutation\nhandoff: original Code owner and SHA\nartifact: "
+            + artifact + "\n" + DelegationReportFormatter.ReportToken(task.Id, "done");
+        var entries = new[] { ("UserPrompt", DelegationReportFormatter.TaskMarker(task.Id)), ("AssistantText", report), ("TurnEnd", (string?)null) };
+        for (var i = 0; i < entries.Length; i++)
+            db.TranscriptEntries.Add(new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = session,
+                Sequence = i + 1, Kind = entries[i].Item1, Text = entries[i].Item2, CreatedAt = DateTime.UtcNow,
+                StopReason = i == 2 ? "end_turn" : null });
+        await db.SaveChangesAsync();
+        await factory.Services.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(session, default);
+        using var readScope = factory.Services.CreateScope();
+        var verify = readScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.NextStage.ShouldBe(PipelineHandoffKind.Mutation);
+        settled.NextHandoff.ShouldBe("original Code owner and SHA");
+        settled.DeliverablePath.ShouldBe(artifact);
+        var note = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == parent && m.Origin == QueuedMessageOrigin.Delegation);
+        note.Body.ShouldContain("next=mutation");
+        var pipeline = await CreateService(verify).GetAsync(default);
+        pipeline.Stages.Single(s => s.Role == AgentTaskRole.Mutation).Ready.ShouldHaveSingleItem().SourcePlanTaskId.ShouldBe(task.Id);
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task C470_storage_and_http_enum_contract()
     {
         await factory.ResetAsync();
