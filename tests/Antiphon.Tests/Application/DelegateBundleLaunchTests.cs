@@ -40,8 +40,9 @@ public class DelegateBundleLaunchTests
         var spec = SpecOf(dispatcher, task, kind: kind);
         spec.Cwd.ShouldBe(task.WorkingDirectory);
         var args = spec.Args.ToList();
+        // CodexLaunchArgs passes raw text after the config key, without JSON quoting.
         var text = kind == AgentKind.Codex
-            ? System.Text.Json.JsonSerializer.Deserialize<string>(ConfigValue(args, "developer_instructions").ShouldNotBeNull()).ShouldNotBeNull()
+            ? ConfigValue(args, "developer_instructions").ShouldNotBeNull()
             : args[args.IndexOf("--append-system-prompt") + 1];
         text.ShouldContain("[bundle:stage-mutation v");
         text.Split("[bundle:stage-mutation v").Length.ShouldBe(2);
