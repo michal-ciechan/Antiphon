@@ -249,7 +249,7 @@ internal sealed class ControlledLandingGit : ILandingGit
     public void RewriteRemoteAwayFromSource()
     {
         var other = NextOid();
-        _objects[other] = new Commit(other, [_remoteTarget]);
+        _objects[other] = new Commit(other, [SeedSha]);
         _remoteTarget = other;
     }
 

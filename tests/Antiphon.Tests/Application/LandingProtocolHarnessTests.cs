@@ -172,6 +172,7 @@ public sealed class LandingProtocolHarnessTests
         h.Git.Trace.ShouldContain(a => a[0] == "fetch");
         var op = (await h.OperationAsync()).ShouldNotBeNull();
         op.Cleanup.ShouldBe(LandCleanupStatus.Refused);
+        op.LastReason.ShouldBe("remote_no_longer_contains_source");
         File.Exists(sentinel).ShouldBeTrue();
     }
 
