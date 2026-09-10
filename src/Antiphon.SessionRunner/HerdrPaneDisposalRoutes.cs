@@ -14,7 +14,7 @@ public static class HerdrPaneDisposalRoutes
             HerdrPaneDisposalService service, CancellationToken ct) => RespondAsync(async () =>
         {
             var receipt = await service.ExecuteAsync(request, ct);
-            return Results.Problem(statusCode: 503, type: receipt.Code,
+            return Results.Problem(statusCode: 409, type: receipt.Code,
                 title: "Guarded Herdr disposal is unavailable",
                 detail: "No teardown was dispatched. The guarded backend prerequisite is not implemented.",
                 extensions: new Dictionary<string, object?>
