@@ -93,6 +93,7 @@ public partial class StandingSessionSwitchConcurrencyTests
                 : outcome == SessionStatus.Failed ? AgentStatus.Failed : AgentStatus.Stopped);
             (await verify.AgentSupervisionStates.FindAsync(f.Agent.Id))?.ContinuityHeldAt.ShouldBeNull();
             (await verify.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == target)).ShouldBe(0);
+            (await verify.Alerts.CountAsync(a => a.SessionId == target)).ShouldBe(0);
         }
         finally { ready.TrySetResult(false); await f.IdleAsync(); }
     }

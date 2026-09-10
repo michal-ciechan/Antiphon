@@ -365,7 +365,9 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // Cleanup's exit observer has its own context. Re-read before merging typed
             // evidence so an unrelated catch cannot overwrite its proven timeout.
             await _db.Entry(session).ReloadAsync(CancellationToken.None);
-            if (session.StartedAt != generation) throw;
+            // Superseded work has settled. Do not turn its failure into evidence or
+            // a queued-launch alert attached to the newer generation.
+            if (session.StartedAt != generation) return;
             session.RestartFailureKind = new RestartFailurePolicy().Classify(ex);
             HerdrSupervisionFailureEvidence.Record(session, HerdrSupervisionFailureEvidence.FromLaunchFailure(ex));
             var stoppedCheck = session.TerminationSource == SessionTerminationSource.OperatorRequest;
