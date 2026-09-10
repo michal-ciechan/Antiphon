@@ -1,0 +1,28 @@
+using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
+
+namespace Antiphon.Server.Application.Dtos;
+
+public sealed record LandRequestStatusDto(
+    Guid Id, LandRequestState State, DateTime RequestedAt, DateTime? StartedAt,
+    DateTime LastEvaluatedAt, DateTime LastProgressAt, double AgeSeconds, double NoProgressSeconds,
+    int Attempt, string? HoldReasonCode, string? HoldDetail, Guid? HoldingTaskId,
+    AgentTaskStatus? HoldingTaskStatus, DateTime? HeldSince, int HoldEpisode,
+    Guid? LandingOperationId, Guid? TerminalEventId, string? ReconciliationError,
+    IReadOnlyList<LandNotificationStatusDto> Notifications)
+{
+    public static LandRequestStatusDto From(AgentTaskLandRequest r, DateTime now, IReadOnlyList<LandNotificationStatusDto> notifications)
+        => new(r.Id, r.State, r.RequestedAt, r.StartedAt, r.LastEvaluatedAt, r.LastProgressAt,
+            (now-r.RequestedAt).TotalSeconds, (now-r.LastProgressAt).TotalSeconds, r.Attempt,
+            r.HoldReasonCode, r.HoldDetail, r.HoldingTaskId, r.HoldingTaskStatus, r.HeldSince, r.HoldEpisode,
+            r.LandingOperationId, r.TerminalEventId, r.ReconciliationError, notifications);
+}
+
+public sealed record LandNotificationStatusDto(Guid Id, LandNotificationKind Kind, LandNotificationState State,
+    Guid? DestinationSessionId, Guid? QueueMessageId, DateTime CreatedAt, DateTime NextAttemptAt,
+    int EnqueueAttempts, string? LastErrorCode, DateTime? ConfirmedAt, long? ConfirmingPromptSequence)
+{
+    public static LandNotificationStatusDto From(AgentTaskLandNotification n) => new(n.Id, n.Kind, n.State,
+        n.ParentSessionId, n.QueueMessageId, n.CreatedAt, n.NextAttemptAt, n.EnqueueAttempts, n.LastErrorCode,
+        n.ConfirmedAt, n.ConfirmingPromptSequence);
+}

@@ -72,7 +72,7 @@ public class AgentTaskLandRequestTests
     }
 
     [Test]
-    public async Task a_pending_row_that_is_not_active_is_requeued_with_a_warning()
+    public async Task C467_V01_AcceptRequeueSerializeRequest()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
@@ -86,13 +86,18 @@ public class AgentTaskLandRequestTests
 
         result.Status.ShouldBe("requeued");
         var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
-        stored.LandRequestedAt.ShouldBe(clock.GetUtcNow().UtcDateTime);
-        stored.LandAttempt.ShouldBe(0);
+        stored.LandRequestedAt.ShouldBe(previous);
+        stored.LandAttempt.ShouldBe(2);
         stored.LandStartedAt.ShouldBeNull();
-        var warning = await db.AgentTaskEvents.AsNoTracking()
-            .SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning);
-        warning.Detail.ShouldContain(previous.ToString("u"));
-        warning.Detail.ShouldContain("was not running");
+        var request = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == result.RequestId);
+        request.RequestedAt.ShouldBe(previous);
+        request.Attempt.ShouldBe(2);
+        queue.Release(task.Id);
+        clock.Advance(TimeSpan.FromHours(1));
+        var again = await land.RequestAsync(task.Id, "updated-filter", CancellationToken.None);
+        again.RequestId.ShouldBe(result.RequestId);
+        (await db.AgentTaskLandRequests.CountAsync(r => r.TaskId == task.Id)).ShouldBe(1);
+        (await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == result.RequestId)).VerifyFilter.ShouldBe("updated-filter");
         queue.IsActive(task.Id).ShouldBeTrue();
     }
 

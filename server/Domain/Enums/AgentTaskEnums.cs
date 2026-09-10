@@ -233,6 +233,8 @@ public enum AgentTaskEventType
     AlreadyPresent = 29,
     /// <summary>Cleanup retry/update for an existing publication; never another publication.</summary>
     LandingCleanup = 30,
+    HeldReleased = 31,
+    LandAged = 32,
 }
 
 /// <summary>

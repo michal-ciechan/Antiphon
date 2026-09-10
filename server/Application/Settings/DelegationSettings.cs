@@ -550,6 +550,8 @@ public sealed class DelegationSettings
     /// does not hold (CARD-0331). Also the Held retry cadence. Floor 1, ceiling 60.
     /// </summary>
     public int LandSweepSeconds { get; set; } = 5;
+    public int LandWarningSeconds { get; set; } = 300;
+    public int LandErrorSeconds { get; set; } = 900;
 
     /// <summary>
     /// Started-and-interrupted git attempts on one land request before the sweep refuses
@@ -1058,6 +1060,8 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
     public ValidateOptionsResult Validate(string? name, DelegationSettings options)
     {
         var failures = new List<string>();
+        if (options.LandWarningSeconds <= 0 || options.LandErrorSeconds <= options.LandWarningSeconds)
+            failures.Add("Delegation land thresholds must be positive and Error must exceed Warning.");
         if (options.CheckInterpreterFirstAttemptSeconds is { } firstAttempt
             && (firstAttempt <= 0 || firstAttempt > options.CheckInterpreterWaitSeconds))
             failures.Add("Delegation:CheckInterpreterFirstAttemptSeconds must be positive and no greater than CheckInterpreterWaitSeconds, or null.");

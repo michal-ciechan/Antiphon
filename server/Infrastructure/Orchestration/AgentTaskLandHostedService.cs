@@ -27,7 +27,7 @@ public sealed class AgentTaskLandHostedService : BackgroundService
                     var lands = scope.ServiceProvider.GetRequiredService<AgentTaskLandService>();
                     try
                     {
-                        await lands.RunAsync(request.TaskId, request.VerifyFilter, stoppingToken);
+                        await lands.RunRequestAsync(request.TaskId, request.RequestId, request.VerifyFilter, stoppingToken);
                     }
                     catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                     {
@@ -38,7 +38,7 @@ public sealed class AgentTaskLandHostedService : BackgroundService
                         _logger.LogWarning(ex, "Land operation failed for task {TaskId}", request.TaskId);
                         try
                         {
-                            await lands.FailAsync(request.TaskId, ex, stoppingToken);
+                            await lands.FailRequestAsync(request.TaskId, request.RequestId, ex, stoppingToken);
                         }
                         catch (Exception failEx) when (failEx is not OperationCanceledException)
                         {

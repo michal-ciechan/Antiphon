@@ -338,6 +338,22 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
         </Section>
       )}
 
+      <Section title="Land request">
+        <Text size="sm">Delegate: {detail.summary.status}</Text>
+        {detail.landRequest ? <>
+          <Text size="sm">Land: {detail.landRequest.state}; attempt {detail.landRequest.attempt}</Text>
+          <Text size="xs">Requested {detail.landRequest.requestedAt}; no progress for {Math.floor(detail.landRequest.noProgressSeconds)}s</Text>
+          {detail.landRequest.holdReasonCode && <Text size="sm">Reason: {detail.landRequest.holdReasonCode}; holder {detail.landRequest.holdingTaskId ?? 'unknown'} ({detail.landRequest.holdingTaskStatus ?? 'unknown'})</Text>}
+          {detail.landRequest.holdDetail && <Text size="sm">{detail.landRequest.holdDetail}</Text>}
+          {detail.landRequest.reconciliationError && <Text c="red">{detail.landRequest.reconciliationError}</Text>}
+          {detail.landRequest.notifications.map(n => <Text size="sm" key={n.id}>
+            Notification: {n.kind} {n.state}; destination {n.destinationSessionId ?? 'unavailable'};
+            receipt {n.confirmedAt ?? 'unconfirmed'}{n.lastErrorCode && `; ${n.lastErrorCode}`}
+          </Text>)}
+        </> : <Text size="sm">Land: Not requested; legacy receipt evidence is unverified.</Text>}
+        {!detail.landing && <Text size="sm">Publication: Unconfirmed; cleanup: NotStarted</Text>}
+      </Section>
+
       {detail.landing && (
         <Section title="Landing">
           <Text size="sm">Publication: {detail.landing.publication}</Text>

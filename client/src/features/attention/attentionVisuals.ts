@@ -39,6 +39,9 @@ export interface AttentionVisual {
 }
 
 export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
+  LandHeld: { label: 'Land held', color: 'warning', icon: TbClockPause, hint: 'An existing writer or repository lease holds landing.' },
+  LandNoProgress: { label: 'Land aged', color: 'warning', icon: TbClockExclamation, hint: 'An accepted land has made no forward progress.' },
+  LandOutcomeUnconfirmed: { label: 'Land receipt missing', color: 'danger', icon: TbMailExclamation, hint: 'The caller has no complete matching UserPrompt receipt.' },
   StandingContinuityDecision: {
     label: 'Conversation decision', color: 'danger', icon: TbHelpCircle,
     hint: 'Inspect the conversation, retry after repair, select owned history, or explicitly start fresh.',

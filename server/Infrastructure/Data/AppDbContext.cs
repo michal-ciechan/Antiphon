@@ -55,6 +55,8 @@ public class AppDbContext : DbContext
     public DbSet<Alert> Alerts => Set<Alert>();
     public DbSet<AgentTask> AgentTasks => Set<AgentTask>();
     public DbSet<AgentTaskLanding> AgentTaskLandings => Set<AgentTaskLanding>();
+    public DbSet<AgentTaskLandRequest> AgentTaskLandRequests => Set<AgentTaskLandRequest>();
+    public DbSet<AgentTaskLandNotification> AgentTaskLandNotifications => Set<AgentTaskLandNotification>();
     public DbSet<AgentTaskEvent> AgentTaskEvents => Set<AgentTaskEvent>();
     public DbSet<StageOutcome> StageOutcomes => Set<StageOutcome>();
     public DbSet<AgentTuiProfile> AgentTuiProfiles => Set<AgentTuiProfile>();
@@ -1469,6 +1471,34 @@ public class AppDbContext : DbContext
                 .HasForeignKey(r => r.StageExecutionId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
+
+        modelBuilder.Entity<AgentTaskLandRequest>(entity =>
+        {
+            entity.ToTable("AgentTaskLandRequests");
+            entity.HasKey(r => r.Id);
+            entity.Property(r => r.ConcurrencyToken).IsConcurrencyToken();
+            entity.Property(r => r.VerifyFilter).HasMaxLength(400);
+            entity.Property(r => r.HoldReasonCode).HasMaxLength(100);
+            entity.Property(r => r.HoldDetail).HasMaxLength(2000);
+            entity.HasIndex(r => r.TaskId).IsUnique().HasFilter("\"IsPending\" = TRUE");
+            entity.HasIndex(r => new { r.IsPending, r.LastProgressAt });
+            entity.HasOne<AgentTask>().WithMany().HasForeignKey(r => r.TaskId).OnDelete(DeleteBehavior.Restrict);
+        });
+        modelBuilder.Entity<AgentTaskLandNotification>(entity =>
+        {
+            entity.ToTable("AgentTaskLandNotifications");
+            entity.HasKey(n => n.Id);
+            entity.Property(n => n.ContentDigest).HasMaxLength(128);
+            entity.HasIndex(n => n.SourceEventId).IsUnique();
+            entity.HasIndex(n => new { n.State, n.NextAttemptAt, n.Id });
+            entity.HasOne<AgentTaskLandRequest>().WithMany().HasForeignKey(n => n.RequestId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<AgentTaskEvent>().WithMany().HasForeignKey(n => n.SourceEventId).OnDelete(DeleteBehavior.Restrict);
+            // Destination is a snapshot, deliberately not a cascading session FK.
+        });
+        modelBuilder.Entity<SessionQueuedMessage>().HasIndex(m => m.SourceLandNotificationId)
+            .IsUnique().HasFilter("\"SourceLandNotificationId\" IS NOT NULL");
+        modelBuilder.Entity<AgentTaskEvent>().HasIndex(e => e.LandRequestId)
+            .IsUnique().HasFilter("\"IsLandTerminal\" = TRUE");
 
         modelBuilder.Entity<AgentTaskLanding>(entity =>
         {

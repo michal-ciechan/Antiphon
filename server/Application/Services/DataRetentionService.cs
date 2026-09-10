@@ -85,6 +85,8 @@ public sealed class DataRetentionService
         var query = _db.AgentSessions.Where(s =>
             (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed)
             && s.LastSeenAt < cutoff
+            && !_db.AgentTaskLandNotifications.Any(n => n.ParentSessionId == s.Id && n.ConfirmedAt == null
+                && n.State != LandNotificationState.NotRequired)
             && !_db.AgentTasks.Any(t => t.AgentSessionId == s.Id || t.ParentSessionId == s.Id));
 
         if (protectedIds.Count > 0)
@@ -121,7 +123,9 @@ public sealed class DataRetentionService
 
         var candidates = await _db.AgentSessions
             .Where(s => (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed)
-                && s.LastSeenAt < cutoff)
+                && s.LastSeenAt < cutoff
+                && !_db.AgentTaskLandNotifications.Any(n => n.ParentSessionId == s.Id && n.ConfirmedAt == null
+                    && n.State != LandNotificationState.NotRequired))
             .Select(s => s.Id)
             .ToListAsync(ct);
         candidates = candidates.Where(id => !protectedIds.Contains(id)).ToList();
@@ -172,6 +176,8 @@ public sealed class DataRetentionService
         var removed = await _db.SessionQueuedMessages
             .Where(m => (m.Status == QueuedMessageStatus.Sent || m.Status == QueuedMessageStatus.Canceled)
                 && m.CreatedAt < cutoff
+                && (m.SourceLandNotificationId == null || _db.AgentTaskLandNotifications.Any(n =>
+                    n.Id == m.SourceLandNotificationId && n.ConfirmedAt != null))
                 && (m.Origin != QueuedMessageOrigin.Channel || m.ChannelReplySettledAt != null))
             .ExecuteDeleteAsync(ct);
         if (removed > 0)
@@ -208,7 +214,8 @@ public sealed class DataRetentionService
             .Select(t => t.RootTaskId);
 
         var eligibleRootIds = await _db.AgentTasks
-            .Where(t => !liveRootIds.Contains(t.RootTaskId))
+            .Where(t => !liveRootIds.Contains(t.RootTaskId)
+                && !_db.AgentTaskLandRequests.Any(r => _db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.Id == r.TaskId)))
             .GroupBy(t => t.RootTaskId)
             .Where(g => g.Max(t => t.CompletedAt ?? t.CreatedAt) < cutoff)
             .Select(g => g.Key)

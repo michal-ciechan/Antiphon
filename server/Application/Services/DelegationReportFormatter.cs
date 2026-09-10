@@ -518,6 +518,8 @@ public static class DelegationReportFormatter
               .Append(StatusWord(task.Status)).Append(']');
 
         var bits = new List<string>();
+        if (task.Workspace == WorkspaceMode.Worktree)
+            bits.Add($"delegate={task.Status.ToString().ToLowerInvariant()}; publication={(task.ActiveLandingId is null ? "unconfirmed" : "inspect-operation")}; land={(task.LandRequestedAt is not null ? "pending" : task.CurrentLandRequestId is null ? "not-requested" : "inspect-request")}");
         if (!string.IsNullOrWhiteSpace(task.Title)) bits.Add(task.Title.Trim());
         bits.Add(ModelLevelAliases.For(task.AgentKind, task.ModelLevel));
         if (task.DispatchedAt is { } started && task.CompletedAt is { } finished)

@@ -198,6 +198,7 @@ public sealed class AttentionService
         items.AddRange(openItems);
         items.AddRange(await BuildParkedMessageItemsAsync(ct));
         items.AddRange(await BuildCallerNoteUndeliveredItemsAsync(now, ct));
+        items.AddRange(await BuildLandItemsAsync(now, ct));
         items.AddRange(await BuildCardlessDetailsNoPromptItemsAsync(now, ct));
         items.AddRange(await BuildInboundUnconsumedItemsAsync(since, ct));
         items.AddRange(await BuildRecentIncidentItemsAsync(since, attachedIncidents, ct));
@@ -1176,6 +1177,44 @@ public sealed class AttentionService
 
     // ---- condition 2: a parked queued message ----------------------------------------------------
 
+    private async Task<List<AttentionItemDto>> BuildLandItemsAsync(DateTime now, CancellationToken ct)
+    {
+        var items = new List<AttentionItemDto>();
+        var requests = await _db.AgentTaskLandRequests.AsNoTracking().Where(r => r.IsPending).ToListAsync(ct);
+        foreach (var request in requests)
+        {
+            var age = (now - request.LastProgressAt).TotalSeconds;
+            if (request.State != LandRequestState.Held && age < _delegation.LandWarningSeconds) continue;
+            var task = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == request.TaskId, ct);
+            items.Add(new AttentionItemDto(request.State == LandRequestState.Held ? AttentionKind.LandHeld : AttentionKind.LandNoProgress,
+                age >= _delegation.LandErrorSeconds ? AlertSeverity.Error : AlertSeverity.Warning,
+                task.Id, request.ParentSessionId, task.AgentId, null, task.Title,
+                $"Land {request.State}; attempt {request.Attempt}; no progress for {(int)age}s",
+                $"request={request.Id:N}; requested={request.RequestedAt:O}; reason={request.HoldReasonCode}; "
+                    + $"holder={request.HoldingTaskId:N} ({request.HoldingTaskStatus}); heldSince={request.HeldSince:O}; {request.HoldDetail}; {request.ReconciliationError}",
+                request.HeldSince ?? request.LastProgressAt, null, [AttentionAction.OpenDrawer], task.CardId));
+        }
+        var notes = await _db.AgentTaskLandNotifications.AsNoTracking().Where(n => n.ConfirmedAt == null
+            && n.State != LandNotificationState.NotRequired).ToListAsync(ct);
+        foreach (var note in notes)
+        {
+            var age = (now - note.CreatedAt).TotalSeconds;
+            var row = note.QueueMessageId is Guid id ? await _db.SessionQueuedMessages.AsNoTracking().SingleOrDefaultAsync(m => m.Id == id, ct) : null;
+            var parked = row?.DeliveryAttempts >= Math.Max(1, _supervision.DeliveryVerification.MaxDeliveryAttempts);
+            if (age < _delegation.LandWarningSeconds && note.LastErrorCode is null && !parked) continue;
+            var task = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == note.TaskId, ct);
+            var state = row is null ? "missing queue row" : row.DeliveryAttempts == 0 ? "queued; waiting for WhenIdle" : "attempted; receipt unconfirmed";
+            items.Add(new AttentionItemDto(AttentionKind.LandOutcomeUnconfirmed,
+                age >= _delegation.LandErrorSeconds || note.LastErrorCode is not null || parked ? AlertSeverity.Error : AlertSeverity.Warning,
+                task.Id, note.ParentSessionId, task.AgentId, note.QueueMessageId, task.Title,
+                $"Land {note.Kind} notification: {note.State}; {state}",
+                $"notification={note.Id:N}; request={note.RequestId:N}; destination={note.ParentSessionId:N}; "
+                    + $"error={note.LastErrorCode}; parked={parked}; {note.Body}",
+                note.CreatedAt, null, [AttentionAction.OpenDrawer], task.CardId));
+        }
+        return items;
+    }
+
     private async Task<List<AttentionItemDto>> BuildParkedMessageItemsAsync(CancellationToken ct)
     {
         var items = new List<AttentionItemDto>();
@@ -1185,7 +1224,7 @@ public sealed class AttentionService
         // to that file — so the view and the queue can never disagree about what parked means.
         var maxAttempts = Math.Max(1, _supervision.DeliveryVerification.MaxDeliveryAttempts);
         var parked = await _db.SessionQueuedMessages.AsNoTracking()
-            .Where(m => m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts >= maxAttempts)
+            .Where(m => m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts >= maxAttempts && m.SourceLandNotificationId == null)
             .Select(m => new
             {
                 m.Id, m.AgentSessionId, m.Body, m.Origin, m.CreatedAt,
@@ -1248,6 +1287,7 @@ public sealed class AttentionService
         // specific delivery-failure diagnosis for the same row.
         var candidates = await _db.SessionQueuedMessages.AsNoTracking()
             .Where(m => m.Status == QueuedMessageStatus.Pending
+                && m.SourceLandNotificationId == null
                 && (m.Origin == QueuedMessageOrigin.Delegation
                     || m.Origin == QueuedMessageOrigin.Check)
                 && m.CreatedAt < cutoff)

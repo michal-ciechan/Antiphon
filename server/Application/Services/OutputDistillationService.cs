@@ -220,7 +220,7 @@ public sealed class OutputDistillationService
         try
         {
             await _db.SessionQueuedMessages
-                .Where(m => m.Id == id && m.HoldUntil != null)
+                .Where(m => m.Id == id && m.HoldUntil != null && m.SourceLandNotificationId == null)
                 .ExecuteUpdateAsync(s => s.SetProperty(m => m.HoldUntil, (DateTime?)null), ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

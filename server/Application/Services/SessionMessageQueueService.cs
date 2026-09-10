@@ -185,7 +185,8 @@ public sealed partial class SessionMessageQueueService
         DateTime? holdUntil = null,
         DateTime? executionDeadlineAt = null, Guid? executionTaskId = null,
         string? capacityRecoveryActionKey = null,
-        Guid? capacityWaitId = null)
+        Guid? capacityWaitId = null,
+        Guid? sourceLandNotificationId = null)
     {
         var trimmed = (body ?? string.Empty).Trim();
         if (trimmed.Length == 0)
@@ -337,14 +338,29 @@ public sealed partial class SessionMessageQueueService
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var now = UtcNow();
 
+            if (sourceLandNotificationId is Guid notificationId)
+            {
+                var existing = await db.SessionQueuedMessages.AsNoTracking()
+                    .SingleOrDefaultAsync(m => m.SourceLandNotificationId == notificationId, ct);
+                if (existing is not null)
+                {
+                    if (existing.AgentSessionId != sessionId || existing.ContentDigest != contentDigest)
+                        throw new ConflictException("Land notification identity has a different destination or payload.");
+                    onCreated?.Invoke(existing.Id);
+                    return await GetQueueAsync(sessionId, ct);
+                }
+            }
+
             // CARD-0320: the per-session queue lock serialises two EnqueueAsync calls but used
             // to let both insert. A Delegation note with the same SourceTaskId+ContentDigest
             // is the same completion, not a second turn.
             if (origin == QueuedMessageOrigin.Delegation
+                && sourceLandNotificationId is null
                 && sourceTaskId is Guid sourced
                 && !string.IsNullOrEmpty(contentDigest)
                 && await db.SessionQueuedMessages.AsNoTracking().AnyAsync(
                     m => m.SourceTaskId == sourced
+                        && m.SourceLandNotificationId == null
                         && m.ContentDigest == contentDigest
                         && m.Origin == QueuedMessageOrigin.Delegation, ct))
             {
@@ -377,6 +393,7 @@ public sealed partial class SessionMessageQueueService
                 Origin = origin,
                 ConversationKey = conversationKey,
                 SourceTaskId = sourceTaskId,
+                SourceLandNotificationId = sourceLandNotificationId,
                 SourceScheduleId = sourceScheduleId,
                 ContentDigest = contentDigest,
                 NoteHeader = noteHeader,
@@ -388,7 +405,18 @@ public sealed partial class SessionMessageQueueService
                 CapacityWaitId = capacityWaitId,
             };
             db.SessionQueuedMessages.Add(row);
-            await db.SaveChangesAsync(ct);
+            try { await db.SaveChangesAsync(ct); }
+            catch (DbUpdateException ex) when (sourceLandNotificationId is not null
+                && ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
+            {
+                db.Entry(row).State = EntityState.Detached;
+                var existing = await db.SessionQueuedMessages.AsNoTracking()
+                    .SingleAsync(m => m.SourceLandNotificationId == sourceLandNotificationId, ct);
+                if (existing.AgentSessionId != sessionId || existing.ContentDigest != contentDigest)
+                    throw new ConflictException("Land notification identity has a different destination or payload.");
+                onCreated?.Invoke(existing.Id);
+                return await GetQueueAsync(sessionId, ct);
+            }
             onCreated?.Invoke(row.Id);
 
             // If the agent is already idle (waiting at the prompt), there is no upcoming turn-end to
@@ -1207,7 +1235,7 @@ public sealed partial class SessionMessageQueueService
                     $"SELECT * FROM \"SessionQueuedMessages\" WHERE \"Id\" = {noteId} FOR UPDATE")
                     .SingleOrDefaultAsync(token);
                 if (source is null || note is null) return "note-missing";
-                if (note.SourceTaskId != request.TaskId || note.ContentDigest != digest
+                if (note.SourceLandNotificationId != null || note.SourceTaskId != request.TaskId || note.ContentDigest != digest
                     || note.Origin != QueuedMessageOrigin.Delegation
                     || DelegationNoteDigest.Compute(source.Result ?? source.FailureReason ?? "") != digest)
                     return "identity";
@@ -1483,7 +1511,7 @@ public sealed partial class SessionMessageQueueService
             foreach (var message in pending.Where(m =>
                          m.Origin == QueuedMessageOrigin.Delegation
                          && m.DeliveryAttempts == 0
-                         && m.SourceTaskId is not null
+                         && m.SourceTaskId is not null && m.SourceLandNotificationId is null
                          && m.ContentDigest is not null).ToList())
             {
                 var contentDigest = message.ContentDigest;

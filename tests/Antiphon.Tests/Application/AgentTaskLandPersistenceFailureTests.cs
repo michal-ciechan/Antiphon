@@ -122,11 +122,14 @@ public sealed class AgentTaskLandPersistenceFailureTests
             await db.SaveChangesAsync();
         }
         await h.RunAsync();
-        logger.Errors.ShouldHaveSingleItem().ShouldBeOfType<Antiphon.Server.Application.Exceptions.NotFoundException>();
+        logger.Errors.ShouldBeEmpty(); // The drain commits an obligation; the independent worker owns delivery.
         var published = (await h.OperationAsync())!;
         published.Publication.ShouldBe(LandPublicationOutcome.Landed);
         published.Cleanup.ShouldBe(LandCleanupStatus.Complete);
         await using var observer = h.CreateContext();
+        var obligation = await observer.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == h.Fixture.TaskId);
+        obligation.ReplyTo.ShouldBe(AgentTaskReplyTo.Session);
+        obligation.ConfirmedAt.ShouldBeNull();
         (await observer.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Fixture.TaskId && e.Type == AgentTaskEventType.Landed)).ShouldBe(1);
         (await observer.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Fixture.TaskId && e.Type == AgentTaskEventType.LandRefused)).ShouldBe(0);
         (await observer.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId)).LandRequestedAt.ShouldBeNull();

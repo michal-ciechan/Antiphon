@@ -237,6 +237,29 @@ export interface BlockedContextDto {
 }
 
 export interface AgentTaskDetailDto {
+  landRequest?: {
+    id: string
+    state: string
+    requestedAt: string
+    startedAt: string | null
+    lastEvaluatedAt: string
+    lastProgressAt: string
+    ageSeconds: number
+    noProgressSeconds: number
+    attempt: number
+    holdReasonCode: string | null
+    holdDetail: string | null
+    holdingTaskId: string | null
+    holdingTaskStatus: string | null
+    heldSince: string | null
+    holdEpisode: number
+    reconciliationError: string | null
+    notifications: Array<{
+      id: string; kind: string; state: string; destinationSessionId: string | null
+      queueMessageId: string | null; lastErrorCode: string | null; confirmedAt: string | null
+      confirmingPromptSequence: number | null
+    }>
+  } | null
   landing?: {
     operationId: string
     phase: string

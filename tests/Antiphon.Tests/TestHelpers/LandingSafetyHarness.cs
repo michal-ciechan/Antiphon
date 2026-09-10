@@ -121,7 +121,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     }
 
     public AppDbContext CreateContext() => new(new DbContextOptionsBuilder<AppDbContext>(
-        TestDbFixture.CreateDbContextOptions(Schema.ConnectionString)).AddInterceptors(Fault).Options);
+        TestDbFixture.CreateDbContextOptions(Schema.ConnectionString)).AddInterceptors(Fault, new TransactionFault(Fault)).Options);
 
     public Task<LandRunResult> RunAsync() => RunAsync(CancellationToken.None);
 
@@ -169,12 +169,9 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
 
     public async Task RepostAsync()
     {
+        await using var scope = Services.CreateAsyncScope();
         await using var db = CreateContext();
-        var task = await db.AgentTasks.SingleAsync(t => t.Id == Fixture.TaskId);
-        task.LandRequestedAt = DateTime.UtcNow;
-        task.LandStartedAt = null;
-        task.LandAttempt = 0;
-        await db.SaveChangesAsync();
+        await CreateLand(db, scope.ServiceProvider).RequestAsync(Fixture.TaskId, null, CancellationToken.None);
     }
 
     public async Task<AgentTaskLanding?> OperationAsync()
@@ -219,6 +216,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         public bool Triggered { get; private set; }
         public Func<LandPhase, Task>? AfterAcknowledged { get; set; }
         private bool _armed;
+        internal bool AwaitingCommit { get; set; }
         public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data,
             InterceptionResult<int> result, CancellationToken ct = default)
         {
@@ -230,12 +228,30 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         }
         public override async ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData data, int result, CancellationToken ct = default)
         {
-            if (_armed && AfterCommit) { Triggered = true; throw new InjectedSaveFailure(); }
+            if (_armed && AfterCommit)
+            {
+                if (data.Context!.Database.CurrentTransaction is not null) AwaitingCommit = true;
+                else { Triggered = true; throw new InjectedSaveFailure(); }
+            }
             if (AfterAcknowledged is not null)
                 foreach (var entry in data.Context!.ChangeTracker.Entries<AgentTaskLanding>())
                     await AfterAcknowledged(entry.Entity.Phase);
             return result;
         }
+        internal void Committed()
+        {
+            if (!AwaitingCommit) return;
+            AwaitingCommit = false;
+            Triggered = true;
+            throw new InjectedSaveFailure();
+        }
+    }
+
+    private sealed class TransactionFault(SaveFault fault) : DbTransactionInterceptor
+    {
+        public override Task TransactionCommittedAsync(System.Data.Common.DbTransaction transaction,
+            TransactionEndEventData eventData, CancellationToken cancellationToken = default)
+        { fault.Committed(); return Task.CompletedTask; }
     }
 
     internal sealed class InjectedSaveFailure : Exception;

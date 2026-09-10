@@ -361,6 +361,7 @@ public class AgentTask
 
     /// <summary>Durable landing evidence; scheduling retries never clear this association.</summary>
     public Guid? ActiveLandingId { get; set; }
+    public Guid? CurrentLandRequestId { get; set; }
 
     /// <summary>
     /// UNCACHED input tokens only. The three input counters are kept apart because they are priced
@@ -490,6 +491,8 @@ public class AgentTaskEvent
     public string Detail { get; set; } = string.Empty;
     public DateTime At { get; set; }
     public Guid? LandingOperationId { get; set; }
+    public Guid? LandRequestId { get; set; }
+    public bool IsLandTerminal { get; set; }
     public LandPublicationOutcome? LandingPublication { get; set; }
     public LandCleanupStatus? LandingCleanup { get; set; }
     public LandOperationMode? LandingMode { get; set; }

@@ -15,6 +15,9 @@ import type { AlertSeverity } from './agents'
 
 /** The named conditions. Mirrors the server enum; the server serialises these as strings. */
 export type AttentionKind =
+  | 'LandHeld'
+  | 'LandNoProgress'
+  | 'LandOutcomeUnconfirmed'
   | 'StandingContinuityDecision'
   | 'HerdrSupervisionHeld'
   /** The delegate asked a question. Only a human answer moves this. */

@@ -317,6 +317,8 @@ try
     builder.Services.AddSingleton<IRepositoryMutationLease, RepositoryMutationLease>();
     builder.Services.AddScoped<AgentTaskLandingState>();
     builder.Services.AddScoped<AgentTaskLandService>();
+    builder.Services.AddScoped<AgentTaskLandNotificationService>();
+    builder.Services.AddScoped<AgentTaskLandMonitorService>();
     builder.Services.AddScoped<AgentTaskLandingProtocol>();
     builder.Services.AddSingleton<ILandingVerifier, LandingVerifier>();
     builder.Services.AddScoped<StageOutcomeService>();
@@ -628,6 +630,8 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddHostedService<AgentTaskDispatcherHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Orchestration.AgentTaskLandHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Orchestration.AgentTaskLandSweepHostedService>();
+    builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Orchestration.AgentTaskLandNotificationHostedService>();
+    builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Orchestration.AgentTaskLandMonitorHostedService>();
     builder.Services.AddHostedService<AgentTaskCheckHostedService>();
     builder.Services.AddHostedService<DiagnoseHostedService>();
     builder.Services.AddHostedService<DiagnoseSweepHostedService>();

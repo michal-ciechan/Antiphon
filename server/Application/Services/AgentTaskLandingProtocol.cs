@@ -442,6 +442,15 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     private async Task TransitionAsync(AgentTaskLanding op, LandPhase next, CancellationToken ct)
     {
         _state.Transition(op, next, Now());
+        var request = await db.AgentTaskLandRequests.SingleOrDefaultAsync(r => r.TaskId == op.TaskId && r.IsPending, ct);
+        if (request is not null && next != LandPhase.Refused && (int)next > request.HighestProgress)
+        {
+            request.HighestProgress = (int)next;
+            request.LastProgressAt = Now();
+            request.LandingOperationId = op.Id;
+            request.WarningAt = request.ErrorAt = null;
+            request.ConcurrencyToken = Guid.NewGuid();
+        }
         await db.SaveChangesAsync(ct);
     }
 

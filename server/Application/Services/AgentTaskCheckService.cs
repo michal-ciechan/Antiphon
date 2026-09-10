@@ -257,6 +257,7 @@ public sealed class AgentTaskCheckService
         AppDbContext db, Guid parentSessionId, Guid rootTaskId, CancellationToken ct) =>
         db.SessionQueuedMessages.AsNoTracking().AnyAsync(
             m => m.AgentSessionId == parentSessionId
+                && m.SourceLandNotificationId == null
                 && m.Origin == QueuedMessageOrigin.Delegation
                 && m.ConversationKey == $"task:{rootTaskId:N}"
                 && m.Status != QueuedMessageStatus.Canceled, ct);

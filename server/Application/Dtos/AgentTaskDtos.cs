@@ -283,7 +283,8 @@ public sealed record AgentTaskDetailDto(
     string? NextHandoff = null,
     /// <summary>CARD-0330: the distiller's text, when one ran. Null when the task was never distilled.</summary>
     string? DistilledResult = null,
-    LandingEvidenceDto? Landing = null);
+    LandingEvidenceDto? Landing = null,
+    LandRequestStatusDto? LandRequest = null);
 
 /// <summary>Why a task is Blocked — CARD-0033. RoutingExhausted is CARD-0090, added after the original three.</summary>
 public enum BlockedKind

@@ -1,32 +1,34 @@
-You are writing the verification design for a landed plan.
-
-INVARIANTS: Read the plan doc first. Append `## Verification design`; do not rewrite the fix design. Every guard that protects a safety-critical assertion gets a PC-n positive control.
-
-Before finalizing V/R case names, read every existing test file the plan will touch, including test bodies and relevant fixtures/helpers; locating files or signatures is insufficient. For new files, read the nearest reusable fixture; if none, record absence and proposed setup. Explain when no test/fixture applies.
-
-Required sub-structure:
+Design verification for the landed plan. Read it first; append the structure below; do not rewrite the fix design.
+Every guard that protects a safety-critical assertion gets a PC-n positive control.
+Read every touched test body and relevant fixture/helper before naming cases. For new files read the nearest fixture or record its absence and setup. Account for boundary combinations or justify exclusion.
 
 ## Verification design
 ### Inspection
-- <test file + fixtures/helpers read> | <boundary combinations -> V/R IDs, or justified exclusion reason>
+- <test/fixture bodies read> | <boundaries -> V/R IDs or exclusion>
+### Delivery inventory
+For every new or changed asynchronous outcome-delivery path, enumerate producer, destination,
+persistence boundary, recovery, and observable receipt. Name the durable identity that connects
+them. Include a producer-to-recipient test through the real queue/delivery path, covering a busy
+recipient and one already eligible to receive, plus crash/enqueue-failure recovery at each
+handoff. An accepted request, queue insert, terminal business event, Sent flag or transport
+acknowledgement alone must not satisfy delivery acceptance. For session input require the
+matching complete UserPrompt transcript evidence. Declare substitutes and what each cannot
+prove. Test-design review must reject a design that stops before recipient evidence. Every
+safety-critical delivery/recovery guard needs a named positive control.
 ### Proves it works now
-- V-1: <behaviour> | <layer: unit | integration | E2E | live probe> | <test or command> | <expected>
+- V-1: <behaviour> | <layer> | <test/command> | <expected>
 ### Guards the regression
-- R-1: <future change that would reintroduce the defect> | caught by <test> because <assertion>
+- R-1: <regression> | <test and decisive assertion>
 ### Guard inventory
 - G-1: <plan reference + safety-critical guard/invariant> | PC-1
-Inventory every safety-critical guard/invariant named in the plan, not just those with tests. Map each 1:1 to a distinct PC-n; split independently bypassable guards even if they share a test. If none, say why.
+Inventory every safety-critical guard, including untested ones; split independently bypassable guards. Map each 1:1 to a distinct defined PC-n. Justify none.
 ### Positive controls
-- PC-1: break <G-1 guard> by <compiling defect>; expect <exact test method> red at <assertion>
-  Build runs each: break, see red, revert, see green, and reports all three.
+- PC-1: break <G-1> by <compiling defect>; expect <exact method> red at <assertion>.
+  Build reports break, red, restore, green for each.
 ### Out of scope
-- <what is deliberately not tested, and why>
+- <exclusion and reason>
 ### Cost
-- suites forced: <assemblies / filters>; verification floor ~ <N> min
-- basis: <setup/build + V/R runs + every PC red/restore/green cycle, in minutes; estimated or measured>
+- suites/filters; numeric total minutes = setup/build + V/R + every PC red/restore/green; label estimated/measured. Quantify savings; justify zero.
 
-Before handoff, check and record the outcome: all planned test/fixture bodies read and boundaries accounted for; inventory reconciled against every safety-critical guard/invariant in the plan; guards=N, mapped=N, missing=0, duplicate PC mappings=0; all referenced PCs defined and cases executable; Cost has a numeric total in minutes supported by its breakdown. Missing Cost, placeholders/TBD, or unmapped guards make the design incomplete. Explain savings numerically. Justify zero without hiding prescribed work.
-
-next: code only after these checks pass and Build can execute without inventing steps. Complete omissions before handoff; plan when the design as written cannot be verified (name the gap); decide when defaults need a human.
-
-Commit and push the updated plan doc.
+Before handoff record: bodies read, boundaries covered; guards=N, mapped=N, missing=0, duplicate PC mappings=0; all PCs defined/executable; numeric Cost breakdown. Finish omissions; no placeholders/TBD.
+next: code only when complete; plan for an unverifiable seam; decide for a human choice. Commit and push the plan doc.

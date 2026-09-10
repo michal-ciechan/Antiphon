@@ -398,6 +398,20 @@ switch ($PSCmdlet.ParameterSetName) {
         $task = Invoke-Antiphon -Method GET -Path "/api/agent-tasks/$Status"
         $s = $task.summary
         Write-Output ("{0}  {1}  {2}/{3}  {4}" -f $s.status, $s.title, $s.kind, $s.role, $s.modelLevel)
+        Write-Output "Delegate: $($s.status)"
+        if ($task.landRequest) {
+            $r = $task.landRequest
+            Write-Output ("Land: {0}; request {1}; requested {2}; attempt {3}; no progress for {4}s" -f $r.state, $r.id, $r.requestedAt, $r.attempt, [int]$r.noProgressSeconds)
+            if ($r.holdReasonCode) { Write-Output "Reason: $($r.holdReasonCode); holder $($r.holdingTaskId) ($($r.holdingTaskStatus)); $($r.holdDetail)" }
+            if ($r.reconciliationError) { Write-Output "Reconciliation: $($r.reconciliationError)" }
+            foreach ($n in $r.notifications) {
+                Write-Output "Notification: $($n.kind) $($n.state); destination $($n.destinationSessionId); queue $($n.queueMessageId); receipt $($n.confirmedAt); error $($n.lastErrorCode)"
+            }
+        } else { Write-Output 'Land: Not requested (legacy receipt evidence, if any, is unverified).' }
+        if ($task.landing) {
+            $l = $task.landing
+            Write-Output "Publication: $($l.publication); operation $($l.operationId); verified $($l.verifiedSha); remote $($l.remoteSha); confirmed $($l.remoteConfirmedAt); cleanup: $($l.cleanup)"
+        } else { Write-Output 'Publication: Unconfirmed; cleanup: NotStarted' }
         if ($task.result) { Write-Output ''; Write-Output $task.result }
         elseif ($task.failureReason) { Write-Output ''; Write-Output "failed: $($task.failureReason)" }
         return
@@ -409,7 +423,11 @@ switch ($PSCmdlet.ParameterSetName) {
         $result = Invoke-Antiphon -Method POST -Path "/api/agent-tasks/$Land/land" -Body $body
         $suffix = if ($Verify) { " with test filter '$Verify'" } else { '' }
         $word = if ($result.status -eq 'requeued') { 'Requeued land' } else { 'Queued land' }
-        Write-Output "$word for task $Land$suffix. The outcome will be delivered to the caller session."
+        if ($result.notification -eq 'not-required') {
+            Write-Output "$word request $($result.requestId). Publication pending; notification=not-required."
+        } else {
+            Write-Output "$word request $($result.requestId). Publication pending; status/hold and outcome notifications are tracked."
+        }
         return
     }
 

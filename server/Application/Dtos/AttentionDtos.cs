@@ -261,6 +261,9 @@ public enum AttentionKind
     CapacityRecoveryExhausted = 32,
     /// <summary>Durable logical Check service outage, fallback use or declared standby readiness defect.</summary>
     StandingSpecialistHealth = 33,
+    LandHeld = 35,
+    LandNoProgress = 36,
+    LandOutcomeUnconfirmed = 37,
 }
 
 /// <summary>

@@ -569,6 +569,19 @@ public class InstructionBundleTests
     }
 
     [Test]
+    public void C467_V21_DeliveryInventoryAndReviewAreMandatory()
+    {
+        var design = InstructionBundles.TextOf(InstructionBundles.StageTestDesign);
+        foreach (var field in new[] { "producer", "destination", "persistence boundary", "recovery", "observable receipt",
+            "durable identity", "busy", "already eligible", "crash/enqueue-failure", "matching complete UserPrompt",
+            "Declare substitutes", "named positive control" }) design.ShouldContain(field);
+        var review = InstructionBundles.TextOf(InstructionBundles.StageReview);
+        review.ShouldContain("V/R/PC evidence");
+        review.ShouldContain("Reject a missing producer-to-recipient test");
+        review.ShouldContain("matching complete UserPrompt");
+    }
+
+    [Test]
     public void a_realistic_code_worker_composition_stays_under_the_command_line_budget()
     {
         // Role pair (stage-code + delegate-basics) plus the one attachment a Code delegate

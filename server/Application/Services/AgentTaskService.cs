@@ -1035,7 +1035,7 @@ public sealed class AgentTaskService
 
     private async Task<string?> CompletionHeaderAsync(Guid taskId, CancellationToken ct) =>
         await _db.SessionQueuedMessages.AsNoTracking()
-            .Where(message => message.SourceTaskId == taskId && message.NoteHeader != null)
+            .Where(message => message.SourceTaskId == taskId && message.SourceLandNotificationId == null && message.NoteHeader != null)
             .OrderByDescending(message => message.CreatedAt)
             .Select(message => message.NoteHeader)
             .FirstOrDefaultAsync(ct);
@@ -1408,6 +1408,7 @@ public sealed class AgentTaskService
             // "the summary was not enough" signal.
             var noteSent = await _db.SessionQueuedMessages.AsNoTracking()
                 .Where(m => m.SourceTaskId == id
+                    && m.SourceLandNotificationId == null
                     && m.Origin == QueuedMessageOrigin.Delegation
                     && m.SentAt != null
                     && m.SentAt < now)
@@ -1439,12 +1440,18 @@ public sealed class AgentTaskService
             ? await _db.AgentTaskLandings.AsNoTracking().SingleOrDefaultAsync(o => o.Id == landingId && o.TaskId == task.Id, ct)
             : null;
 
+        var landRequest = task.CurrentLandRequestId is Guid requestId
+            ? await _db.AgentTaskLandRequests.AsNoTracking().SingleOrDefaultAsync(r => r.Id == requestId, ct) : null;
+        var landNotes = landRequest is null ? [] : await _db.AgentTaskLandNotifications.AsNoTracking()
+            .Where(n => n.TaskId == task.Id).OrderBy(n => n.CreatedAt).ToListAsync(ct);
         return new AgentTaskDetailDto(
             ToSummary(task, family, await LoadCardIdentifiersAsync([task], ct)), task.Goal, task.Result,
             task.ResultFilePath, task.DeliverablePath, task.DeliverableRef,
             task.FailureReason, task.MergeTargetRef, events, task.FailureCode, blocked,
             task.StandingAuthority, task.AutoContinueOnWait, task.NextStage, task.NextHandoff,
-            task.DistilledResult, landing is null ? null : LandingEvidenceDto.From(landing));
+            task.DistilledResult, landing is null ? null : LandingEvidenceDto.From(landing),
+            landRequest is null ? null : LandRequestStatusDto.From(landRequest, _timeProvider.GetUtcNow().UtcDateTime,
+                landNotes.Select(LandNotificationStatusDto.From).ToList()));
     }
 
     /// <summary>Record the first operator read; repeat opens deliberately preserve that timestamp.</summary>

@@ -48,6 +48,7 @@ public class SessionQueuedMessage
 
     /// <summary>The delegated task a completion note reports, when this is a delegation completion row.</summary>
     public Guid? SourceTaskId { get; set; }
+    public Guid? SourceLandNotificationId { get; set; }
 
     /// <summary>
     /// The schedule that enqueued this row (CARD-0057). Used to cancel a previous still-Pending

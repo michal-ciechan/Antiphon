@@ -18,11 +18,11 @@ public sealed class AgentTaskLandQueue
     /// Hand a pending land to the drain. Returns false when this id is already queued or
     /// running in this process — never duplicated.
     /// </summary>
-    public bool TryEnqueue(Guid taskId, string? verifyFilter)
+    public bool TryEnqueue(Guid taskId, string? verifyFilter, Guid? requestId = null)
     {
         if (!_active.TryAdd(taskId, 0))
             return false;
-        if (_channel.Writer.TryWrite(new LandRequest(taskId, verifyFilter)))
+        if (_channel.Writer.TryWrite(new LandRequest(taskId, verifyFilter, requestId)))
             return true;
         _active.TryRemove(taskId, out _);
         return false;
@@ -45,5 +45,5 @@ public sealed class AgentTaskLandQueue
     /// <summary>Take one claim without waiting; false when the queue is empty (tests).</summary>
     public bool TryDequeue(out LandRequest request) => _channel.Reader.TryRead(out request!);
 
-    public sealed record LandRequest(Guid TaskId, string? VerifyFilter);
+    public sealed record LandRequest(Guid TaskId, string? VerifyFilter, Guid? RequestId = null);
 }
