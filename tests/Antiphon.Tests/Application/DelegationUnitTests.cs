@@ -232,6 +232,19 @@ public class DelegationWorkspaceBoundaryTests
 public class DelegationReportFormatterTests
 {
     [Test]
+    public void C470_mutation_brief_and_handoff_contract()
+    {
+        var task = new AgentTask { Id = Guid.NewGuid(), Role = AgentTaskRole.Mutation,
+            Kind = AgentTaskKind.Worker, Workspace = WorkspaceMode.Shared, Goal = "owner=ce744e22; exact SHA and retained worktree" };
+        var brief = DelegationReportFormatter.BuildBrief(task, new DelegationSettings());
+        brief.ShouldContain("--- next stage ---");
+        brief.ShouldContain("code|mutation|review");
+        brief.ShouldNotContain("Do NOT modify any files");
+        brief.ShouldNotContain("[bundle:");
+        DelegationReportFormatter.StageHandoffContract.Length.ShouldBeLessThanOrEqualTo(700);
+    }
+
+    [Test]
     [Arguments("Unconfirmed", "NotStarted", "Held", "Queued")]
     [Arguments("Landed", "Refused", "Held", "AwaitingReceipt")]
     [Arguments("AlreadyPresent", "Complete", "Completed", "Confirmed")]

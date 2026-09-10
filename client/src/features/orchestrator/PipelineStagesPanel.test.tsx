@@ -246,6 +246,18 @@ describe('PipelineStagesPanel', () => {
     window.history.pushState({}, '', '/')
   })
 
+  it('C470 shows mutation ready running and cap', async () => {
+    const dto = liveDto()
+    dto.stages.push(stage({ role: 'Mutation', inFlight: [inFlight({ taskId: 'mutation-task' })], inFlightCount: 1,
+      ready: [ready({ targetRole: 'Mutation' })] }))
+    servePipeline(dto)
+    renderWithProviders(<PipelineStagesPanel />)
+    const row = await screen.findByTestId('pipeline-stage-Mutation')
+    expect(row).toHaveTextContent('Mutation')
+    expect(row).toHaveTextContent('1')
+    expect(row).toHaveTextContent('ready')
+  })
+
   it('renders the strip, shown stages, idle line, and a row of each kind', async () => {
     servePipeline(liveDto())
     renderWithProviders(<PipelineStagesPanel />)

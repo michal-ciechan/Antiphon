@@ -206,6 +206,17 @@
       "blocked": [],
       "ready": [],
       "routingPin": null
+    },
+    {
+      "role": "Mutation",
+      "recommendedInFlight": 1,
+      "inFlightCount": 0,
+      "atOrAboveRecommendation": false,
+      "inFlight": [],
+      "queued": [],
+      "blocked": [],
+      "ready": [],
+      "routingPin": null
     }
   ]
 }
