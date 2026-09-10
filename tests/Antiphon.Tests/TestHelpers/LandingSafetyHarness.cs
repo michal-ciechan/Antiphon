@@ -19,6 +19,8 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     public LandingSafetyHarness(string? root = null, Guid? taskId = null) => Fixture = new(root, taskId);
     public IsolatedTestSchema Schema { get; private set; } = null!;
     public ServiceProvider Services { get; private set; } = null!;
+    public TimeProvider Clock { get; set; } = TimeProvider.System;
+    public AgentTaskLandQueue Queue { get; private set; } = new();
     public ControlledVerifier Verifier { get; } = new();
     public SaveFault Fault { get; } = new();
     public IEventBus Events { get; set; } = new MockEventBus();
@@ -50,9 +52,10 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
                     o.ChildProcessStartTicks }).SingleOrDefaultAsync();
             LandingEvidence.Write(Fixture.TaskId, "committed_before_mutation", new { arguments, committed });
         };
+        Queue = new();
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton(Clock);
         services.AddSingleton<ILandingGit>(Fixture.Git);
         services.AddSingleton<ILandingVerifier>(Verifier);
         services.AddScoped(_ => CreateContext());
@@ -159,12 +162,39 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     {
         var tasks = new AgentTaskService(db, new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
             Options.Create(new DelegationSettings { MaxTasksPerRoot = 40, MaxDepth = 5 }), Events,
-            new RecordingSessionStopper(), TimeProvider.System, NullLogger<AgentTaskService>.Instance);
+            new RecordingSessionStopper(), Clock, NullLogger<AgentTaskService>.Instance);
         return new AgentTaskLandService(db, services.GetRequiredService<DelegationWorktreeService>(),
-            tasks, new AgentTaskLandQueue(), Messages!, Events, TimeProvider.System,
+            tasks, Queue, Messages!, Events, Clock,
             Options.Create(new DelegationSettings()), Logger,
             services.GetRequiredService<AgentTaskLandingProtocol>(),
             Services.GetRequiredService<IRepositoryMutationLease>(), Fixture.Git);
+    }
+
+    public async Task<LandRequestResult> RequestAsync(string? filter = null)
+    {
+        await using var scope = Services.CreateAsyncScope();
+        return await CreateLand(scope.ServiceProvider.GetRequiredService<AppDbContext>(), scope.ServiceProvider)
+            .RequestAsync(Fixture.TaskId, filter, CancellationToken.None);
+    }
+
+    public async Task SweepAsync()
+    {
+        await using var scope = Services.CreateAsyncScope();
+        await CreateLand(scope.ServiceProvider.GetRequiredService<AppDbContext>(), scope.ServiceProvider)
+            .SweepAsync(CancellationToken.None);
+    }
+
+    public async Task<LandRunResult> RunQueuedAsync(string? filter = null)
+    {
+        if (!Queue.TryDequeue(out var request) || request.TaskId != Fixture.TaskId || request.VerifyFilter != filter)
+            throw new InvalidOperationException("Expected exact fixture task/filter queue claim");
+        try
+        {
+            await using var scope = Services.CreateAsyncScope();
+            return await CreateLand(scope.ServiceProvider.GetRequiredService<AppDbContext>(), scope.ServiceProvider)
+                .RunRequestAsync(request.TaskId, request.RequestId, request.VerifyFilter, CancellationToken.None);
+        }
+        finally { Queue.Release(request.TaskId); }
     }
 
     public async Task RepostAsync()
@@ -200,9 +230,11 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         public Func<Task>? Barrier { get; set; }
         public bool Passed { get; set; } = true;
         public int Calls { get; private set; }
+        public List<(string Worktree, string? Filter)> Invocations { get; } = [];
         public async Task<LandingVerification> VerifyAsync(string worktree, string? filter, CancellationToken ct)
         {
             Calls++;
+            Invocations.Add((worktree, filter));
             if (Barrier is not null) await Barrier();
             return new(Passed, "fixture verification");
         }
@@ -215,6 +247,8 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         public string? TerminalCut { get; set; }
         public AgentTaskEventType? EventKind { get; set; }
         public bool AfterCommit { get; set; }
+        public bool AfterSave { get; set; }
+        public Func<DbContext, Task>? AfterSaveAcknowledged { get; set; }
         public bool Triggered { get; private set; }
         public Func<LandPhase, Task>? AfterAcknowledged { get; set; }
         private bool _armed;
@@ -227,12 +261,13 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
                 : data.Context!.ChangeTracker.Entries<AgentTaskLanding>()
                 .Any(e => e.State != EntityState.Unchanged
                     && (Phase is not null && e.Entity.Phase == Phase || Matches?.Invoke(e.Entity) == true)));
-            if (_armed && (TerminalCut == "before-save" || TerminalCut is null && !AfterCommit)) { Triggered = true; throw new InjectedSaveFailure(); }
+            if (_armed && (TerminalCut == "before-save" || TerminalCut is null && !AfterCommit && !AfterSave)) { Triggered = true; throw new InjectedSaveFailure(); }
             return ValueTask.FromResult(result);
         }
         public override async ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData data, int result, CancellationToken ct = default)
         {
-            if (_armed && TerminalCut == "after-save") { Triggered = true; throw new InjectedSaveFailure(); }
+            if (AfterSaveAcknowledged is not null) await AfterSaveAcknowledged(data.Context!);
+            if (_armed && (AfterSave || TerminalCut == "after-save")) { Triggered = true; throw new InjectedSaveFailure(); }
             if (_armed && TerminalCut is "commit" or "after-commit") AwaitingCommit = true;
             if (_armed && AfterCommit)
             {

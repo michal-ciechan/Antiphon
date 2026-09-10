@@ -47,18 +47,12 @@ public sealed class AgentTaskLandingState
         operation.ConcurrencyToken = Guid.NewGuid();
     }
 
-    /// <summary>F1: a human may resolve/abort in place without changing task coordinates.</summary>
+    /// <summary>An explicit retry after terminal refusal requires fresh accepted inspection, even for unchanged source.</summary>
     public bool CanReplaceRefused(AgentTaskLanding previous, LandSourceInspection freshInspection,
         bool explicitRequest, bool leaseHeld) => explicitRequest && leaseHeld && previous.SchemaVersion == 1
         && previous.Phase == LandPhase.Refused && !HasPublication(previous)
         && freshInspection.Accepted
-        && freshInspection.Snapshot!.Coordinates.TaskId == previous.TaskId
-        && (previous.LastReason == "interrupted_rebase_requires_inspection"
-            || freshInspection.Snapshot.Coordinates.SourceFullRef != previous.SourceFullRef
-            || freshInspection.Snapshot.HeadSha != previous.OriginalSourceSha
-            || freshInspection.Snapshot.Coordinates.TargetFullRef != previous.TargetFullRef
-            || freshInspection.Snapshot.CommonDirectory != previous.CommonDirectory
-            || freshInspection.Snapshot.RegisteredPath != previous.WorktreePath);
+        && freshInspection.Snapshot!.Coordinates.TaskId == previous.TaskId;
 
     private static bool HasVerification(AgentTaskLanding operation) => IsOid(operation.VerifiedSourceSha)
         && operation.VerifiedAt is not null && operation.SourcePinned && operation.TargetPinned

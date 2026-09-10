@@ -123,4 +123,85 @@ public sealed class AgentTaskLandingStateTests
         previous.Phase.ShouldBe(LandPhase.Refused);
         previous.OriginalSourceSha.ShouldBe(new string('a', 40));
     }
+
+    [Test]
+    [Arguments("reason:target_dirty_or_unknown", true)]
+    [Arguments("reason:remote_read_failed", true)]
+    [Arguments("reason:verification_failed", true)]
+    [Arguments("reason:interrupted_rebase_requires_inspection", true)]
+    [Arguments("reason:unknown", true)]
+    [Arguments("reason:null", true)]
+    [Arguments("source-ref", true)]
+    [Arguments("source-sha", true)]
+    [Arguments("target-ref", true)]
+    [Arguments("common", true)]
+    [Arguments("path", true)]
+    [Arguments("automatic", false)]
+    [Arguments("no-lease", false)]
+    [Arguments("schema", false)]
+    [Arguments("inspection", false)]
+    [Arguments("wrong-task", false)]
+    [Arguments("automatic-changed", false)]
+    [Arguments("no-lease-changed", false)]
+    [Arguments("phase:Inspected", false)]
+    [Arguments("phase:RecoveryPinned", false)]
+    [Arguments("phase:RebaseStarted", false)]
+    [Arguments("phase:Prepared", false)]
+    [Arguments("phase:Verified", false)]
+    [Arguments("phase:TargetAdvanceStarted", false)]
+    [Arguments("phase:LocalTargetAdvanced", false)]
+    [Arguments("phase:PushStarted", false)]
+    [Arguments("phase:PublicationConfirmed", false)]
+    [Arguments("phase:CleanupStarted", false)]
+    [Arguments("phase:Complete", false)]
+    [Arguments("receipt:Landed", false)]
+    [Arguments("receipt:AlreadyPresent", false)]
+    [Arguments("refused-status", true)]
+    public void RR_V7_RefusedReplacementEligibilityDependsOnlyOnAdmission(string row, bool expected)
+    {
+        var previous = new AgentTaskLanding
+        {
+            Id = Guid.NewGuid(), TaskId = Guid.NewGuid(), Phase = LandPhase.Refused,
+            SourceFullRef = "refs/heads/source", TargetFullRef = "refs/heads/master", DestinationFullRef = "refs/heads/master",
+            RepositoryPath = "repo", CommonDirectory = "common", GitDirectory = "git", WorktreePath = "tree",
+            OriginalSourceSha = new string('a', 40), TargetBeforeSha = new string('b', 40), RemoteFingerprint = new string('c', 64),
+        };
+        previous.RecoveryRefPrefix = $"refs/antiphon/land/{previous.TaskId:N}/{previous.Id:N}";
+        var snapshot = new LandSourceSnapshot(new(previous.TaskId, "repo", "tree", previous.SourceFullRef, previous.TargetFullRef),
+            "common", "tree", "git", previous.SourceFullRef, previous.OriginalSourceSha, previous.OriginalSourceSha, "", []);
+        var explicitRequest = true;
+        var leaseHeld = true;
+        if (row.StartsWith("reason:")) previous.LastReason = row == "reason:null" ? null : row[7..];
+        if (row.StartsWith("phase:")) previous.Phase = Enum.Parse<LandPhase>(row[6..]);
+        if (row.Contains("changed") || row == "source-sha") snapshot = snapshot with { HeadSha = new string('d', 40), BranchSha = new string('d', 40) };
+        switch (row)
+        {
+            case "source-ref": snapshot = snapshot with { Coordinates = snapshot.Coordinates with { SourceFullRef = "refs/heads/other" }, SymbolicHead = "refs/heads/other" }; break;
+            case "target-ref": snapshot = snapshot with { Coordinates = snapshot.Coordinates with { TargetFullRef = "refs/heads/other-target" } }; break;
+            case "common": snapshot = snapshot with { CommonDirectory = "other-common" }; break;
+            case "path": snapshot = snapshot with { RegisteredPath = "other-tree", Coordinates = snapshot.Coordinates with { WorktreePath = "other-tree" } }; break;
+            case "automatic": case "automatic-changed": explicitRequest = false; break;
+            case "no-lease": case "no-lease-changed": leaseHeld = false; break;
+            case "schema": previous.SchemaVersion = 999; break;
+            case "wrong-task": snapshot = snapshot with { Coordinates = snapshot.Coordinates with { TaskId = Guid.NewGuid() } }; break;
+            case "refused-status": previous.Publication = LandPublicationOutcome.Refused; break;
+        }
+        var policy = new AgentTaskLandingState();
+        if (row.StartsWith("receipt:"))
+        {
+            previous.Publication = Enum.Parse<LandPublicationOutcome>(row[8..]);
+            previous.VerifiedSourceSha = previous.OriginalSourceSha;
+            previous.VerifiedAt = previous.RemoteConfirmedAt = DateTime.UtcNow;
+            previous.SourcePinned = previous.TargetPinned = previous.VerificationPassed = true;
+            previous.ObservedRemoteTargetSha = previous.OriginalSourceSha;
+            previous.ConfirmationMethod = "push-endpoint-read-fetch-ancestry";
+            policy.HasPublication(previous).ShouldBeTrue();
+        }
+        var inspection = row == "inspection" ? new LandSourceInspection(null, "active_sequencer") : new(snapshot, null);
+        var oldEvidence = System.Text.Json.JsonSerializer.Serialize(previous);
+        var oldInspection = System.Text.Json.JsonSerializer.Serialize(inspection);
+        policy.CanReplaceRefused(previous, inspection, explicitRequest, leaseHeld).ShouldBe(expected, row);
+        System.Text.Json.JsonSerializer.Serialize(previous).ShouldBe(oldEvidence);
+        System.Text.Json.JsonSerializer.Serialize(inspection).ShouldBe(oldInspection);
+    }
 }

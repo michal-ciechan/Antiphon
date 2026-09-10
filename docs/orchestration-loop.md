@@ -564,6 +564,12 @@ wait for the outcome event; it never fires for a request no process holds. Three
 attempts refuse (`LandRefused`); `-Land` again starts a new request. A `Warning` "did not
 finish (server restarted); re-running" is informational.
 
+An explicit retry of an eligible terminal `Refused` operation creates a fresh operation,
+even when the source is unchanged. It repeats validation and verification as required,
+retains the previous operation and recovery pins, and may refuse again if the target or
+other prerequisites remain unsafe. Target repair or restart alone does not authorize a
+retry. Publication recovery and guarded cleanup retain their existing operation and evidence.
+
 Read the task's structured `landing` evidence and the outcome's operation ID, original source,
 verified commit, observed remote commit, confirmation time, mode and cleanup status.
 `AlreadyPresent` records independent containment without claiming a successful push.
