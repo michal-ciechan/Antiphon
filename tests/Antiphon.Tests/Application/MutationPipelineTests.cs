@@ -39,6 +39,7 @@ public class MutationPipelineTests
         (await CreateService(db).GetAsync(default)).Stages.Single(s => s.Role == AgentTaskRole.Mutation).Ready.ShouldBeEmpty();
         mutation.Status = AgentTaskStatus.Succeeded;
         mutation.CompletedAt = DateTime.UtcNow.AddMinutes(-1);
+        mutation.DispatchedAt = DateTime.UtcNow.AddMinutes(-9);
         mutation.NextStage = PipelineHandoffKind.Review;
         mutation.NextHandoff = "original Code owner";
         mutation.DeliverablePath = code.DeliverablePath;

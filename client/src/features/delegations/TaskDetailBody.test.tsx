@@ -67,6 +67,6 @@ it('C470 renders canonical mutation handoff', async () => {
   server.use(http.get('/api/agent-tasks/:id', () => HttpResponse.json(task)))
   renderWithProviders(<TaskDetailBody taskId={FLY_ID} onClose={() => {}} />)
   expect(await screen.findByText('next: mutation')).toBeInTheDocument()
-  expect(screen.getByText('PCs pending; original owner ce744e22')).toBeInTheDocument()
+  expect(screen.getByTestId('task-next-handoff')).toHaveTextContent('PCs pending; original owner ce744e22')
   expect(screen.getByText(task.deliverablePath)).toBeInTheDocument()
 })

@@ -11,7 +11,7 @@ import type {
 import type { ModelAvailabilityDto } from '../../api/modelAvailability'
 import type { RoutingPinDto } from '../../api/routingPins'
 import type { SubscriptionUsageObservationDto } from '../../api/subscriptionUsage'
-import { renderWithProviders, screen, userEvent, within } from '../../test/utils'
+import { renderWithProviders, screen, userEvent, within, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { RoutingSettingsTab } from './RoutingSettingsTab'
 import {
@@ -265,6 +265,22 @@ function serveRouting(options?: {
 }
 
 describe('RoutingSettingsTab', () => {
+  it('C470 mutation can be selected and saved independently', async () => {
+    const put = vi.fn()
+    serveRouting({ list: { ...listDto, roles: [...listDto.roles, 'Mutation'] } })
+    server.use(http.put('/api/complexity-chains/:role/:complexity', async ({ params, request }) => {
+      put(params.role, await request.json())
+      return HttpResponse.json(chain('Hard', { role: 'Mutation' }))
+    }))
+    renderWithProviders(<RoutingSettingsTab />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Configure Mutation / Hard' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Add candidate' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+    expect(put).toHaveBeenCalledWith('Mutation', expect.objectContaining({ provenance: 'Human' }))
+    expect(screen.getByTestId('routing-matrix-row-Code')).toHaveTextContent('Required Human pin: Code')
+  })
+
   it('renders the three headed sections with availability, usage, and the matrix', async () => {
     serveRouting()
     renderWithProviders(<RoutingSettingsTab />)
