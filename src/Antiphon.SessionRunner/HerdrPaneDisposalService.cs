@@ -111,15 +111,17 @@ public sealed class HerdrPaneDisposalService
                         HerdrPaneDisposalCodes.OperationConflict);
                 return existing.Receipt;
             }
-            if (!_previews.TryGetValue(request.PreviewId, out var preview)
-                || preview.ExpiresAtUtc <= _time.GetUtcNow())
+            if (!_previews.TryGetValue(request.PreviewId, out var preview))
                 throw new HerdrLaunchException("Preview is unknown, expired or belongs to a previous runner instance.",
                     HerdrPaneDisposalCodes.PreviewInvalid);
+            if (preview.ExpiresAtUtc <= _time.GetUtcNow())
+                throw new HerdrLaunchException("Preview has expired; obtain a new inspection.",
+                    HerdrPaneDisposalCodes.PreviewExpired);
 
             // Even the most convincing preview cannot authorize an unconditional close. No
             // backend RPC, process kill, session transition or locator cleanup occurs here.
             var receipt = new HerdrPaneDisposalReceipt(request.OperationId, request.PreviewId,
-                preview.PaneId, "GuardUnavailable", HerdrPaneDisposalCodes.GuardUnavailable,
+                preview.PaneId, "Refused", HerdrPaneDisposalCodes.GuardUnavailable,
                 _time.GetUtcNow(), PaneLeftOpen: null, CleanupPending: false);
             SaveStored(new(fingerprint, receipt));
             return receipt;
@@ -142,7 +144,8 @@ public sealed class HerdrPaneDisposalService
         {
             var stored = JsonSerializer.Deserialize<StoredRefusal>(File.ReadAllText(path), _json)
                 ?? throw new IOException("Disposal receipt is unreadable.");
-            if (stored.Receipt.OperationId != id || stored.Receipt.Outcome != "GuardUnavailable")
+            if (stored.Receipt.OperationId != id || stored.Receipt.Outcome != "Refused"
+                || stored.Receipt.Code != HerdrPaneDisposalCodes.GuardUnavailable)
                 throw new IOException("Disposal receipt identity or outcome is unsupported.");
             return stored;
         }

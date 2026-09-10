@@ -24,13 +24,13 @@ public sealed class HerdrPaneDisposalHttpWireTests
         var request = new HerdrPaneDisposalRequest(Guid.NewGuid(), preview.PreviewId, "leftover selected by operator");
         var methods = h.Runner.Methods;
         using var refused = await h.Http.PostAsJsonAsync("/api/herdr/pane-disposals", request);
-        refused.StatusCode.ShouldBe(HttpStatusCode.ServiceUnavailable);
+        refused.StatusCode.ShouldBe(HttpStatusCode.Conflict);
         var problem = await refused.Content.ReadFromJsonAsync<JsonElement>();
         problem.GetProperty("code").GetString().ShouldBe(HerdrPaneDisposalCodes.GuardUnavailable);
         problem.GetProperty("operationId").GetGuid().ShouldBe(request.OperationId);
-        var receipt = problem.GetProperty("receipt").Deserialize<HerdrPaneDisposalReceipt>(new(JsonSerializerDefaults.Web))!;
+        var receipt = problem.GetProperty("receipt").Deserialize<HerdrPaneDisposalReceipt>(new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
         receipt.PaneLeftOpen.ShouldBeNull();
-        receipt.Outcome.ShouldBe("GuardUnavailable");
+        receipt.Outcome.ShouldBe("Refused");
         using var status = await h.Http.GetAsync($"/api/herdr/pane-disposals/{request.OperationId:D}");
         status.StatusCode.ShouldBe(HttpStatusCode.OK);
         (await status.Content.ReadFromJsonAsync<HerdrPaneDisposalReceipt>()).ShouldBe(receipt);

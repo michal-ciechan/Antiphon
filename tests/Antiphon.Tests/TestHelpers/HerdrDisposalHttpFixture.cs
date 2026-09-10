@@ -37,7 +37,7 @@ internal sealed class HerdrDisposalHttpFixture : IAsyncDisposable
             if (context.Request.Path.StartsWithSegments("/herdr/pane-disposals")) RunnerDisposalRequests++;
             await next(context);
         });
-        RunnerApp.MapGet("/capabilities", () => new RunnerCapabilitiesDto("ModernConPty", null, "test", false,
+        RunnerApp.MapGet("/capabilities", () => new RunnerCapabilitiesDto("ModernConPty", "test", "test", false,
             SessionBackends: [SessionBackends.Herdr], Features: AdvertiseCapability ? [HerdrPaneDisposalCodes.Capability] : []));
         RunnerApp.MapHerdrPaneDisposalRoutes();
         await RunnerApp.StartAsync();

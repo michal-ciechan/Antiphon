@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -38,7 +39,7 @@ public sealed class HerdrPaneScriptTests
         var status = await RunAsync(h, "status", "-OperationId", operationId, "-Json");
         status.ExitCode.ShouldBe(0, status.Output);
         using var receipt = JsonDocument.Parse(status.Output);
-        receipt.RootElement.GetProperty("outcome").GetString().ShouldBe("GuardUnavailable");
+        receipt.RootElement.GetProperty("outcome").GetString().ShouldBe("Refused");
         receipt.RootElement.GetProperty("operationId").GetString().ShouldBe(operationId);
         h.Runner.Methods.ShouldNotContain("pane.close");
     }

@@ -37,5 +37,6 @@ public static class HerdrPaneDisposalCodes
     public const string GuardUnavailable = "herdr_disposal_guard_unavailable";
     public const string IdentityUnproven = "herdr_pane_identity_unproven";
     public const string PreviewInvalid = "herdr_disposal_preview_invalid";
+    public const string PreviewExpired = "herdr_disposal_preview_expired";
     public const string OperationConflict = "herdr_disposal_operation_conflict";
 }

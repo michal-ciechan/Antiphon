@@ -71,7 +71,7 @@ public sealed class HerdrPaneDisposalServiceTests
         var receipts = await Task.WhenAll(Enumerable.Range(0, 8)
             .Select(_ => h.Service.ExecuteAsync(request, CancellationToken.None)));
         receipts.ShouldAllBe(r => r == receipts[0]);
-        receipts[0].Outcome.ShouldBe("GuardUnavailable");
+        receipts[0].Outcome.ShouldBe("Refused");
         receipts[0].PaneLeftOpen.ShouldBeNull();
         receipts[0].CleanupPending.ShouldBeFalse();
         h.Methods.ShouldBe(methods);
@@ -86,7 +86,7 @@ public sealed class HerdrPaneDisposalServiceTests
     }
 
     [Test]
-    public async Task Expired_evicted_restarted_and_unknown_previews_never_create_receipts()
+    public async Task Expired_restarted_and_unknown_previews_never_create_receipts()
     {
         await using var h = new HerdrPaneDisposalFixture();
         await h.StartAsync();
@@ -94,7 +94,7 @@ public sealed class HerdrPaneDisposalServiceTests
         h.Clock.Offset = TimeSpan.FromMinutes(2);
         var expired = await Should.ThrowAsync<HerdrLaunchException>(() => h.Service.ExecuteAsync(
             new(Guid.NewGuid(), first.PreviewId, "expired"), CancellationToken.None));
-        expired.Code.ShouldBe(HerdrPaneDisposalCodes.PreviewInvalid);
+        expired.Code.ShouldBe(HerdrPaneDisposalCodes.PreviewExpired);
         h.Clock.Offset = TimeSpan.Zero;
         var current = await h.PreviewAsync();
         h.RecreateService();
