@@ -40,6 +40,9 @@ public class MutationDispatchTests
         codeSha.ShouldNotBe(master);
         var oldSession = Guid.NewGuid();
         var oldAgent = Guid.NewGuid();
+        // Let reservation expire so Shared/worktree exclusion is the decisive reuse guard (PC-8).
+        var reservationMinutes = h.Bridge.Provider.GetRequiredService<IOptions<DelegationSettings>>().Value.PoolReservedForCallerMinutes;
+        var poolIdleSince = DateTime.UtcNow.AddMinutes(-reservationMinutes - 1);
         await using (var db = h.Context())
         {
             db.AgentSessions.Add(new AgentSession { Id = oldSession, DefinitionName = "claude", AgentKind = AgentKind.ClaudeCode,
@@ -47,7 +50,7 @@ public class MutationDispatchTests
                 StartedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow });
             db.Agents.Add(new Agent { Id = oldAgent, Name = "warm-code", Slug = "warm-code", WorkingDirectory = retained,
                 Details = "Code A", Kind = AgentKind.ClaudeCode, ModelLevel = AgentModelLevel.Frontier,
-                IsPoolDelegate = true, Status = AgentStatus.Idle, PoolIdleSince = DateTime.UtcNow.AddMinutes(-1), PoolProjectId = h.ProjectId,
+                IsPoolDelegate = true, Status = AgentStatus.Idle, PoolIdleSince = poolIdleSince, PoolProjectId = h.ProjectId,
                 LaunchEnvJson = "{}", PersistentSessionId = oldSession.ToString(), CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
             await db.SaveChangesAsync();
         }
