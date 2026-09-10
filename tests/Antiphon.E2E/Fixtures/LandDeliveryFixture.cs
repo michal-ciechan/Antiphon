@@ -119,7 +119,8 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
             fakeHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(await File.ReadAllBytesAsync(Path.Combine(AppContext.BaseDirectory, "fakegrok", "fakegrok.dll")))) }));
         using var runnerIdentity = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(_app.OwnedRunnerDirectory, "runner.json")));
         using var ownedRunner = Process.GetProcessById(runnerIdentity.RootElement.GetProperty("Pid").GetInt32());
-        Path.GetFullPath(ownedRunner.MainModule!.FileName).ShouldBe(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "Antiphon.SessionRunner.exe")), Case.Insensitive);
+        string.Equals(Path.GetFullPath(ownedRunner.MainModule!.FileName), Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "Antiphon.SessionRunner.exe")),
+            StringComparison.OrdinalIgnoreCase).ShouldBeTrue();
         await File.WriteAllTextAsync(Path.Combine(Root, "loaded-runner" + _suffix + ".json"), JsonSerializer.Serialize(new {
             pid = ownedRunner.Id, started = ownedRunner.StartTime.ToUniversalTime(), binary = ownedRunner.MainModule.FileName,
             sha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(await File.ReadAllBytesAsync(Path.Combine(AppContext.BaseDirectory, "Antiphon.SessionRunner.dll")))) }));
@@ -233,6 +234,7 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
         _child.HasExited.ShouldBeFalse(_child.HasExited ? await _childError : "");
         using var identity = JsonDocument.Parse(await File.ReadAllTextAsync(ready));
         identity.RootElement.GetProperty("pid").GetInt32().ShouldBe(_child.Id);
+        identity.RootElement.GetProperty("mvid").GetGuid().ShouldBe(typeof(Program).Assembly.ManifestModule.ModuleVersionId);
         _address = identity.RootElement.GetProperty("address").GetString()!;
         _http.Dispose(); _http = new HttpClient { BaseAddress = new Uri(_address) };
     }
@@ -247,7 +249,8 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
         var address = host.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
         var settings = host.Services.GetRequiredService<IOptions<DelegationSettings>>().Value;
         settings.ApiBaseUrl = address; settings.AllowedRoots = [root];
-        await File.WriteAllTextAsync(ready, JsonSerializer.Serialize(new { address, pid = Environment.ProcessId, mvid = typeof(Program).Assembly.ManifestModule.ModuleVersionId }));
+        await File.WriteAllTextAsync(ready + ".tmp", JsonSerializer.Serialize(new { address, pid = Environment.ProcessId, mvid = typeof(Program).Assembly.ManifestModule.ModuleVersionId }));
+        File.Move(ready + ".tmp", ready);
         await Task.Delay(Timeout.Infinite);
     }
 

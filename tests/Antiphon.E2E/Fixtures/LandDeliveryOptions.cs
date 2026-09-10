@@ -74,9 +74,11 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
                 || options.Cut == "receipt" && boundary == "receipt-before-save"
                 || options.Cut == "attempt" && boundary == "queue-before-typing"
                 || options.Cut == "verdict" && boundary == "queue-before-verdict";
-            if (!blocked) return;
-            await File.WriteAllTextAsync(Path.Combine(options.Root, boundary + ".barrier.json"), JsonSerializer.Serialize(new
+            if (!blocked || File.Exists(Path.Combine(options.Root, boundary + ".release"))) return;
+            var barrierPath = Path.Combine(options.Root, boundary + ".barrier.json");
+            await File.WriteAllTextAsync(barrierPath + ".tmp", JsonSerializer.Serialize(new
             { boundary, taskId, identity, nonce = Path.GetFileName(options.Root), pid = Environment.ProcessId, start = System.Diagnostics.Process.GetCurrentProcess().StartTime.ToUniversalTime() }), ct);
+            File.Move(barrierPath + ".tmp", barrierPath, true);
             while (!File.Exists(Path.Combine(options.Root, boundary + ".release"))
                 && !(boundary == "before-execution" && File.Exists(Path.Combine(options.Root, "execute.release"))))
                 await Task.Delay(50, ct);
