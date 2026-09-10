@@ -12,6 +12,11 @@ using TUnit.Core;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Settings;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Microsoft.Extensions.DependencyInjection;
+using Antiphon.Server.Application.Interfaces;
 
 namespace Antiphon.Tests.Application;
 
@@ -115,10 +120,93 @@ public sealed class AgentTaskLandNotificationPersistenceTests
         attached.EnqueueAttempts.ShouldBe(0); bridge.Adapter.Inputs.ShouldBeEmpty();
         (await observer.SessionQueuedMessages.CountAsync(q => q.AgentSessionId == bridge.SessionId)).ShouldBe(3);
         (await observer.AgentTasks.Where(t => t.Id == legacy || t.Id == none).Select(t => t.CurrentLandRequestId).ToListAsync()).ShouldAllBe(id => id == null);
+        var tasks = new AgentTaskService(observer, new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
+            Options.Create(new DelegationSettings()), new MockEventBus(), new RecordingSessionStopper(), TimeProvider.System,
+            NullLogger<AgentTaskService>.Instance);
+        (await tasks.GetAsync(legacy, CancellationToken.None)).LegacyLandReceipt!.State.ShouldBe("LegacyUnverified");
+        (await tasks.GetAsync(ambiguous, CancellationToken.None)).LegacyLandReceipt!.State.ShouldBe("LegacyUnverified");
+        (await tasks.GetAsync(none, CancellationToken.None)).LegacyLandReceipt!.State.ShouldBe("NotRequired");
+        (await tasks.GetAsync(unique, CancellationToken.None)).LegacyLandReceipt!.State.ShouldBe("Confirmed");
         await using var connection = new NpgsqlConnection(schema.ConnectionString); await connection.OpenAsync();
         await using var command = new NpgsqlCommand("SELECT count(*) FROM pg_indexes WHERE indexname IN ('IX_AgentTaskLandRequests_TaskId','IX_AgentTaskEvents_LandRequestId','IX_AgentTaskLandNotifications_SourceEventId','IX_SessionQueuedMessages_SourceLandNotificationId') AND indexdef LIKE '%UNIQUE%'", connection);
         Convert.ToInt32(await command.ExecuteScalarAsync()).ShouldBe(4);
     }
+    [Test]
+    [Arguments("landed")]
+    [Arguments("held-release")]
+    public async Task C467_V17_BackfilledRequestUsesCurrentGuardAndAtomicOutcome(string outcome)
+    {
+        await using var h = new LandingSafetyHarness(); await h.InitializeAsync(); await h.AddSourceAsync();
+        var old = DateTime.UtcNow.AddDays(-5);
+        var writer = Guid.NewGuid();
+        Guid requestId;
+        await using (var db = h.CreateContext())
+        {
+            var migrations = db.Database.GetMigrations().ToArray();
+            var cut = Array.FindIndex(migrations, m => m.EndsWith("_AddDurableLandDelivery", StringComparison.Ordinal));
+            await db.GetService<IMigrator>().MigrateAsync(migrations[cut - 1]);
+            await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE \"AgentTasks\" SET \"LandRequestedAt\" = {old}, \"LandAttempt\" = 2 WHERE \"Id\" = {h.Fixture.TaskId}");
+            await db.GetService<IMigrator>().MigrateAsync();
+            requestId = await db.AgentTaskLandRequests.Select(r => r.Id).SingleAsync();
+            if (outcome == "held-release")
+            {
+                db.AgentTasks.Add(new AgentTask { Id = writer, RootTaskId = writer, Title = "current blocked writer", Goal = "upgrade guard",
+                    Status = AgentTaskStatus.Blocked, Workspace = WorkspaceMode.Shared, WorkingDirectory = h.Fixture.Repository,
+                    RepoPath = h.Fixture.Repository, CreatedAt = DateTime.UtcNow });
+                await db.SaveChangesAsync();
+            }
+        }
+        if (outcome == "held-release")
+        {
+            (await h.RunAsync()).ShouldBe(LandRunResult.Held);
+            await using var held = h.CreateContext();
+            var request = await held.AgentTaskLandRequests.SingleAsync(r => r.Id == requestId);
+            request.Attempt.ShouldBe(2); request.HoldingTaskId.ShouldBe(writer);
+            (await held.AgentTaskLandings.CountAsync()).ShouldBe(0);
+            await held.AgentTasks.Where(t => t.Id == writer).ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, AgentTaskStatus.Succeeded));
+        }
+        await h.RunAsync(); await h.Fixture.AssertRemoteSourceAsync();
+        await using var final = h.CreateContext();
+        var completed = await final.AgentTaskLandRequests.SingleAsync(r => r.Id == requestId);
+        completed.RequestedAt.ShouldBe(old, TimeSpan.FromMicroseconds(1)); completed.IsPending.ShouldBeFalse();
+        completed.Attempt.ShouldBe(3);
+        var note = await final.AgentTaskLandNotifications.SingleAsync(n => n.SourceEventId == completed.TerminalEventId);
+        note.RequestId.ShouldBe(requestId); note.Kind.ShouldBe(LandNotificationKind.Outcome);
+    }
+
+    [Test]
+    public async Task C467_V05_NotificationWaitsForRepositoryLeaseRelease()
+    {
+        await using var h = new LandingSafetyHarness(); await h.InitializeAsync(); await h.AddSourceAsync();
+        await using var bridge = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = h.Schema.ConnectionString });
+        await using (var before = h.CreateContext())
+        {
+            var task = await before.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
+            task.ReplyTo = AgentTaskReplyTo.Session; task.ParentSessionId = bridge.SessionId;
+            await before.SaveChangesAsync();
+        }
+        await h.RunAsync();
+        await using var db = h.CreateContext();
+        var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == h.Fixture.TaskId);
+        note.QueueMessageId.ShouldBeNull();
+        (await db.AgentTaskEvents.AnyAsync(e => e.Id == note.SourceEventId && e.IsLandTerminal)).ShouldBeTrue();
+        var leases = h.Services.GetRequiredService<IRepositoryMutationLease>();
+        var occupied = (await leases.TryAcquireAsync(h.Fixture.Repository, CancellationToken.None)).ShouldNotBeNull();
+        var notifier = new AgentTaskLandNotificationService(db, bridge.Queue, new CompletionNoteFlushQueue(), bridge.Runtime,
+            TimeProvider.System, leases: leases);
+        try
+        {
+            await notifier.ReconcileAsync(note.Id, CancellationToken.None);
+            note.QueueMessageId.ShouldBeNull(); note.EnqueueAttempts.ShouldBe(0);
+            (await db.SessionQueuedMessages.CountAsync(m => m.SourceLandNotificationId == note.Id)).ShouldBe(0);
+        }
+        finally { await occupied.DisposeAsync(); }
+        await notifier.ReconcileAsync(note.Id, CancellationToken.None);
+        note.QueueMessageId.ShouldNotBeNull();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.Id == note.QueueMessageId)).DeliveryAttempts.ShouldBe(0);
+        bridge.Adapter.Inputs.ShouldBeEmpty();
+    }
+
     [Test]
     [Arguments("landed")]
     [Arguments("already-present")]

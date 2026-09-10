@@ -1196,8 +1196,6 @@ public sealed class AttentionService
                 ConditionKey: $"land:{request.Id:N}:{(request.State == LandRequestState.Held ? "held" : "progress")}",
                 LandRequestId: request.Id, HoldingTaskId: request.HoldingTaskId);
             items.Add(item);
-            if (request.State == LandRequestState.Held && age >= _delegation.LandWarningSeconds)
-                items.Add(item with { Kind = AttentionKind.LandNoProgress, ConditionKey = $"land:{request.Id:N}:progress", SinceUtc = request.LastProgressAt });
         }
         var notes = await _db.AgentTaskLandNotifications.AsNoTracking().Where(n => !n.IsLegacy && n.ConfirmedAt == null
             && n.State != LandNotificationState.NotRequired).ToListAsync(ct);

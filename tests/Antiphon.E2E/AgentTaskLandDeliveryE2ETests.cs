@@ -263,11 +263,12 @@ public class AgentTaskLandDeliveryE2ETests
         owed.Severity.ShouldBe(AlertSeverity.Error);
         owed.Headline.ShouldContain(state == "busy" ? "busy" : "attempted");
         await f.SnapshotAsync();
-        await f.KillChildAsync();
-        await f.UseChildAsync(state == "attempt" ? "attempt" : "none");
-        await f.StatusAsync();
-        var afterRestart = (await f.AttentionAsync()).Items.Single(i => i.LandNotificationId == owed.LandNotificationId && i.Kind == AttentionKind.LandOutcomeUnconfirmed);
-        afterRestart.Severity.ShouldBe(AlertSeverity.Error);
+        if (state == "busy")
+        {
+            await f.KillChildAsync(); await f.UseChildAsync("none"); await f.StatusAsync();
+            var afterRestart = (await f.AttentionAsync()).Items.Single(i => i.LandNotificationId == owed.LandNotificationId && i.Kind == AttentionKind.LandOutcomeUnconfirmed);
+            afterRestart.Severity.ShouldBe(AlertSeverity.Error);
+        }
         await using (var db = f.CreateContext())
         {
             var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Outcome);

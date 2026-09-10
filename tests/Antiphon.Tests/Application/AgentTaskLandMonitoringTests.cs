@@ -58,13 +58,20 @@ public sealed class AgentTaskLandMonitoringTests
         var result = await ReadAsync();
         var held = result.Items.Single(i => i.Kind == AttentionKind.LandHeld && i.TaskId == note.TaskId);
         held.HoldingTaskId.ShouldBe(holder); held.Severity.ShouldBe(AlertSeverity.Error);
-        result.Items.ShouldContain(i => i.Kind == AttentionKind.LandNoProgress && i.LandRequestId == request.Id);
+        result.Items.ShouldNotContain(i => i.Kind == AttentionKind.LandNoProgress && i.LandRequestId == request.Id);
+        result.Items.Count(i => i.LandRequestId == request.Id && i.LandNotificationId is null).ShouldBe(1,
+            "a held request has one enriched escalating Attention item");
         var outcome = result.Items.Single(i => i.LandNotificationId == note.Id);
         outcome.ConditionKey.ShouldBe($"land:{note.Id:N}:receipt"); outcome.SessionId.ShouldBe(h.SessionId);
         outcome.Actions.ShouldBe([AttentionAction.OpenDrawer]); outcome.MessageId.ShouldBe(note.QueueMessageId);
         result.Items.ShouldNotContain(i => i.MessageId == note.QueueMessageId && (i.Kind == AttentionKind.CallerNoteUndelivered || i.Kind == AttentionKind.ParkedMessage));
         result.Items.ShouldContain(i => i.MessageId == unrelated && i.Kind == AttentionKind.ParkedMessage);
         (await ReadAsync()).Items.Single(i => i.LandNotificationId == note.Id).ConditionKey.ShouldBe(outcome.ConditionKey);
+        request.State = LandRequestState.Running; await db.SaveChangesAsync();
+        var running = await ReadAsync();
+        running.Items.ShouldNotContain(i => i.Kind == AttentionKind.LandHeld && i.LandRequestId == request.Id);
+        running.Items.Single(i => i.Kind == AttentionKind.LandNoProgress && i.LandRequestId == request.Id).Severity.ShouldBe(AlertSeverity.Error);
+        running.Items.ShouldContain(i => i.LandNotificationId == note.Id);
         JsonSerializer.Serialize(outcome, new JsonSerializerOptions(JsonSerializerDefaults.Web)).ShouldContain("landNotificationId");
         ((int)AttentionKind.LandHeld).ShouldBe(35); ((int)AttentionKind.LandNoProgress).ShouldBe(36); ((int)AttentionKind.LandOutcomeUnconfirmed).ShouldBe(37);
         ((int)AttentionKind.BlockedQuestion).ShouldBe(0); ((int)AttentionKind.ParkedMessage).ShouldBe(1);
