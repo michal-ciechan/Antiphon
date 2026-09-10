@@ -231,6 +231,22 @@ public class DelegationWorkspaceBoundaryTests
 [Category("Unit")]
 public class DelegationReportFormatterTests
 {
+    [Test]
+    [Arguments("Unconfirmed", "NotStarted", "Held", "Queued")]
+    [Arguments("Landed", "Refused", "Held", "AwaitingReceipt")]
+    [Arguments("AlreadyPresent", "Complete", "Completed", "Confirmed")]
+    [Arguments("Refused", "NotStarted", "Completed", "NotRequired")]
+    public void C467_V19_CompletionHeadersSeparatePublication(string publication, string cleanup, string land, string receipt)
+    {
+        var task = NewTask(); task.Workspace = WorkspaceMode.Worktree;
+        var result = DelegationReportFormatter.BuildCompletionNote(task, Settings, "unchanged report", next: "review",
+            land: new LandCompletionFacts(publication, cleanup, land, receipt));
+        result.Header.ShouldStartWith("[task 7f3a2b91 done]");
+        result.Header.ShouldContain("delegate=succeeded"); result.Header.ShouldContain("publication=" + publication);
+        result.Header.ShouldContain("cleanup=" + cleanup); result.Header.ShouldContain("land=" + land);
+        result.Header.ShouldContain("receipt=" + receipt); result.Header.ShouldContain("next=review");
+        result.Body.ShouldEndWith("unchanged report");
+    }
     private static readonly DelegationSettings Settings = new()
     {
         ReplyInlineMaxChars = 20_000,

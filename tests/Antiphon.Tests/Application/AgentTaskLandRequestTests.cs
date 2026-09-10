@@ -23,6 +23,50 @@ namespace Antiphon.Tests.Application;
 public class AgentTaskLandRequestTests
 {
     [Test]
+    public async Task C467_V01_ConcurrentAcceptanceKeepsOneRequest()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var seed = CreateContext(schema);
+        var task = await SeedSucceededWorktreeAsync(seed);
+        await using var first = CreateContext(schema); await using var second = CreateContext(schema);
+        var a = CreateLand(first, new AgentTaskLandQueue(), Frozen(DateTime.UtcNow));
+        var b = CreateLand(second, new AgentTaskLandQueue(), Frozen(DateTime.UtcNow.AddHours(1)));
+        var accepted = await Task.WhenAll(a.RequestAsync(task.Id, "first", CancellationToken.None), b.RequestAsync(task.Id, "second", CancellationToken.None));
+        accepted[0].RequestId.ShouldBe(accepted[1].RequestId);
+        (await seed.AgentTaskLandRequests.CountAsync(r => r.TaskId == task.Id && r.IsPending)).ShouldBe(1);
+    }
+
+    [Test]
+    [Arguments("stale")]
+    [Arguments("canceled")]
+    [Arguments("superseded")]
+    [Arguments("needs-resolution")]
+    [Arguments("mirror")]
+    public async Task C467_V02_RejectStaleWorkAndExposeMirrorDrift(string state)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync(); await using var db = CreateContext(schema);
+        var queue = new AgentTaskLandQueue(); var clock = Frozen(DateTime.UtcNow); var land = CreateLand(db, queue, clock);
+        var task = await SeedSucceededWorktreeAsync(db); var accepted = await land.RequestAsync(task.Id, null, CancellationToken.None);
+        queue.Release(task.Id);
+        var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == accepted.RequestId);
+        var token = task.ConcurrencyToken;
+        if (state is "canceled" or "superseded")
+        { request.IsPending = false; request.State = state == "canceled" ? LandRequestState.Canceled : LandRequestState.Superseded; await db.SaveChangesAsync(); }
+        if (state == "needs-resolution")
+        { request.State = LandRequestState.NeedsResolution; await db.SaveChangesAsync(); await land.SweepAsync(CancellationToken.None); queue.PendingCount.ShouldBe(1); /* original accepted channel item only */ }
+        else if (state == "mirror")
+        {
+            task.LandAttempt = 7; await db.SaveChangesAsync();
+            await new AgentTaskLandMonitorService(db, clock, Options.Create(new DelegationSettings()), new MockEventBus()).SweepAsync(CancellationToken.None);
+            (await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.Id)).ReconciliationError.ShouldBe("land_request_mirror_disagreement");
+        }
+        else await land.RunRequestAsync(task.Id, state == "stale" ? Guid.NewGuid() : request.Id, null, CancellationToken.None);
+        (await db.AgentTaskLandings.CountAsync(o => o.TaskId == task.Id)).ShouldBe(0);
+        (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id)).ShouldBe(1);
+        (await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == task.Id)).ShouldBe(0);
+        task.ConcurrencyToken.ShouldBe(token);
+    }
+    [Test]
     public async Task request_sets_columns_writes_the_event_and_enqueues()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();

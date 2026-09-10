@@ -99,7 +99,15 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
                 {
                     await onward();
                     if (context.Response.StatusCode == 202)
-                        await File.WriteAllBytesAsync(Path.Combine(root, "http-202.json"), capture.ToArray());
+                    {
+                        using var encoded = new MemoryStream(capture.ToArray());
+                        using Stream decoded = context.Response.Headers.ContentEncoding.ToString() switch {
+                            "br" => new System.IO.Compression.BrotliStream(encoded, System.IO.Compression.CompressionMode.Decompress),
+                            "gzip" => new System.IO.Compression.GZipStream(encoded, System.IO.Compression.CompressionMode.Decompress),
+                            _ => encoded };
+                        using var reader = new StreamReader(decoded);
+                        await File.WriteAllTextAsync(Path.Combine(root, "http-202.json"), await reader.ReadToEndAsync());
+                    }
                     capture.Position = 0; await capture.CopyToAsync(original);
                 }
                 finally { context.Response.Body = original; }

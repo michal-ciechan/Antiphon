@@ -22,9 +22,15 @@ namespace Antiphon.E2E.Fixtures;
 public sealed class LandDeliveryFixture : IAsyncDisposable
 {
     public string Root { get; } = Path.Combine(AntiphonAppFixture.FindRepositoryRoot(), ".antiphon", "acceptance", "card-0467", Guid.NewGuid().ToString("N"));
-    public string Repository => Path.Combine(Root, "repo");
-    public string Source => Path.Combine(Root, "trees", "source");
-    public string Remote => Path.Combine(Root, "remote.git");
+    private readonly string _suffix = "";
+    private readonly bool _shared;
+    public LandDeliveryFixture() { }
+    internal LandDeliveryFixture(LandDeliveryFixture owner)
+    { Root = owner.Root; _app = owner._app; _suffix = "-second"; _shared = true; }
+    public string Repository => Path.Combine(Root, "repo" + _suffix);
+    public string Source => Path.Combine(Root, "trees", "source" + _suffix);
+    public string Remote => Path.Combine(Root, "remote" + _suffix + ".git");
+    private string CallerDirectory => Path.Combine(Root, "caller" + _suffix);
     public Guid TaskId { get; } = Guid.NewGuid();
     public Guid CallerId { get; private set; }
     public string SourceSha { get; private set; } = "";
@@ -43,7 +49,7 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
         ConPtyRedistributable.TryLocate(out _, out var why).ShouldBeTrue(why);
         File.Exists(Path.Combine(AppContext.BaseDirectory, "fakegrok", "fakegrok.exe")).ShouldBeTrue("native FakeGrok must be staged");
         Directory.CreateDirectory(Repository);
-        Directory.CreateDirectory(Path.Combine(Root, "caller"));
+        Directory.CreateDirectory(CallerDirectory);
         await GitAsync(Repository, "init", "-b", "master");
         await GitAsync(Root, "init", "--bare", Remote);
         await File.WriteAllTextAsync(Path.Combine(Repository, ".gitignore"), ".antiphon/\nbin/\nobj/\n");
@@ -58,8 +64,11 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
         await GitAsync(Source, "add", ".");
         await GitAsync(Source, "commit", "-m", "owned feature");
         SourceSha = (await GitAsync(Source, "rev-parse", "HEAD")).Trim();
-        _app = new AntiphonAppFixture { LandDelivery = new(Root, cut), UsePrebuiltFrontend = true, DiagnosticsDirectory = Path.Combine(Root, "server-logs") };
-        await _app.InitializeAsync();
+        if (!_shared)
+        {
+            _app = new AntiphonAppFixture { LandDelivery = new(Root, cut), UsePrebuiltFrontend = true, DiagnosticsDirectory = Path.Combine(Root, "server-logs") };
+            await _app.InitializeAsync();
+        }
         _app.EnsureSessionRunnerReachable();
         new Uri(_app.OwnedRunnerUrl).Port.ShouldNotBe(17204);
         _connection = _app.OwnedDatabase;
@@ -75,7 +84,7 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             await db.AgentTuiProfiles.ExecuteUpdateAsync(s => s.SetProperty(p => p.IsDefault, false));
             var agent = new Agent { Id = Guid.NewGuid(), Name = "C467 owned caller", Slug = "c467-" + Guid.NewGuid().ToString("N"),
-                Kind = AgentKind.Grok, WorkingDirectory = Path.Combine(Root, "caller"), AlwaysOn = false, AutoCompactEnabled = false,
+                Kind = AgentKind.Grok, WorkingDirectory = CallerDirectory, AlwaysOn = false, AutoCompactEnabled = false,
                 CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
             db.Agents.Add(agent);
             await db.SaveChangesAsync();
@@ -85,6 +94,7 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
         }
         await UntilAsync(async () => {
             await using var db = CreateContext();
+            if (!await db.AgentSessions.AnyAsync(s => s.Id == CallerId && s.InteractiveLaunchCompletedAt != null)) return false;
             return busy ? await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == CallerId && t.Kind == TranscriptKinds.UserPrompt)
                 && File.Exists(Path.Combine(Root, "caller-busy.held"))
                 : await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == CallerId && t.Kind == TranscriptKinds.TurnEnd)
@@ -101,7 +111,7 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
                 ReplyTo = AgentTaskReplyTo.Session, ParentSessionId = CallerId, CreatedAt = DateTime.UtcNow, CompletedAt = DateTime.UtcNow });
             await db.SaveChangesAsync();
         }
-        await File.WriteAllTextAsync(Path.Combine(Root, "identities.json"), JsonSerializer.Serialize(new {
+        await File.WriteAllTextAsync(Path.Combine(Root, "identities" + _suffix + ".json"), JsonSerializer.Serialize(new {
             taskId = TaskId, callerId = CallerId, sourceSha = SourceSha, serverMvid = typeof(Program).Assembly.ManifestModule.ModuleVersionId,
             runner = _app.OwnedRunnerUrl, runnerDirectory = _app.OwnedRunnerDirectory, server = _address,
             fakeHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(await File.ReadAllBytesAsync(Path.Combine(AppContext.BaseDirectory, "fakegrok", "fakegrok.dll")))) }));
@@ -285,7 +295,7 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await KillChildAsync();
-        if (_app is not null) await _app.DisposeAsync();
+        if (_app is not null && !_shared) await _app.DisposeAsync();
         _http?.Dispose();
         // Evidence, owned repository and native input records are intentionally retained.
     }

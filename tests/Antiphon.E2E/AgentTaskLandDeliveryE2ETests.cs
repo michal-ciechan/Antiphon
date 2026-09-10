@@ -35,9 +35,9 @@ public class AgentTaskLandDeliveryE2ETests
             await using var db = busy.CreateContext();
             return await db.AgentTaskLandNotifications.AnyAsync(n => n.TaskId == busy.TaskId && n.Kind == LandNotificationKind.Outcome && n.QueueMessageId != null);
         }, "busy caller has queued outcome");
-        await using var idle = new LandDeliveryFixture();
+        await using var idle = new LandDeliveryFixture(busy);
         await idle.InitializeAsync();
-        await idle.RequestAsync(); await idle.ReleaseExecutionAsync();
+        await idle.RequestAsync(initial: false); await idle.ReleaseExecutionAsync();
         await idle.ReceiptAsync(); await idle.AssertRemoteAsync();
         await using (var db = busy.CreateContext())
         {
