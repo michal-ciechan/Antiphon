@@ -38,7 +38,7 @@ public sealed class SessionQueueReceiptPlumbingTests
         if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
         if (!File.Exists(FakeClaudeExe)) throw new SkipTestException("fakeclaude missing");
         await using var world = await PtyWorld.StartAsync();
-        const string body = "CARD-0475 complete recipient body for " ;
+        const string body = "CARD-0475 complete recipient body for ";
         var text = body + cut;
         if (cut == "insert-fails")
         {
@@ -140,6 +140,13 @@ public sealed class SessionQueueReceiptPlumbingTests
         var delivered = (await world.RowsAsync()).ShouldHaveSingleItem();
         delivered.Status.ShouldBe(QueuedMessageStatus.Sent);
         delivered.DeliveryVerdict.ShouldNotBeNull();
+        Console.WriteLine("C475_RECEIPT:" + System.Text.Json.JsonSerializer.Serialize(new
+        {
+            cut, world.SessionId, delivered.Id, delivered.DeliveryAttempts, delivered.LastDeliveryBaselineSequence,
+            delivered.DeliveryVerdict, body = text, inputs = world.Forward.Payloads,
+            file = SessionQueueTranscriptPump.FileUserPrompts(world.TranscriptPath),
+            destination = await SessionQueueTranscriptPump.DestinationUserPromptsAsync(world.SessionId, 0),
+        }));
     }
 
     [Test]
