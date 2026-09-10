@@ -281,6 +281,9 @@ public class SessionMessageQueuePtyIntegrationTests
         if (!File.Exists(FakeClaudeExe))
             throw new SkipTestException($"fakeclaude.exe not staged at {FakeClaudeExe} — build the solution first");
 
+        var transcriptPath = Path.Combine(Path.GetTempPath(), $"antiphon-c475-receipt-{Guid.NewGuid():N}.jsonl");
+        using var pump = new CancellationTokenSource();
+        Task? pumping = null;
         var sessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-fake-pty-{Guid.NewGuid():N}");
         var client = new DirectSessionRunnerClient(sessionLogPath, ptyBackend: PinnedBackend);
 
@@ -313,7 +316,7 @@ public class SessionMessageQueuePtyIntegrationTests
             Kind: AgentKind.ClaudeCode,
             Exe: FakeClaudeExe,
             Args: Array.Empty<string>(),
-            Env: new Dictionary<string, string>(),
+            Env: new Dictionary<string, string> { ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = transcriptPath },
             Cwd: cwd,
             Cols: 120,
             Rows: 30);
@@ -344,12 +347,22 @@ public class SessionMessageQueuePtyIntegrationTests
                 await db.SaveChangesAsync();
             }
 
+            var baseline = await SessionQueueTranscriptPump.MaxSequenceAsync(sessionId);
+            pumping = SessionQueueTranscriptPump.RunAsync(transcriptPath, sessionId, pump.Token);
             var queue = provider.GetRequiredService<SessionMessageQueueService>();
             await queue.EnqueueAsync(sessionId, "[T] batched alpha", MessageSendMode.WhenIdle,
                 CancellationToken.None, QueuedMessageOrigin.Channel, "telegram:batch");
             await queue.EnqueueAsync(sessionId, "[T] batched omega", MessageSendMode.WhenIdle,
                 CancellationToken.None, QueuedMessageOrigin.Channel, "telegram:batch");
 
+            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+            {
+                var pending = await db.SessionQueuedMessages.Where(m => m.AgentSessionId == sessionId).ToListAsync();
+                pending.Count.ShouldBe(2);
+                pending.ShouldAllBe(m => m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts == 0);
+            }
+            SessionQueueTranscriptPump.FileUserPrompts(transcriptPath).ShouldBeEmpty();
+            (await client.GetSnapshotAsync(sessionId, CancellationToken.None)).RawOutput.ShouldNotContain("SUBMITTED:");
             await using (var scope = provider.CreateAsyncScope())
             {
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -371,9 +384,15 @@ public class SessionMessageQueuePtyIntegrationTests
                      && s.Contains("[T] batched omega"),
                 TimeSpan.FromSeconds(10));
             submitted.ShouldBeTrue("the batched body must pass verification and submit as one turn");
+            var expected = ChannelPromptFormat.BatchContextMarker + "\n[T] batched alpha\n\n"
+                + ChannelPromptFormat.BatchCurrentMarker + "\n[T] batched omega";
+            SessionQueueTranscriptPump.FileUserPrompts(transcriptPath).ShouldBe([expected]);
+            (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(sessionId, baseline)).ShouldBe([expected]);
         }
         finally
         {
+            pump.Cancel();
+            if (pumping is not null) await pumping;
             try { await client.KillAsync(sessionId, CancellationToken.None); } catch { /* best effort */ }
             await client.DisposeAsync();
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
@@ -382,6 +401,7 @@ public class SessionMessageQueuePtyIntegrationTests
                 await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).ExecuteDeleteAsync();
                 await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
             }
+            try { File.Delete(transcriptPath); } catch { /* best effort */ }
             try { Directory.Delete(cwd, recursive: true); } catch { /* best effort */ }
         }
     }
@@ -397,6 +417,9 @@ public class SessionMessageQueuePtyIntegrationTests
         if (!File.Exists(FakeClaudeExe))
             throw new SkipTestException($"fakeclaude.exe not staged at {FakeClaudeExe} — build the solution first");
 
+        var transcriptPath = Path.Combine(Path.GetTempPath(), $"antiphon-c475-receipt-{Guid.NewGuid():N}.jsonl");
+        using var pump = new CancellationTokenSource();
+        Task? pumping = null;
         var sessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-fake-pty-{Guid.NewGuid():N}");
         var client = new DirectSessionRunnerClient(sessionLogPath, ptyBackend: PinnedBackend);
 
@@ -424,7 +447,7 @@ public class SessionMessageQueuePtyIntegrationTests
 
         var spec = new AgentLaunchSpec(
             DefinitionName: "fakeclaude", Kind: AgentKind.ClaudeCode, Exe: FakeClaudeExe,
-            Args: Array.Empty<string>(), Env: new Dictionary<string, string>(),
+            Args: Array.Empty<string>(), Env: new Dictionary<string, string> { ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = transcriptPath },
             Cwd: cwd, Cols: 120, Rows: 30);
 
         try
@@ -473,8 +496,13 @@ public class SessionMessageQueuePtyIntegrationTests
                 "the body must be TYPED, not spilled - assert it rather than trusting the "
                 + "arithmetic to survive the next edit to these lines");
 
+            var baseline = await SessionQueueTranscriptPump.MaxSequenceAsync(sessionId);
+            pumping = SessionQueueTranscriptPump.RunAsync(transcriptPath, sessionId, pump.Token);
             var queue = provider.GetRequiredService<SessionMessageQueueService>();
-            await queue.EnqueueAsync(sessionId, body, MessageSendMode.Now, CancellationToken.None);
+            var receipt = await queue.EnqueueAsync(sessionId, body, MessageSendMode.Now, CancellationToken.None);
+            receipt.LastDelivery.ShouldNotBeNull().ConfirmedBy.ShouldBe(DeliveryConfirmedBy.Transcript);
+            SessionQueueTranscriptPump.FileUserPrompts(transcriptPath).ShouldBe([body.ReplaceLineEndings("\n")]);
+            (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(sessionId, baseline)).ShouldBe([body.ReplaceLineEndings("\n")]);
 
             // ONE submit carrying the WHOLE body: head and tail inside the SAME SUBMITTED marker —
             // i.e. no turn boundary ("FAKE response" echo) between them. ConPTY soft-wraps the long
@@ -493,13 +521,17 @@ public class SessionMessageQueuePtyIntegrationTests
         }
         finally
         {
+            pump.Cancel();
+            if (pumping is not null) await pumping;
             try { await client.KillAsync(sessionId, CancellationToken.None); } catch { /* best effort */ }
             await client.DisposeAsync();
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
             {
                 await db.SessionQueuedMessages.Where(m => m.AgentSessionId == sessionId).ExecuteDeleteAsync();
+                await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).ExecuteDeleteAsync();
                 await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
             }
+            try { File.Delete(transcriptPath); } catch { /* best effort */ }
             try { Directory.Delete(cwd, recursive: true); } catch { /* best effort */ }
         }
     }
@@ -640,12 +672,13 @@ public class SessionMessageQueuePtyIntegrationTests
         var cwd = Path.Combine(Path.GetTempPath(), $"antiphon-fake-cwd-{sessionId:N}");
         Directory.CreateDirectory(cwd);
         using var pump = new CancellationTokenSource();
+        Task? pumping = null;
 
         try
         {
             await StartSwallowingFakeAsync(client, sessionId, cwd, transcriptPath, swallowEnters: 1);
             await SeedIdleClaudeSessionAsync(sessionId, cwd);
-            var pumping = PumpTranscriptAsync(transcriptPath, sessionId, pump.Token);
+            pumping = PumpTranscriptAsync(transcriptPath, sessionId, pump.Token);
 
             var queue = provider.GetRequiredService<SessionMessageQueueService>();
             await queue.EnqueueAsync(sessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
@@ -678,6 +711,7 @@ public class SessionMessageQueuePtyIntegrationTests
         finally
         {
             pump.Cancel();
+            if (pumping is not null) await pumping;
             await CleanupAsync(client, sessionId, cwd, transcriptPath);
         }
     }
@@ -712,13 +746,14 @@ public class SessionMessageQueuePtyIntegrationTests
         var cwd = Path.Combine(Path.GetTempPath(), $"antiphon-fake-cwd-{sessionId:N}");
         Directory.CreateDirectory(cwd);
         using var pump = new CancellationTokenSource();
+        Task? pumping = null;
 
         try
         {
             // More swallows than SubmitAttempts: nothing this delivery does can submit.
             await StartSwallowingFakeAsync(client, sessionId, cwd, transcriptPath, swallowEnters: 9);
             await SeedIdleClaudeSessionAsync(sessionId, cwd);
-            var pumping = PumpTranscriptAsync(transcriptPath, sessionId, pump.Token);
+            pumping = PumpTranscriptAsync(transcriptPath, sessionId, pump.Token);
 
             var queue = provider.GetRequiredService<SessionMessageQueueService>();
             await queue.EnqueueAsync(sessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
@@ -750,6 +785,7 @@ public class SessionMessageQueuePtyIntegrationTests
         finally
         {
             pump.Cancel();
+            if (pumping is not null) await pumping;
             await CleanupAsync(client, sessionId, cwd, transcriptPath);
         }
     }
