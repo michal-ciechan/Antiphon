@@ -19,6 +19,25 @@ namespace Antiphon.Tests.Scripts;
 public sealed class ComplexityChainScriptTests
 {
     [Test]
+    public async Task C470_mutation_cell_round_trip()
+    {
+        using var server = new StubApi();
+        var set = await RunAsync(server, "set", "-Role", "Mutation", "-Complexity", "Hard", "-Candidates", "Codex/Frontier,ClaudeCode/High", "-Provenance", "Human");
+        set.ExitCode.ShouldBe(0, set.Output);
+        server.LastPath.ShouldBe("/api/complexity-chains/Mutation/Hard");
+        var body = server.LastBody.ShouldNotBeNull().RootElement;
+        body.GetProperty("provenance").GetString().ShouldBe("Human");
+        body.GetProperty("candidates")[0].GetProperty("agentKind").GetString().ShouldBe("Codex");
+        var get = await RunAsync(server, "get", "-Role", "Mutation");
+        get.ExitCode.ShouldBe(0, get.Output);
+        server.LastPath.ShouldBe("/api/complexity-chains?role=Mutation");
+        var clear = await RunAsync(server, "clear", "-Role", "Mutation", "-Complexity", "Hard");
+        clear.ExitCode.ShouldBe(0, clear.Output);
+        server.LastMethod.ShouldBe("DELETE");
+        server.LastPath.ShouldBe("/api/complexity-chains/Mutation/Hard");
+    }
+
+    [Test]
     public async Task Set_puts_the_tier_provenance_and_candidates()
     {
         using var server = new StubApi();

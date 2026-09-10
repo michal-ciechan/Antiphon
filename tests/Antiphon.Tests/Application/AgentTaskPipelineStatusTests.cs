@@ -92,7 +92,7 @@ public class AgentTaskPipelineStatusTests
             AgentTaskRole.Custom, AgentTaskRole.Plan, AgentTaskRole.Code, AgentTaskRole.Review,
             AgentTaskRole.Debug, AgentTaskRole.Coverage, AgentTaskRole.Docs, AgentTaskRole.Commit,
             AgentTaskRole.Test, AgentTaskRole.Deploy, AgentTaskRole.Merge,
-            AgentTaskRole.Investigate, AgentTaskRole.TestDesign,
+            AgentTaskRole.Investigate, AgentTaskRole.TestDesign, AgentTaskRole.Mutation,
         ]);
         dto.Stages.ShouldNotContain(s => s.Role == AgentTaskRole.Check);
         dto.Stages.ShouldNotContain(s => s.Role == AgentTaskRole.Distill);
@@ -973,7 +973,7 @@ public class AgentTaskPipelineEndpointTests
         dto.RecommendationsAreAdvisory.ShouldBeTrue();
         dto.MaxConcurrentTasks.ShouldBe(6);
         dto.InFlightAgainstCap.ShouldBe(0);
-        dto.Stages.Count.ShouldBe(13);
+        dto.Stages.Count.ShouldBe(14);
         dto.Stages.ShouldNotContain(s => s.Role == AgentTaskRole.Check);
         dto.Stages.ShouldNotContain(s => s.Role == AgentTaskRole.Distill);
         dto.Stages.ShouldNotContain(s => s.Role == AgentTaskRole.Diagnose);

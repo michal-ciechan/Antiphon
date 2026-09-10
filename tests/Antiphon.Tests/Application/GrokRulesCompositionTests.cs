@@ -18,9 +18,26 @@ namespace Antiphon.Tests.Application;
 public sealed class GrokRulesCompositionTests
 {
     [Test]
+    public async Task C470_mutation_rules_payload_contains_its_stage()
+    {
+        var (dispatcher, provider) = GrokRulesLaunchRefusalTests.CreateDelegateHarness();
+        await using var owned = provider;
+        var task = GrokRulesLaunchRefusalTests.TaskFor(AgentTaskKind.Worker, AgentTaskRole.Mutation);
+        var spec = GrokRulesLaunchRefusalTests.SpecOf(dispatcher, task, AgentKind.Grok, null);
+        var text = spec.GrokRulesPayload.ShouldNotBeNull().Content;
+        text.ShouldStartWith("[bundle:stage-mutation v");
+        text.ShouldNotContain("[bundle:stage-code");
+        text.ShouldNotContain("[bundle:stage-review");
+        spec.Args.ShouldAllBe(a => !a.Contains("[bundle:"));
+        spec.Env.Values.ShouldAllBe(v => !v.Contains("[bundle:"));
+        await AssertExactDiskAsync(spec.GrokRulesPayload, text);
+    }
+
+    [Test]
     [Arguments(AgentTaskRole.Investigate)]
     [Arguments(AgentTaskRole.Plan)]
     [Arguments(AgentTaskRole.TestDesign)]
+    [Arguments(AgentTaskRole.Mutation)]
     [Arguments(AgentTaskRole.Code)]
     [Arguments(AgentTaskRole.Review)]
     public async Task Worker_and_stage_bundles_reach_typed_rules_payload_without_argv_text(AgentTaskRole role)

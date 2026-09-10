@@ -186,6 +186,11 @@ public sealed class AgentTaskService
         if (request.Goal.Length > 20_000)
             throw new ValidationException(nameof(request.Goal), "A goal must not exceed 20,000 characters.");
 
+        // Validate explicit access before a live follow-up can overwrite Workspace.
+        if (request.Role == AgentTaskRole.Mutation && request.Workspace == WorkspaceMode.ReadOnly)
+            throw new ValidationException(nameof(request.Workspace),
+                "Mutation requires writable workspace access; ReadOnly is not supported.");
+
         var standingAuthority = string.IsNullOrWhiteSpace(request.Authority)
             ? null
             : request.Authority.Trim();

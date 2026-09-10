@@ -544,6 +544,7 @@ const NEXT_STAGE_TOKEN: Record<PipelineHandoffKind, string> = {
   Investigate: 'investigate',
   Plan: 'plan',
   TestDesign: 'test-design',
+  Mutation: 'mutation',
   Code: 'code',
   Review: 'review',
   Land: 'land',

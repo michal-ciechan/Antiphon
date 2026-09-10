@@ -241,7 +241,7 @@ public static class DelegationReportFormatter
         Close with this block immediately above the report token (required for this stage role; a missing block still settles as next=unmarked):
 
         --- next stage ---
-        next: <investigate|plan|test-design|code|review|land|decide|none>
+        next: <investigate|plan|test-design|code|mutation|review|land|decide|none>
         handoff: <one physical line, at most 400 characters — the sentence the next brief is built from>
         artifact: <optional repo-relative docs/**/*.md path>
 

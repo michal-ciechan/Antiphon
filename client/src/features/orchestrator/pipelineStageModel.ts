@@ -74,6 +74,7 @@ export const STAGE_LABEL: Record<AgentTaskRole, string> = {
   Diagnose: 'Diagnose',
   Investigate: 'Investigate',
   TestDesign: 'Test design',
+  Mutation: 'Mutation',
 }
 
 const KIND_WORD: Record<PipelineRowKind, string> = {

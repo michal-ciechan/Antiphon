@@ -105,6 +105,9 @@ public static class InstructionBundles
     /// <summary>Code-stage standing rules (CARD-0146). Worker + Code only.</summary>
     public const string StageCode = "stage-code";
 
+    /// <summary>Writable positive-control verification of committed Code work.</summary>
+    public const string StageMutation = "stage-mutation";
+
     /// <summary>Review-stage standing rules (CARD-0146). Worker + Review only.</summary>
     public const string StageReview = "stage-review";
 
@@ -223,6 +226,7 @@ public static class InstructionBundles
         AgentTaskRole.Plan => StagePlan,
         AgentTaskRole.TestDesign => StageTestDesign,
         AgentTaskRole.Code => StageCode,
+        AgentTaskRole.Mutation => StageMutation,
         AgentTaskRole.Review => StageReview,
         _ => throw new ArgumentOutOfRangeException(
             nameof(role), role, "Not a pipeline stage — no stage-* bundle."),

@@ -16,4 +16,5 @@ public enum PipelineHandoffKind
     Land = 5,
     Decide = 6,
     None = 7,
+    Mutation = 8,
 }

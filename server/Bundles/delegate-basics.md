@@ -30,13 +30,13 @@ work itself: each one is here because ignoring it has already cost a real task.
   Avoid tight loops polling the same log with an identical command. Space out status checks and
   use the wait to read/investigate the next planned fix, without editing source under the run.
 
-- KEEP POSITIVE-CONTROL (PC) CYCLES METHOD-SCOPED. For each red-then-green cycle use a precise
+- MUTATION RUNNER ONLY: KEEP POSITIVE-CONTROL (PC) CYCLES METHOD-SCOPED. For each red-then-green cycle use a precise
   `--treenode-filter "/*/*/ClassName/ExactTestMethod"`, never a whole class or suite. Batch
   genuinely independent mutations only when they touch different files and methods: run just
   their specific tests, confirm each expected assertion fails, restore all mutations, then run
   those same tests green. Keep per-PC evidence; zero tests or build/fixture errors are not red.
 
-- SHARD LARGE PC PLANS (roughly >15-20 rows) across additional worktrees off the SAME task branch
+- MUTATION RUNNER ONLY: optionally SHARD LARGE PC PLANS (roughly >15-20 rows) across additional worktrees off the SAME task branch
   when controls are independent. Use detached worktrees at the same committed branch tip or
   temporary branches from it; do not force the same branch checked out twice. Scope and batch
   within each shard. Own and await every concurrent run before ending your turn; this permits
@@ -44,8 +44,8 @@ work itself: each one is here because ignoring it has already cost a real task.
   worktree's source frozen. Concurrent `Antiphon.Tests` shards require per-test DB schema
   isolation and the assembly-local `ParallelLimiter<ProcessSpawnLimit>`; the limiter is not a
   cross-process lock. Do not co-schedule `Antiphon.Agents.Pty.Tests`/FakeClaude with them.
-  Restore all PC mutations, merge/reconcile retained fixes onto the task branch, then run the
-  final combined regression there. See `docs/testing-and-build.md` for PC execution details.
+  Restore all PC mutations. Production/test repairs return to Code for ordinary verification
+  and another Mutation pass; retain only plan/evidence amendments after restoration. See `docs/testing-and-build.md` for PC execution details.
 
 - BUILD TO AN ALTERNATE OUTPUT PATH while the daemons hold their bin directories:
   `--property:OutputPath=bin-<name>/` with a FORWARD slash, and delete the resulting `bin-<name>`

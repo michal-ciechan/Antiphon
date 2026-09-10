@@ -28,6 +28,30 @@ namespace Antiphon.Tests.Application;
 public class DelegateBundleLaunchTests
 {
     [Test]
+    [Arguments(AgentKind.ClaudeCode)]
+    [Arguments(AgentKind.Codex)]
+    public void C470_mutation_claude_and_codex_launch_contract(AgentKind kind)
+    {
+        var (dispatcher, provider) = CreateHarness();
+        using var owned = provider;
+        var task = TaskFor(AgentTaskKind.Worker, AgentTaskRole.Mutation);
+        task.Workspace = WorkspaceMode.Shared;
+        var args = ArgsOf(dispatcher, task, kind: kind);
+        var text = kind == AgentKind.Codex
+            ? ConfigValue(args, "developer_instructions").ShouldNotBeNull()
+            : args[args.IndexOf("--append-system-prompt") + 1];
+        text.ShouldContain("[bundle:stage-mutation v");
+        text.Split("[bundle:stage-mutation v").Length.ShouldBe(2);
+        text.IndexOf("[bundle:stage-mutation", StringComparison.Ordinal)
+            .ShouldBeLessThan(text.IndexOf("[bundle:delegate-basics", StringComparison.Ordinal));
+        text.ShouldNotContain("[bundle:stage-code");
+        text.ShouldNotContain("[bundle:stage-review");
+        text.ShouldNotContain("[bundle:orchestrator");
+        args.ShouldNotContain("--permission-mode");
+        args.ShouldNotContain("read-only");
+    }
+
+    [Test]
     public void a_worker_launches_with_the_delegate_basics_bundle_under_its_versioned_header()
     {
         var (dispatcher, _) = CreateHarness();
