@@ -64,6 +64,7 @@ public sealed class ComplexityRoutingService
         AgentTaskRole.Plan,
         AgentTaskRole.TestDesign,
         AgentTaskRole.Code,
+        AgentTaskRole.Mutation,
         AgentTaskRole.Review,
         AgentTaskRole.Debug,
         AgentTaskRole.Coverage,

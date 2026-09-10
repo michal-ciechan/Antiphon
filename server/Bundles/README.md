@@ -34,7 +34,7 @@ accidentally-embedded file fails a test instead of reaching an agent.
 
 Delegates get theirs from the role map in `InstructionBundles.ForDelegate` (Orchestrator tasks:
 `orchestrator` + `delegate-basics`; a Worker whose role is a pipeline stage — Investigate, Plan,
-TestDesign, Code, Review — gets that stage's `stage-*` bundle then `delegate-basics`; other worker
+TestDesign, Code, Mutation, Review — gets that stage's `stage-*` bundle then `delegate-basics`; other worker
 roles: `delegate-basics`; specialist tasks: none, the specialist's contract is its own — and an
 attachment does not reopen that, because the carve-out is about what the specialist can obey).
 Stage bundles never name a kind: routing stays on pins, chains and RolePolicy.

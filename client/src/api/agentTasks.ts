@@ -44,6 +44,7 @@ export type AgentTaskRole =
   | 'Investigate'
   /** Write the verification design for a plan (CARD-0146). A pipeline stage at Plan tier. */
   | 'TestDesign'
+  | 'Mutation'
 
 export type AgentTaskStatus =
   | 'Queued'
@@ -305,6 +306,7 @@ export type PipelineHandoffKind =
   | 'Investigate'
   | 'Plan'
   | 'TestDesign'
+  | 'Mutation'
   | 'Code'
   | 'Review'
   | 'Land'
@@ -499,6 +501,7 @@ export const AGENT_TASK_ROLES: Array<{
 }> = [
   { value: 'Investigate', label: 'Investigate', use: 'measure, reproduce, confirm a mechanism', level: 'High' },
   { value: 'Plan', label: 'Plan', use: 'decompose, design, choose an approach', level: 'Frontier' },
+  { value: 'Mutation', label: 'Mutation', use: 'run positive controls against committed code', level: 'Frontier' },
   { value: 'TestDesign', label: 'Test design', use: 'name the assertions and positive controls', level: 'Frontier' },
   { value: 'Code', label: 'Code', use: 'write or change code', level: 'Frontier' },
   { value: 'Review', label: 'Review', use: 'judge whether logic is correct', level: 'Frontier' },

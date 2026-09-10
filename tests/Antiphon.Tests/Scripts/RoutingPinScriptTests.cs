@@ -19,6 +19,42 @@ namespace Antiphon.Tests.Scripts;
 public sealed class RoutingPinScriptTests
 {
     [Test]
+    public async Task C470_routing_pin_accepts_mutation()
+    {
+        using var server = new StubApi();
+        var run = await RunPinAsync(server, "set", "-Role", "Mutation", "-Kind", "Codex", "-Level", "Frontier");
+        run.ExitCode.ShouldBe(0, run.Output);
+        server.LastMethod.ShouldBe("PUT");
+        server.LastBody.ShouldNotBeNull().RootElement.GetProperty("role").GetString().ShouldBe("Mutation");
+    }
+
+    [Test]
+    public Task C470_delegate_mutation_posts_shared_retained_directory() => AssertRetainedDispatch("Mutation");
+
+    [Test]
+    public Task C470_debug_bootstrap_posts_separate_worker() => AssertRetainedDispatch("Debug");
+
+    private static async Task AssertRetainedDispatch(string role)
+    {
+        using var server = new StubApi();
+        var directory = Path.Combine(Path.GetTempPath(), "card-task-aabbccdd");
+        var goal = "code-task=ce744e22; sha=" + new string('a', 40)
+            + "\nartifact: docs/superpowers/plans/2026-09-09-card-0470-code-mutation-split-plan.md"
+            + "\nPC-1a..PC-13 (17 variants); review-required: yes; restart: server\n"
+            + File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "server/Bundles/stage-mutation.md"));
+        var run = await DelegateScriptRunner.RunAsync(server.BaseUrl, "-Role", role, "-Shared", "-Dir", directory,
+            "-Card", "CARD-0470", "-Goal", goal);
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastCreateBody.ShouldNotBeNull().RootElement;
+        body.GetProperty("role").GetString().ShouldBe(role);
+        body.GetProperty("workspace").GetString().ShouldBe("Shared");
+        body.GetProperty("workingDirectory").GetString().ShouldBe(directory);
+        body.GetProperty("goal").GetString().ShouldBe(goal);
+        body.TryGetProperty("agentId", out _).ShouldBeFalse();
+        body.TryGetProperty("followUpOnTask", out _).ShouldBeFalse();
+    }
+
+    [Test]
     public async Task Set_puts_the_grain_provenance_and_route()
     {
         using var server = new StubApi();

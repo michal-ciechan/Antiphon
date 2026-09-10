@@ -73,6 +73,9 @@ public enum AgentTaskRole
     /// Write the verification design for a plan (CARD-0146). A pipeline stage at Plan tier.
     /// </summary>
     TestDesign = 15,
+
+    /// <summary>Run positive controls against committed Code work.</summary>
+    Mutation = 16,
 }
 
 public enum AgentTaskStatus
@@ -356,7 +359,8 @@ public static class AgentTaskRoles
             or AgentTaskRole.Plan
             or AgentTaskRole.TestDesign
             or AgentTaskRole.Code
-            or AgentTaskRole.Review;
+            or AgentTaskRole.Review
+            or AgentTaskRole.Mutation;
 
     /// <summary>
     /// EF-translatable "is a pipeline stage" predicate. <see cref="IsStage"/> does not translate.
@@ -366,7 +370,8 @@ public static class AgentTaskRoles
             || t.Role == AgentTaskRole.Plan
             || t.Role == AgentTaskRole.TestDesign
             || t.Role == AgentTaskRole.Code
-            || t.Role == AgentTaskRole.Review;
+            || t.Role == AgentTaskRole.Review
+            || t.Role == AgentTaskRole.Mutation;
 
     /// <summary>
     /// EF-translatable "not a specialist" predicate. A method call does not translate; this

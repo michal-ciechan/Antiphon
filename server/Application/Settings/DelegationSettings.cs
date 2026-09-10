@@ -304,6 +304,7 @@ public sealed class DelegationSettings
         ["Plan"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
         ["TestDesign"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
         ["Code"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
+        ["Mutation"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
         ["Review"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
         // EscalateTo stays for the manual ladder (/escalate); EscalateAfterMinutes is deliberately
         // unset — the auto-trigger is disarmed by default (CARD-0158). Same pattern as Test below.

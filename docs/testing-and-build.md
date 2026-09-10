@@ -109,7 +109,7 @@ PowerShell `Copy-Item` preserves the backup's older timestamp, so an incremental
 reuse the baseline DLL even though the source contains the fix. Verify the new method in
 the test output's DLL before accepting the green run (CARD-0412 D6).
 
-## Code-stage positive-control execution (CARD-0451)
+## Mutation-stage positive-control execution (CARD-0451)
 
 Each PC-n still needs red-then-green evidence: apply the planned mutation, observe the
 expected assertion failure, restore the fixed source, and observe green. Scope **both** runs
@@ -132,7 +132,7 @@ then run those same tests green. Keep a result for every PC-n in the stage repor
 that share a file/method or affect one another must run separately, not in the same batch.
 Refresh restored source timestamps/rebuild as described above so green uses restored code.
 
-For large plans (roughly >15-20 PC rows), the Code delegate may create one or more additional
+For large plans (roughly >15-20 PC rows), the Mutation delegate may create one or more additional
 worktrees **off the same task branch** and shard independent controls across them concurrently.
 Start from the same committed branch tip, using detached worktrees or temporary branches
 from that tip; do not force a branch to be checked out twice. Each shard has its own source,
@@ -143,8 +143,8 @@ Concurrent `Antiphon.Tests` shards rely on per-test DB schema isolation and the 
 assembly-local `ParallelLimiter<ProcessSpawnLimit>` model. That limiter serializes process
 spawns within one assembly process, not across processes; do not co-schedule these shards
 with `Antiphon.Agents.Pty.Tests`/FakeClaude. Controls depending on shared external state
-without isolation must remain serial. Restore all temporary mutations and merge/reconcile
-retained fixes onto the task branch before the final combined regression run. Remove only
+without isolation must remain serial. Restore all temporary mutations. Production/test repairs return to Code for ordinary V/R
+and a new Mutation pass; Mutation retains only plan/evidence amendments after restoration. Remove only
 the extra worktrees/temporary branches you created after preserving their evidence and fixes;
 leave the delegated task worktree for the normal landing operation.
 

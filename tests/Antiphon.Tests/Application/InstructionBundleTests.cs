@@ -56,7 +56,7 @@ public class InstructionBundleTests
             "output-distiller",
             // CARD-0146 S3: one standing-rule block per pipeline-stage role. Adding a stage is
             // meant to cost this one line plus the ForDelegate map.
-            "stage-code", "stage-investigate", "stage-plan", "stage-review", "stage-test-design",
+            "stage-code", "stage-investigate", "stage-mutation", "stage-plan", "stage-review", "stage-test-design",
             // One per AgentReplyStyle value (CARD-0060), style-normal included — see AgentReplyStyles
             // for why the one that is never composed still ships as a file.
             "style-brief", "style-caveman", "style-explanatory", "style-normal", "style-terse",
@@ -465,6 +465,7 @@ public class InstructionBundleTests
     [Arguments(AgentTaskRole.Investigate, "stage-investigate")]
     [Arguments(AgentTaskRole.Plan, "stage-plan")]
     [Arguments(AgentTaskRole.TestDesign, "stage-test-design")]
+    [Arguments(AgentTaskRole.Mutation, "stage-mutation")]
     [Arguments(AgentTaskRole.Code, "stage-code")]
     [Arguments(AgentTaskRole.Review, "stage-review")]
     public void a_stage_worker_carries_its_stage_bundle_then_the_basics(AgentTaskRole role, string stageKey)
@@ -521,6 +522,7 @@ public class InstructionBundleTests
     [Arguments(InstructionBundles.StagePlan)]
     [Arguments(InstructionBundles.StageTestDesign)]
     [Arguments(InstructionBundles.StageCode)]
+    [Arguments(InstructionBundles.StageMutation)]
     [Arguments(InstructionBundles.StageReview)]
     public void each_stage_bundle_is_ascii_and_under_the_size_cap(string key)
     {
@@ -558,8 +560,8 @@ public class InstructionBundleTests
         testDesign.ShouldContain("do not rewrite the fix design");
 
         var code = InstructionBundles.TextOf(InstructionBundles.StageCode);
-        code.ShouldContain("Run each PC-n as red-then-green");
-        code.ShouldContain("next: land only when every PC went red-then-green");
+        code.ShouldContain("Run each V-n and R-n");
+        code.ShouldContain("next: mutation when implementation and ordinary V/R are complete, even with zero PCs");
         code.ShouldNotContain("fast-forward");
         code.ShouldNotContain("deploy-local");
 

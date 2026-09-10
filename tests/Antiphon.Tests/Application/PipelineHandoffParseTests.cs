@@ -10,6 +10,41 @@ namespace Antiphon.Tests.Application;
 public class PipelineHandoffParseTests
 {
     [Test]
+    [Arguments("mutation")]
+    [Arguments("MUTATION")]
+    [Arguments("Mutation")]
+    public void C470_mutation_token_maps_to_mutation(string token)
+    {
+        var parsed = PipelineHandoff.TryParse(Block(token, "owner and SHA", "docs/plans/c470.md"));
+        parsed.Kind.ShouldBe(PipelineHandoffKind.Mutation);
+        parsed.Handoff.ShouldBe("owner and SHA");
+        parsed.ArtifactPath.ShouldBe("docs/plans/c470.md");
+        PipelineHandoff.HeaderBit(AgentTaskRole.Code, parsed).ShouldBe("mutation");
+    }
+
+    [Test]
+    public void C470_mutation_destination_maps_to_role()
+    {
+        PipelineHandoff.TryToStageRole(PipelineHandoffKind.Mutation, out var role).ShouldBeTrue();
+        role.ShouldBe(AgentTaskRole.Mutation);
+        PipelineHandoff.HeaderBit(AgentTaskRole.Mutation, PipelineHandoff.TryParse("no block"))
+            .ShouldBe("unmarked");
+    }
+
+    [Test]
+    [Arguments("verify")]
+    [Arguments("VERIFY")]
+    public void C470_verify_stays_review(string token)
+    {
+        var parsed = PipelineHandoff.TryParse(Block(token, "review evidence"));
+        parsed.Kind.ShouldBe(PipelineHandoffKind.Review);
+        PipelineHandoff.HeaderBit(AgentTaskRole.Mutation, parsed).ShouldBe("review");
+        PipelineHandoff.TryToStageRole(parsed.Kind.Value, out var role).ShouldBeTrue();
+        role.ShouldBe(AgentTaskRole.Review);
+        PipelineHandoff.TryParse(Block("test", "unsupported")).Kind.ShouldBeNull();
+    }
+
+    [Test]
     [Arguments("investigate", PipelineHandoffKind.Investigate)]
     [Arguments("plan", PipelineHandoffKind.Plan)]
     [Arguments("design", PipelineHandoffKind.Plan)]

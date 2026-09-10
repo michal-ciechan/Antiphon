@@ -30,6 +30,7 @@ public static class PipelineHandoff
             ["test-design"] = PipelineHandoffKind.TestDesign,
             ["testdesign"] = PipelineHandoffKind.TestDesign,
             ["test design"] = PipelineHandoffKind.TestDesign,
+            ["mutation"] = PipelineHandoffKind.Mutation,
             ["code"] = PipelineHandoffKind.Code,
             ["build"] = PipelineHandoffKind.Code,
             ["execute"] = PipelineHandoffKind.Code,
@@ -57,6 +58,7 @@ public static class PipelineHandoff
         PipelineHandoffKind.Investigate => "investigate",
         PipelineHandoffKind.Plan => "plan",
         PipelineHandoffKind.TestDesign => "test-design",
+        PipelineHandoffKind.Mutation => "mutation",
         PipelineHandoffKind.Code => "code",
         PipelineHandoffKind.Review => "review",
         PipelineHandoffKind.Land => "land",
@@ -82,6 +84,9 @@ public static class PipelineHandoff
                 return true;
             case PipelineHandoffKind.TestDesign:
                 role = AgentTaskRole.TestDesign;
+                return true;
+            case PipelineHandoffKind.Mutation:
+                role = AgentTaskRole.Mutation;
                 return true;
             case PipelineHandoffKind.Code:
                 role = AgentTaskRole.Code;

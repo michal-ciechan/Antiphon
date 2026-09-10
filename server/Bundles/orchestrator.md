@@ -30,7 +30,7 @@ choice. `AuthenticationRequired` from a Grok pool launch means this host needs
 `grok login` (the OAuth store under `GROK_HOME` has no usable session). Do not retry
 Grok. Do not switch profile to hide it.
 
-A pipeline-stage report (Investigate/Plan/TestDesign/Code/Review) closes with a
+A pipeline-stage report (Investigate/Plan/TestDesign/Code/Mutation/Review) closes with a
 `--- next stage ---` block above the report token; read its parsed `next=` bit and `handoff:` text
 off the completion header/tail, and dispatch the named stage from that — never by reading the
 report body or the diff to decide what happens next. `next=unmarked` on a stage role is a report to
