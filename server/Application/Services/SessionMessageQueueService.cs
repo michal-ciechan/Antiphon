@@ -1664,6 +1664,9 @@ public sealed partial class SessionMessageQueueService
         DeliveryOutcome outcome;
         try
         {
+            foreach (var landRow in run.Where(m => m.SourceLandNotificationId != null))
+                if (rulesScope.ServiceProvider.GetService<LandDeliveryBoundary>() is { } landBoundary)
+                    await landBoundary.ReachedAsync("queue-before-typing", landRow.SourceTaskId!.Value, landRow.Id, ct);
             if (await CancelJustClaimedExpiredBriefsAsync(db, run, ct)) return FlushResult.Nothing;
             using var observation = new RuntimePhase(_logger, _timeProvider, sessionId, "queue.delivery-confirm");
             outcome = await DeliverAsync(sessionId, body, ct, baseline, ceilings, FirstInputDeadline(run));
@@ -1699,6 +1702,9 @@ public sealed partial class SessionMessageQueueService
 
         if (outcome.Verdict == DeliveryVerdict.Delivered)
         {
+            foreach (var landRow in run.Where(m => m.SourceLandNotificationId != null))
+                if (rulesScope.ServiceProvider.GetService<LandDeliveryBoundary>() is { } landBoundary)
+                    await landBoundary.ReachedAsync("queue-before-verdict", landRow.SourceTaskId!.Value, landRow.Id, ct);
             StampAttemptVerdict(run, DeliveryVerdict.Delivered, UtcNow());
             await ArmBootReplyWatchAsync(db, sessionId, ct);
             await db.SaveChangesAsync(ct);

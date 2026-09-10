@@ -109,7 +109,7 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
 
     public AppDbContext CreateContext() => new(new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(_connection).Options);
 
-    public async Task<Guid> RequestAsync()
+    public async Task<Guid> RequestAsync(bool initial = true)
     {
         var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var arg in new[] { "-NoProfile", "-File", Path.Combine(AntiphonAppFixture.FindRepositoryRoot(), "scripts", "delegate.ps1"), "-Land", TaskId.ToString() }) start.ArgumentList.Add(arg);
@@ -122,20 +122,38 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
         await File.WriteAllTextAsync(Path.Combine(Root, "script-acceptance.txt"), output);
         output.ShouldContain("Publication pending");
         await using var db = CreateContext();
-        var request = await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == TaskId && r.IsPending);
+        var request = await db.AgentTaskLandRequests.OrderByDescending(r => r.RequestedAt).FirstAsync(r => r.TaskId == TaskId);
         output.ShouldContain(request.Id.ToString());
-        (await db.AgentTaskLandings.CountAsync(o => o.TaskId == TaskId)).ShouldBe(0, "execution gate must hold until acceptance is observed");
+        using var acceptance = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(Root, "http-202.json")));
+        acceptance.RootElement.GetProperty("requestId").GetGuid().ShouldBe(request.Id);
+        if (initial) (await db.AgentTaskLandings.CountAsync(o => o.TaskId == TaskId)).ShouldBe(0, "execution gate must hold until acceptance is observed");
         return request.Id;
     }
     public Task ReleaseExecutionAsync() => File.WriteAllTextAsync(Path.Combine(Root, "execute.release"), "release");
     public Task ReleaseBusyAsync() => File.WriteAllTextAsync(Path.Combine(Root, "caller-busy.release"), "release");
+    public Task AdvanceLandClockAsync(int seconds) => File.WriteAllTextAsync(Path.Combine(Root, "land-clock-seconds.txt"), seconds.ToString());
+    public Task ReleaseBoundaryAsync(string boundary) => File.WriteAllTextAsync(Path.Combine(Root, boundary + ".release"), "release");
 
-    public async Task<AgentTaskLandNotification> ReceiptAsync(LandNotificationKind kind = LandNotificationKind.Outcome)
+    public async Task<string> StatusAsync()
+    {
+        var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var arg in new[] { "-NoProfile", "-File", Path.Combine(AntiphonAppFixture.FindRepositoryRoot(), "scripts", "delegate.ps1"), "-Status", TaskId.ToString() }) start.ArgumentList.Add(arg);
+        start.Environment["ANTIPHON_API"] = _address; start.Environment["ANTIPHON_TASK_TOKEN"] = _token;
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEndAsync(); var error = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(60));
+        process.ExitCode.ShouldBe(0, await error);
+        var text = await output;
+        await File.AppendAllTextAsync(Path.Combine(Root, "status-polls.txt"), text + "\n");
+        return text;
+    }
+
+    public async Task<AgentTaskLandNotification> ReceiptAsync(LandNotificationKind kind = LandNotificationKind.Outcome, Guid? requestId = null)
     {
         AgentTaskLandNotification? result = null;
         await UntilAsync(async () => {
             await using var db = CreateContext();
-            result = await db.AgentTaskLandNotifications.AsNoTracking().FirstOrDefaultAsync(n => n.TaskId == TaskId && n.Kind == kind && n.ConfirmedAt != null);
+            result = await db.AgentTaskLandNotifications.AsNoTracking().FirstOrDefaultAsync(n => n.TaskId == TaskId && n.Kind == kind && n.ConfirmedAt != null && (requestId == null || n.RequestId == requestId));
             return result is not null;
         }, "complete native Land receipt");
         await using var observer = CreateContext();
@@ -160,9 +178,9 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
         await Task.Delay(TimeSpan.FromSeconds(11));
         await using var db = CreateContext();
         var prompts = await db.TranscriptEntries.Where(p => p.AgentSessionId == CallerId && p.Kind == TranscriptKinds.UserPrompt && p.Text != null).ToListAsync();
-        prompts.Count(p => p.Text!.Contains(note.Id.ToString("N"))).ShouldBe(1);
+        prompts.Count(p => p.Text!.Contains("[land " + note.Id.ToString("N"))).ShouldBe(1);
         var native = Directory.GetFiles(Path.Combine(Root, "native"), "updates.jsonl", SearchOption.AllDirectories)
-            .SelectMany(File.ReadAllLines).Count(line => line.Contains("user_message_chunk") && line.Contains(note.Id.ToString("N")));
+            .SelectMany(File.ReadAllLines).Count(line => line.Contains("user_message_chunk") && line.Contains("[land " + note.Id.ToString("N")));
         native.ShouldBe(1);
     }
 
@@ -226,6 +244,31 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
             notifications = await db.AgentTaskLandNotifications.AsNoTracking().Where(n => n.TaskId == TaskId).ToListAsync(),
             queue = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.SourceTaskId == TaskId).ToListAsync(),
             prompts = await db.TranscriptEntries.AsNoTracking().Where(p => p.AgentSessionId == CallerId && p.Kind == TranscriptKinds.UserPrompt).ToListAsync() }));
+    }
+    public async Task ArrangeOutcomeAsync(string outcome)
+    {
+        if (outcome == "already-present") await GitAsync(Source, "push", "origin", "HEAD:refs/heads/master");
+        if (outcome == "residue-cleanup")
+        {
+            Directory.CreateDirectory(Path.Combine(Source, ".antiphon"));
+            await File.WriteAllTextAsync(Path.Combine(Source, ".antiphon", "valuable.txt"), "owned user residue");
+        }
+        if (outcome == "preoperation-refusal")
+        {
+            await using var db = CreateContext();
+            await db.AgentTasks.Where(t => t.Id == TaskId).ExecuteUpdateAsync(s => s.SetProperty(t => t.WorktreeBranch, (string?)null));
+        }
+        if (outcome == "operation-refusal")
+            await File.WriteAllTextAsync(Path.Combine(Remote, "hooks", "pre-receive"), "#!/bin/sh\nexit 1\n");
+        if (outcome == "conflict")
+        {
+            await File.WriteAllTextAsync(Path.Combine(Source, "Seed.cs"), "public class Seed { public int Source; }\n");
+            await GitAsync(Source, "add", "."); await GitAsync(Source, "commit", "-m", "source conflict");
+            SourceSha = (await GitAsync(Source, "rev-parse", "HEAD")).Trim();
+            await File.WriteAllTextAsync(Path.Combine(Repository, "Seed.cs"), "public class Seed { public int Target; }\n");
+            await GitAsync(Repository, "add", "."); await GitAsync(Repository, "commit", "-m", "target conflict");
+            await GitAsync(Repository, "push", "origin", "master");
+        }
     }
     public static async Task UntilAsync(Func<Task<bool>> predicate, string evidence, int seconds = 60)
     {

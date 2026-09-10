@@ -381,5 +381,6 @@ export function ageSeconds(item: AttentionItemDto, now: number = Date.now()): nu
  * headline, which counts elapsed time and would remount the row every fifteen seconds.
  */
 export function keyOf(item: AttentionItemDto): string {
+  if (item.conditionKey) return item.conditionKey
   return [item.kind, item.cardId, item.taskId, item.sessionId, item.messageId, item.agentId, item.modelKind, item.modelAlias, item.sinceUtc].join('|')
 }

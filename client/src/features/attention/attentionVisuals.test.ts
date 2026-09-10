@@ -19,6 +19,9 @@ import {
  * in a hurry.
  */
 const ALL_KINDS: AttentionKind[] = [
+  'LandHeld',
+  'LandNoProgress',
+  'LandOutcomeUnconfirmed',
   'HerdrSupervisionHeld',
   'StandingContinuityDecision',
   'BlockedQuestion',

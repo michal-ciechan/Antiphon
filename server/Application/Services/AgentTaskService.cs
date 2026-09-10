@@ -2599,7 +2599,7 @@ public sealed class AgentTaskService
         if (!await _db.AgentSessions.AnyAsync(s => s.Id == parentSession, ct))
             return;
 
-        var note = DelegationReportFormatter.BuildCompletionNote(task, _settings, reason);
+        var note = DelegationReportFormatter.BuildCompletionNote(task, _settings, reason, land: await LandCompletionFacts.LoadAsync(_db, task, ct));
         var nextSequence = (await _db.SessionQueuedMessages
             .Where(m => m.AgentSessionId == parentSession)
             .MaxAsync(m => (long?)m.Sequence, ct) ?? 0) + 1;

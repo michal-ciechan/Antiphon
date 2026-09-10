@@ -174,6 +174,10 @@ export type AttentionAction =
   | 'Continue'
 
 export interface AttentionItemDto {
+  conditionKey?: string | null
+  landRequestId?: string | null
+  landNotificationId?: string | null
+  holdingTaskId?: string | null
   kind: AttentionKind
   /** Critical = needs you now, Error = broken, Warning = suspect. The row's rank AND its group. */
   severity: AlertSeverity

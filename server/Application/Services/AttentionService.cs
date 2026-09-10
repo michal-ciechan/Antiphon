@@ -1192,7 +1192,9 @@ public sealed class AttentionService
                 $"Land {request.State}; attempt {request.Attempt}; no progress for {(int)age}s",
                 $"request={request.Id:N}; requested={request.RequestedAt:O}; reason={request.HoldReasonCode}; "
                     + $"holder={request.HoldingTaskId:N} ({request.HoldingTaskStatus}); heldSince={request.HeldSince:O}; {request.HoldDetail}; {request.ReconciliationError}",
-                request.HeldSince ?? request.LastProgressAt, null, [AttentionAction.OpenDrawer], task.CardId));
+                request.HeldSince ?? request.LastProgressAt, null, [AttentionAction.OpenDrawer], task.CardId,
+                ConditionKey: $"land:{request.Id:N}:{(request.State == LandRequestState.Held ? "held" : "progress")}",
+                LandRequestId: request.Id, HoldingTaskId: request.HoldingTaskId));
         }
         var notes = await _db.AgentTaskLandNotifications.AsNoTracking().Where(n => n.ConfirmedAt == null
             && n.State != LandNotificationState.NotRequired).ToListAsync(ct);
@@ -1203,14 +1205,16 @@ public sealed class AttentionService
             var parked = row?.DeliveryAttempts >= Math.Max(1, _supervision.DeliveryVerification.MaxDeliveryAttempts);
             if (age < _delegation.LandWarningSeconds && note.LastErrorCode is null && !parked) continue;
             var task = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == note.TaskId, ct);
-            var state = row is null ? "missing queue row" : row.DeliveryAttempts == 0 ? "queued; waiting for WhenIdle" : "attempted; receipt unconfirmed";
+            var busy = note.ParentSessionId is Guid destination && await SessionMessageQueueService.IsWorkingAsync(_db, destination, ct);
+            var state = row is null ? "missing queue row" : row.DeliveryAttempts == 0 ? (busy ? "queued; caller busy" : "queued; caller idle") : "attempted; receipt unconfirmed";
             items.Add(new AttentionItemDto(AttentionKind.LandOutcomeUnconfirmed,
                 age >= _delegation.LandErrorSeconds || note.LastErrorCode is not null || parked ? AlertSeverity.Error : AlertSeverity.Warning,
                 task.Id, note.ParentSessionId, task.AgentId, note.QueueMessageId, task.Title,
                 $"Land {note.Kind} notification: {note.State}; {state}",
                 $"notification={note.Id:N}; request={note.RequestId:N}; destination={note.ParentSessionId:N}; "
                     + $"error={note.LastErrorCode}; parked={parked}; {note.Body}",
-                note.CreatedAt, null, [AttentionAction.OpenDrawer], task.CardId));
+                note.CreatedAt, null, [AttentionAction.OpenDrawer], task.CardId,
+                ConditionKey: $"land:{note.Id:N}:receipt", LandRequestId: note.RequestId, LandNotificationId: note.Id));
         }
         return items;
     }

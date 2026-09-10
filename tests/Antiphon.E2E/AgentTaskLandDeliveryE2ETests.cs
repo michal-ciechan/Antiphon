@@ -4,6 +4,7 @@ using Antiphon.Server.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.E2E;
 
@@ -63,6 +64,11 @@ public class AgentTaskLandDeliveryE2ETests
         }
         await f.RequestAsync(); await f.ReleaseExecutionAsync();
         var held = await f.ReceiptAsync(LandNotificationKind.Held);
+        await f.AdvanceLandClockAsync(901);
+        await LandDeliveryFixture.UntilAsync(async () => {
+            await using var db = f.CreateContext();
+            return await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Aged && n.ConfirmedAt != null) == 2;
+        }, "both hold age receipts");
         await using (var db = f.CreateContext())
         {
             var request = await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == f.TaskId);
@@ -137,18 +143,106 @@ public class AgentTaskLandDeliveryE2ETests
     }
 
     [Test]
-    public async Task C467_V30_ReceiptSaveFailureNeverRetypes()
+    [Arguments("receipt")]
+    [Arguments("verdict")]
+    public async Task C467_V30_ReceiptSaveFailureNeverRetypes(string cut)
     {
-        await using var f = new LandDeliveryFixture(); await f.InitializeAsync(); await f.UseChildAsync("receipt");
+        await using var f = new LandDeliveryFixture(); await f.InitializeAsync(); await f.UseChildAsync(cut);
         await f.RequestAsync(); await f.ReleaseExecutionAsync();
-        await LandDeliveryFixture.UntilAsync(() => Task.FromResult(File.Exists(Path.Combine(f.Root, "receipt-before-save.barrier.json"))), "native prompt persisted before receipt save");
+        var barrier = cut == "receipt" ? "receipt-before-save" : "queue-before-verdict";
+        await LandDeliveryFixture.UntilAsync(() => Task.FromResult(File.Exists(Path.Combine(f.Root, barrier + ".barrier.json"))), "native prompt persisted before receipt/verdict save");
+        await using (var db = f.CreateContext())
+        {
+            var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Outcome);
+            if (cut == "receipt") note.ConfirmedAt.ShouldBeNull();
+            (await db.TranscriptEntries.AnyAsync(p => p.AgentSessionId == f.CallerId && p.Kind == TranscriptKinds.UserPrompt && p.Text!.Contains(note.Id.ToString("N")))) .ShouldBeTrue();
+        }
+        await f.SnapshotAsync(); await f.KillChildAsync(); await f.UseChildAsync("none");
+        var received = await f.ReceiptAsync(); await f.AssertOnePromptAsync(received);
+    }
+
+    [Test]
+    [Arguments("landed")]
+    [Arguments("already-present")]
+    [Arguments("residue-cleanup")]
+    [Arguments("preoperation-refusal")]
+    [Arguments("operation-refusal")]
+    [Arguments("conflict")]
+    public async Task C467_V29_RealOutcomeProducerMatrix(string outcome)
+    {
+        await using var f = new LandDeliveryFixture(); await f.InitializeAsync(); await f.ArrangeOutcomeAsync(outcome);
+        await f.RequestAsync(); await f.ReleaseExecutionAsync();
+        var note = await f.ReceiptAsync(outcome == "conflict" ? LandNotificationKind.Conflict : LandNotificationKind.Outcome);
+        await using (var db = f.CreateContext())
+        {
+            var terminal = await db.AgentTaskEvents.SingleAsync(e => e.Id == note.SourceEventId);
+            terminal.Type.ShouldBe(outcome switch {
+                "already-present" => AgentTaskEventType.AlreadyPresent,
+                "residue-cleanup" => AgentTaskEventType.LandedWithResidue,
+                "preoperation-refusal" or "operation-refusal" => AgentTaskEventType.LandRefused,
+                "conflict" => AgentTaskEventType.Conflicted,
+                _ => AgentTaskEventType.Landed });
+            if (outcome == "conflict")
+            {
+                (await db.AgentTaskLandRequests.SingleAsync(r => r.Id == note.RequestId)).State.ShouldBe(LandRequestState.NeedsResolution);
+                (await db.AgentTasks.SingleAsync(t => t.Id == f.TaskId)).Status.ShouldBe(AgentTaskStatus.Blocked);
+            }
+        }
+        if (outcome is "landed" or "already-present" or "residue-cleanup") await f.AssertRemoteAsync();
+        if (outcome == "residue-cleanup")
+        {
+            File.Delete(Path.Combine(f.Source, ".antiphon", "valuable.txt"));
+            var retry = await f.RequestAsync(initial: false);
+            var cleanup = await f.ReceiptAsync(requestId: retry);
+            cleanup.Id.ShouldNotBe(note.Id); cleanup.ContentDigest.ShouldNotBe(note.ContentDigest);
+            cleanup.LandingOperationId.ShouldBe(note.LandingOperationId);
+            await f.AssertOnePromptAsync(cleanup);
+        }
+        await f.AssertOnePromptAsync(note);
+    }
+
+    [Test]
+    public async Task C467_V31_EnqueueFailureRecoversAutomatically()
+    {
+        await using var f = new LandDeliveryFixture(); await f.InitializeAsync(cut: "enqueue-errors");
+        await f.RequestAsync(); await f.ReleaseExecutionAsync();
+        Guid original = default;
+        await LandDeliveryFixture.UntilAsync(async () => {
+            await using var db = f.CreateContext();
+            var note = await db.AgentTaskLandNotifications.FirstOrDefaultAsync(n => n.TaskId == f.TaskId && n.State == LandNotificationState.RetryPending && n.EnqueueAttempts == 2);
+            if (note is null) return false;
+            note.LastErrorCode.ShouldContain("IOException"); note.ConfirmedAt.ShouldBeNull(); note.QueueMessageId.ShouldBeNull();
+            note.NextAttemptAt.ShouldBe(note.LastErrorAt!.Value.AddSeconds(10)); original = note.Id; return true;
+        }, "two persisted enqueue failures");
+        await f.AssertRemoteAsync();
+        var received = await f.ReceiptAsync(); received.Id.ShouldBe(original); await f.AssertOnePromptAsync(received);
+    }
+
+    [Test]
+    [Arguments("busy")]
+    [Arguments("attempt")]
+    public async Task C467_V32_StatusPollingCannotDischargeUnreceivedOutcome(string state)
+    {
+        await using var f = new LandDeliveryFixture(); await f.InitializeAsync(busy: state == "busy", cut: state == "attempt" ? "attempt" : "none");
+        await f.RequestAsync(); await f.ReleaseExecutionAsync();
+        await LandDeliveryFixture.UntilAsync(async () => {
+            await using var db = f.CreateContext();
+            return await db.AgentTaskLandNotifications.AnyAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Outcome && n.QueueMessageId != null)
+                && (state == "busy" || File.Exists(Path.Combine(f.Root, "queue-before-typing.barrier.json")));
+        }, "unreceived outcome held at actual queue");
+        await f.AdvanceLandClockAsync(301); await f.StatusAsync();
+        await f.AdvanceLandClockAsync(901); await f.StatusAsync();
+        await LandDeliveryFixture.UntilAsync(async () => {
+            await using var db = f.CreateContext();
+            return await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Aged) == 2;
+        }, "outcome warning and error obligations");
         await using (var db = f.CreateContext())
         {
             var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Outcome);
             note.ConfirmedAt.ShouldBeNull();
-            (await db.TranscriptEntries.AnyAsync(p => p.AgentSessionId == f.CallerId && p.Kind == "UserPrompt" && p.Text!.Contains(note.Id.ToString("N")))) .ShouldBeTrue();
+            (await db.TranscriptEntries.AnyAsync(p => p.AgentSessionId == f.CallerId && p.Kind == TranscriptKinds.UserPrompt && p.Text!.Contains("[land " + note.Id.ToString("N")))).ShouldBeFalse();
         }
-        await f.SnapshotAsync(); await f.KillChildAsync(); await f.UseChildAsync("none");
+        if (state == "busy") await f.ReleaseBusyAsync(); else await f.ReleaseBoundaryAsync("queue-before-typing");
         var received = await f.ReceiptAsync(); await f.AssertOnePromptAsync(received);
     }
 }

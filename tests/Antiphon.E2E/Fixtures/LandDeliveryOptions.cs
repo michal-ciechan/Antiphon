@@ -6,6 +6,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 
 namespace Antiphon.E2E.Fixtures;
 
@@ -29,12 +31,19 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
         settings["Delegation:CheckInterpreterEnabled"] = "false";
         settings["Delegation:DiagnoseEnabled"] = "false";
         settings["Delegation:OutputDistillerEnabled"] = "false";
+        settings["Delegation:MaxTasksPerRoot"] = "1"; // Preserve the real conflict cap branch; never launch a model helper.
         settings["Supervision:DeliveryVerification:Enabled"] = "true";
         settings["Supervision:DeliveryVerification:TranscriptConfirmEnabled"] = "true";
     }
     public void ConfigureServices(IServiceCollection services)
     {
         services.AddSingleton<LandDeliveryBoundary>(new FileBoundary(this));
+        var clock = new LandClock(Root);
+        services.AddScoped(p => ActivatorUtilities.CreateInstance<AgentTaskLandService>(p, clock));
+        services.AddScoped(p => ActivatorUtilities.CreateInstance<AgentTaskLandingProtocol>(p, clock));
+        services.AddScoped(p => ActivatorUtilities.CreateInstance<AgentTaskLandMonitorService>(p, clock));
+        services.AddScoped(p => ActivatorUtilities.CreateInstance<AgentTaskLandNotificationService>(p, clock));
+        services.AddTransient<IStartupFilter>(_ => new AcceptanceObserver(Root));
         services.AddSingleton(p => new PtyDeliveryProfile(p.GetRequiredService<IServiceScopeFactory>(),
             p.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PtyDeliveryProfile>>(),
             p.GetRequiredService<IOptions<DelegationSettings>>(), p.GetRequiredService<TimeProvider>(), backendOverride: "modern"));
@@ -44,20 +53,58 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
 
     private sealed class FileBoundary(LandDeliveryOptions options) : LandDeliveryBoundary
     {
+        private int _enqueueCalls;
         public override bool DropWakeup(string boundary, Guid identity) => options.Cut == "lost-flush" && boundary == "completion"
             || options.Cut == "lost-request" && boundary == "land-request";
         public override async Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
         {
+            if (options.Cut == "enqueue-errors" && boundary == "before-enqueue" && Interlocked.Increment(ref _enqueueCalls) <= 2)
+                throw new IOException("Owned notification insert failure");
             var blocked = boundary == "before-execution" && !File.Exists(Path.Combine(options.Root, "execute.release"))
                 || options.Cut == "terminal" && boundary is "terminal-committed" or "before-enqueue"
                 || options.Cut == "queue" && boundary == "queue-inserted"
-                || options.Cut == "receipt" && boundary == "receipt-before-save";
+                || options.Cut == "receipt" && boundary == "receipt-before-save"
+                || options.Cut == "attempt" && boundary == "queue-before-typing"
+                || options.Cut == "verdict" && boundary == "queue-before-verdict";
             if (!blocked) return;
             await File.WriteAllTextAsync(Path.Combine(options.Root, boundary + ".barrier.json"), JsonSerializer.Serialize(new
-            { boundary, taskId, identity, pid = Environment.ProcessId, start = System.Diagnostics.Process.GetCurrentProcess().StartTime.ToUniversalTime() }), ct);
+            { boundary, taskId, identity, nonce = Path.GetFileName(options.Root), pid = Environment.ProcessId, start = System.Diagnostics.Process.GetCurrentProcess().StartTime.ToUniversalTime() }), ct);
             while (!File.Exists(Path.Combine(options.Root, boundary + ".release"))
                 && !(boundary == "before-execution" && File.Exists(Path.Combine(options.Root, "execute.release"))))
                 await Task.Delay(50, ct);
         }
+    }
+
+    private sealed class LandClock(string root) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow()
+        {
+            var path = Path.Combine(root, "land-clock-seconds.txt");
+            return DateTimeOffset.UtcNow.AddSeconds(File.Exists(path) && double.TryParse(File.ReadAllText(path), out var seconds) ? seconds : 0);
+        }
+    }
+
+    private sealed class AcceptanceObserver(string root) : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            app.Use(async (context, onward) =>
+            {
+                if (!context.Request.Path.Value!.EndsWith("/land", StringComparison.Ordinal) || context.Request.Method != "POST")
+                { await onward(); return; }
+                var original = context.Response.Body;
+                await using var capture = new MemoryStream();
+                context.Response.Body = capture;
+                try
+                {
+                    await onward();
+                    if (context.Response.StatusCode == 202)
+                        await File.WriteAllBytesAsync(Path.Combine(root, "http-202.json"), capture.ToArray());
+                    capture.Position = 0; await capture.CopyToAsync(original);
+                }
+                finally { context.Response.Body = original; }
+            });
+            next(app);
+        };
     }
 }

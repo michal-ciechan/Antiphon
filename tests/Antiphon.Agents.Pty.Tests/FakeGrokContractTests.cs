@@ -37,7 +37,7 @@ public class FakeGrokContractTests
             var native = Path.Combine(root, "sessions", Uri.EscapeDataString(Path.GetFullPath(root)), session, "updates.jsonl");
             var held = await WaitForUpdatesAsync(native, "user_message_chunk", "distinctive held prompt");
             held.ShouldNotContain("turn_completed");
-            (await runner.WaitForOutputAsync(s => s.Contains("C467_BUSY_HELD"), TimeSpan.FromSeconds(5))).ShouldBeTrue();
+            File.Exists(gate + ".held").ShouldBeTrue();
             (await File.ReadAllTextAsync(native)).ShouldNotContain("turn_completed");
             await File.WriteAllTextAsync(gate + ".release", "release");
             var completed = await WaitForUpdatesAsync(native, "turn_completed", "end_turn");

@@ -1660,7 +1660,8 @@ public sealed class AgentTaskReplyService
             await DescribeOverlappingRunningAsync(task, ct), drift,
             ReportEvidenceHeader(task.ReportEvidence), git,
             DescribeDeliverable(task),
-            PipelineHandoff.HeaderBit(task.Role, PipelineHandoff.TryParse(report)));
+            PipelineHandoff.HeaderBit(task.Role, PipelineHandoff.TryParse(report)),
+            await LandCompletionFacts.LoadAsync(_db, task, ct));
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();

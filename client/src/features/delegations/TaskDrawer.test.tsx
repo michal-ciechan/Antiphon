@@ -72,6 +72,58 @@ function serve(body: AgentTaskDetailDto, extra: Parameters<typeof server.use> = 
 }
 
 describe('TaskDrawer', () => {
+  const land = (overrides: Partial<NonNullable<AgentTaskDetailDto['landRequest']>> = {}): NonNullable<AgentTaskDetailDto['landRequest']> => ({
+    id: TASK_ID, state: 'Held', requestedAt: '2026-09-09T10:00:00Z', startedAt: null,
+    lastEvaluatedAt: '2026-09-09T10:05:00Z', lastProgressAt: '2026-09-09T10:00:00Z', ageSeconds: 300,
+    noProgressSeconds: 300, attempt: 0, holdReasonCode: 'repository_or_source_writer', holdDetail: 'Waiting for blocked writer',
+    holdingTaskId: 'holder-9', holdingTaskStatus: 'Blocked', heldSince: '2026-09-09T10:00:00Z', holdEpisode: 1,
+    reconciliationError: null, notifications: [], ...overrides,
+  })
+
+  it('shows a blocked land separately from delegate success', async () => {
+    serve(detail({ status: 'Succeeded', workspace: 'Worktree' }, { landRequest: land() }))
+    renderWithProviders(<TaskDrawer taskId={TASK_ID} onClose={() => {}} />)
+    expect(await screen.findByText('Delegate: Succeeded')).toBeVisible()
+    expect(screen.getByText('Land: Held; attempt 0')).toBeVisible()
+    expect(screen.getByText(/holder holder-9 \(Blocked\)/)).toBeVisible()
+    expect(screen.getByText('Publication: Unconfirmed; cleanup: NotStarted')).toBeVisible()
+  })
+
+  it('keeps published evidence during a held cleanup retry', async () => {
+    serve(detail({ status: 'Succeeded', workspace: 'Worktree' }, { landRequest: land(), landing: {
+      operationId: TASK_ID, phase: 'Complete', mode: 'CleanupRetry', publication: 'Landed', cleanup: 'Refused',
+      sourceSha: 'a'.repeat(40), verifiedSha: 'a'.repeat(40), remoteSha: 'a'.repeat(40),
+      remoteConfirmedAt: '2026-09-09T09:00:00Z', destinationRef: 'refs/heads/master', reason: 'residue',
+    } }))
+    renderWithProviders(<TaskDrawer taskId={TASK_ID} onClose={() => {}} />)
+    expect(await screen.findByText('Publication: Landed')).toBeVisible()
+    expect(screen.getByText('Land: Held; attempt 0')).toBeVisible()
+    expect(screen.getByText('Cleanup: Refused')).toBeVisible()
+  })
+
+  it('shows unconfirmed receipt and destination errors', async () => {
+    serve(detail({ status: 'Succeeded', workspace: 'Worktree' }, { landRequest: land({ notifications: [{
+      id: 'note-1', kind: 'Outcome', state: 'DestinationUnavailable', destinationSessionId: null, queueMessageId: null,
+      lastErrorCode: 'destination_unavailable', confirmedAt: null, confirmingPromptSequence: null,
+    }] }) }))
+    renderWithProviders(<TaskDrawer taskId={TASK_ID} onClose={() => {}} />)
+    expect(await screen.findByText(/Outcome DestinationUnavailable/)).toHaveTextContent('receipt unconfirmed; destination_unavailable')
+  })
+
+  it('opens land task holder caller and queue without mutation', async () => {
+    serve(detail({ status: 'Succeeded', workspace: 'Worktree' }, { landRequest: land({ notifications: [{
+      id: 'note-1', kind: 'Outcome', state: 'AwaitingReceipt', destinationSessionId: 'caller-1', queueMessageId: 'queue-1',
+      lastErrorCode: null, confirmedAt: null, confirmingPromptSequence: null,
+    }] }) }), [http.get('/api/sessions/caller-1/messages', () => HttpResponse.json({ sessionId: 'caller-1', working: true,
+      messages: [{ id: 'queue-1', body: 'immutable outcome evidence', status: 'Pending', deliveryAttempts: 0 }] }))])
+    renderWithProviders(<TaskDrawer taskId={TASK_ID} onClose={() => {}} />)
+    expect(await screen.findByRole('link', { name: 'Open holding task' })).toHaveAttribute('href', '/orchestrator?tab=delegations&task=holder-9')
+    expect(screen.getByRole('button', { name: 'Open caller transcript' })).toBeVisible()
+    await userEvent.click(screen.getByRole('button', { name: 'Inspect queued note' }))
+    expect(await screen.findByText('immutable outcome evidence')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Send now' })).not.toBeInTheDocument()
+  })
+
   it.each(['Unconfirmed', 'Landed', 'AlreadyPresent'] as const)('renders %s evidence through a cleanup update', async (publication) => {
     serve(detail({ status: 'Succeeded', workspace: 'Worktree' }, {
       landing: {

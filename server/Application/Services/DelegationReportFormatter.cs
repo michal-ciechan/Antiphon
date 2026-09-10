@@ -511,7 +511,7 @@ public static class DelegationReportFormatter
         AgentTask task, DelegationSettings settings, string report, string? workspaceNote = null,
         int? replyInlineMaxChars = null, string? warning = null, string? overlappingRunning = null,
         string? drift = null, string? reportEvidence = null, string? git = null,
-        DeliverableNote? deliverable = null, string? next = null)
+        DeliverableNote? deliverable = null, string? next = null, LandCompletionFacts? land = null)
     {
         var header = new StringBuilder();
         header.Append('[').Append("task ").Append(Short(task.Id)).Append(' ')
@@ -519,7 +519,7 @@ public static class DelegationReportFormatter
 
         var bits = new List<string>();
         if (task.Workspace == WorkspaceMode.Worktree)
-            bits.Add($"delegate={task.Status.ToString().ToLowerInvariant()}; publication={(task.ActiveLandingId is null ? "unconfirmed" : "inspect-operation")}; land={(task.LandRequestedAt is not null ? "pending" : task.CurrentLandRequestId is null ? "not-requested" : "inspect-request")}");
+            bits.Add($"delegate={task.Status.ToString().ToLowerInvariant()}; publication={land?.Publication ?? "Unconfirmed"}; cleanup={land?.Cleanup ?? "NotStarted"}; land={land?.Land ?? (task.LandRequestedAt is not null ? "Pending" : "NotRequested")}; receipt={land?.Receipt ?? "Unverified"}");
         if (!string.IsNullOrWhiteSpace(task.Title)) bits.Add(task.Title.Trim());
         bits.Add(ModelLevelAliases.For(task.AgentKind, task.ModelLevel));
         if (task.DispatchedAt is { } started && task.CompletedAt is { } finished)

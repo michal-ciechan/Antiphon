@@ -1,4 +1,4 @@
-﻿using Antiphon.Agents.Pty;
+using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -1293,7 +1293,7 @@ public sealed class AgentTaskDispatcher
             // completion, and the board sees the status flip.
             if (task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is Guid parentSession)
             {
-                var note = DelegationReportFormatter.BuildCompletionNote(task, _settings, reason);
+                var note = DelegationReportFormatter.BuildCompletionNote(task, _settings, reason, land: await LandCompletionFacts.LoadAsync(_db, task, ct));
                 try
                 {
                     await _queue.EnqueueAsync(
@@ -2213,7 +2213,7 @@ public sealed class AgentTaskDispatcher
 
         if (task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is Guid parentSession)
         {
-            var note = DelegationReportFormatter.BuildCompletionNote(task, _settings, reason);
+            var note = DelegationReportFormatter.BuildCompletionNote(task, _settings, reason, land: await LandCompletionFacts.LoadAsync(_db, task, ct));
             try
             {
                 await _queue.EnqueueAsync(
@@ -2687,7 +2687,7 @@ public sealed class AgentTaskDispatcher
 
         var reason = task.FailureReason ?? string.Empty;
         var note = DelegationReportFormatter.BuildCompletionNote(
-            task, _settings, reason, workspaceNote: workspaceNote);
+            task, _settings, reason, workspaceNote: workspaceNote, land: await LandCompletionFacts.LoadAsync(_db, task, ct));
         try
         {
             await _queue.EnqueueAsync(

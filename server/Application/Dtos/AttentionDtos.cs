@@ -349,7 +349,11 @@ public sealed record AttentionItemDto(
     Guid? CardId = null,
     Guid? BoardId = null,
     string? ModelKind = null,
-    string? ModelAlias = null);
+    string? ModelAlias = null,
+    string? ConditionKey = null,
+    Guid? LandRequestId = null,
+    Guid? LandNotificationId = null,
+    Guid? HoldingTaskId = null);
 
 /// <param name="RunnerConsulted">
 /// Whether the session runner answered this sweep. False means the runner-derived condition

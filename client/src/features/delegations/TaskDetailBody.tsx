@@ -7,6 +7,7 @@ import {
   Code,
   Group,
   Loader,
+  Modal,
   Paper,
   ScrollArea,
   Select,
@@ -16,6 +17,10 @@ import {
   Tooltip,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
+import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router'
+import { getSessionQueue } from '../../api/sessions'
+import { SessionTranscriptPanel } from '../agents/SessionTranscriptPanel'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   TbAlertTriangle,
@@ -72,6 +77,15 @@ export function TaskDetailBody({ taskId, onClose }: { taskId: string | null; onC
   )
 }
 
+function LandQueueEvidence({ session, message }: { session: string; message: string }) {
+  const result = useQuery({ queryKey: ['landQueueEvidence', session], queryFn: () => getSessionQueue(session) })
+  const row = result.data?.messages.find(m => m.id === message)
+  if (result.isLoading) return <Loader size="sm" />
+  if (result.error) return <Text c="red">Could not load queue evidence.</Text>
+  if (!row) return <Text>Queue history is unavailable. The durable receipt remains in the Land request.</Text>
+  return <Stack><Text>{row.status}; attempts {row.deliveryAttempts}; caller {result.data?.working ? 'busy' : 'idle'}</Text><Code block>{row.body}</Code></Stack>
+}
+
 export function TaskDetailTitle({ detail }: { detail: AgentTaskDetailDto }) {
   const { summary } = detail
   return (
@@ -100,6 +114,7 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
   const [rerouteKind, setRerouteKind] = useState<string | null>('Grok')
   const [rerouteLevel, setRerouteLevel] = useState<string | null>('Frontier')
   const [expandedEvent, setExpandedEvent] = useState<number | null>(null)
+  const [landView, setLandView] = useState<{ session: string; queue?: string } | null>(null)
   const stampedTask = useRef<string | null>(null)
   // "Storing information from previous renders" (react.dev): a guarded set during render, not a
   // ref read in render, which eslint react-hooks/refs rejects (CARD-0378).
@@ -345,14 +360,21 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
           <Text size="xs">Requested {detail.landRequest.requestedAt}; no progress for {Math.floor(detail.landRequest.noProgressSeconds)}s</Text>
           {detail.landRequest.holdReasonCode && <Text size="sm">Reason: {detail.landRequest.holdReasonCode}; holder {detail.landRequest.holdingTaskId ?? 'unknown'} ({detail.landRequest.holdingTaskStatus ?? 'unknown'})</Text>}
           {detail.landRequest.holdDetail && <Text size="sm">{detail.landRequest.holdDetail}</Text>}
+          {detail.landRequest.holdingTaskId && <Anchor component={Link} to={`/orchestrator?tab=delegations&task=${detail.landRequest.holdingTaskId}`}>Open holding task</Anchor>}
           {detail.landRequest.reconciliationError && <Text c="red">{detail.landRequest.reconciliationError}</Text>}
-          {detail.landRequest.notifications.map(n => <Text size="sm" key={n.id}>
+          {detail.landRequest.notifications.map(n => <Stack gap={4} key={n.id}><Text size="sm">
             Notification: {n.kind} {n.state}; destination {n.destinationSessionId ?? 'unavailable'};
             receipt {n.confirmedAt ?? 'unconfirmed'}{n.lastErrorCode && `; ${n.lastErrorCode}`}
-          </Text>)}
+          </Text><Group gap="xs">
+            {n.destinationSessionId && <Button variant="subtle" size="xs" onClick={() => setLandView({ session: n.destinationSessionId! })}>Open caller transcript</Button>}
+            {n.destinationSessionId && n.queueMessageId && <Button variant="subtle" size="xs" onClick={() => setLandView({ session: n.destinationSessionId!, queue: n.queueMessageId! })}>Inspect queued note</Button>}
+          </Group></Stack>)}
         </> : <Text size="sm">Land: Not requested; legacy receipt evidence is unverified.</Text>}
         {!detail.landing && <Text size="sm">Publication: Unconfirmed; cleanup: NotStarted</Text>}
       </Section>
+      <Modal opened={landView !== null} onClose={() => setLandView(null)} title={landView?.queue ? 'Queued Land note' : 'Caller transcript'} size="xl">
+        {landView && (landView.queue ? <LandQueueEvidence session={landView.session} message={landView.queue} /> : <SessionTranscriptPanel sessionId={landView.session} />)}
+      </Modal>
 
       {detail.landing && (
         <Section title="Landing">
