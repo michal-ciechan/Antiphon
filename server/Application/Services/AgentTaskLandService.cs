@@ -104,6 +104,8 @@ public sealed class AgentTaskLandService
             _db.AgentTaskEvents.Add(requestedEvent);
         }
         request!.VerifyFilter = filter;
+        // Only an explicit POST after the task has succeeded can resume a resolved conflict.
+        if (requeued && request.State == LandRequestState.NeedsResolution) request.State = LandRequestState.Queued;
         task.LandVerifyFilter = filter;
         task.ConcurrencyToken = Guid.NewGuid();
         await _db.SaveChangesAsync(ct);

@@ -95,8 +95,12 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
     private sealed class EvidenceGit(string root) : LandingGit
     {
         private async Task RecordAsync(string repository, IReadOnlyList<string> arguments, LandingGitResult result)
-            => await File.WriteAllTextAsync(Path.Combine(root, $"protocol-git-{Guid.NewGuid():N}.json"), JsonSerializer.Serialize(new {
+        {
+            var path = Path.Combine(root, $"protocol-git-{Guid.NewGuid():N}.json");
+            await File.WriteAllTextAsync(path + ".tmp", JsonSerializer.Serialize(new {
                 repository, arguments, result.ExitCode, at = DateTime.UtcNow, pid = Environment.ProcessId }));
+            File.Move(path + ".tmp", path);
+        }
         public override async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
         {
             var result = await base.RunAsync(repository, arguments, ct); await RecordAsync(repository, arguments, result); return result;

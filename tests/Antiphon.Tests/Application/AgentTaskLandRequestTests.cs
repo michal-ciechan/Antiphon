@@ -64,6 +64,21 @@ public class AgentTaskLandRequestTests
     }
 
     [Test]
+    public async Task C467_V01_ExplicitPostResumesResolvedConflictWithoutResettingAge()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync(); await using var db = CreateContext(schema);
+        var clock = Frozen(DateTime.UtcNow); var queue = new AgentTaskLandQueue(); var land = CreateLand(db, queue, clock);
+        var task = await SeedSucceededWorktreeAsync(db); var accepted = await land.RequestAsync(task.Id, null, CancellationToken.None);
+        queue.Release(task.Id);
+        var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == accepted.RequestId);
+        request.State = LandRequestState.NeedsResolution; await db.SaveChangesAsync(); var age = request.RequestedAt;
+        await land.SweepAsync(CancellationToken.None); queue.PendingCount.ShouldBe(0);
+        clock.Advance(TimeSpan.FromHours(1));
+        (await land.RequestAsync(task.Id, null, CancellationToken.None)).RequestId.ShouldBe(accepted.RequestId);
+        request.State.ShouldBe(LandRequestState.Queued); request.RequestedAt.ShouldBe(age); queue.PendingCount.ShouldBe(1);
+    }
+
+    [Test]
     [Arguments("stale")]
     [Arguments("canceled")]
     [Arguments("superseded")]

@@ -84,7 +84,7 @@ public sealed class AgentTaskLandNotificationRecoveryTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
-        var note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId);
+        var note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId, detail: "immutable Land outcome for report-consumer controls");
         await new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System).ReconcileAsync(note.Id, CancellationToken.None);
         var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == note.QueueMessageId);
         row.ConversationKey = $"task:{note.TaskId:N}"; row.HoldUntil = DateTime.UtcNow.AddHours(1);
