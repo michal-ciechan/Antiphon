@@ -168,7 +168,15 @@ public sealed class AgentTaskLandPublicationTests
         else await h.RunAsync();
         var operation = (await h.OperationAsync()).ShouldNotBeNull();
         operation.RemoteConfirmedAt.ShouldBeNull();
-        operation.LastReason.ShouldNotContain("synthetic-private-marker");
+        // Drain-side timeout/cancellation settlement can retain a null operation reason.
+        (operation.LastReason ?? "").ShouldNotContain("synthetic-private-marker");
+        await using (var db = h.CreateContext())
+        {
+            var terminal = await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == h.Fixture.TaskId
+                && e.Type == AgentTaskEventType.LandRefused);
+            terminal.Detail.ShouldNotContain("synthetic-private-marker");
+            terminal.LandingOperationId.ShouldBe(operation.Id);
+        }
         h.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("rebase") || a.Contains("remove"));
         Directory.Exists(h.Fixture.Source).ShouldBeTrue();
         h.Fixture.Git.BeforeCommand = null;
