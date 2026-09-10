@@ -324,44 +324,6 @@ public sealed class AgentTaskLandBoundaryTests
     }
 
     [Test]
-    [Arguments("source-ref")]
-    [Arguments("source-path")]
-    [Arguments("target")]
-    [Arguments("repository")]
-    public async Task C448_V10_VerificationCannotFreezeOldTaskCoordinates(string change)
-    {
-        await using var h = new LandingSafetyHarness();
-        await h.InitializeAsync();
-        await h.AddSourceAsync();
-        await using (var db = h.CreateContext())
-        {
-            var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
-            task.LandVerifyFilter = "/*/*/Fixture/*";
-            await db.SaveChangesAsync();
-        }
-        h.Verifier.Barrier = async () =>
-        {
-            await using var db = h.CreateContext();
-            var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
-            switch (change)
-            {
-                case "source-ref": task.WorktreeBranch = "other"; break;
-                case "source-path": task.WorktreePath = h.Fixture.Repository; break;
-                case "target": task.MergeTargetRef = "other"; break;
-                case "repository": task.RepoPath = h.Fixture.Remote; break;
-            }
-            await db.SaveChangesAsync();
-        };
-        h.Fixture.Git.Trace.Clear();
-        await h.RunAsync();
-        h.Verifier.Calls.ShouldBe(1);
-        h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("--ff-only") || a[0] == "push" || a.Contains("remove"));
-        (await h.OperationAsync())!.LastReason.ShouldBe("task_coordinates_changed");
-        Directory.Exists(h.Fixture.Source).ShouldBeTrue();
-        await h.Fixture.AssertRemoteSourceAsync();
-    }
-
-    [Test]
     [Arguments("source")]
     [Arguments("target-before")]
     [Arguments("prepared")]

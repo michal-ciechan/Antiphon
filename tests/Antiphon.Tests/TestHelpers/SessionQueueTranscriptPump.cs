@@ -8,14 +8,9 @@ internal static class SessionQueueTranscriptPump
 {
     public static async Task RunAsync(string path, Guid sessionId, CancellationToken ct,
         Func<Task>? beforeRead = null, Func<Task>? beforeSave = null,
-        bool pauseAtBarrier = false, Task? hold = null)
+        Task? hold = null)
     {
         var consumed = 0;
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        long sequence;
-        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
-            sequence = await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId)
-                .Select(t => (long?)t.Sequence).MaxAsync(ct) ?? 0;
 
         while (!ct.IsCancellationRequested)
         {
@@ -30,12 +25,19 @@ internal static class SessionQueueTranscriptPump
                     var complete = lines.Length - 1;
                     for (var i = consumed; i < complete; i++)
                     {
-                        foreach (var part in Antiphon.SessionRunner.TranscriptNormalizer.Normalize(lines[i]))
+                        var parts = Antiphon.SessionRunner.TranscriptNormalizer.Normalize(lines[i]);
+                        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+                        var sequence = await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId)
+                            .Select(t => (long?)t.Sequence).MaxAsync(CancellationToken.None) ?? 0;
+                        // A normalizer line can contain several parts with the same UUID.
+                        // Commit them together and consult durable UUIDs on every restart.
+                        var uuids = parts.Select(p => p.Uuid).Where(u => !string.IsNullOrEmpty(u)).ToArray();
+                        var persisted = await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId
+                                && uuids.Contains(t.Uuid)).Select(t => t.Uuid).ToListAsync(CancellationToken.None);
+                        foreach (var part in parts)
                         {
-                            if (part.Uuid is { Length: > 0 } && !seen.Add(part.Uuid))
+                            if (part.Uuid is { Length: > 0 } && persisted.Contains(part.Uuid))
                                 continue;
-                            if (beforeSave is not null) await beforeSave();
-                            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
                             db.TranscriptEntries.Add(new TranscriptEntry
                             {
                                 Id = Guid.NewGuid(),
@@ -49,13 +51,15 @@ internal static class SessionQueueTranscriptPump
                                 Timestamp = part.Timestamp?.UtcDateTime,
                                 CreatedAt = DateTime.UtcNow,
                             });
-                            await db.SaveChangesAsync(CancellationToken.None);
                         }
+                        if (beforeSave is not null) await beforeSave();
+                        await db.SaveChangesAsync(CancellationToken.None);
+                        consumed = i + 1;
                     }
-                    consumed = complete;
                 }
             }
             catch (IOException) { }
+            catch (DbUpdateException) { }
             try { await Task.Delay(100, ct); }
             catch (OperationCanceledException) { break; }
         }
