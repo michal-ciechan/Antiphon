@@ -136,6 +136,7 @@ describe('TaskDrawer', () => {
   })
 
   it('opens land task holder caller and queue without mutation', async () => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
     serve(detail({ status: 'Succeeded', workspace: 'Worktree' }, { landRequest: land({ notifications: [{
       id: 'note-1', kind: 'Outcome', state: 'AwaitingReceipt', destinationSessionId: 'caller-1', queueMessageId: 'queue-1',
       lastErrorCode: null, confirmedAt: null, confirmingPromptSequence: null,
