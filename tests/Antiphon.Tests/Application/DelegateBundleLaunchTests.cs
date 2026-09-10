@@ -41,7 +41,7 @@ public class DelegateBundleLaunchTests
         spec.Cwd.ShouldBe(task.WorkingDirectory);
         var args = spec.Args.ToList();
         var text = kind == AgentKind.Codex
-            ? ConfigValue(args, "developer_instructions").ShouldNotBeNull()
+            ? System.Text.Json.JsonSerializer.Deserialize<string>(ConfigValue(args, "developer_instructions").ShouldNotBeNull()).ShouldNotBeNull()
             : args[args.IndexOf("--append-system-prompt") + 1];
         text.ShouldContain("[bundle:stage-mutation v");
         text.Split("[bundle:stage-mutation v").Length.ShouldBe(2);

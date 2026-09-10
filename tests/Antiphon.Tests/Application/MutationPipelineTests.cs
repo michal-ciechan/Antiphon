@@ -61,7 +61,8 @@ public class MutationPipelineTests(AntiphonWebAppFactory factory)
         var note = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == parent && m.Origin == QueuedMessageOrigin.Delegation);
         note.Body.ShouldContain("next=mutation");
         var pipeline = await CreateService(verify).GetAsync(default);
-        pipeline.Stages.Single(s => s.Role == AgentTaskRole.Mutation).Ready.ShouldHaveSingleItem().SourcePlanTaskId.ShouldBe(task.Id);
+        pipeline.Stages.Single(s => s.Role == AgentTaskRole.Mutation).Ready.Where(r => r.Card.Id == card.Id)
+            .ShouldHaveSingleItem().SourcePlanTaskId.ShouldBe(task.Id);
     }
 
     [Test]
@@ -110,10 +111,12 @@ public class MutationPipelineTests(AntiphonWebAppFactory factory)
             "code", cardId: card.Id, createdAt: DateTime.UtcNow.AddMinutes(-30), completedAt: DateTime.UtcNow.AddMinutes(-20),
             deliverablePath: "docs/superpowers/plans/2026-09-09-card-0470-code-mutation-split-plan.md", nextStage: PipelineHandoffKind.Mutation, nextHandoff: "owner and SHA");
         var first = await CreateService(db).GetAsync(default);
-        first.Stages.Single(s => s.Role == AgentTaskRole.Mutation).Ready.ShouldHaveSingleItem().SourcePlanTaskId.ShouldBe(code.Id);
+        first.Stages.Single(s => s.Role == AgentTaskRole.Mutation).Ready.Where(r => r.Card.Id == card.Id)
+            .ShouldHaveSingleItem().SourcePlanTaskId.ShouldBe(code.Id);
         var mutation = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Mutation, openStatus,
             "mutation", cardId: card.Id, createdAt: DateTime.UtcNow.AddMinutes(-10));
-        (await CreateService(db).GetAsync(default)).Stages.Single(s => s.Role == AgentTaskRole.Mutation).Ready.ShouldBeEmpty();
+        (await CreateService(db).GetAsync(default)).Stages.Single(s => s.Role == AgentTaskRole.Mutation).Ready
+            .Where(r => r.Card.Id == card.Id).ShouldBeEmpty();
         var parent = Guid.NewGuid();
         var session = Guid.NewGuid();
         await SeedSessionAsync(db, parent, workspace.Path);
@@ -148,12 +151,12 @@ public class MutationPipelineTests(AntiphonWebAppFactory factory)
         var note = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == parent && m.Origin == QueuedMessageOrigin.Delegation);
         note.Body.ShouldContain("next=" + token);
         var after = await CreateService(verify).GetAsync(default);
-        var review = after.Stages.Single(s => s.Role == AgentTaskRole.Review).Ready;
+        var review = after.Stages.Single(s => s.Role == AgentTaskRole.Review).Ready.Where(r => r.Card.Id == card.Id);
         if (destination == PipelineHandoffKind.Review)
             review.ShouldHaveSingleItem().SourcePlanTaskId.ShouldBe(mutation.Id);
         else
             review.ShouldBeEmpty();
-        after.Stages.Single(s => s.Role == AgentTaskRole.Mutation).Ready.ShouldBeEmpty();
+        after.Stages.Single(s => s.Role == AgentTaskRole.Mutation).Ready.Where(r => r.Card.Id == card.Id).ShouldBeEmpty();
     }
 
     private static AgentTaskPipelineStatusService CreateService(
