@@ -6,6 +6,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -49,6 +50,40 @@ public sealed class AgentTaskLandNotificationRecoveryTests
     [Test]
     [Arguments(1, 5)] [Arguments(2, 10)] [Arguments(3, 20)] [Arguments(4, 40)]
     [Arguments(5, 80)] [Arguments(6, 160)] [Arguments(7, 300)] [Arguments(8, 300)]
-    public void C467_V08_RetryAndDestinationMatrix(int attempt, int seconds)
-        => AgentTaskLandNotificationService.RetrySeconds(attempt).ShouldBe(seconds);
+    public async Task C467_V08_RetryAndDestinationMatrix(int attempt, int seconds)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId);
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var boundary = new FailedInsert();
+        var service = new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, clock, boundary);
+        for (var i = 0; i < attempt; i++)
+        {
+            await service.ReconcileAsync(note.Id, CancellationToken.None);
+            await db.Entry(note).ReloadAsync();
+            if (i + 1 < attempt) clock.SetUtcNow(note.NextAttemptAt);
+        }
+        note.EnqueueAttempts.ShouldBe(attempt);
+        note.NextAttemptAt.ShouldBe(clock.GetUtcNow().UtcDateTime.AddSeconds(seconds));
+        note.State.ShouldBe(LandNotificationState.RetryPending); note.ConfirmedAt.ShouldBeNull();
+        note.LastErrorCode.ShouldContain("IOException"); note.QueueMessageId.ShouldBeNull();
+        await service.ReconcileAsync(note.Id, CancellationToken.None);
+        boundary.Calls.ShouldBe(attempt, "not-yet-due retry does not attempt enqueue");
+        clock.SetUtcNow(note.NextAttemptAt);
+        await new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, clock).ReconcileAsync(note.Id, CancellationToken.None);
+        await db.Entry(note).ReloadAsync(); note.QueueMessageId.ShouldNotBeNull();
+        var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == note.QueueMessageId);
+        row.SourceLandNotificationId.ShouldBe(note.Id); row.SourceTaskId.ShouldBe(note.TaskId);
+        row.ContentDigest.ShouldBe(note.ContentDigest); row.NoteHeader.ShouldBe(note.Body.Split('\n')[0]);
+        h.Adapter.Inputs.ShouldBeEmpty();
+    }
+
+    private sealed class FailedInsert : LandDeliveryBoundary
+    {
+        public int Calls;
+        public override Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
+        { Calls++; throw new IOException("owned insertion failure"); }
+    }
 }

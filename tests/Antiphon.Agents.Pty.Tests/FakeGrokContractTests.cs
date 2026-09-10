@@ -20,6 +20,32 @@ public class FakeGrokContractTests
 {
     private static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
 
+    [Test]
+    public async Task C467_BusyGatePreservesNativePromptAndTurnEnd()
+    {
+        OperatingSystem.IsWindows().ShouldBeTrue();
+        File.Exists(FakeGrokExe).ShouldBeTrue();
+        var root = Path.Combine(Path.GetTempPath(), "c467-gate-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var gate = Path.Combine(root, "busy");
+        var session = Guid.NewGuid().ToString();
+        await using var runner = await LaunchReadyFakeAsync(new Dictionary<string, string> {
+            ["GROK_HOME"] = root, ["ANTIPHON_FAKE_BUSY_GATE"] = gate }, ["--cwd", root, "--session-id", session]);
+        try
+        {
+            await runner.WriteAsync("[c467-busy] distinctive held prompt\r");
+            var native = Path.Combine(root, "sessions", Uri.EscapeDataString(Path.GetFullPath(root)), session, "updates.jsonl");
+            var held = await WaitForUpdatesAsync(native, "user_message_chunk", "distinctive held prompt");
+            held.ShouldNotContain("turn_completed");
+            (await runner.WaitForOutputAsync(s => s.Contains("C467_BUSY_HELD"), TimeSpan.FromSeconds(5))).ShouldBeTrue();
+            (await File.ReadAllTextAsync(native)).ShouldNotContain("turn_completed");
+            await File.WriteAllTextAsync(gate + ".release", "release");
+            var completed = await WaitForUpdatesAsync(native, "turn_completed", "end_turn");
+            completed.Split("user_message_chunk").Length.ShouldBe(2);
+        }
+        finally { await runner.KillAsync(TimeSpan.FromSeconds(2)); }
+    }
+
     private static string FakeGrokExe =>
         Path.Combine(AppContext.BaseDirectory, "fakegrok", "fakegrok.exe");
 

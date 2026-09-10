@@ -16,9 +16,11 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
     {
         settings["Agents:DefaultDefinition"] = "c467-grok";
         settings["Agents:Definitions:c467-grok:Kind"] = "Grok";
-        settings["Agents:Definitions:c467-grok:Exe"] = Path.Combine(AppContext.BaseDirectory, "fakegrok", "fakegrok.exe");
+        settings["Agents:Definitions:c467-grok:Exe"] = Path.Combine(Path.GetDirectoryName(typeof(LandDeliveryOptions).Assembly.Location)!, "fakegrok", "fakegrok.exe");
         settings["Agents:Definitions:c467-grok:Env:GROK_HOME"] = Path.Combine(Root, "native");
         settings["Agents:Definitions:c467-grok:Env:ANTIPHON_FAKE_BUSY_GATE"] = Gate;
+        settings["Agents:Definitions:c467-grok:NonSecretEnvironmentNames:0"] = "GROK_HOME";
+        settings["Agents:Definitions:c467-grok:NonSecretEnvironmentNames:1"] = "ANTIPHON_FAKE_BUSY_GATE";
         settings["Git:WorkspacePath"] = Path.Combine(Root, "repo");
         settings["Git:WorktreeBasePath"] = Path.Combine(Root, "trees");
         settings["GitHub:Enabled"] = "false";
