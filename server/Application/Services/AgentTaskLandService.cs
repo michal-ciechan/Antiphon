@@ -135,11 +135,19 @@ public sealed class AgentTaskLandService
             return LandRunResult.Complete;
         if (task.Status != AgentTaskStatus.Succeeded || task.Workspace != WorkspaceMode.Worktree)
         {
+            await using var canceled = await _db.Database.BeginTransactionAsync(ct);
+            await LockTaskAsync(task.Id, ct);
+            await _db.Entry(task).ReloadAsync(ct);
+            await _db.Entry(request).ReloadAsync(ct);
+            if (task.CurrentLandRequestId != request.Id || !request.IsPending || task.LandRequestedAt is null
+                || task.Status == AgentTaskStatus.Blocked || task.Status == AgentTaskStatus.Succeeded && task.Workspace == WorkspaceMode.Worktree)
+                return LandRunResult.Complete;
             request.State = LandRequestState.Canceled;
             request.IsPending = false;
             request.ReconciliationError = "task_no_longer_eligible";
             ClearPending(task);
             await _db.SaveChangesAsync(ct);
+            await canceled.CommitAsync(ct);
             return LandRunResult.Complete;
         }
 
@@ -169,7 +177,16 @@ public sealed class AgentTaskLandService
         await using (var admission = await _db.Database.BeginTransactionAsync(ct))
         {
         await LockTaskAsync(task.Id, ct);
+        await _db.Entry(task).ReloadAsync(ct);
         await _db.Entry(request).ReloadAsync(ct);
+        if (!request.IsPending || task.CurrentLandRequestId != request.Id || task.Status != AgentTaskStatus.Succeeded
+            || task.LandRequestedAt is null || request.State == LandRequestState.NeedsResolution) return LandRunResult.Complete;
+        if (task.LandRequestedAt != request.RequestedAt || task.LandAttempt != request.Attempt)
+        {
+            request.ReconciliationError = "land_request_mirror_disagreement";
+            await _db.SaveChangesAsync(ct); await admission.CommitAsync(ct);
+            return LandRunResult.Complete;
+        }
         if (request.State == LandRequestState.Held)
         {
             var released = Event(task.Id, AgentTaskEventType.HeldReleased, "Land admitted; hold released.", _clock.GetUtcNow().UtcDateTime);
@@ -200,6 +217,11 @@ public sealed class AgentTaskLandService
         if (result.Conflicts.Count > 0)
         {
             await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+            await LockTaskAsync(task.Id, ct);
+            await _db.Entry(task).ReloadAsync(ct);
+            await _db.Entry(request).ReloadAsync(ct);
+            if (task.CurrentLandRequestId != request.Id || !request.IsPending || request.State == LandRequestState.NeedsResolution)
+                return LandRunResult.Complete;
             task.Status = AgentTaskStatus.Blocked;
             task.FailureReason = "Landing rebase conflicted.";
             var helper = await _tasks.CreateMergeTaskAsync(task, result.Conflicts, ct, task.MergeTargetRef ?? "master");
@@ -399,14 +421,20 @@ public sealed class AgentTaskLandService
             .ToListAsync(ct);
         foreach (var row in stale)
         {
+            await using var canceled = await _db.Database.BeginTransactionAsync(ct);
+            await LockTaskAsync(row.Id, ct);
+            await _db.Entry(row).ReloadAsync(ct);
+            if (row.LandRequestedAt is null || row.Status is AgentTaskStatus.Succeeded or AgentTaskStatus.Blocked) continue;
             var request = await EnsureRequestAsync(row, ct);
+            await _db.Entry(request).ReloadAsync(ct);
+            if (!request.IsPending) continue;
             request.State = LandRequestState.Canceled;
             request.IsPending = false;
             request.ReconciliationError = "task_no_longer_eligible";
             ClearPending(row);
-        }
-        if (stale.Count > 0)
             await _db.SaveChangesAsync(ct);
+            await canceled.CommitAsync(ct);
+        }
 
         var pending = await _db.AgentTasks
             .Where(t => t.LandRequestedAt != null
@@ -418,6 +446,8 @@ public sealed class AgentTaskLandService
         {
             if (_queue.IsActive(row.Id))
                 continue;
+            var request = await EnsureRequestAsync(row, ct);
+            if (!request.IsPending || request.State == LandRequestState.NeedsResolution) continue;
             if (row.LandAttempt >= maxAttempts)
             {
                 var last = row.LandStartedAt?.ToString("u") ?? "unknown";
@@ -437,8 +467,6 @@ public sealed class AgentTaskLandService
                 await _db.SaveChangesAsync(ct);
             }
 
-            var request = await EnsureRequestAsync(row, ct);
-            if (request.State == LandRequestState.NeedsResolution) continue;
             _queue.TryEnqueue(row.Id, row.LandVerifyFilter, request.Id);
         }
     }

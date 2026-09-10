@@ -8,6 +8,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Infrastructure.Git;
 
 namespace Antiphon.E2E.Fixtures;
 
@@ -43,6 +46,8 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
         services.AddScoped(p => ActivatorUtilities.CreateInstance<AgentTaskLandingProtocol>(p, clock));
         services.AddScoped(p => ActivatorUtilities.CreateInstance<AgentTaskLandMonitorService>(p, clock));
         services.AddScoped(p => ActivatorUtilities.CreateInstance<AgentTaskLandNotificationService>(p, clock));
+        services.AddScoped(p => ActivatorUtilities.CreateInstance<AttentionService>(p, clock));
+        services.AddSingleton<ILandingGit>(new EvidenceGit(Root));
         services.AddTransient<IStartupFilter>(_ => new AcceptanceObserver(Root));
         services.AddSingleton(p => new PtyDeliveryProfile(p.GetRequiredService<IServiceScopeFactory>(),
             p.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PtyDeliveryProfile>>(),
@@ -84,6 +89,22 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none")
         {
             var path = Path.Combine(root, "land-clock-seconds.txt");
             return DateTimeOffset.UtcNow.AddSeconds(File.Exists(path) && double.TryParse(File.ReadAllText(path), out var seconds) ? seconds : 0);
+        }
+    }
+
+    private sealed class EvidenceGit(string root) : LandingGit
+    {
+        private async Task RecordAsync(string repository, IReadOnlyList<string> arguments, LandingGitResult result)
+            => await File.WriteAllTextAsync(Path.Combine(root, $"protocol-git-{Guid.NewGuid():N}.json"), JsonSerializer.Serialize(new {
+                repository, arguments, result.ExitCode, at = DateTime.UtcNow, pid = Environment.ProcessId }));
+        public override async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
+        {
+            var result = await base.RunAsync(repository, arguments, ct); await RecordAsync(repository, arguments, result); return result;
+        }
+        public override async Task<LandingGitResult> RunOwnedAsync(string repository, IReadOnlyList<string> arguments,
+            Func<int, long, CancellationToken, Task> started, CancellationToken ct)
+        {
+            var result = await base.RunOwnedAsync(repository, arguments, started, ct); await RecordAsync(repository, arguments, result); return result;
         }
     }
 

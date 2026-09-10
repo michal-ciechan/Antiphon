@@ -20,6 +20,17 @@ namespace Antiphon.Tests.Application;
 public sealed class AgentTaskLandMonitoringTests
 {
     [Test]
+    [Arguments(0, 900, false)]
+    [Arguments(300, 300, false)]
+    [Arguments(900, 300, false)]
+    [Arguments(300, 900, true)]
+    public void C467_V15_ThresholdConfiguration(int warning, int error, bool valid)
+    {
+        var settings = new DelegationSettings { LandWarningSeconds = warning, LandErrorSeconds = error };
+        new DelegationSettingsValidator().Validate(null, settings).Succeeded.ShouldBe(valid);
+        new DelegationSettings().LandWarningSeconds.ShouldBe(300); new DelegationSettings().LandErrorSeconds.ShouldBe(900);
+    }
+    [Test]
     public async Task C467_V16_AttentionSurvivesRecencyAndDeduplicates()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -91,7 +102,9 @@ public sealed class AgentTaskLandMonitoringTests
         await service.SweepAsync(CancellationToken.None);
         (await db.AgentTaskLandNotifications.CountAsync(n => n.RequestId == request.Id)).ShouldBe(0);
         clock.Advance(TimeSpan.FromMilliseconds(1));
-        await service.SweepAsync(CancellationToken.None);
+        await using (var competing = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+            await Task.WhenAll(service.SweepAsync(CancellationToken.None), new AgentTaskLandMonitorService(competing, clock,
+                Options.Create(new DelegationSettings()), new MockEventBus()).SweepAsync(CancellationToken.None));
         (await db.AgentTaskLandNotifications.CountAsync(n => n.RequestId == request.Id)).ShouldBe(1);
         clock.Advance(TimeSpan.FromSeconds(599.999));
         await service.SweepAsync(CancellationToken.None);

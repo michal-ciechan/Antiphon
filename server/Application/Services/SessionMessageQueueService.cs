@@ -352,6 +352,8 @@ public sealed partial class SessionMessageQueueService
                         await boundary.ReachedAsync("queue-existing-key", sourceTaskId ?? Guid.Empty, existing.Id, ct);
                     return await GetQueueAsync(sessionId, ct);
                 }
+                if (scope.ServiceProvider.GetService<LandDeliveryBoundary>() is { } absentBoundary)
+                    await absentBoundary.ReachedAsync("queue-key-absent", sourceTaskId ?? Guid.Empty, notificationId, ct);
             }
 
             // CARD-0320: the per-session queue lock serialises two EnqueueAsync calls but used

@@ -23,6 +23,33 @@ namespace Antiphon.Tests.Application;
 public class AgentTaskLandRequestTests
 {
     [Test]
+    public async Task C467_V01_TerminalRetryPreservesSnapshotAndCancellationDebt()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync(); await using var db = CreateContext(schema);
+        var clock = Frozen(DateTime.UtcNow); var queue = new AgentTaskLandQueue(); var land = CreateLand(db, queue, clock);
+        var task = await SeedSucceededWorktreeAsync(db);
+        var originalCaller = Guid.NewGuid(); task.ReplyTo = AgentTaskReplyTo.Session; task.ParentSessionId = originalCaller;
+        await db.SaveChangesAsync();
+        var first = await land.RequestAsync(task.Id, "first", CancellationToken.None); queue.Release(task.Id);
+        await land.FailAsync(task.Id, new IOException("owned pre-operation failure"), CancellationToken.None);
+        var owed = await db.AgentTaskLandNotifications.SingleAsync(n => n.RequestId == first.RequestId);
+        owed.ParentSessionId.ShouldBe(originalCaller); owed.ConfirmedAt.ShouldBeNull();
+        task = await db.AgentTasks.SingleAsync(t => t.Id == task.Id); task.ParentSessionId = Guid.NewGuid(); await db.SaveChangesAsync();
+        clock.Advance(TimeSpan.FromHours(1));
+        var second = await land.RequestAsync(task.Id, "second", CancellationToken.None); second.RequestId.ShouldNotBe(first.RequestId);
+        var retry = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == second.RequestId);
+        retry.Attempt.ShouldBe(0); retry.RequestedAt.ShouldBe(clock.GetUtcNow().UtcDateTime);
+        retry.ParentSessionId.ShouldBe(task.ParentSessionId); owed.ParentSessionId.ShouldBe(originalCaller);
+        var terminalEvents = await db.AgentTaskEvents.CountAsync(e => e.IsLandTerminal && e.AgentTaskId == task.Id);
+        await land.RunRequestAsync(task.Id, first.RequestId, null, CancellationToken.None);
+        (await db.AgentTaskEvents.CountAsync(e => e.IsLandTerminal && e.AgentTaskId == task.Id)).ShouldBe(terminalEvents);
+        task.Status = AgentTaskStatus.Canceled; await db.SaveChangesAsync(); await land.SweepAsync(CancellationToken.None);
+        (await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == owed.Id)).ConfirmedAt.ShouldBeNull();
+        (await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == first.RequestId)).State.ShouldBe(LandRequestState.Completed);
+        (await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == second.RequestId)).State.ShouldBe(LandRequestState.Canceled);
+    }
+
+    [Test]
     public async Task C467_V01_ConcurrentAcceptanceKeepsOneRequest()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();

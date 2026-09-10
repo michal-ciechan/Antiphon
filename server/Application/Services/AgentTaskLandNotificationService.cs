@@ -6,13 +6,15 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
+using Antiphon.Server.Application.Settings;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>Durable handoff and transcript-only receipt. All typing belongs to the existing queue.</summary>
 public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMessageQueueService messages,
     CompletionNoteFlushQueue flushes, AgentSessionRuntime runtime, TimeProvider clock, LandDeliveryBoundary? boundary = null,
-    IRepositoryMutationLease? leases = null)
+    IRepositoryMutationLease? leases = null, IOptions<SupervisionSettings>? supervision = null)
 {
     public async Task ReconcileAsync(Guid id, CancellationToken ct)
     {
@@ -85,6 +87,11 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                 note.State = LandNotificationState.Canceled;
                 note.LastErrorCode = "queue_canceled_unconfirmed";
             }
+            else if (row.DeliveryVerdict == DeliveryVerdict.Truncated)
+                note.LastErrorCode = "queue_truncated_unconfirmed";
+            else if (row.Status == QueuedMessageStatus.Pending && row.DeliveryAttempts >= Math.Max(1,
+                (supervision?.Value ?? new SupervisionSettings()).DeliveryVerification.MaxDeliveryAttempts))
+                note.LastErrorCode = "queue_parked_unconfirmed";
             if (row.DeliveryAttempts > 0)
             {
                 await runtime.CatchUpTranscriptAsync(session, ct);
@@ -93,7 +100,11 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                 if (row.LastDeliveryBaselineSequence is long floor)
                     prompts = prompts.Where(p => p.Sequence > floor);
                 else if (row.LastDeliveryStartedAt is DateTime started)
-                    prompts = prompts.Where(p => p.Timestamp >= started);
+                {
+                    var floorTime = started.AddSeconds(-Math.Max(0, (supervision?.Value ?? new SupervisionSettings())
+                        .DeliveryVerification.UnobservableBaselineConfirmClockToleranceSeconds));
+                    prompts = prompts.Where(p => p.Timestamp >= floorTime);
+                }
                 else return;
                 var evidence = (await prompts.OrderBy(p => p.Sequence).ToListAsync(ct))
                     .FirstOrDefault(p => PromptSubmissionMatch.IsConfirmedBy(row.Body, p.Text!)

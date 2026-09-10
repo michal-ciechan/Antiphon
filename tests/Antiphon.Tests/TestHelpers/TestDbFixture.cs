@@ -40,6 +40,12 @@ public class TestDbFixture
 	[Before(Assembly)]
 	public static async Task InitializeAsync()
 	{
+		if (Environment.GetEnvironmentVariable(LandQueueRaceWorker.Marker) is { } worker)
+		{
+			try { await LandQueueRaceWorker.RunAsync(worker); Environment.Exit(0); }
+			catch (Exception ex) { Console.Error.WriteLine(ex.GetType().Name + ": " + ex.StackTrace); Environment.Exit(1); }
+			return;
+		}
 		await _container.StartAsync();
 
 		// Migrate the shared database once; isolated clones copy this state via TEMPLATE.

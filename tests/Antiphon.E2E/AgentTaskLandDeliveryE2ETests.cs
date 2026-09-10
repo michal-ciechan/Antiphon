@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Shouldly;
 using TUnit.Core;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.Server.Application.Dtos;
 
 namespace Antiphon.E2E;
 
@@ -53,7 +54,7 @@ public class AgentTaskLandDeliveryE2ETests
     [Test]
     public async Task C467_V24_BlockedWriterThenReleaseDeliversBothNotes()
     {
-        await using var f = new LandDeliveryFixture(); await f.InitializeAsync();
+        await using var f = new LandDeliveryFixture(); await f.InitializeAsync(); await f.UseChildAsync("none");
         var writer = Guid.NewGuid();
         await using (var db = f.CreateContext())
         {
@@ -64,11 +65,15 @@ public class AgentTaskLandDeliveryE2ETests
         }
         await f.RequestAsync(); await f.ReleaseExecutionAsync();
         var held = await f.ReceiptAsync(LandNotificationKind.Held);
+        f.PublicationMutationCount().ShouldBe(0);
+        (await f.AttentionAsync()).Items.ShouldContain(i => i.Kind == AttentionKind.LandHeld && i.TaskId == f.TaskId && i.HoldingTaskId == writer);
         await f.AdvanceLandClockAsync(901);
         await LandDeliveryFixture.UntilAsync(async () => {
             await using var db = f.CreateContext();
             return await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Aged && n.ConfirmedAt != null) == 2;
         }, "both hold age receipts");
+        await f.SnapshotAsync(); await f.KillChildAsync(); await f.UseChildAsync("none");
+        (await f.AttentionAsync()).Items.ShouldContain(i => i.Kind == AttentionKind.LandHeld && i.LandRequestId == held.RequestId && i.HoldingTaskId == writer);
         await using (var db = f.CreateContext())
         {
             var request = await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == f.TaskId);
@@ -83,6 +88,7 @@ public class AgentTaskLandDeliveryE2ETests
             (await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == f.TaskId)).HoldReasonCode.ShouldBeNull();
         }
         await f.AssertOnePromptAsync(held); await f.AssertOnePromptAsync(outcome);
+        (await f.AttentionAsync()).Items.ShouldNotContain(i => i.TaskId == f.TaskId && (i.Kind == AttentionKind.LandHeld || i.LandNotificationId == outcome.Id));
     }
 
     [Test]
@@ -99,8 +105,10 @@ public class AgentTaskLandDeliveryE2ETests
             note.QueueMessageId.ShouldBeNull();
             (await db.SessionQueuedMessages.CountAsync(m => m.SourceLandNotificationId == note.Id)).ShouldBe(0);
         }
+        var mutations = f.PublicationMutationCount();
         await f.AssertRemoteAsync(); await f.SnapshotAsync(); await f.KillChildAsync(); await f.UseChildAsync("none");
         var received = await f.ReceiptAsync(); await f.AssertOnePromptAsync(received);
+        f.PublicationMutationCount().ShouldBe(mutations, "recovery must not repeat push or cleanup");
     }
 
     [Test]
@@ -238,6 +246,10 @@ public class AgentTaskLandDeliveryE2ETests
             await using var db = f.CreateContext();
             return await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Aged) == 2;
         }, "outcome warning and error obligations");
+        var attention = await f.AttentionAsync();
+        var owed = attention.Items.Single(i => i.TaskId == f.TaskId && i.Kind == AttentionKind.LandOutcomeUnconfirmed && i.Headline.Contains("Outcome"));
+        owed.Severity.ShouldBe(AlertSeverity.Error);
+        owed.Headline.ShouldContain(state == "busy" ? "busy" : "attempted");
         await using (var db = f.CreateContext())
         {
             var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == f.TaskId && n.Kind == LandNotificationKind.Outcome);
@@ -246,5 +258,7 @@ public class AgentTaskLandDeliveryE2ETests
         }
         if (state == "busy") await f.ReleaseBusyAsync(); else await f.ReleaseBoundaryAsync("queue-before-typing");
         var received = await f.ReceiptAsync(); await f.AssertOnePromptAsync(received);
+        await f.UseChildAsync("none");
+        (await f.AttentionAsync()).Items.ShouldNotContain(i => i.LandNotificationId == received.Id);
     }
 }

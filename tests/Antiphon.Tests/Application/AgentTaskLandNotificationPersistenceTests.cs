@@ -105,6 +105,9 @@ public sealed class AgentTaskLandNotificationPersistenceTests
         var notifier = new AgentTaskLandNotificationService(observer, bridge.Queue, new CompletionNoteFlushQueue(), bridge.Runtime, TimeProvider.System);
         await notifier.ReconcileAsync(attached.Id, CancellationToken.None);
         attached.ConfirmedAt.ShouldBeNull("a historical Sent row is not receipt evidence");
+        observer.TranscriptEntries.Add(new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = bridge.SessionId, Sequence = 10,
+            Kind = TranscriptKinds.AssistantText, Text = "historical attempt baseline", Timestamp = old, CreatedAt = old });
+        await observer.SaveChangesAsync();
         bridge.Runner.SetTranscript(new(bridge.SessionId, [new SessionRunnerTranscriptEvent(bridge.SessionId, 11, TranscriptKinds.UserPrompt,
             "c467-legacy-evidence", null, DateTimeOffset.UtcNow, "user", attached.Body, null, null, null, null, null)], 11));
         await notifier.ReconcileAsync(attached.Id, CancellationToken.None);

@@ -18,6 +18,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class AgentTaskLandNotificationRecoveryTests
 {
     [Test]
@@ -87,9 +88,13 @@ public sealed class AgentTaskLandNotificationRecoveryTests
         await new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System).ReconcileAsync(note.Id, CancellationToken.None);
         var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == note.QueueMessageId);
         row.ConversationKey = $"task:{note.TaskId:N}"; row.HoldUntil = DateTime.UtcNow.AddHours(1);
+        // Adversarial digest equality ensures the Land exclusion, rather than a digest mismatch, protects the row.
+        row.ContentDigest = DelegationNoteDigest.Compute("ordinary report");
         var body = row.Body; var digest = row.ContentDigest; var hold = row.HoldUntil;
         (await db.AgentTasks.SingleAsync(t => t.Id == note.TaskId)).Result = "ordinary report";
         await db.SaveChangesAsync();
+        (await h.Queue.TryApplyDistillationAsync(new DistillRequest(note.TaskId, row.Id, DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow.AddMinutes(1), OutputDistillerMode.Apply), digest!, "replacement summary", CancellationToken.None)).ShouldBe("identity");
         (await AgentTaskCheckService.HasCompletionNoteAsync(db, h.SessionId, note.TaskId, CancellationToken.None)).ShouldBeFalse();
         var tasks = new AgentTaskService(db, new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance), Options.Create(new DelegationSettings()),
             new MockEventBus(), new RecordingSessionStopper(), TimeProvider.System, NullLogger<AgentTaskService>.Instance);
@@ -98,11 +103,15 @@ public sealed class AgentTaskLandNotificationRecoveryTests
             .ReleaseHoldAsync(row.Id, CancellationToken.None);
         await db.Entry(row).ReloadAsync(); await db.Entry(note).ReloadAsync();
         row.Body.ShouldBe(body); row.ContentDigest.ShouldBe(digest); row.HoldUntil.ShouldBe(hold); note.ConfirmedAt.ShouldBeNull();
+        row.HoldUntil = null; await db.SaveChangesAsync();
+        await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await db.Entry(row).ReloadAsync(); row.Body.ShouldBe(body);
+        h.Adapter.SubmittedBodies.ShouldContain(body);
+        (await db.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == note.TaskId && e.Type == AgentTaskEventType.NoteShrunk)).ShouldBeFalse();
         await h.Queue.EnqueueAsync(h.SessionId, "ordinary report", MessageSendMode.WhenIdle, CancellationToken.None,
             QueuedMessageOrigin.Delegation, $"task:{note.TaskId:N}", note.TaskId, DelegationNoteDigest.Compute("ordinary report"), deliverIfIdle: false);
         (await AgentTaskCheckService.HasCompletionNoteAsync(db, h.SessionId, note.TaskId, CancellationToken.None)).ShouldBeTrue();
         (await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == note.TaskId)).ShouldBe(2);
-        h.Adapter.Inputs.ShouldBeEmpty();
     }
     [Test]
     public async Task C467_V09_KeyedQueueRacesAndDistinctEvents()
@@ -112,14 +121,9 @@ public sealed class AgentTaskLandNotificationRecoveryTests
         await using var second = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
         var notification = Guid.NewGuid();
         var task = Guid.NewGuid();
-        Guid firstId = default, secondId = default;
-        await Task.WhenAll(
-            first.Queue.EnqueueAsync(first.SessionId, "immutable keyed body", MessageSendMode.WhenIdle, CancellationToken.None,
-                QueuedMessageOrigin.Delegation, sourceTaskId: task, contentDigest: "digest", deliverIfIdle: false,
-                sourceLandNotificationId: notification, onCreated: id => firstId = id),
-            second.Queue.EnqueueAsync(first.SessionId, "immutable keyed body", MessageSendMode.WhenIdle, CancellationToken.None,
-                QueuedMessageOrigin.Delegation, sourceTaskId: task, contentDigest: "digest", deliverIfIdle: false,
-                sourceLandNotificationId: notification, onCreated: id => secondId = id));
+        await first.Queue.EnqueueAsync(first.SessionId, "ordinary adversarial report", MessageSendMode.WhenIdle, CancellationToken.None,
+            QueuedMessageOrigin.Delegation, sourceTaskId: task, contentDigest: "digest", deliverIfIdle: false);
+        var (firstId, secondId) = await LandQueueRaceWorker.RunPairAsync(schema.ConnectionString, first.SessionId, task, notification);
         firstId.ShouldNotBe(Guid.Empty);
         firstId.ShouldBe(secondId);
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
@@ -128,7 +132,7 @@ public sealed class AgentTaskLandNotificationRecoveryTests
             CancellationToken.None, QueuedMessageOrigin.Delegation, sourceTaskId: task, contentDigest: "digest", deliverIfIdle: false, sourceLandNotificationId: notification));
         await first.Queue.EnqueueAsync(first.SessionId, "immutable keyed body", MessageSendMode.WhenIdle,
             CancellationToken.None, QueuedMessageOrigin.Delegation, sourceTaskId: task, contentDigest: "digest", deliverIfIdle: false, sourceLandNotificationId: Guid.NewGuid());
-        (await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == task)).ShouldBe(2);
+        (await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == task)).ShouldBe(3);
         db.SessionQueuedMessages.Add(new SessionQueuedMessage { Id = Guid.NewGuid(), AgentSessionId = first.SessionId,
             SourceLandNotificationId = notification, Body = "duplicate", CreatedAt = DateTime.UtcNow });
         await Should.ThrowAsync<DbUpdateException>(() => db.SaveChangesAsync());

@@ -117,9 +117,28 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
             taskId = TaskId, callerId = CallerId, sourceSha = SourceSha, serverMvid = typeof(Program).Assembly.ManifestModule.ModuleVersionId,
             runner = _app.OwnedRunnerUrl, runnerDirectory = _app.OwnedRunnerDirectory, server = _address,
             fakeHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(await File.ReadAllBytesAsync(Path.Combine(AppContext.BaseDirectory, "fakegrok", "fakegrok.dll")))) }));
+        using var runnerIdentity = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(_app.OwnedRunnerDirectory, "runner.json")));
+        using var ownedRunner = Process.GetProcessById(runnerIdentity.RootElement.GetProperty("Pid").GetInt32());
+        Path.GetFullPath(ownedRunner.MainModule!.FileName).ShouldBe(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "Antiphon.SessionRunner.exe")), Case.Insensitive);
+        await File.WriteAllTextAsync(Path.Combine(Root, "loaded-runner" + _suffix + ".json"), JsonSerializer.Serialize(new {
+            pid = ownedRunner.Id, started = ownedRunner.StartTime.ToUniversalTime(), binary = ownedRunner.MainModule.FileName,
+            sha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(await File.ReadAllBytesAsync(Path.Combine(AppContext.BaseDirectory, "Antiphon.SessionRunner.dll")))) }));
     }
 
     public AppDbContext CreateContext() => new(new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(_connection).Options);
+    public async Task<AttentionDto> AttentionAsync()
+    {
+        var result = await _http.GetFromJsonAsync<AttentionDto>("/api/attention", new JsonSerializerOptions(JsonSerializerDefaults.Web) {
+            Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } });
+        await File.WriteAllTextAsync(Path.Combine(Root, $"attention-{Guid.NewGuid():N}.json"), JsonSerializer.Serialize(result));
+        return result!;
+    }
+    public int PublicationMutationCount()
+        => Directory.GetFiles(Root, "protocol-git-*.json").Count(path => {
+            using var data = JsonDocument.Parse(File.ReadAllText(path));
+            var args = data.RootElement.GetProperty("arguments").EnumerateArray().Select(a => a.GetString()).ToArray();
+            return args[0] == "push" || args.Contains("remove");
+        });
 
     public async Task<Guid> RequestAsync(bool initial = true)
     {

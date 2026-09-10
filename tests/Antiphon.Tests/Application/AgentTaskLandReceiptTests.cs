@@ -121,6 +121,7 @@ public sealed class AgentTaskLandReceiptTests
     [Arguments("wrong-identity")]
     [Arguments("old-sequence")]
     [Arguments("old-time")]
+    [Arguments("clock-tolerance")]
     [Arguments("head-only")]
     [Arguments("head-tail-splice")]
     [Arguments("unrelated")]
@@ -137,7 +138,7 @@ public sealed class AgentTaskLandReceiptTests
         var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == note.QueueMessageId);
         row.DeliveryAttempts = 1;
         row.Status = QueuedMessageStatus.Sent;
-        row.LastDeliveryBaselineSequence = evidence == "old-time" ? null : 10;
+        row.LastDeliveryBaselineSequence = evidence is "old-time" or "clock-tolerance" ? null : 10;
         row.LastDeliveryStartedAt = DateTime.UtcNow.AddSeconds(-1);
         row.DeliveryVerdict = evidence == "screen-delivered" ? DeliveryVerdict.Delivered
             : evidence == "late-confirmed" ? DeliveryVerdict.LateConfirmed : null;
@@ -163,13 +164,14 @@ public sealed class AgentTaskLandReceiptTests
                 Id = Guid.NewGuid(), AgentSessionId = session,
                 Sequence = evidence == "old-sequence" ? 10 : 11,
                 Kind = evidence == "queue-enqueue" ? TranscriptKinds.QueueEnqueue : evidence == "queued-prompt" ? TranscriptKinds.QueuedUserPrompt : TranscriptKinds.UserPrompt,
-                Text = text, Timestamp = evidence == "old-time" ? DateTime.UtcNow.AddHours(-1) : DateTime.UtcNow, CreatedAt = DateTime.UtcNow,
+                Text = text, Timestamp = evidence == "old-time" ? DateTime.UtcNow.AddHours(-1)
+                    : evidence == "clock-tolerance" ? row.LastDeliveryStartedAt!.Value.AddMilliseconds(-100) : DateTime.UtcNow, CreatedAt = DateTime.UtcNow,
             });
         }
         await db.SaveChangesAsync();
         await service.ReconcileAsync(note.Id, CancellationToken.None);
         await db.Entry(note).ReloadAsync();
-        var confirmed = evidence is "complete" or "flattened";
+        var confirmed = evidence is "complete" or "flattened" or "clock-tolerance";
         note.ConfirmedAt.HasValue.ShouldBe(confirmed);
         note.ConfirmingPromptSequence.ShouldBe(confirmed ? 11L : null);
         h.Adapter.Inputs.ShouldBeEmpty("receipt reconciliation must never type");

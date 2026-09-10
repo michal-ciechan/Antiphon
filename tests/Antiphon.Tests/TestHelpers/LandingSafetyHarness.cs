@@ -239,10 +239,14 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
                 if (data.Context!.Database.CurrentTransaction is not null) AwaitingCommit = true;
                 else { Triggered = true; throw new InjectedSaveFailure(); }
             }
-            if (AfterAcknowledged is not null)
-                foreach (var entry in data.Context!.ChangeTracker.Entries<AgentTaskLanding>())
-                    await AfterAcknowledged(entry.Entity.Phase);
+            if (data.Context!.Database.CurrentTransaction is null) await AcknowledgedAsync(data.Context);
             return result;
+        }
+        internal async Task AcknowledgedAsync(DbContext? context)
+        {
+            if (AfterAcknowledged is not null && context is not null)
+                foreach (var entry in context.ChangeTracker.Entries<AgentTaskLanding>())
+                    await AfterAcknowledged(entry.Entity.Phase);
         }
         internal void Committed()
         {
@@ -263,9 +267,9 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         public override ValueTask<InterceptionResult> TransactionCommittingAsync(System.Data.Common.DbTransaction transaction,
             TransactionEventData eventData, InterceptionResult result, CancellationToken cancellationToken = default)
         { fault.Committing(); return ValueTask.FromResult(result); }
-        public override Task TransactionCommittedAsync(System.Data.Common.DbTransaction transaction,
+        public override async Task TransactionCommittedAsync(System.Data.Common.DbTransaction transaction,
             TransactionEndEventData eventData, CancellationToken cancellationToken = default)
-        { fault.Committed(); return Task.CompletedTask; }
+        { fault.Committed(); await fault.AcknowledgedAsync(eventData.Context); }
     }
 
     internal sealed class InjectedSaveFailure : Exception;
