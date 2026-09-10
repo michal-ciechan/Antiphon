@@ -21,6 +21,28 @@ namespace Antiphon.Tests.Application;
 public class InstructionBundleTests
 {
     [Test]
+    public void C470_composed_roles_separate_vr_from_pc()
+    {
+        string Compose(AgentTaskRole role) => InstructionBundleComposer.Compose(
+            InstructionBundles.ForDelegate(AgentTaskKind.Worker, role)).Text;
+        var code = Compose(AgentTaskRole.Code);
+        foreach (var text in new[] { "Run each V-n and R-n", "Commit and push", "pending for Mutation", "even with zero PCs", "full commit SHA", "original Code task ID", "Do not settle next: land" })
+            code.ShouldContain(text);
+        code.ShouldNotContain("Run each PC-n as red-then-green");
+        code.ShouldContain("MUTATION RUNNER ONLY");
+        var mutation = Compose(AgentTaskRole.Mutation);
+        foreach (var text in new[] { "implementation SHA equals HEAD", "clean tracked source/index", "exact methods", "intended assertion red", "restore fixed bytes", "restored green", "missing PC", "next: code", "final SHA", "original Code task ID", "only after restoration" })
+            mutation.ShouldContain(text);
+        var review = Compose(AgentTaskRole.Review);
+        review.ShouldContain("Read-only");
+        review.ShouldContain("PC evidence read-only");
+        review.ShouldNotContain("run the listed PCs");
+        var design = Compose(AgentTaskRole.TestDesign);
+        design.ShouldContain("ordinary V/R floor (Code)");
+        design.ShouldContain("PC floor (Mutation)");
+    }
+
+    [Test]
     public void the_orchestrator_preset_prompt_is_embedded_and_not_attachable()
     {
         var text = AgentPresets.LoadOrchestratorTemplate();
@@ -387,30 +409,18 @@ public class InstructionBundleTests
         // specialist keys are now excluded, which is the launch that can actually happen. The bound
         // here is the budget itself: the guard still THROWS rather than truncating.
         var budget = new DelegationSettings().CommandLineBudgetChars;
-        var specialistKeys = new HashSet<string>(StringComparer.Ordinal)
+        // Stage bundles are mutually exclusive at launch. Exercise every actual role composition
+        // with every attachable bundle and the longest style, preserving the 30,000-char guard.
+        foreach (var role in Enum.GetValues<AgentTaskRole>().Where(r => !AgentTaskRoles.IsSpecialist(r)))
+        foreach (var kind in Enum.GetValues<AgentTaskKind>())
         {
-            InstructionBundles.CheckInterpreter,
-            InstructionBundles.Diagnose,
-            InstructionBundles.OutputDistiller,
-        };
-        var everything = InstructionBundles.All.Keys
-            .Where(k => !specialistKeys.Contains(k))
-            .Order()
-            .ToList();
-
-        var composed = InstructionBundleComposer.Compose(
-            everything, systemPromptAppend: ChannelPreamble.TelegramPresetTemplate);
-
-        var detail = string.Join(", ", composed.Bundles.Select(b => $"{b.Stamp} {b.Text.Length}"))
-            + $", telegram-preset {ChannelPreamble.TelegramPresetTemplate.Length}"
-            + $" => composed {composed.Text.Length} chars against a budget of {budget}";
-        composed.Text.Length.ShouldBeLessThan(budget, detail);
-        // And it fits with every other launch argument beside it, which is what the guard measures.
-        Should.NotThrow(() => InstructionBundleComposer.EnsureWithinCommandLineBudget(
-            composed,
-            ["--name", "task-1a2b3c4d", "--model", "opus", "--session-id", Guid.NewGuid().ToString("D")],
-            budget,
-            "worst case"));
+            var keys = InstructionBundles.ForDelegate(kind, role, InstructionBundles.Attachable.Select(b => b.Key).ToArray());
+            var composed = InstructionBundleComposer.Compose(keys, systemPromptAppend: ChannelPreamble.TelegramPresetTemplate);
+            composed.Text.Length.ShouldBeLessThan(budget, $"{kind}/{role}");
+            Should.NotThrow(() => InstructionBundleComposer.EnsureWithinCommandLineBudget(composed,
+                ["--name", "task-1a2b3c4d", "--model", "opus", "--session-id", Guid.NewGuid().ToString("D")],
+                budget, $"{kind}/{role}"));
+        }
     }
 
     [Test]

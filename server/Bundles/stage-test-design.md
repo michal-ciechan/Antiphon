@@ -1,6 +1,6 @@
 Design verification for the landed plan. Append this structure; do not rewrite the fix design.
 Every guard that protects a safety-critical assertion gets a PC-n positive control.
-Read every touched test body and relevant fixture/helper before naming cases. For new files read the nearest fixture or record its absence and setup. Account for boundary combinations or justify exclusion.
+Read touched test bodies and fixtures/helpers before naming cases. For new files read the nearest fixture or record its absence and setup. Account for boundary combinations or justify exclusion.
 
 ## Verification design
 ### Inspection

@@ -102,7 +102,9 @@ public class MutationAdmissionTests
         var request = new CreateAgentTaskRequest(Goal: goal, Role: AgentTaskRole.Mutation,
             Workspace: WorkspaceMode.ReadOnly, FollowUpOnTask: followUp ? prior.Id.ToString() : null);
         var ex = await Should.ThrowAsync<ValidationException>(() => CreateService(db).CreateAsync(request, ManualCaller(workspace.Path), default));
-        ex.Message.ShouldContain("workspace");
+        ex.StatusCode.ShouldBe(422);
+        ex.Errors.ShouldContainKey("Workspace");
+        ex.Errors["Workspace"].ShouldContain(e => e.Contains("writable"));
         await using var verify = CreateContext(schema);
         (await verify.AgentTasks.CountAsync(t => t.Goal == goal)).ShouldBe(0);
     }
