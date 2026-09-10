@@ -4,10 +4,25 @@ import type { AgentTaskDetailDto, AgentTaskSummaryDto } from '../../api/agentTas
 import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { TaskDrawer } from './TaskDrawer'
+import type { HubConnection } from '@microsoft/signalr'
+import { act } from '@testing-library/react'
+import { renderHookWithProviders } from '../../test/utils'
+import { useSignalRInvalidation } from '../../hooks/useSignalRInvalidation'
 
 vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
 
 const TASK_ID = '77777777-7777-7777-7777-777777777777'
+
+it('invalidates land detail after AgentTaskChanged', () => {
+  const callbacks = new Map<string, (payload: object) => void>()
+  const connection = { on: (name: string, fn: (payload: object) => void) => callbacks.set(name, fn), off: vi.fn() }
+  const view = renderHookWithProviders(() => useSignalRInvalidation({ current: connection as unknown as HubConnection }))
+  const key = ['agentTasks', 'detail', TASK_ID]
+  view.queryClient.setQueryData(key, { landRequest: { state: 'Held' } })
+  act(() => callbacks.get('AgentTaskChanged')!({ taskId: TASK_ID }))
+  expect(view.queryClient.getQueryState(key)?.isInvalidated).toBe(true)
+  view.unmount()
+})
 
 function detail(overrides: Partial<AgentTaskSummaryDto> = {}, extra: Partial<AgentTaskDetailDto> = {}): AgentTaskDetailDto {
   const summary: AgentTaskSummaryDto = {

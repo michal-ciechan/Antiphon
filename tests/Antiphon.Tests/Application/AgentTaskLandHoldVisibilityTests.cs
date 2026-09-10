@@ -7,6 +7,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
+using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
+using Antiphon.Server.Application.Settings;
 
 namespace Antiphon.Tests.Application;
 
@@ -21,11 +24,23 @@ public sealed class AgentTaskLandHoldVisibilityTests
     [Arguments("source", AgentTaskStatus.Blocked)]
     [Arguments("lease", AgentTaskStatus.Blocked)]
     [Arguments("unrelated", AgentTaskStatus.Blocked)]
+    [Arguments("shared-alias", AgentTaskStatus.Blocked)]
+    [Arguments("source-alias", AgentTaskStatus.Blocked)]
+    [Arguments("inaccessible", AgentTaskStatus.Blocked)]
     public async Task C467_V03_RealWriterLeaseAndEpisodeMatrix(string writer, AgentTaskStatus status)
     {
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
         await h.AddSourceAsync();
+        using var alias = writer.EndsWith("-alias", StringComparison.Ordinal)
+            ? new OwnedJunction(Path.Combine(h.Fixture.Root, "writer-alias"), writer == "source-alias" ? h.Fixture.Source : h.Fixture.Repository) : null;
+        var inaccessible = Path.Combine(h.Fixture.Root, "unknown-writer");
+        if (writer == "inaccessible") Directory.CreateDirectory(inaccessible);
+        var failedIdentity = 0;
+        h.Fixture.Git.BeforeCommand = (path, _) => {
+            if (path == inaccessible) { failedIdentity++; throw new IOException("owned writer identity inaccessible"); }
+            return Task.FromResult<Antiphon.Server.Application.Dtos.LandingGitResult?>(null);
+        };
         var ownerId = Guid.NewGuid();
         await using var unrelated = new LandingGitFixture();
         if (writer == "unrelated") await unrelated.InitializeAsync();
@@ -35,9 +50,9 @@ public sealed class AgentTaskLandHoldVisibilityTests
             {
                 Id = ownerId, RootTaskId = ownerId, Title = "C467 writer", Goal = "owned fixture",
                 Status = status, Role = AgentTaskRole.Code, ReplyTo = AgentTaskReplyTo.None,
-                Workspace = writer == "source" ? WorkspaceMode.Worktree : WorkspaceMode.Shared,
-                WorkingDirectory = writer == "unrelated" ? unrelated.Repository : writer == "source" ? h.Fixture.Source : h.Fixture.Repository,
-                RepoPath = writer == "unrelated" ? unrelated.Repository : h.Fixture.Repository,
+                Workspace = writer.StartsWith("source", StringComparison.Ordinal) ? WorkspaceMode.Worktree : WorkspaceMode.Shared,
+                WorkingDirectory = alias?.Path ?? (writer == "inaccessible" ? inaccessible : writer == "unrelated" ? unrelated.Repository : writer == "source" ? h.Fixture.Source : h.Fixture.Repository),
+                RepoPath = writer == "inaccessible" ? inaccessible : writer == "shared-alias" ? alias!.Path : writer == "unrelated" ? unrelated.Repository : h.Fixture.Repository,
                 CreatedAt = DateTime.UtcNow,
             });
             await db.SaveChangesAsync();
@@ -55,6 +70,7 @@ public sealed class AgentTaskLandHoldVisibilityTests
                 return;
             }
             result.ShouldBe(LandRunResult.Held);
+            if (writer == "inaccessible") failedIdentity.ShouldBeGreaterThan(0);
             h.Verifier.Calls.ShouldBe(0);
             h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("rebase") || a.Contains("remove") || a.Contains("--ff-only") || a[0] == "push");
             await using (var observer = h.CreateContext())
@@ -114,5 +130,54 @@ public sealed class AgentTaskLandHoldVisibilityTests
     {
         public Task PublishToAllAsync(string name, object payload, CancellationToken ct = default) => observe();
         public Task PublishToGroupAsync(string group, string name, object payload, CancellationToken ct = default) => observe();
+    }
+
+    [Test]
+    [Arguments(AgentTaskEventType.Held, "before-save")]
+    [Arguments(AgentTaskEventType.Held, "after-save")]
+    [Arguments(AgentTaskEventType.Held, "commit")]
+    [Arguments(AgentTaskEventType.Held, "after-commit")]
+    [Arguments(AgentTaskEventType.LandAged, "before-save")]
+    [Arguments(AgentTaskEventType.LandAged, "after-save")]
+    [Arguments(AgentTaskEventType.LandAged, "commit")]
+    [Arguments(AgentTaskEventType.LandAged, "after-commit")]
+    public async Task C467_V04_HoldAndAgeFaultCuts(AgentTaskEventType kind, string cut)
+    {
+        await using var h = new LandingSafetyHarness(); await h.InitializeAsync();
+        await using var lease = await h.Services.GetRequiredService<IRepositoryMutationLease>().TryAcquireAsync(h.Fixture.Repository, CancellationToken.None);
+        if (kind == AgentTaskEventType.LandAged) await h.RunAsync();
+        h.Fault.TerminalCut = cut; h.Fault.EventKind = kind;
+        async Task ActAsync()
+        {
+            if (kind == AgentTaskEventType.Held) await h.RunAsync();
+            else
+            {
+                await using var db = h.CreateContext();
+                var request = await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Fixture.TaskId);
+                await new AgentTaskLandMonitorService(db, new FakeTimeProvider(request.LastProgressAt.AddSeconds(301)),
+                    Options.Create(new DelegationSettings()), new MockEventBus()).SweepAsync(CancellationToken.None);
+            }
+        }
+        await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(ActAsync); h.Fault.Triggered.ShouldBeTrue();
+        await using var observer = h.CreateContext();
+        var eventIds = await observer.AgentTaskEvents.Where(e => e.AgentTaskId == h.Fixture.TaskId && e.Type == kind).Select(e => e.Id).ToListAsync();
+        eventIds.Count.ShouldBe(cut == "after-commit" ? 1 : 0);
+        (await observer.AgentTaskLandNotifications.CountAsync(n => eventIds.Contains(n.SourceEventId))).ShouldBe(eventIds.Count);
+        await h.RestartServicesAsync(); await ActAsync();
+        (await observer.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Fixture.TaskId && e.Type == kind)).ShouldBe(1);
+    }
+
+    private sealed class OwnedJunction : IDisposable
+    {
+        public string Path { get; }
+        public OwnedJunction(string path, string target)
+        {
+            Path = path;
+            var start = new System.Diagnostics.ProcessStartInfo("cmd.exe") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+            foreach (var arg in new[] { "/c", "mklink", "/J", path, target }) start.ArgumentList.Add(arg);
+            using var process = System.Diagnostics.Process.Start(start)!;
+            process.WaitForExit(); process.ExitCode.ShouldBe(0, process.StandardError.ReadToEnd());
+        }
+        public void Dispose() => Directory.Delete(Path, false);
     }
 }

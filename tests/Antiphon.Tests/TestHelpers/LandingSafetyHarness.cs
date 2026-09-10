@@ -213,6 +213,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         public LandPhase? Phase { get; set; }
         public Func<AgentTaskLanding, bool>? Matches { get; set; }
         public string? TerminalCut { get; set; }
+        public AgentTaskEventType? EventKind { get; set; }
         public bool AfterCommit { get; set; }
         public bool Triggered { get; private set; }
         public Func<LandPhase, Task>? AfterAcknowledged { get; set; }
@@ -222,7 +223,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
             InterceptionResult<int> result, CancellationToken ct = default)
         {
             _armed = !Triggered && (TerminalCut is not null
-                ? data.Context!.ChangeTracker.Entries<AgentTaskEvent>().Any(e => e.State == EntityState.Added && e.Entity.IsLandTerminal)
+                ? data.Context!.ChangeTracker.Entries<AgentTaskEvent>().Any(e => e.State == EntityState.Added && (EventKind is null ? e.Entity.IsLandTerminal : e.Entity.Type == EventKind))
                 : data.Context!.ChangeTracker.Entries<AgentTaskLanding>()
                 .Any(e => e.State != EntityState.Unchanged
                     && (Phase is not null && e.Entity.Phase == Phase || Matches?.Invoke(e.Entity) == true)));

@@ -11,6 +11,7 @@ using Shouldly;
 using TUnit.Core;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.Server.Application.Dtos;
 
 namespace Antiphon.Tests.Application;
 
