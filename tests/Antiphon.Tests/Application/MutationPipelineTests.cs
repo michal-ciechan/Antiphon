@@ -39,6 +39,9 @@ public class MutationPipelineTests(AntiphonWebAppFactory factory)
         task.ParentSessionId = parent;
         task.ReplyTo = AgentTaskReplyTo.Session;
         const string artifact = "docs/superpowers/plans/2026-09-09-card-0470-code-mutation-split-plan.md";
+        var artifactFile = Path.Combine(workspace.Path, artifact);
+        Directory.CreateDirectory(Path.GetDirectoryName(artifactFile)!);
+        await File.WriteAllTextAsync(artifactFile, "# CARD-0470 verification fixture\n");
         var report = "Ordinary V/R complete.\n--- next stage ---\nnext: mutation\nhandoff: original Code owner and SHA\nartifact: "
             + artifact + "\n" + DelegationReportFormatter.ReportToken(task.Id, "done");
         var entries = new[] { ("UserPrompt", DelegationReportFormatter.TaskMarker(task.Id)), ("AssistantText", report), ("TurnEnd", (string?)null) };
