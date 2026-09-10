@@ -140,6 +140,8 @@ public class SessionMessageQueuePtyIntegrationTests
     /// <summary>
     /// CARD-0137: leftover overlay makes the next real body <c>NoComposerEvidence</c> without S5/S6.
     /// fakeclaude's overlay discards typed bytes until Esc. Grok is the Supported kind.
+    /// The fake's emitted JSONL supplies prompt evidence through the existing pump: its retained
+    /// screen echoes cannot satisfy Grok's emptied-composer check or prove transcript delivery.
     /// </summary>
     [Test]
     public async Task A_body_typed_while_an_overlay_is_up_recovers_via_Esc_and_submits()
@@ -148,8 +150,10 @@ public class SessionMessageQueuePtyIntegrationTests
         if (!File.Exists(FakeClaudeExe))
             throw new SkipTestException($"fakeclaude.exe not staged at {FakeClaudeExe} — build the solution first");
 
+        const string body = "hello after overlay";
+        var transcriptPath = Path.Combine(Path.GetTempPath(), $"antiphon-overlay-{Guid.NewGuid():N}.jsonl");
         var sessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-fake-pty-{Guid.NewGuid():N}");
-        var client = new DirectSessionRunnerClient(sessionLogPath, ptyBackend: PinnedBackend);
+        var client = new DirectSessionRunnerClient(sessionLogPath, ptyBackend: PinnedBackend, grokTranscript: false);
 
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(options =>
@@ -184,13 +188,19 @@ public class SessionMessageQueuePtyIntegrationTests
         var sessionId = Guid.NewGuid();
         var cwd = Path.Combine(Path.GetTempPath(), $"antiphon-fake-cwd-{sessionId:N}");
         Directory.CreateDirectory(cwd);
+        using var pump = new CancellationTokenSource();
+        var pumping = Task.CompletedTask;
 
         var spec = new AgentLaunchSpec(
             DefinitionName: "fakeclaude",
             Kind: AgentKind.Grok,
             Exe: FakeClaudeExe,
             Args: Array.Empty<string>(),
-            Env: new Dictionary<string, string> { ["ANTIPHON_FAKE_OVERLAY_ON_COMMAND"] = "/usage" },
+            Env: new Dictionary<string, string>
+            {
+                ["ANTIPHON_FAKE_OVERLAY_ON_COMMAND"] = "/usage",
+                ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = transcriptPath,
+            },
             Cwd: cwd,
             Cols: 120,
             Rows: 30);
@@ -214,24 +224,68 @@ public class SessionMessageQueuePtyIntegrationTests
                 await db.SaveChangesAsync();
             }
 
+            pumping = PumpTranscriptAsync(transcriptPath, sessionId, pump.Token);
             var queue = provider.GetRequiredService<SessionMessageQueueService>();
             await queue.EnqueueAsync(sessionId, "/usage", MessageSendMode.Now, CancellationToken.None);
             (await WaitForRawAsync(client, sessionId, s => s.Contains("OVERLAY:open"), TimeSpan.FromSeconds(8)))
                 .ShouldBeTrue("the first /usage must leave the overlay standing");
 
-            await queue.EnqueueAsync(sessionId, "hello after overlay", MessageSendMode.Now, CancellationToken.None);
+            UserPromptsIn(transcriptPath).ShouldBeEmpty("the overlay command must not supply a prompt receipt");
+            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+            {
+                var promptsBeforeBody = await db.TranscriptEntries
+                    .Where(t => t.AgentSessionId == sessionId
+                        && t.Kind == Antiphon.SessionRunner.Contracts.TranscriptKinds.UserPrompt)
+                    .ToListAsync();
+                promptsBeforeBody.ShouldBeEmpty("no prompt evidence may precede the ordinary body");
+            }
+
+            SessionQueueDto? result = null;
+            await Should.NotThrowAsync(async () =>
+            {
+                result = await queue.EnqueueAsync(sessionId, body, MessageSendMode.Now, CancellationToken.None);
+            }, "overlay body delivery must be transcript-confirmed");
+            result.ShouldNotBeNull();
+            result.LastDelivery.ShouldNotBeNull();
+            result.LastDelivery.Verdict.ShouldBe("Delivered");
+            result.LastDelivery.ConfirmedBy.ShouldBe(DeliveryConfirmedBy.Transcript);
+            result.LastDelivery.Degraded.ShouldBeFalse();
 
             var submitted = await WaitForRawAsync(
-                client, sessionId, s => s.Contains("SUBMITTED:hello after overlay"), TimeSpan.FromSeconds(15));
+                client, sessionId, s => s.Contains("SUBMITTED:" + body), TimeSpan.FromSeconds(15));
             submitted.ShouldBeTrue("S5/S6 must Esc the leftover overlay and deliver the real body");
+            var snapshot = await client.GetSnapshotAsync(sessionId, CancellationToken.None);
+            (snapshot.RawOutput ?? string.Empty).ShouldContain("OVERLAY:closed");
+
+            var prompts = UserPromptsIn(transcriptPath);
+            prompts.Count.ShouldBe(1, "the complete overlay body must be accepted exactly once");
+            prompts[0].ShouldBe(body);
+            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+            {
+                var recordedPrompts = await db.TranscriptEntries
+                    .Where(t => t.AgentSessionId == sessionId
+                        && t.Kind == Antiphon.SessionRunner.Contracts.TranscriptKinds.UserPrompt)
+                    .ToListAsync();
+                recordedPrompts.Count.ShouldBe(1, "the session must ingest exactly one complete prompt");
+                recordedPrompts[0].Text.ShouldBe(body);
+            }
+        }
+        catch
+        {
+            Console.WriteLine($"Overlay fixture session logs retained at {sessionLogPath}");
+            throw;
         }
         finally
         {
-            try { await client.KillAsync(sessionId, CancellationToken.None); } catch { /* best effort */ }
-            await client.DisposeAsync();
-            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
-                await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
-            try { Directory.Delete(cwd, recursive: true); } catch { /* best effort */ }
+            try
+            {
+                pump.Cancel();
+                await pumping;
+            }
+            finally
+            {
+                await CleanupAsync(client, sessionId, cwd, transcriptPath);
+            }
         }
     }
 
