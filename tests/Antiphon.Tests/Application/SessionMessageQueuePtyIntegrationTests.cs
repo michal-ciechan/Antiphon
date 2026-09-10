@@ -500,9 +500,9 @@ public class SessionMessageQueuePtyIntegrationTests
             pumping = SessionQueueTranscriptPump.RunAsync(transcriptPath, sessionId, pump.Token);
             var queue = provider.GetRequiredService<SessionMessageQueueService>();
             var receipt = await queue.EnqueueAsync(sessionId, body, MessageSendMode.Now, CancellationToken.None);
-            receipt.LastDelivery.ShouldNotBeNull().ConfirmedBy.ShouldBe(DeliveryConfirmedBy.Transcript);
             SessionQueueTranscriptPump.FileUserPrompts(transcriptPath).ShouldBe([body.ReplaceLineEndings("\n")]);
             (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(sessionId, baseline)).ShouldBe([body.ReplaceLineEndings("\n")]);
+            receipt.LastDelivery.ShouldNotBeNull().ConfirmedBy.ShouldBe(DeliveryConfirmedBy.Transcript);
 
             // ONE submit carrying the WHOLE body: head and tail inside the SAME SUBMITTED marker —
             // i.e. no turn boundary ("FAKE response" echo) between them. ConPTY soft-wraps the long

@@ -194,6 +194,22 @@ public sealed class LandingProtocolHarnessTests
         await PrepareModeAsync(h, mode);
         var leases = h.Services.GetRequiredService<IRepositoryMutationLease>();
         var acquired = new List<bool>();
+        var commonQueries = 0;
+        bool? entryAcquired = null;
+        var probing = false;
+        h.Git.BeforeCommonDirectory = async () =>
+        {
+            // This isolated fixture has no other task/claim: query one acquires the
+            // service lease, query two is the protocol's first query, before Owns.
+            if (probing || ++commonQueries != 2) return;
+            probing = true;
+            try
+            {
+                await using var contender = await leases.TryAcquireAsync(h.Git.Repository, CancellationToken.None);
+                entryAcquired = contender is not null;
+            }
+            finally { probing = false; }
+        };
         h.Git.BeforeInspection = async () =>
         {
             await using var contender = await leases.TryAcquireAsync(h.Git.Repository, CancellationToken.None);
@@ -202,6 +218,7 @@ public sealed class LandingProtocolHarnessTests
         if (mode == "CleanupRetry") File.Delete(Path.Combine(h.Git.Source, ".antiphon", "report.md"));
         Exception? failure = null;
         try { await h.RunAsync(); } catch (Exception ex) { failure = ex; }
+        entryAcquired.ShouldBe(false, "the first protocol query must still hold the service lease");
         acquired.Count.ShouldBeGreaterThanOrEqualTo(2, "admission and an in-protocol inspection must both be observed");
         acquired.ShouldAllBe(value => !value);
         failure.ShouldBeNull();
