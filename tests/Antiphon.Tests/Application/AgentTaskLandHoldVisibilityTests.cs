@@ -27,6 +27,7 @@ public sealed class AgentTaskLandHoldVisibilityTests
     [Arguments("shared-alias", AgentTaskStatus.Blocked)]
     [Arguments("source-alias", AgentTaskStatus.Blocked)]
     [Arguments("inaccessible", AgentTaskStatus.Blocked)]
+    [Arguments("changing-writer", AgentTaskStatus.Blocked)]
     public async Task C467_V03_RealWriterLeaseAndEpisodeMatrix(string writer, AgentTaskStatus status)
     {
         await using var h = new LandingSafetyHarness();
@@ -59,10 +60,20 @@ public sealed class AgentTaskLandHoldVisibilityTests
         }
         var lease = writer == "lease" ? await h.Services.GetRequiredService<IRepositoryMutationLease>()
             .TryAcquireAsync(h.Fixture.Repository, CancellationToken.None) : null;
+        DateTime initialProgress = default;
         try
         {
             h.Fixture.Git.Trace.Clear();
-            var result = await h.RunAsync();
+            var result = LandRunResult.Complete;
+            Exception? captured = null;
+            try { result = await h.RunAsync(); } catch (Exception ex) { captured = ex; }
+            if (writer != "unrelated")
+            {
+                h.Verifier.Calls.ShouldBe(0, "excluded writers must not enter verification");
+                await using var safety = h.CreateContext();
+                (await safety.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Fixture.TaskId)).Attempt.ShouldBe(0, "exclusion must precede admission");
+            }
+            if (captured is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(captured).Throw();
             if (writer == "unrelated")
             {
                 result.ShouldBe(LandRunResult.Complete);
@@ -79,6 +90,7 @@ public sealed class AgentTaskLandHoldVisibilityTests
                 request.Attempt.ShouldBe(0);
                 request.State.ShouldBe(LandRequestState.Held);
                 request.HoldEpisode.ShouldBe(1);
+                initialProgress = request.LastProgressAt;
                 request.HoldingTaskId.ShouldBe(writer == "lease" ? null : ownerId);
                 request.HoldingTaskStatus.ShouldBe(writer == "lease" ? null : status);
                 request.HoldReasonCode.ShouldBe(writer == "lease" ? "repository_mutation_lease_busy" : "repository_or_source_writer");
@@ -86,9 +98,27 @@ public sealed class AgentTaskLandHoldVisibilityTests
                 (await observer.AgentTaskLandNotifications.SingleAsync(n => n.RequestId == request.Id)).Kind.ShouldBe(LandNotificationKind.Held);
             }
             await h.RestartServicesAsync();
+            if (writer == "changing-writer")
+            {
+                await using var changed = h.CreateContext();
+                (await changed.AgentTasks.SingleAsync(t => t.Id == ownerId)).Status = AgentTaskStatus.Succeeded;
+                ownerId = Guid.NewGuid();
+                changed.AgentTasks.Add(new AgentTask { Id = ownerId, RootTaskId = ownerId, Title = "replacement blocked writer", Goal = "changed episode",
+                    Status = AgentTaskStatus.Blocked, Workspace = WorkspaceMode.Shared, WorkingDirectory = h.Fixture.Repository,
+                    RepoPath = h.Fixture.Repository, CreatedAt = DateTime.UtcNow });
+                await changed.SaveChangesAsync();
+            }
             await h.RunAsync();
             await using var again = h.CreateContext();
-            (await again.AgentTaskLandNotifications.CountAsync(n => n.TaskId == h.Fixture.TaskId)).ShouldBe(1);
+            var expectedEpisodes = writer == "changing-writer" ? 2 : 1;
+            (await again.AgentTaskLandNotifications.CountAsync(n => n.TaskId == h.Fixture.TaskId)).ShouldBe(expectedEpisodes);
+            var persisted = await again.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.TaskId == h.Fixture.TaskId);
+            persisted.HoldEpisode.ShouldBe(expectedEpisodes); persisted.LastProgressAt.ShouldBe(initialProgress);
+            if (writer == "changing-writer")
+            {
+                persisted.HoldingTaskId.ShouldBe(ownerId); await h.RunAsync();
+                (await again.AgentTaskLandNotifications.CountAsync(n => n.TaskId == h.Fixture.TaskId)).ShouldBe(2);
+            }
         }
         finally { if (lease is not null) await lease.DisposeAsync(); }
         await using (var db = h.CreateContext())
