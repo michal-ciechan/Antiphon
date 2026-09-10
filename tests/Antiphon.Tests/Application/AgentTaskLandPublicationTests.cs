@@ -168,7 +168,13 @@ public sealed class AgentTaskLandPublicationTests
         else await h.RunAsync();
         var operation = (await h.OperationAsync()).ShouldNotBeNull();
         operation.RemoteConfirmedAt.ShouldBeNull();
-        operation.LastReason.ShouldNotContain("synthetic-private-marker");
+        // An interrupted remote probe can leave the optional operation reason unset.
+        // Keep the no-leak oracle on both that field and the actual persisted refusal.
+        (operation.LastReason ?? string.Empty).ShouldNotContain("synthetic-private-marker");
+        await using (var observer = h.CreateContext())
+            (await observer.AgentTaskEvents.Where(e => e.AgentTaskId == h.Fixture.TaskId
+                    && e.Type == AgentTaskEventType.LandRefused)
+                .Select(e => e.Detail).SingleAsync()).ShouldNotContain("synthetic-private-marker");
         h.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("rebase") || a.Contains("remove"));
         Directory.Exists(h.Fixture.Source).ShouldBeTrue();
         h.Fixture.Git.BeforeCommand = null;
