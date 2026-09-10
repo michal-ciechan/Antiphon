@@ -280,3 +280,28 @@ Verify each selected class/method appears in the fresh execution results. If the
 - **Total verification floor: approximately 80 minutes** (= ordinary 20 + PC 60), retained for older consumers; rollout probe adds ~5 min. Floors are scheduling allowances, not timeouts or permission to skip rows. Record observed times in the Code/PC reports so subsequent dispatches can replace estimates. Batching savings require actual evidence and cannot remove per-variant red/green results.
 
 Code's report maps every V/R ID to actual outcomes and commands, with V-15/B-1 explicitly `pending: caller after bootstrap`, plus C, branch/worktree, original landing owner, review/restart requirements and all PC IDs pending. Its next step on this old-runtime card is D-8's separate Debug worker. That worker reports all 17 variants and its added missing-control result, restoration/cleanliness, tested C/final F, and next land/review/code using the existing vocabulary. After the runtime upgrade, future Code reports use `next: mutation` and the same evidence split without the temporary Debug role.
+
+### PC-8 fixture repair evidence (2026-09-10, dce91b85)
+
+Pulled plan amendment `4cd5288b` before fixing the shared `RetainedLaunch` fixture.
+Tested commit: `9d0aa46081d0a9cfedeac4754c59e957249cf9a3`, branch
+`feat/card-task-ce744e22`, worktree `C:\Antiphon\worktrees\card-task-ce744e22`.
+The warm agent's idle timestamp is now one minute older than the harness's configured
+`PoolReservedForCallerMinutes` (six minutes with the default, within the 60-minute idle TTL).
+Production reservation and Shared/worktree guards are unchanged.
+
+| Check | Actual outcome |
+|---|---|
+| V-8 and touched-class regression | `MutationDispatchTests/*`: 5 passed, 0 failed, including both V-8 methods; runner duration 32.593 s. |
+| PC-8 red | Exact `C470_retained_worktree_launch_is_fresh`: 1 failed, exit 2; replacing only the Shared/worktree predicate with `.Where(a => true)` reused the old agent and failed `launched.AgentId.ShouldNotBe(oldAgent)`; runner duration 21.925 s. |
+| PC-8 restored green | Same exact method: 1 passed, 0 failed, exit 0; runner duration 20.580 s. Source restored byte-for-byte, timestamp refreshed, and rebuilt server DLL newer than restored source. |
+
+Evidence: `C:\Antiphon\verification\card0470\dce91b85` contains each arm's
+`run.log`, `results.trx` and `exit.txt`, the exact mutation diff, restoration timestamps,
+results summary and retained build-output inventory. Command for each arm:
+`dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c470-dce91b85/ -- --treenode-filter <filter> --results-directory <fresh-absolute-directory> --report-trx --report-trx-filename results.trx`.
+Filters: `/*/*/MutationDispatchTests/*` for ordinary verification and
+`/*/*/MutationDispatchTests/C470_retained_worktree_launch_is_fresh` for both PC arms.
+The prior D-8 report remains the evidence for the other PC variants. Next: review;
+original landing owner remains `ce744e22`. This test-only repair needs no restart;
+the feature's server/built-client restart and B-1 remain caller-owned after landing.
