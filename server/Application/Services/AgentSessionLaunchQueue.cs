@@ -43,12 +43,12 @@ public sealed class AgentSessionLaunchQueue : ILaunchOwnership
     /// With <paramref name="resume"/> the agent's previous Claude conversation is resumed.
     /// </summary>
     public void EnqueueInteractiveSession(
-        Guid sessionId, Guid agentId, AgentLaunchSpec spec, string? remoteControlName,
+        Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec, string? remoteControlName,
         bool resume = false, LaunchNotes? notes = null, string? initialPrompt = null)
     {
         if (!_owned.TryAdd(sessionId, 0)) return;
         var launch = Task.Run(() => LaunchInteractiveSessionAsync(
-            sessionId, agentId, spec, remoteControlName, resume, notes, initialPrompt));
+            sessionId, agentId, acceptedGeneration, spec, remoteControlName, resume, notes, initialPrompt));
         TrackLaunch(launch, sessionId, agentId, interactive: true);
     }
 
@@ -136,13 +136,13 @@ public sealed class AgentSessionLaunchQueue : ILaunchOwnership
     }
 
     private async Task LaunchInteractiveSessionAsync(
-        Guid sessionId, Guid agentId, AgentLaunchSpec spec, string? remoteControlName, bool resume, LaunchNotes? notes,
+        Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec, string? remoteControlName, bool resume, LaunchNotes? notes,
         string? initialPrompt)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var service = scope.ServiceProvider.GetRequiredService<AgentSessionService>();
         await service.LaunchInteractiveAsync(
-            sessionId, agentId, spec, remoteControlName, resume, notes, CancellationToken.None, initialPrompt);
+            sessionId, agentId, spec, remoteControlName, resume, notes, CancellationToken.None, initialPrompt, acceptedGeneration);
     }
 
     private void Enqueue(

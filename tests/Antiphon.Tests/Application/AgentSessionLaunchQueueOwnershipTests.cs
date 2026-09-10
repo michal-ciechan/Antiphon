@@ -31,7 +31,7 @@ public class AgentSessionLaunchQueueOwnershipTests
 
         queue.Owns(fixture.SessionId).ShouldBeFalse();
         queue.EnqueueInteractiveSession(
-            fixture.SessionId, fixture.AgentId, fixture.Spec, remoteControlName: null);
+            fixture.SessionId, fixture.AgentId, fixture.Generation, fixture.Spec, remoteControlName: null);
 
         await WaitUntilAsync(() => adapter.Started);
         queue.Owns(fixture.SessionId).ShouldBeTrue();
@@ -87,6 +87,7 @@ public class AgentSessionLaunchQueueOwnershipTests
         public required BridgeQueueHarness Harness { private get; init; }
         public required IServiceScope LaunchScope { private get; init; }
         public required Guid SessionId { get; init; }
+        public required DateTime Generation { get; init; }
         public required Guid AgentId { get; init; }
         public required AgentLaunchSpec Spec { get; init; }
         public IServiceProvider Services => LaunchScope.ServiceProvider;
@@ -158,6 +159,7 @@ public class AgentSessionLaunchQueueOwnershipTests
                 Harness = harness,
                 LaunchScope = harness.Provider.CreateScope(),
                 SessionId = sessionId,
+                Generation = now,
                 AgentId = harness.AgentId,
                 Spec = new AgentLaunchSpec(
                     "fake", AgentKind.ClaudeCode, "fake", [], new Dictionary<string, string>(),

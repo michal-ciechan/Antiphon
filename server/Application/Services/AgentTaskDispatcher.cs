@@ -3209,7 +3209,7 @@ public sealed class AgentTaskDispatcher
         }
         GrokLaunchArgs.EnsureWindowsRulesArgv(spec.Args, session.AgentKind, session.SessionBackend,
             spec.Env, $"Session {session.Id}");
-        _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, spec, remoteControlName: null, notes: null);
+        _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, session.StartedAt, spec, remoteControlName: null, notes: null);
         await MaybeWarnOrchestratorWorkspaceAsync(claimed, agent, session.Id, ct);
 
         // The brief goes through the message QUEUE, never straight to the pty: that is the only path
@@ -3362,7 +3362,7 @@ public sealed class AgentTaskDispatcher
                 }
 
                 deferRulesBrief = spec.GrokRulesPayload is not null;
-                _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, spec, remoteControlName: null, notes: null);
+                _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, session.StartedAt, spec, remoteControlName: null, notes: null);
                 await MaybeWarnOrchestratorWorkspaceAsync(task, agent, session.Id, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

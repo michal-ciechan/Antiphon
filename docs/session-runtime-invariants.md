@@ -1,5 +1,14 @@
 # Session runtime invariants
 
+- **Queued standing launches retain their accepted generation (CARD-0466).** Start holds
+  the source and chosen target's delivery locks through reservation commit and launch
+  enqueue, including a Fresh target whose row did not exist before the reservation.
+  The queue carries the accepted `StartedAt` at PostgreSQL microsecond precision;
+  workers validate that immutable generation before adapter creation, later launch
+  side effects, and failure evidence writes. They must never borrow a newer row's
+  generation after Stop and resume. Locks release on rollback, and runner I/O stays
+  outside the reservation transaction.
+
 - **Startup diagnostics do not relax readiness (CARD-0420).** The runner restores
   transcript claims, completes the existing Herdr pass (including Pending/terminal
   representations), then completes the serial pty-host manifest pass before HTTP

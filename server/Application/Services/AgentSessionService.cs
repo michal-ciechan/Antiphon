@@ -335,16 +335,23 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         bool resume,
         LaunchNotes? notes,
         CancellationToken ct,
-        string? initialPrompt = null)
+        string? initialPrompt = null,
+        DateTime? acceptedGeneration = null)
     {
         var session = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct)
             ?? throw new NotFoundException(nameof(AgentSession), sessionId);
+
+        // Queued work carries the generation accepted by its caller. Direct launches capture
+        // it here. PostgreSQL timestamps persist microseconds, rather than .NET's 100ns ticks.
+        var generation = acceptedGeneration ?? session.StartedAt;
+        generation = new DateTime(generation.Ticks - generation.Ticks % 10, generation.Kind);
+        if (session.StartedAt.Ticks / 10 != generation.Ticks / 10) return;
 
         try
         {
             await LaunchInteractiveProcessAsync(
                 session, agentId, launchSpec, remoteControlName,
-                resume ? AgentSessionResumeMode.Resume : null, notes, initialPrompt, ct);
+                resume ? AgentSessionResumeMode.Resume : null, notes, initialPrompt, generation, ct);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
@@ -353,13 +360,12 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 ? await _db.Database.BeginTransactionAsync(CancellationToken.None) : null;
             await _db.Agents.FromSqlInterpolated($"SELECT * FROM \"Agents\" WHERE \"Id\" = {agentId} FOR UPDATE")
                 .AsNoTracking().SingleOrDefaultAsync(CancellationToken.None);
-            var expectedGeneration = session.StartedAt;
             await _db.AgentSessions.FromSqlInterpolated(
                 $"""SELECT * FROM "AgentSessions" WHERE "Id" = {sessionId} FOR UPDATE""").AsNoTracking().SingleAsync(CancellationToken.None);
             // Cleanup's exit observer has its own context. Re-read before merging typed
             // evidence so an unrelated catch cannot overwrite its proven timeout.
             await _db.Entry(session).ReloadAsync(CancellationToken.None);
-            if (session.StartedAt != expectedGeneration) throw;
+            if (session.StartedAt != generation) throw;
             session.RestartFailureKind = new RestartFailurePolicy().Classify(ex);
             HerdrSupervisionFailureEvidence.Record(session, HerdrSupervisionFailureEvidence.FromLaunchFailure(ex));
             var stoppedCheck = session.TerminationSource == SessionTerminationSource.OperatorRequest;
@@ -410,24 +416,25 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         AgentSessionResumeMode? resumeMode,
         LaunchNotes? notes,
         string? initialPrompt,
+        DateTime acceptedGeneration,
         CancellationToken ct)
     {
         IAgentProtocolAdapter? adapter = null;
         try
         {
-            await RequireCurrentCheckLaunchAsync(session, agentId, ct);
+            await RequireCurrentCheckLaunchAsync(session, agentId, acceptedGeneration, ct);
             // Standing resume preserves native identity even when local storage cannot be inspected.
             if (session.CardId is not null || session.WorktreeId is not null)
                 resumeMode = ApplyEffectiveResumeMode(session, launchSpec, resumeMode);
             adapter = _adapterFactory.Create(session.AgentKind);
             var spec = await BuildRuntimeLaunchSpecAsync(launchSpec, session, session.Cwd, resumeMode, ct);
             EnsureHerdrLaunchAllowed(session, spec);
-            await RequireCurrentCheckLaunchAsync(session, agentId, ct);
+            await RequireCurrentCheckLaunchAsync(session, agentId, acceptedGeneration, ct);
             await adapter.StartAsync(spec, ct);
 
             await CaptureGrokRulesReceiptAsync(session, ct);
             await WaitForReadyOrThrowAsync(adapter, session.Id, ct);
-            await RequireCurrentCheckLaunchAsync(session, agentId, ct);
+            await RequireCurrentCheckLaunchAsync(session, agentId, acceptedGeneration, ct);
             session.Status = SessionStatus.Running;
             session.LastSeenAt = UtcNow();
             await _db.SaveChangesAsync(ct);
@@ -436,7 +443,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // mid-turn, the old process died before its TurnEnd — state the truth (boundary
             // record) so working/idle, the queue and the cards all read idle, not "Working"
             // forever (live miss 2026-08-08).
-            await RequireCurrentCheckLaunchAsync(session, agentId, ct);
+            await RequireCurrentCheckLaunchAsync(session, agentId, acceptedGeneration, ct);
             var interruptedTurn = await WriteRestartBoundaryIfInterruptedAsync(session.Id, ct);
             await InitializeGrokRulesAsync(session, ct);
 
@@ -451,12 +458,12 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // Interactive: no work prompt — the human drives the agent via the terminal. We only push
             // the agent into remote-control mode if asked, so it can also be monitored from elsewhere.
             // Best-effort: this session has no purpose that a monitoring command's failure invalidates.
-            await RequireCurrentCheckLaunchAsync(session, agentId, ct);
+            await RequireCurrentCheckLaunchAsync(session, agentId, acceptedGeneration, ct);
             await SendRemoteControlCommandsAsync(adapter, remoteControlName, session, agentId, resumeMode, ct);
 
             // Channel-facing agents get the bootstrap note for explicit creation and the cheaper
             // restart note for strict resume. Missing history never falls through to creation.
-            await RequireCurrentCheckLaunchAsync(session, agentId, ct);
+            await RequireCurrentCheckLaunchAsync(session, agentId, acceptedGeneration, ct);
             var typedSomething = await DeliverLaunchNoteAsync(session.Id, resumeMode, notes, ct);
 
             // LAST, and only on a genuine --resume (a fresh conversation has nothing to continue):
@@ -467,7 +474,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 .AnyAsync(StandingSpecialistSeatPolicy.SeatOrSlug(_delegationSettings), ct);
             if (interruptedTurn && resumeMode == AgentSessionResumeMode.Resume && !checkSeat)
             {
-                await RequireCurrentCheckLaunchAsync(session, agentId, ct);
+                await RequireCurrentCheckLaunchAsync(session, agentId, acceptedGeneration, ct);
                 typedSomething |= await EnqueueResumeContinueAsync(session.Id, ct);
             }
 
@@ -478,7 +485,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // callers that want work on start pass StartAgentRequest.Prompt.
             if (!string.IsNullOrWhiteSpace(initialPrompt))
             {
-                await RequireCurrentCheckLaunchAsync(session, agentId, ct);
+                await RequireCurrentCheckLaunchAsync(session, agentId, acceptedGeneration, ct);
                 await _messageQueue.EnqueueAsync(
                     session.Id, initialPrompt.Trim(), MessageSendMode.WhenIdle, ct,
                     origin: QueuedMessageOrigin.Ui);
@@ -490,13 +497,13 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // probe, which then kills a healthy delegate — live miss 2026-08-09), so a delegation
             // brief enqueued at dispatch time is sitting Pending right now. If the launch note
             // above started a turn, this no-ops and the turn-end flush takes over.
-            await RequireCurrentCheckLaunchAsync(session, agentId, ct);
+            await RequireCurrentCheckLaunchAsync(session, agentId, acceptedGeneration, ct);
             await _messageQueue.FlushSessionAsync(session.Id, ct);
 
             // CARD-0312 S2, LAST: the one launch shape that ends with Status=Running, an
             // AgentChanged event, and zero evidence that anything can be reached.
             await TryEnqueueBootProbeAsync(session, agentId, typedSomething, ct);
-            await RequireCurrentCheckLaunchAsync(session, agentId, ct);
+            await RequireCurrentCheckLaunchAsync(session, agentId, acceptedGeneration, ct);
             session.InteractiveLaunchCompletedAt = UtcNow();
             await _db.SaveChangesAsync(ct);
         }
@@ -523,14 +530,14 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         }
     }
 
-    private async Task RequireCurrentCheckLaunchAsync(AgentSession expected, Guid agentId, CancellationToken ct)
+    private async Task RequireCurrentCheckLaunchAsync(AgentSession expected, Guid agentId, DateTime acceptedGeneration, CancellationToken ct)
     {
         var agent = await _db.Agents.AsNoTracking().SingleOrDefaultAsync(a => a.Id == agentId, ct);
         if (agent is null) throw new NotFoundException(nameof(Agent), agentId);
         var check = StandingSpecialistSeatPolicy.IsCheck(agent, _delegationSettings);
         if (agent.IsPoolDelegate && !check) return;
         var current = await _db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == expected.Id, ct);
-        if (agent.PersistentSessionId != expected.Id.ToString("D") || current?.StartedAt != expected.StartedAt
+        if (agent.PersistentSessionId != expected.Id.ToString("D") || current?.StartedAt != acceptedGeneration
             || current.Status is not (SessionStatus.Starting or SessionStatus.Running)
             || current.TerminationSource == SessionTerminationSource.OperatorRequest
             || (check && await StandingSpecialistSeatPolicy.StartRefusalAsync(_db, agent, _delegationSettings, true, ct) is not null))

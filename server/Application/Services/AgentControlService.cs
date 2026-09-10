@@ -409,7 +409,9 @@ public sealed class AgentControlService
         var expectedPointer = agent.PersistentSessionId;
         var expectedGeneration = previous?.StartedAt;
         var sourceId = Guid.TryParse(expectedPointer, out var source) ? source : (Guid?)null;
-        var involved = new[] { sourceId, previous?.Id }.OfType<Guid>().Distinct().Order().ToArray();
+        // Include a Fresh target before it exists: its queue lock bridges commit to enqueue,
+        // preventing a later Start from reserving it before this worker owns the launch.
+        var involved = new[] { sourceId, chosenSessionId }.OfType<Guid>().Distinct().Order().ToArray();
         if (resumeSessionId is not null && _sessionRunner is null)
             throw new ServiceUnavailableException("Runner liveness cannot be verified.", "standing_resume_runner_unavailable");
         if (_sessionRunner is not null && involved.Length > 0)
@@ -519,10 +521,10 @@ public sealed class AgentControlService
                 await _db.SaveChangesAsync(ct);
 
                 await AcceptAsync(previous);
+                var acceptedGeneration = previous.StartedAt;
                 await reservation.CommitAsync(ct);
-                await _db.Entry(previous).ReloadAsync(ct);
                 _launchQueue.EnqueueInteractiveSession(
-                    previous.Id, agent.Id, spec, remoteControlName, resume: true, notes: notes,
+                    previous.Id, agent.Id, acceptedGeneration, spec, remoteControlName, resume: true, notes: notes,
                     initialPrompt: initialPrompt);
                 return previous.Id;
             }
@@ -611,7 +613,7 @@ public sealed class AgentControlService
             await AcceptAsync(session);
             await reservation.CommitAsync(ct);
             _launchQueue.EnqueueInteractiveSession(
-                session.Id, agent.Id, spec, remoteControlName, notes: notes, initialPrompt: initialPrompt);
+                session.Id, agent.Id, session.StartedAt, spec, remoteControlName, notes: notes, initialPrompt: initialPrompt);
             return session.Id;
 
             async Task AcceptAsync(AgentSession accepted)
