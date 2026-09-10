@@ -36,7 +36,10 @@ public class DelegateBundleLaunchTests
         using var owned = provider;
         var task = TaskFor(AgentTaskKind.Worker, AgentTaskRole.Mutation);
         task.Workspace = WorkspaceMode.Shared;
-        var args = ArgsOf(dispatcher, task, kind: kind);
+        task.WorkingDirectory = Path.Combine(Path.GetTempPath(), "retained", "card-task-aabbccdd");
+        var spec = SpecOf(dispatcher, task, kind: kind);
+        spec.Cwd.ShouldBe(task.WorkingDirectory);
+        var args = spec.Args.ToList();
         var text = kind == AgentKind.Codex
             ? ConfigValue(args, "developer_instructions").ShouldNotBeNull()
             : args[args.IndexOf("--append-system-prompt") + 1];
@@ -49,6 +52,10 @@ public class DelegateBundleLaunchTests
         text.ShouldNotContain("[bundle:orchestrator");
         args.ShouldNotContain("--permission-mode");
         args.ShouldNotContain("read-only");
+        args.ShouldNotContain("--sandbox");
+        ConfigValue(args, "sandbox_mode").ShouldBeNull();
+        args.Where((_, index) => index > 0 && args[index - 1] == "-c")
+            .ShouldNotContain(value => value.Contains("read-only", StringComparison.OrdinalIgnoreCase));
     }
 
     [Test]

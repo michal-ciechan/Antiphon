@@ -115,8 +115,12 @@ public class MutationDispatchTests
     {
         await using var h = await Harness.CreateAsync(cap: 1);
         var mutation = await h.Seed(AgentTaskRole.Mutation, AgentTaskStatus.Working, h.Root);
-        var other = Directory.CreateDirectory(Path.Combine(h.Root, "other")).FullName;
-        var code = await h.Seed(AgentTaskRole.Code, AgentTaskStatus.Queued, other);
+        var code = await h.Seed(AgentTaskRole.Code, AgentTaskStatus.Queued, h.Root);
+        await using (var db = h.Context())
+        {
+            (await db.AgentTasks.SingleAsync(t => t.Id == code.Id)).Workspace = WorkspaceMode.Worktree;
+            await db.SaveChangesAsync();
+        }
         await h.Tick();
         await using (var db = h.Context())
             (await db.AgentTasks.SingleAsync(t => t.Id == code.Id)).Status.ShouldBe(AgentTaskStatus.Queued);
@@ -126,6 +130,11 @@ public class MutationDispatchTests
         await using var verify = h.Context();
         var row = await verify.AgentTasks.SingleAsync(t => t.Id == code.Id);
         row.Status.ShouldBe(AgentTaskStatus.Dispatched, row.FailureReason);
+        row.Workspace.ShouldBe(WorkspaceMode.Worktree);
+        row.WorktreePath.ShouldNotBeNull().ShouldNotBe(mutation.WorkingDirectory);
+        (await Git(row.WorktreePath!, "rev-parse", "--show-toplevel")).Replace('/', Path.DirectorySeparatorChar)
+            .ShouldBe(row.WorktreePath);
+        (await verify.AgentSessions.SingleAsync(s => s.Id == row.AgentSessionId)).Cwd.ShouldBe(row.WorktreePath);
         h.Factory.Adapters.ShouldHaveSingleItem().Started.ShouldBeTrue();
     }
 

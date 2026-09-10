@@ -336,7 +336,14 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
         <Section title="Handoff">
           {detail.deliverablePath && (
             <Text size="sm" data-testid="task-deliverable">
-              deliverable: <Code>{detail.deliverablePath}</Code>
+              deliverable: <Anchor
+                component={Link}
+                to={`/plans?${new URLSearchParams({
+                  file: detail.deliverablePath,
+                  ...(detail.deliverableRef ? { ref: detail.deliverableRef } : {}),
+                  task: summary.id,
+                }).toString()}`}
+              >{detail.deliverablePath}</Anchor>
               {detail.deliverableRef ? ` @ ${detail.deliverableRef}` : ''}
             </Text>
           )}
