@@ -355,11 +355,13 @@ public class SessionMessageQueuePtyIntegrationTests
             await queue.EnqueueAsync(sessionId, "[T] batched omega", MessageSendMode.WhenIdle,
                 CancellationToken.None, QueuedMessageOrigin.Channel, "telegram:batch");
 
+            Guid[] pendingIds;
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
             {
                 var pending = await db.SessionQueuedMessages.Where(m => m.AgentSessionId == sessionId).ToListAsync();
                 pending.Count.ShouldBe(2);
                 pending.ShouldAllBe(m => m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts == 0);
+                pendingIds = pending.Select(m => m.Id).Order().ToArray();
             }
             SessionQueueTranscriptPump.FileUserPrompts(transcriptPath).ShouldBeEmpty();
             (await client.GetSnapshotAsync(sessionId, CancellationToken.None)).RawOutput.ShouldNotContain("SUBMITTED:");
@@ -388,6 +390,10 @@ public class SessionMessageQueuePtyIntegrationTests
                 + ChannelPromptFormat.BatchCurrentMarker + "\n[T] batched omega";
             SessionQueueTranscriptPump.FileUserPrompts(transcriptPath).ShouldBe([expected]);
             (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(sessionId, baseline)).ShouldBe([expected]);
+            await using var delivered = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            var deliveredRows = await delivered.SessionQueuedMessages.Where(m => m.AgentSessionId == sessionId).ToListAsync();
+            deliveredRows.Select(m => m.Id).Order().ShouldBe(pendingIds);
+            deliveredRows.ShouldAllBe(m => m.Status == QueuedMessageStatus.Sent && m.DeliveryAttempts == 1);
         }
         finally
         {
@@ -484,7 +490,9 @@ public class SessionMessageQueuePtyIntegrationTests
             // CRLF normalization, which needs many line BREAKS, not a large body: it keeps every
             // break and loses the bulk. CARD-0025 (00ad946) is what made this spill; that path is
             // pinned separately by SessionMessageQueueSpillTests.
-            var body = "[Telegram \"Family\" — Mike 01:55] HEAD-MARKER add these to my calendar:\r\n\r\n"
+            // Inbox ConPTY narrows non-ASCII input for this .NET fake (ADR 0002).
+            // This fixture tests line endings and complete receipt, using an ASCII envelope.
+            var body = "[Telegram \"Family\" - Mike 01:55] HEAD-MARKER add these to my calendar:\r\n\r\n"
                 + string.Join("\r\n", Enumerable.Range(1, 8).Select(i => $"booking line {i} " + new string('x', 80)))
                 + "\r\nTAIL-MARKER also check my outlook calendar?";
 
