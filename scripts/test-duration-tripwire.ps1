@@ -122,8 +122,8 @@ foreach ($n in $results) {
 Write-Output ("SLOW-TEST TRIPWIRE: expanded rows={0}" -f $rowCount)
 foreach ($k in ($classStats.Keys | Sort-Object)) {
     $s = $classStats[$k]
-    Write-Output ("CLASS {0}: expanded={1} slow-rows={2} body-seconds={3:n3} (summed TRX body time, not elapsed wall time)" -f `
-        $k, $s.Expanded, $s.Slow, $s.BodySeconds)
+    Write-Output ("CLASS {0}: expanded={1} slow-rows={2} body-seconds={3} (summed TRX body time, not wall-clock duration)" -f `
+        $k, $s.Expanded, $s.Slow, $s.BodySeconds.ToString('0.000', [Globalization.CultureInfo]::InvariantCulture))
 }
 
 if ($unresolved.Count -gt 0) {
