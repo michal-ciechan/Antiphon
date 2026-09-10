@@ -189,17 +189,11 @@ public sealed class LandDeliveryFixture : IAsyncDisposable
         if (!_hostSuspended) { await _app.SuspendLandHostAsync(); _hostSuspended = true; }
         if (_child is not null) await KillChildAsync();
         var ready = Path.Combine(Root, "child-" + Guid.NewGuid().ToString("N") + ".json");
-        var script = Path.Combine(Root, "child.ps1");
-        await File.WriteAllTextAsync(script, """
-            $ErrorActionPreference = 'Stop'
-            $assembly = [Reflection.Assembly]::LoadFrom($args[0])
-            $method = $assembly.GetType('Antiphon.E2E.Fixtures.LandDeliveryFixture', $true).GetMethod('RunChildAsync')
-            $task = $method.Invoke($null, [object[]]@($args[1], $args[2], $args[3], $args[4]))
-            $task.GetAwaiter().GetResult()
-            """);
-        var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var arg in new[] { "-NoProfile", "-File", script, typeof(LandDeliveryFixture).Assembly.Location, Root, _app.OwnedRunnerUrl, cut, ready }) start.ArgumentList.Add(arg);
+        // Use this assembly's .NET/ASP.NET runtime graph. PowerShell's runtime cannot load the real Kestrel host.
+        var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var arg in new[] { typeof(LandDeliveryFixture).Assembly.Location, "--treenode-filter", "/*/*/AgentTaskLandDeliveryE2ETests/C467_V22*" }) start.ArgumentList.Add(arg);
         start.Environment["ANTIPHON_C467_CONNECTION"] = _connection;
+        start.Environment["ANTIPHON_C467_CHILD"] = JsonSerializer.Serialize(new[] { Root, _app.OwnedRunnerUrl, cut, ready });
         _child = Process.Start(start)!;
         _childOut = _child.StandardOutput.ReadToEndAsync(); _childError = _child.StandardError.ReadToEndAsync();
         await UntilAsync(() => Task.FromResult(File.Exists(ready) || _child.HasExited), "owned child startup", 120);
