@@ -171,15 +171,18 @@ public sealed class AgentTaskLandRefusedRetryTests
             task.LandRequestedAt = marker;
             task.LandStartedAt = marker;
             task.LandAttempt = 1;
-            // CARD-0467 added a durable request mirror after TestDesign. Restore both
-            // sides of the same interrupted request so recovery reaches the protocol.
-            var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == task.CurrentLandRequestId);
-            request.RequestedAt = marker;
-            request.StartedAt = marker;
-            request.Attempt = 1;
-            request.IsPending = true;
-            request.State = LandRequestState.Running;
-            request.TerminalEventId = null;
+            // CARD-0467 added durable request identity and one terminal event per request.
+            // Model the legacy pending crash state with its old timestamp beside the retained
+            // settled history; reviving the settled row would claim its terminal event twice.
+            var request = new AgentTaskLandRequest
+            {
+                Id = Guid.NewGuid(), TaskId = task.Id, RequestedAt = marker, StartedAt = marker,
+                LastAttemptAt = marker, Attempt = 1, State = LandRequestState.Running,
+                ReplyTo = AgentTaskReplyTo.None, LastEvaluatedAt = marker, LastProgressAt = marker,
+            };
+            db.AgentTaskLandRequests.Add(request);
+            await db.SaveChangesAsync();
+            task.CurrentLandRequestId = request.Id;
             await db.SaveChangesAsync();
         }
         if (equal) (await s.TaskAsync()).LandRequestedAt.ShouldBe(s.A.UpdatedAt);
