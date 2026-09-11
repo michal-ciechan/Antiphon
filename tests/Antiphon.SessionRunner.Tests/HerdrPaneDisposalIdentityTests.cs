@@ -76,10 +76,13 @@ public sealed class HerdrPaneDisposalIdentityTests
         Verdict(o with { Claims = [new(Session, "sidecar", "attached", false, "grok", p.Pid, p.StartedAtUtc!.Value.AddSeconds(seconds))] }).ShouldBe(HerdrPaneDisposalCodes.IdentityUnproven);
     }
     [Test] [Arguments("sidecar")] [Arguments("last-pane")]
-    public void C461_G023_Legacy_sidecar_is_not_exact(string source)
+    public async Task C461_G023_Legacy_sidecar_is_not_exact(string source)
     {
-        var o = Agent(native: false);
-        Verdict(o with { Claims = [new(Session, source, "launched", false, "grok", 11)] }).ShouldBe(HerdrPaneDisposalCodes.IdentityUnproven);
+        await using var h = new HerdrPaneDisposalFixture(); await h.StartAsync(); h.Occupied(native: false);
+        var sidecar = HerdrPaneDisposalServiceTests.Sidecar(h) with { ChildStartedAtUtc = null, LaunchedAtUtc = h.Processes.Started.AddSeconds(1), UpdatedAtUtc = h.Processes.Started.AddSeconds(1) };
+        if (source == "sidecar") sidecar.SaveAtomic(HerdrPaneSidecar.PathFor(h.Settings.SessionLogPath, h.SessionId));
+        else HerdrLastPane.FromSidecar(sidecar, "test").SaveAtomic(HerdrLastPane.PathFor(h.Settings.SessionLogPath, h.SessionId));
+        (await h.PreviewAsync()).Blockers.ShouldContain(HerdrPaneDisposalCodes.IdentityUnproven);
     }
     [Test] public void C461_G024_Native_source_antiphon()
     {

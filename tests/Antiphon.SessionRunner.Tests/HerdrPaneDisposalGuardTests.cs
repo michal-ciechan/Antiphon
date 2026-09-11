@@ -111,17 +111,31 @@ public sealed partial class HerdrPaneDisposalServiceTests
         public string? TryGetProcessName(int pid) => null;
         public DateTime? TryGetStartTimeUtc(int pid) => null;
     }
-    private static async Task Bound(string source, bool other)
+    private static async Task Bound(bool other)
     {
         await using var h = new HerdrPaneDisposalFixture(); await h.StartAsync();
         var p = await h.PreviewAsync();
-        h.Backend.Transform = o => o with { Claims = [.. o.Claims, new(other ? Guid.NewGuid() : h.SessionId, source, null, true)] };
+        h.Occupied("claude");
+        var binding = other ? Guid.NewGuid() : h.SessionId;
+        await h.Runtime.AttachHerdrAsync(new(binding, h.PaneId, "claude", "claude-jsonl", 4243, "owned-test", ExpectedNativeSessionId: h.SessionId), default);
+        // Prove the runtime claim itself, independently of files and metadata that can disappear.
+        File.Delete(HerdrPaneSidecar.PathFor(h.Settings.SessionLogPath, binding));
+        var pane = h.Fake.Workspaces.SelectMany(w => w.Tabs).SelectMany(t => t.Panes).Single(pane => pane.PaneId == h.PaneId);
+        pane.Tokens = new() { ["antiphon-session"] = h.SessionId.ToString() };
         var r = await h.Service.ExecuteAsync(h.Request(p), default);
         r.Code.ShouldBe(HerdrProblemTypes.PaneBound); h.Backend.Closes.ShouldBe(0);
     }
-    [Test] public Task C461_G042_Own_live_binding() => Bound("runtime", false);
-    [Test] public Task C461_G043_Other_live_binding() => Bound("runtime", true);
-    [Test] public Task C461_G044_Pending_adoption_binding() => Bound("pending-adoption", false);
+    [Test] public Task C461_G042_Own_live_binding() => Bound(false);
+    [Test] public Task C461_G043_Other_live_binding() => Bound(true);
+    [Test] public async Task C461_G044_Pending_adoption_binding()
+    {
+        await using var h = new HerdrPaneDisposalFixture(); var path = SaveLocator(h, "sidecar");
+        await h.Runtime.AdoptOrphanedHostsAsync(new HerdrPaneDisposalConcurrencyTests.Probe(), default);
+        h.Runtime.Get(h.SessionId).Pending.ShouldBe(HerdrPendingReasons.Unreachable);
+        await h.StartAsync(); var p = await h.PreviewAsync(); p.Blockers.ShouldContain(HerdrProblemTypes.PaneBound);
+        (await h.Service.ExecuteAsync(h.Request(p), default)).Code.ShouldBe(HerdrProblemTypes.PaneBound);
+        h.Backend.Closes.ShouldBe(0); File.Exists(path).ShouldBeTrue();
+    }
     private static async Task ConflictingFile(string kind)
     {
         await using var h = new HerdrPaneDisposalFixture(); await h.StartAsync();
