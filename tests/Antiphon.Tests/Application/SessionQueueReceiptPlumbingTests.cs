@@ -398,6 +398,7 @@ public sealed class SessionQueueReceiptPlumbingTests
         (await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == world.SessionId)).ShouldBeFalse();
         (await db.AgentSessions.AnyAsync(s => s.Id == world.SessionId)).ShouldBeFalse();
         Directory.Exists(world.Cwd).ShouldBeFalse();
+        Directory.Exists(world.LogDirectory).ShouldBeFalse();
         File.Exists(world.TranscriptPath).ShouldBeFalse();
     }
 
@@ -453,6 +454,7 @@ public sealed class SessionQueueReceiptPlumbingTests
         public required Guid SessionId { get; init; }
         public required string TranscriptPath { get; init; }
         public required string Cwd { get; init; }
+        public required string LogDirectory { get; init; }
         public required SessionMessageQueueService Queue { get; set; }
         public required ForwardingClient Forward { get; init; }
         public required InsertFault Fault { get; init; }
@@ -470,7 +472,8 @@ public sealed class SessionQueueReceiptPlumbingTests
             var cwd = Path.Combine(Path.GetTempPath(), $"c475-plumb-{sessionId:N}");
             Directory.CreateDirectory(cwd);
             var transcript = Path.Combine(Path.GetTempPath(), $"c475-plumb-{sessionId:N}.jsonl");
-            var client = new DirectSessionRunnerClient(Path.Combine(Path.GetTempPath(), $"c475-plumb-log-{sessionId:N}"), ptyBackend: "inbox");
+            var logDirectory = Path.Combine(Path.GetTempPath(), $"c475-plumb-log-{sessionId:N}");
+            var client = new DirectSessionRunnerClient(logDirectory, ptyBackend: "inbox");
             var inner = client;
             var forward = new ForwardingClient(inner);
             var fault = new InsertFault();
@@ -497,6 +500,7 @@ public sealed class SessionQueueReceiptPlumbingTests
             var world = new PtyWorld
             {
                 Client = inner, SessionId = sessionId, TranscriptPath = transcript, Cwd = cwd,
+                LogDirectory = logDirectory,
                 Queue = null!, Forward = forward, Fault = fault, Clock = clock, _provider = provider,
             };
             try
@@ -574,7 +578,7 @@ public sealed class SessionQueueReceiptPlumbingTests
         {
             List<Exception> errors = [];
             await AttemptAsync(StopPumpAsync);
-            _pump.Dispose();
+            AttemptSync(_pump.Dispose);
             await AttemptAsync(async () => { await Client.KillAsync(SessionId, CancellationToken.None); });
             await AttemptAsync(async () => await Client.DisposeAsync());
             await AttemptAsync(async () => await _provider.DisposeAsync());
@@ -588,12 +592,19 @@ public sealed class SessionQueueReceiptPlumbingTests
             }
             });
             await AttemptAsync(() => { if (Directory.Exists(Cwd)) Directory.Delete(Cwd, true); return Task.CompletedTask; });
+            await AttemptAsync(() => { if (Directory.Exists(LogDirectory)) Directory.Delete(LogDirectory, true); return Task.CompletedTask; });
             await AttemptAsync(() => { File.Delete(TranscriptPath); return Task.CompletedTask; });
             if (errors.Count > 0) throw new AggregateException("PtyWorld cleanup failed", errors);
 
             async Task AttemptAsync(Func<Task> cleanup)
             {
                 try { await cleanup(); }
+                catch (Exception error) { errors.Add(error); }
+            }
+
+            void AttemptSync(Action cleanup)
+            {
+                try { cleanup(); }
                 catch (Exception error) { errors.Add(error); }
             }
         }

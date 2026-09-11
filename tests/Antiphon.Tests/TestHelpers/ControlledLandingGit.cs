@@ -10,7 +10,7 @@ namespace Antiphon.Tests.TestHelpers;
 /// CARD-0475 S4: in-memory ILandingGit. Supported command shapes are explicit; unexpected
 /// calls throw. No default-success and no fallback to a real git process.
 /// </summary>
-internal sealed class ControlledLandingGit : ILandingGit
+internal sealed class ControlledLandingGit : ILandingGit, IDisposable
 {
     private int _oid;
     private int _pid = 2_000_000_000;
@@ -54,7 +54,6 @@ internal sealed class ControlledLandingGit : ILandingGit
     public string Fingerprint { get; }
     public List<string[]> Trace { get; } = [];
     public List<string[]> OwnedTrace { get; } = [];
-    public int NativeProcessStarts { get; private set; }
     public Func<Task>? BeforeInspection { get; set; }
     public Func<Task>? BeforeCommonDirectory { get; set; }
     public Func<string, IReadOnlyList<string>, Task<LandingGitResult?>>? BeforeCommand { get; set; }
@@ -700,6 +699,27 @@ internal sealed class ControlledLandingGit : ILandingGit
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
         StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The constructor materialises a real temp tree, so every fixture owns one and must drop
+    /// it; the per-test roots otherwise accumulate under %TEMP% forever (CARD-0475 review).
+    /// </summary>
+    public void Dispose()
+    {
+        var full = Path.GetFullPath(Root);
+        var temp = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath())) + Path.DirectorySeparatorChar;
+        if (!full.StartsWith(temp, StringComparison.OrdinalIgnoreCase)
+            || !Path.GetFileName(full).StartsWith("antiphon-c475-", StringComparison.Ordinal)) return;
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(full, "*", SearchOption.AllDirectories))
+                File.SetAttributes(file, FileAttributes.Normal);
+            Directory.Delete(full, true);
+        }
+        catch (DirectoryNotFoundException) { /* already gone */ }
+        catch (IOException) { /* best effort */ }
+    }
+
     private static InvalidOperationException Unsupported(IReadOnlyList<string> args) =>
         new("unsupported controlled git command: " + string.Join(' ', args));
 

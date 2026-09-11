@@ -53,7 +53,6 @@ public sealed class LandingProtocolHarnessTests
         (await h.RunAsync()).ShouldBe(Antiphon.Server.Application.Services.LandRunResult.Complete);
         h.Git.Trace.ShouldContain(a => a[0] == "push");
         h.Git.Trace.ShouldContain(a => a.Contains("remove"));
-        h.Git.NativeProcessStarts.ShouldBe(0);
         h.Git.OwnedTrace.ShouldContain(a => a[0] == "push");
         Console.WriteLine("C475_MODEL_TRACE:" + System.Text.Json.JsonSerializer.Serialize(new
         {

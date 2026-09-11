@@ -176,19 +176,7 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
     {
         if (Services is not null) await Services.DisposeAsync();
         if (Schema is not null) await Schema.DisposeAsync();
-        var full = Path.GetFullPath(Git.Root);
-        var temp = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath())) + Path.DirectorySeparatorChar;
-        if (full.StartsWith(temp, StringComparison.OrdinalIgnoreCase)
-            && Path.GetFileName(full).StartsWith("antiphon-c475-", StringComparison.Ordinal))
-        {
-            try
-            {
-                foreach (var file in Directory.EnumerateFiles(full, "*", SearchOption.AllDirectories))
-                    File.SetAttributes(file, FileAttributes.Normal);
-                Directory.Delete(full, true);
-            }
-            catch (IOException) { /* best effort */ }
-        }
+        Git.Dispose();
     }
 
     internal sealed class ProtocolFixture(ControlledLandingGit git)

@@ -49,47 +49,41 @@ public sealed class ControlledLandingGitTests
     [Arguments("push ENDPOINT missing-colon")]
     public async Task C475_UnsupportedArgumentsCannotSucceedOrMutate(string command)
     {
-        var git = new ControlledLandingGit();
-        try
+        using var git = new ControlledLandingGit();
+        var args = command.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(a => a.Replace("SOURCE", git.Source).Replace("OTHER", git.Repository)
+                .Replace("ENDPOINT", git.Remote.Replace('\\', '/')).Replace("OID", git.SeedSha)).ToArray();
+        var callbacks = 0;
+        git.BeforeCommand = (_, _) =>
         {
-            var args = command.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                .Select(a => a.Replace("SOURCE", git.Source).Replace("OTHER", git.Repository)
-                    .Replace("ENDPOINT", git.Remote.Replace('\\', '/')).Replace("OID", git.SeedSha)).ToArray();
-            var callbacks = 0;
-            git.BeforeCommand = (_, _) =>
-            {
-                callbacks++;
-                return Task.FromResult<Antiphon.Server.Application.Dtos.LandingGitResult?>(new(0, "", ""));
-            };
-            var error = await Should.ThrowAsync<InvalidOperationException>(() =>
-                git.RunOwnedAsync(git.Repository, args,
-                    (_, _, _) => { callbacks++; return Task.CompletedTask; }, CancellationToken.None));
-            error.Message.ShouldStartWith("unsupported controlled git command:");
-            callbacks.ShouldBe(0);
-            git.Trace.ShouldBeEmpty();
-            git.OwnedTrace.ShouldBeEmpty();
-            git.SourceHead.ShouldBe(git.SeedSha);
-            git.TargetHead.ShouldBe(git.SeedSha);
-            git.RemoteTarget.ShouldBe(git.SeedSha);
-            Directory.Exists(git.Source).ShouldBeTrue();
-            git.NativeProcessStarts.ShouldBe(0);
-        }
-        finally { Directory.Delete(git.Root, true); }
+            callbacks++;
+            return Task.FromResult<Antiphon.Server.Application.Dtos.LandingGitResult?>(new(0, "", ""));
+        };
+        var error = await Should.ThrowAsync<InvalidOperationException>(() =>
+            git.RunOwnedAsync(git.Repository, args,
+                (_, _, _) => { callbacks++; return Task.CompletedTask; }, CancellationToken.None));
+        error.Message.ShouldStartWith("unsupported controlled git command:");
+        callbacks.ShouldBe(0);
+        git.Trace.ShouldBeEmpty();
+        git.OwnedTrace.ShouldBeEmpty();
+        git.SourceHead.ShouldBe(git.SeedSha);
+        git.TargetHead.ShouldBe(git.SeedSha);
+        git.RemoteTarget.ShouldBe(git.SeedSha);
+        Directory.Exists(git.Source).ShouldBeTrue();
     }
 
     [Test]
     public async Task C475_UnknownCommandsAreRejected()
     {
-        var git = new ControlledLandingGit();
+        using var git = new ControlledLandingGit();
         await Should.ThrowAsync<InvalidOperationException>(() =>
             git.RunAsync(git.Repository, ["definitely-not-a-git-command"], CancellationToken.None));
-        git.NativeProcessStarts.ShouldBe(0);
     }
 
     [Test]
     public async Task C475_UnsupportedWorktreeOperationsAreRejected()
     {
-        var git = new ControlledLandingGit();
+        using var git = new ControlledLandingGit();
         var wt = new LandingProtocolHarness.ControlledWorktreeManager(git);
         await Should.ThrowAsync<InvalidOperationException>(() =>
             wt.CreateAsync(git.Repository, "card", "master", CancellationToken.None));
@@ -98,7 +92,7 @@ public sealed class ControlledLandingGitTests
     [Test]
     public async Task C475_SourceTargetRemoteAndPinsAreIndependent()
     {
-        var git = new ControlledLandingGit();
+        using var git = new ControlledLandingGit();
         var beforeTarget = git.TargetHead;
         var beforeRemote = git.RemoteTarget;
         await git.RequiredAsync(git.Source, "commit", "--allow-empty", "-m", "advance source");
@@ -111,7 +105,7 @@ public sealed class ControlledLandingGitTests
     [Test]
     public async Task C475_QueryErrorsAreNotAbsence()
     {
-        var git = new ControlledLandingGit();
+        using var git = new ControlledLandingGit();
         git.SetShowRefExistsError(128);
         var result = await git.RunAsync(git.Repository, ["show-ref", "--exists", "refs/heads/missing"], CancellationToken.None);
         result.ExitCode.ShouldBe(128);
@@ -121,7 +115,7 @@ public sealed class ControlledLandingGitTests
     [Test]
     public async Task C475_RunOwnedAwaitsTheStartedCallback()
     {
-        var git = new ControlledLandingGit();
+        using var git = new ControlledLandingGit();
         var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var calls = 0;
         var running = git.RunOwnedAsync(git.Source, ["commit", "--allow-empty", "-m", "x"],
@@ -138,7 +132,7 @@ public sealed class ControlledLandingGitTests
     [Test]
     public async Task C475_PushOwnedAwaitsTheStartedCallback()
     {
-        var git = new ControlledLandingGit();
+        using var git = new ControlledLandingGit();
         var dest = await git.DestinationAsync(git.Repository, git.TargetRef, CancellationToken.None);
         var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var calls = 0;
