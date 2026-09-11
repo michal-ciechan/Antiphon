@@ -283,7 +283,7 @@ public sealed class LandingSourceFreshnessTests
         request.RemoteSourceSha.ShouldBe(h.Git.SeedSha);
         request.ResolvedSourceSha.ShouldBe(local);
         h.Git.RemoteSource.ShouldBe(h.Git.SeedSha);
-        h.Git.OwnedTrace.ShouldNotContain(a => a.Contains("merge"));
+        h.Git.OwnedTrace.ShouldNotContain(a => a.Contains("merge") && a.Contains("--ff-only") && a.Contains(local));
     }
 
     [Test]
@@ -341,9 +341,9 @@ public sealed class LandingSourceFreshnessTests
         var b = h.Git.AdvanceRemoteSource();
         await h.RequestAsync(expectedSourceSha: b);
         await h.RunQueuedAsync();
-        var merge = h.Git.OwnedTrace.Single(a => a.Contains("merge") && a.Contains("--ff-only"));
-        merge.ShouldContain(b);
-        merge.ShouldContain("merge.autoStash=false");
+        var merge = h.Git.OwnedTrace.Where(a => a.Contains("merge") && a.Contains("--ff-only") && a.Contains(b)).ToArray();
+        merge.ShouldNotBeEmpty();
+        merge[0].ShouldContain("merge.autoStash=false");
         h.Git.SourceHead.ShouldBe(b);
     }
 

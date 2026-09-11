@@ -102,7 +102,11 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
         var seeded = await observer.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == Git.TaskId);
         if (seeded.LandRequestedAt is null)
             await RequestAsync();
-        return await CreateLand(db, scope.ServiceProvider).RunAsync(Git.TaskId, null, ct);
+        try
+        {
+            return await CreateLand(db, scope.ServiceProvider).RunAsync(Git.TaskId, null, ct);
+        }
+        finally { Queue.Release(Git.TaskId); }
     }
 
     public async Task FailAsync(Exception error)

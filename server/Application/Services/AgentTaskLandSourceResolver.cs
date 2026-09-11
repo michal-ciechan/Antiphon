@@ -33,7 +33,7 @@ public sealed class AgentTaskLandSourceResolver(
             || request.TargetFullRefSnapshot is not null && request.TargetFullRefSnapshot != coordinates.TargetFullRef
             || request.RepositoryPathSnapshot is not null && !SamePath(request.RepositoryPathSnapshot, coordinates.RepositoryPath)
             || request.WorktreePathSnapshot is not null && !SamePath(request.WorktreePathSnapshot, coordinates.WorktreePath))
-            return new(null, "request_coordinates_changed", false);
+            return await RefuseAsync(request, "request_coordinates_changed", null, null, null, ct);
 
         var common = await git.CommonDirectoryAsync(coordinates.RepositoryPath, ct);
         if (!leases.Owns(lease, common))

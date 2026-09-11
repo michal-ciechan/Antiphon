@@ -138,7 +138,11 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
             var task = await observer.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == Fixture.TaskId);
             if (task.LandRequestedAt is null)
                 await RequestAsync();
-            return await CreateLand(db, scope.ServiceProvider).RunAsync(Fixture.TaskId, null, ct);
+            try
+            {
+                return await CreateLand(db, scope.ServiceProvider).RunAsync(Fixture.TaskId, null, ct);
+            }
+            finally { Queue.Release(Fixture.TaskId); }
         }
         finally
         {

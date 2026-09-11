@@ -360,8 +360,6 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
 
     private async Task RecheckRemoteSourceAsync(AgentTaskLanding op, AgentTaskLandRequest? request, CancellationToken ct)
     {
-        if (op.SchemaVersion != 2 || op.SourceRemoteSha is null || op.SourceRemoteFingerprint is null)
-            return;
         if (request is not null)
         {
             Require(request.TaskId == op.TaskId, "stale_land_request");
@@ -373,6 +371,8 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 Require(request.ReviewEvidenceId == op.ReviewEvidenceId, "resume_approval_changed");
             Require(request.VerifyFilter == op.VerificationFilter, "verification_filter_changed");
         }
+        if (op.SchemaVersion != 2 || op.SourceRemoteSha is null || op.SourceRemoteFingerprint is null)
+            return;
         var observed = await git.ObserveSourceAsync(op.RepositoryPath, op.SourceFullRef,
             $"refs/antiphon/land/{op.TaskId:N}/{op.Id:N}/source-recheck", ct);
         Require(observed.Accepted, observed.Reason ?? "source_remote_unreadable");

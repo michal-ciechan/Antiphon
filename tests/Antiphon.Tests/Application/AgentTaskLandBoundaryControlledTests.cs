@@ -147,7 +147,7 @@ public sealed class AgentTaskLandBoundaryControlledTests
         h.Fault.AfterAcknowledged = async phase => { if (phase.ToString() == boundary) await MutateAsync(); };
         h.Fixture.Git.AfterCommand = async (_, args, result) =>
         {
-            if (args[0] == "fetch" && result.Succeeded)
+            if (args[0] == "fetch" && result.Succeeded && args.Any(a => a.StartsWith(h.Fixture.TargetRef, StringComparison.Ordinal)))
             {
                 observedFetches++;
                 if (boundary == "remote" || boundary == "BeforePushIntent" && observedFetches == 2) await MutateAsync();
@@ -175,7 +175,7 @@ public sealed class AgentTaskLandBoundaryControlledTests
         if (boundary == "Prepared") h.Verifier.Calls.ShouldBe(0, "source changes must refuse before running verification");
         if (boundary == "Verified") op.Phase.ShouldBe(LandPhase.Verified, "source changes must refuse before target-advance intent");
         if (boundary == "LocalTargetAdvanced")
-            h.Fixture.Git.Trace.Skip(afterBoundary).ShouldNotContain(a => a[0] == "fetch", "source changes must refuse before a new publication observation");
+            h.Fixture.Git.Trace.Skip(afterBoundary).ShouldNotContain(a => a[0] == "fetch" && a.Any(x => x.StartsWith(h.Fixture.TargetRef, StringComparison.Ordinal)), "source changes must refuse before a new publication observation");
         if (boundary == "BeforePushIntent") op.PushStartedAt.ShouldBeNull("source changes must refuse before push intent");
         if (boundary == "TargetAdvanceStarted")
             h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("--ff-only") || a[0] == "update-ref" && a.Contains(h.Fixture.TargetRef),

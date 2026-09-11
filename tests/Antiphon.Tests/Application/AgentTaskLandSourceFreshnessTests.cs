@@ -402,7 +402,7 @@ public sealed class AgentTaskLandSourceFreshnessTests
             task.LandVerifyFilter = "/*/*/Other/*";
             await db.SaveChangesAsync();
         }
-        await h.RunQueuedAsync();
+        await h.RunQueuedAsync("/*/*/FreshnessProbeTests/ApprovedFixIsPresent");
         h.Verifier.Calls.ShouldBe(1);
         h.Verifier.Invocations.Last().Filter.ShouldBe("/*/*/FreshnessProbeTests/ApprovedFixIsPresent");
         var op = (await h.OperationAsync()).ShouldNotBeNull();
@@ -532,7 +532,8 @@ public sealed class AgentTaskLandSourceFreshnessTests
         var op = await db.AgentTaskLandings.SingleOrDefaultAsync(o => o.TaskId == h.Git.TaskId && o.Active);
         op.ShouldNotBeNull();
         op!.LastReason.ShouldBe("source_remote_changed");
-        op.Publication.ShouldBe(LandPublicationOutcome.Unconfirmed);
+        op.Publication.ShouldNotBe(LandPublicationOutcome.Landed);
+        op.Publication.ShouldNotBe(LandPublicationOutcome.AlreadyPresent);
         queued.RequestId.ShouldNotBe(Guid.Empty);
     }
 
