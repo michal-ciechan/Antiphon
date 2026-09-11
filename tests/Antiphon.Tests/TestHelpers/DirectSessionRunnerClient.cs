@@ -49,6 +49,7 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
 
     /// <summary>CARD-0213: when false, GetCapabilitiesAsync omits herdr-attach (R3).</summary>
     public bool AdvertiseHerdrAttach { get; set; } = true;
+    public bool AdvertiseVerificationCustody { get; set; }
 
     /// <summary>CARD-0384: when false, GetCapabilitiesAsync omits herdr-named-tab-placement.</summary>
     public bool AdvertiseHerdrNamedTabPlacement { get; set; } = true;
@@ -171,7 +172,8 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             Backend: SessionRunnerHttpClient.BackendWire(spec.Backend),
             Herdr: spec.Herdr,
             GrokRulesPayload: spec.GrokRulesPayload,
-            CommandLineBudgetChars: spec.CommandLineBudgetChars);
+            CommandLineBudgetChars: spec.CommandLineBudgetChars,
+            VerificationBinding: spec.VerificationBinding);
 
         _startRequests.Enqueue(request);
         BeforeStart?.Invoke();
@@ -203,6 +205,8 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             if (features.Count == 0)
                 features = null;
         }
+        if (AdvertiseVerificationCustody && _runtime.VerificationCustodyBackend is not null)
+            features!.Add(RunnerCapabilityFeatures.VerificationCustodyV1);
         return Task.FromResult<RunnerCapabilitiesDto?>(new(
             "ModernConPty",
             "modern",
@@ -210,8 +214,13 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             false,
             SessionRunnerRuntime.SupportedTranscriptFormats,
             SessionBackends: backends,
-            Features: features));
+            Features: features,
+            VerificationCustodyBackend: AdvertiseVerificationCustody ? _runtime.VerificationCustodyBackend : null,
+            RunnerStoreId: AdvertiseVerificationCustody ? _runtime.RunnerStoreId : null));
     }
+
+    public Task<VerificationCustodyStatus> ReadVerificationCustodyAsync(VerificationExecutionBinding binding, bool seal, CancellationToken ct)
+        => _runtime.ReadCustodyAsync(binding, seal, ct);
 
     public Task<string?> GetSessionBackendCapabilityMismatchAsync(CancellationToken ct)
     {

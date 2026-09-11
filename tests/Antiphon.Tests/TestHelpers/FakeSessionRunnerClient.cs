@@ -22,6 +22,7 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
 
     public bool AdvertiseHerdr { get; set; } = true;
     public bool AdvertiseGrokRules { get; set; }
+    public Guid? VerificationStoreId { get; set; }
     public Func<Guid, GrokRulesReceipt?>? RulesReceipt { get; set; }
 
     public bool AdvertiseHerdrAttach { get; set; } = true;
@@ -40,6 +41,7 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
             ? [SessionBackends.PtyHost, SessionBackends.Herdr]
             : [SessionBackends.PtyHost];
         var features = new List<string>();
+        if (VerificationStoreId is not null) features.Add(RunnerCapabilityFeatures.VerificationCustodyV1);
         if (AdvertiseGrokRules) features.Add(GrokRulesTransport.Capability);
         if (AdvertiseHerdr && AdvertiseHerdrAttach)
             features.Add(RunnerCapabilityFeatures.HerdrAttach);
@@ -52,7 +54,9 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
             false,
             SessionRunnerRuntime.SupportedTranscriptFormats,
             SessionBackends: backends,
-            Features: features.Count == 0 ? null : features));
+            Features: features.Count == 0 ? null : features,
+            VerificationCustodyBackend: VerificationStoreId is null ? null : "windows-job-v1",
+            RunnerStoreId: VerificationStoreId));
     }
 
     public Task<string?> GetSessionBackendCapabilityMismatchAsync(CancellationToken ct)

@@ -189,6 +189,10 @@ public static class AgentTaskEndpoints
 
         // Explicit and ordered: a succeeded Worktree task is left for review until the caller
         // chooses to land it. The request only queues deterministic git work; it never waits for it.
+        tasks.MapPost("/{id}/cleanup-verification", async (
+            string id, AgentTaskService service, VerificationCleanupService cleanup, CancellationToken ct) =>
+            Results.Ok(await cleanup.CleanupAsync(await service.ResolveTaskIdAsync(id, ct), ct)));
+
         tasks.MapPost("/{id}/land", async (
             string id,
             LandAgentTaskRequest? request,

@@ -172,6 +172,19 @@ public class AgentTask
 
     public Guid? WorktreeId { get; set; }
 
+    /// <summary>Immutable confirmed publication selected for an isolated verification snapshot.</summary>
+    public Guid? SourceLandingOperationId { get; set; }
+    public string? SourceLandingSha { get; set; }
+    public string? VerificationCreationJson { get; set; }
+    public int? VerificationCustodyContractVersion { get; set; }
+    public long VerificationExecutionRevision { get; set; }
+    public string? VerificationCleanupSealJson { get; set; }
+    public string? VerificationCleanupResidue { get; set; }
+    public DateTime? VerificationCleanupStartedAt { get; set; }
+    public bool VerificationDirectoryRemoved { get; set; }
+    public bool VerificationRegistrationRemoved { get; set; }
+    public bool VerificationBranchRemoved { get; set; }
+
     /// <summary>
     /// Where a Worktree task actually runs — filled at dispatch by <c>git worktree add</c>. The
     /// card-scoped <see cref="Worktree"/> entity requires a card, which a task doesn't have, so the

@@ -55,6 +55,7 @@ public class AppDbContext : DbContext
     public DbSet<Alert> Alerts => Set<Alert>();
     public DbSet<AgentTask> AgentTasks => Set<AgentTask>();
     public DbSet<AgentTaskLanding> AgentTaskLandings => Set<AgentTaskLanding>();
+    public DbSet<VerificationExecution> VerificationExecutions => Set<VerificationExecution>();
     public DbSet<AgentTaskLandRequest> AgentTaskLandRequests => Set<AgentTaskLandRequest>();
     public DbSet<AgentTaskLandNotification> AgentTaskLandNotifications => Set<AgentTaskLandNotification>();
     public DbSet<AgentTaskEvent> AgentTaskEvents => Set<AgentTaskEvent>();
@@ -1512,9 +1513,24 @@ public class AppDbContext : DbContext
             entity.Property(l => l.VerificationFilter).HasMaxLength(400);
         });
 
+        modelBuilder.Entity<VerificationExecution>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.TaskId, e.SessionId, e.AcceptedStartedAt }).IsUnique();
+            entity.HasOne<AgentTask>().WithMany().HasForeignKey(e => e.TaskId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<AgentTaskLanding>().WithMany().HasForeignKey(e => e.SourceLandingOperationId).OnDelete(DeleteBehavior.Restrict);
+            foreach (var name in new[] { nameof(VerificationExecution.TaskId), nameof(VerificationExecution.SourceLandingOperationId),
+                nameof(VerificationExecution.SessionId), nameof(VerificationExecution.AcceptedStartedAt),
+                nameof(VerificationExecution.BindingJson), nameof(VerificationExecution.CreatedAt) })
+                entity.Property(name).Metadata.SetAfterSaveBehavior(Microsoft.EntityFrameworkCore.Metadata.PropertySaveBehavior.Throw);
+        });
+
         modelBuilder.Entity<AgentTask>(entity =>
         {
             entity.ToTable("AgentTasks");
+            entity.HasOne<AgentTaskLanding>().WithMany().HasForeignKey(t => t.SourceLandingOperationId).OnDelete(DeleteBehavior.Restrict);
+            entity.Property(t => t.SourceLandingOperationId).Metadata.SetAfterSaveBehavior(Microsoft.EntityFrameworkCore.Metadata.PropertySaveBehavior.Throw);
+            entity.Property(t => t.SourceLandingSha).Metadata.SetAfterSaveBehavior(Microsoft.EntityFrameworkCore.Metadata.PropertySaveBehavior.Throw);
             entity.HasKey(t => t.Id);
             entity.Property(t => t.RootTaskId).IsRequired();
             entity.Property(t => t.Depth).IsRequired();

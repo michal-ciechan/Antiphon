@@ -1598,6 +1598,16 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         // "env values only": args are process-listing-visible and quoted into logs and failure
         // reasons, and --append-system-prompt text additionally lands in transcripts.
         ApiKeyPlaceholder.EnsureResolved(spec, session.Id);
+        await using (var verificationScope = _scopeFactory.CreateAsyncScope())
+        {
+            var verification = verificationScope.ServiceProvider.GetService<VerificationExecutionService>();
+            if (verification is not null)
+                spec = await verification.PrepareLaunchAsync(session, spec, ct);
+            else if (spec.VerificationBinding is not null
+                || await _db.AgentTasks.AsNoTracking().AnyAsync(t => t.AgentSessionId == session.Id && t.SourceLandingOperationId != null, ct)
+                || await _db.VerificationExecutions.AsNoTracking().AnyAsync(e => e.SessionId == session.Id, ct))
+                throw new ConflictException("verification_custody_unavailable");
+        }
         // CARD-0382: last server-side scan of the resolved argv (profile/registry --rules that
         // never went through composition). Herdr expands $env:NAME with DollarEnvArg first;
         // PtyHost does not expand (D-T4).

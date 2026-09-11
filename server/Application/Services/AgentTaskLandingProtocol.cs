@@ -15,6 +15,8 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
 
     public async Task<LandingProtocolResult> RunAsync(AgentTask task, RepositoryLease lease, CancellationToken ct)
     {
+        if (task.Role == AgentTaskRole.Mutation || task.SourceLandingOperationId is not null)
+            throw new Application.Exceptions.ConflictException("Mutation snapshots cannot be landed.", "verification_publication_forbidden");
         AgentTaskLanding? op = task.ActiveLandingId is Guid id
             ? await db.AgentTaskLandings.SingleAsync(o => o.Id == id && o.TaskId == task.Id, ct) : null;
         AgentTaskLanding? previousToReplace = null;

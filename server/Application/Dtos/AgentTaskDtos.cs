@@ -154,7 +154,8 @@ public sealed record CreateAgentTaskRequest(
     /// a <see cref="FollowUpOnTask"/> → FollowUp). Distinct from <see cref="Role"/> / CARD-0146
     /// pipeline seats. An unknown name is 422.
     /// </summary>
-    OrchestrationStage? Stage = null);
+    OrchestrationStage? Stage = null,
+    Guid? SourceLandingOperationId = null);
 
 public sealed record AgentTaskSummaryDto(
     Guid Id,
@@ -285,7 +286,10 @@ public sealed record AgentTaskDetailDto(
     string? DistilledResult = null,
     LandingEvidenceDto? Landing = null,
     LandRequestStatusDto? LandRequest = null,
-    LegacyLandReceiptDto? LegacyLandReceipt = null);
+    LegacyLandReceiptDto? LegacyLandReceipt = null,
+    Guid? SourceLandingOperationId = null,
+    string? SourceLandingSha = null,
+    string? VerificationCleanupResidue = null);
 
 /// <summary>Why a task is Blocked — CARD-0033. RoutingExhausted is CARD-0090, added after the original three.</summary>
 public enum BlockedKind

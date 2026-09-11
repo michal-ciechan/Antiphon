@@ -215,6 +215,8 @@ public sealed class DataRetentionService
 
         var eligibleRootIds = await _db.AgentTasks
             .Where(t => !liveRootIds.Contains(t.RootTaskId)
+                && !_db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.SourceLandingOperationId != null)
+                && !_db.AgentTaskLandings.Any(op => _db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.Id == op.TaskId))
                 && !_db.AgentTaskLandRequests.Any(r => _db.AgentTasks.Any(member => member.RootTaskId == t.RootTaskId && member.Id == r.TaskId)))
             .GroupBy(t => t.RootTaskId)
             .Where(g => g.Max(t => t.CompletedAt ?? t.CreatedAt) < cutoff)

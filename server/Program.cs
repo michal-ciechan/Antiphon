@@ -309,6 +309,9 @@ try
     builder.Services.AddScoped<DelegationOpenGate>();
     builder.Services.AddScoped<WorktreeHealthService>();
     builder.Services.AddScoped<AgentTaskService>();
+    builder.Services.AddScoped<SourceLandingAdmission>();
+    builder.Services.AddScoped<VerificationExecutionService>();
+    builder.Services.AddScoped<VerificationCleanupService>();
     builder.Services.AddScoped<AgentTaskPipelineStatusService>();
     builder.Services.AddSingleton<AgentTaskLandQueue>();
     builder.Services.AddSingleton<ILandingGit, LandingGit>();

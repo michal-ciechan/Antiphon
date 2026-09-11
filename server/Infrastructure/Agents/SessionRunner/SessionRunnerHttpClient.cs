@@ -92,7 +92,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             Backend: backendWire,
             Herdr: spec.Herdr,
             GrokRulesPayload: spec.GrokRulesPayload,
-            CommandLineBudgetChars: spec.CommandLineBudgetChars);
+            CommandLineBudgetChars: spec.CommandLineBudgetChars,
+            VerificationBinding: spec.VerificationBinding);
         var response = await _httpClient.PostAsJsonAsync("sessions", request, JsonOptions, ct);
         // CARD-0341: a runner refusal (herdr_gkp_env_missing, pane_occupied, …) carries its reason
         // in problem-details; surface that as the typed exception so the launch path stores the
@@ -107,6 +108,20 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     /// Null for PtyHost on purpose — it is the pre-herdr default, so a new server in front of an
     /// old runner asks for exactly what that runner already does.
     /// </summary>
+    public async Task<VerificationCustodyStatus> ReadVerificationCustodyAsync(
+        VerificationExecutionBinding binding, bool seal, CancellationToken ct)
+    {
+        var path = $"sessions/{binding.Generation.SessionId:D}/executions/{binding.ExecutionId:D}/";
+        using var response = seal
+            ? await _httpClient.PostAsJsonAsync(path + "seal", binding, JsonOptions, ct)
+            : await _httpClient.GetAsync(path + "custody?acceptedStartedAt="
+                + Uri.EscapeDataString(binding.Generation.AcceptedStartedAt.ToString("O")), ct);
+        await ThrowForRunnerProblemAsync(response, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<VerificationCustodyStatus>(JsonOptions, ct)
+            ?? throw new ConflictException("verification_custody_missing_response");
+    }
+
     public static string? BackendWire(SessionBackend backend) =>
         backend == SessionBackend.Herdr ? SessionBackends.Herdr : null;
 

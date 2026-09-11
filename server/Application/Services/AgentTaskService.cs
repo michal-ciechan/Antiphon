@@ -54,6 +54,7 @@ public sealed class AgentTaskService
     // absent, create does not consult the fleet/role cap.
     private readonly DelegationOpenGate? _openGate;
     private readonly CapacityRecoveryService? _capacityRecovery;
+    private readonly SourceLandingAdmission? _sourceLanding;
 
     public AgentTaskService(
         AppDbContext db,
@@ -73,7 +74,8 @@ public sealed class AgentTaskService
         DelegateCheckProbe? checkProbe = null,
         DiagnoseQueue? diagnoseQueue = null,
         DelegationOpenGate? openGate = null,
-        CapacityRecoveryService? capacityRecovery = null)
+        CapacityRecoveryService? capacityRecovery = null,
+        SourceLandingAdmission? sourceLanding = null)
     {
         _areas = areas;
         _db = db;
@@ -93,6 +95,7 @@ public sealed class AgentTaskService
         _diagnoseQueue = diagnoseQueue;
         _openGate = openGate;
         _capacityRecovery = capacityRecovery;
+        _sourceLanding = sourceLanding;
     }
 
     /// <summary>
@@ -185,6 +188,14 @@ public sealed class AgentTaskService
             throw new ValidationException(nameof(request.Goal), "A goal is required.");
         if (request.Goal.Length > 20_000)
             throw new ValidationException(nameof(request.Goal), "A goal must not exceed 20,000 characters.");
+
+        if (request.SourceLandingOperationId is not null
+            && (request.Kind != AgentTaskKind.Worker || request.Role != AgentTaskRole.Mutation
+                || request.Workspace != WorkspaceMode.Worktree || request.MergeTargetRef is not null
+                || request.AgentId is not null || request.Agent is not null || request.FollowUpOnTask is not null))
+            throw new ValidationException(nameof(request.SourceLandingOperationId),
+                "SourceLanding requires a fresh Worker/Mutation Worktree without an agent pin, follow-up or merge target.",
+                "verification_source_mode");
 
         // Validate explicit access before a live follow-up can overwrite Workspace.
         if (request.Role == AgentTaskRole.Mutation && request.Workspace == WorkspaceMode.ReadOnly)
@@ -864,6 +875,8 @@ public sealed class AgentTaskService
             Goal = request.Goal.Trim(),
             Kind = request.Kind,
             Role = request.Role,
+            SourceLandingOperationId = request.SourceLandingOperationId,
+            VerificationCustodyContractVersion = request.SourceLandingOperationId is null ? null : 1,
             ProjectId = projectId,
             CardId = binding.CardId,
             LaunchEnvOverrideJson = AgentLaunchEnv.Serialize(launchEnvOverride),
@@ -883,7 +896,7 @@ public sealed class AgentTaskService
             // A worktree parent's children target its task branch (integration once per level);
             // a shared-workspace parent passes its own target down. Cross-repo "merge" is a
             // release-coordination problem and deliberately out of scope.
-            MergeTargetRef = request.MergeTargetRef
+            MergeTargetRef = request.SourceLandingOperationId is not null ? null : request.MergeTargetRef
                 ?? (SharesRepoWith(parent, resolved.RepoPath)
                     ? parent?.WorktreeBranch ?? parent?.MergeTargetRef
                     : null),
@@ -931,7 +944,7 @@ public sealed class AgentTaskService
             && !liveFollowUp;
         IDbContextTransaction? gateTx = null;
         DelegationOpenGate.Snapshot? openSnapshot = null;
-        if (gateCreate)
+        if (gateCreate || task.SourceLandingOperationId is not null)
         {
             gateTx = _db.Database.CurrentTransaction is null
                 ? await _db.Database.BeginTransactionAsync(ct)
@@ -940,6 +953,16 @@ public sealed class AgentTaskService
 
         try
         {
+            if (task.SourceLandingOperationId is Guid sourceOperation)
+            {
+                if (_sourceLanding is null)
+                    throw new ConflictException("SourceLanding admission is unavailable.", "verification_custody_unsupported_backend");
+                if (task.AgentId is not null)
+                    throw new ConflictException("SourceLanding cannot use a pinned process.", "verification_source_mode");
+                await _sourceLanding.RequireUniqueOpenAsync(sourceOperation, ct);
+                task.SourceLandingSha = (await _sourceLanding.RequireSourceAsync(task, ct)).VerifiedSourceSha;
+                await _sourceLanding.RequireSupportAsync(ct);
+            }
             if (gateCreate)
                 openSnapshot = await _openGate!.EnsureCanCreateAsync(
                     projectId, request.Role, request.IgnoreConcurrencyLimit, ct);
@@ -1465,7 +1488,8 @@ public sealed class AgentTaskService
                 landNotes.Select(LandNotificationStatusDto.From).ToList()),
             legacyLand is null ? null : new LegacyLandReceiptDto(legacyLand.Id, legacyLand.At,
                 legacyNote?.ConfirmedAt is not null ? "Confirmed" : task.ReplyTo == AgentTaskReplyTo.None ? "NotRequired" : "LegacyUnverified",
-                legacyNote?.QueueMessageId, legacyNote?.ConfirmedAt, legacyNote?.ConfirmingPromptSequence));
+                legacyNote?.QueueMessageId, legacyNote?.ConfirmedAt, legacyNote?.ConfirmingPromptSequence),
+            task.SourceLandingOperationId, task.SourceLandingSha, task.VerificationCleanupResidue);
     }
 
     /// <summary>Record the first operator read; repeat opens deliberately preserve that timestamp.</summary>

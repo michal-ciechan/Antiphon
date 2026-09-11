@@ -48,7 +48,8 @@ public sealed record AgentLaunchOptions(
     // session.AgentKind, not profile.Kind).
     AgentModelLevel? ModelTier = null,
     global::Antiphon.SessionRunner.Contracts.GrokRulesPayload? GrokRulesPayload = null,
-    int? CommandLineBudgetChars = null);
+    int? CommandLineBudgetChars = null,
+    global::Antiphon.SessionRunner.Contracts.VerificationExecutionBinding? VerificationBinding = null);
 
 /// <summary>
 /// How the resolved launch treated the model argument (CARD-0182 D4).
@@ -84,4 +85,5 @@ public sealed record AgentLaunchSpec(
     // Required when Backend == Herdr; ignored otherwise. Resolved server-side (runner has no DB).
     global::Antiphon.SessionRunner.Contracts.HerdrLaunchOptions? Herdr = null,
     global::Antiphon.SessionRunner.Contracts.GrokRulesPayload? GrokRulesPayload = null,
-    int? CommandLineBudgetChars = null);
+    int? CommandLineBudgetChars = null,
+    global::Antiphon.SessionRunner.Contracts.VerificationExecutionBinding? VerificationBinding = null);
