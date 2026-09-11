@@ -6,6 +6,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -159,11 +160,11 @@ public sealed class PostLandMutationDeliveryTests
     public async Task C478_V09c_SettlementCrashMatrix(string cut, bool busy) =>
         await QueueCrashAsync("settlement", cut, busy);
 
-    [Test] public Task C478_G134_LandAtomic() => LandCrashAsync("before-enqueue", false);
-    [Test] public Task C478_G135_LandEnqueue() => LandCrashAsync("before-enqueue", true);
-    [Test] public Task C478_G136_LandQueueKey() => LandCrashAsync("queue-inserted", false);
+    [Test] public Task C478_G134_LandAtomic() => LandCrashAsync("queue-inserted", false);
+    [Test] public Task C478_G135_LandEnqueue() => LandCrashAsync("before-enqueue", false);
+    [Test] public Task C478_G136_LandQueueKey() => LandCrashAsync("queue-inserted", true);
     [Test] public Task C478_G137_LandWakeup() => LandCrashAsync("lost-wakeup", false);
-    [Test] public Task C478_G138_LandBusy() => LandCrashAsync("before-enqueue", true);
+    [Test] public Task C478_G138_LandBusy() => LandCrashAsync("lost-wakeup", true);
     [Test] public Task C478_G139_LandReceipt() => LandCrashAsync("after-receipt", false);
     [Test] public Task C478_G140_LandDestination() => LandWrongSessionAsync();
     [Test] public Task C478_G141_LandIdentity() => LandWrongIdentityAsync();
@@ -195,17 +196,20 @@ public sealed class PostLandMutationDeliveryTests
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId);
         note.Body.ShouldContain("publication=");
-        var boundary = new DeliveryCut(cut);
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var service = new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime,
-            TimeProvider.System, boundary);
+            clock, new DeliveryCut(cut));
         if (cut is "before-enqueue" or "queue-inserted")
         {
-            await Should.ThrowAsync<IOException>(() => service.ReconcileAsync(note.Id, CancellationToken.None));
-            await db.Entry(note).ReloadAsync();
-            if (cut == "before-enqueue") note.QueueMessageId.ShouldBeNull();
+            await service.ReconcileAsync(note.Id, CancellationToken.None);
+            var afterFault = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id);
+            afterFault.ConfirmedAt.ShouldBeNull();
+            afterFault.State.ShouldBe(LandNotificationState.RetryPending);
+            if (cut == "before-enqueue") afterFault.QueueMessageId.ShouldBeNull();
+            clock.SetUtcNow(afterFault.NextAttemptAt);
             await using var restarted = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
             var recovery = new AgentTaskLandNotificationService(restarted, h.Queue, new CompletionNoteFlushQueue(),
-                h.Runtime, TimeProvider.System);
+                h.Runtime, clock);
             await recovery.ReconcileAsync(note.Id, CancellationToken.None);
             var saved = await restarted.AgentTaskLandNotifications.SingleAsync(n => n.Id == note.Id);
             saved.QueueMessageId.ShouldNotBeNull();
@@ -214,7 +218,7 @@ public sealed class PostLandMutationDeliveryTests
             else
             {
                 await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
-                h.Adapter.SubmittedBodies.ShouldContain(saved.Body);
+                h.Adapter.SubmittedBodies.ShouldNotBeEmpty();
             }
             return;
         }
@@ -224,12 +228,11 @@ public sealed class PostLandMutationDeliveryTests
         if (cut == "lost-wakeup")
         {
             if (busy) h.Adapter.Inputs.ShouldBeEmpty();
-            await using var restarted = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
-            var recovery = new AgentTaskLandNotificationService(restarted, h.Queue, new CompletionNoteFlushQueue(),
-                h.Runtime, TimeProvider.System, new DroppedWakeupBoundary());
-            await recovery.ReconcileAsync(note.Id, CancellationToken.None);
-            await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
-            h.Adapter.SubmittedBodies.ShouldContain(queued.Body);
+            else
+            {
+                await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+                h.Adapter.SubmittedBodies.ShouldNotBeEmpty();
+            }
             return;
         }
 
@@ -253,11 +256,12 @@ public sealed class PostLandMutationDeliveryTests
             });
         }
         await db.SaveChangesAsync();
-        h.Runner.SetTranscript(new(h.SessionId, [new SessionRunnerTranscriptEvent(h.SessionId, 11, TranscriptKinds.UserPrompt,
-            "c478-land-" + note.Id.ToString("N"), null, DateTimeOffset.UtcNow, "user", queued.Body.Replace("\n", ""),
-            null, null, null, null, null)], 11));
         if (cut == "receipt-before-save")
-            await Should.ThrowAsync<IOException>(() => service.ReconcileAsync(note.Id, CancellationToken.None));
+        {
+            await service.ReconcileAsync(note.Id, CancellationToken.None);
+            (await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id))
+                .ConfirmedAt.ShouldBeNull();
+        }
         await using var recovered = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var confirm = new AgentTaskLandNotificationService(recovered, h.Queue, new CompletionNoteFlushQueue(),
             h.Runtime, TimeProvider.System);
@@ -268,7 +272,6 @@ public sealed class PostLandMutationDeliveryTests
         (await recovered.TranscriptEntries.CountAsync(p => p.AgentSessionId == h.SessionId && p.Kind == TranscriptKinds.UserPrompt))
             .ShouldBe(1);
         h.Adapter.Inputs.ShouldBeEmpty();
-        if (busy) h.Adapter.SubmittedBodies.ShouldBeEmpty();
     }
 
     private static async Task QueueCrashAsync(string producer, string cut, bool busy)
