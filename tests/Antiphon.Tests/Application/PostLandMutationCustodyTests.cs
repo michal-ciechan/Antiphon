@@ -477,22 +477,22 @@ public sealed class PostLandMutationCustodyTests
         var sessionId = Guid.NewGuid();
         await using (var db = world.Host.CreateContext())
         {
-            var task = await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
             db.AgentSessions.Add(new AgentSession
             {
-                Id = sessionId, Status = SessionStatus.Running, Cwd = task.WorktreePath!, AgentKind = AgentKind.Raw,
+                Id = sessionId, Status = SessionStatus.Running, Cwd = row.WorktreePath!, AgentKind = AgentKind.Raw,
                 StartedAt = DateTime.UtcNow, CreatedAt = DateTime.UtcNow,
             });
             db.Agents.Add(new Agent
             {
-                Id = agentId, Name = "sourced-pool", Slug = "sourced-pool", WorkingDirectory = task.WorktreePath!,
+                Id = agentId, Name = "sourced-pool", Slug = "sourced-pool", WorkingDirectory = row.WorktreePath!,
                 Status = AgentStatus.Running, Kind = AgentKind.Raw, ModelLevel = AgentModelLevel.Medium,
                 IsPoolDelegate = true, PersistentSessionId = sessionId.ToString("D"),
                 CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
             });
-            task.AgentId = agentId;
-            task.AgentSessionId = sessionId;
-            task.Status = AgentTaskStatus.Dispatched;
+            row.AgentId = agentId;
+            row.AgentSessionId = sessionId;
+            row.Status = AgentTaskStatus.Dispatched;
             await db.SaveChangesAsync();
         }
 
