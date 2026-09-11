@@ -21,7 +21,6 @@ function New-Efx {
     $root = Join-Path $ResultsDirectory ([guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $root -Force | Out-Null
     $clone = New-C487OwnedClone -Root $root
-    Copy-Item -LiteralPath $policyPath -Destination (Join-Path $clone (Join-Path 'tests' 'test-execution-policy.json')) -Force
     New-Item -ItemType Directory -Path (Join-Path $clone 'tests') -Force | Out-Null
     Copy-Item -LiteralPath $policyPath -Destination (Join-Path (Join-Path $clone 'tests') 'test-execution-policy.json') -Force
     Get-ChildItem -Path (Join-Path $repo 'tests') -Filter '*.csproj' -Recurse | ForEach-Object {
