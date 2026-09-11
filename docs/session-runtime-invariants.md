@@ -1,5 +1,18 @@
 # Session runtime invariants
 
+- **Tracked root exit is not descendant-exit authority (CARD-0478, incomplete Code checkpoint).**
+  The opt-in modern PtyHost path retains its original job observer after root exit.
+  Its irreversible seal precedes successful zero accounting and output drain;
+  the host persists exact producer receipt bytes before replying, and the runner
+  validates and persists accepted bytes before exposing a terminal custody result.
+  An explicit kill request remains possible after root exit, including kill-all,
+  but neither its acknowledgment nor session terminal state is a receipt.
+  Ordinary custody reads do not seal a running generation. Store loss, crossed
+  identities and unresolved session reuse refuse rather than inventing a new job.
+  The application reservation/importer, task seal and guarded cleanup are still
+  absent: **do not land or deploy this runtime checkpoint alone**. See the
+  [continuation and ordinary evidence](investigations/2026-09-11-card-0478-host-runner-custody-checkpoint.md).
+
 - **Queued standing launches retain their accepted generation (CARD-0466).** Start holds
   the source and chosen target's delivery locks through reservation commit and launch
   enqueue, including a Fresh target whose row did not exist before the reservation.

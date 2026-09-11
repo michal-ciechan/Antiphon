@@ -70,10 +70,14 @@ own that job handle. Inbox tests and fallback still need that. CARD-0221's three
 `StartTrackedAsync` additionally uses a native job-list attribute and suspension
 to establish containment before resuming the root. Its accounting comes from
 the retained original job; termination success is separate. This is a native
-primitive, not advertised host/runner support or cleanup authority. The journal
-interface still needs the amendment's bound durable host/runner implementation.
-The complete feature must ship together; see the
-[checkpoint evidence and remaining work](../investigations/2026-09-11-card-0478-native-custody-checkpoint.md).
+primitive. The subsequent Code checkpoint adds the bound durable host/runner
+journal, capability negotiation, execution-keyed producer/accepted receipts and
+restart recovery. Runtime capability is now advertised by this branch when the
+resolved Windows backend supports it; it is not application admission or cleanup
+authority. Server reservation, all-attempt sealing and guarded removal remain
+unfinished. The complete feature must ship together; do not deploy this checkpoint.
+See the [current evidence and remaining work](../investigations/2026-09-11-card-0478-host-runner-custody-checkpoint.md)
+and [earlier native checkpoint](../investigations/2026-09-11-card-0478-native-custody-checkpoint.md).
 Native tests on Windows 10.0.19045 showed that new-console descendants can add a
 console host to the job count. A descendant fixture must prove nonzero while its
 leaf lives, rather than assume exactly three active processes.
