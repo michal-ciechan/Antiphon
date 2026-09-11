@@ -11,6 +11,15 @@ namespace Antiphon.Server.Application.Services;
 /// <summary>The operation supplies source identity, never authorization or a capacity bucket.</summary>
 public sealed class SourceLandingAdmission(AppDbContext db, ILandingGit git, ISessionRunnerClient runner)
 {
+    public async Task RequireAuthorizedDirectoryAsync(string directory, string parentDirectory,
+        IReadOnlyList<string> allowedRoots, CancellationToken ct)
+    {
+        var canonical = await git.CanonicalDirectoryAsync(directory, ct);
+        foreach (var root in allowedRoots.Append(parentDirectory).Where(r => !string.IsNullOrWhiteSpace(r) && Directory.Exists(r)))
+            if (DelegationWorkspaceResolver.IsWithinRoot(canonical, await git.CanonicalDirectoryAsync(root, ct))) return;
+        throw new ForbiddenException("SourceLanding directory escapes the caller's canonical authorized roots.");
+    }
+
     public async Task<AgentTaskLanding> RequireSourceAsync(AgentTask task, CancellationToken ct)
     {
         if (task.Kind != AgentTaskKind.Worker || task.Role != AgentTaskRole.Mutation

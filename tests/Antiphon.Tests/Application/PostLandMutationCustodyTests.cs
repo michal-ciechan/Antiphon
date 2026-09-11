@@ -25,6 +25,115 @@ namespace Antiphon.Tests.Application;
 public sealed class PostLandMutationCustodyTests
 {
     [Test]
+    public async Task C478_SnapshotSubdirectoryCannotLaunchAnUnboundSession()
+    {
+        await using var world = await World.CreateAsync();
+        var nested = Path.Combine(await world.PathAsync(), "nested");
+        Directory.CreateDirectory(nested);
+        await using var scope = world.Host.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var session = new AgentSession { Id = Guid.NewGuid(), Cwd = nested, StartedAt = DateTime.UtcNow, Status = SessionStatus.Starting };
+        db.AgentSessions.Add(session); await db.SaveChangesAsync();
+        var spec = new AgentLaunchSpec("fixture", AgentKind.Raw, "cmd.exe", [], new Dictionary<string, string>(), nested, 80, 24);
+        await Should.ThrowAsync<ConflictException>(() => scope.ServiceProvider.GetRequiredService<VerificationExecutionService>()
+            .PrepareLaunchAsync(session, spec, default));
+        (await db.VerificationExecutions.CountAsync()).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C478_CanonicalAuthorizationRejectsAnEscapingJunction()
+    {
+        await using var world = await World.CreateAsync();
+        var link = Path.Combine(world.Host.Fixture.Repository, "alias-outside");
+        // The fixture owns both target and link; only the link is removed before fixture disposal.
+        using var command = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe")
+        {
+            UseShellExecute = false, CreateNoWindow = true,
+            ArgumentList = { "/d", "/c", "mklink", "/J", link, world.Host.Fixture.Observer },
+        })!;
+        await command.WaitForExitAsync(); command.ExitCode.ShouldBe(0);
+        try
+        {
+            await using var scope = world.Host.Services.CreateAsyncScope();
+            var admission = scope.ServiceProvider.GetRequiredService<SourceLandingAdmission>();
+            await admission.RequireAuthorizedDirectoryAsync(world.Host.Fixture.Repository, world.Host.Fixture.Repository, [], default);
+            await Should.ThrowAsync<ForbiddenException>(() => admission.RequireAuthorizedDirectoryAsync(link, world.Host.Fixture.Repository, [], default));
+        }
+        finally { Directory.Delete(link); }
+    }
+
+    [Test]
+    [Arguments(AgentTaskStatus.Succeeded, 0u)]
+    [Arguments(AgentTaskStatus.Failed, 8u)]
+    [Arguments(AgentTaskStatus.Canceled, 16u)]
+    public async Task C478_V17_RealReceiptToGuardedRemoval(AgentTaskStatus terminal, uint flags)
+    {
+        await using var world = await World.CreateAsync(native: true);
+        var binding = await world.ReserveAsync();
+        var prefix = "Local\\c478-app-" + Guid.NewGuid().ToString("N");
+        var roles = new[] { "root", "middle", "leaf" };
+        var ready = roles.Select(r => new EventWaitHandle(false, EventResetMode.ManualReset, prefix + "-" + r)).ToArray();
+        var release = roles.Select(r => new EventWaitHandle(false, EventResetMode.ManualReset, prefix + "-release-" + r)).ToArray();
+        try
+        {
+            SessionRunnerSessionDto started;
+            await using (var scope = world.Host.Services.CreateAsyncScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var session = await db.AgentSessions.SingleAsync(s => s.Id == binding.Generation.SessionId);
+                var spec = await scope.ServiceProvider.GetRequiredService<VerificationExecutionService>().PrepareLaunchAsync(session,
+                    world.Spec(binding) with { Exe = Path.Combine(AppContext.BaseDirectory, "custody-child", "Antiphon.CustodyTestChild.exe"),
+                        Args = ["root", prefix, flags.ToString()] }, default);
+                started = await world.Runner.StartAsync(session.Id, spec, default);
+            }
+            using var root = System.Diagnostics.Process.GetProcessById(started.Pid!.Value);
+            foreach (var signal in ready) signal.WaitOne(TimeSpan.FromSeconds(15)).ShouldBeTrue();
+            release[0].Set(); release[1].Set();
+            await root.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
+            await world.TerminalAsync(binding.Generation.SessionId);
+            await using (var db = world.Host.CreateContext())
+            {
+                (await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId)).Status = terminal;
+                await db.SaveChangesAsync();
+            }
+            await world.WriteRestorationAsync([]);
+            var path = await world.PathAsync();
+            world.Host.Fixture.Git.Trace.Clear();
+            await using (var scope = world.Host.Services.CreateAsyncScope())
+            {
+                var refused = await scope.ServiceProvider.GetRequiredService<VerificationCleanupService>().CleanupAsync(world.TaskId, default);
+                refused.IsClean.ShouldBeFalse();
+                world.Host.Fixture.Git.Trace.Any(args => args.Contains("remove") || args.Contains("update-ref")).ShouldBeFalse();
+                Directory.Exists(path).ShouldBeTrue();
+            }
+            release[2].Set();
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            VerificationCustodyStatus status;
+            do
+            {
+                status = await world.Runner.ReadVerificationCustodyAsync(binding, true, deadline.Token);
+                if (status.Receipt is null) await Task.Delay(25, deadline.Token);
+            } while (status.Receipt is null);
+            status.State.ShouldBe(VerificationCustodyState.Exited);
+            await world.Host.RestartServicesAsync();
+            await using var final = world.Host.Services.CreateAsyncScope();
+            (await final.ServiceProvider.GetRequiredService<VerificationCleanupService>().CleanupAsync(world.TaskId, default)).Residue.ShouldBeNull();
+            Directory.Exists(path).ShouldBeFalse();
+            await using var observer = world.Host.CreateContext();
+            var execution = await observer.VerificationExecutions.SingleAsync(e => e.Id == binding.ExecutionId);
+            execution.ReceiptBytes.ShouldBe(status.Receipt);
+            new VerificationReceiptPolicy().ValidateImported(execution, binding);
+            (await observer.AgentTasks.SingleAsync(t => t.Id == world.TaskId)).Status.ShouldBe(terminal);
+            File.Exists(await world.EvidencePathAsync()).ShouldBeTrue();
+        }
+        finally
+        {
+            foreach (var signal in release) signal.Set();
+            foreach (var signal in ready.Concat(release)) signal.Dispose();
+        }
+    }
+
+    [Test]
     public async Task C478_ConfirmedSourceCreatesExactSnapshotAndRetainsIdentity()
     {
         await using var world = await World.CreateAsync();
