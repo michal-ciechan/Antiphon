@@ -667,10 +667,11 @@ public sealed class PostLandMutationDeliveryTests
                 await SetWorkingAsync(connection, sessionId, false);
                 await h.Queue.FlushIfIdleAsync(sessionId, CancellationToken.None);
             }
-            h.Adapter.SubmittedBodies.ShouldContain(queued.Body);
+            queued = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == queued.Id);
+            var typedBody = await AssertSubmittedAsync(h, queued);
             if (cut == "before-submit")
             {
-                await ConfirmPersistedQueuedReceiptAsync(connection, h, queued, sessionId);
+                await ConfirmPersistedQueuedReceiptAsync(connection, h, queued, sessionId, typedBody);
                 return;
             }
         }
@@ -691,20 +692,42 @@ public sealed class PostLandMutationDeliveryTests
             });
         }
         await db.SaveChangesAsync();
-        await ConfirmPersistedQueuedReceiptAsync(connection, h, queued, sessionId);
+        await ConfirmPersistedQueuedReceiptAsync(connection, h, queued, sessionId,
+            h.Adapter.SubmittedBodies.LastOrDefault() ?? queued.Body);
+    }
+
+    private static async Task<string> AssertSubmittedAsync(BridgeQueueHarness h, SessionQueuedMessage queued)
+    {
+        h.Adapter.SubmittedBodies.Count.ShouldBeGreaterThan(0);
+        var typed = h.Adapter.SubmittedBodies[^1];
+        if (typed == queued.Body) return typed;
+        typed.ShouldContain(TypedBodySpill.PointerHeadline);
+        var relative = typed.Split('\n').Select(l => l.Trim().Trim('\'', '`'))
+            .First(l => l.Contains(".antiphon") && l.EndsWith(".md", StringComparison.OrdinalIgnoreCase));
+        var absolute = Path.IsPathRooted(relative)
+            ? relative
+            : Path.GetFullPath(Path.Combine(h.TempRoot, "workspace", relative.Replace('/', Path.DirectorySeparatorChar)));
+        (await File.ReadAllTextAsync(absolute)).ShouldBe(queued.Body);
+        return typed;
     }
 
     private static async Task ConfirmPersistedQueuedReceiptAsync(string connection, BridgeQueueHarness h,
-        SessionQueuedMessage queued, Guid sessionId)
+        SessionQueuedMessage queued, Guid sessionId, string typedBody)
     {
         var typed = h.Adapter.Inputs.Count;
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
         queued = await db.SessionQueuedMessages.SingleAsync(m => m.Id == queued.Id);
         var floor = queued.LastDeliveryBaselineSequence ?? 4;
         var promptSequence = floor + 1;
-        h.Runner.SetTranscript(new(sessionId, [new SessionRunnerTranscriptEvent(sessionId, promptSequence,
-            TranscriptKinds.UserPrompt, "c478-queued-" + queued.Id.ToString("N"), null, DateTimeOffset.UtcNow, "user",
-            queued.Body.Replace("\n", ""), null, null, null, null, null)], promptSequence));
+        h.Runner.SetTranscript(new(sessionId,
+        [
+            new SessionRunnerTranscriptEvent(sessionId, promptSequence, TranscriptKinds.UserPrompt,
+                "c478-queued-" + queued.Id.ToString("N"), null, DateTimeOffset.UtcNow, "user",
+                typedBody.Replace("\n", ""), null, null, null, null, null),
+            new SessionRunnerTranscriptEvent(sessionId, promptSequence + 1, TranscriptKinds.TurnEnd,
+                "c478-queued-end-" + queued.Id.ToString("N"), null, DateTimeOffset.UtcNow, "assistant",
+                null, null, null, null, null, TranscriptKinds.StopReasons.EndTurn),
+        ], promptSequence + 1));
         queued.Status = QueuedMessageStatus.Pending;
         queued.DeliveryAttempts = Math.Max(1, queued.DeliveryAttempts);
         queued.DeliveryVerdict = null;
@@ -712,6 +735,7 @@ public sealed class PostLandMutationDeliveryTests
         queued.LastDeliveryStartedAt ??= DateTime.UtcNow.AddSeconds(-1);
         await db.SaveChangesAsync();
         await h.Runtime.CatchUpTranscriptAsync(sessionId, CancellationToken.None);
+        await SetWorkingAsync(connection, sessionId, false);
         await h.Queue.FlushIfIdleAsync(sessionId, CancellationToken.None);
         await h.Queue.FlushIfIdleAsync(sessionId, CancellationToken.None);
         await using var recovered = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
@@ -721,7 +745,7 @@ public sealed class PostLandMutationDeliveryTests
         var prompts = await recovered.TranscriptEntries.Where(p => p.AgentSessionId == sessionId
             && p.Kind == TranscriptKinds.UserPrompt).ToListAsync();
         prompts.Count.ShouldBeGreaterThanOrEqualTo(1);
-        prompts.Any(p => p.Text != null && PromptSubmissionMatch.IsCompleteIn(queued.Body, p.Text)).ShouldBeTrue();
+        prompts.Any(p => p.Text != null && PromptSubmissionMatch.IsCompleteIn(typedBody, p.Text)).ShouldBeTrue();
         h.Adapter.Inputs.Count.ShouldBe(typed);
     }
 
