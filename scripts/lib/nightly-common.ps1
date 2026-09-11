@@ -8,6 +8,7 @@ $script:AntiphonNightlyCommonLoaded = $true
 $script:NightlySeams = $null
 $script:NightlyOwnedLock = $null
 $script:NightlyLockStream = $null
+$script:NightlyLockSelfRetry = $false
 
 function Get-NightlyUtcNow {
     if ($script:NightlySeams -and $script:NightlySeams.UtcNow) {
@@ -530,6 +531,20 @@ function Enter-NightlyExclusiveLock {
         $alive = $false
         if ($existing -and [int]$existing.pid -gt 0) {
             $alive = Test-NightlyProcessAlive -ProcessId ([int]$existing.pid)
+        }
+        if ($alive -and [int]$existing.pid -eq $PID -and [string]::IsNullOrWhiteSpace($ContinueRunId) -and -not $script:NightlyLockSelfRetry) {
+            $script:NightlyLockSelfRetry = $true
+            if ($script:NightlyLockStream) {
+                try { $script:NightlyLockStream.Dispose() } catch { }
+                $script:NightlyLockStream = $null
+            }
+            Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
+            $script:NightlyOwnedLock = $false
+            try {
+                return (Enter-NightlyExclusiveLock -StateRoot $StateRoot -RunId $RunId -ContinueRunId '' -ContinueParentPid 0 -ContinueParentStartedAt '')
+            } finally {
+                $script:NightlyLockSelfRetry = $false
+            }
         }
         if ($alive) {
             return [pscustomobject]@{ Ok = $false; Reason = 'live-owner'; OwnsLock = $false; Record = $existing }

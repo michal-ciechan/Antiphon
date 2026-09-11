@@ -194,6 +194,7 @@ function Reset-Store {
     $script:state.Cards.Clear()
     $script:state.ThrowAll = $false
     $script:state.CreatedCount = 0
+    $script:state.ColumnsEmpty = $false
     foreach ($c in @($Cards)) { [void]$script:state.Cards.Add($c) }
 }
 
@@ -209,10 +210,11 @@ function Get-CallsMatching {
 }
 
 $script:state = [pscustomobject]@{
-    Calls        = New-Object 'System.Collections.Generic.List[object]'
-    Cards        = New-Object 'System.Collections.Generic.List[object]'
-    ThrowAll     = $false
-    CreatedCount = 0
+    Calls         = New-Object 'System.Collections.Generic.List[object]'
+    Cards         = New-Object 'System.Collections.Generic.List[object]'
+    ThrowAll      = $false
+    CreatedCount  = 0
+    ColumnsEmpty  = $false
 }
 $state = $script:state
 $script:shim = {
@@ -232,6 +234,7 @@ $script:shim = {
         )
     }
     if ($Method -eq 'GET' -and $u -match '/api/boards/.+/columns') {
+        if ($state.ColumnsEmpty) { return @() }
         return @(
             [pscustomobject]@{ id = $backlogColumnId; name = 'Backlog'; columnOrder = 0; isTerminal = $false; cardStatus = 'Backlog' }
             [pscustomobject]@{ id = $inProgressColumnId; name = 'In Progress'; columnOrder = 1; isTerminal = $false; cardStatus = 'InProgress' }
@@ -585,11 +588,11 @@ function Test-C487_G084 {
 function Test-C487_G085 {
     $dir = New-TestDir
     Save-Summary -Object (New-GreenSummaryObject -LogDir $dir) -Path (Join-Path $dir 'summary.json')
-    $script:shimColumnsEmpty = $true
     Reset-Store -Cards @(New-FakeCard -Status 'Backlog')
+    $script:state.ColumnsEmpty = $true
     $r = Invoke-Report @{ Summary = (Join-Path $dir 'summary.json') }
     Assert-True ($r.Action -ne 'closed' -or $r.ExitCode -ne 0) 'G085 no terminal column' $r.Action
-    $script:shimColumnsEmpty = $false
+    $script:state.ColumnsEmpty = $false
 }
 function Test-C487_G086 {
     foreach ($kind in @('retry', 'next')) {
