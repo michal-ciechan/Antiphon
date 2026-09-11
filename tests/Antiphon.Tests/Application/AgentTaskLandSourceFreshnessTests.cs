@@ -416,7 +416,7 @@ public sealed class AgentTaskLandSourceFreshnessTests
         await using var h = new LandingProtocolHarness();
         await h.InitializeAsync();
         await h.AddSourceAsync();
-        h.Fault.Phase = LandPhase.Inspected;
+        h.Fault.Phase = LandPhase.RecoveryPinned;
         h.Fault.AfterCommit = true;
         await Should.ThrowAsync<LandingProtocolHarness.InjectedSaveFailure>(() => h.RunAsync());
         await using (var db = h.CreateContext())

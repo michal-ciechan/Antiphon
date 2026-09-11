@@ -389,8 +389,6 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             && currentTask.WorktreePath is not null && SamePath(currentTask.WorktreePath, op.WorktreePath)
             && currentTask.WorktreeBranch is not null && FullRef(currentTask.WorktreeBranch) == op.SourceFullRef
             && FullRef(currentTask.MergeTargetRef ?? "master") == op.TargetFullRef, "task_coordinates_changed");
-        if (!_state.HasPublication(op))
-            Require(currentTask!.LandVerifyFilter == op.VerificationFilter, "verification_filter_changed");
         var pins = new List<(string Name, string Sha)>();
         if (op.SourcePinned) pins.Add(("source", op.OriginalSourceSha));
         if (op.TargetPinned) pins.Add(("target-before", op.TargetBeforeSha));

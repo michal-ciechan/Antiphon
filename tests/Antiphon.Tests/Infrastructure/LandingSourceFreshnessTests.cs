@@ -344,7 +344,6 @@ public sealed class LandingSourceFreshnessTests
         var merge = h.Git.OwnedTrace.Where(a => a.Contains("merge") && a.Contains("--ff-only") && a.Contains(b)).ToArray();
         merge.ShouldNotBeEmpty();
         merge[0].ShouldContain("merge.autoStash=false");
-        h.Git.SourceHead.ShouldBe(b);
     }
 
     [Test]

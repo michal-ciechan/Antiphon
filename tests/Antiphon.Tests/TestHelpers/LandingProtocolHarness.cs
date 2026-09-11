@@ -134,7 +134,14 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
     public async Task<LandRequestResult> RequestAsync(string? filter = null, string? expectedSourceSha = null,
         Guid? reviewEvidenceId = null)
     {
-        expectedSourceSha ??= Git.SourceHead;
+        if (expectedSourceSha is null)
+        {
+            await using var published = CreateContext();
+            var op = await published.AgentTaskLandings.AsNoTracking()
+                .SingleOrDefaultAsync(o => o.TaskId == Git.TaskId && o.Active);
+            expectedSourceSha = op is not null && new AgentTaskLandingState().HasPublication(op)
+                ? op.OriginalSourceSha : Git.SourceHead;
+        }
         await using var scope = Services.CreateAsyncScope();
         return await CreateLand(scope.ServiceProvider.GetRequiredService<AppDbContext>(), scope.ServiceProvider)
             .RequestAsync(Git.TaskId, new LandAgentTaskRequest(filter, expectedSourceSha, reviewEvidenceId),

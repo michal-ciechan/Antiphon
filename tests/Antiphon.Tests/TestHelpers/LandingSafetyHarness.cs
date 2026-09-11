@@ -183,7 +183,15 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     public async Task<LandRequestResult> RequestAsync(string? filter = null, string? expectedSourceSha = null,
         Guid? reviewEvidenceId = null)
     {
-        expectedSourceSha ??= (await Fixture.RequiredAsync(Fixture.Source, "rev-parse", "HEAD")).Trim();
+        if (expectedSourceSha is null)
+        {
+            await using var published = CreateContext();
+            var op = await published.AgentTaskLandings.AsNoTracking()
+                .SingleOrDefaultAsync(o => o.TaskId == Fixture.TaskId && o.Active);
+            expectedSourceSha = op is not null && new AgentTaskLandingState().HasPublication(op)
+                ? op.OriginalSourceSha
+                : (await Fixture.RequiredAsync(Fixture.Source, "rev-parse", "HEAD")).Trim();
+        }
         await using var scope = Services.CreateAsyncScope();
         return await CreateLand(scope.ServiceProvider.GetRequiredService<AppDbContext>(), scope.ServiceProvider)
             .RequestAsync(Fixture.TaskId, new LandAgentTaskRequest(filter, expectedSourceSha, reviewEvidenceId),
