@@ -229,7 +229,19 @@ public sealed class PostLandMutationCleanupTests
         var creation = await CreationAsync(world);
         var copy = Path.Combine(world.Host.Fixture.Root, "gitdir-copy-" + Guid.NewGuid().ToString("N"));
         CopyDirectory(creation.WorktreeGitDirectory, copy);
-        await File.WriteAllTextAsync(Path.Combine(path, ".git"), "gitdir: " + copy + "\n");
+        var gitFile = Path.Combine(path, ".git");
+        if (File.Exists(gitFile))
+        {
+            File.SetAttributes(gitFile, FileAttributes.Normal);
+            File.Delete(gitFile);
+        }
+        else if (Directory.Exists(gitFile))
+        {
+            foreach (var file in Directory.EnumerateFiles(gitFile, "*", SearchOption.AllDirectories))
+                File.SetAttributes(file, FileAttributes.Normal);
+            Directory.Delete(gitFile, recursive: true);
+        }
+        await File.WriteAllTextAsync(gitFile, "gitdir: " + copy + Environment.NewLine);
         await RefuseCleanupAsync(world, path);
     }
 
@@ -518,8 +530,13 @@ public sealed class PostLandMutationCleanupTests
             arguments.Contains("remove")
                 ? Task.FromResult<LandingGitResult?>(new LandingGitResult(128, "", "injected remove failure"))
                 : Task.FromResult<LandingGitResult?>(null);
-        var result = await RefuseCleanupAsync(world, path);
+        world.Host.Fixture.Git.Trace.Clear();
+        await using var scope = world.Host.Services.CreateAsyncScope();
+        var result = await scope.ServiceProvider.GetRequiredService<VerificationCleanupService>().CleanupAsync(world.TaskId, default);
+        result.IsClean.ShouldBeFalse();
         result.Residue.ShouldNotBeNull();
+        Directory.Exists(path).ShouldBeTrue();
+        world.Host.Fixture.Git.Trace.Any(a => a.Contains("remove")).ShouldBeTrue();
         world.Host.Fixture.Git.Trace.Any(a => a.Contains("--force")).ShouldBeFalse();
         File.Exists(await world.EvidencePathAsync()).ShouldBeTrue();
     }

@@ -665,12 +665,7 @@ public sealed class PostLandMutationCustodyTests
     {
         await using var world = await PostLandMutationWorld.CreateAsync();
         var first = await world.ReserveAsync();
-        await using (var db = world.Host.CreateContext())
-        {
-            var execution = await db.VerificationExecutions.SingleAsync(e => e.Id == first.ExecutionId);
-            execution.CustodyReason = VerificationCustodyState.Unknown.ToString();
-            await db.SaveChangesAsync();
-        }
+        await world.SeedImportedReceiptAsync(first, world.ValidReceipt(first) with { SchemaVersion = 2 });
         var second = await world.ReserveAsync();
         await world.SeedImportedReceiptAsync(second, world.ValidReceipt(second));
         await world.TerminalAsync(second.Generation.SessionId);
