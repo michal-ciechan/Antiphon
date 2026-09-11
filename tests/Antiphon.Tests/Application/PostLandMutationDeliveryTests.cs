@@ -62,7 +62,7 @@ public sealed class PostLandMutationDeliveryTests
         var sha = new string('a', 40);
         var brief = $"SourceLanding {operation:D}\nL={sha}\n{DelegationReportFormatter.TaskMarker(taskId)}";
         await h.Queue.EnqueueAsync(h.SessionId, brief, MessageSendMode.WhenIdle, CancellationToken.None,
-            QueuedMessageOrigin.Delegation, sourceTaskId: taskId);
+            QueuedMessageOrigin.Delegation, sourceTaskId: taskId, deliverIfIdle: false);
         var queued = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId && m.SourceTaskId == taskId);
         queued.Body.ShouldContain(operation.ToString("D"));
         queued.Body.ShouldContain(sha);
@@ -83,10 +83,11 @@ public sealed class PostLandMutationDeliveryTests
             Timestamp = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();
+        var typed = h.Adapter.Inputs.Count;
         await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
         await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
         (await db.TranscriptEntries.CountAsync(p => p.AgentSessionId == h.SessionId && p.Kind == TranscriptKinds.UserPrompt)).ShouldBe(1);
-        h.Adapter.Inputs.ShouldBeEmpty();
+        h.Adapter.Inputs.Count.ShouldBe(typed);
     }
 
     [Test]
@@ -98,7 +99,7 @@ public sealed class PostLandMutationDeliveryTests
         var taskId = Guid.NewGuid();
         var report = "Mutation complete.\n--- next stage ---\nnext: none\n" + DelegationReportFormatter.ReportToken(taskId, "done");
         await h.Queue.EnqueueAsync(h.SessionId, report, MessageSendMode.WhenIdle, CancellationToken.None,
-            QueuedMessageOrigin.Delegation, sourceTaskId: taskId);
+            QueuedMessageOrigin.Delegation, sourceTaskId: taskId, deliverIfIdle: false);
         var queued = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId && m.SourceTaskId == taskId);
         queued.Status = QueuedMessageStatus.Sent;
         queued.DeliveryAttempts = 1;
@@ -117,9 +118,10 @@ public sealed class PostLandMutationDeliveryTests
             Timestamp = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();
+        var typed = h.Adapter.Inputs.Count;
         await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
         await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
         (await db.TranscriptEntries.CountAsync(p => p.AgentSessionId == h.SessionId && p.Kind == TranscriptKinds.UserPrompt)).ShouldBe(1);
-        h.Adapter.Inputs.ShouldBeEmpty();
+        h.Adapter.Inputs.Count.ShouldBe(typed);
     }
 }

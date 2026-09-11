@@ -101,7 +101,7 @@ public sealed class PostLandMutationAdmissionTests
         await using var world = await PostLandMutationWorld.CreateAsync();
         await world.CancelOpenAsync();
         await using var scope = world.Host.Services.CreateAsyncScope();
-        await Should.ThrowAsync<ConflictException>(() => world.TaskService(scope.ServiceProvider)
+        await Should.ThrowAsync<HttpException>(() => world.TaskService(scope.ServiceProvider)
             .CreateAsync(world.Request(world.Companion) with { Role = AgentTaskRole.Code }, world.Caller, default));
     }
 
@@ -111,7 +111,7 @@ public sealed class PostLandMutationAdmissionTests
         await using var world = await PostLandMutationWorld.CreateAsync();
         await world.CancelOpenAsync();
         await using var scope = world.Host.Services.CreateAsyncScope();
-        await Should.ThrowAsync<ConflictException>(() => world.TaskService(scope.ServiceProvider)
+        await Should.ThrowAsync<HttpException>(() => world.TaskService(scope.ServiceProvider)
             .CreateAsync(world.Request(world.Companion) with { Kind = AgentTaskKind.Orchestrator }, world.Caller, default));
     }
 
@@ -122,7 +122,7 @@ public sealed class PostLandMutationAdmissionTests
         await world.CancelOpenAsync();
         await using var scope = world.Host.Services.CreateAsyncScope();
         foreach (var workspace in new[] { WorkspaceMode.ReadOnly, WorkspaceMode.Shared })
-            await Should.ThrowAsync<ConflictException>(() => world.TaskService(scope.ServiceProvider)
+            await Should.ThrowAsync<HttpException>(() => world.TaskService(scope.ServiceProvider)
                 .CreateAsync(world.Request(world.Companion) with { Workspace = workspace }, world.Caller, default));
     }
 
@@ -132,7 +132,7 @@ public sealed class PostLandMutationAdmissionTests
         await using var world = await PostLandMutationWorld.CreateAsync();
         await world.CancelOpenAsync();
         await using var scope = world.Host.Services.CreateAsyncScope();
-        await Should.ThrowAsync<ConflictException>(() => world.TaskService(scope.ServiceProvider)
+        await Should.ThrowAsync<HttpException>(() => world.TaskService(scope.ServiceProvider)
             .CreateAsync(world.Request(world.Companion) with { AgentId = Guid.NewGuid() }, world.Caller, default));
     }
 
@@ -142,7 +142,7 @@ public sealed class PostLandMutationAdmissionTests
         await using var world = await PostLandMutationWorld.CreateAsync();
         await world.CancelOpenAsync();
         await using var scope = world.Host.Services.CreateAsyncScope();
-        await Should.ThrowAsync<ConflictException>(() => world.TaskService(scope.ServiceProvider)
+        await Should.ThrowAsync<HttpException>(() => world.TaskService(scope.ServiceProvider)
             .CreateAsync(world.Request(world.Companion) with { MergeTargetRef = "master" }, world.Caller, default));
     }
 
