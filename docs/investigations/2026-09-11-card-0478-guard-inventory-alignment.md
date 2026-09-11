@@ -32,11 +32,13 @@ G-166/G-167/G-178/G-230 and V-11 alias live in `PostLandMutationContractTests`.
 Native V-14 and G-192/G-193/G-195 live in `PtyCustodyTests`; host intermediary spawn
 and G-213 live in `HostCustodyTests`.
 
-Remaining plan method names (especially G-8..G-10, G-13, G-17..G-20, G-57..G-84,
-G-85..G-123 except those named above, G-125..G-182 except those named above, and
-G-185/G-187..G-230 except those named above) still need exact-method ordinary tests
-before a complete-Code handoff. Existing un-prefixed native/host/runner cases remain
-partial V-14/V-15/V-16 evidence.
+Continuation `27871064` added the remaining named ordinary methods through G-230
+and the V-4 / V-9 crash / V-15 / V-16 scenario methods. Cleanup G-91..G-97 and
+several G-108+ rows currently alias a sibling first-boundary refusal rather than
+corrupting only that coordinate; Review should treat those as named-method
+coverage, not independently falsifiable PC oracles. Loaded V-12 selector/bundle
+probes after canonical deployment remain caller-owned. All **230 PCs remain
+pending**.
 
 ## Unresolved-release ownership
 
