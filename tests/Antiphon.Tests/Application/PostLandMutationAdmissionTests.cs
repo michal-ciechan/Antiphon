@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -144,6 +145,170 @@ public sealed class PostLandMutationAdmissionTests
         await using var scope = world.Host.Services.CreateAsyncScope();
         await Should.ThrowAsync<HttpException>(() => world.TaskService(scope.ServiceProvider)
             .CreateAsync(world.Request(world.Companion) with { MergeTargetRef = "master" }, world.Caller, default));
+    }
+
+    [Test]
+    public async Task C478_G008_Authorization()
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync();
+        await world.CancelOpenAsync();
+        await using var scope = world.Host.Services.CreateAsyncScope();
+        var stranger = Path.Combine(Path.GetTempPath(), "c478-unauth-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(stranger);
+        try
+        {
+            var caller = new AgentTaskService.Caller(null, null, stranger);
+            await Should.ThrowAsync<ForbiddenException>(() => world.TaskService(scope.ServiceProvider)
+                .CreateAsync(world.Request(world.Companion), caller, default));
+            await using var observer = world.Host.CreateContext();
+            (await observer.AgentTasks.CountAsync(t => t.SourceLandingOperationId == world.Operation
+                && t.Status != AgentTaskStatus.Canceled)).ShouldBe(0);
+        }
+        finally { Directory.Delete(stranger, true); }
+    }
+
+    [Test]
+    public async Task C478_G009_Repository()
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync();
+        await world.CancelOpenAsync();
+        await using (var db = world.Host.CreateContext())
+        {
+            var op = await db.AgentTaskLandings.SingleAsync(o => o.Id == world.Operation);
+            op.RepositoryPath = Path.Combine(world.Host.Fixture.Root, "other-repo");
+            op.CommonDirectory = Path.Combine(world.Host.Fixture.Root, "other-repo", ".git");
+            Directory.CreateDirectory(op.CommonDirectory);
+            await db.SaveChangesAsync();
+        }
+        await using var scope = world.Host.Services.CreateAsyncScope();
+        var ex = await Should.ThrowAsync<ConflictException>(() => world.TaskService(scope.ServiceProvider)
+            .CreateAsync(world.Request(world.Companion), world.Caller, default));
+        ex.Code.ShouldBe("verification_source_repository_mismatch");
+    }
+
+    [Test]
+    public async Task C478_G010_Project()
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync();
+        await world.CancelOpenAsync();
+        await using (var db = world.Host.CreateContext())
+        {
+            var other = new Project { Id = Guid.NewGuid(), Name = "other-project", GitRepositoryUrl = "https://example.test/other.git" };
+            db.Projects.Add(other);
+            (await db.AgentTasks.SingleAsync(t => t.Id == world.Host.Fixture.TaskId)).ProjectId = other.Id;
+            await db.SaveChangesAsync();
+        }
+        await using var scope = world.Host.Services.CreateAsyncScope();
+        var ex = await Should.ThrowAsync<ConflictException>(() => world.TaskService(scope.ServiceProvider)
+            .CreateAsync(world.Request(world.Companion), world.Caller, default));
+        ex.Code.ShouldBe("verification_source_identity_mismatch");
+    }
+
+    [Test]
+    public async Task C478_G013_Board()
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync();
+        await world.CancelOpenAsync();
+        Guid foreignCard;
+        await using (var db = world.Host.CreateContext())
+        {
+            var project = await db.Projects.SingleAsync();
+            var board = new Board { Id = Guid.NewGuid(), ProjectId = project.Id, Name = "foreign" };
+            var column = new BoardColumn { Id = Guid.NewGuid(), BoardId = board.Id, Name = "Backlog", StateKey = "backlog", CardStatus = CardStatus.Backlog };
+            var card = new Card { Id = Guid.NewGuid(), BoardId = board.Id, BoardColumnId = column.Id, Identifier = "CARD-0001", Title = "foreign" };
+            db.Boards.Add(board); db.BoardColumns.Add(column); db.Cards.Add(card);
+            await db.SaveChangesAsync();
+            foreignCard = card.Id;
+        }
+        await using var scope = world.Host.Services.CreateAsyncScope();
+        var ex = await Should.ThrowAsync<ConflictException>(() => world.TaskService(scope.ServiceProvider)
+            .CreateAsync(world.Request(foreignCard), world.Caller, default));
+        ex.Code.ShouldBe("verification_source_card_mismatch");
+    }
+
+    [Test]
+    public async Task C478_G017_GlobalCap()
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync();
+        await world.CancelOpenAsync();
+        await using (var db = world.Host.CreateContext())
+        {
+            var project = await db.Projects.SingleAsync();
+            for (var i = 0; i < 3; i++)
+            {
+                var id = Guid.NewGuid();
+                db.AgentTasks.Add(new AgentTask
+                {
+                    Id = id, RootTaskId = id, Title = "cap-" + i, Goal = "cap", Kind = AgentTaskKind.Worker,
+                    Role = AgentTaskRole.Code, ProjectId = project.Id, Status = AgentTaskStatus.Working,
+                    WorkingDirectory = world.Host.Fixture.Repository, CreatedAt = DateTime.UtcNow,
+                });
+            }
+            await db.SaveChangesAsync();
+        }
+        await using var scope = world.Host.Services.CreateAsyncScope();
+        await Should.ThrowAsync<ConcurrencyLimitException>(() => world.TaskService(scope.ServiceProvider)
+            .CreateAsync(world.Request(world.Companion), world.Caller, default));
+        await using var observer = world.Host.CreateContext();
+        (await observer.AgentTasks.CountAsync(t => t.SourceLandingOperationId == world.Operation
+            && t.Status != AgentTaskStatus.Canceled)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C478_G018_ProjectCap()
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync();
+        await world.CancelOpenAsync();
+        Guid? otherProject;
+        await using (var db = world.Host.CreateContext())
+        {
+            var project = await db.Projects.SingleAsync();
+            var occupant = Guid.NewGuid();
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = occupant, RootTaskId = occupant, Title = "occupant", Goal = "occupant", Kind = AgentTaskKind.Worker,
+                Role = AgentTaskRole.Mutation, ProjectId = project.Id, Status = AgentTaskStatus.Working,
+                WorkingDirectory = world.Host.Fixture.Repository, CreatedAt = DateTime.UtcNow,
+            });
+            var other = new Project { Id = Guid.NewGuid(), Name = "unrelated", GitRepositoryUrl = "https://example.test/unrelated.git" };
+            db.Projects.Add(other);
+            otherProject = other.Id;
+            await db.SaveChangesAsync();
+        }
+        await using var scope = world.Host.Services.CreateAsyncScope();
+        var service = world.TaskService(scope.ServiceProvider);
+        await Should.ThrowAsync<ConcurrencyLimitException>(() =>
+            service.CreateAsync(world.Request(world.Companion), world.Caller, default));
+        var unrelated = await service.CreateAsync(new CreateAgentTaskRequest("unrelated mutation", Role: AgentTaskRole.Mutation),
+            new AgentTaskService.Caller(null, null, world.Host.Fixture.Repository, ProjectId: otherProject), default);
+        unrelated.Status.ShouldBe(AgentTaskStatus.Queued);
+        await using var observer = world.Host.CreateContext();
+        (await observer.AgentTasks.SingleAsync(t => t.Id == unrelated.Id)).SourceLandingOperationId.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task C478_G019_Provider()
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync(provision: false, custodySupport: false);
+        await using var scope = world.Host.Services.CreateAsyncScope();
+        var ex = await Should.ThrowAsync<ConflictException>(() => world.TaskService(scope.ServiceProvider)
+            .CreateAsync(world.Request(world.Companion), world.Caller, default));
+        ex.Code.ShouldBe("verification_custody_unsupported_backend");
+        await using var observer = world.Host.CreateContext();
+        (await observer.AgentTasks.CountAsync(t => t.SourceLandingOperationId == world.Operation)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C478_G020_Pin()
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync();
+        await world.CancelOpenAsync();
+        await using var scope = world.Host.Services.CreateAsyncScope();
+        await Should.ThrowAsync<HttpException>(() => world.TaskService(scope.ServiceProvider)
+            .CreateAsync(world.Request(world.Companion) with { AgentId = Guid.NewGuid() }, world.Caller, default));
+        await using var observer = world.Host.CreateContext();
+        (await observer.AgentTasks.CountAsync(t => t.SourceLandingOperationId == world.Operation
+            && t.Status != AgentTaskStatus.Canceled)).ShouldBe(0);
     }
 
     [Test]

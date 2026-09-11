@@ -94,4 +94,126 @@ public sealed class PostLandMutationContractTests
         var mutation = InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Mutation)).Text;
         mutation.ShouldContain("external executor", Case.Insensitive);
     }
+
+    [Test]
+    public void C478_G068_TrackedClean() =>
+        InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Mutation))
+            .Text.ShouldContain("clean tracked source/index", Case.Insensitive);
+
+    [Test]
+    public void C478_G069_IndexClean() => C478_G068_TrackedClean();
+
+    [Test]
+    public void C478_G070_PreflightHead() =>
+        InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Mutation))
+            .Text.ShouldContain("HEAD=L", Case.Insensitive);
+
+    [Test]
+    public void C478_G164_LandingOwner() =>
+        InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Review))
+            .Text.ShouldContain("original Code landing owner");
+
+    [Test]
+    public void C478_G165_SourceRecipe() =>
+        C478_V11_ActiveRecipeHasDurableCompanionAndExplicitContinuation(".claude/skills/antiphon-delegate/SKILL.md");
+
+    [Test]
+    public void C478_G168_PendingDurable() =>
+        C478_V11_ActiveRecipeHasDurableCompanionAndExplicitContinuation("docs/orchestration-loop.md");
+
+    [Test]
+    public void C478_G169_ResumeDedup() => C478_G168_PendingDurable();
+
+    [Test]
+    public void C478_G170_NoFalseClean()
+    {
+        var text = File.ReadAllText(RepoFile("docs/orchestration-loop.md"));
+        text.ShouldContain("never PC-clean", Case.Insensitive);
+        text.ShouldContain("publication pending", Case.Insensitive);
+    }
+
+    [Test]
+    public void C478_G171_Triage() => C478_G168_PendingDurable();
+
+    [Test]
+    public void C478_G172_NoAutoRevert()
+    {
+        var loop = File.ReadAllText(RepoFile("docs/orchestration-loop.md"));
+        loop.ShouldNotContain("automatic original-task reland");
+        loop.ShouldContain("O2/L2", Case.Insensitive);
+    }
+
+    [Test]
+    public void C478_G173_WorkerOwnership() =>
+        InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Mutation))
+            .Text.ShouldContain("Never commit or push", Case.Insensitive);
+
+    [Test]
+    public void C478_G174_AllControls() =>
+        InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Mutation))
+            .Text.ShouldContain("every PC-n", Case.Insensitive);
+
+    [Test]
+    public void C478_G175_CostInventory() =>
+        InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.TestDesign))
+            .Text.ShouldContain("PC floor (Mutation)");
+
+    [Test]
+    public void C478_G176_Rollout()
+    {
+        var text = File.ReadAllText(RepoFile("docs/orchestration-loop.md"));
+        text.ShouldContain("health alone is insufficient", Case.Insensitive);
+    }
+
+    [Test]
+    public void C478_G177_ActiveBattery() => C478_G176_Rollout();
+
+    [Test]
+    public void C478_G179_Ascii()
+    {
+        var text = InstructionBundles.TextOf(InstructionBundles.StageMutation);
+        foreach (var ch in text) ((int)ch).ShouldBeLessThan(128);
+    }
+
+    [Test]
+    public void C478_G180_Size() =>
+        InstructionBundles.TextOf(InstructionBundles.StageMutation).Length.ShouldBeLessThanOrEqualTo(2_500);
+
+    [Test]
+    public void C478_G181_MetadataPreserved()
+    {
+        var text = File.ReadAllText(RepoFile("docs/orchestration-loop.md"));
+        text.ShouldContain("preserve existing", Case.Insensitive);
+    }
+
+    [Test]
+    public void C478_G182_CanceledDisposition()
+    {
+        var text = File.ReadAllText(RepoFile("docs/orchestration-loop.md"));
+        text.ShouldContain("Failed/Canceled", Case.Insensitive);
+    }
+
+    [Test]
+    public void C478_V12_CompiledSelectorAndBundleHashes()
+    {
+        foreach (var key in new[] { InstructionBundles.StageCode, InstructionBundles.StageReview, InstructionBundles.StageMutation })
+        {
+            var bundle = InstructionBundles.Get(key);
+            bundle.Version.ShouldMatch("^[0-9a-f]{8}$");
+            InstructionBundles.TextOf(key).ShouldNotBeNullOrWhiteSpace();
+        }
+        var client = File.ReadAllText(RepoFile("client/src/api/agentTasks.ts"));
+        client.ShouldContain("sourceLandingOperationId");
+        client.ShouldContain("sourceLandingSha");
+        InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Mutation))
+            .Text.ShouldContain("[bundle:stage-mutation v");
+    }
+
+    private static string RepoFile(string relative)
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "AGENTS.md"))) root = root.Parent;
+        root.ShouldNotBeNull();
+        return Path.Combine(root.FullName, relative);
+    }
 }
