@@ -278,6 +278,7 @@ internal sealed class ControlledLandingGit : ILandingGit
         Func<int, long, CancellationToken, Task>? started, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
+        ValidateCommand(arguments);
         Trace.Add(arguments.ToArray());
         if (BeforeCommand is not null && await BeforeCommand(repository, arguments) is { } injected)
             return injected;
@@ -294,6 +295,67 @@ internal sealed class ControlledLandingGit : ILandingGit
         return result;
     }
 
+    private void ValidateCommand(IReadOnlyList<string> args)
+    {
+        // Validate the entire vector before fault hooks or owned-process callbacks. A
+        // recognized verb is not evidence that this model implements its options.
+        var supported = args switch
+        {
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"] => true,
+            ["rev-parse", "--absolute-git-dir"] => true,
+            ["rev-parse", var revision] => IsRevision(revision),
+            ["rev-parse", "--verify", var revision] => IsRevision(revision),
+            ["symbolic-ref", "-q", var name] => name == "HEAD" || IsFullRef(name),
+            ["show-ref", "--exists", var name] => IsFullRef(name),
+            ["show-ref", "--verify", "--hash", var name] => IsFullRef(name),
+            ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"] => true,
+            ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"] => true,
+            ["worktree", "list", "--porcelain", "-z"] => true,
+            ["worktree", "remove", "--", var path] => PathsEqual(path, Source),
+            ["worktree", "lock", var path] => PathsEqual(path, Source),
+            ["fetch", "--no-tags", "--no-write-fetch-head", var endpoint, var spec] =>
+                endpoint == _endpoint && spec.StartsWith(TargetRef + ":", StringComparison.Ordinal)
+                    && IsFullRef(spec[(TargetRef.Length + 1)..]),
+            ["merge-base", "--is-ancestor", var source, var target] => LooksOid(source) && LooksOid(target),
+            ["update-ref", var name, var sha, var expected] => IsFullRef(name) && LooksOid(sha) && LooksOid(expected),
+            ["update-ref", "--no-deref", "-d", var name, var expected] => IsFullRef(name) && LooksOid(expected),
+            ["rebase", "--abort"] => true,
+            ["-c", "rebase.autoStash=false", "-c", "rebase.updateRefs=false", "rebase", var sha] => LooksOid(sha),
+            ["-c", "merge.autoStash=false", "merge", "--ff-only", var sha] => LooksOid(sha),
+            ["diff", "--name-only", "--diff-filter=U", "-z"] => true,
+            ["diff", "--cached"] => true,
+            ["commit", "-m", var message] => !string.IsNullOrEmpty(message),
+            ["commit", "--allow-empty", "-m", var message] => !string.IsNullOrEmpty(message),
+            ["checkout", "-b", var branch] => IsFullRef("refs/heads/" + branch),
+            ["add", var path] => path == "." || IsRelativeFile(path),
+            ["push", var endpoint, var spec] => endpoint == _endpoint && IsPushSpec(spec),
+            _ => false,
+        };
+        if (!supported) throw Unsupported(args);
+    }
+
+    private bool IsPushSpec(string spec)
+    {
+        var parts = spec.Split(':');
+        return parts.Length == 2 && LooksOid(parts[0]) && (parts[1] == TargetRef || parts[1] == SourceRef);
+    }
+
+    private static bool IsFullRef(string name) => name.StartsWith("refs/", StringComparison.Ordinal)
+        && name.Split('/').All(part => part.Length > 0 && !part.StartsWith('.') && !part.EndsWith('.')
+            && !part.EndsWith(".lock", StringComparison.Ordinal)
+            && part.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.'))
+        && !name.Contains("..", StringComparison.Ordinal);
+
+    private static bool IsRevision(string revision)
+    {
+        var name = revision.EndsWith("^{commit}", StringComparison.Ordinal) ? revision[..^9] : revision;
+        return name == "HEAD" || LooksOid(name) || IsFullRef(name);
+    }
+
+    private static bool IsRelativeFile(string path) => !string.IsNullOrWhiteSpace(path)
+        && !Path.IsPathRooted(path) && !path.StartsWith('-')
+        && path.Replace('\\', '/').Split('/').All(part => part is not ("" or "." or "..") && !part.Contains(':'));
+
     private LandingGitResult Dispatch(string repository, IReadOnlyList<string> args)
     {
         if (args.Count == 0) throw Unsupported(args);
@@ -309,9 +371,6 @@ internal sealed class ControlledLandingGit : ILandingGit
             _sourceLocked = true;
             return new(0, "", "");
         }
-        if (args[0] == "check-ref-format") return new(0, "", "");
-        if (args[0] == "remote" && args.Contains("get-url")) return new(0, _endpoint + "\n", "");
-        if (args[0] == "ls-remote") return new(0, $"{_remoteTarget}\t{TargetRef}\n", "");
         if (args[0] == "fetch")
         {
             var dest = args[^1];
@@ -423,24 +482,6 @@ internal sealed class ControlledLandingGit : ILandingGit
             if (dest == TargetRef || dest.EndsWith("/master", StringComparison.Ordinal)) _remoteTarget = sha;
             if (dest == SourceRef) _remoteSource = sha;
             return new(0, "", "");
-        }
-        if (args[0] == "stash") return new(0, "", "");
-        if (args[0] == "branch")
-        {
-            var name = args[^1];
-            var full = name.StartsWith("refs/", StringComparison.Ordinal) ? name : "refs/heads/" + name;
-            _refs[full] = args.Count > 2 ? args[^1] == name ? HeadOf(repository) : args[^1] : HeadOf(repository);
-            if (args.Count > 2 && LooksOid(args[^1]) is false && args[^2] != "branch")
-                _refs[full] = HeadOf(repository);
-            if (args.Count >= 3 && LooksOid(args[^1])) _refs["refs/heads/" + args[^2]] = args[^1];
-            return new(0, "", "");
-        }
-        if (args[0] == "config") return new(0, "", "");
-        if (args[0] == "commit-tree")
-        {
-            var sha = NextOid();
-            _objects[sha] = new Commit(sha, [_targetHead]);
-            return new(0, sha + "\n", "");
         }
         throw Unsupported(args);
     }

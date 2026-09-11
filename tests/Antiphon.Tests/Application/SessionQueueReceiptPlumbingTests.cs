@@ -168,10 +168,14 @@ public sealed class SessionQueueReceiptPlumbingTests
         await using var world = await PtyWorld.StartAsync();
         var dto = await world.Queue.EnqueueAsync(world.SessionId, "already idle", MessageSendMode.WhenIdle, CancellationToken.None);
         dto.Messages.ShouldBeEmpty();
+        await world.WaitForReceiptAsync("already idle");
         SessionQueueTranscriptPump.FileUserPrompts(world.TranscriptPath).ShouldBe(["already idle"]);
+        (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(world.SessionId, 1)).ShouldBe(["already idle"]);
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
-        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == world.SessionId))
-            .Status.ShouldBe(QueuedMessageStatus.Sent);
+        var delivered = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == world.SessionId);
+        delivered.Status.ShouldBe(QueuedMessageStatus.Sent);
+        delivered.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        delivered.LastDeliveryBaselineSequence.ShouldBe(1);
     }
 
     [Test]
@@ -291,50 +295,110 @@ public sealed class SessionQueueReceiptPlumbingTests
     [Test]
     public async Task C475_PumpIsJoinedBeforeFixtureDisposal()
     {
-        var sessionId = Guid.NewGuid();
-        var path = Path.Combine(Path.GetTempPath(), $"c475-join-{Guid.NewGuid():N}.jsonl");
-        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
-        {
-            var now = DateTime.UtcNow;
-            db.AgentSessions.Add(new AgentSession { Id = sessionId, DefinitionName = "x", AgentKind = AgentKind.ClaudeCode, Status = SessionStatus.Running, Cwd = ".", Cols = 80, Rows = 24, CreatedAt = now, StartedAt = now, LastSeenAt = now });
-            await db.SaveChangesAsync();
-        }
+        RequireFakeClaude();
+        var world = await PtyWorld.StartAsync();
+        using var child = await RecipientProcessAsync(world);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var cts = new CancellationTokenSource();
-        var pumping = SessionQueueTranscriptPump.RunAsync(path, sessionId, cts.Token,
-            beforeRead: () => { entered.TrySetResult(); return Task.CompletedTask; }, hold: hold.Task);
-        var deleting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Task cleanup = Task.CompletedTask;
         try
         {
+            await world.StopPumpAsync();
+            world.StartPump(beforeRead: () => { entered.TrySetResult(); return Task.CompletedTask; }, hold: hold.Task);
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            cleanup = CleanupAsync();
+            cleanup = world.DisposeAsync().AsTask();
             cleanup.IsCompleted.ShouldBeFalse();
-            deleting.Task.IsCompleted.ShouldBeFalse();
+            world.Client.KillCalls.ShouldBe(0);
+            child.HasExited.ShouldBeFalse();
             await using var check = new AppDbContext(TestDbFixture.CreateDbContextOptions());
-            (await check.AgentSessions.AnyAsync(s => s.Id == sessionId)).ShouldBeTrue();
+            (await check.AgentSessions.AnyAsync(s => s.Id == world.SessionId)).ShouldBeTrue();
+            Directory.Exists(world.Cwd).ShouldBeTrue();
         }
         finally
         {
             hold.TrySetResult();
-            cts.Cancel();
-            await pumping;
+            await world.DisposeAsync();
             await cleanup;
-            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
-            await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
-            File.Delete(path);
         }
+        await AssertDisposedAsync(world, child);
+    }
 
-        async Task CleanupAsync()
+    [Test]
+    public async Task C475_FaultedPumpStillCleansFixtureResources()
+    {
+        RequireFakeClaude();
+        var world = await PtyWorld.StartAsync();
+        using var child = await RecipientProcessAsync(world);
+        var fault = new InvalidOperationException("injected pump failure");
+        try
         {
-            cts.Cancel();
-            await pumping;
-            deleting.TrySetResult();
-            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
-            await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).ExecuteDeleteAsync();
-            await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
+            await world.StopPumpAsync();
+            world.StartPump(beforeRead: () => throw fault);
         }
+        finally
+        {
+            var error = await Should.ThrowAsync<AggregateException>(() => world.DisposeAsync().AsTask());
+            error.InnerExceptions.ShouldBe([fault]);
+        }
+        await AssertDisposedAsync(world, child);
+    }
+
+    [Test]
+    [Arguments("launched")]
+    [Arguments("seeded")]
+    [Arguments("ready")]
+    [Arguments("pumping")]
+    public async Task C475_FailedStartupCleansFixtureResources(string cut)
+    {
+        RequireFakeClaude();
+        PtyWorld? captured = null;
+        System.Diagnostics.Process? child = null;
+        var fault = new InvalidOperationException("injected startup failure at " + cut);
+        try
+        {
+            var error = await Should.ThrowAsync<InvalidOperationException>(() => PtyWorld.StartAsync(checkpoint: async (stage, world) =>
+            {
+                if (stage != cut) return;
+                captured = world;
+                child = await RecipientProcessAsync(world);
+                if (cut == "pumping")
+                {
+                    await world.StopPumpAsync();
+                    world.StartPump(beforeRead: () => throw new InvalidOperationException("secondary pump failure"));
+                }
+                throw fault;
+            }));
+            error.ShouldBeSameAs(fault);
+            if (cut == "pumping") error.Data["CleanupFailure"].ShouldBeOfType<AggregateException>();
+            else error.Data.Contains("CleanupFailure").ShouldBeFalse();
+            await AssertDisposedAsync(captured.ShouldNotBeNull(), child.ShouldNotBeNull());
+        }
+        finally { child?.Dispose(); }
+    }
+
+    private static void RequireFakeClaude()
+    {
+        if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
+        if (!File.Exists(FakeClaudeExe)) throw new SkipTestException("fakeclaude missing");
+    }
+
+    private static async Task<System.Diagnostics.Process> RecipientProcessAsync(PtyWorld world)
+    {
+        var session = await world.Client.GetAsync(world.SessionId, CancellationToken.None);
+        return System.Diagnostics.Process.GetProcessById(session.Pid.ShouldNotBeNull());
+    }
+
+    private static async Task AssertDisposedAsync(PtyWorld world, System.Diagnostics.Process child)
+    {
+        await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        child.HasExited.ShouldBeTrue();
+        world.Client.KillCalls.ShouldBe(1);
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        (await db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == world.SessionId)).ShouldBeFalse();
+        (await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == world.SessionId)).ShouldBeFalse();
+        (await db.AgentSessions.AnyAsync(s => s.Id == world.SessionId)).ShouldBeFalse();
+        Directory.Exists(world.Cwd).ShouldBeFalse();
+        File.Exists(world.TranscriptPath).ShouldBeFalse();
     }
 
     [Test]
@@ -362,10 +426,13 @@ public sealed class SessionQueueReceiptPlumbingTests
         if (!File.Exists(FakeClaudeExe)) throw new SkipTestException("fakeclaude missing");
         await using var world = await PtyWorld.StartAsync();
         const string body = "line one\nline two";
-        await world.Queue.EnqueueAsync(world.SessionId, body, MessageSendMode.Now, CancellationToken.None);
+        var dto = await world.Queue.EnqueueAsync(world.SessionId, body, MessageSendMode.Now, CancellationToken.None);
+        dto.LastDelivery.ShouldNotBeNull().ConfirmedBy.ShouldBe(DeliveryConfirmedBy.Transcript);
+        await world.WaitForReceiptAsync(body);
         world.Forward.Payloads.ShouldContain(p => p.Contains("\u001b[200~") && p.Contains("line one\nline two") && p.Contains("\u001b[201~"));
         world.Forward.Payloads.ShouldContain("\r");
         SessionQueueTranscriptPump.FileUserPrompts(world.TranscriptPath).ShouldBe([body.Replace("\r\n", "\n")]);
+        (await SessionQueueTranscriptPump.DestinationUserPromptsAsync(world.SessionId, 1)).ShouldBe([body]);
     }
 
     private static async Task WaitUntilAsync(Func<Task<bool>> condition)
@@ -393,8 +460,10 @@ public sealed class SessionQueueReceiptPlumbingTests
         private CancellationTokenSource _pump = new();
         private Task _pumping = Task.CompletedTask;
         private ServiceProvider _provider = null!;
+        private Task? _disposing;
 
-        public static async Task<PtyWorld> StartAsync(bool overlay = false)
+        public static async Task<PtyWorld> StartAsync(bool overlay = false,
+            Func<string, PtyWorld, Task>? checkpoint = null)
         {
             var sessionId = Guid.NewGuid();
             var kind = overlay ? AgentKind.Grok : AgentKind.ClaudeCode;
@@ -425,34 +494,46 @@ public sealed class SessionQueueReceiptPlumbingTests
             services.AddTransient<SessionMessageQueueService>();
             services.AddLogging();
             var provider = services.BuildServiceProvider();
-            await inner.StartAsync(sessionId, new AgentLaunchSpec("fakeclaude", kind, FakeClaudeExe, [],
-                new Dictionary<string, string> { ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = transcript, ["ANTIPHON_FAKE_OVERLAY_ON_COMMAND"] = overlay ? "/usage" : "" }, cwd, 120, 30), CancellationToken.None);
-            await using (var scope = provider.CreateAsyncScope())
-            {
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                var now = DateTime.UtcNow;
-                db.AgentSessions.Add(new AgentSession { Id = sessionId, DefinitionName = "fakeclaude", AgentKind = kind, Status = SessionStatus.Running, Cwd = cwd, Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now });
-                db.TranscriptEntries.Add(new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = 1, Kind = Antiphon.SessionRunner.Contracts.TranscriptKinds.TurnEnd, StopReason = "end_turn", CreatedAt = now });
-                await db.SaveChangesAsync();
-            }
             var world = new PtyWorld
             {
                 Client = inner, SessionId = sessionId, TranscriptPath = transcript, Cwd = cwd,
-                Queue = provider.GetRequiredService<SessionMessageQueueService>(), Forward = forward, Fault = fault, Clock = clock,
+                Queue = null!, Forward = forward, Fault = fault, Clock = clock, _provider = provider,
             };
-            world._provider = provider;
-            await WaitUntilAsync(async () => (await inner.GetSnapshotAsync(sessionId, CancellationToken.None)).RawOutput.Contains("Fake Claude ready"));
-            world.StartPump();
-            return world;
+            try
+            {
+                world.Queue = provider.GetRequiredService<SessionMessageQueueService>();
+                await inner.StartAsync(sessionId, new AgentLaunchSpec("fakeclaude", kind, FakeClaudeExe, [],
+                    new Dictionary<string, string> { ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = transcript, ["ANTIPHON_FAKE_OVERLAY_ON_COMMAND"] = overlay ? "/usage" : "" }, cwd, 120, 30), CancellationToken.None);
+                if (checkpoint is not null) await checkpoint("launched", world);
+                await using (var scope = provider.CreateAsyncScope())
+                {
+                    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                    var now = DateTime.UtcNow;
+                    db.AgentSessions.Add(new AgentSession { Id = sessionId, DefinitionName = "fakeclaude", AgentKind = kind, Status = SessionStatus.Running, Cwd = cwd, Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now });
+                    db.TranscriptEntries.Add(new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = 1, Kind = Antiphon.SessionRunner.Contracts.TranscriptKinds.TurnEnd, StopReason = "end_turn", CreatedAt = now });
+                    await db.SaveChangesAsync();
+                }
+                if (checkpoint is not null) await checkpoint("seeded", world);
+                await WaitUntilAsync(async () => (await inner.GetSnapshotAsync(sessionId, CancellationToken.None)).RawOutput.Contains("Fake Claude ready"));
+                if (checkpoint is not null) await checkpoint("ready", world);
+                world.StartPump();
+                if (checkpoint is not null) await checkpoint("pumping", world);
+                return world;            }
+            catch (Exception error)
+            {
+                try { await world.DisposeAsync(); }
+                catch (Exception cleanup) { error.Data["CleanupFailure"] = cleanup; }
+                throw;
+            }
         }
 
         public void RecreateQueue() => Queue = _provider.GetRequiredService<SessionMessageQueueService>();
 
-        public void StartPump()
+        public void StartPump(Func<Task>? beforeRead = null, Task? hold = null)
         {
             _pump.Dispose();
             _pump = new CancellationTokenSource();
-            _pumping = SessionQueueTranscriptPump.RunAsync(TranscriptPath, SessionId, _pump.Token);
+            _pumping = SessionQueueTranscriptPump.RunAsync(TranscriptPath, SessionId, _pump.Token, beforeRead: beforeRead, hold: hold);
         }
 
         public async Task StopPumpAsync()
@@ -487,21 +568,34 @@ public sealed class SessionQueueReceiptPlumbingTests
                 && await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == SessionId && t.Sequence > 1 && t.Kind == TranscriptKinds.TurnEnd);
         });
 
-        public async ValueTask DisposeAsync()
+        public ValueTask DisposeAsync() => new(_disposing ??= DisposeCoreAsync());
+
+        private async Task DisposeCoreAsync()
         {
-            await StopPumpAsync();
+            List<Exception> errors = [];
+            await AttemptAsync(StopPumpAsync);
             _pump.Dispose();
-            try { await Client.KillAsync(SessionId, CancellationToken.None); } catch { }
-            await Client.DisposeAsync();
-            await _provider.DisposeAsync();
+            await AttemptAsync(async () => { await Client.KillAsync(SessionId, CancellationToken.None); });
+            await AttemptAsync(async () => await Client.DisposeAsync());
+            await AttemptAsync(async () => await _provider.DisposeAsync());
+            await AttemptAsync(async () =>
+            {
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
             {
                 await db.SessionQueuedMessages.Where(m => m.AgentSessionId == SessionId).ExecuteDeleteAsync();
                 await db.TranscriptEntries.Where(t => t.AgentSessionId == SessionId).ExecuteDeleteAsync();
                 await db.AgentSessions.Where(s => s.Id == SessionId).ExecuteDeleteAsync();
             }
-            try { Directory.Delete(Cwd, true); } catch { }
-            try { File.Delete(TranscriptPath); } catch { }
+            });
+            await AttemptAsync(() => { if (Directory.Exists(Cwd)) Directory.Delete(Cwd, true); return Task.CompletedTask; });
+            await AttemptAsync(() => { File.Delete(TranscriptPath); return Task.CompletedTask; });
+            if (errors.Count > 0) throw new AggregateException("PtyWorld cleanup failed", errors);
+
+            async Task AttemptAsync(Func<Task> cleanup)
+            {
+                try { await cleanup(); }
+                catch (Exception error) { errors.Add(error); }
+            }
         }
     }
 
