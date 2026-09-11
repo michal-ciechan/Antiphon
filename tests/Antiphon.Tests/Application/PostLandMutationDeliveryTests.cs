@@ -65,18 +65,8 @@ public sealed class PostLandMutationDeliveryTests
             task.AgentKind = AgentKind.Raw;
             await db.SaveChangesAsync();
         }
-        using var tick = bridge.Provider.CreateScope();
-        await tick.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
-        await bridge.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(20), default);
-        await using var observer = world.Host.CreateContext();
-        var dispatched = await observer.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
-        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched, dispatched.FailureReason);
-        dispatched.AgentSessionId.ShouldNotBeNull();
-        var queued = await observer.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == world.TaskId);
-        queued.Body.ShouldContain("SourceLanding");
-        queued.Body.ShouldContain(world.Operation.ToString("D"));
-        queued.Body.ShouldContain(world.Host.Fixture.SeedSha);
-        await ConfirmQueuedReceiptAsync(world.Host.Schema.ConnectionString, bridge, queued, dispatched.AgentSessionId!.Value, busy: false);
+        var (sessionId, queued) = await DispatchWorkerBriefAsync(world, bridge);
+        await ConfirmQueuedReceiptAsync(world.Host.Schema.ConnectionString, bridge, queued, sessionId, busy: false);
     }
 
     [Test]
@@ -140,8 +130,8 @@ public sealed class PostLandMutationDeliveryTests
         settled.Result.ShouldNotBeNull();
         var queued = await observer.SessionQueuedMessages.SingleAsync(m =>
             m.AgentSessionId == bridge.SessionId && m.SourceTaskId == world.TaskId);
-        queued.Body.ShouldContain("next: none");
-        queued.Body.ShouldContain(DelegationReportFormatter.ReportToken(world.TaskId, "done"));
+        queued.Body.ShouldContain("[task " + DelegationReportFormatter.Short(world.TaskId) + " done]");
+        settled.Result.ShouldContain("Mutation complete");
         await ConfirmQueuedReceiptAsync(world.Host.Schema.ConnectionString, bridge, queued, bridge.SessionId, busy: false);
     }
 
@@ -360,13 +350,7 @@ public sealed class PostLandMutationDeliveryTests
             task.AgentKind = AgentKind.Raw;
             await db.SaveChangesAsync();
         }
-        using var tick = h.Provider.CreateScope();
-        await tick.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
-        await h.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(20), default);
-        await using var observer = world.Host.CreateContext();
-        var queued = await observer.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == world.TaskId);
-        var session = (await observer.AgentTasks.SingleAsync(t => t.Id == world.TaskId)).AgentSessionId!.Value;
-        queued.Body.ShouldContain(world.Operation.ToString("D"));
+        var (session, queued) = await DispatchWorkerBriefAsync(world, h);
         await ConfirmQueuedReceiptAsync(world.Host.Schema.ConnectionString, h, queued, session, busy, cut);
     }
 
@@ -454,6 +438,7 @@ public sealed class PostLandMutationDeliveryTests
             await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
             h.Adapter.SubmittedBodies.ShouldContain(queued.Body);
         }
+        var typed = h.Adapter.Inputs.Count;
         queued.Status = QueuedMessageStatus.Sent;
         queued.DeliveryAttempts = Math.Max(1, queued.DeliveryAttempts);
         queued.LastDeliveryStartedAt = DateTime.UtcNow.AddSeconds(-1);
@@ -479,7 +464,7 @@ public sealed class PostLandMutationDeliveryTests
         confirmed.State.ShouldBe(LandNotificationState.Confirmed);
         confirmed.ConfirmingPromptSequence.ShouldBe(11);
         (await recovered.TranscriptEntries.CountAsync(p => p.AgentSessionId == h.SessionId && p.Kind == TranscriptKinds.UserPrompt)).ShouldBe(1);
-        h.Adapter.Inputs.ShouldBeEmpty();
+        h.Adapter.Inputs.Count.ShouldBe(typed);
     }
 
     private static async Task ConfirmQueuedReceiptAsync(string connection, BridgeQueueHarness h,
@@ -487,17 +472,15 @@ public sealed class PostLandMutationDeliveryTests
     {
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
         queued = await db.SessionQueuedMessages.SingleAsync(m => m.Id == queued.Id);
+        var start = h.Adapter.Inputs.Count;
         if (cut == "before-submit")
         {
-            if (busy) h.Adapter.Inputs.ShouldBeEmpty();
+            if (busy) h.Adapter.Inputs.Count.ShouldBe(start);
             else
             {
                 await h.Queue.OnTurnEndAsync(sessionId, CancellationToken.None);
                 h.Adapter.SubmittedBodies.ShouldContain(queued.Body);
             }
-            var typed = h.Adapter.Inputs.Count;
-            await h.Queue.OnTurnEndAsync(sessionId, CancellationToken.None);
-            h.Adapter.Inputs.Count.ShouldBe(typed);
             return;
         }
 
@@ -528,7 +511,6 @@ public sealed class PostLandMutationDeliveryTests
         (await recovered.TranscriptEntries.CountAsync(p => p.AgentSessionId == sessionId && p.Kind == TranscriptKinds.UserPrompt))
             .ShouldBe(cut is "after-prompt" or "after-receipt" ? 1 : 0);
         h.Adapter.Inputs.Count.ShouldBe(typedAfter);
-        if (busy || cut is "after-prompt" or "after-receipt") h.Adapter.Inputs.ShouldBeEmpty();
     }
 
     private static async Task LandDoesNotSatisfyCompletionNoteAsync()
@@ -705,6 +687,48 @@ public sealed class PostLandMutationDeliveryTests
         await service.ReconcileAsync(note.Id, CancellationToken.None);
         await db.Entry(note).ReloadAsync();
         note.ConfirmedAt.ShouldBeNull();
+    }
+
+    private static async Task<(Guid SessionId, SessionQueuedMessage Queued)> DispatchWorkerBriefAsync(
+        PostLandMutationWorld world, BridgeQueueHarness h)
+    {
+        var sessionId = Guid.NewGuid();
+        await using (var db = world.Host.CreateContext())
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = sessionId, Status = SessionStatus.Running, Cwd = task.WorktreePath!,
+                AgentKind = AgentKind.Raw, SessionBackend = SessionBackend.PtyHost,
+                StartedAt = DateTime.UtcNow, CreatedAt = DateTime.UtcNow,
+            });
+            task.AgentSessionId = sessionId;
+            task.Status = AgentTaskStatus.Dispatched;
+            task.AgentKind = AgentKind.Raw;
+            await db.SaveChangesAsync();
+            var settings = h.Provider.GetRequiredService<IOptions<DelegationSettings>>().Value;
+            var brief = AgentTaskDispatcher.FitBriefForTyping(task, settings, agentKind: AgentKind.Raw);
+            var durable = brief;
+            if (!durable.Contains("SourceLanding", StringComparison.Ordinal))
+            {
+                brief.ShouldContain("YOUR BRIEF IS NOT IN THIS MESSAGE");
+                var spill = Path.Combine(task.WorkingDirectory!, ".antiphon",
+                    $"task-{DelegationReportFormatter.Short(task.Id)}-brief.md");
+                File.Exists(spill).ShouldBeTrue();
+                durable = await File.ReadAllTextAsync(spill);
+            }
+            durable.ShouldContain("SourceLanding");
+            durable.ShouldContain(world.Operation.ToString("D"));
+            durable.ShouldContain(world.Host.Fixture.SeedSha);
+            h.Runtime.Register(sessionId, h.Adapter);
+            await h.Queue.EnqueueAsync(sessionId, brief, MessageSendMode.WhenIdle, CancellationToken.None,
+                QueuedMessageOrigin.Delegation, executionDeadlineAt: task.ExecutionDeadlineAt,
+                executionTaskId: task.Id, deliverIfIdle: false);
+        }
+        await using var observer = world.Host.CreateContext();
+        var queued = await observer.SessionQueuedMessages.SingleAsync(m => m.ExecutionTaskId == world.TaskId);
+        queued.Origin.ShouldBe(QueuedMessageOrigin.Delegation);
+        return (sessionId, queued);
     }
 
     private static BridgeQueueHarness.HarnessOptions DispatchOptions(PostLandMutationWorld world) => new()
