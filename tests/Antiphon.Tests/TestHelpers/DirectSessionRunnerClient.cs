@@ -40,6 +40,13 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
 
     public bool KillOnDispose { get; set; } = true;
 
+    /// <summary>
+    /// Where this client's runtime writes pty-host manifests. A fixture that must release a
+    /// LINGERING host (its shadow-copied binaries pin the session log tree) reads the host pid
+    /// from here rather than re-deriving the path (CARD-0475 review).
+    /// </summary>
+    public string PtyHostManifestDir => _runnerSettings.PtyHostManifestDir;
+
     /// <summary>CARD-0213: when false, GetCapabilitiesAsync omits herdr-attach (R3).</summary>
     public bool AdvertiseHerdrAttach { get; set; } = true;
 

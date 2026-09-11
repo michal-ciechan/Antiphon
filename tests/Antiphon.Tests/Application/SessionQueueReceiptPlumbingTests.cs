@@ -572,6 +572,46 @@ public sealed class SessionQueueReceiptPlumbingTests
                 && await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == SessionId && t.Sequence > 1 && t.Kind == TranscriptKinds.TurnEnd);
         });
 
+        /// <summary>
+        /// Killing the SESSION leaves the detached pty-host alive on purpose: the runner keeps it
+        /// for reattach (<c>PtyHostLingerHours</c>), and while it lives it holds the shadow-copied
+        /// binaries under <see cref="LogDirectory"/> open. A fixture can neither wait out that
+        /// linger nor leave 3.5 MB of tree per test behind, so it releases its OWN host — the pid
+        /// comes from this session's manifest inside our own temp directory, so no other test's
+        /// host and no production host can be reached (CARD-0475 review).
+        /// </summary>
+        private async Task ReleasePtyHostAsync()
+        {
+            var manifest = Antiphon.PtyHost.Protocol.PtyHostManifest.TryLoad(
+                Antiphon.PtyHost.Protocol.PtyHostManifest.PathFor(Client.PtyHostManifestDir, SessionId));
+            if (manifest is not { HostPid: > 0 } live) return;
+            System.Diagnostics.Process host;
+            try { host = System.Diagnostics.Process.GetProcessById(live.HostPid); }
+            catch (ArgumentException) { return; }
+            using (host)
+            {
+                try { host.Kill(entireProcessTree: true); }
+                catch (InvalidOperationException) { return; }
+                await host.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            }
+        }
+
+        /// <summary>
+        /// Windows can still report the host's handles for a moment after it exits, so the delete
+        /// retries briefly. The assertion in <c>AssertDisposedAsync</c> stays absolute: the last
+        /// attempt throws and the fixture reports it.
+        /// </summary>
+        private async Task DeleteLogDirectoryAsync()
+        {
+            for (var attempt = 0; ; attempt++)
+            {
+                if (!Directory.Exists(LogDirectory)) return;
+                try { Directory.Delete(LogDirectory, true); return; }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException && attempt < 10)
+                { await Task.Delay(100); }
+            }
+        }
+
         public ValueTask DisposeAsync() => new(_disposing ??= DisposeCoreAsync());
 
         private async Task DisposeCoreAsync()
@@ -581,6 +621,7 @@ public sealed class SessionQueueReceiptPlumbingTests
             AttemptSync(_pump.Dispose);
             await AttemptAsync(async () => { await Client.KillAsync(SessionId, CancellationToken.None); });
             await AttemptAsync(async () => await Client.DisposeAsync());
+            await AttemptAsync(ReleasePtyHostAsync);
             await AttemptAsync(async () => await _provider.DisposeAsync());
             await AttemptAsync(async () =>
             {
@@ -592,7 +633,7 @@ public sealed class SessionQueueReceiptPlumbingTests
             }
             });
             await AttemptAsync(() => { if (Directory.Exists(Cwd)) Directory.Delete(Cwd, true); return Task.CompletedTask; });
-            await AttemptAsync(() => { if (Directory.Exists(LogDirectory)) Directory.Delete(LogDirectory, true); return Task.CompletedTask; });
+            await AttemptAsync(() => DeleteLogDirectoryAsync());
             await AttemptAsync(() => { File.Delete(TranscriptPath); return Task.CompletedTask; });
             if (errors.Count > 0) throw new AggregateException("PtyWorld cleanup failed", errors);
 
