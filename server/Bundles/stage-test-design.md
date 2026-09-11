@@ -1,6 +1,6 @@
 Design verification for the landed plan. Append this structure; do not rewrite the fix design.
 Every guard that protects a safety-critical assertion gets a PC-n positive control.
-Read touched test bodies and fixtures/helpers before naming cases. For new files read the nearest fixture, or record missing setup. Cover boundary combinations or justify exclusion.
+Read touched tests and fixtures/helpers before naming cases. Read the nearest fixture for new files. Record missing setup; cover boundary combinations or justify exclusion.
 
 ## Verification design
 ### Inspection
@@ -24,11 +24,11 @@ safety-critical delivery/recovery guard needs a named positive control.
 Inventory every safety-critical guard, including untested ones; split independently bypassable guards. Map each 1:1 to a distinct defined PC-n. Justify none.
 ### Positive controls
 - PC-1: break <G-1> by <compiling defect>; expect <exact method> red at <assertion>.
-  Mutation reports break, red, restore, green for each; Code implements tests and runs V/R.
+  Mutation reports break, red, restore, green after land; Code implements tests and runs V/R; ordinary Review judges them before land.
 ### Out of scope
 - <exclusion and reason>
 ### Cost
 - Separate ordinary V/R floor (Code) and PC floor (Mutation), with suites/filters and minutes. Total verification floor = setup/build + V/R + every PC red/restore/green; label estimated/measured. Quantify savings; justify zero.
 
-Before handoff: bodies read, boundaries; guards=N, mapped=N, missing=0, duplicate PC mappings=0; all PCs defined/executable; numeric Cost breakdown. Finish omissions; no placeholders/TBD.
+Before handoff: bodies read; guards=N, mapped=N, missing=0, duplicate PC mappings=0; all PCs executable; numeric Cost breakdown. No placeholders/TBD.
 next: code only when complete; plan for an unverifiable seam; decide for a human choice. Commit and push the plan doc.

@@ -74,9 +74,10 @@ primitive. The subsequent Code checkpoint adds the bound durable host/runner
 journal, capability negotiation, execution-keyed producer/accepted receipts and
 restart recovery. Runtime capability is now advertised by this branch when the
 resolved Windows backend supports it; it is not application admission or cleanup
-authority. Server reservation, all-attempt sealing and guarded removal remain
-unfinished. The complete feature must ship together; do not deploy this checkpoint.
-See the [current evidence and remaining work](../investigations/2026-09-11-card-0478-host-runner-custody-checkpoint.md)
+authority. The application checkpoint adds reservation, all-attempt sealing and
+guarded removal, with focused real receipt-to-removal tests. The complete ordinary
+acceptance matrix remains unfinished; do not deploy this checkpoint.
+See the [current evidence and remaining work](../investigations/2026-09-11-card-0478-application-custody-checkpoint.md)
 and [earlier native checkpoint](../investigations/2026-09-11-card-0478-native-custody-checkpoint.md).
 Native tests on Windows 10.0.19045 showed that new-console descendants can add a
 console host to the job count. A descendant fixture must prove nonzero while its

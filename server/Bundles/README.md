@@ -79,3 +79,12 @@ The `style-*` files (`style-normal`, `style-terse`, `style-caveman`, `style-brie
 them with 422 because two voices at once has nothing to dedup against. `Normal` composes to
 nothing (the file still ships so every enum value has a block). The style block sits after
 attachments and before the agent's own `SystemPromptAppend`, which keeps the last word.
+
+Default workflow: Code -> ordinary Review -> caller records same-board companion -> land
+the original Code task -> confirmed publication -> required deployment -> SourceLanding
+Mutation on the companion. Keep every PC/variant pending through Review; use a fresh
+Worktree at O.VerifiedSourceSha. Follow the full CARD-0478 recipe in docs/orchestration-loop.md.
+The landing outcome explicitly starts this continuation; do not synthesize a stage report.
+Read parsed next= elsewhere. Mutation next=decide is caller triage of the full finding report,
+not automatically a human question. Preserve the original Done verdict and keep the companion
+open until its explicit disposition; no automatic card creation, tick spend or alert message.

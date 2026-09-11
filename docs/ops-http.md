@@ -245,3 +245,30 @@ confirmed prompt sequence. POST land returns additive `requestId` and `notificat
 Repeated inactive pending requests preserve age and identity. `delegate.ps1 -Status`
 prints delegate, land, publication/cleanup and receipt separately. The Attention view
 projects held and aged requests and unresolved receipts independently of task openness.
+
+## Post-land verification (CARD-0478)
+
+An implementation card may be Done after ordinary V/R, separate Review, confirmed publication,
+a durable linked companion obligation and explicit deployment/acceptance conditions. Its close
+reason names C/O/L, Review and pending Mutation; it does not claim PC-clean. The ordinary
+same-board companion tracks SourceLanding Mutation independently. No new CardStatus is added,
+no successful task automatically closes it, and findings never automatically reopen the original.
+Use the explicit commissioning/resumption/triage recipe in [orchestration-loop.md](orchestration-loop.md).
+Canceled/superseded verification records reason and successor, never Done/Clean. Decisions belong
+on existing move/reopen revisions and attention, never an alert sink.
+
+`POST /api/agent-tasks` accepts optional `sourceLandingOperationId` (full GUID), exposed by
+`delegate.ps1 -SourceLanding`. Only fresh Worker/Mutation/Worktree with a distinct same-board
+companion, same authorized repository/project and structured confirmed publication is accepted.
+`GET /api/agent-tasks/{id}` exposes sourceLandingOperationId, sourceLandingSha and
+verificationCleanupResidue. Same-O Queued/Dispatched/Working/Blocked admission is serialized;
+conflict includes the existing task ID. Provider/capacity refusal retains the companion; no fallback.
+
+`POST /api/agent-tasks/{id}/cleanup-verification` (no body), or
+`delegate.ps1 -CleanupVerification <task-id>`, irreversibly seals terminal sourced task admission
+and freezes all accepted generations. It imports exact runner-owned receipt bytes before guarded
+removal, returns separate directory/registration/branch facts and residue, and never kills or lands.
+Missing/unsupported/unknown custody, live owners, dirty source or unknown outputs retain the tree.
+Repeat cleanup through this endpoint after resolving evidence; never force-remove or delete the
+external verification/runner ledgers. A restored Failed/Canceled run can clean without changing
+its verdict. See [testing-and-build.md](testing-and-build.md#verification-restoration-contract-card-0478).

@@ -119,6 +119,13 @@ the test output's DLL before accepting the green run (CARD-0412 D6).
 
 ## Mutation-stage positive-control execution (CARD-0451)
 
+The default is Code ordinary V/R -> separate ordinary Review -> confirmed land -> SourceLanding
+Mutation. Review checks the pending PC design and ordinary evidence; it does not require executed
+PCs. Follow the companion commissioning and triage recipe in docs/orchestration-loop.md. Sourced
+snapshots never commit/push amendments; keep evidence externally and request separate repair work.
+Use local inherited execution only; never grant snapshot access to an external executor, broker,
+remote service or pre-existing process.
+
 Each PC-n still needs red-then-green evidence: apply the planned mutation, observe the
 expected assertion failure, restore the fixed source, and observe green. Scope **both** runs
 to only that PC's specific test method with a precise filter, for example:
@@ -152,9 +159,11 @@ assembly-local `ParallelLimiter<ProcessSpawnLimit>` model. That limiter serializ
 spawns within one assembly process, not across processes; do not co-schedule these shards
 with `Antiphon.Agents.Pty.Tests`/FakeClaude. Controls depending on shared external state
 without isolation must remain serial. Restore all temporary mutations. Production/test repairs return to Code for ordinary V/R
-and a new Mutation pass; Mutation retains only plan/evidence amendments after restoration. Remove only
-the extra worktrees/temporary branches you created after preserving their evidence and fixes;
-leave the delegated task worktree for the normal landing operation.
+and a new post-land SourceLanding pass; sourced Mutation keeps amendments in external evidence.
+A SourceLanding task has one recorded managed snapshot: do not create extra unbound snapshot
+worktrees or temporary branches. For legacy explicitly commissioned unsourced sharding only,
+remove owned extra trees after preserving evidence. The sourced tree remains for explicit guarded
+CleanupVerification, never normal landing.
 
 While a long run is in flight, avoid tight identical-command polling loops. Space status
 checks out and use the wait to read/investigate the next planned fix. CARD-0450 still applies:
@@ -207,3 +216,43 @@ StageReview rejects missing producer-to-recipient evidence. See
 [the standing bundle](../server/Bundles/stage-test-design.md) and its
 [review audit](../server/Bundles/stage-review.md). Text checks protect this rule;
 they do not prove transport delivery.
+
+## Verification restoration contract (CARD-0478)
+
+The SourceLanding brief names O/L, task and creation IDs and the external root
+`<canonical-common-git-dir>/antiphon/verification/<O:N>/<task:N>/`. Keep full reports, PC matrices,
+logs and restoration evidence there; do not use symlinks/junctions or paths inside the snapshot.
+The authoritative full report is the stored task Result (including any reporting block/token
+that settlement retained), independent of distilled completion text. Await all owned commands
+and restore exact tracked/index bytes before writing restoration.json. Never forge a runtime
+receipt: the worker record only describes files, outputs and test disposition.
+
+The UTF-8 JSON object uses camelCase:
+
+```json
+{
+  "schemaVersion": 1,
+  "source": { "taskId": "<task-guid>", "sourceOperationId": "<O-guid>", "landedSha": "<L>" },
+  "creationId": "<creation-guid>",
+  "restored": true,
+  "disposition": "<complete clean, finding or failed battery; evidence references>",
+  "reportSha256": "<uppercase SHA256 of exact UTF-8 stored task Result>",
+  "outputs": [{ "relativePath": "<exact task-owned output file>", "sha256": "<uppercase file SHA256>" }]
+}
+```
+
+After settlement, the caller verifies the full Result and its digest against the external report
+before completing/reconciling this record; do not hash a distilled notification or reworded report.
+Outputs are exact files, never directory globs. Use `[]` when none remain. Tracked paths, escapes,
+reparse points, unlisted ignored/untracked files and unknown empty directories refuse removal.
+Already-removed exact outputs allow idempotent retry. Evidence remains outside cleanup.
+
+Cleanup seals the durable task attempt set under the reservation lock, then separately obtains
+native sealed receipts for every accepted generation. Receipt import checks binding, source,
+creation, expected runner store, original host/container, successful zero accounting and drained
+I/O; status/PIDs/kill acknowledgements cannot substitute. NeverReserved is a separate proven
+empty history. The fresh DB evidence reader and Git/filesystem checks run under the genuine
+repository lease before output/ref/tree deletion; unknown custody remains residue, never a kill.
+Publication, report disposition and cleanup are independent verdicts. Deploy all source/custody/
+cleanup/contracts together and directly inspect loaded selector, bundle hashes and runner/host
+tracking before commissioning the feature's own PCs; caller-owned rollout cannot be fixture proof.

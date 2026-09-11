@@ -55,9 +55,9 @@ to answer one narrow question, carries no stage bundle, and the block is optiona
 | `Investigate` | confirm a card's root cause — evidence only, no fix design (stage) | opus, escalate fable |
 | `Plan` | decompose, design, choose an approach (stage) | fable |
 | `TestDesign` | write the `## Verification design` section for a landed plan — separate dispatch by default for `complexity:hard`/`medium`, folded into Plan for `easy` (stage) | fable |
-| `Code` | write or change code; implements tests and runs ordinary V/R; commits/pushes then hands off Mutation (stage) | fable |
-| `Mutation` | deliberate PC red/restore/green and missing-control discovery in retained Code worktree (stage) | Frontier |
-| `Review` | judge whether logic is correct — read-only judgement of implementation and Mutation evidence (a `complexity:hard`/safety-critical card, or Code requested Review through Mutation), not the default (stage) | fable |
+| `Code` | write or change code; implements tests and runs ordinary V/R; commits/pushes then hands off ordinary Review (stage) | fable |
+| `Mutation` | post-land PCs and missing-control discovery in a fresh SourceLanding snapshot (stage) | Frontier |
+| `Review` | ordinary read-only pre-land review for every complexity; judges implementation, ordinary evidence and pending PC design (stage) | fable |
 | `Debug` | find out why something is broken | opus |
 | `Coverage` | check what a change missed | opus |
 | `Merge` | resolve a conflict left by a worktree task (auto-spawned after TryMergeBackAsync fails; rarely by hand) | opus |
@@ -93,12 +93,14 @@ pwsh -NoProfile -File scripts/delegate.ps1 -Role TestDesign -Card CARD-nnnn -Tit
 # Code — ordinary V/R; -ExpectAbout is ordinary V/R floor + authoring
 pwsh -NoProfile -File scripts/delegate.ps1 -Role Code -Card CARD-nnnn -Title "build <card>" -Worktree -ExpectAbout <floor+authoring> -Goal "execute <plan artifact path> and its verification section; handoff from test-design/plan: '<verbatim>'"
 
-# Mutation — PC floor plus analysis/reporting; fresh process in the retained checkout
-$mutationGoal = Get-Content -LiteralPath "<prepared-brief-file>" -Raw
-pwsh -NoProfile -File scripts/delegate.ps1 -Role Mutation -Card CARD-nnnn -Title "mutation checks <card>" -Shared -Dir <code-worktree> -ExpectAbout <pc-floor+analysis> -Goal $mutationGoal
-
-# Review — after Mutation when required, read-only on the retained Code worktree
-pwsh -NoProfile -File scripts/delegate.ps1 -Role Review -Card CARD-nnnn -Title "review <card>" -ReadOnly -Dir <build worktree> -Goal "review the diff against <plan artifact path>; handoff from code: '<verbatim>'"
+# Review -- ordinary pre-land review of the retained Code worktree
+$reviewGoal = Get-Content -LiteralPath '<review-brief-file>' -Raw
+pwsh -NoProfile -File scripts/delegate.ps1 -Role Review -Card <original-card-guid> -ReadOnly -Dir '<code-worktree>' -Title 'ordinary review' -Goal $reviewGoal
+# Record linked companion, then land the original Code task and await confirmed O/L
+pwsh -NoProfile -File scripts/delegate.ps1 -Land <original-code-task-id>
+# Mutation -- after confirmed publication and required deployment
+$mutationGoal = Get-Content -LiteralPath '<mutation-brief-file>' -Raw
+pwsh -NoProfile -File scripts/delegate.ps1 -Role Mutation -Card <verification-card-guid> -Worktree -SourceLanding <operation-guid> -Title 'post-land mutation' -ExpectAbout <pc-floor-plus-analysis> -Goal $mutationGoal
 ```
 
 **The handoff block (D2).** A stage-role report must close with, immediately above the
@@ -131,7 +133,9 @@ A sub-orchestrator defaults to `Plan` and never runs below opus.
 | `-Level <tier>` | override the role's tier — `Frontier`/`High`/`Medium`/`Low`. Say why in `-Goal` |
 | `-Complexity Hard\|Medium\|Easy` | walk the (role, complexity) cell, falling back to the any-role chain (CARD-0090 / CARD-0332). Combined with `-Kind` or `-Level` is refused. Exhausted → Blocked for a human; **do not pick a kind yourself**. `-RefuseIfExhausted` 409s instead. `-Reroute <id> -Kind … -Level …` is the explicit human pick |
 | `-Dir <path>` | run somewhere else — another repo, another checkout. Defaults to yours |
-| `-Worktree` | isolate a worker in a fresh git worktree, merged back when it finishes |
+| `-Worktree` | isolate a worker in a fresh git worktree; sourced Mutation never merges back |
+| `-SourceLanding <operation-guid>` | create only Worker/Mutation/Worktree at the confirmed operation's immutable L; distinct same-board companion and same project/repository required |
+| `-CleanupVerification <task-id>` | explicitly seal and clean a terminal sourced snapshot after all-attempt native custody and restoration checks; never publishes or kills |
 | `-Shared` | force the shared directory — opts a sub-orchestrator OUT of its worktree (warned) |
 | `-ReadOnly` | shared directory, but the brief says don't write |
 | `-AllowDirectEdits` | don't arm the deny hook in a sub-orchestrator's worktree (it needs to write a plan file itself) |
@@ -361,54 +365,104 @@ What is NOT in a bundle, and is therefore yours to say in `-Goal`: today's known
 already landed, what is out of scope, and anything else that is true this afternoon and false next
 month.
 
-### Code to Mutation dispatch and landing (CARD-0470)
+### Code, ordinary Review, Land, then Mutation (CARD-0478)
 
-Code implements the plan's tests and runs all ordinary V/R. It commits/pushes, reports
-all PCs pending, and uses next: mutation even for zero-PC plans. Code never defaults to Land.
-Mutation runs every PC variant and adds a missing control; Review judges that evidence read-only.
-Code ExpectAbout is authoring + ordinary V/R floor; Mutation is PC floor + analysis/reporting.
-TestDesign keeps separate floors with suites/filters and the total verification floor for older consumers.
-Explicitly override older plans saying Build runs PCs when preparing a new Code brief.
+Code implements tests, runs every ordinary V/R, commits/pushes and returns `next: review`,
+even with zero PCs. Review is separate for every complexity and judges the diff, ordinary
+evidence and pending guard/PC inventory read-only. It does not require executed PCs before
+land. Clean Review returns `next: land`, defects `next: code`; preserve the original Code
+task ID as landing owner. Code's cost is authoring plus ordinary V/R; Mutation's is every
+PC/variant plus discovery and reporting. TestDesign retains both numeric floors and their sum.
 
-Read a prepared file with Get-Content -LiteralPath '<prepared-brief-file>' -Raw and pass that
-value as -Goal to scripts/delegate.ps1 -Role Mutation -Shared -Dir <actual-Code.WorktreePath>.
-Use the same commissioning project. No -OnAgent, -Agent, -ReadOnly or -Worktree: a fresh process
-composes stage-mutation in the retained isolated Code checkout. A sibling Worktree starts from
-master lineage and need not contain Code's unlanded commit. Standing pins or nonstandard/shared
-Code checkouts need an explicitly isolated source and confirmed Mutation composition; no silent fallback.
+Before implementation land, create or discover one ordinary same-board Backlog companion:
+`Post-land verification: <original identifier>`, label `post-land-verification`, stable key
+`post-land-verification:<original-code-task-guid>`. Record full board/card GUIDs, Code/Review
+task IDs, reviewed C, plan, commissioning project (including null), pending PC inventory and
+`publication pending`. Append the reverse link through a content revision; preserve existing
+human description and metadata. Serialize commissioning, inspect linked threads/tasks after
+interruption and reconcile conflicting duplicates before dispatch. Missing acknowledgements
+never authorize duplicate cards/tasks. The stable text key is discoverable, not DB uniqueness.
+Exclude these cards from fresh feature picking; never Spawn a card session for a companion.
 
-The brief contains the previous handoff verbatim, plan artifact, Code task ID (original landing
-owner), full SHA, branch, exact worktree, pending PC IDs, full Code report/V/R evidence,
-review-required and restart target. Previous Code must be terminal with no running commands.
-Never run another task in that exact directory during Mutation. Another card's Code uses its own
-Worktree. Exact-role capacity is independent; project/global/provider caps and writer leases remain.
+Order `delegate.ps1 -Land <original-code-task-id>`. Its correlated publication outcome starts
+the continuation, not a synthetic next-stage report. Only structured HasPublication for
+Landed, AlreadyPresent or LandedWithResidue qualifies. Queued land, task success, push exit,
+local advance, event prose and LandRefused do not. Record O (operation), L=VerifiedSourceSha
+and R=ObservedRemoteTargetSha alongside ordinary-reviewed C; rebase can make C differ from L.
+Mutation tests L, even after master advances or reverts. Changed implementation needs fresh
+ordinary V/R and Review; never relabel C evidence as L.
 
-Before any defect cycle Mutation confirms SHA=HEAD, clean tracked source/index, and records
-untracked/output inventory. Missing SHA/worktree, moved branch, staged/unstaged edits or a running
-Code command stops dependent work; never reset, switch to master, delete outputs or land.
-Run exact methods: green, compiling defect, intended assertion red, restore bytes, refresh
-source timestamps/rebuild, restored green. Record expected assertions, nonzero counts, both paths
-and tested SHA. Zero tests/build/fixture errors/stale DLLs cannot pass. Await every owned command.
-For a touched guard without a PC, including zero-PC plans, add a named control using an adequate
-existing assertion. Missing detection requiring production/test repairs returns to Code after
-restoration; inadequate design returns TestDesign. Do not weaken assertions or retain implementation repairs.
-Plan/evidence-only amendments may commit/push after restoration, reporting tested C and final F
-with a C..F diff proving production/tests unchanged. Interrupted passes identify remaining mutants
-and cannot claim completion. Final tracked source/index must be clean and final SHA recorded.
+Update the same companion with O/L/R. Use a file-backed brief containing the Review handoff
+verbatim, full reports/plan, all PC IDs/variants, both card GUIDs, Code/Review task IDs,
+C/O/L/R, restart target for context and the persistent evidence root:
 
-Successful Mutation goes to Review for hard/safety-critical work, Code's review-required: yes,
-or substantive deviations needing judgement; otherwise Land. Surviving mutants return Code after
-restoration. Human choices use Decide; unavailable evidence is failed/blocked, never green.
-Keep the original Code owner through repairs and Review. Land with -Land <code-task-id>, never the
-Shared Mutation task ID. Retain Code's branch/worktree until Mutation and required Review finish.
-No new OrchestrationStage is added: verify still aliases Review; optional -Stage Verify remains
-landing outcome accounting, and OnAgent's FollowUp default is unchanged.
+```powershell
+$reviewGoal = Get-Content -LiteralPath '<review-brief-file>' -Raw
+pwsh -NoProfile -File scripts/delegate.ps1 -Role Review -Card <original-card-guid> -ReadOnly -Dir '<code-worktree>' -Title 'ordinary review' -Goal $reviewGoal
+# After Review and companion recording:
+pwsh -NoProfile -File scripts/delegate.ps1 -Land <original-code-task-id>
+# After confirmed publication and required deployment:
+$mutationGoal = Get-Content -LiteralPath '<mutation-brief-file>' -Raw
+pwsh -NoProfile -File scripts/delegate.ps1 -Role Mutation -Card <verification-card-guid> -Worktree -SourceLanding <operation-guid> -Title 'post-land mutation checks' -ExpectAbout <pc-floor-plus-analysis> -Goal $mutationGoal
+# After settlement, restoration and durable evidence:
+pwsh -NoProfile -File scripts/delegate.ps1 -CleanupVerification <mutation-task-id>
+```
 
-For CARD-0470 before runtime upgrade, Code reports next: decide. The caller sends a separate
-Debug Worker using the same Shared/Dir recipe and a file-backed Goal with the full Mutation
-contract; it reads stage-mutation.md as an artifact. All 17 planned PC variants plus missing-control
-discovery belong to that worker. Its report uses existing land/code vocabulary. After success and
-required Review, land the original Code task, restart the canonical server via the runbook and
-wait for built-client rebuild. Probe loaded bundle catalog/pipeline role and client label directly
-(B-1 in the plan); health alone is insufficient. B-1 is caller-owned after landing, pending during
-Code. Do not change live pins/holds/ports, rewrite historical reports or interrupt active PC cycles.
+Use the same commissioning project and authorized repository. SourceLanding accepts only a
+fresh Worker/Mutation/Worktree, no standing pin, OnAgent, Shared, ReadOnly or merge target.
+Record the accepted task ID in a companion revision. Admission serializes same-O open tasks
+including Blocked; a 409 names the existing task or refusal. Preserve the pending obligation
+after quota/sign-in/capacity refusal; no silent provider fallback. A new explicit same-O attempt
+requires prior terminal evidence/restoration assessment. Normal task queues own running-state
+visibility; no tick creates cards or spends quota. Next-card Code may use its own Worktree.
+
+Before mutation check exact managed creation, HEAD=L and clean tracked source/index; inventory
+outputs. Await all commands, use exact-method green/compiling-defect/intended-red/restore/fresh-
+build/green cycles and retain nonzero counts/assertions per variant. Run discovery even with
+zero PCs. Missing tests or repairs become findings. Do not reset, substitute latest master,
+commit/push even evidence amendments, merge, land or deploy from the snapshot. Use local
+inherited execution only; never give snapshot access to an external executor, broker, remote
+service or pre-existing process. Preserve full evidence/restoration outside the worktree at
+the assigned common-Git verification root. Interrupted work retains contaminated paths.
+
+Original Done means shipped: ordinary V/R and Review passed, publication confirmed, companion
+recorded and other explicit deployment/acceptance conditions met. Close with C/O/L, Review ID
+and `post-land Mutation pending: <companion>`, never PC-clean. Companion activity cannot reopen
+the original automatically. Existing card statuses and explicit tracker actions are unchanged.
+All PCs/variants and discovery clean after restoration: Mutation `done`, `next: none`; caller
+closes the companion with L, counts, evidence and restoration. Findings: `done`, `next: decide`;
+caller reads the full report, creates linked remediation and keeps verification open. Incomplete,
+interrupted, unavailable or unknown evidence is failed/blocked, not clean. Explicit abandonment
+uses Canceled with reason/successor, never Done/Clean.
+
+Mutation's `next: decide` is a triage continuation, not automatically AskUserQuestion. Distinguish
+coverage survivor/missing detection from reproducible unmutated-L product regression, invalid/
+noncompiling/equivalent control and infrastructure failure. Report Where/Failure/Why/Fix,
+severity, guard/PC and C/O/L evidence. Check the companion thread before creating each actionable
+remediation; group one root cause. Forward fix at current target through ordinary V/R, Review
+and a new land. Record O2/L2 and explicitly commission a new snapshot on this companion; old
+Found evidence remains at L. Never automatically reland the original, revert a surviving mutant,
+reset or force-push master. A justified revert is a new reviewed commit and deliberate landing.
+Only real operator choices belong on a NeedsDecision move/reopen revision and attention feed;
+do not create an alert-sink message or new status for a finding.
+
+Cleanup is separate from both publication and test verdict. CleanupVerification irreversibly
+seals this task's complete launch set, imports exact native receipts and reads fresh committed
+authority under the genuine repository lease before deletion. A started attempt requires the
+original container's descendant-zero observation and drained output; dead root, terminal row,
+kill success or worker restoration alone never proves custody. Never-reserved evidence is a
+separate closed path. Every attempt, exact L/creation/registration/ref, no owners/sequencer,
+restoration and hashed task-owned outputs must match. Unknown files, dirty/replaced trees or
+missing/unsupported custody remain actionable residue. No force or recursive deletion, and
+cleanup never kills. A restored Failed/Canceled battery may clean without changing its verdict.
+See docs/testing-and-build.md for the restoration schema and docs/ops-http.md for inspection.
+
+Ship source admission, launch custody, no-autosave/no-land fences, cleanup and these contracts
+together. Complete ordinary Code and Review before landing/deploying the feature. The caller
+uses the canonical main-checkout runbook and verifies loaded SourceLanding behavior, composed
+Code/Review/Mutation hashes and runner/host tracking directly; health alone is insufficient.
+Only then commission the feature's own pending PCs. Never use a prose-only, Shared or Debug
+fallback. Preserve active PC commands: await and restore through their owner before adopting
+the new order, keep evidence at its tested SHA and rerun affected controls at the actual L.
+No pins/holds/quotas, historical reports, role ordinals or parser tokens change; `verify` still
+aliases Review and optional `-Stage Verify` remains outcome accounting.
