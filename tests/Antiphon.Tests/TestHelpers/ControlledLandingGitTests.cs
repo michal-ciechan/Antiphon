@@ -72,6 +72,22 @@ public sealed class ControlledLandingGitTests
         Directory.Exists(git.Source).ShouldBeTrue();
     }
 
+    /// <summary>
+    /// The constructor materialises a real temp tree, so disposal MUST remove it; six of the
+    /// fixtures in this file used to leave one behind per run (CARD-0475 review).
+    /// </summary>
+    [Test]
+    public void C475_DisposeRemovesTheFixtureTree()
+    {
+        string root;
+        using (var git = new ControlledLandingGit())
+        {
+            root = git.Root;
+            Directory.Exists(root).ShouldBeTrue();
+        }
+        Directory.Exists(root).ShouldBeFalse();
+    }
+
     [Test]
     public async Task C475_UnknownCommandsAreRejected()
     {
