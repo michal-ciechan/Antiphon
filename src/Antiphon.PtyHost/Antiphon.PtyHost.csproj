@@ -13,6 +13,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Antiphon.PtyHost.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Antiphon.Agents.Pty\Antiphon.Agents.Pty.csproj" />
     <ProjectReference Include="..\Antiphon.PtyHost.Protocol\Antiphon.PtyHost.Protocol.csproj" />
   </ItemGroup>

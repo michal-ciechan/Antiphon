@@ -56,7 +56,11 @@ public sealed class VerificationCleanupService(AppDbContext db, ISessionRunnerCl
                 }
                 var status = await runner.ReadVerificationCustodyAsync(binding, seal: true, ct);
                 if (status.Binding != binding || status.Receipt is null || status.Host is null)
-                    return await ResidueAsync(task, $"{execution.Id:D}: {status.Reason ?? status.State.ToString()}", ct);
+                {
+                    var unknown = status.Reason ?? status.State.ToString();
+                    await MarkUnknownAsync(executionId, unknown, ct);
+                    return await ResidueAsync(task, $"{execution.Id:D}: {unknown}", ct);
+                }
                 var receipt = new VerificationReceiptPolicy().Validate(status.Receipt, binding, status.Host);
                 if (receipt.Disposition != status.State)
                     return await ResidueAsync(task, "verification_custody_invalid_receipt", ct);
@@ -72,11 +76,13 @@ public sealed class VerificationCleanupService(AppDbContext db, ISessionRunnerCl
                 row.ReceiptBytes ??= status.Receipt;
                 row.ReceiptDigest ??= Convert.ToHexString(SHA256.HashData(status.Receipt));
                 row.ReceiptImportedAt ??= clock.GetUtcNow().UtcDateTime;
+                row.CustodyReason = receipt.Disposition.ToString();
                 await db.SaveChangesAsync(ct);
                 await import.CommitAsync(ct);
             }
             catch (Exception ex) when (ex is VerificationCustodyException or JsonException or HttpRequestException or ConflictException)
             {
+                await MarkUnknownAsync(executionId, "verification_custody_unavailable", ct);
                 return await ResidueAsync(task, $"{executionId:D}: verification_custody_unavailable ({ex.GetType().Name})", ct);
             }
         }
@@ -96,6 +102,13 @@ public sealed class VerificationCleanupService(AppDbContext db, ISessionRunnerCl
         task.VerificationCleanupResidue = result.Residue;
         await db.SaveChangesAsync(ct);
         return result;
+    }
+
+    private async Task MarkUnknownAsync(Guid executionId, string reason, CancellationToken ct)
+    {
+        var marked = $"{VerificationCustodyState.Unknown}: {reason}";
+        await db.VerificationExecutions.Where(e => e.Id == executionId && e.ReceiptBytes == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(e => e.CustodyReason, marked), ct);
     }
 
     private async Task<WorktreeRemoval> ResidueAsync(AgentTask task, string reason, CancellationToken ct)

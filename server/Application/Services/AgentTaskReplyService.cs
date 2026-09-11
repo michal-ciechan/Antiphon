@@ -1585,10 +1585,13 @@ public sealed class AgentTaskReplyService
 
         if (task.SourceLandingOperationId is not null && !killSession)
         {
-            // A recovery uncertainty is not authority to kill. Keep its explicit task/agent
-            // ownership and custody residue; this process must never become a warm candidate.
+            // A recovery uncertainty is not authority to kill or pool. The terminal sourced
+            // task keeps assignment ownership until imported Exited/NeverStarted receipts
+            // authorize the ordinary stop path, or an operator stop runs.
+            agent.Status = AgentStatus.Running;
             agent.PoolIdleSince = null;
             agent.PoolReservedForRootTaskId = null;
+            agent.UpdatedAt = now;
             task.VerificationCleanupResidue = "verification_release_unresolved";
             return;
         }

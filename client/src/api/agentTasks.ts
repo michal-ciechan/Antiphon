@@ -237,10 +237,28 @@ export interface BlockedContextDto {
   autoContinuedAt?: string | null
 }
 
+export interface VerificationExecutionDetailDto {
+  executionId: string
+  sessionId: string
+  acceptedStartedAt: string
+  runnerCallIntentAt?: string | null
+  custodyReason?: string | null
+  receiptDigest?: string | null
+  receiptImportedAt?: string | null
+  runnerStoreId?: string | null
+  hasReceipt: boolean
+}
+
 export interface AgentTaskDetailDto {
   sourceLandingOperationId?: string | null
   sourceLandingSha?: string | null
   verificationCleanupResidue?: string | null
+  verificationCleanupSealId?: string | null
+  verificationExecutionRevision?: number
+  verificationDirectoryRemoved?: boolean
+  verificationRegistrationRemoved?: boolean
+  verificationBranchRemoved?: boolean
+  verificationExecutions?: VerificationExecutionDetailDto[] | null
   legacyLandReceipt?: { eventId: string; at: string; state: 'LegacyUnverified' | 'NotRequired' | 'Confirmed' } | null
   landRequest?: {
     id: string

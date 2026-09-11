@@ -52,4 +52,46 @@ public sealed class PostLandMutationContractTests
                      "Review — after Mutation", "Code requested Review through Mutation", "retained Code Shared" })
             text.ShouldNotContain(obsolete);
     }
+
+    [Test]
+    public void C478_V11_ActiveContractAndVocabulary() =>
+        C478_V11_ComposedContractsKeepOrdinaryReviewBeforePublication();
+
+    [Test]
+    public void C478_G162_CodeHandsOffReview() =>
+        InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Code))
+            .Text.ShouldContain("next: review when implementation and ordinary V/R are complete, even with zero PCs");
+
+    [Test]
+    public void C478_G163_ReviewHasNoExecutedPcPrerequisite() =>
+        InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Review))
+            .Text.ShouldContain("Executed PCs are not a prerequisite");
+
+    [Test]
+    public void C478_G166_SnapshotCommitException() =>
+        InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Mutation))
+            .Text.ShouldContain("SOURCELANDING MUTATION EXCEPTION", Case.Insensitive);
+
+    [Test]
+    public void C478_G167_CleanNoneFindingDecide()
+    {
+        var mutation = InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Mutation)).Text;
+        mutation.ShouldContain("next: none", Case.Insensitive);
+        mutation.ShouldContain("next: decide", Case.Insensitive);
+    }
+
+    [Test]
+    public void C478_G178_LegacyTokensRemain()
+    {
+        PipelineHandoff.TryParse("--- next stage ---\nnext: mutation\n").Kind.ShouldBe(PipelineHandoffKind.Mutation);
+        PipelineHandoff.TryParse("--- next stage ---\nnext: verify\n").Kind.ShouldBe(PipelineHandoffKind.Review);
+        PipelineHandoff.TryParse("--- next stage ---\nnext: land\n").Kind.ShouldBe(PipelineHandoffKind.Land);
+    }
+
+    [Test]
+    public void C478_G230_ExternalExecutorContract()
+    {
+        var mutation = InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Mutation)).Text;
+        mutation.ShouldContain("external executor", Case.Insensitive);
+    }
 }

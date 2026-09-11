@@ -689,7 +689,9 @@ and accepted application generation at microsecond precision. A terminal result
 carries the exact UTF-8 receipt bytes (JSON encodes byte arrays as base64), after
 runner acceptance. Unknown/Unsupported results confer no exit authority.
 Application task creation now accepts optional `sourceLandingOperationId`; task detail
-exposes it, `sourceLandingSha` and `verificationCleanupResidue`. The explicit
+exposes it, `sourceLandingSha`, `verificationCleanupResidue`, the cleanup seal id,
+execution revision, removal facts, and typed `verificationExecutions` with
+`custodyReason` and receipt digest. The explicit
 `POST /api/agent-tasks/{id}/cleanup-verification` seals a terminal sourced task and
 imports all-attempt custody before guarded removal. It never kills or publishes.
 See [ops-http.md](ops-http.md#post-land-verification-card-0478) for the CLI and restrictions.

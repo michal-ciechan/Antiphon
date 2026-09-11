@@ -1,4 +1,5 @@
 using Antiphon.Agents.Pty;
+using Antiphon.PtyHost;
 using Antiphon.PtyHost.Client;
 using Antiphon.PtyHost.Protocol;
 using Antiphon.SessionRunner.Contracts;
@@ -15,6 +16,27 @@ namespace Antiphon.PtyHost.Tests;
 [ParallelLimiter<ProcessSpawnLimit>]
 public class HostCustodyTests
 {
+    [Test]
+    public async Task C478_G213_VersionNegotiation() =>
+        await Legacy_peer_receives_no_custody_or_tracked_launch_messages(missingFeature: true);
+
+    [Test]
+    public void C478_V14_HostIntermediaryBreakawayDeniedFallback()
+    {
+        var pid = Win32ProcessSpawner.StartDetachedWithFallback(
+            Path.Combine(Environment.SystemDirectory, "cmd.exe"), ["/d", "/c", "ping -n 2 127.0.0.1 > nul"]);
+        pid.ShouldBeGreaterThan(0);
+        try
+        {
+            using var child = Process.GetProcessById(pid);
+            child.WaitForExit(15000).ShouldBeTrue();
+        }
+        catch (ArgumentException)
+        {
+            // The intermediary already exited after a successful detached spawn.
+        }
+    }
+
     [Test]
     [Arguments(true)]
     [Arguments(false)]

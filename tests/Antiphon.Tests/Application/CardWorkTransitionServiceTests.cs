@@ -34,7 +34,7 @@ public class CardWorkTransitionServiceTests
     [Test]
     public async Task a_dispatched_task_moves_its_backlog_card_to_in_progress()
     {
-        await using var world = await World.CreateAsync();
+        await using var world = await CardWorkTransitionServiceTestsHarness.CreateAsync();
         var card = await world.SeedCardAsync(CardStatus.Backlog);
         var task = await world.SeedTaskAsync(card.Id, AgentTaskStatus.Dispatched, dispatchedAt: world.Now);
 
@@ -61,7 +61,7 @@ public class CardWorkTransitionServiceTests
     [Test]
     public async Task a_settled_task_with_nothing_else_open_moves_the_card_to_review_and_dequeues_it()
     {
-        await using var world = await World.CreateAsync();
+        await using var world = await CardWorkTransitionServiceTestsHarness.CreateAsync();
         var agent = await world.SeedAgentAsync();
         var card = await world.SeedCardAsync(CardStatus.InProgress, assignedAgentId: agent.Id, queuePosition: 1);
         await world.SeedTaskAsync(
@@ -85,7 +85,7 @@ public class CardWorkTransitionServiceTests
     [Test]
     public async Task a_settle_with_a_sibling_still_open_leaves_the_card_in_progress()
     {
-        await using var world = await World.CreateAsync();
+        await using var world = await CardWorkTransitionServiceTestsHarness.CreateAsync();
         var card = await world.SeedCardAsync(CardStatus.InProgress);
         await world.SeedTaskAsync(
             card.Id, AgentTaskStatus.Succeeded, dispatchedAt: world.Now.AddMinutes(-20), completedAt: world.Now);
@@ -100,7 +100,7 @@ public class CardWorkTransitionServiceTests
     [Test]
     public async Task a_blocked_task_counts_as_open()
     {
-        await using var world = await World.CreateAsync();
+        await using var world = await CardWorkTransitionServiceTestsHarness.CreateAsync();
         var card = await world.SeedCardAsync(CardStatus.Backlog);
         await world.SeedTaskAsync(card.Id, AgentTaskStatus.Blocked, dispatchedAt: world.Now);
 
@@ -113,7 +113,7 @@ public class CardWorkTransitionServiceTests
     [Test]
     public async Task a_failed_or_canceled_last_task_moves_the_card_nowhere()
     {
-        await using var world = await World.CreateAsync();
+        await using var world = await CardWorkTransitionServiceTestsHarness.CreateAsync();
         var failedCard = await world.SeedCardAsync(CardStatus.InProgress);
         await world.SeedTaskAsync(
             failedCard.Id, AgentTaskStatus.Failed, dispatchedAt: world.Now.AddMinutes(-9), completedAt: world.Now);
@@ -132,7 +132,7 @@ public class CardWorkTransitionServiceTests
     [Test]
     public async Task a_succeeded_after_an_earlier_failure_still_reaches_review()
     {
-        await using var world = await World.CreateAsync();
+        await using var world = await CardWorkTransitionServiceTestsHarness.CreateAsync();
         var card = await world.SeedCardAsync(CardStatus.InProgress);
         await world.SeedTaskAsync(
             card.Id, AgentTaskStatus.Failed, dispatchedAt: world.Now.AddMinutes(-40), completedAt: world.Now.AddMinutes(-30));
@@ -147,7 +147,7 @@ public class CardWorkTransitionServiceTests
     [Test]
     public async Task a_backlog_card_whose_only_evidence_is_a_settle_goes_straight_to_review()
     {
-        await using var world = await World.CreateAsync();
+        await using var world = await CardWorkTransitionServiceTestsHarness.CreateAsync();
         // The CARD-0069 shape: the work ran as a delegated task and the card never left Backlog.
         var card = await world.SeedCardAsync(CardStatus.Backlog);
         await world.SeedTaskAsync(
@@ -166,7 +166,7 @@ public class CardWorkTransitionServiceTests
     [Test]
     public async Task a_human_move_newer_than_the_evidence_is_never_overridden_and_the_next_dispatch_moves_it_again()
     {
-        await using var world = await World.CreateAsync();
+        await using var world = await CardWorkTransitionServiceTestsHarness.CreateAsync();
         var card = await world.SeedCardAsync(CardStatus.InProgress);
         await world.SeedTaskAsync(
             card.Id, AgentTaskStatus.Succeeded, dispatchedAt: world.Now.AddMinutes(-60), completedAt: world.Now.AddMinutes(-30));
@@ -188,7 +188,7 @@ public class CardWorkTransitionServiceTests
     [Test]
     public async Task cards_the_sweep_must_not_touch_are_left_alone()
     {
-        await using var world = await World.CreateAsync();
+        await using var world = await CardWorkTransitionServiceTestsHarness.CreateAsync();
         var needsDecision = await world.SeedCardAsync(CardStatus.NeedsDecision);
         var done = await world.SeedCardAsync(CardStatus.Done);
         var canceled = await world.SeedCardAsync(CardStatus.Canceled);
@@ -210,7 +210,7 @@ public class CardWorkTransitionServiceTests
     [Test]
     public async Task check_tasks_are_ignored()
     {
-        await using var world = await World.CreateAsync();
+        await using var world = await CardWorkTransitionServiceTestsHarness.CreateAsync();
         var card = await world.SeedCardAsync(CardStatus.Backlog);
         await world.SeedTaskAsync(
             card.Id, AgentTaskStatus.Dispatched, dispatchedAt: world.Now, role: AgentTaskRole.Check);
@@ -223,7 +223,7 @@ public class CardWorkTransitionServiceTests
     [Test]
     public async Task a_second_sweep_over_unchanged_rows_writes_nothing()
     {
-        await using var world = await World.CreateAsync();
+        await using var world = await CardWorkTransitionServiceTestsHarness.CreateAsync();
         var card = await world.SeedCardAsync(CardStatus.Backlog);
         await world.SeedTaskAsync(card.Id, AgentTaskStatus.Dispatched, dispatchedAt: world.Now);
 
@@ -237,7 +237,7 @@ public class CardWorkTransitionServiceTests
     [Test]
     public async Task the_sweep_does_nothing_when_it_is_disabled()
     {
-        await using var world = await World.CreateAsync(enabled: false);
+        await using var world = await CardWorkTransitionServiceTestsHarness.CreateAsync(enabled: false);
         var card = await world.SeedCardAsync(CardStatus.Backlog);
         await world.SeedTaskAsync(card.Id, AgentTaskStatus.Dispatched, dispatchedAt: world.Now);
 
@@ -254,14 +254,14 @@ public class CardWorkTransitionServiceTests
     /// sweep needs. The isolated schema is what makes a GLOBAL sweep safe to run in a shared
     /// container: there are no other tests' cards in it to move.
     /// </summary>
-    private sealed class World : IAsyncDisposable
+    internal sealed class CardWorkTransitionServiceTestsHarness : IAsyncDisposable
     {
         private readonly IsolatedTestSchema _schema;
         private readonly ServiceProvider _provider;
         private readonly string _tempRoot;
         private int _cardNumber;
 
-        private World(IsolatedTestSchema schema, ServiceProvider provider, string tempRoot,
+        private CardWorkTransitionServiceTestsHarness(IsolatedTestSchema schema, ServiceProvider provider, string tempRoot,
             MockEventBus eventBus, Guid boardId)
         {
             _schema = schema;
@@ -277,7 +277,7 @@ public class CardWorkTransitionServiceTests
 
         public DateTime Now { get; } = DateTime.UtcNow;
 
-        public static async Task<World> CreateAsync(bool enabled = true)
+        public static async Task<CardWorkTransitionServiceTestsHarness> CreateAsync(bool enabled = true)
         {
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-card-transitions-{Guid.NewGuid():N}");
@@ -351,7 +351,7 @@ public class CardWorkTransitionServiceTests
 
             var provider = services.BuildServiceProvider();
             var boardId = await SeedBoardAsync(provider, tempRoot);
-            return new World(schema, provider, tempRoot, eventBus, boardId);
+            return new CardWorkTransitionServiceTestsHarness(schema, provider, tempRoot, eventBus, boardId);
         }
 
         private static async Task<Guid> SeedBoardAsync(ServiceProvider provider, string tempRoot)
@@ -559,6 +559,9 @@ public class CardWorkTransitionServiceTests
 
             await db.SaveChangesAsync();
         }
+
+        public AppDbContext CreateContext() =>
+            new(TestDbFixture.CreateDbContextOptions(_schema.ConnectionString));
 
         public async Task<Card> ReadCardAsync(Guid cardId)
         {

@@ -260,8 +260,11 @@ on existing move/reopen revisions and attention, never an alert sink.
 `POST /api/agent-tasks` accepts optional `sourceLandingOperationId` (full GUID), exposed by
 `delegate.ps1 -SourceLanding`. Only fresh Worker/Mutation/Worktree with a distinct same-board
 companion, same authorized repository/project and structured confirmed publication is accepted.
-`GET /api/agent-tasks/{id}` exposes sourceLandingOperationId, sourceLandingSha and
-verificationCleanupResidue. Same-O Queued/Dispatched/Working/Blocked admission is serialized;
+`GET /api/agent-tasks/{id}` exposes sourceLandingOperationId, sourceLandingSha,
+verificationCleanupResidue, verificationCleanupSealId, verificationExecutionRevision,
+directory/registration/branch removal facts, and typed verificationExecutions
+(executionId, session generation, custodyReason, receipt digest, runnerStoreId).
+Same-O Queued/Dispatched/Working/Blocked admission is serialized;
 conflict includes the existing task ID. Provider/capacity refusal retains the companion; no fallback.
 
 `POST /api/agent-tasks/{id}/cleanup-verification` (no body), or
