@@ -59,10 +59,11 @@ public class RunnerCustodyTests
     }
 
     [Test]
-    [Arguments(0u)]
-    [Arguments(8u)]
-    [Arguments(16u)]
-    public async Task Dead_root_live_orphan_retains_host_and_refuses_generation_reuse(uint flags)
+    [Arguments(0u, false)]
+    [Arguments(8u, false)]
+    [Arguments(16u, false)]
+    [Arguments(0u, true)]
+    public async Task Dead_root_live_orphan_retains_host_and_refuses_generation_reuse(uint flags, bool authorizedKillAll)
     {
         await using var fixture = new CustodyFixture();
         var prefix = "Local\\c478-runner-" + Guid.NewGuid().ToString("N");
@@ -95,7 +96,10 @@ public class RunnerCustodyTests
             (await fixture.Runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None)).ShouldBe(1);
             (await fixture.Runtime.ReadCustodyAsync(fixture.Binding, false, CancellationToken.None)).State
                 .ShouldBe(VerificationCustodyState.Draining);
-            release[2].Set();
+            if (authorizedKillAll)
+                (await fixture.Runtime.KillAllAsync(TimeSpan.FromSeconds(5), CancellationToken.None)).Count.ShouldBe(1);
+            else
+                release[2].Set();
             (await fixture.WaitFinalAsync()).State.ShouldBe(VerificationCustodyState.Exited);
         }
         finally

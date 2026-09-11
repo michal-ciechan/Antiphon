@@ -719,7 +719,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         var killed = new List<RunnerSessionDto>();
         foreach (var (sessionId, session) in _sessions)
         {
-            if (session.HasExited)
+            if (session.HasExited && session.VerificationBinding is null)
                 continue;
             try
             {
