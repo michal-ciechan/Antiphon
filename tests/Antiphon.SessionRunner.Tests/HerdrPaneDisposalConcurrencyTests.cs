@@ -93,7 +93,8 @@ public sealed class HerdrPaneDisposalConcurrencyTests
         var child = new HerdrPaneChild(h.Client, h.Settings, NullLogger.Instance,
             () => [new(h.SessionId, tab.TabId, h.PaneId, tab.Number)], new Probe(), h.Runtime.Placement);
         if (actor == "named") tab.Panes.RemoveAll(p => p.PaneId != h.PaneId);
-        if (actor == "reuse") HerdrPaneDisposalServiceTests.SaveLocator(h, "last-pane");
+        if (actor == "reuse") HerdrLastPane.FromSidecar(HerdrPaneDisposalServiceTests.Sidecar(h) with { Origin = HerdrPaneOrigins.Launched }, "test")
+            .SaveAtomic(HerdrLastPane.PathFor(h.Settings.SessionLogPath, h.SessionId));
         if (actor is "attach" or "kill") h.Occupied("claude");
         if (actor == "kill") await child.AttachExistingAsync(HerdrPaneDisposalServiceTests.Sidecar(h), default);
         var held = await h.Runtime.Placement.LockPaneAsync(h.PaneId, default);
@@ -123,12 +124,60 @@ public sealed class HerdrPaneDisposalConcurrencyTests
         if (actor == "split") h.Methods.Count(m => m == "pane.split").ShouldBe(1);
         await child.DisposeAsync();
     }
-    [Test] public Task C461_G065_Attach_lease() => ActorWaits("attach");
-    [Test] public Task C461_G066_Named_launch_lease() => ActorWaits("named");
-    [Test] public Task C461_G067_Last_pane_reuse_lease() => ActorWaits("reuse");
+    [Test] [Arguments(false)] [Arguments(true)] public async Task C461_G065_Attach_lease(bool disposalWins) { await ActorWaits("attach"); await RuntimeRace("attach", disposalWins); }
+    [Test] [Arguments(false)] [Arguments(true)] public async Task C461_G066_Named_launch_lease(bool disposalWins) { await ActorWaits("named"); await RuntimeRace("named", disposalWins); }
+    [Test] [Arguments(false)] [Arguments(true)] public async Task C461_G067_Last_pane_reuse_lease(bool disposalWins) { await ActorWaits("reuse"); await RuntimeRace("reuse", disposalWins); }
     [Test] public Task C461_G068_Allocator_split_lease() => ActorWaits("split");
     [Test] public Task C461_G070_Detach_kill_lease() => ActorWaits("kill");
-    [Test] public Task C461_G071_Sidecar_publication_lease() => ActorWaits("attach");
+    [Test] [Arguments(false)] [Arguments(true)] public Task C461_G071_Sidecar_publication_lease(bool disposalWins) => RuntimeRace("attach", disposalWins);
+    private static async Task RuntimeRace(string actor, bool disposalWins)
+    {
+        await using var h = new HerdrPaneDisposalFixture(); await h.StartAsync();
+        h.Fake.Workspaces[0].Tokens!["antiphon-ws"] = "owned-test";
+        var tab = h.Fake.Workspaces[0].Tabs.Single(t => t.Panes.Any(p => p.PaneId == h.PaneId));
+        if (actor == "named") tab.Panes.RemoveAll(p => p.PaneId != h.PaneId);
+        if (actor == "reuse") HerdrLastPane.FromSidecar(HerdrPaneDisposalServiceTests.Sidecar(h) with { Origin = HerdrPaneOrigins.Launched }, "test")
+            .SaveAtomic(HerdrLastPane.PathFor(h.Settings.SessionLogPath, h.SessionId));
+        if (actor == "attach") h.Occupied("claude");
+        var p = await h.PreviewAsync(); p.Eligible.ShouldBeTrue();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        Task<RunnerSessionDto> Acquire() => actor == "attach"
+            ? h.Runtime.AttachHerdrAsync(new(h.SessionId, h.PaneId, "claude", "claude-jsonl", 4243, "owned-test", ExpectedNativeSessionId: h.SessionId), timeout.Token)
+            : h.Runtime.StartAsync(Launch(h, actor == "named" ? "selected-tab" : null), timeout.Token);
+        if (disposalWins)
+        {
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            h.Backend.BeforeClose = async () => { entered.SetResult(); await release.Task; };
+            var disposal = h.Service.ExecuteAsync(h.Request(p), timeout.Token); await entered.Task.WaitAsync(timeout.Token);
+            var acquisition = Acquire();
+            try { await Task.Delay(100); acquisition.IsCompleted.ShouldBeFalse(); }
+            finally { release.TrySetResult(); }
+            (await disposal).Outcome.ShouldBe("Closed");
+            try
+            {
+                var acquired = await acquisition;
+                h.Runtime.LiveHerdrPanes().Single(live => live.SessionId == acquired.SessionId).PaneId.ShouldNotBe(h.PaneId);
+                await h.Runtime.KillAsync(h.SessionId, TimeSpan.FromSeconds(1), default);
+            }
+            catch (Exception ex) when (ex is HerdrLaunchException or HerdrApiException) { }
+            h.Backend.Closes.ShouldBe(1);
+        }
+        else
+        {
+            var gate = h.Fake.GateMethod("pane.report_metadata");
+            var acquisition = Acquire();
+            for (var i = 0; i < 200 && !h.Methods.Contains("pane.report_metadata"); i++) await Task.Delay(10);
+            h.Methods.ShouldContain("pane.report_metadata");
+            var disposal = h.Service.ExecuteAsync(h.Request(p), timeout.Token);
+            try { await Task.Delay(100); disposal.IsCompleted.ShouldBeFalse(); }
+            finally { gate.Release(); }
+            (await acquisition).Status.ShouldBe("Running");
+            (await disposal).Outcome.ShouldBe("Refused"); h.Backend.Closes.ShouldBe(0);
+            File.Exists(HerdrPaneSidecar.PathFor(h.Settings.SessionLogPath, h.SessionId)).ShouldBeTrue();
+            await h.Runtime.KillAsync(h.SessionId, TimeSpan.FromSeconds(1), default);
+        }
+    }
     [Test] public async Task C461_G069_Pending_adoption_lease()
     {
         await using var h = new HerdrPaneDisposalFixture();
