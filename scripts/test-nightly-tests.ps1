@@ -163,8 +163,11 @@ function Test-C487_G039 {
 function Test-C487_G040 {
     foreach ($kind in @('list-only', 'inprogress')) {
         $v = ConvertTo-NightlyCoverageVerdict -TerminalRows @() -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p' -DiscoveryNodes @([pscustomobject]@{ State = 'InProgress' }) -UsedDiscoveryAsExecution ($kind -eq 'list-only')
-        Assert-C487 -Cond (-not $v.coverageComplete) -Name ('G040 {0}' -f $kind)
+        Assert-C487 -Cond (-not $v.coverageComplete -and -not $v.testsPassed) -Name ('G040 {0}' -f $kind)
     }
+    $fx = New-Efx
+    $r = Invoke-E -Fx $fx -Extra @{ Suites = @('antiphon') }
+    Assert-C487 -Cond ((-not [bool]$r.coverageComplete) -and (-not [bool]$r.testsPassed)) -Name 'G040 missing-trx entry' -Detail ('cov=' + $r.coverageComplete + ' pass=' + $r.testsPassed)
 }
 
 function Test-C487_G041 {
@@ -186,7 +189,27 @@ function Test-C487_G044 {
     foreach ($n in @('ANTIPHON_HEADED_TESTS', 'ANTIPHON_HEADED_LONG_TESTS', 'ANTIPHON_CARD0133_RUN_P3')) {
         $pol = (Get-Content -LiteralPath $policyPath -Raw | ConvertFrom-Json)
         $envMap = Get-NightlySafeChildEnvironment -PolicyObject $pol -SuiteId 'antiphon' -BaseEnvironment @{ $n = '1' }
-        Assert-C487 -Cond ([string]$envMap[$n] -eq '') -Name ('G044 cleared {0}' -f $n)
+        $mapOk = [string]$envMap[$n] -eq ''
+        $prevSeams = $script:NightlySeams
+        $script:NightlySeams = $null
+        $log = Join-Path $ResultsDirectory ('g044-' + $n + '-' + [guid]::NewGuid().ToString('N') + '.log')
+        $saved = [Environment]::GetEnvironmentVariable($n, 'Process')
+        $childOk = $false
+        $detail = ''
+        try {
+            [Environment]::SetEnvironmentVariable($n, '1', 'Process')
+            $cmd = "if ([string]::IsNullOrEmpty([Environment]::GetEnvironmentVariable('$n'))) { 'CLEARED' } else { 'LEAK' }"
+            $run = Invoke-NightlyOwnedProcess -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-NonInteractive', '-Command', $cmd) `
+                -WorkingDirectory $repo -TimeoutMilliseconds 30000 -Environment $envMap -LogPath $log
+            $text = ''
+            if (Test-Path -LiteralPath $log) { $text = [System.IO.File]::ReadAllText($log) }
+            $detail = ('exit=' + $run.ExitCode + ' log=' + $text)
+            $childOk = ($text -match 'CLEARED') -and ($text -notmatch 'LEAK')
+        } finally {
+            [Environment]::SetEnvironmentVariable($n, $saved, 'Process')
+            $script:NightlySeams = $prevSeams
+        }
+        Assert-C487 -Cond ($mapOk -and $childOk) -Name ('G044 cleared {0}' -f $n) -Detail $detail
     }
 }
 
@@ -270,4 +293,4 @@ if ($Case) {
     }
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'tests-summary' -Body @{ passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows }
-Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows 54
+Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows 55

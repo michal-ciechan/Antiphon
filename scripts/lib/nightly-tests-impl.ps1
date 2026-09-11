@@ -21,7 +21,7 @@ function Invoke-NightlyOwnedProcess {
         [string[]]$ArgumentList,
         [string]$WorkingDirectory,
         [int]$TimeoutMilliseconds,
-        [hashtable]$Environment,
+        [hashtable]$Environment = $null,
         [string]$LogPath
     )
     Write-NightlyTrace -Kind 'proc' -Message ($FilePath + ' ' + (($ArgumentList) -join ' '))
@@ -47,7 +47,7 @@ function Invoke-NightlyOwnedProcess {
     }
     if ($ArgumentList -and $ArgumentList.Count -gt 0) { $startParams.ArgumentList = $ArgumentList }
     try {
-        $proc = Start-Process @startParams
+        $proc = Start-NightlyProcess -StartParams $startParams -Environment $Environment
     } catch {
         $_ | Out-String | Set-Content -LiteralPath $LogPath -Encoding UTF8
         return [pscustomobject]@{ ExitCode = 1; TimedOut = $false; Pid = 0; ChildrenExited = $true }
@@ -237,13 +237,13 @@ function Invoke-AntiphonNightlyTests {
         if ($dockerOk -and $diskOk) {
             $clientDir = Join-Path $RepoRoot 'client'
             $npmCi = Invoke-NightlyOwnedProcess -FilePath "$env:ComSpec" -ArgumentList @('/c', 'npm.cmd', 'ci') `
-                -WorkingDirectory $clientDir -TimeoutMilliseconds 600000 -LogPath (Join-Path $LogRoot 'npm-ci.log') -Environment @{}
+                -WorkingDirectory $clientDir -TimeoutMilliseconds 600000 -LogPath (Join-Path $LogRoot 'npm-ci.log')
             $buildResults += [ordered]@{ name = 'npm ci'; exitCode = $npmCi.ExitCode; timedOut = $npmCi.TimedOut; result = $(if ($npmCi.ExitCode -eq 0) { 'pass' } else { 'FAIL' }) }
             if ($npmCi.ExitCode -ne 0) { $npmOk = $false; $overallFailed = $true; Set-NightlyOutcome BUILD; $coverageComplete = $false }
 
             if ($npmOk) {
                 $npmBuild = Invoke-NightlyOwnedProcess -FilePath "$env:ComSpec" -ArgumentList @('/c', 'npm.cmd', 'run', 'build') `
-                    -WorkingDirectory $clientDir -TimeoutMilliseconds 600000 -LogPath (Join-Path $LogRoot 'npm-build.log') -Environment @{}
+                    -WorkingDirectory $clientDir -TimeoutMilliseconds 600000 -LogPath (Join-Path $LogRoot 'npm-build.log')
                 $buildResults += [ordered]@{ name = 'npm run build'; exitCode = $npmBuild.ExitCode; timedOut = $npmBuild.TimedOut; result = $(if ($npmBuild.ExitCode -eq 0) { 'pass' } else { 'FAIL' }) }
                 if ($npmBuild.ExitCode -ne 0) { $npmOk = $false; $overallFailed = $true; Set-NightlyOutcome BUILD; $coverageComplete = $false }
                 else {
@@ -255,13 +255,13 @@ function Invoke-AntiphonNightlyTests {
 
             if ($npmOk) {
                 $lint = Invoke-NightlyOwnedProcess -FilePath "$env:ComSpec" -ArgumentList @('/c', 'npm.cmd', 'run', 'lint') `
-                    -WorkingDirectory $clientDir -TimeoutMilliseconds 600000 -LogPath (Join-Path $LogRoot 'client-lint.log') -Environment @{}
+                    -WorkingDirectory $clientDir -TimeoutMilliseconds 600000 -LogPath (Join-Path $LogRoot 'client-lint.log')
                 $buildResults += [ordered]@{ name = 'client lint'; exitCode = $lint.ExitCode; timedOut = $lint.TimedOut; result = $(if ($lint.ExitCode -eq 0) { 'pass' } else { 'FAIL' }) }
                 if ($lint.ExitCode -ne 0) { $lintOk = $false; $overallFailed = $true; Set-NightlyOutcome BUILD; $coverageComplete = $false }
             }
 
             $dotnetBuild = Invoke-NightlyOwnedProcess -FilePath 'dotnet' -ArgumentList @('build', 'Antiphon.sln', '-c', 'Debug', '--nologo') `
-                -WorkingDirectory $RepoRoot -TimeoutMilliseconds 1200000 -LogPath (Join-Path $LogRoot 'dotnet-build.log') -Environment @{}
+                -WorkingDirectory $RepoRoot -TimeoutMilliseconds 1200000 -LogPath (Join-Path $LogRoot 'dotnet-build.log')
             $buildResults += [ordered]@{ name = 'dotnet build Antiphon.sln'; exitCode = $dotnetBuild.ExitCode; timedOut = $dotnetBuild.TimedOut; result = $(if ($dotnetBuild.ExitCode -eq 0) { 'pass' } else { 'FAIL' }) }
             if ($dotnetBuild.ExitCode -ne 0) { $dotnetOk = $false; $overallFailed = $true; Set-NightlyOutcome BUILD; $coverageComplete = $false }
 
@@ -361,6 +361,15 @@ function Invoke-AntiphonNightlyTests {
                         if (-not $cleaned) { throw 'owned-child still running' }
                     }
 
+                    if (Test-Path -LiteralPath $logPath) {
+                        $stamp = 'C487_INVOCATION=' + $invocationId
+                        $rawLog = [System.IO.File]::ReadAllText($logPath)
+                        if ($rawLog -notmatch [regex]::Escape($invocationId)) {
+                            [System.IO.File]::WriteAllText($logPath, ($stamp + [Environment]::NewLine + $rawLog))
+                        }
+                    } else {
+                        Set-Content -LiteralPath $logPath -Value ('C487_INVOCATION=' + $invocationId) -Encoding UTF8
+                    }
                     $fresh = Test-NightlyFreshEvidence -Path $logPath -RunDirectory $LogRoot -NotBeforeUtc $startedAt -InvocationId $invocationId
                     $row = [ordered]@{
                         id = $suiteId
@@ -374,12 +383,37 @@ function Invoke-AntiphonNightlyTests {
                     }
                     if (-not $fresh.Ok) {
                         $coverageComplete = $false
+                        $testsPassed = $false
+                        $overallFailed = $true
                         $row.detail = $fresh.Reason
                         $reasons += $fresh.Reason
+                    }
+                    if ($isNative) {
+                        $discPath = Join-Path $LogRoot ('{0}-{1}.discovery.json' -f $suiteId, $chunk.id)
+                        $required = @()
+                        if ($chunk.classes) { foreach ($c in @($chunk.classes)) { $required += [string]$c } }
+                        $nativeVerdict = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $trxPath -DiscoveryPath $discPath `
+                            -RunDirectory $LogRoot -NotBeforeUtc $startedAt -ProcessExit ([int]$run.ExitCode) `
+                            -Sha $Sha -ExpectedSha $Sha -GitRef $GitRef -ExpectedRef $GitRef `
+                            -PolicyHash $policyHash -ExpectedPolicyHash $policyHash -RequiredClasses $required
+                        $row.trx = $trxPath
+                        $row.evidenceReasons = @($nativeVerdict.reasons)
+                        if (-not [bool]$nativeVerdict.coverageComplete) {
+                            $coverageComplete = $false
+                            $row.coverageComplete = $false
+                            foreach ($ev in @($nativeVerdict.reasons)) { $reasons += $ev }
+                        }
+                        if (-not [bool]$nativeVerdict.testsPassed) {
+                            $testsPassed = $false
+                            $overallFailed = $true
+                            $row.result = 'FAIL'
+                        }
                     }
                     if ($suiteId -eq 'client') {
                         if (-not (Test-Path -LiteralPath $jsonPath)) {
                             $coverageComplete = $false
+                            $testsPassed = $false
+                            $overallFailed = $true
                             $reasons += 'missing-client-json'
                             $row.coverageComplete = $false
                         }
@@ -393,6 +427,9 @@ function Invoke-AntiphonNightlyTests {
                     } elseif ($run.ExitCode -ne 0) {
                         $overallFailed = $true
                         $testsPassed = $false
+                        Set-NightlyOutcome TESTS
+                    } elseif (-not $testsPassed -or -not $coverageComplete) {
+                        $overallFailed = $true
                         Set-NightlyOutcome TESTS
                     }
                     $suiteResults += $row

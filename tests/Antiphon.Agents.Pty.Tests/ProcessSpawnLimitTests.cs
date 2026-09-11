@@ -23,6 +23,7 @@ public class ProcessSpawnLimitTests
             typeof(FakeClaudeContractTests),
             typeof(FakeGrokContractTests),
             typeof(ClaudeSubmitContractTests),
+            typeof(ClaudeSubmitContractLiveTests),
             typeof(PtyInputChunkingTests),
             typeof(PtyLargeWriteTests),
             typeof(PtyBackendContractTests),

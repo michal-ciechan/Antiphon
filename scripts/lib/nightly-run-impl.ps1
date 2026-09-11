@@ -75,7 +75,7 @@ function Invoke-NightlyWatchedCommand {
         Wait = $true
     }
     if ($ArgumentList -and $ArgumentList.Count -gt 0) { $start.ArgumentList = $ArgumentList }
-    $proc = Start-Process @start
+    $proc = Start-NightlyProcess -StartParams $start -Environment $Environment
     $code = 1
     if ($null -ne $proc) { $code = [int]$proc.ExitCode }
     return [pscustomobject]@{ ExitCode = $code; TimedOut = $false; Pid = $(if ($proc) { $proc.Id } else { 0 }) }

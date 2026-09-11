@@ -8,56 +8,29 @@ using TUnit.Core.Exceptions;
 namespace Antiphon.Agents.Pty.Tests;
 
 /// <summary>
-/// The <em>submit contract</em> — pinned against BOTH backends from one set of scenarios:
-///  * <c>"fakeclaude"</c> — the deterministic fake, runs in CI (no opt-in).
-///  * <c>"claude"</c> — the real CLI, opt-in headed (<c>ANTIPHON_HEADED_TESTS=1</c> + claude on PATH);
-///    self-skips otherwise.
-///
-/// This is the drift canary. The fake encodes our understanding of how Claude's TUI handles input; the
-/// real-Claude variant checks that understanding still holds. If a future Claude starts (or stops)
-/// submitting on a paste-style write, the <c>"claude"</c> case fails and we learn the contract moved —
-/// while the <c>"fakeclaude"</c> case keeps CI green and our other tests trustworthy.
-///
-/// Both cases assert via the <c>" for Ns"</c> done pattern (Claude's "Crunched for 3s" turn-end summary,
-/// which the fake also emits). We deliberately do NOT key on the idle OSC title here: Claude can re-emit
-/// it on an idle redraw, which would false-positive the "did not submit" assertion. The done pattern only
-/// appears after a real processing turn, so it cleanly distinguishes "submitted" from "sitting in the composer".
+/// Unattended fakeclaude submit-contract cases. The live Claude canary lives in
+/// <see cref="ClaudeSubmitContractLiveTests"/> (OptIn/Headed) so default safety
+/// guards stay on these two fake rows.
 /// </summary>
 [NotInParallel("Headed")]
 [Category("Pty")]
-[Category("Headed")]
-[Category("OptIn")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public class ClaudeSubmitContractTests
 {
-    private static readonly Regex DonePattern = new(@" for \d+s", RegexOptions.Compiled);
-
-    private static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
-
-    private static string FakeClaudeExe =>
-        Path.Combine(AppContext.BaseDirectory, "fakeclaude", "fakeclaude.exe");
-
-    // The two-write submit (body, brief gap, then a lone CR) must complete a turn on BOTH backends.
     [Test]
     [Arguments("fakeclaude")]
-    [Arguments("claude")]
     public async Task Submitting_via_two_writes_completes_a_turn(string backend)
     {
-        await using var runner = await LaunchReadyAsync(backend);
+        await using var runner = await ClaudeSubmitContractHarness.LaunchReadyAsync(backend);
 
-        // Two-write submit: body, then CR after the composer echo (CARD-0050 S3). SendLineAsync's
-        // fixed 20ms gap is the production shape, but under load it compresses below fakeclaude's
-        // 12ms burst threshold; EchoGatedSubmit is the evidence-gated equivalent.
-        if (backend == "fakeclaude")
-            await EchoGatedSubmit.SendAsync(runner, PromptFor(backend));
-        else
-            await runner.SendLineAsync(PromptFor(backend));
+        await EchoGatedSubmit.SendAsync(runner, ClaudeSubmitContractHarness.PromptFor(backend));
 
         var done = await runner.WaitForOutputAsync(
-            text => DonePattern.IsMatch(text), DoneWaitFor(backend));
+            text => ClaudeSubmitContractHarness.DonePattern.IsMatch(text),
+            ClaudeSubmitContractHarness.DoneWaitFor(backend));
         done.ShouldBeTrue($"[{backend}] a properly-submitted turn must complete (\" for Ns\" must appear)");
 
-        await CleanupAsync(runner, backend);
+        await ClaudeSubmitContractHarness.CleanupAsync(runner, backend);
     }
 
     // Text and the CR in a SINGLE write is a paste — it must NOT complete a turn. This is the exact
@@ -68,40 +41,44 @@ public class ClaudeSubmitContractTests
     // with a typed-Enter-sized gap and legitimately submit — observed failing 2 of 3 runs. The
     // no-submit direction is therefore untestable through this transport against real Claude; the
     // fake pins the modelled contract deterministically (12ms burst gap), and the direction our
-    // stack actually RELIES on — two writes DO submit — stays real-Claude-canaried above.
+    // stack actually RELIES on — two writes DO submit — stays real-Claude-canaried in
+    // ClaudeSubmitContractLiveTests.
     [Test]
     [Arguments("fakeclaude")]
     public async Task Text_and_CR_in_one_write_does_not_submit(string backend)
     {
-        await using var runner = await LaunchReadyAsync(backend);
+        await using var runner = await ClaudeSubmitContractHarness.LaunchReadyAsync(backend);
 
-        await runner.WriteAsync(PromptFor(backend) + "\r");
+        await runner.WriteAsync(ClaudeSubmitContractHarness.PromptFor(backend) + "\r");
 
-        // If the paste wrongly submitted, the turn would complete and the done pattern would appear.
         var done = await runner.WaitForOutputAsync(
-            text => DonePattern.IsMatch(text), NoSubmitWindowFor(backend));
+            text => ClaudeSubmitContractHarness.DonePattern.IsMatch(text),
+            ClaudeSubmitContractHarness.NoSubmitWindowFor(backend));
         done.ShouldBeFalse($"[{backend}] text+CR in one write is a paste and must NOT submit");
 
-        await CleanupAsync(runner, backend);
+        await ClaudeSubmitContractHarness.CleanupAsync(runner, backend);
     }
+}
 
-    private static string PromptFor(string backend) =>
+internal static class ClaudeSubmitContractHarness
+{
+    public static readonly Regex DonePattern = new(@" for \d+s", RegexOptions.Compiled);
+
+    private static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+
+    private static string FakeClaudeExe =>
+        Path.Combine(AppContext.BaseDirectory, "fakeclaude", "fakeclaude.exe");
+
+    public static string PromptFor(string backend) =>
         backend == "claude" ? "Reply with the single word PONG and nothing else." : "hello fake";
 
-    private static TimeSpan DoneWaitFor(string backend) =>
+    public static TimeSpan DoneWaitFor(string backend) =>
         backend == "claude" ? TimeSpan.FromMinutes(2) : TimeSpan.FromSeconds(10);
 
-    // How long to wait while asserting NO submit happened. Generous enough for the real backend to have
-    // started processing if it were going to, short enough to keep the suite snappy.
-    private static TimeSpan NoSubmitWindowFor(string backend) =>
+    public static TimeSpan NoSubmitWindowFor(string backend) =>
         backend == "claude" ? TimeSpan.FromSeconds(8) : TimeSpan.FromSeconds(3);
 
-    // CARD-0045: both arms declare the INBOX conhost. The whole value of this file is that the fake
-    // arm and the real arm measure the same transport — the fake models the inbox typing path
-    // (CARD-0028), so a real arm silently running on the modern pseudoconsole because the launching
-    // shell exported ANTIPHON_PTY_BACKEND would compare two different platforms and call the
-    // difference "drift".
-    private static async Task<PtyAgentRunner> LaunchReadyAsync(string backend)
+    public static async Task<PtyAgentRunner> LaunchReadyAsync(string backend)
     {
         var runner = new PtyAgentRunner("inbox");
         if (backend == "fakeclaude")
@@ -111,12 +88,10 @@ public class ClaudeSubmitContractTests
                 throw new SkipTestException($"fakeclaude.exe not staged at {FakeClaudeExe} — build the solution first");
 
             await runner.StartAsync(FakeClaudeExe, Array.Empty<string>(), cols: 120, rows: 30);
-            // CARD-0050 S3: runaway bound — success returns on the banner. Under the concurrent
-            // double-suite load a cold fakeclaude launch was measured >15s.
             var ready = await runner.WaitForOutputAsync(s => s.Contains("Fake Claude ready"), TimeSpan.FromSeconds(45));
             ready.ShouldBeTrue("fake Claude should print its readiness banner");
         }
-        else // "claude" — real CLI, opt-in headed
+        else
         {
             ClSession.SkipIfNotEligible();
             var (app, args) = ClSession.BuildLaunch(ClSession.ResolveOrThrow(), "--dangerously-skip-permissions");
@@ -133,7 +108,7 @@ public class ClaudeSubmitContractTests
         return runner;
     }
 
-    private static async Task CleanupAsync(PtyAgentRunner runner, string backend)
+    public static async Task CleanupAsync(PtyAgentRunner runner, string backend)
     {
         if (backend == "claude")
         {

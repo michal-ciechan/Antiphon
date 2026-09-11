@@ -209,7 +209,12 @@ function Test-C487_G125 {
 function Test-C487_G126 {
     foreach ($kind in @('unset', 'override')) {
         $h = Invoke-AntiphonNightlyHealth -StateRoot $ResultsDirectory -AuthorizedDestination '' -PassThru
-        Assert-C487 -Cond ($null -ne $h) -Name ('G126 {0} no silent dest' -f $kind)
+        $monitorPath = Get-NightlyMonitorResultPath -StateRoot $ResultsDirectory
+        $persisted = Test-Path -LiteralPath $monitorPath
+        $reasons = @()
+        if ($h -and $h.Health -and $h.Health.Reasons) { $reasons = @($h.Health.Reasons) }
+        $noSilent = ($reasons -contains 'unauthorized-destination') -and ($null -eq $h.Notification)
+        Assert-C487 -Cond (($null -ne $h) -and $persisted -and $noSilent) -Name ('G126 {0} no silent dest' -f $kind)
     }
 }
 

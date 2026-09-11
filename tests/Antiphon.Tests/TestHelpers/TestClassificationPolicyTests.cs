@@ -82,7 +82,14 @@ public sealed class TestClassificationPolicyTests
     {
         var probe = await RunProbeAsync(includeMethodSlow: true);
         probe.Source.ShouldContain("MethodSlow");
-        probe.DiscoveryJson.ShouldContain("method-level");
+        var dll = Directory.GetFiles(probe.Dir, "Probe.dll", SearchOption.AllDirectories)
+            .FirstOrDefault(p => p.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
+            ?? Directory.GetFiles(probe.Dir, "Probe.dll", SearchOption.AllDirectories).First();
+        var asm = System.Reflection.Assembly.LoadFrom(dll);
+        var registry = WriteTempRegistry("# CARD-0487 probe SlowCases\nC487.Probe.SlowCases\n");
+        var errors = TestClassificationMetadata.AssertRegistryMatches(asm, registry, repositoryMode: true);
+        errors.ShouldContain("method-level-slow");
+        errors.ShouldContain("C487.Probe.MethodSlow");
     }
 
     [Test]
@@ -133,10 +140,24 @@ public sealed class TestClassificationPolicyTests
     [Test]
     public void C487_G070()
     {
-        var path = Path.Combine(RepoRoot, "tests", "Antiphon.Messaging.Tests", "Conformance", "TelegramLiveChatConformanceTests.cs");
-        var text = File.ReadAllText(path);
-        text.ShouldNotContain("[Category(\"OptIn\")]");
-        text.ShouldContain("The fake leg always runs");
+        var telegram = Path.Combine(RepoRoot, "tests", "Antiphon.Messaging.Tests", "Conformance", "TelegramLiveChatConformanceTests.cs");
+        var telegramText = File.ReadAllText(telegram);
+        telegramText.ShouldNotContain("[Category(\"OptIn\")]");
+        telegramText.ShouldContain("The fake leg always runs");
+
+        var fake = Path.Combine(RepoRoot, "tests", "Antiphon.Agents.Pty.Tests", "ClaudeSubmitContractTests.cs");
+        var fakeText = File.ReadAllText(fake);
+        fakeText.ShouldNotContain("[Category(\"OptIn\")]");
+        fakeText.ShouldNotContain("[Category(\"Headed\")]");
+        fakeText.ShouldContain("Arguments(\"fakeclaude\")");
+        fakeText.ShouldNotContain("Arguments(\"claude\")");
+
+        var live = Path.Combine(RepoRoot, "tests", "Antiphon.Agents.Pty.Tests", "ClaudeSubmitContractLiveTests.cs");
+        var liveText = File.ReadAllText(live);
+        liveText.ShouldContain("[Category(\"OptIn\")]");
+        liveText.ShouldContain("[Category(\"Headed\")]");
+        liveText.ShouldContain("Arguments(\"claude\")");
+        liveText.ShouldNotContain("Arguments(\"fakeclaude\")");
     }
 
     [Test]
@@ -291,7 +312,7 @@ public sealed class TestClassificationPolicyTests
         return (process.ExitCode, await stdout + await stderr);
     }
 
-    private sealed record ProbeResult(string Source, int DiscoveryCount, int DefaultPassed, int SlowCount, bool ManualAbsent, string DiscoveryJson);
+    private sealed record ProbeResult(string Dir, string Source, int DiscoveryCount, int DefaultPassed, int SlowCount, bool ManualAbsent, string DiscoveryJson);
 
     private static async Task<ProbeResult> RunProbeAsync(bool includeMethodSlow = false)
     {
@@ -367,7 +388,7 @@ public sealed class TestClassificationPolicyTests
         var slowCount = CountTrx(Path.Combine(slowDir, "slow.trx"));
         var json = "{\"discovery\":" + discoveryCount + (includeMethodSlow ? ",\"method-level\":true" : "") + "}";
         var trxAll = File.Exists(Path.Combine(allDir, "all.trx")) ? File.ReadAllText(Path.Combine(allDir, "all.trx")) : "";
-        return new ProbeResult(source, discoveryCount, defaultPassed, slowCount, trxAll.IndexOf("ManualOne", StringComparison.Ordinal) < 0, json);
+        return new ProbeResult(dir, source, discoveryCount, defaultPassed, slowCount, trxAll.IndexOf("ManualOne", StringComparison.Ordinal) < 0, json);
     }
 
     private static string ParseProbeClasses(string json) => json;
