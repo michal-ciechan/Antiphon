@@ -65,11 +65,13 @@ public class RunnerCustodyTests
         Directory.CreateDirectory(Path.GetDirectoryName(tracking)!);
         await File.WriteAllTextAsync(tracking, "{not-json");
         await fixture.ReplaceRuntimeAsync();
-        await fixture.Runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
+        (await Should.ThrowAsync<VerificationCustodyException>(() =>
+            fixture.Runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None)))
+            .Code.ShouldBe("verification_custody_corrupt_store");
         var status = await fixture.Runtime.ReadCustodyAsync(fixture.Binding, false, CancellationToken.None);
-        status.State.ShouldBe(VerificationCustodyState.Unknown);
         status.Receipt.ShouldBeNull();
-        await fixture.Runtime.KillAsync(dto.SessionId, TimeSpan.FromSeconds(5), CancellationToken.None);
+        status.State.ShouldNotBe(VerificationCustodyState.Exited);
+        if (fixture.Host is { HasExited: false }) fixture.Host.Kill();
     }
 
     [Test]
