@@ -168,7 +168,7 @@ public class RunnerCustodyTests
             Binding = new(Guid.NewGuid(), new(Guid.NewGuid(), Guid.NewGuid(), new string('a', 40)),
                 new(Guid.NewGuid(), new DateTime(now.Ticks - now.Ticks % 10, DateTimeKind.Utc)),
                 new(_root, Path.Combine(_root, ".git"), Path.Combine(_root, "snapshot"),
-                    Path.Combine(_root, ".git", "worktrees", "snapshot"), "feat/test", Guid.NewGuid()));
+                    Path.Combine(_root, ".git", "worktrees", "snapshot"), "feat/test", Guid.NewGuid()), RunnerStoreId: Runtime.RunnerStoreId);
             Directory.CreateDirectory(Binding.Creation.WorktreePath);
             Request = new(Binding.Generation.SessionId, Path.Combine(Environment.SystemDirectory, "cmd.exe"),
                 [], new Dictionary<string, string>(), Binding.Creation.WorktreePath, 80, 24, VerificationBinding: Binding);

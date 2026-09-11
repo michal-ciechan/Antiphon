@@ -11,6 +11,20 @@ namespace Antiphon.PtyHost.Tests;
 public class VerificationCustodyStoreTests
 {
     [Test]
+    public void Lost_or_replaced_store_cannot_reexecute_an_old_binding()
+    {
+        using var fixture = new StoreFixture();
+        Directory.Delete(fixture.Store.Root, recursive: true);
+        Should.Throw<VerificationCustodyException>(() => new VerificationCustodyStore(fixture.Store.Root)).Code
+            .ShouldBe("verification_custody_store_identity_missing");
+        File.Delete(fixture.Store.IdentityAnchorPath);
+        var replacement = new VerificationCustodyStore(fixture.Store.Root);
+        replacement.StoreId.ShouldNotBe(fixture.Store.StoreId);
+        Should.Throw<VerificationCustodyException>(() => replacement.Reserve(fixture.Binding)).Code
+            .ShouldBe("verification_custody_identity_mismatch");
+        replacement.ReadReservations().ShouldBeEmpty();
+    }
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public void C478_G203_ReceiptFlush(bool failFlush)
@@ -206,7 +220,7 @@ public class VerificationCustodyStoreTests
             Binding = new(Guid.NewGuid(), new(Guid.NewGuid(), Guid.NewGuid(), new string('a', 40)),
                 new(Guid.NewGuid(), new DateTime(now.Ticks - now.Ticks % 10, DateTimeKind.Utc)),
                 new(_root, Path.Combine(_root, ".git"), Path.Combine(_root, "snapshot"),
-                    Path.Combine(_root, ".git", "worktrees", "snapshot"), "feat/test", Guid.NewGuid()));
+                    Path.Combine(_root, ".git", "worktrees", "snapshot"), "feat/test", Guid.NewGuid()), RunnerStoreId: Store.StoreId);
             Store.Reserve(Binding);
             Receipt = new(1, Binding, new(Store.StoreId, Guid.NewGuid(), Guid.NewGuid(), Environment.ProcessId, now),
                 4, now, now, "JobObjectBasicAccountingInformation", 0, true, VerificationCustodyState.Exited, 1234, now);

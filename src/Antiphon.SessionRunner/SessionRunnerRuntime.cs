@@ -44,6 +44,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     public string? VerificationCustodyBackend => OperatingSystem.IsWindows()
         && PtyBackendPolicy.Resolve(_settings.PtyBackend).Backend == PtyBackend.ModernConPty ? "windows-job-v1" : null;
     public Guid RunnerStoreId => _custody.Value.Store.StoreId;
+    private bool HasCustodyLedger => _custody.IsValueCreated
+        || Directory.Exists(Path.Combine(_settings.SessionLogPath, "verification-custody"))
+        || File.Exists(Path.Combine(_settings.SessionLogPath, "verification-custody.identity.json"));
 
     /// <summary>
     /// CARD-0162: fired when the set of live herdr panes changes (launch / adopt / exit) so the
@@ -154,6 +157,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         await gate.WaitAsync(ct);
         try
         {
+            if (request.VerificationBinding is null)
+            {
+                if (HasCustodyLedger) _custody.Value.RequireUntrackedSession(request.SessionId);
+                return await StartCoreAsync(request, ct);
+            }
             using var custodyLease = _custody.Value.AcquireSession(request.SessionId);
             if (!_custody.Value.PrepareStart(request, _settings.PtyBackend))
             {
@@ -377,8 +385,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         await gate.WaitAsync(ct);
         try
         {
-            using var custodyLease = _custody.Value.AcquireSession(request.SessionId);
-            _custody.Value.RequireUntrackedSession(request.SessionId);
+            if (HasCustodyLedger) _custody.Value.RequireUntrackedSession(request.SessionId);
             return await AttachHerdrCoreAsync(request, ct);
         }
         finally { gate.Release(); }
@@ -808,8 +815,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     /// </summary>
     public async Task<int> AdoptOrphanedHostsAsync(IProcessLivenessProbe probe, CancellationToken ct)
     {
-        _custody.Value.ValidateRecovery();
-        _custody.Value.RecoverManifests(_settings.PtyHostManifestDir, probe);
+        var hasCustodyLedger = HasCustodyLedger;
+        if (hasCustodyLedger)
+        {
+            _custody.Value.ValidateRecovery();
+            _custody.Value.RecoverManifests(_settings.PtyHostManifestDir, probe);
+        }
         using var sweep = _startup.Begin("adoption-sweep");
         // Rebuild transcript claims BEFORE any session is adopted. This sweep already has to
         // complete before the HTTP API starts listening, so restoring here means a freshly launched
@@ -858,8 +869,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (_sessions.ContainsKey(manifest.SessionId))
                 continue;
 
-            var tracked = _custody.Value.Store.ReadReservations()
-                .Where(b => b.Generation.SessionId == manifest.SessionId).ToArray();
+            var tracked = hasCustodyLedger ? _custody.Value.Store.ReadReservations()
+                .Where(b => b.Generation.SessionId == manifest.SessionId).ToArray() : [];
             if (tracked.Length != 0)
             {
                 if (manifest.VerificationBinding is not { } binding || !tracked.Contains(binding)
