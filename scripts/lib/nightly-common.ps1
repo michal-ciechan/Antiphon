@@ -11,7 +11,9 @@ $script:NightlyLockStream = $null
 
 function Get-NightlyUtcNow {
     if ($script:NightlySeams -and $script:NightlySeams.UtcNow) {
-        return [datetime]$script:NightlySeams.UtcNow.Invoke()
+        $value = $script:NightlySeams.UtcNow.Invoke()
+        $arr = @($value)
+        if ($arr.Count -gt 0) { return [datetime]$arr[0] }
     }
     return [datetime]::UtcNow
 }

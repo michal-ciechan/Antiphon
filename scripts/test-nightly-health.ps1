@@ -14,6 +14,53 @@ $lib = Join-Path $here 'lib'
 
 $ResultsDirectory = New-C487Root -ResultsDirectory $ResultsDirectory
 
+function New-HealthFx {
+    $root = Join-Path $ResultsDirectory ([guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $root -Force | Out-Null
+    $trace = Join-Path $root 'trace.log'
+    $seams = Join-Path $root 'seams.ps1'
+    $enq = Join-Path $root 'enqueue.jsonl'
+    $inbox = Join-Path $root 'inbox.json'
+    Write-NightlyAtomicJson -Path (Join-Path $root 'last-run.json') -Object ([ordered]@{
+        runId = 'run-1'
+        sha = 'sha-1'
+        policyHash = 'p'
+        coverageComplete = $false
+        testsPassed = $true
+        reportDelivered = $true
+        completedAt = '2026-09-11T08:00:00Z'
+    })
+    $extra = [scriptblock]::Create(@"
+`$NightlySeams.UtcNow = { return [datetime]::SpecifyKind([datetime]'2026-09-11T12:00:00Z', [DateTimeKind]::Utc) }
+`$NightlySeams.AllowOfflineNotify = `$true
+`$NightlySeams.WindmillApi = @{
+    GetRegistration = { return @{ script = `$true; tag = 'desktop'; hash = 'a' } }
+    GetSchedule = { return @{ enabled = `$true; paused = `$false; tag = 'desktop' } }
+    GetJobs = { return @() }
+}
+`$NightlySeams.NotificationSink = {
+    param(`$Event)
+    Add-Content -LiteralPath '$enq' -Value (([pscustomobject]`$Event | ConvertTo-Json -Compress -Depth 6)) -Encoding ASCII
+    return @{ Enqueued = `$true; TransportStatus = 202; Received = `$false; NotificationId = [string]`$Event.notificationId }
+}
+`$NightlySeams.RecipientView = {
+    if (Test-Path -LiteralPath '$inbox') {
+        `$raw = Get-Content -LiteralPath '$inbox' -Raw -Encoding UTF8
+        return @(`$raw | ConvertFrom-Json)
+    }
+    return @()
+}
+"@)
+    Write-C487Seams -Path $seams -TracePath $trace -Extra $extra
+    return [pscustomobject]@{ Root = $root; Seams = $seams; EnqueueLog = $enq; Inbox = $inbox }
+}
+
+function Invoke-HealthFx {
+    param($Fx)
+    return Invoke-AntiphonNightlyHealth -StateRoot $Fx.Root -SeamsPath $Fx.Seams `
+        -ExpectedScriptHash 'a' -ExpectedPolicyHash 'p' -AuthorizedDestination 'operator-1' -PassThru
+}
+
 function Test-C487_G099 {
     foreach ($kind in @('script', 'schedule')) {
         $h = Test-NightlyMonitorHealth -Registration $(if ($kind -eq 'script') { $null } else { @{ script = $true; tag = 'desktop'; hash = 'abc' } }) `
@@ -147,6 +194,14 @@ function Test-C487_G118 {
         $saved = Add-NightlyNotificationEvent -StorePath $store -Event $event
         Assert-C487 -Cond (-not $saved.Deduped) -Name ('G118 persist {0}' -f $kind)
     }
+    $fx = New-HealthFx
+    $r = Invoke-HealthFx -Fx $fx
+    $storePath = Get-NightlyNotificationStorePath -StateRoot $fx.Root
+    $store = Read-NightlyNotificationStore -Path $storePath
+    $events = @()
+    if ($store.events) { $events = @($store.events) }
+    $enqueued = (Test-Path -LiteralPath $fx.EnqueueLog)
+    Assert-C487 -Cond (($events.Count -eq 1) -and $enqueued -and (-not [bool]$r.Receipt)) -Name 'G118 entry persist before enqueue' -Detail ('events=' + $events.Count)
 }
 
 function Test-C487_G119 {
@@ -165,6 +220,8 @@ function Test-C487_G120 {
         $ok = Test-NightlyNotificationReceipt -Event @{ notificationId = 'n1'; nativeRunId = 'r1' } -RecipientView @()
         Assert-C487 -Cond (-not $ok) -Name ('G120 {0} not receipt' -f $kind)
     }
+    $payload = New-NightlyNotificationPayload -Event @{ failureKind = 'incomplete-coverage'; nativeRunId = 'run-1'; sha = 'sha-1'; notificationId = 'nid-9' } -Destination 'operator-1'
+    Assert-C487 -Cond (([string]$payload.notificationId -eq 'nid-9') -and ([string]$payload.text -match 'notificationId=nid-9')) -Name 'G120 payload carries notification id'
 }
 
 function Test-C487_G121 {
@@ -182,6 +239,30 @@ function Test-C487_G122 {
         $again = Add-NightlyNotificationEvent -StorePath $store -Event $event
         Assert-C487 -Cond ($again.Deduped) -Name ('G122 {0} same identity' -f $kind)
     }
+    $fx = New-HealthFx
+    $first = Invoke-HealthFx -Fx $fx
+    $storePath = Get-NightlyNotificationStorePath -StateRoot $fx.Root
+    $store1 = Read-NightlyNotificationStore -Path $storePath
+    $e1 = @($store1.events)[0]
+    $id1 = [string]$e1.notificationId
+    $run1 = [string]$e1.nativeRunId
+    @(
+        @{ notificationId = $id1; nativeRunId = $run1 }
+    ) | ConvertTo-Json | Set-Content -LiteralPath $fx.Inbox -Encoding UTF8
+    $second = Invoke-HealthFx -Fx $fx
+    $store2 = Read-NightlyNotificationStore -Path $storePath
+    $events2 = @($store2.events)
+    $id2 = [string]$events2[0].notificationId
+    $receiptPath = Get-NightlyRecipientReceiptPath -StateRoot $fx.Root
+    $settled = $false
+    if (Test-Path -LiteralPath $receiptPath) {
+        $rs = Read-NightlyRecipientReceiptStore -Path $receiptPath
+        foreach ($row in @($rs.receipts)) {
+            if ([string]$row.notificationId -eq $id1 -and [string]$row.nativeRunId -eq $run1) { $settled = $true }
+        }
+    }
+    Assert-C487 -Cond (($events2.Count -eq 1) -and ($id1 -eq $id2) -and $id1) -Name 'G122 entry preserves pending identity' -Detail ('n=' + $events2.Count + ' id1=' + $id1 + ' id2=' + $id2)
+    Assert-C487 -Cond ((-not [bool]$first.Receipt) -and [bool]$second.Receipt -and $settled) -Name 'G122 entry receipt of first settles second' -Detail ('r1=' + $first.Receipt + ' r2=' + $second.Receipt)
 }
 
 function Test-C487_G123 {
@@ -194,6 +275,13 @@ function Test-C487_G123 {
         if ($kind -eq 'same') { Assert-C487 -Cond ($second.Deduped) -Name 'G123 same not spam' }
         else { Assert-C487 -Cond (-not $second.Deduped) -Name 'G123 distinct retained' }
     }
+    $fx = New-HealthFx
+    [void](Invoke-HealthFx -Fx $fx)
+    [void](Invoke-HealthFx -Fx $fx)
+    $store = Read-NightlyNotificationStore -Path (Get-NightlyNotificationStorePath -StateRoot $fx.Root)
+    $events = @()
+    if ($store.events) { $events = @($store.events) }
+    Assert-C487 -Cond ($events.Count -eq 1) -Name 'G123 entry same poll not spam' -Detail ('n=' + $events.Count)
 }
 
 function Test-C487_G124 {
@@ -226,4 +314,4 @@ if ($Case) {
     foreach ($fn in (Get-C487CaseFunctions -Prefix 'C487_G')) { & $fn }
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'health-summary' -Body @{ passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows }
-Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows 46
+Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 51 })
