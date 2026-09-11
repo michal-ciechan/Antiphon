@@ -3205,6 +3205,8 @@ public class AgentTaskReplyIntegrationTests
         await SeedApiErrorStubTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id));
         await using var wall = await WallRecoveryFixture.CreateAsync(task, sessionId);
         var logger = new SettlementLogger();
+        // Production registers CapacityRecoveryService unconditionally. Disabled recovery still
+        // parks at WallDeathCap and must Fail; it must not stamp a wait that would retain Working.
         var factory = new TestScopeFactory(supervision: new SupervisionSettings
         {
             CapacityRecovery = new CapacityRecoverySettings { Enabled = false },
@@ -3214,6 +3216,8 @@ public class AgentTaskReplyIntegrationTests
         recovery.ResolvedReason.ShouldBe(ApiErrorRecoveryReasons.WallParked);
         recovery.ResolvedAt.ShouldNotBeNull();
         recovery.NextAttemptAt.ShouldBeNull();
+        recovery.CapacityWaitId.ShouldBeNull(
+            "disabled CapacityRecovery must not register a wait that the reply path would retain");
 
         await using var verify = CreateContext();
         var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
@@ -3221,6 +3225,9 @@ public class AgentTaskReplyIntegrationTests
         failed.FailureReason!.ShouldContain("WallParked");
         failed.Result.ShouldBeNull();
         failed.CompletedAt.ShouldNotBeNull();
+        failed.CapacityWaitId.ShouldBeNull();
+        failed.CapacityWaitRetained.ShouldBeFalse();
+        (await verify.CapacityRecoveryWaits.CountAsync(w => w.SessionId == sessionId)).ShouldBe(0);
         (await verify.ApiErrorRecoveries.CountAsync(r => r.AgentSessionId == sessionId)).ShouldBe(3);
         (await verify.ApiErrorRecoveries.CountAsync(r => r.AgentSessionId == sessionId
             && r.ResolvedReason == ApiErrorRecoveryReasons.Replaced)).ShouldBe(2);
@@ -3228,6 +3235,56 @@ public class AgentTaskReplyIntegrationTests
             && e.Type == AgentTaskEventType.Failed)).ShouldBe(1);
         (await verify.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == task.Id
             && e.Type == AgentTaskEventType.ApiErrorDeferred)).ShouldBeFalse();
+        (await verify.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == task.Id
+            && e.Type == AgentTaskEventType.CapacityRecovery)).ShouldBeFalse();
+        logger.SettlementFailures.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task an_exhausted_capacity_wait_fails_the_wall_paused_task()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+
+        await SeedApiErrorStubTurnAsync(
+            sessionId,
+            DelegationReportFormatter.TaskMarker(task.Id),
+            errorText: "API Error: 429 You've hit your usage limit.");
+        await using var wall = await WallRecoveryFixture.CreateAsync(task, sessionId);
+        var logger = new SettlementLogger();
+        var factory = new TestScopeFactory();
+        var service = CreateService(factory, logger: logger);
+        await wall.OnTurnEndAsync(service);
+
+        await using (var db = CreateContext())
+        {
+            var recovery = (await db.ApiErrorRecoveries.AsNoTracking()
+                .Where(r => r.AgentSessionId == sessionId && r.StubSequence == wall.StubSequence)
+                .ToListAsync()).ShouldHaveSingleItem();
+            recovery.ResolvedReason.ShouldBe(ApiErrorRecoveryReasons.WallModelPaused);
+            recovery.CapacityWaitId.ShouldNotBeNull();
+            var retained = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            retained.Status.ShouldBe(AgentTaskStatus.Working);
+            retained.CapacityWaitRetained.ShouldBeTrue();
+            retained.CapacityWaitId.ShouldBe(recovery.CapacityWaitId);
+
+            var wait = await db.CapacityRecoveryWaits.SingleAsync(w => w.Id == recovery.CapacityWaitId);
+            wait.State.ShouldNotBe(CapacityRecoveryWaitState.Exhausted);
+            wait.State = CapacityRecoveryWaitState.Exhausted;
+            wait.Outcome = nameof(CapacityRecoveryWaitState.Exhausted);
+            await db.SaveChangesAsync();
+        }
+
+        await wall.OnTurnEndAsync(service);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureReason!.ShouldContain("WallModelPaused");
+        failed.Result.ShouldBeNull();
+        failed.CompletedAt.ShouldNotBeNull();
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id
+            && e.Type == AgentTaskEventType.Failed)).ShouldBe(1);
         logger.SettlementFailures.ShouldBeEmpty();
     }
 
@@ -4293,10 +4350,8 @@ public class AgentTaskReplyIntegrationTests
             services.AddSingleton<AgentSessionRuntime>();
             services.AddSingleton<SessionMessageQueueService>();
             services.AddSingleton<ApiErrorRecoveryService>();
-            // Legacy parked-exhaustion fixtures disable CapacityRecovery so WallParked
-            // still Fails the task; omitting the service keeps CapacityWaitId unset.
-            if (supervision?.CapacityRecovery.Enabled ?? true)
-                services.AddSingleton<CapacityRecoveryService>();
+            // Production (Program.cs) registers CapacityRecoveryService unconditionally.
+            services.AddSingleton<CapacityRecoveryService>();
             services.AddScoped<ModelAvailability>();
             // The settle path's collaborators: merge-back, the Merge-task spawner, ephemeral cleanup.
             services.AddSingleton<Antiphon.Server.Application.Interfaces.IDelegateSessionStopper>(Stopper);
