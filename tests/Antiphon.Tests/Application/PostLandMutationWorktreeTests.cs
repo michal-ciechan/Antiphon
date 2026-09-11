@@ -6,6 +6,8 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Git;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -86,7 +88,29 @@ public sealed class PostLandMutationWorktreeTests
     }
 
     [Test]
-    public async Task C478_G074_NoLandRequest() => await C478_V05_SettlementNeverPublishesSnapshot();
+    public async Task C478_G074_NoLandRequest()
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync();
+        await using var bridge = await BridgeQueueHarness.CreateAsync(new()
+        {
+            AlwaysOn = false, ConnectionString = world.Host.Schema.ConnectionString,
+        });
+        await using var scope = world.Host.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var tasks = new AgentTaskService(db, new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
+            Options.Create(new DelegationSettings { MaxTasksPerRoot = 40, MaxDepth = 5 }), world.Host.Events,
+            new RecordingSessionStopper(), TimeProvider.System, NullLogger<AgentTaskService>.Instance);
+        var land = new AgentTaskLandService(db,
+            scope.ServiceProvider.GetRequiredService<DelegationWorktreeService>(), tasks, world.Host.Queue, bridge.Queue,
+            world.Host.Events, TimeProvider.System, Options.Create(new DelegationSettings()), world.Host.Logger,
+            scope.ServiceProvider.GetRequiredService<AgentTaskLandingProtocol>(),
+            world.Host.Services.GetRequiredService<IRepositoryMutationLease>(), world.Host.Fixture.Git);
+        var ex = await Should.ThrowAsync<ConflictException>(() => land.RequestAsync(world.TaskId, null, default));
+        ex.Code.ShouldBe("verification_publication_forbidden");
+        (await db.AgentTaskLandRequests.CountAsync(r => r.TaskId == world.TaskId)).ShouldBe(0);
+        world.Host.Queue.IsActive(world.TaskId).ShouldBeFalse();
+        (await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == world.TaskId)).ShouldBe(0);
+    }
 
     [Test]
     [Arguments(AgentKind.ClaudeCode)]
@@ -248,8 +272,97 @@ public sealed class PostLandMutationWorktreeTests
     [Test] public Task C478_G072_LowerSettlement() => C478_V05_SettlementNeverPublishesSnapshot();
     [Test] public Task C478_G073_NoLocalMerge() => C478_V05_SettlementNeverPublishesSnapshot();
     [Test] public Task C478_G075_NoLandExecution() => C478_V05_SettlementNeverPublishesSnapshot();
-    [Test] public Task C478_G076_NoProgress() => C478_V05_SettlementNeverPublishesSnapshot();
-    [Test] public Task C478_G083_CreationFailure() => C478_G064_RetryIdentity();
+    [Test]
+    public async Task C478_G076_NoProgress()
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync();
+        await using var bridge = await BridgeQueueHarness.CreateAsync(new()
+        {
+            AlwaysOn = false, ConnectionString = world.Host.Schema.ConnectionString,
+            ConfigureServices = services =>
+            {
+                services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
+                services.AddDelegationWorktreeGraph(new GitSettings { WorktreeBasePath = Path.Combine(world.Host.Fixture.Root, "trees") });
+                services.AddSingleton<ILandingGit>(world.Host.Fixture.Git);
+                services.AddSingleton<IWorkspaceProgressProbe>(new ZeroProgressProbe());
+            },
+        });
+        var worker = Guid.NewGuid();
+        var report = "Mutation complete.\n--- next stage ---\nnext: none\n"
+            + DelegationReportFormatter.ReportToken(world.TaskId, "done");
+        await using (var db = world.Host.CreateContext())
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = worker, Status = SessionStatus.Running, Cwd = task.WorktreePath!,
+                AgentKind = AgentKind.Raw, StartedAt = DateTime.UtcNow, CreatedAt = DateTime.UtcNow,
+            });
+            task.AgentSessionId = worker;
+            task.Status = AgentTaskStatus.Working;
+            task.DispatchedAt = DateTime.UtcNow.AddMinutes(-5);
+            task.ParentSessionId = bridge.SessionId;
+            task.ReplyTo = AgentTaskReplyTo.Session;
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(), AgentSessionId = worker, Sequence = 1,
+                Kind = TranscriptKinds.UserPrompt, Text = DelegationReportFormatter.TaskMarker(world.TaskId),
+                CreatedAt = DateTime.UtcNow, Timestamp = DateTime.UtcNow,
+            });
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(), AgentSessionId = worker, Sequence = 2,
+                Kind = TranscriptKinds.AssistantText, Text = report,
+                CreatedAt = DateTime.UtcNow, Timestamp = DateTime.UtcNow,
+            });
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(), AgentSessionId = worker, Sequence = 3,
+                Kind = TranscriptKinds.TurnEnd, StopReason = TranscriptKinds.StopReasons.EndTurn,
+                CreatedAt = DateTime.UtcNow, Timestamp = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+        await new AgentTaskReplyService(
+            bridge.Provider.GetRequiredService<IServiceScopeFactory>(),
+            Options.Create(new DelegationSettings()),
+            bridge.EventBus, TimeProvider.System, NullLogger<AgentTaskReplyService>.Instance)
+            .OnTurnEndAsync(worker, default);
+        await using var observer = world.Host.CreateContext();
+        var settled = await observer.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded, settled.FailureReason);
+        settled.FailureCode.ShouldBeNull();
+        (await observer.AgentTasks.CountAsync(t => t.ParentTaskId == world.TaskId)).ShouldBe(0);
+        Directory.Exists(settled.WorktreePath!).ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task C478_G083_CreationFailure()
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync(provision: false);
+        await using var scope = world.Host.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var taskId = (await world.TaskService(scope.ServiceProvider)
+            .CreateAsync(world.Request(world.Companion), world.Caller, default)).Id;
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+        var identifier = "task-" + DelegationReportFormatter.Short(taskId);
+        var expected = Path.GetFullPath(Path.Combine(world.Host.Fixture.Root, "trees",
+            WorktreeManager.BuildDirectoryName(identifier)));
+        var hooks = Path.Combine(world.Host.Fixture.Repository, ".git-hooks-c478-g083");
+        Directory.CreateDirectory(hooks);
+        await File.WriteAllTextAsync(Path.Combine(hooks, "post-checkout"),
+            "#!/bin/sh\nprintf 'hook-sentinel\\n' > hook-sentinel.txt\nexit 1\n");
+        await world.Host.Fixture.RequiredAsync(world.Host.Fixture.Repository, "config", "core.hooksPath", hooks);
+        await using var lease = await world.Host.Services.GetRequiredService<IRepositoryMutationLease>()
+            .TryAcquireAsync(task.RepoPath!, default);
+        await Should.ThrowAsync<InvalidOperationException>(() =>
+            scope.ServiceProvider.GetRequiredService<DelegationWorktreeService>()
+                .CreateForTaskAsync(task, lease!, default));
+        Directory.Exists(expected).ShouldBeTrue();
+        var sentinel = Path.Combine(expected, "hook-sentinel.txt");
+        File.Exists(sentinel).ShouldBeTrue();
+        (await File.ReadAllTextAsync(sentinel)).Trim().ShouldBe("hook-sentinel");
+    }
 
     [Test]
     public async Task C478_G077_NoSettlementDelete()
@@ -500,4 +613,11 @@ internal sealed class MutationDispatchTestsCapture : IAgentProtocolAdapterFactor
         Count++;
         return new Antiphon.Tests.Agents.FakeAgentProtocolAdapter();
     }
+}
+
+internal sealed class ZeroProgressProbe : IWorkspaceProgressProbe
+{
+    public Task<WorkspaceProgressArm> ProbeProgressAsync(
+        string? workingDirectory, DateTime since, bool sharedCheckout, CancellationToken ct) =>
+        Task.FromResult(new WorkspaceProgressArm(true, null, null, sharedCheckout));
 }

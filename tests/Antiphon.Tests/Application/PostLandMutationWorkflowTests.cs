@@ -1,8 +1,13 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -193,7 +198,41 @@ public sealed class PostLandMutationWorkflowTests
     }
 
     [Test]
-    public async Task C478_G130_DecisionRevision() => await C478_V08_FindingDispositionMatrix();
+    public async Task C478_G130_DecisionRevision()
+    {
+        await using var world = await CardWorkTransitionServiceTests.CardWorkTransitionServiceTestsHarness.CreateAsync();
+        var original = await world.SeedCardAsync(CardStatus.Done);
+        var verification = await world.SeedCardAsync(CardStatus.InProgress);
+        const string question = "Which linked repair owns coverage survivor PC-1?";
+        await world.MoveToAsync(verification.Id, CardStatus.NeedsDecision, question);
+        var moved = await world.ReadCardAsync(verification.Id);
+        moved.Status.ShouldBe(CardStatus.NeedsDecision);
+        var revision = (await world.DecisionRevisionsAsync(verification.Id)).ShouldHaveSingleItem();
+        revision.Kind.ShouldBe(CardRevisionKind.Move);
+        revision.Reason.ShouldBe(question);
+        revision.ToStatus.ShouldBe(CardStatus.NeedsDecision);
+        (await world.ReadCardAsync(original.Id)).Status.ShouldBe(CardStatus.Done);
+
+        await using var db = world.CreateContext();
+        var attention = new AttentionService(db, new FakeSessionRunnerClient(),
+            Options.Create(new SupervisionSettings()), Options.Create(new DelegationSettings()),
+            TimeProvider.System, NullLogger<AttentionService>.Instance);
+        var item = (await attention.GetAsync(default)).Items.Single(i => i.CardId == verification.Id);
+        item.Kind.ShouldBe(AttentionKind.CardNeedsDecision);
+        item.Evidence.ShouldBe(question);
+        item.CardId.ShouldBe(verification.Id);
+        item.BoardId.ShouldBe(world.BoardId);
+
+        const string reopenQuestion = "Reopen into Needs decision: keep the original close history?";
+        var closed = await world.SeedCardAsync(CardStatus.Done);
+        await world.ReopenToAsync(closed.Id, CardStatus.NeedsDecision, reopenQuestion);
+        var reopened = (await world.DecisionRevisionsAsync(closed.Id)).ShouldHaveSingleItem();
+        reopened.Kind.ShouldBe(CardRevisionKind.Reopen);
+        reopened.Reason.ShouldBe(reopenQuestion);
+        var reopenItem = (await attention.GetAsync(default)).Items.Single(i => i.CardId == closed.Id);
+        reopenItem.Kind.ShouldBe(AttentionKind.CardNeedsDecision);
+        reopenItem.Evidence.ShouldBe(reopenQuestion);
+    }
 
     [Test]
     public async Task C478_G131_NoAlertSink()
