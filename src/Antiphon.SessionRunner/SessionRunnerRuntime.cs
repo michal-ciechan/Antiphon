@@ -2439,11 +2439,16 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
             if (_pendingReason is not null)
             {
-                await using var pendingLease = _herdrPlacement is null || _pendingSidecar is null ? null
-                    : await _herdrPlacement.LockPaneAsync(_pendingSidecar.PaneId, ct);
-                if (_pendingReason is null) return;
-                KillPendingHerdr();
-                return;
+                // The pane lease serializes us against RetryPendingHerdrAsync, which holds it for
+                // the whole adoption — so waiting for it can mean adoption already finished and
+                // the session is live. Re-evaluate under the lease, then fall through to the live
+                // path instead of returning: returning would leave a running session unstopped.
+                if (await TryKillPendingUnderPaneLeaseAsync(ct))
+                    return;
+                if (HasExited)
+                    return;
+                // pendingLease is released inside the helper; the live paths below take the pane
+                // lease themselves and the lease is not reentrant.
             }
 
             if (_herdrChild is { } herdr)
@@ -2460,6 +2465,25 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             // Parity with the old in-proc KillAsync: wait for the exit (with a grace margin for
             // the pipe round-trip); the liveness sweep is the backstop if it never arrives.
             await Task.WhenAny(_exited.Task, Task.Delay(timeout + TimeSpan.FromSeconds(2), ct));
+        }
+
+        /// <summary>
+        /// Kills a pending herdr session under its pane lease. Returns false when the session is no
+        /// longer pending by the time the lease is granted — adoption won the race and the caller
+        /// must finish Stop through the live path rather than returning a still-running session.
+        /// The lease is released before returning either way: it is not reentrant, and every live
+        /// stop path acquires it again for itself.
+        /// </summary>
+        private async Task<bool> TryKillPendingUnderPaneLeaseAsync(CancellationToken ct)
+        {
+            // Snapshot: adoption clears _pendingSidecar, so re-reading it for the pane ID races.
+            var pendingSidecar = _pendingSidecar;
+            await using var pendingLease = _herdrPlacement is null || pendingSidecar is null ? null
+                : await _herdrPlacement.LockPaneAsync(pendingSidecar.PaneId, ct);
+            if (_pendingReason is null)
+                return false;
+            KillPendingHerdr();
+            return true;
         }
 
         /// <summary>
