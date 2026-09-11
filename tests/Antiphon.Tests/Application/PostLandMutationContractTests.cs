@@ -98,10 +98,12 @@ public sealed class PostLandMutationContractTests
     [Test]
     public void C478_G068_TrackedClean() =>
         InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Mutation))
-            .Text.ShouldContain("clean tracked source/index", Case.Insensitive);
+            .Text.ShouldContain("clean tracked", Case.Insensitive);
 
     [Test]
-    public void C478_G069_IndexClean() => C478_G068_TrackedClean();
+    public void C478_G069_IndexClean() =>
+        InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Mutation))
+            .Text.ShouldContain("source/index", Case.Insensitive);
 
     [Test]
     public void C478_G070_PreflightHead() =>
@@ -119,10 +121,12 @@ public sealed class PostLandMutationContractTests
 
     [Test]
     public void C478_G168_PendingDurable() =>
-        C478_V11_ActiveRecipeHasDurableCompanionAndExplicitContinuation("docs/orchestration-loop.md");
+        File.ReadAllText(RepoFile("docs/orchestration-loop.md")).ShouldContain("publication pending", Case.Insensitive);
 
     [Test]
-    public void C478_G169_ResumeDedup() => C478_G168_PendingDurable();
+    public void C478_G169_ResumeDedup() =>
+        File.ReadAllText(RepoFile("docs/orchestration-loop.md"))
+            .ShouldContain("reconcile conflicting duplicates before dispatch", Case.Insensitive);
 
     [Test]
     public void C478_G170_NoFalseClean()
@@ -133,7 +137,9 @@ public sealed class PostLandMutationContractTests
     }
 
     [Test]
-    public void C478_G171_Triage() => C478_G168_PendingDurable();
+    public void C478_G171_Triage() =>
+        File.ReadAllText(RepoFile("docs/orchestration-loop.md"))
+            .ShouldContain("NeedsDecision move/reopen revision", Case.Insensitive);
 
     [Test]
     public void C478_G172_NoAutoRevert()
@@ -166,7 +172,8 @@ public sealed class PostLandMutationContractTests
     }
 
     [Test]
-    public void C478_G177_ActiveBattery() => C478_G176_Rollout();
+    public void C478_G177_ActiveBattery() =>
+        File.ReadAllText(RepoFile("docs/orchestration-loop.md")).ShouldContain("including Blocked", Case.Insensitive);
 
     [Test]
     public void C478_G179_Ascii()

@@ -114,6 +114,14 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
         Task.FromResult(new SessionRunnerSessionDto(
             sessionId, null, DateTime.UtcNow, "Exited", 0, AgentExitReason.KilledByRequest, 0));
 
+    public Func<VerificationExecutionBinding, bool, CancellationToken, Task<VerificationCustodyStatus>>? VerificationCustody { get; set; }
+
+    public Task<VerificationCustodyStatus> ReadVerificationCustodyAsync(
+        VerificationExecutionBinding binding, bool seal, CancellationToken ct) =>
+        VerificationCustody?.Invoke(binding, seal, ct)
+        ?? Task.FromResult(new VerificationCustodyStatus(binding, VerificationCustodyState.UnsupportedBackend,
+            "verification_custody_unsupported_backend"));
+
     public IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(CancellationToken ct) =>
         EmptyEvents(ct);
 

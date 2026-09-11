@@ -95,6 +95,10 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         var h = new LandingSafetyHarness(root, Guid.Parse(taskId));
         h.Schema = new IsolatedTestSchema("worker-observer-only", connection);
         h.BuildServices();
+        h.Messages = new SessionMessageQueueService(
+            h.Services.GetRequiredService<IServiceScopeFactory>(),
+            null!, new MockEventBus(), TimeProvider.System,
+            NullLogger<SessionMessageQueueService>.Instance);
         async Task PauseAsync()
         {
             await File.WriteAllTextAsync(ready, System.Text.Json.JsonSerializer.Serialize(new { cut, worker = Environment.ProcessId }));
