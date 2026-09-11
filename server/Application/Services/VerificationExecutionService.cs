@@ -66,7 +66,10 @@ public sealed class VerificationExecutionService(AppDbContext db, SourceLandingA
         var current = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == session.Id, ct);
         var binding = JsonSerializer.Deserialize<VerificationExecutionBinding>(execution.BindingJson)
             ?? throw new ConflictException("verification_binding_required");
-        if (task.VerificationCleanupSealJson is not null || task.Status is not (AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
+        if (binding.ExecutionId != execution.Id || binding.Source.TaskId != task.Id
+            || binding.Generation != new VerificationSessionGeneration(session.Id, execution.AcceptedStartedAt)
+            || binding.CustodyContractVersion != 1 || binding.Backend != "windows-job-v1" || binding.RunnerStoreId == Guid.Empty
+            || task.VerificationCleanupSealJson is not null || task.Status is not (AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
             || task.AgentSessionId != session.Id || current.StartedAt != binding.Generation.AcceptedStartedAt
             || current.Status is not (SessionStatus.Starting or SessionStatus.Running)
             || task.SourceLandingOperationId != binding.Source.SourceOperationId || task.SourceLandingSha != binding.Source.LandedSha

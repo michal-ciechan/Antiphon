@@ -292,6 +292,11 @@ public sealed class PostLandMutationCustodyTests
                 services.AddScoped<VerificationCleanupService>();
             };
             await world.Host.InitializeAsync();
+            try
+            {
+            // WorktreeManager deliberately uses production Git I/O. Pin the fixture's local
+            // checkout policy too, so it agrees with FixtureGit's isolated global config.
+            await world.Host.Fixture.RequiredAsync(world.Host.Fixture.Repository, "config", "core.autocrlf", "false");
             await world.Host.RunAsync();
             await using (var db = world.Host.CreateContext())
             {
@@ -315,6 +320,8 @@ public sealed class PostLandMutationCustodyTests
             await scope.ServiceProvider.GetRequiredService<DelegationWorktreeService>().CreateForTaskAsync(task, lease!, default);
             await context.SaveChangesAsync();
             return world;
+            }
+            catch { await world.DisposeAsync(); throw; }
         }
 
         public async Task<VerificationExecutionBinding> ReserveAsync()
