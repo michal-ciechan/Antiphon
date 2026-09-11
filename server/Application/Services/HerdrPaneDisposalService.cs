@@ -22,6 +22,9 @@ public sealed class HerdrPaneDisposalService(ISessionRunnerClient runner, IHerdr
     public async Task<HerdrPaneDisposalReceipt> ExecuteAsync(
         HerdrPaneDisposalRequest request, CancellationToken cancellationToken)
     {
+        if (request.OperationId == Guid.Empty || request.PreviewId == Guid.Empty
+            || string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Length > 4096)
+            throw new BadRequestException("Nonempty operationId/previewId and a 1-4096-character reason are required.");
         if ((await runner.GetCapabilitiesAsync(cancellationToken))?.Features?.Contains(
             HerdrPaneDisposalCodes.BestEffortCapability, StringComparer.Ordinal) != true)
             throw new ConflictException("The runner cannot execute best-effort pane disposal.", HerdrPaneDisposalCodes.GuardUnavailable);

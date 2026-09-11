@@ -21,10 +21,10 @@ internal sealed class HerdrPaneDisposalFixture : IAsyncDisposable
     public TestProcesses Processes { get; } = new();
     public TestBackend Backend { get; private set; } = null!;
 
-    public HerdrPaneDisposalFixture()
+    public HerdrPaneDisposalFixture(IProcessLivenessProbe? probe = null)
     {
         Client = new(new HerdrSettings { Enabled = true, Session = Fake.Session });
-        Runtime = new(Options.Create(Settings), NullLogger<SessionRunnerRuntime>.Instance, Client);
+        Runtime = new(Options.Create(Settings), NullLogger<SessionRunnerRuntime>.Instance, Client, probe);
         var workspace = Fake.SeedWorkspace("w1", "selected-workspace");
         var tab = Fake.SeedTab(workspace.WorkspaceId, "selected-tab", paneCount: 2);
         PaneId = tab.Panes[0].PaneId;
