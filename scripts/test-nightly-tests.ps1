@@ -158,6 +158,36 @@ function Test-C487_G039 {
         $r = Test-NightlyExpandedRowsPresent -DiscoveryNodes @() -TerminalRows @() -RequiredUids @('uid-missing')
         Assert-C487 -Cond (-not $r.Ok) -Name ('G039 {0} missing uid' -f $kind)
     }
+    $fx = New-Efx
+    $runDir = $fx.Logs
+    New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+    $trx = Join-Path $runDir 'g039.trx'
+    $disc = Join-Path $runDir 'g039.discovery.json'
+    Write-C487Trx -Path $trx -Rows @(@{ Id = 'uid-pass'; ClassName = 'SampleClass'; MethodName = 'OtherRow'; Outcome = 'Passed' })
+    Write-C487Discovery -Path $disc -Nodes @(
+        @{ uid = 'uid-missing'; type = 'SampleClass'; method = 'ArgumentsRow'; namespace = 'Ns'; state = 'Discovered' },
+        @{ uid = 'uid-pass'; type = 'SampleClass'; method = 'OtherRow'; namespace = 'Ns'; state = 'Discovered' }
+    )
+    $v = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $trx -DiscoveryPath $disc -RunDirectory $runDir `
+        -NotBeforeUtc ([datetime]::UtcNow.AddMinutes(-5)) -ProcessExit 0 `
+        -Sha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' -ExpectedSha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' `
+        -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p'
+    $named = (($v.reasons) -join ',') -match 'uid-missing'
+    Assert-C487 -Cond ((-not [bool]$v.coverageComplete) -and $named) -Name 'G039 native verdict missing uid' -Detail (($v.reasons) -join ',')
+
+    Write-C487NativePassSeams -Path $fx.Seams -TracePath $fx.Trace `
+        -Rows @(@{ Id = 'uid-pass'; ClassName = 'SampleClass'; MethodName = 'OtherRow'; Outcome = 'Passed' }) `
+        -DiscoveryNodes @(
+            @{ uid = 'uid-missing'; type = 'SampleClass'; method = 'ArgumentsRow'; namespace = 'Ns' },
+            @{ uid = 'uid-pass'; type = 'SampleClass'; method = 'OtherRow'; namespace = 'Ns' }
+        )
+    $r = Invoke-E -Fx $fx -Extra @{ Suites = @('antiphon') }
+    $entryNamed = $false
+    if ($r.SummaryPath -and (Test-Path -LiteralPath $r.SummaryPath)) {
+        $sum = Get-Content -LiteralPath $r.SummaryPath -Raw | ConvertFrom-Json
+        $entryNamed = (([string]($sum.reasons | Out-String)) -match 'uid-missing')
+    }
+    Assert-C487 -Cond ((-not [bool]$r.coverageComplete) -and $entryNamed) -Name 'G039 entry missing expanded uid' -Detail ('cov=' + $r.coverageComplete)
 }
 
 function Test-C487_G040 {
@@ -168,6 +198,29 @@ function Test-C487_G040 {
     $fx = New-Efx
     $r = Invoke-E -Fx $fx -Extra @{ Suites = @('antiphon') }
     Assert-C487 -Cond ((-not [bool]$r.coverageComplete) -and (-not [bool]$r.testsPassed)) -Name 'G040 missing-trx entry' -Detail ('cov=' + $r.coverageComplete + ' pass=' + $r.testsPassed)
+
+    $fxPass = New-Efx
+    $runDir = $fxPass.Logs
+    New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+    $trx = Join-Path $runDir 'g040-missing-disc.trx'
+    Write-C487Trx -Path $trx -Rows @(@{ Id = 'uid-1'; ClassName = 'SampleClass'; MethodName = 'SampleMethod'; Outcome = 'Passed' })
+    $v2 = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $trx -DiscoveryPath '' -RunDirectory $runDir `
+        -NotBeforeUtc ([datetime]::UtcNow.AddMinutes(-5)) -ProcessExit 0 `
+        -Sha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' -ExpectedSha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' `
+        -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p'
+    $missingDisc = (($v2.reasons) -join ',') -match 'missing-discovery'
+    Assert-C487 -Cond ((-not [bool]$v2.coverageComplete) -and [bool]$v2.testsPassed -and $missingDisc) -Name 'G040 missing discovery not complete' -Detail (($v2.reasons) -join ',')
+
+    Write-C487NativePassSeams -Path $fxPass.Seams -TracePath $fxPass.Trace `
+        -Rows @(@{ Id = 'uid-1'; ClassName = 'SampleClass'; MethodName = 'SampleMethod'; Outcome = 'Passed' }) `
+        -DiscoveryNodes @(@{ uid = 'uid-1'; type = 'SampleClass'; method = 'SampleMethod'; namespace = 'Ns' })
+    $r2 = Invoke-E -Fx $fxPass -Extra @{ Suites = @('antiphon') }
+    $partialReason = $false
+    if ($r2.SummaryPath -and (Test-Path -LiteralPath $r2.SummaryPath)) {
+        $sum2 = Get-Content -LiteralPath $r2.SummaryPath -Raw | ConvertFrom-Json
+        $partialReason = (([string]($sum2.reasons | Out-String)) -match 'partial-selection')
+    }
+    Assert-C487 -Cond ((-not [bool]$r2.coverageComplete) -and [bool]$r2.testsPassed -and $partialReason) -Name 'G040 partial selection not complete' -Detail ('cov=' + $r2.coverageComplete + ' pass=' + $r2.testsPassed)
 }
 
 function Test-C487_G041 {
@@ -293,4 +346,4 @@ if ($Case) {
     }
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'tests-summary' -Body @{ passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows }
-Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows 55
+Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 59 })

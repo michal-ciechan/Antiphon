@@ -165,15 +165,59 @@ function Get-NightlySuiteMap {
     return $map
 }
 
+function Get-NightlyFallbackSuiteUniverse {
+    return @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging', 'client', 'scripts')
+}
+
+function Get-NightlyRequiredSuiteUniverse {
+    param($PolicyObject)
+    $selected = @()
+    if ($PolicyObject -and $PolicyObject.defaultSuites) {
+        foreach ($id in @($PolicyObject.defaultSuites)) {
+            $name = [string]$id
+            if (-not [string]::IsNullOrWhiteSpace($name)) { $selected += $name }
+        }
+    }
+    if ($selected.Count -eq 0) {
+        $selected = @(Get-NightlyFallbackSuiteUniverse)
+    }
+    $map = @{}
+    if ($PolicyObject) { $map = Get-NightlySuiteMap -PolicyObject $PolicyObject }
+    $required = @()
+    foreach ($id in $selected) {
+        $suite = $null
+        if ($map.ContainsKey($id)) { $suite = $map[$id] }
+        if ($suite -and [string]$suite.mode -eq 'manual') { continue }
+        $required += $id
+    }
+    return $required
+}
+
+function Test-NightlyRequiredSuitesPresent {
+    param([string[]]$Selected, [string[]]$Required)
+    $sel = @{}
+    foreach ($s in @($Selected)) {
+        $name = [string]$s
+        if (-not [string]::IsNullOrWhiteSpace($name)) { $sel[$name] = $true }
+    }
+    $missing = @()
+    foreach ($r in @($Required)) {
+        $name = [string]$r
+        if ([string]::IsNullOrWhiteSpace($name)) { continue }
+        if (-not $sel.ContainsKey($name)) { $missing += $name }
+    }
+    return [pscustomobject]@{ Ok = ($missing.Count -eq 0); Missing = $missing }
+}
+
 function Resolve-NightlySelectedSuites {
     param($PolicyObject, [string[]]$Suites)
     $map = Get-NightlySuiteMap -PolicyObject $PolicyObject
     $valid = @($map.Keys)
     $selected = @()
     if ($null -eq $Suites -or $Suites.Count -eq 0) {
-        foreach ($id in @($PolicyObject.defaultSuites)) { $selected += [string]$id }
+        $selected = @(Get-NightlyRequiredSuiteUniverse -PolicyObject $PolicyObject)
         if ($selected.Count -eq 0) {
-            $selected = @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging', 'client', 'scripts')
+            $selected = @(Get-NightlyFallbackSuiteUniverse)
         }
     } else {
         $seen = @{}

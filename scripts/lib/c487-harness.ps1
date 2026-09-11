@@ -110,6 +110,126 @@ function Invoke-C487NightlyRun {
     return Invoke-AntiphonNightlyRun @Args
 }
 
+function Write-C487Trx {
+    param(
+        [string]$Path,
+        [object[]]$Rows
+    )
+    $defs = New-Object System.Text.StringBuilder
+    $results = New-Object System.Text.StringBuilder
+    [void]$defs.Append('<TestDefinitions>')
+    [void]$results.Append('<Results>')
+    foreach ($r in @($Rows)) {
+        $id = [string]$r.Id
+        $cls = [string]$r.ClassName
+        $method = [string]$r.MethodName
+        $outcome = [string]$r.Outcome
+        if ([string]::IsNullOrWhiteSpace($outcome)) { $outcome = 'Passed' }
+        [void]$defs.Append(('<UnitTest id="{0}" name="{1}.{2}"><TestMethod className="{1}" name="{2}" /></UnitTest>' -f $id, $cls, $method))
+        [void]$results.Append(('<UnitTestResult testId="{0}" testName="{1}.{2}" outcome="{3}" />' -f $id, $cls, $method, $outcome))
+    }
+    [void]$defs.Append('</TestDefinitions>')
+    [void]$results.Append('</Results>')
+    $xml = ('<?xml version="1.0" encoding="utf-8"?><TestRun>{0}{1}</TestRun>' -f $defs.ToString(), $results.ToString())
+    $dir = Split-Path -Parent $Path
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    [System.IO.File]::WriteAllText($Path, $xml)
+}
+
+function Write-C487Discovery {
+    param(
+        [string]$Path,
+        [object[]]$Nodes
+    )
+    $obj = [ordered]@{
+        format = 'antiphon-tunit-discovery-v1'
+        tunitVersion = '1.44.0'
+        mtpVersion = '2.2.2'
+        assemblyHash = 'c487-test-hash'
+        nodes = @($Nodes)
+    }
+    Write-NightlyAtomicJson -Path $Path -Object $obj
+}
+
+function Write-C487NativePassSeams {
+    param(
+        [string]$Path,
+        [string]$TracePath,
+        [object[]]$Rows,
+        [object[]]$DiscoveryNodes
+    )
+    $trxLiteral = @()
+    foreach ($r in @($Rows)) {
+        $trxLiteral += ('@{{ Id = ''{0}''; ClassName = ''{1}''; MethodName = ''{2}''; Outcome = ''{3}'' }}' -f `
+            ([string]$r.Id).Replace("'", "''"),
+            ([string]$r.ClassName).Replace("'", "''"),
+            ([string]$r.MethodName).Replace("'", "''"),
+            $(if ([string]$r.Outcome) { ([string]$r.Outcome).Replace("'", "''") } else { 'Passed' }))
+    }
+    $nodeLiteral = @()
+    foreach ($n in @($DiscoveryNodes)) {
+        $ns = [string]$n.namespace
+        $nodeLiteral += ('@{{ uid = ''{0}''; type = ''{1}''; method = ''{2}''; namespace = ''{3}''; state = ''Discovered'' }}' -f `
+            ([string]$n.uid).Replace("'", "''"),
+            ([string]$n.type).Replace("'", "''"),
+            ([string]$n.method).Replace("'", "''"),
+            $ns.Replace("'", "''"))
+    }
+    $rowText = $trxLiteral -join ', '
+    $nodeText = $nodeLiteral -join ', '
+    $extra = [scriptblock]::Create(@"
+`$NightlySeams.StartProcess = {
+    param(`$FilePath, `$ArgumentList, `$WorkingDirectory, `$TimeoutMilliseconds, `$Environment)
+    Add-Content -LiteralPath '$TracePath' -Value (('EXEC {0} {1}' -f `$FilePath, ((`$ArgumentList) -join ' '))) -Encoding ASCII
+    `$trx = ''
+    `$args = @(`$ArgumentList)
+    for (`$i = 0; `$i -lt `$args.Count; `$i++) {
+        if ([string]`$args[`$i] -eq '--report-trx-filename' -and (`$i + 1) -lt `$args.Count) {
+            `$trx = [string]`$args[`$i + 1]
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace(`$trx)) {
+        `$rows = @($rowText)
+        `$defs = New-Object System.Text.StringBuilder
+        `$results = New-Object System.Text.StringBuilder
+        [void]`$defs.Append('<TestDefinitions>')
+        [void]`$results.Append('<Results>')
+        foreach (`$r in `$rows) {
+            [void]`$defs.Append(('<UnitTest id="{0}" name="{1}.{2}"><TestMethod className="{1}" name="{2}" /></UnitTest>' -f `$r.Id, `$r.ClassName, `$r.MethodName))
+            [void]`$results.Append(('<UnitTestResult testId="{0}" testName="{1}.{2}" outcome="{3}" />' -f `$r.Id, `$r.ClassName, `$r.MethodName, `$r.Outcome))
+        }
+        [void]`$defs.Append('</TestDefinitions>')
+        [void]`$results.Append('</Results>')
+        `$xml = ('<?xml version="1.0" encoding="utf-8"?><TestRun>{0}{1}</TestRun>' -f `$defs.ToString(), `$results.ToString())
+        `$td = Split-Path -Parent `$trx
+        if (`$td -and -not (Test-Path -LiteralPath `$td)) { New-Item -ItemType Directory -Path `$td -Force | Out-Null }
+        [System.IO.File]::WriteAllText(`$trx, `$xml)
+        `$discPath = [System.IO.Path]::ChangeExtension(`$trx, '.discovery.json')
+        `$nodes = @($nodeText)
+        `$disc = @{
+            format = 'antiphon-tunit-discovery-v1'
+            tunitVersion = '1.44.0'
+            mtpVersion = '2.2.2'
+            assemblyHash = 'c487-test-hash'
+            nodes = `$nodes
+        }
+        `$disc | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath `$discPath -Encoding UTF8
+    }
+    `$jsonIdx = [array]::IndexOf(`$args, '-JsonResultPath')
+    if (`$jsonIdx -ge 0 -and (`$jsonIdx + 1) -lt `$args.Count) {
+        `$jp = [string]`$args[`$jsonIdx + 1]
+        `$jd = Split-Path -Parent `$jp
+        if (`$jd -and -not (Test-Path -LiteralPath `$jd)) { New-Item -ItemType Directory -Path `$jd -Force | Out-Null }
+        '{ "numPassedTests": 1, "numFailedTests": 0 }' | Set-Content -LiteralPath `$jp -Encoding UTF8
+    }
+    return @{ ExitCode = 0; TimedOut = `$false; Pid = 2; ChildrenExited = `$true; LogText = 'C487_INVOCATION fake' }
+}
+"@)
+    Write-C487Seams -Path $Path -TracePath $TracePath -Extra $extra
+}
+
 function Write-C487Evidence {
     param([string]$ResultsDirectory, [string]$Case, $Body)
     $path = Join-Path $ResultsDirectory ($Case + '.json')
