@@ -423,6 +423,7 @@ public sealed class AgentTaskLandSourceFreshnessTests
         {
             var request = await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.Git.TaskId && r.IsPending);
             request.ExpectedSourceSha = new string('c', 40);
+            request.ResolvedSourceSha = request.ExpectedSourceSha;
             await db.SaveChangesAsync();
         }
         await h.RestartServicesAsync();
