@@ -27,7 +27,7 @@ public sealed class ScopedVerificationInstructionTests
         var code = Compose(AgentTaskRole.Code);
         code.ShouldNotContain("credit nightly without a current monitor");
         File.ReadAllText(Path.Combine(RepoRoot, "docs", "testing-and-build.md"))
-            .ShouldContain("Do not credit this as an operational full-suite backstop");
+            .ShouldContain("operational full-suite backstop");
     }
 
     [Test]

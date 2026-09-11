@@ -131,6 +131,8 @@ function Invoke-AntiphonNightlyTests {
         if (-not $AllowSharedTree) {
             Write-Host 'REFUSED: nightly-tests.ps1 will not run in the shared tree.'
             Write-Host ('  RepoRoot: {0}' -f $RepoRoot)
+            Write-Host '  Isolated clone: C:\Antiphon\nightly\checkout'
+            Write-Host '  Re-run with -AllowSharedTree only for a deliberate shared-tree run.'
             return [pscustomobject]@{ ExitCode = 3; Refusal = 'shared-tree'; coverageComplete = $false; testsPassed = $false }
         }
     }
