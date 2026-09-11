@@ -400,6 +400,7 @@ public sealed class SessionQueueReceiptPlumbingTests
         Directory.Exists(world.Cwd).ShouldBeFalse();
         Directory.Exists(world.LogDirectory).ShouldBeFalse();
         File.Exists(world.TranscriptPath).ShouldBeFalse();
+        File.Exists(world.TranscriptPath + ".timing").ShouldBeFalse();
     }
 
     [Test]
@@ -635,6 +636,8 @@ public sealed class SessionQueueReceiptPlumbingTests
             await AttemptAsync(() => { if (Directory.Exists(Cwd)) Directory.Delete(Cwd, true); return Task.CompletedTask; });
             await AttemptAsync(() => DeleteLogDirectoryAsync());
             await AttemptAsync(() => { File.Delete(TranscriptPath); return Task.CompletedTask; });
+            // FakeClaude writes a <transcript>.timing sidecar next to every transcript it appends to.
+            await AttemptAsync(() => { File.Delete(TranscriptPath + ".timing"); return Task.CompletedTask; });
             if (errors.Count > 0) throw new AggregateException("PtyWorld cleanup failed", errors);
 
             async Task AttemptAsync(Func<Task> cleanup)
