@@ -116,6 +116,7 @@ public sealed class HerdrPaneDisposalGuardedLiveTests
                 catch (HerdrBackendUnavailableException) { await Task.Delay(50); }
             }
             info.ShouldNotBeNull(); info.InstanceId.ShouldStartWith(_server.Id + ":");
+            Console.WriteLine($"C461 isolated Herdr {_session}: version={info.Version} protocol={info.Protocol} instance={info.InstanceId} root={Root}");
             var created = await Client.WorkspaceCreateAsync(Root, "C461 isolated", default);
             Pane = created.RootPane.PaneId;
             var tab = await Client.TabCreateAsync(created.WorkspaceId, Root, null, "sentinel", default); Sentinel = tab.InitialPaneId;

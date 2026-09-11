@@ -132,7 +132,7 @@ public sealed class HerdrPaneDisposalConcurrencyTests
     [Test] [Arguments(false)] [Arguments(true)] public Task C461_G071_Sidecar_publication_lease(bool disposalWins) => RuntimeRace("attach", disposalWins);
     private static async Task RuntimeRace(string actor, bool disposalWins)
     {
-        await using var h = new HerdrPaneDisposalFixture(); await h.StartAsync();
+        await using var h = new HerdrPaneDisposalFixture(new Probe()); await h.StartAsync();
         h.Fake.Workspaces[0].Tokens!["antiphon-ws"] = "owned-test";
         var tab = h.Fake.Workspaces[0].Tabs.Single(t => t.Panes.Any(p => p.PaneId == h.PaneId));
         if (actor == "named") tab.Panes.RemoveAll(p => p.PaneId != h.PaneId);
@@ -168,6 +168,7 @@ public sealed class HerdrPaneDisposalConcurrencyTests
             var gate = h.Fake.GateMethod("pane.report_metadata");
             var acquisition = Acquire();
             for (var i = 0; i < 200 && !h.Methods.Contains("pane.report_metadata"); i++) await Task.Delay(10);
+            if (acquisition.IsCompleted) await acquisition;
             h.Methods.ShouldContain("pane.report_metadata");
             var disposal = h.Service.ExecuteAsync(h.Request(p), timeout.Token);
             try { await Task.Delay(100); disposal.IsCompleted.ShouldBeFalse(); }
