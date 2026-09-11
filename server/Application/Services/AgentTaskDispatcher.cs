@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -4606,6 +4607,14 @@ public sealed class AgentTaskDispatcher
             .Distinct()
             .ToListAsync(ct))
             .ToHashSet();
+        var sourcedOwnerIds = (await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.AgentId != null
+                && agentIds.Contains(t.AgentId.Value)
+                && t.SourceLandingOperationId != null)
+            .Select(t => t.AgentId!.Value)
+            .Distinct()
+            .ToListAsync(ct))
+            .ToHashSet();
 
         var stale = new HashSet<Agent>();
         foreach (var row in parsed)
@@ -4615,6 +4624,8 @@ public sealed class AgentTaskDispatcher
             if (row.SessionId is Guid sid && liveSessionIds.Contains(sid))
                 continue;
             if (busyAgentIds.Contains(row.Agent.Id))
+                continue;
+            if (sourcedOwnerIds.Contains(row.Agent.Id))
                 continue;
             stale.Add(row.Agent);
         }
@@ -4629,6 +4640,8 @@ public sealed class AgentTaskDispatcher
         var acted = 0;
         foreach (var agent in retire)
         {
+            if (sourcedOwnerIds.Contains(agent.Id))
+                continue;
             var idleSince = agent.PoolIdleSince;
             await KillPooledSessionAsync(agent, ct);
             FinishPoolRetire(agent, incidentAgentIds.Contains(agent.Id), now);
@@ -4640,6 +4653,8 @@ public sealed class AgentTaskDispatcher
 
         foreach (var agent in stale)
         {
+            if (sourcedOwnerIds.Contains(agent.Id))
+                continue;
             // Session is already terminal in the DB. Do not KillAsync: Failed is
             // SessionReconciliationService's re-adopt arm (CARD-0056), Stopped is its only
             // auto-kill. The agent row is the junk this pass is for.
@@ -4650,9 +4665,73 @@ public sealed class AgentTaskDispatcher
             acted++;
         }
 
+        acted += await ReconcileSourcedUnresolvedReleaseAsync(pool, sourcedOwnerIds, incidentAgentIds, now, ct);
+
         if (acted > 0)
             await _db.SaveChangesAsync(ct);
         return acted;
+    }
+
+    /// <summary>
+    /// Sourced killSession:false recovery keeps the pool row assigned to the terminal task.
+    /// Authorized stop runs only after every attempt has an imported Exited/NeverStarted receipt
+    /// or the fenced NeverReserved empty history; cleanup itself never kills.
+    /// </summary>
+    private async Task<int> ReconcileSourcedUnresolvedReleaseAsync(
+        List<Agent> pool, HashSet<Guid> sourcedOwnerIds, HashSet<Guid> incidentAgentIds, DateTime now,
+        CancellationToken ct)
+    {
+        if (sourcedOwnerIds.Count == 0)
+            return 0;
+        var owned = await _db.AgentTasks
+            .Where(t => t.AgentId != null
+                && sourcedOwnerIds.Contains(t.AgentId.Value)
+                && t.SourceLandingOperationId != null
+                && (t.Status == AgentTaskStatus.Succeeded
+                    || t.Status == AgentTaskStatus.Failed
+                    || t.Status == AgentTaskStatus.Canceled))
+            .ToListAsync(ct);
+        var acted = 0;
+        foreach (var task in owned)
+        {
+            if (task.AgentId is not Guid agentId)
+                continue;
+            var agent = pool.FirstOrDefault(a => a.Id == agentId);
+            if (agent is null)
+                continue;
+            if (!await SourcedReleaseIsAuthorizedAsync(task, ct))
+                continue;
+            await KillPooledSessionAsync(agent, ct);
+            FinishPoolRetire(agent, incidentAgentIds.Contains(agent.Id), now);
+            if (task.VerificationCleanupResidue == "verification_release_unresolved")
+                task.VerificationCleanupResidue = "verification_release_stopped";
+            acted++;
+        }
+        return acted;
+    }
+
+    private async Task<bool> SourcedReleaseIsAuthorizedAsync(AgentTask task, CancellationToken ct)
+    {
+        var executions = await _db.VerificationExecutions.AsNoTracking()
+            .Where(e => e.TaskId == task.Id)
+            .ToListAsync(ct);
+        if (executions.Count == 0)
+        {
+            if (task.VerificationCleanupSealJson is null)
+                return false;
+            try
+            {
+                return JsonSerializer.Deserialize<VerificationCleanupSeal>(task.VerificationCleanupSealJson)
+                    ?.NeverReserved == true;
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
+        }
+
+        return executions.All(e => e.ReceiptBytes is { Length: > 0 }
+            && e.CustodyReason is "Exited" or "NeverStarted");
     }
 
     private async Task KillPooledSessionAsync(Agent agent, CancellationToken ct)

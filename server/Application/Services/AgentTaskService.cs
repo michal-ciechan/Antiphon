@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -8,6 +9,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Options;
@@ -1480,6 +1482,20 @@ public sealed class AgentTaskService
             .OrderByDescending(e => e.At).FirstOrDefaultAsync(ct);
         var legacyNote = legacyLand is null ? null : await _db.AgentTaskLandNotifications.AsNoTracking()
             .SingleOrDefaultAsync(n => n.SourceEventId == legacyLand.Id && n.IsLegacy, ct);
+        var executions = task.SourceLandingOperationId is null
+            ? Array.Empty<VerificationExecutionDetailDto>()
+            : (await _db.VerificationExecutions.AsNoTracking()
+                .Where(e => e.TaskId == task.Id)
+                .OrderBy(e => e.CreatedAt)
+                .ToListAsync(ct))
+            .Select(ToExecutionDetail)
+            .ToArray();
+        Guid? sealId = null;
+        if (task.VerificationCleanupSealJson is not null)
+        {
+            try { sealId = JsonSerializer.Deserialize<VerificationCleanupSeal>(task.VerificationCleanupSealJson)?.Id; }
+            catch (JsonException) { }
+        }
         return new AgentTaskDetailDto(
             ToSummary(task, family, await LoadCardIdentifiersAsync([task], ct)), task.Goal, task.Result,
             task.ResultFilePath, task.DeliverablePath, task.DeliverableRef,
@@ -1491,7 +1507,22 @@ public sealed class AgentTaskService
             legacyLand is null ? null : new LegacyLandReceiptDto(legacyLand.Id, legacyLand.At,
                 legacyNote?.ConfirmedAt is not null ? "Confirmed" : task.ReplyTo == AgentTaskReplyTo.None ? "NotRequired" : "LegacyUnverified",
                 legacyNote?.QueueMessageId, legacyNote?.ConfirmedAt, legacyNote?.ConfirmingPromptSequence),
-            task.SourceLandingOperationId, task.SourceLandingSha, task.VerificationCleanupResidue);
+            task.SourceLandingOperationId, task.SourceLandingSha, task.VerificationCleanupResidue,
+            sealId, task.VerificationExecutionRevision, task.VerificationDirectoryRemoved,
+            task.VerificationRegistrationRemoved, task.VerificationBranchRemoved, executions);
+    }
+
+    private static VerificationExecutionDetailDto ToExecutionDetail(VerificationExecution execution)
+    {
+        Guid? store = null;
+        try
+        {
+            store = JsonSerializer.Deserialize<VerificationExecutionBinding>(execution.BindingJson)?.RunnerStoreId;
+        }
+        catch (JsonException) { }
+        return new(execution.Id, execution.SessionId, execution.AcceptedStartedAt, execution.RunnerCallIntentAt,
+            execution.CustodyReason, execution.ReceiptDigest, execution.ReceiptImportedAt, store,
+            execution.ReceiptBytes is { Length: > 0 });
     }
 
     /// <summary>Record the first operator read; repeat opens deliberately preserve that timestamp.</summary>

@@ -289,7 +289,25 @@ public sealed record AgentTaskDetailDto(
     LegacyLandReceiptDto? LegacyLandReceipt = null,
     Guid? SourceLandingOperationId = null,
     string? SourceLandingSha = null,
-    string? VerificationCleanupResidue = null);
+    string? VerificationCleanupResidue = null,
+    Guid? VerificationCleanupSealId = null,
+    long VerificationExecutionRevision = 0,
+    bool VerificationDirectoryRemoved = false,
+    bool VerificationRegistrationRemoved = false,
+    bool VerificationBranchRemoved = false,
+    IReadOnlyList<VerificationExecutionDetailDto>? VerificationExecutions = null);
+
+/// <summary>One accepted launch attempt for a sourced Mutation snapshot. Receipt bytes stay on the server.</summary>
+public sealed record VerificationExecutionDetailDto(
+    Guid ExecutionId,
+    Guid SessionId,
+    DateTime AcceptedStartedAt,
+    DateTime? RunnerCallIntentAt,
+    string? CustodyReason,
+    string? ReceiptDigest,
+    DateTime? ReceiptImportedAt,
+    Guid? RunnerStoreId,
+    bool HasReceipt);
 
 /// <summary>Why a task is Blocked — CARD-0033. RoutingExhausted is CARD-0090, added after the original three.</summary>
 public enum BlockedKind

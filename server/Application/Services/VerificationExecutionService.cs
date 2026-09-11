@@ -32,6 +32,7 @@ public sealed class VerificationExecutionService(AppDbContext db, SourceLandingA
             Id = binding.ExecutionId, TaskId = task.Id, SourceLandingOperationId = operation,
             SessionId = session.Id, AcceptedStartedAt = session.StartedAt,
             BindingJson = JsonSerializer.Serialize(binding), CreatedAt = clock.GetUtcNow().UtcDateTime,
+            CustodyReason = VerificationCustodyState.Starting.ToString(),
         });
         task.VerificationExecutionRevision++;
         return binding;
@@ -76,8 +77,12 @@ public sealed class VerificationExecutionService(AppDbContext db, SourceLandingA
             || spec.VerificationBinding is not null && spec.VerificationBinding != binding
             || spec.Backend != SessionBackend.PtyHost || spec.Cwd != binding.Creation.WorktreePath)
             throw new ConflictException("verification_custody_identity_mismatch_or_sealed");
+        var intentAt = clock.GetUtcNow().UtcDateTime;
+        var starting = VerificationCustodyState.Starting.ToString();
         await db.VerificationExecutions.Where(e => e.Id == execution.Id && e.RunnerCallIntentAt == null)
-            .ExecuteUpdateAsync(s => s.SetProperty(e => e.RunnerCallIntentAt, clock.GetUtcNow().UtcDateTime), ct);
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(e => e.RunnerCallIntentAt, intentAt)
+                .SetProperty(e => e.CustodyReason, starting), ct);
         await tx.CommitAsync(ct);
         return spec with { VerificationBinding = binding };
     }

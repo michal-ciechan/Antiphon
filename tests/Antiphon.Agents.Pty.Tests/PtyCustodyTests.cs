@@ -154,6 +154,12 @@ public class PtyCustodyTests
     }
 
     [Test]
+    public void C478_G192_BreakawayFlag() => Native_job_limits_disallow_both_breakaway_flags(0x00000800u);
+
+    [Test]
+    public void C478_G193_SilentBreakaway() => Native_job_limits_disallow_both_breakaway_flags(0x00001000u);
+
+    [Test]
     [Arguments(0x00000800u)]
     [Arguments(0x00001000u)]
     public void Native_job_limits_disallow_both_breakaway_flags(uint forbiddenFlag)
@@ -354,6 +360,18 @@ public class PtyCustodyTests
         while (connection.QueryActiveProcesses() != expected && timeout.Elapsed < TimeSpan.FromSeconds(15))
             await Task.Delay(20);
         connection.QueryActiveProcesses().ShouldBe(expected);
+    }
+
+    [Test]
+    public async Task C478_G195_TrackingBeforeResume() => await Atomic_launch_resumes_only_after_tracking_callback();
+
+    [Test]
+    public async Task C478_V14_RealDescendantContainer()
+    {
+        await C478_G198_NonemptyJob(0u, 0);
+        await C478_G198_NonemptyJob(8u, 0);
+        await C478_G198_NonemptyJob(16u, 0);
+        await Explicit_breakaway_is_refused_by_the_actual_job();
     }
 
     [Test]

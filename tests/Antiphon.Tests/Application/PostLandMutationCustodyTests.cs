@@ -27,7 +27,7 @@ public sealed class PostLandMutationCustodyTests
     [Test]
     public async Task C478_FinalBranchBoundaryReloadsCommittedAuthority()
     {
-        await using var world = await World.CreateAsync();
+        await using var world = await PostLandMutationWorld.CreateAsync();
         await world.TerminalAsync();
         await world.WriteRestorationAsync([]);
         var branch = "refs/heads/feat/card-task-" + DelegationReportFormatter.Short(world.TaskId);
@@ -54,7 +54,7 @@ public sealed class PostLandMutationCustodyTests
     [Test]
     public async Task C478_SnapshotSubdirectoryCannotLaunchAnUnboundSession()
     {
-        await using var world = await World.CreateAsync();
+        await using var world = await PostLandMutationWorld.CreateAsync();
         var nested = Path.Combine(await world.PathAsync(), "nested");
         Directory.CreateDirectory(nested);
         await using var scope = world.Host.Services.CreateAsyncScope();
@@ -70,7 +70,7 @@ public sealed class PostLandMutationCustodyTests
     [Test]
     public async Task C478_CanonicalAuthorizationRejectsAnEscapingJunction()
     {
-        await using var world = await World.CreateAsync();
+        await using var world = await PostLandMutationWorld.CreateAsync();
         var link = Path.Combine(world.Host.Fixture.Repository, "alias-outside");
         // The fixture owns both target and link; only the link is removed before fixture disposal.
         using var command = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe")
@@ -95,7 +95,7 @@ public sealed class PostLandMutationCustodyTests
     [Arguments(AgentTaskStatus.Canceled, 16u)]
     public async Task C478_V17_RealReceiptToGuardedRemoval(AgentTaskStatus terminal, uint flags)
     {
-        await using var world = await World.CreateAsync(native: true);
+        await using var world = await PostLandMutationWorld.CreateAsync(native: true);
         var binding = await world.ReserveAsync();
         var prefix = "Local\\c478-app-" + Guid.NewGuid().ToString("N");
         var roles = new[] { "root", "middle", "leaf" };
@@ -163,7 +163,7 @@ public sealed class PostLandMutationCustodyTests
     [Test]
     public async Task C478_ConfirmedSourceCreatesExactSnapshotAndRetainsIdentity()
     {
-        await using var world = await World.CreateAsync();
+        await using var world = await PostLandMutationWorld.CreateAsync();
         await using var scope = world.Host.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var task = await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
@@ -189,7 +189,7 @@ public sealed class PostLandMutationCustodyTests
     [Arguments(AgentTaskStatus.Blocked)]
     public async Task C478_OpenSourceAdmissionSerializesEvenWithDifferentCompanions(AgentTaskStatus status)
     {
-        await using var world = await World.CreateAsync();
+        await using var world = await PostLandMutationWorld.CreateAsync();
         await using (var db = world.Host.CreateContext())
         {
             var task = await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
@@ -210,7 +210,7 @@ public sealed class PostLandMutationCustodyTests
     [Test]
     public async Task C478_ConcurrentFirstSourceAdmissionAcceptsOne()
     {
-        await using var world = await World.CreateAsync();
+        await using var world = await PostLandMutationWorld.CreateAsync();
         await using (var db = world.Host.CreateContext())
         {
             var task = await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
@@ -235,7 +235,7 @@ public sealed class PostLandMutationCustodyTests
     [Arguments("repository")]
     public async Task C478_SourceIdentityRefusesIndependently(string variant)
     {
-        await using var world = await World.CreateAsync();
+        await using var world = await PostLandMutationWorld.CreateAsync();
         await using var scope = world.Host.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var task = await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
@@ -260,7 +260,7 @@ public sealed class PostLandMutationCustodyTests
     [Test]
     public async Task C478_ReservationPersistsBeforeRunnerAndSealFencesDelayedLaunch()
     {
-        await using var world = await World.CreateAsync();
+        await using var world = await PostLandMutationWorld.CreateAsync();
         var binding = await world.ReserveAsync();
         await using (var db = world.Host.CreateContext())
         {
@@ -285,7 +285,7 @@ public sealed class PostLandMutationCustodyTests
     [Test]
     public async Task C478_RecoveryConsumesSameBindingAndRetainsUncertainAttempt()
     {
-        await using var world = await World.CreateAsync();
+        await using var world = await PostLandMutationWorld.CreateAsync();
         var binding = await world.ReserveAsync();
         await using var scope = world.Host.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -306,7 +306,7 @@ public sealed class PostLandMutationCustodyTests
     [Arguments(true)]
     public async Task C478_SnapshotNeverAutosavesOrLands(bool sourced)
     {
-        await using var world = await World.CreateAsync();
+        await using var world = await PostLandMutationWorld.CreateAsync();
         await using var scope = world.Host.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var task = await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
@@ -329,7 +329,7 @@ public sealed class PostLandMutationCustodyTests
     [Arguments("missing-evidence")]
     public async Task C478_NeverReservedCleanupRetainsUnknownFiles(string variant)
     {
-        await using var world = await World.CreateAsync();
+        await using var world = await PostLandMutationWorld.CreateAsync();
         await world.TerminalAsync();
         var path = await world.PathAsync();
         await world.WriteRestorationAsync(variant == "output-escape" ? [new("../outside.txt", new string('A', 64))] : []);
@@ -350,7 +350,7 @@ public sealed class PostLandMutationCustodyTests
     [Test]
     public async Task C478_NeverReservedCleanupRemovesExactOwnedOutputsAndIsIdempotent()
     {
-        await using var world = await World.CreateAsync();
+        await using var world = await PostLandMutationWorld.CreateAsync();
         await world.TerminalAsync();
         var path = await world.PathAsync();
         Directory.CreateDirectory(Path.Combine(path, "bin-verification"));
@@ -368,7 +368,7 @@ public sealed class PostLandMutationCustodyTests
     [Test]
     public async Task C478_V17_RealModernHostReceiptImportsAndRemovesSnapshot()
     {
-        await using var world = await World.CreateAsync(native: true);
+        await using var world = await PostLandMutationWorld.CreateAsync(native: true);
         var binding = await world.ReserveAsync();
         var path = await world.PathAsync();
         await using (var scope = world.Host.Services.CreateAsyncScope())
@@ -397,7 +397,141 @@ public sealed class PostLandMutationCustodyTests
         new VerificationReceiptPolicy().ValidateImported(execution, binding);
     }
 
-    private sealed class World : IAsyncDisposable
+    [Test]
+    public async Task C478_V13_AcceptedExecutionHistory()
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync();
+        var binding = await world.ReserveAsync();
+        await using var scope = world.Host.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var execution = await db.VerificationExecutions.SingleAsync(e => e.Id == binding.ExecutionId);
+        execution.RunnerCallIntentAt.ShouldBeNull();
+        execution.CustodyReason.ShouldBe(VerificationCustodyState.Starting.ToString());
+        (execution.AcceptedStartedAt.Ticks % 10).ShouldBe(0);
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == binding.Generation.SessionId);
+        var prepared = await scope.ServiceProvider.GetRequiredService<VerificationExecutionService>()
+            .PrepareLaunchAsync(session, world.Spec(binding), default);
+        prepared.VerificationBinding.ShouldBe(binding);
+        var detail = await world.TaskService(scope.ServiceProvider).GetAsync(world.TaskId, default);
+        detail.SourceLandingOperationId.ShouldBe(world.Operation);
+        detail.SourceLandingSha.ShouldBe(world.Host.Fixture.SeedSha);
+        var listed = detail.VerificationExecutions.ShouldHaveSingleItem();
+        listed.ExecutionId.ShouldBe(binding.ExecutionId);
+        listed.RunnerStoreId.ShouldBe(binding.RunnerStoreId);
+        listed.HasReceipt.ShouldBeFalse();
+        listed.CustodyReason.ShouldBe(VerificationCustodyState.Starting.ToString());
+        await using var observer = world.Host.CreateContext();
+        (await observer.VerificationExecutions.SingleAsync(e => e.Id == binding.ExecutionId)).RunnerCallIntentAt.ShouldNotBeNull();
+    }
+
+    [Test]
+    public async Task C478_G183_PersistBinding()
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync();
+        var binding = await world.ReserveAsync();
+        await using var observer = world.Host.CreateContext();
+        var stored = await observer.VerificationExecutions.SingleAsync(e => e.Id == binding.ExecutionId);
+        stored.BindingJson.ShouldContain(binding.ExecutionId.ToString("D"));
+        stored.RunnerCallIntentAt.ShouldBeNull();
+        JsonSerializer.Deserialize<VerificationExecutionBinding>(stored.BindingJson).ShouldBe(binding);
+    }
+
+    [Test]
+    public async Task C478_G184_AcceptedGeneration()
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync();
+        var binding = await world.ReserveAsync();
+        (binding.Generation.AcceptedStartedAt.Ticks % 10).ShouldBe(0);
+        await using var observer = world.Host.CreateContext();
+        var stored = await observer.VerificationExecutions.SingleAsync(e => e.Id == binding.ExecutionId);
+        stored.AcceptedStartedAt.ShouldBe(binding.Generation.AcceptedStartedAt);
+        stored.SessionId.ShouldBe(binding.Generation.SessionId);
+    }
+
+    [Test]
+    public async Task C478_G186_AttemptHistory()
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync();
+        var first = await world.ReserveAsync();
+        await using (var db = world.Host.CreateContext())
+        {
+            var execution = await db.VerificationExecutions.SingleAsync(e => e.Id == first.ExecutionId);
+            execution.ReceiptBytes = [1, 2, 3];
+            execution.CustodyReason = VerificationCustodyState.Unknown.ToString();
+            await db.SaveChangesAsync();
+        }
+        var second = await world.ReserveAsync();
+        second.ExecutionId.ShouldNotBe(first.ExecutionId);
+        second.Generation.SessionId.ShouldNotBe(first.Generation.SessionId);
+        await using var observer = world.Host.CreateContext();
+        (await observer.VerificationExecutions.CountAsync(e => e.TaskId == world.TaskId)).ShouldBe(2);
+        (await observer.VerificationExecutions.SingleAsync(e => e.Id == first.ExecutionId)).CustodyReason
+            .ShouldBe(VerificationCustodyState.Unknown.ToString());
+    }
+
+    [Test]
+    public async Task C478_G189_NoPool()
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync();
+        var agentId = Guid.NewGuid();
+        var sessionId = Guid.NewGuid();
+        await using (var db = world.Host.CreateContext())
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = sessionId, Status = SessionStatus.Running, Cwd = task.WorktreePath!, AgentKind = AgentKind.Raw,
+                StartedAt = DateTime.UtcNow, CreatedAt = DateTime.UtcNow,
+            });
+            db.Agents.Add(new Agent
+            {
+                Id = agentId, Name = "sourced-pool", Slug = "sourced-pool", WorkingDirectory = task.WorktreePath!,
+                Status = AgentStatus.Running, Kind = AgentKind.Raw, ModelLevel = AgentModelLevel.Medium,
+                IsPoolDelegate = true, PersistentSessionId = sessionId.ToString("D"),
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+            });
+            task.AgentId = agentId;
+            task.AgentSessionId = sessionId;
+            task.Status = AgentTaskStatus.Dispatched;
+            await db.SaveChangesAsync();
+        }
+
+        var replies = new AgentTaskReplyService(
+            world.Host.Services.GetRequiredService<IServiceScopeFactory>(),
+            Options.Create(new DelegationSettings { PoolEnabled = true }),
+            new MockEventBus(), TimeProvider.System, NullLogger<AgentTaskReplyService>.Instance);
+        await replies.RecoverFromBindRefusalAsync(world.TaskId, new DelegateBindRefusalEvidence(["deadbeef"], null), default);
+
+        await using var observer = world.Host.CreateContext();
+        var agent = await observer.Agents.SingleAsync(a => a.Id == agentId);
+        agent.Status.ShouldBe(AgentStatus.Running);
+        agent.PoolIdleSince.ShouldBeNull();
+        agent.PoolReservedForRootTaskId.ShouldBeNull();
+        var task = await observer.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
+        task.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        task.AgentId.ShouldBe(agentId);
+        task.VerificationCleanupResidue.ShouldBe("verification_release_unresolved");
+        (await observer.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Running);
+    }
+
+    [Test]
+    public async Task C478_G224_EmptyHistory()
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync();
+        await world.TerminalAsync();
+        await world.WriteRestorationAsync([]);
+        await using var scope = world.Host.Services.CreateAsyncScope();
+        var result = await scope.ServiceProvider.GetRequiredService<VerificationCleanupService>().CleanupAsync(world.TaskId, default);
+        result.Residue.ShouldBeNull();
+        await using var observer = world.Host.CreateContext();
+        var task = await observer.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
+        var seal = JsonSerializer.Deserialize<VerificationCleanupSeal>(task.VerificationCleanupSealJson!);
+        seal!.NeverReserved.ShouldBeTrue();
+        (await observer.VerificationExecutions.CountAsync(e => e.TaskId == world.TaskId)).ShouldBe(0);
+    }
+}
+
+internal sealed class PostLandMutationWorld : IAsyncDisposable
     {
         public LandingSafetyHarness Host { get; } = new();
         public ISessionRunnerClient Runner { get; private set; } = null!;
@@ -414,9 +548,9 @@ public sealed class PostLandMutationCustodyTests
             new MockEventBus(), new RecordingSessionStopper(), TimeProvider.System, NullLogger<AgentTaskService>.Instance,
             sourceLanding: services.GetRequiredService<SourceLandingAdmission>());
 
-        public static async Task<World> CreateAsync(bool native = false)
+        public static async Task<PostLandMutationWorld> CreateAsync(bool native = false, bool provision = true)
         {
-            var world = new World();
+            var world = new PostLandMutationWorld();
             world.Runner = native
                 ? new DirectSessionRunnerClient(Path.Combine(world.Host.Fixture.Root, "runner"), "modern") { AdvertiseVerificationCustody = true }
                 : new FakeSessionRunnerClient { VerificationStoreId = Guid.NewGuid() };
@@ -448,6 +582,7 @@ public sealed class PostLandMutationCustodyTests
                 world.Operation = (await db.AgentTaskLandings.SingleAsync(o => o.TaskId == world.Host.Fixture.TaskId)).Id;
                 await db.SaveChangesAsync();
             }
+            if (!provision) return world;
             await using var scope = world.Host.Services.CreateAsyncScope();
             world.TaskId = (await world.TaskService(scope.ServiceProvider).CreateAsync(world.Request(world.Companion), world.Caller, default)).Id;
             var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -504,10 +639,17 @@ public sealed class PostLandMutationCustodyTests
             if (sessionId is Guid id) (await db.AgentSessions.SingleAsync(s => s.Id == id)).Status = SessionStatus.Stopped;
             await db.SaveChangesAsync();
         }
+
+        public async Task CancelOpenAsync()
+        {
+            await using var db = Host.CreateContext();
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == TaskId);
+            task.Status = AgentTaskStatus.Canceled;
+            await db.SaveChangesAsync();
+        }
         public async ValueTask DisposeAsync()
         {
             if (Runner is IAsyncDisposable disposable) await disposable.DisposeAsync();
             await Host.DisposeAsync();
         }
     }
-}

@@ -415,6 +415,16 @@ switch ($PSCmdlet.ParameterSetName) {
         if ($task.sourceLandingOperationId) {
             Write-Output "Verification source: $($task.sourceLandingOperationId); commit $($task.sourceLandingSha)"
             if ($task.verificationCleanupResidue) { Write-Output "Verification residue: $($task.verificationCleanupResidue)" }
+            if ($task.verificationCleanupSealId) {
+                Write-Output ("Verification seal: {0}; revision {1}; removed dir={2} registration={3} branch={4}" -f `
+                    $task.verificationCleanupSealId, $task.verificationExecutionRevision, `
+                    $task.verificationDirectoryRemoved, $task.verificationRegistrationRemoved, $task.verificationBranchRemoved)
+            }
+            foreach ($execution in @($task.verificationExecutions)) {
+                $receipt = if ($execution.hasReceipt) { $execution.receiptDigest } else { 'none' }
+                Write-Output ("Execution {0}: session {1}; {2}; receipt {3}" -f `
+                    $execution.executionId, $execution.sessionId, $execution.custodyReason, $receipt)
+            }
         }
         if ($task.legacyLandReceipt) { Write-Output "Legacy receipt: $($task.legacyLandReceipt.state); event $($task.legacyLandReceipt.eventId)" }
         if ($task.landRequest) {
