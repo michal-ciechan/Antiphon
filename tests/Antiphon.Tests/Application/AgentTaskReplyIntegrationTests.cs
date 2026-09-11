@@ -4293,7 +4293,10 @@ public class AgentTaskReplyIntegrationTests
             services.AddSingleton<AgentSessionRuntime>();
             services.AddSingleton<SessionMessageQueueService>();
             services.AddSingleton<ApiErrorRecoveryService>();
-            services.AddSingleton<CapacityRecoveryService>();
+            // Legacy parked-exhaustion fixtures disable CapacityRecovery so WallParked
+            // still Fails the task; omitting the service keeps CapacityWaitId unset.
+            if (supervision?.CapacityRecovery.Enabled ?? true)
+                services.AddSingleton<CapacityRecoveryService>();
             services.AddScoped<ModelAvailability>();
             // The settle path's collaborators: merge-back, the Merge-task spawner, ephemeral cleanup.
             services.AddSingleton<Antiphon.Server.Application.Interfaces.IDelegateSessionStopper>(Stopper);
