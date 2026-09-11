@@ -51,7 +51,7 @@ function Save-NightlyNotificationStore {
     Write-NightlyAtomicJson -Path $Path -Object $Store
 }
 
-function New-NightlyNotificationIdentity {
+function Get-NightlyNotificationLogicalIdentity {
     param($Event)
     $parts = @(
         [string]$Event.workspace
@@ -61,9 +61,13 @@ function New-NightlyNotificationIdentity {
         [string]$Event.sha
         [string]$Event.policyHash
         [string]$Event.failureKind
-        [string]$Event.notificationId
     )
     return ($parts -join '|')
+}
+
+function New-NightlyNotificationIdentity {
+    param($Event)
+    return ((Get-NightlyNotificationLogicalIdentity -Event $Event) + '|' + [string]$Event.notificationId)
 }
 
 function Add-NightlyNotificationEvent {
@@ -74,15 +78,92 @@ function Add-NightlyNotificationEvent {
     $store = Read-NightlyNotificationStore -Path $StorePath
     $events = @()
     if ($store.events) { $events = @($store.events) }
-    $id = New-NightlyNotificationIdentity -Event $Event
-    $existing = @($events | Where-Object { (New-NightlyNotificationIdentity -Event $_) -eq $id })
-    if ($existing.Count -gt 0 -and [string]$Event.failureKind -eq [string]$existing[0].failureKind) {
+    $logical = Get-NightlyNotificationLogicalIdentity -Event $Event
+    $existing = @($events | Where-Object { (Get-NightlyNotificationLogicalIdentity -Event $_) -eq $logical })
+    if ($existing.Count -gt 0) {
         return [pscustomobject]@{ Deduped = $true; Event = $existing[0] }
+    }
+    if ($Event -is [System.Collections.IDictionary]) {
+        if ([string]::IsNullOrWhiteSpace([string]$Event['notificationId'])) {
+            $Event['notificationId'] = New-NightlyRunId
+        }
+        if ([string]::IsNullOrWhiteSpace([string]$Event['status'])) {
+            $Event['status'] = 'pending'
+        }
+    } else {
+        if ([string]::IsNullOrWhiteSpace([string]$Event.notificationId)) {
+            $Event | Add-Member -NotePropertyName notificationId -NotePropertyValue (New-NightlyRunId) -Force
+        }
+        if ([string]::IsNullOrWhiteSpace([string]$Event.status)) {
+            $Event | Add-Member -NotePropertyName status -NotePropertyValue 'pending' -Force
+        }
     }
     $events += $Event
     $store = [ordered]@{ events = $events }
     Save-NightlyNotificationStore -Path $StorePath -Store $store
     return [pscustomobject]@{ Deduped = $false; Event = $Event }
+}
+
+function New-NightlyNotificationPayload {
+    param($Event, [string]$Destination)
+    $id = [string]$Event.notificationId
+    $run = [string]$Event.nativeRunId
+    $text = ('Antiphon nightly monitor failureKind={0} run={1} sha={2} notificationId={3}' -f `
+        [string]$Event.failureKind, $run, [string]$Event.sha, $id)
+    return [ordered]@{
+        text = $text
+        chat_id = $Destination
+        notificationId = $id
+        nativeRunId = $run
+    }
+}
+
+function Read-NightlyRecipientReceiptStore {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return [pscustomobject]@{ receipts = @() }
+    }
+    $obj = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($null -eq $obj) { return [pscustomobject]@{ receipts = @() } }
+    if ($obj.receipts) { return [pscustomobject]@{ receipts = @($obj.receipts) } }
+    if ($obj -is [System.Array]) { return [pscustomobject]@{ receipts = @($obj) } }
+    return [pscustomobject]@{ receipts = @($obj) }
+}
+
+function Save-NightlyRecipientReceipt {
+    param([string]$StateRoot, $Event)
+    $path = Get-NightlyRecipientReceiptPath -StateRoot $StateRoot
+    $store = Read-NightlyRecipientReceiptStore -Path $path
+    $receipts = @($store.receipts)
+    $id = [string]$Event.notificationId
+    $run = [string]$Event.nativeRunId
+    foreach ($item in $receipts) {
+        if ([string]$item.notificationId -eq $id -and [string]$item.nativeRunId -eq $run) {
+            return
+        }
+    }
+    $receipts += [ordered]@{
+        notificationId = $id
+        nativeRunId = $run
+        receivedAt = (Get-NightlyUtcNow).ToString('o')
+    }
+    Write-NightlyAtomicJson -Path $path -Object ([ordered]@{ receipts = @($receipts) })
+}
+
+function Set-NightlyNotificationReceived {
+    param([string]$StorePath, $Event)
+    $store = Read-NightlyNotificationStore -Path $StorePath
+    $events = @()
+    if ($store.events) { $events = @($store.events) }
+    $logical = Get-NightlyNotificationLogicalIdentity -Event $Event
+    $updated = @()
+    foreach ($e in $events) {
+        if ((Get-NightlyNotificationLogicalIdentity -Event $e) -eq $logical) {
+            $e | Add-Member -NotePropertyName status -NotePropertyValue 'received' -Force
+        }
+        $updated += $e
+    }
+    Save-NightlyNotificationStore -Path $StorePath -Store ([ordered]@{ events = $updated })
 }
 
 function Invoke-NightlyNotificationEnqueue {
@@ -400,8 +481,7 @@ function New-NightlyProductionWindmillApi {
         }.GetNewClosure()
         EnqueueNotification = {
             param($Event, [string]$Destination)
-            $text = ('Antiphon nightly monitor failureKind={0} run={1} sha={2}' -f [string]$Event.failureKind, [string]$Event.nativeRunId, [string]$Event.sha)
-            $body = @{ text = $text; chat_id = $Destination }
+            $body = New-NightlyNotificationPayload -Event $Event -Destination $Destination
             $job = Invoke-NightlyWindmillHttp -Method POST `
                 -Url ('{0}/api/w/{1}/jobs/run/p/{2}' -f $base, $ws, [string]$Config.NotifyPath) `
                 -Token $token -Body $body
@@ -409,6 +489,7 @@ function New-NightlyProductionWindmillApi {
                 Enqueued = $true
                 TransportStatus = 201
                 JobId = [string]$job
+                NotificationId = [string]$body.notificationId
                 Received = $false
             }
         }.GetNewClosure()
@@ -424,15 +505,14 @@ function Get-NightlyWindmillApi {
 
 function Get-NightlyRecipientView {
     param([string]$StateRoot)
-    if ($script:NightlySeams -and $script:NightlySeams.RecipientView) {
-        return @($script:NightlySeams.RecipientView.Invoke())
-    }
+    $items = @()
     $path = Get-NightlyRecipientReceiptPath -StateRoot $StateRoot
-    if (-not (Test-Path -LiteralPath $path)) { return @() }
-    $obj = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($obj.receipts) { return @($obj.receipts) }
-    if ($obj -is [System.Array]) { return @($obj) }
-    return @($obj)
+    $fileStore = Read-NightlyRecipientReceiptStore -Path $path
+    if ($fileStore.receipts) { $items += @($fileStore.receipts) }
+    if ($script:NightlySeams -and $script:NightlySeams.RecipientView) {
+        $items += @($script:NightlySeams.RecipientView.Invoke())
+    }
+    return @($items)
 }
 
 function Get-NightlyNotificationSink {
@@ -501,17 +581,25 @@ function Invoke-AntiphonNightlyHealth {
             }
             $storePath = Get-NightlyNotificationStorePath -StateRoot $StateRoot
             $saved = Add-NightlyNotificationEvent -StorePath $storePath -Event $event
+            $deliveredEvent = $saved.Event
             $sink = Get-NightlyNotificationSink -Api $api -AuthorizedDestination $AuthorizedDestination
-            try {
-                if ($sink) { $notify = Invoke-NightlyNotificationEnqueue -Event $saved.Event -Sink $sink }
-            } catch {
-                $notify = [pscustomobject]@{ Enqueued = $false; Error = $_.Exception.Message; Received = $false }
-                $health.Healthy = $false
-                $health.Reasons += 'enqueue-failed'
-            }
             $view = Get-NightlyRecipientView -StateRoot $StateRoot
-            $receiptOk = Test-NightlyNotificationReceipt -Event $saved.Event -RecipientView $view
+            $receiptOk = Test-NightlyNotificationReceipt -Event $deliveredEvent -RecipientView $view
             if (-not $receiptOk) {
+                try {
+                    if ($sink) { $notify = Invoke-NightlyNotificationEnqueue -Event $deliveredEvent -Sink $sink }
+                } catch {
+                    $notify = [pscustomobject]@{ Enqueued = $false; Error = $_.Exception.Message; Received = $false }
+                    $health.Healthy = $false
+                    $health.Reasons += 'enqueue-failed'
+                }
+                $view = Get-NightlyRecipientView -StateRoot $StateRoot
+                $receiptOk = Test-NightlyNotificationReceipt -Event $deliveredEvent -RecipientView $view
+            }
+            if ($receiptOk) {
+                Save-NightlyRecipientReceipt -StateRoot $StateRoot -Event $deliveredEvent
+                Set-NightlyNotificationReceived -StorePath $storePath -Event $deliveredEvent
+            } else {
                 $health.Healthy = $false
                 if ($health.Reasons -notcontains 'notification-unreceived') {
                     $health.Reasons += 'notification-unreceived'
