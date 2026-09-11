@@ -292,15 +292,23 @@ GET    /api/distillations/stats              CARD-0330 counts by outcome/feedbac
 POST   /api/agent-tasks/{id}/finding         CARD-0272: orchestrator override of a stage
                                              finding. Body `RecordStageFindingRequest`:
                                              `stage` (name, not ordinal — unknown is 422),
-                                             `found` bool, optional `detail`. Writes a
-                                             `Source=Orchestrator` `StageOutcome` row that
-                                             supersedes the latest for that (task, stage).
-                                             `delegate.ps1 -Finding <id> -Stage … -Found
-                                             "…"` / `-Clean`.
+                                             `found` bool, optional `detail`, optional
+                                             `reviewedSourceSha` (Review Clean only; 422
+                                             otherwise). Writes a `Source=Orchestrator`
+                                             `StageOutcome` row that supersedes the latest
+                                             for that (task, stage). Does not copy a prior
+                                             approved SHA. `delegate.ps1 -Finding <id>
+                                             -Stage … -Found "…"` / `-Clean`
+                                             [`-ReviewedSourceSha`].
 POST   /api/agent-tasks/{id}/land            queue an explicit land of a Succeeded Worktree
-                                             task (`{ verify?: string }`). 202
+                                             task (`{ expectedSourceSha, reviewEvidenceId?,
+                                             verify? }`). Fresh work requires a full
+                                             40/64-hex SHA (422 without it). Optional
+                                             review evidence must match subject/SHA/ref/repo
+                                             (409). Pending identity is immutable. 202
                                              `{ status: "queued" | "requeued" }`; git
-                                             runs in the background. Outcomes: `Landed`
+                                             runs in the background after remote-source
+                                             freshness. Outcomes: `Landed`
                                              (publication confirmed, cleaned), `AlreadyPresent`
                                              (exact remote containment; cleanup separately
                                              reported), `LandedWithResidue`
@@ -310,8 +318,9 @@ POST   /api/agent-tasks/{id}/land            queue an explicit land of a Succeed
                                              never a second publication), `LandRefused`
                                              (publication refused/unconfirmed; local target
                                              may have advanced). GET task detail includes
-                                             structured `landing`: operation, mode, phase,
-                                             source/verified/remote SHAs, publication, cleanup
+                                             structured `landing`/`landRequest`/`reviewEvidence`:
+                                             approved original vs verified SHAs, remote source,
+                                             publication, cleanup
                                              and reason. New landing events also carry
                                              nullable landingOperationId, landingPublication,
                                              landingCleanup and landingMode snapshots;

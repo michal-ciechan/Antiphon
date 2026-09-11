@@ -304,7 +304,7 @@ namespace Antiphon.Server.Migrations
             migrationBuilder.AddCheckConstraint(
                 name: "CK_AgentTaskLandings_V2Approval",
                 table: "AgentTaskLandings",
-                sql: "\"SchemaVersion\" <> 2 OR (\"ApprovalLandRequestId\" IS NOT NULL AND \"ReviewedSourceSha\" IS NOT NULL AND \"ReviewedSourceSha\" = \"OriginalSourceSha\")");
+                sql: "\"SchemaVersion\" <> 2 OR (\"ApprovalLandRequestId\" IS NOT NULL AND \"ReviewedSourceSha\" IS NOT NULL)");
 
             migrationBuilder.AddCheckConstraint(
                 name: "CK_AgentTaskLandings_V2ApprovalEquality",

@@ -1479,7 +1479,7 @@ namespace Antiphon.Server.Migrations
                         {
                             t.HasCheckConstraint("CK_AgentTaskLandings_OidShape", "(\"OriginalSourceSha\" = '' OR ((length(\"OriginalSourceSha\") = 40 OR length(\"OriginalSourceSha\") = 64) AND \"OriginalSourceSha\" ~ '^[0-9a-f]+$')) AND (\"ReviewedSourceSha\" IS NULL OR ((length(\"ReviewedSourceSha\") = 40 OR length(\"ReviewedSourceSha\") = 64) AND \"ReviewedSourceSha\" ~ '^[0-9a-f]+$')) AND (\"PreparationInputSha\" IS NULL OR ((length(\"PreparationInputSha\") = 40 OR length(\"PreparationInputSha\") = 64) AND \"PreparationInputSha\" ~ '^[0-9a-f]+$')) AND (\"SourceRemoteSha\" IS NULL OR ((length(\"SourceRemoteSha\") = 40 OR length(\"SourceRemoteSha\") = 64) AND \"SourceRemoteSha\" ~ '^[0-9a-f]+$'))");
 
-                            t.HasCheckConstraint("CK_AgentTaskLandings_V2Approval", "\"SchemaVersion\" <> 2 OR (\"ApprovalLandRequestId\" IS NOT NULL AND \"ReviewedSourceSha\" IS NOT NULL AND \"ReviewedSourceSha\" = \"OriginalSourceSha\")");
+                            t.HasCheckConstraint("CK_AgentTaskLandings_V2Approval", "\"SchemaVersion\" <> 2 OR (\"ApprovalLandRequestId\" IS NOT NULL AND \"ReviewedSourceSha\" IS NOT NULL)");
 
                             t.HasCheckConstraint("CK_AgentTaskLandings_V2ApprovalEquality", "\"SchemaVersion\" <> 2 OR \"ReviewedSourceSha\" = \"OriginalSourceSha\"");
                         });

@@ -56,7 +56,7 @@ composition is kept current automatically: an idle seat with drifted bundles is 
 restart.
 
 **Also delegated: the landing mechanics.** For a delegated Worktree task, the orchestrator orders
-the landing with `delegate.ps1 -Land <id>` (optionally `-Verify <filter>`); the server fetches,
+the landing with `delegate.ps1 -Land <id> -ExpectedSourceSha <full-sha>` (optionally `-Verify <filter>` and `-ReviewEvidenceId`); the server fetches,
 rebases, verifies when required, fast-forwards, pushes, and cleans up. The resulting
 `Landed` / `AlreadyPresent` / `LandedWithResidue` outcome records confirmed remote containment.
 Publication and cleanup have separate durable statuses. `LandRefused` leaves publication
@@ -551,8 +551,8 @@ the same areas. Land this branch first, or expect its rebase to replay onto thei
 For a succeeded Worktree task, make the ordered landing decision with one call:
 
 ```powershell
-pwsh -NoProfile -File scripts/delegate.ps1 -Land <id>
-# Add -Verify "<treenode-filter>" when that narrow test is part of the landing decision.
+pwsh -NoProfile -File scripts/delegate.ps1 -Land <original-code-task> -ExpectedSourceSha <full-reviewed-sha>
+# Optional: -ReviewEvidenceId <review-outcome-guid> -Verify "<treenode-filter>"
 ```
 
 The server performs the fetch, rebase, conditional build and optional named test, fast-forward,
