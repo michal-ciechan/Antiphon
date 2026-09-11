@@ -9,7 +9,8 @@ public sealed record VerificationExecutionBinding(
     [property: JsonRequired] VerificationSessionGeneration Generation,
     [property: JsonRequired] VerificationCreationCoordinates Creation,
     [property: JsonRequired] int CustodyContractVersion = 1,
-    [property: JsonRequired] string Backend = "windows-job-v1");
+    [property: JsonRequired] string Backend = "windows-job-v1",
+    [property: JsonRequired] Guid RunnerStoreId = default);
 
 public sealed record VerificationSourceIdentity([property: JsonRequired] Guid TaskId,
     [property: JsonRequired] Guid SourceOperationId, [property: JsonRequired] string LandedSha);

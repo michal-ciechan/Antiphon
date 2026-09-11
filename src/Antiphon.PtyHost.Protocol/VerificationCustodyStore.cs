@@ -74,6 +74,7 @@ public sealed class VerificationCustodyStore
     private readonly IVerificationCustodyFiles _files;
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web);
     public string Root { get; }
+    public string IdentityAnchorPath => Path.TrimEndingDirectorySeparator(Root) + ".identity.json";
     public Guid StoreId { get; }
 
     public VerificationCustodyStore(string root, Guid? expectedStoreId = null,
@@ -83,6 +84,7 @@ public sealed class VerificationCustodyStore
         _files = files ?? new VerificationCustodyFiles();
         Directory.CreateDirectory(Root);
         var identityPath = Path.Combine(Root, "store.json");
+        var anchor = Read<StoreIdentity>(IdentityAnchorPath);
         // Serialize store initialization across runner processes. Losing an existing identity
         // cannot turn an old ledger into a freshly empty runner.
         var identity = Read<StoreIdentity>(identityPath);
@@ -93,14 +95,17 @@ public sealed class VerificationCustodyStore
             identity = Read<StoreIdentity>(identityPath);
             if (identity is null)
             {
-                if (expectedStoreId is not null || Directory.EnumerateDirectories(Root).Any()
+                if (expectedStoreId is not null || anchor is not null || Directory.EnumerateDirectories(Root).Any()
                     || Directory.EnumerateFiles(Root).Any(p => Path.GetFileName(p) != "store.lock"))
                     throw new VerificationCustodyException("verification_custody_store_identity_missing");
                 identity = new(1, Guid.NewGuid());
+                Write(IdentityAnchorPath, identity);
+                anchor = identity;
                 Write(identityPath, identity);
             }
         }
         if (identity.SchemaVersion != 1 || identity.StoreId == Guid.Empty
+            || anchor != identity
             || (expectedStoreId is { } expected && expected != identity.StoreId))
             throw new VerificationCustodyException("verification_custody_identity_mismatch");
         StoreId = identity.StoreId;
@@ -224,6 +229,8 @@ public sealed class VerificationCustodyStore
     public void ValidateBinding(VerificationExecutionBinding binding)
     {
         RequireStoreIdentity();
+        if (binding.RunnerStoreId != StoreId)
+            throw new VerificationCustodyException("verification_custody_identity_mismatch");
         if (binding.ExecutionId == Guid.Empty || binding.Source is null || binding.Generation is null
             || binding.Creation is null || binding.Source.TaskId == Guid.Empty || binding.Source.SourceOperationId == Guid.Empty
             || binding.Source.LandedSha is not { Length: 40 } sha || !sha.All(Uri.IsHexDigit)
@@ -265,6 +272,8 @@ public sealed class VerificationCustodyStore
     private void RequireStoreIdentity()
     {
         if (Read<StoreIdentity>(Path.Combine(Root, "store.json")) != new StoreIdentity(1, StoreId))
+            throw new VerificationCustodyException("verification_custody_identity_mismatch");
+        if (Read<StoreIdentity>(IdentityAnchorPath) != new StoreIdentity(1, StoreId))
             throw new VerificationCustodyException("verification_custody_identity_mismatch");
     }
 
