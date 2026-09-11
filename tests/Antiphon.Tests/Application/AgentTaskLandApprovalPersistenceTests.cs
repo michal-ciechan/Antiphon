@@ -87,9 +87,9 @@ public sealed class AgentTaskLandApprovalPersistenceTests
             """);
         var requestId = Guid.NewGuid();
         await db.Database.ExecuteSqlInterpolatedAsync($"""
-            INSERT INTO "AgentTaskLandRequests" ("Id", "TaskId", "RequestedAt", "State", "IsPending",
+            INSERT INTO "AgentTaskLandRequests" ("Id", "TaskId", "RequestedAt", "ReplyTo", "State", "IsPending",
                 "Attempt", "LastEvaluatedAt", "LastProgressAt", "HighestProgress", "HoldEpisode", "ConcurrencyToken")
-            VALUES ({requestId}, {id}, {DateTime.UtcNow}, 0, TRUE, 0, {DateTime.UtcNow}, {DateTime.UtcNow}, -2, 0, {Guid.NewGuid()})
+            VALUES ({requestId}, {id}, {DateTime.UtcNow}, 0, 0, TRUE, 0, {DateTime.UtcNow}, {DateTime.UtcNow}, -2, 0, {Guid.NewGuid()})
             """);
         await db.GetService<IMigrator>().MigrateAsync(migrations[^1]);
         await db.GetService<IMigrator>().MigrateAsync(migrations[^1]);
@@ -116,7 +116,7 @@ public sealed class AgentTaskLandApprovalPersistenceTests
         var id = Guid.NewGuid();
         db.AgentTasks.Add(new AgentTask { Id = id, RootTaskId = id, CreatedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();
-        var error = await Should.ThrowAsync<DbUpdateException>(() => db.Database.ExecuteSqlInterpolatedAsync($"""
+        var error = await Should.ThrowAsync<PostgresException>(() => db.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO "AgentTaskLandings" ("Id", "TaskId", "SchemaVersion", "Active", "ConcurrencyToken",
                 "Phase", "Publication", "Cleanup", "Mode", "CreatedAt", "UpdatedAt",
                 "RepositoryPath", "CommonDirectory", "WorktreePath", "GitDirectory",
@@ -131,7 +131,8 @@ public sealed class AgentTaskLandApprovalPersistenceTests
                 'origin', 'refs/heads/master', {new string('c', 64)}, 'refs/antiphon/land/x',
                 FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE)
             """));
-        ((PostgresException)error.InnerException!).ConstraintName.ShouldBe("CK_AgentTaskLandings_V2Approval");
+        error.SqlState.ShouldBe(PostgresErrorCodes.CheckViolation);
+        error.ConstraintName.ShouldBe("CK_AgentTaskLandings_V2Approval");
     }
 
     [Test]
@@ -142,14 +143,15 @@ public sealed class AgentTaskLandApprovalPersistenceTests
         var id = Guid.NewGuid();
         db.AgentTasks.Add(new AgentTask { Id = id, RootTaskId = id, CreatedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();
-        var error = await Should.ThrowAsync<DbUpdateException>(() => db.Database.ExecuteSqlInterpolatedAsync($"""
-            INSERT INTO "AgentTaskLandRequests" ("Id", "TaskId", "RequestedAt", "State", "IsPending",
+        var error = await Should.ThrowAsync<PostgresException>(() => db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "AgentTaskLandRequests" ("Id", "TaskId", "RequestedAt", "ReplyTo", "State", "IsPending",
                 "Attempt", "LastEvaluatedAt", "LastProgressAt", "HighestProgress", "HoldEpisode",
-                "ConcurrencyToken", "SchemaVersion", "ExpectedSourceSha")
-            VALUES ({Guid.NewGuid()}, {id}, {DateTime.UtcNow}, 0, TRUE, 0, {DateTime.UtcNow}, {DateTime.UtcNow},
-                -2, 0, {Guid.NewGuid()}, 2, 'deadbee')
+                "ConcurrencyToken", "SchemaVersion", "ExpectedSourceSha", "ResolvedSourceSha")
+            VALUES ({Guid.NewGuid()}, {id}, {DateTime.UtcNow}, 0, 0, TRUE, 0, {DateTime.UtcNow}, {DateTime.UtcNow},
+                -2, 0, {Guid.NewGuid()}, 2, {Sha}, 'deadbee')
             """));
-        ((PostgresException)error.InnerException!).ConstraintName.ShouldBe("CK_AgentTaskLandRequests_V2Approval");
+        error.SqlState.ShouldBe(PostgresErrorCodes.CheckViolation);
+        error.ConstraintName.ShouldBe("CK_AgentTaskLandRequests_OidShape");
     }
 
     [Test]
@@ -161,7 +163,7 @@ public sealed class AgentTaskLandApprovalPersistenceTests
         var opId = Guid.NewGuid();
         db.AgentTasks.Add(new AgentTask { Id = id, RootTaskId = id, CreatedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();
-        var error = await Should.ThrowAsync<DbUpdateException>(() => db.Database.ExecuteSqlInterpolatedAsync($"""
+        var error = await Should.ThrowAsync<PostgresException>(() => db.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO "AgentTaskLandings" ("Id", "TaskId", "SchemaVersion", "Active", "ConcurrencyToken",
                 "Phase", "Publication", "Cleanup", "Mode", "CreatedAt", "UpdatedAt",
                 "RepositoryPath", "CommonDirectory", "WorktreePath", "GitDirectory",
@@ -177,6 +179,7 @@ public sealed class AgentTaskLandApprovalPersistenceTests
                 {"refs/antiphon/land/" + id.ToString("N") + "/" + opId.ToString("N")},
                 FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE)
             """));
-        ((PostgresException)error.InnerException!).ConstraintName.ShouldBe("CK_AgentTaskLandings_V2ApprovalEquality");
+        error.SqlState.ShouldBe(PostgresErrorCodes.CheckViolation);
+        error.ConstraintName.ShouldBe("CK_AgentTaskLandings_V2ApprovalEquality");
     }
 }

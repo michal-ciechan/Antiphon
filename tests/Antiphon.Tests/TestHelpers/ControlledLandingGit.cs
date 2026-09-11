@@ -141,10 +141,12 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
         Func<int, long, CancellationToken, Task> started, CancellationToken ct)
         => await ExecuteAsync(repository, arguments, started, ct);
 
+    public bool? ProcessAlive { get; set; } = false;
+
     public Task<bool?> IsProcessAliveAsync(int processId, long startTicks, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        return Task.FromResult<bool?>(false);
+        return Task.FromResult(ProcessAlive);
     }
 
     public Task<string> CanonicalDirectoryAsync(string path, CancellationToken ct)
@@ -238,16 +240,51 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
     {
         SourceObservationAttempts++;
         if (OnSourceObservation is not null) await OnSourceObservation(SourceObservationAttempts);
-        if (SourceReadError is not null) return new(null, null, Fingerprint, SourceReadError);
-        if (RemoteSourceMissing) return new(null, null, Fingerprint, "source_remote_missing");
+        if (SourceReadError is not null) return new(null, null, CurrentFingerprint(), SourceReadError);
+        if (RemoteSourceMissing) return new(null, null, CurrentFingerprint(), "source_remote_missing");
         var pin = $"{observationPrefix}/{Guid.NewGuid():N}";
         var fetch = await RunAsync(repository,
             ["fetch", "--no-tags", "--no-write-fetch-head", _endpoint, $"{sourceFullRef}:{pin}"], ct);
-        if (!fetch.Succeeded) return new(null, null, Fingerprint, "source_remote_fetch_failed");
-        return new(_remoteSource, pin, Fingerprint, null);
+        if (!fetch.Succeeded) return new(null, null, CurrentFingerprint(), "source_remote_fetch_failed");
+        return new(_remoteSource, pin, CurrentFingerprint(), null);
     }
 
     public void SetRemoteSource(string sha) => _remoteSource = sha;
+
+    public string AdvanceRemoteSource()
+    {
+        var sha = NextOid();
+        _objects[sha] = new Commit(sha, [_remoteSource]);
+        _remoteSource = sha;
+        return sha;
+    }
+
+    public string DivergeRemoteSource()
+    {
+        var sha = NextOid();
+        _objects[sha] = new Commit(sha, [SeedSha]);
+        _remoteSource = sha;
+        return sha;
+    }
+
+    public void RewindSource(string sha)
+    {
+        _sourceHead = sha;
+        _refs[_sourceBranch] = sha;
+        _worktrees[Source] = _worktrees[Source] with { Head = sha };
+    }
+
+    public void MarkSourceSequencer() => _sequencer.Add("rebase-apply");
+
+    public void SwitchSourceBranch(string branch)
+    {
+        var full = branch.StartsWith("refs/", StringComparison.Ordinal) ? branch : "refs/heads/" + branch;
+        _sourceBranch = full;
+        _refs[full] = _sourceHead;
+        _worktrees[Source] = _worktrees[Source] with { Branch = full };
+    }
+
+    public void SetEndpoint(string endpoint) => _endpoint = endpoint.Replace('\\', '/');
 
     public async Task<LandingGitResult> PinAsync(string repository, string recoveryRef, string sha, CancellationToken ct)
     {
@@ -746,6 +783,8 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
     private bool IsSource(string path) => PathsEqual(path, Source);
     private bool IsRemote(string path) => PathsEqual(path, Remote);
     private string WorktreePath(string repository) => IsSource(repository) ? Source : Repository;
+    private string CurrentFingerprint() => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(_endpoint)));
+
     private string NextOid()
     {
         _oid++;

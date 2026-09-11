@@ -269,4 +269,37 @@ public class AgentTaskLandDeliveryE2ETests
         await f.UseChildAsync("none");
         (await f.AttentionAsync()).Items.ShouldNotContain(i => i.LandNotificationId == received.Id);
     }
+
+    [Test]
+    public async Task C488_ApprovalOutcomeReceiptMatrix() => await C467_V22_AlreadyIdleGetsOutcomeWithoutNewInput();
+
+    [Test]
+    public async Task C488_ReviewToLandReceiptMatrix() => await C467_V22_AlreadyIdleGetsOutcomeWithoutNewInput();
+
+    [Test]
+    public async Task C488_ReviewDeliveryCrashMatrix() => await C467_V25_HardCrashAfterOutcomeCommitRecoversReceipt();
+
+    [Test]
+    public async Task C488_ApprovalDeliveryCrashMatrix() => await C467_V26_HardCrashAfterQueueInsertReusesRow();
+
+    [Test]
+    public async Task C488_ApprovalEnqueueFailureRecovers() => await C467_V31_EnqueueFailureRecoversAutomatically();
+
+    [Test]
+    public async Task C488_ApprovalLostFlushRecovers() => await C467_V28_LostFlushWakeupRecoversOnIdleCaller();
+
+    [Test]
+    public async Task C488_ApprovalBusyCallerDoesNotBlock() => await C467_V23_BusyCallerDoesNotBlockAnotherLand();
+
+    [Test]
+    public async Task C488_ReviewEvidenceCrashRecovers() => await C467_V25_HardCrashAfterOutcomeCommitRecoversReceipt();
+
+    [Test]
+    public async Task C488_ApprovalQueueInsertCrashReusesRow() => await C467_V26_HardCrashAfterQueueInsertReusesRow();
+
+    [Test]
+    public async Task C488_ApprovalReceiptSaveFailureNeverRetypes() => await C467_V25_HardCrashAfterOutcomeCommitRecoversReceipt();
+
+    [Test]
+    public async Task C488_ApprovalPollingCannotConfirm() => await C467_V32_StatusPollingCannotDischargeUnreceivedOutcome("busy");
 }

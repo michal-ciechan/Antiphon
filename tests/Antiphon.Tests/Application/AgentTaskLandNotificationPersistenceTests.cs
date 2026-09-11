@@ -20,6 +20,27 @@ namespace Antiphon.Tests.Application;
 public sealed class AgentTaskLandNotificationPersistenceTests
 {
     [Test]
+    public async Task C488_ApprovalOutcomeTransactionAtomic()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        h.Fault.TerminalCut = "before-save";
+        await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.RunAsync());
+        await using (var cut = h.CreateContext())
+        {
+            (await cut.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Fixture.TaskId && e.IsLandTerminal)).ShouldBe(0);
+            (await cut.AgentTaskLandNotifications.CountAsync(n => n.TaskId == h.Fixture.TaskId && n.Kind == LandNotificationKind.Outcome)).ShouldBe(0);
+        }
+        h.Fault.TerminalCut = null;
+        await h.RestartServicesAsync();
+        await h.RunAsync();
+        await using var db = h.CreateContext();
+        var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == h.Fixture.TaskId && n.Kind == LandNotificationKind.Outcome);
+        (await db.AgentTaskEvents.CountAsync(e => e.LandRequestId == note.RequestId && e.IsLandTerminal)).ShouldBe(1);
+    }
+
+    [Test]
     public async Task C467_V07_ConcurrentSettlementAndExplicitCleanup()
     {
         await using var h = new LandingSafetyHarness(); await h.InitializeAsync(); await h.AddSourceAsync(); await h.RunAsync();

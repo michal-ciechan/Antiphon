@@ -124,12 +124,13 @@ public sealed class AgentTaskLandSourceResolver(
         request.SourceResolutionState = LandSourceResolutionState.Observed;
         await SaveRequestAsync(request, ct);
 
+        var afterObserved = await RecheckRemoteAsync(coordinates.RepositoryPath, coordinates.SourceFullRef, prefix,
+            observed, ct);
+        if (afterObserved is not null)
+            return await RefuseAsync(request, afterObserved, local.HeadSha, request.RemoteSourceSha, expected, ct);
+
         if (graph.Relationship == LandSourceRelationship.Behind)
         {
-            var recheck = await git.ObserveSourceAsync(coordinates.RepositoryPath, coordinates.SourceFullRef,
-                prefix, ct);
-            if (!recheck.Accepted || recheck.Sha != observed.Sha || recheck.Fingerprint != observed.Fingerprint)
-                return await RefuseAsync(request, "source_remote_changed", local.HeadSha, recheck.Sha, expected, ct);
             var still = await git.InspectAsync(coordinates, ct);
             if (!still.Accepted || still.Snapshot!.HeadSha != local.HeadSha
                 || still.Snapshot.GitDirectory != local.GitDirectory
@@ -139,6 +140,10 @@ public sealed class AgentTaskLandSourceResolver(
             request.SourceResolutionState = LandSourceResolutionState.AdvanceStarted;
             request.SourceAdvanceChildOperation = "source-ff";
             await SaveRequestAsync(request, ct);
+            var beforeMerge = await RecheckRemoteAsync(coordinates.RepositoryPath, coordinates.SourceFullRef, prefix,
+                observed, ct);
+            if (beforeMerge is not null)
+                return await RefuseAsync(request, beforeMerge, local.HeadSha, request.RemoteSourceSha, expected, ct);
             var merge = await git.RunOwnedAsync(local.RegisteredPath,
                 ["-c", "merge.autoStash=false", "merge", "--ff-only", expected],
                 async (pid, ticks, token) =>
@@ -159,6 +164,10 @@ public sealed class AgentTaskLandSourceResolver(
                 || after.Snapshot.CommonDirectory != local.CommonDirectory
                 || after.Snapshot.RegisteredPath != local.RegisteredPath)
                 return await RefuseAsync(request, after.Reason ?? "source_changed", after.Snapshot?.HeadSha, observed.Sha, expected, ct);
+            var afterFf = await RecheckRemoteAsync(coordinates.RepositoryPath, coordinates.SourceFullRef, prefix,
+                observed, ct);
+            if (afterFf is not null)
+                return await RefuseAsync(request, afterFf, expected, request.RemoteSourceSha, expected, ct);
         }
 
         request.ResolvedSourceSha = expected;
@@ -187,6 +196,9 @@ public sealed class AgentTaskLandSourceResolver(
         var fresh = await git.InspectAsync(coordinates, ct);
         if (!fresh.Accepted) return new(null, fresh.Reason ?? "source_unknown", false);
         var snapshot = fresh.Snapshot!;
+        AgentTaskLanding? previous = null;
+        if (task.ActiveLandingId is Guid previousId)
+            previous = await db.AgentTaskLandings.SingleAsync(o => o.Id == previousId, ct);
         var op = new AgentTaskLanding
         {
             Id = Guid.NewGuid(), TaskId = task.Id, SchemaVersion = 2, Phase = LandPhase.Inspected,
@@ -194,8 +206,12 @@ public sealed class AgentTaskLandSourceResolver(
             WorktreePath = snapshot.RegisteredPath, CommonDirectory = snapshot.CommonDirectory,
             GitDirectory = snapshot.GitDirectory, SourceFullRef = coordinates.SourceFullRef,
             OriginalSourceSha = request.ExpectedSourceSha!, ReviewedSourceSha = request.ExpectedSourceSha,
-            PreparationInputSha = request.ExpectedSourceSha, ApprovalLandRequestId = request.Id,
-            ReviewEvidenceId = request.ReviewEvidenceId, ApprovalKind = request.ApprovalKind,
+            PreparationInputSha = previous?.RebasedSourceSha ?? request.ExpectedSourceSha,
+            PreviousPreparationOperationId = previous is { RebasedSourceSha: not null } ? previous.Id : null,
+            ApprovalLandRequestId = previous is { OriginalSourceSha: { } prev } && prev == request.ExpectedSourceSha
+                ? previous.ApprovalLandRequestId ?? request.Id : request.Id,
+            ReviewEvidenceId = previous?.ReviewEvidenceId ?? request.ReviewEvidenceId,
+            ApprovalKind = request.ApprovalKind,
             ApprovedAt = request.ApprovedAt ?? request.RequestedAt,
             SourceRemoteSha = request.RemoteSourceSha, SourceRemoteRef = request.RemoteSourceRef,
             SourceRemoteFingerprint = request.RemoteSourceFingerprint,
@@ -214,9 +230,6 @@ public sealed class AgentTaskLandSourceResolver(
         {
             return new(null, ex.Message, false);
         }
-        AgentTaskLanding? previous = null;
-        if (task.ActiveLandingId is Guid previousId)
-            previous = await db.AgentTaskLandings.SingleAsync(o => o.Id == previousId, ct);
         await using var transaction = previous is null ? null : await db.Database.BeginTransactionAsync(ct);
         if (previous is not null)
         {
@@ -273,6 +286,15 @@ public sealed class AgentTaskLandSourceResolver(
         request.CandidateSourceSha = candidate;
         await SaveRequestAsync(request, ct);
         return new(null, reason, false);
+    }
+
+    private async Task<string?> RecheckRemoteAsync(string repository, string sourceFullRef, string prefix,
+        LandingSourceObservation accepted, CancellationToken ct)
+    {
+        var observed = await git.ObserveSourceAsync(repository, sourceFullRef, prefix, ct);
+        if (!observed.Accepted) return observed.Reason ?? "source_remote_unreadable";
+        return observed.Sha == accepted.Sha && observed.Fingerprint == accepted.Fingerprint
+            ? null : "source_remote_changed";
     }
 
     private async Task SaveRequestAsync(AgentTaskLandRequest request, CancellationToken ct)

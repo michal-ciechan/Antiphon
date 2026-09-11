@@ -22,6 +22,28 @@ namespace Antiphon.Tests.Application;
 public sealed class AgentTaskLandNotificationRecoveryTests
 {
     [Test]
+    public async Task C488_ApprovalReceiptDestinationImmutable() => await C467_V08_DestinationSnapshotsRemainOwed("destination-edit");
+
+    [Test]
+    public async Task C488_ApprovalReceiptQueueKeyRequired() => await C467_V09_KeyedQueueRacesAndDistinctEvents();
+
+    [Test]
+    public async Task C488_ApprovalReceiptKeyCollisionRefuses() => await C467_V09_KeyedQueueRacesAndDistinctEvents();
+
+    [Test]
+    public async Task C488_PreOperationReceiptUsesRequest()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId, detail: "reviewed_source_mismatch expected=aaa local=aaa remote=bbb candidate=bbb");
+        note.Body.ShouldContain("expected=");
+        await new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System).ReconcileAsync(note.Id, CancellationToken.None);
+        await db.Entry(note).ReloadAsync();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.Id == note.QueueMessageId)).Body.ShouldContain("expected=");
+    }
+
+    [Test]
     [Arguments("none")]
     [Arguments("missing")]
     [Arguments("stopped")]

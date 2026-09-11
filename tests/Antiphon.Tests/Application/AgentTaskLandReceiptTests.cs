@@ -177,6 +177,24 @@ public sealed class AgentTaskLandReceiptTests
         h.Adapter.Inputs.ShouldBeEmpty("receipt reconciliation must never type");
     }
 
+    [Test]
+    public async Task C488_ApprovalReceiptNeedsUserPrompt() => await C467_V11_RejectFalseReceipts("sent");
+
+    [Test]
+    public async Task C488_ApprovalReceiptNeedsDestination() => await C467_V11_RejectFalseReceipts("wrong-session");
+
+    [Test]
+    public async Task C488_ApprovalReceiptNeedsIdentity() => await C467_V11_RejectFalseReceipts("wrong-identity");
+
+    [Test]
+    public async Task C488_ApprovalReceiptNeedsCompleteBody() => await C467_V11_RejectFalseReceipts("head-only");
+
+    [Test]
+    public async Task C488_ApprovalReceiptNeedsSequenceFloor() => await C467_V11_RejectFalseReceipts("old-sequence");
+
+    [Test]
+    public async Task C488_ApprovalReceiptNeedsTimeFloor() => await C467_V11_RejectFalseReceipts("old-time");
+
     internal static async Task<AgentTaskLandNotification> SeedAsync(AppDbContext db, Guid session, AgentTaskReplyTo replyTo = AgentTaskReplyTo.Session, string? detail = null)
     {
         var taskId = Guid.NewGuid();

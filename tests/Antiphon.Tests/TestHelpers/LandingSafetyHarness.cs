@@ -252,6 +252,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     internal sealed class SaveFault : SaveChangesInterceptor
     {
         public LandPhase? Phase { get; set; }
+        public LandSourceResolutionState? RequestResolution { get; set; }
         public Func<AgentTaskLanding, bool>? Matches { get; set; }
         public string? TerminalCut { get; set; }
         public AgentTaskEventType? EventKind { get; set; }
@@ -265,12 +266,16 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data,
             InterceptionResult<int> result, CancellationToken ct = default)
         {
-            _armed = !Triggered && (TerminalCut is not null
+            _armed = !Triggered && (RequestResolution is { } resolution
+                ? data.Context!.ChangeTracker.Entries<AgentTaskLandRequest>()
+                    .Any(e => e.State != EntityState.Unchanged && e.Entity.SourceResolutionState == resolution)
+                : TerminalCut is not null
                 ? data.Context!.ChangeTracker.Entries<AgentTaskEvent>().Any(e => e.State == EntityState.Added && (EventKind is null ? e.Entity.IsLandTerminal : e.Entity.Type == EventKind))
                 : data.Context!.ChangeTracker.Entries<AgentTaskLanding>()
                 .Any(e => e.State != EntityState.Unchanged
                     && (Phase is not null && e.Entity.Phase == Phase || Matches?.Invoke(e.Entity) == true)));
-            if (_armed && (TerminalCut == "before-save" || TerminalCut is null && !AfterCommit && !AfterSave)) { Triggered = true; throw new InjectedSaveFailure(); }
+            if (_armed && (TerminalCut == "before-save" || TerminalCut is null && !AfterCommit && !AfterSave && RequestResolution is null
+                || RequestResolution is not null && !AfterCommit && !AfterSave)) { Triggered = true; throw new InjectedSaveFailure(); }
             return ValueTask.FromResult(result);
         }
         public override async ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData data, int result, CancellationToken ct = default)
