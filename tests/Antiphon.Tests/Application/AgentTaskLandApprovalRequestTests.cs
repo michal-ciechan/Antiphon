@@ -168,6 +168,7 @@ public class AgentTaskLandApprovalRequestTests
         var land = CreateLand(db, queue, Frozen(DateTime.UtcNow));
         var task = await SeedSucceededWorktreeAsync(db);
         var first = await land.RequestAsync(task.Id, new LandAgentTaskRequest(ExpectedSourceSha: ShaA), CancellationToken.None);
+        queue.Release(task.Id);
         var error = await Should.ThrowAsync<ConflictException>(() => land.RequestAsync(task.Id,
             new LandAgentTaskRequest(ExpectedSourceSha: ShaB), CancellationToken.None));
         error.Code.ShouldBe("land_request_identity_conflict");
@@ -179,12 +180,14 @@ public class AgentTaskLandApprovalRequestTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        var land = CreateLand(db, new AgentTaskLandQueue(), Frozen(DateTime.UtcNow));
+        var queue = new AgentTaskLandQueue();
+        var land = CreateLand(db, queue, Frozen(DateTime.UtcNow));
         var task = await SeedSucceededWorktreeAsync(db);
         var evidence = await SeedReviewAsync(db, task, ShaA);
         var other = await SeedReviewAsync(db, task, ShaA);
         var first = await land.RequestAsync(task.Id,
             new LandAgentTaskRequest(ExpectedSourceSha: ShaA, ReviewEvidenceId: evidence.Id), CancellationToken.None);
+        queue.Release(task.Id);
         var error = await Should.ThrowAsync<ConflictException>(() => land.RequestAsync(task.Id,
             new LandAgentTaskRequest(ExpectedSourceSha: ShaA, ReviewEvidenceId: other.Id), CancellationToken.None));
         error.Code.ShouldBe("land_request_identity_conflict");
@@ -196,9 +199,11 @@ public class AgentTaskLandApprovalRequestTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        var land = CreateLand(db, new AgentTaskLandQueue(), Frozen(DateTime.UtcNow));
+        var queue = new AgentTaskLandQueue();
+        var land = CreateLand(db, queue, Frozen(DateTime.UtcNow));
         var task = await SeedSucceededWorktreeAsync(db);
         var first = await land.RequestAsync(task.Id, new LandAgentTaskRequest("keep", ShaA), CancellationToken.None);
+        queue.Release(task.Id);
         var error = await Should.ThrowAsync<ConflictException>(() => land.RequestAsync(task.Id,
             new LandAgentTaskRequest("changed", ShaA), CancellationToken.None));
         error.Code.ShouldBe("land_request_identity_conflict");

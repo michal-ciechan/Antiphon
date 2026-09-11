@@ -106,13 +106,11 @@ public class StageOutcomeFindingEndpointTests
     [Test]
     public async Task a_finding_on_a_task_with_no_stage_creates_the_row_at_the_given_stage()
     {
-        var cardId = Guid.NewGuid();
         var taskId = Guid.NewGuid();
         using (var scope = _factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var task = TaskRow(taskId, stage: null);
-            task.CardId = cardId;
             db.AgentTasks.Add(task);
             await db.SaveChangesAsync();
         }

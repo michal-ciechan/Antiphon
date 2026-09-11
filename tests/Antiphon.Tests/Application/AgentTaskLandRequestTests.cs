@@ -184,11 +184,13 @@ public class AgentTaskLandRequestTests
         var again = await land.RequestAsync(task.Id, new LandAgentTaskRequest(), CancellationToken.None);
         again.RequestId.ShouldBe(result.RequestId);
         (await db.AgentTaskLandRequests.CountAsync(r => r.TaskId == task.Id)).ShouldBe(1);
+        queue.IsActive(task.Id).ShouldBeTrue();
+        queue.Release(task.Id);
         var conflict = await Should.ThrowAsync<ConflictException>(
             () => land.RequestAsync(task.Id, new LandAgentTaskRequest("updated-filter"), CancellationToken.None));
         conflict.Code.ShouldBe("land_request_identity_conflict");
         (await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == result.RequestId)).VerifyFilter.ShouldBeNull();
-        queue.IsActive(task.Id).ShouldBeTrue();
+        queue.IsActive(task.Id).ShouldBeFalse();
     }
 
     [Test]
