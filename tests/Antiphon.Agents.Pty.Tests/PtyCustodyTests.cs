@@ -373,8 +373,39 @@ public class PtyCustodyTests
         await Output_drain_cancellation_never_returns_an_exit_observation();
 
     [Test]
-    public async Task C478_G200_ProducerSeal() =>
-        await Failed_tracked_attempt_cannot_spawn_again_on_the_same_runner();
+    public async Task C478_G200_ProducerSeal()
+    {
+        RequireModern();
+        var journal = new Journal(_ => { });
+        var native = new NativeProbe();
+        await using var runner = new PtyAgentRunner("modern") { CustodyNative = native };
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        try
+        {
+            native.ObservedJournal = journal;
+            await runner.StartTrackedAsync(Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+                ["/d", "/c", "echo sealed-before-query"], AppContext.BaseDirectory,
+                new Dictionary<string, string>(), 80, 24, 0, journal, timeout.Token);
+            journal.Sealed.ShouldBeFalse();
+            PtyCustodyObservation observation;
+            do
+            {
+                observation = await runner.SealAndObserveCustodyAsync(timeout.Token);
+                journal.Sealed.ShouldBeTrue("the durable seal must precede every accounting observation");
+                native.SealedWhenQueried.ShouldBeTrue("admission is closed before the OS query");
+                if (observation.ActiveProcesses != 0) await Task.Delay(20, timeout.Token);
+            } while (observation.ActiveProcesses != 0);
+            observation.OutputDrained.ShouldBeTrue();
+            native.QueryCalls.ShouldBeGreaterThan(0);
+            await Should.ThrowAsync<InvalidOperationException>(() => runner.WriteAsync("late input", timeout.Token));
+            await Should.ThrowAsync<InvalidOperationException>(() => runner.StartTrackedAsync(
+                Path.Combine(Environment.SystemDirectory, "cmd.exe"), ["/d", "/c", "echo post-seal-root"],
+                AppContext.BaseDirectory, new Dictionary<string, string>(), 80, 24, 0, new Journal(_ => { }),
+                timeout.Token));
+            native.ResumeCalls.ShouldBe(1);
+        }
+        finally { await runner.KillAsync(TimeSpan.FromSeconds(5)); }
+    }
 
     [Test]
     public async Task C478_V14_RealDescendantContainer()
@@ -468,6 +499,8 @@ public class PtyCustodyTests
         public int QueryCalls { get; private set; }
         public bool? ObservedMembership { get; private set; }
         public uint? ObservedLimits { get; private set; }
+        public Journal? ObservedJournal { get; set; }
+        public bool SealedWhenQueried { get; private set; }
         private SafeFileHandle? _launchJob;
         public bool IsInJob(IntPtr process, SafeFileHandle job)
         {
@@ -484,6 +517,7 @@ public class PtyCustodyTests
         {
             ReferenceEquals(_launchJob, job).ShouldBeTrue("observe the original retained launch job");
             QueryCalls++;
+            SealedWhenQueried = ObservedJournal?.Sealed == true;
             if (FailQuery) throw new Win32Exception(5, "injected accounting failure");
             return ReportActive ?? _real.QueryActiveProcesses(job);
         }

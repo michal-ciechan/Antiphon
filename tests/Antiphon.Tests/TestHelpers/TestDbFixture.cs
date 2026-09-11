@@ -46,6 +46,12 @@ public class TestDbFixture
 			catch (Exception ex) { Console.Error.WriteLine(ex.GetType().Name + ": " + ex.StackTrace); Environment.Exit(1); }
 			return;
 		}
+		if (Environment.GetEnvironmentVariable(PostLandMutationDeliveryWorker.Marker) is { } delivery)
+		{
+			try { await PostLandMutationDeliveryWorker.RunAsync(delivery); Environment.Exit(0); }
+			catch (Exception ex) { Console.Error.WriteLine(ex.GetType().Name + ": " + ex.StackTrace); Environment.Exit(1); }
+			return;
+		}
 		await _container.StartAsync();
 
 		// Migrate the shared database once; isolated clones copy this state via TEMPLATE.

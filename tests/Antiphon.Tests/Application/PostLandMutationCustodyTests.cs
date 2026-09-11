@@ -544,46 +544,108 @@ public sealed class PostLandMutationCustodyTests
 
     [Test]
     [Arguments("schema")]
-    [Arguments("task")]
-    [Arguments("operation")]
-    [Arguments("generation")]
-    [Arguments("path")]
+    [Arguments("sealedAt")]
+    [Arguments("observation")]
     public async Task C478_G215_ImportSchema(string variant)
     {
         await using var world = await PostLandMutationWorld.CreateAsync();
         var binding = await world.ReserveAsync();
-        var now = DateTime.UtcNow;
-        var host = new VerificationHostIdentity(binding.RunnerStoreId, Guid.NewGuid(), Guid.NewGuid(), 123, now);
-        var valid = new VerificationCustodyReceipt(1, binding, host, 3, now, now, "JobObjectBasicAccountingInformation", 0, true,
-            VerificationCustodyState.Exited, 124, now);
+        var valid = world.ValidReceipt(binding);
         var bad = variant switch
         {
             "schema" => valid with { SchemaVersion = 2 },
-            "task" => valid with { Binding = binding with { Source = binding.Source with { TaskId = Guid.NewGuid() } } },
-            "operation" => valid with { Binding = binding with { Source = binding.Source with { SourceOperationId = Guid.NewGuid() } } },
-            "generation" => valid with { Binding = binding with { Generation = binding.Generation with { AcceptedStartedAt = now.AddSeconds(1) } } },
-            _ => valid with { Binding = binding with { Creation = binding.Creation with { WorktreePath = @"C:\stranger" } } },
+            "sealedAt" => valid with { SealedAtUtc = default },
+            _ => valid with { ObservationMethod = "worker-restoration", StateRevision = 1, OutputDrained = false },
         };
-        await using (var db = world.Host.CreateContext())
-        {
-            var row = await db.VerificationExecutions.SingleAsync(e => e.Id == binding.ExecutionId);
-            row.ReceiptBytes = JsonSerializer.SerializeToUtf8Bytes(bad, new JsonSerializerOptions(JsonSerializerDefaults.Web));
-            await db.SaveChangesAsync();
-        }
+        await world.SeedImportedReceiptAsync(binding, bad);
         await world.TerminalAsync(binding.Generation.SessionId);
         await world.WriteRestorationAsync([]);
-        var path = await world.PathAsync();
-        await using var scope = world.Host.Services.CreateAsyncScope();
-        (await scope.ServiceProvider.GetRequiredService<VerificationCleanupService>().CleanupAsync(world.TaskId, default))
-            .IsClean.ShouldBeFalse();
-        Directory.Exists(path).ShouldBeTrue();
+        await AssertCleanupRetainsAsync(world);
     }
 
-    [Test] public Task C478_G216_RunnerProvenance() => C478_G215_ImportSchema("schema");
-    [Test] public Task C478_G217_TaskOperation() => C478_G215_ImportSchema("task");
-    [Test] public Task C478_G218_GenerationBinding() => C478_G215_ImportSchema("generation");
-    [Test] public Task C478_G219_Coordinates() => C478_G215_ImportSchema("path");
-    [Test] public Task C478_G220_ContainerBinding() => C478_G215_ImportSchema("operation");
+    [Test]
+    public async Task C478_G216_RunnerProvenance()
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync();
+        var binding = await world.ReserveAsync();
+        await world.TerminalAsync(binding.Generation.SessionId);
+        await world.WriteRestorationAsync([]);
+        await AssertCleanupRetainsAsync(world);
+    }
+
+    [Test]
+    [Arguments("task")]
+    [Arguments("operation")]
+    public async Task C478_G217_TaskOperation(string variant)
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync();
+        var binding = await world.ReserveAsync();
+        var valid = world.ValidReceipt(binding);
+        var source = variant == "task"
+            ? valid.Binding.Source with { TaskId = Guid.NewGuid() }
+            : valid.Binding.Source with { SourceOperationId = Guid.NewGuid() };
+        await world.SeedImportedReceiptAsync(binding, valid with { Binding = valid.Binding with { Source = source } });
+        await world.TerminalAsync(binding.Generation.SessionId);
+        await world.WriteRestorationAsync([]);
+        await AssertCleanupRetainsAsync(world);
+    }
+
+    [Test]
+    public async Task C478_G218_GenerationBinding()
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync();
+        var binding = await world.ReserveAsync();
+        var valid = world.ValidReceipt(binding);
+        var generation = valid.Binding.Generation with
+        {
+            AcceptedStartedAt = DateTime.SpecifyKind(valid.Binding.Generation.AcceptedStartedAt.AddSeconds(1), DateTimeKind.Utc),
+        };
+        await world.SeedImportedReceiptAsync(binding, valid with { Binding = valid.Binding with { Generation = generation } });
+        await world.TerminalAsync(binding.Generation.SessionId);
+        await world.WriteRestorationAsync([]);
+        await AssertCleanupRetainsAsync(world);
+    }
+
+    [Test]
+    [Arguments("path")]
+    [Arguments("common")]
+    [Arguments("git")]
+    [Arguments("branch")]
+    [Arguments("creation")]
+    [Arguments("sha")]
+    public async Task C478_G219_Coordinates(string variant)
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync();
+        var binding = await world.ReserveAsync();
+        var valid = world.ValidReceipt(binding);
+        var creation = valid.Binding.Creation;
+        var receipt = variant switch
+        {
+            "path" => valid with { Binding = valid.Binding with { Creation = creation with { WorktreePath = Path.Combine(world.Host.Fixture.Root, "stranger") } } },
+            "common" => valid with { Binding = valid.Binding with { Creation = creation with { CommonGitDirectory = world.Host.Fixture.Observer } } },
+            "git" => valid with { Binding = valid.Binding with { Creation = creation with { WorktreeGitDirectory = Path.Combine(world.Host.Fixture.Root, "stranger.git") } } },
+            "branch" => valid with { Binding = valid.Binding with { Creation = creation with { Branch = "feat/card-task-other" } } },
+            "creation" => valid with { Binding = valid.Binding with { Creation = creation with { CreationId = Guid.NewGuid() } } },
+            _ => valid with { Binding = valid.Binding with { Source = valid.Binding.Source with { LandedSha = new string('f', 40) } } },
+        };
+        await world.SeedImportedReceiptAsync(binding, receipt);
+        await world.TerminalAsync(binding.Generation.SessionId);
+        await world.WriteRestorationAsync([]);
+        await AssertCleanupRetainsAsync(world);
+    }
+
+    [Test]
+    public async Task C478_G220_ContainerBinding()
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync();
+        var binding = await world.ReserveAsync();
+        var valid = world.ValidReceipt(binding);
+        var stranger = valid.Host with { ContainerId = Guid.NewGuid(), HostInstanceId = Guid.NewGuid() };
+        await world.SeedImportedReceiptAsync(binding, valid with { Host = stranger }, storedHost: valid.Host);
+        await world.TerminalAsync(binding.Generation.SessionId);
+        await world.WriteRestorationAsync([]);
+        await AssertCleanupRetainsAsync(world);
+    }
 
     [Test]
     public async Task C478_G221_TaskSealAtomic()
@@ -606,20 +668,27 @@ public sealed class PostLandMutationCustodyTests
         await using (var db = world.Host.CreateContext())
         {
             var execution = await db.VerificationExecutions.SingleAsync(e => e.Id == first.ExecutionId);
-            execution.ReceiptBytes = [1, 2, 3];
             execution.CustodyReason = VerificationCustodyState.Unknown.ToString();
             await db.SaveChangesAsync();
         }
         var second = await world.ReserveAsync();
+        await world.SeedImportedReceiptAsync(second, world.ValidReceipt(second));
         await world.TerminalAsync(second.Generation.SessionId);
         await world.WriteRestorationAsync([]);
+        await AssertCleanupRetainsAsync(world);
+        await using var observer = world.Host.CreateContext();
+        (await observer.VerificationExecutions.CountAsync(e => e.TaskId == world.TaskId)).ShouldBe(2);
+    }
+
+    private static async Task AssertCleanupRetainsAsync(PostLandMutationWorld world)
+    {
         var path = await world.PathAsync();
+        world.Host.Fixture.Git.Trace.Clear();
         await using var scope = world.Host.Services.CreateAsyncScope();
         (await scope.ServiceProvider.GetRequiredService<VerificationCleanupService>().CleanupAsync(world.TaskId, default))
             .IsClean.ShouldBeFalse();
         Directory.Exists(path).ShouldBeTrue();
-        await using var observer = world.Host.CreateContext();
-        (await observer.VerificationExecutions.CountAsync(e => e.TaskId == world.TaskId)).ShouldBe(2);
+        world.Host.Fixture.Git.Trace.Any(PostLandMutationWorld.IsDestructive).ShouldBeFalse();
     }
 
     [Test]
@@ -783,6 +852,36 @@ internal sealed class PostLandMutationWorld : IAsyncDisposable
             task.Status = AgentTaskStatus.Canceled;
             await db.SaveChangesAsync();
         }
+
+        public static readonly JsonSerializerOptions WebJson = new(JsonSerializerDefaults.Web);
+
+        public VerificationCustodyReceipt ValidReceipt(VerificationExecutionBinding binding)
+        {
+            var now = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Utc);
+            var host = new VerificationHostIdentity(binding.RunnerStoreId, Guid.NewGuid(), Guid.NewGuid(),
+                Math.Max(1, Environment.ProcessId), now);
+            return new(1, binding, host, 3, now, now, "JobObjectBasicAccountingInformation", 0, true,
+                VerificationCustodyState.Exited, 124, now);
+        }
+
+        public async Task SeedImportedReceiptAsync(VerificationExecutionBinding binding, VerificationCustodyReceipt receipt,
+            VerificationHostIdentity? storedHost = null)
+        {
+            var bytes = JsonSerializer.SerializeToUtf8Bytes(receipt, WebJson);
+            await using var db = Host.CreateContext();
+            var row = await db.VerificationExecutions.SingleAsync(e => e.Id == binding.ExecutionId);
+            row.ReceiptBytes = bytes;
+            row.HostIdentityJson = JsonSerializer.Serialize(storedHost ?? receipt.Host);
+            row.ReceiptDigest = Convert.ToHexString(SHA256.HashData(bytes));
+            row.ReceiptImportedAt = DateTime.UtcNow;
+            row.CustodyReason = receipt.Disposition.ToString();
+            await db.SaveChangesAsync();
+        }
+
+        public static bool IsDestructive(IReadOnlyList<string> arguments) =>
+            arguments.Contains("remove") || arguments.Contains("--force")
+            || (arguments.Contains("update-ref") && arguments.Contains("-d"));
+
         public async ValueTask DisposeAsync()
         {
             if (Runner is IAsyncDisposable disposable) await disposable.DisposeAsync();

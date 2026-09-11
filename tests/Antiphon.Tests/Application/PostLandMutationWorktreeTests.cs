@@ -216,7 +216,35 @@ public sealed class PostLandMutationWorktreeTests
     }
 
     [Test] public Task C478_G067_MissingCommit() => C478_V03_CreateRestartAndMissingCommit();
-    [Test] public Task C478_G071_CallerSettlement() => C478_V05_SettlementNeverPublishesSnapshot();
+    [Test]
+    public async Task C478_G071_CallerSettlement()
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync();
+        var sessionId = Guid.NewGuid();
+        await using (var db = world.Host.CreateContext())
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = sessionId, Status = SessionStatus.Running, Cwd = task.WorktreePath!,
+                StartedAt = DateTime.UtcNow, CreatedAt = DateTime.UtcNow, AgentKind = AgentKind.Raw,
+            });
+            task.AgentSessionId = sessionId;
+            task.Status = AgentTaskStatus.Working;
+            await db.SaveChangesAsync();
+        }
+        world.Host.Fixture.Git.Trace.Clear();
+        await new AgentTaskReplyService(
+            world.Host.Services.GetRequiredService<IServiceScopeFactory>(),
+            Options.Create(new DelegationSettings()),
+            new MockEventBus(), TimeProvider.System, NullLogger<AgentTaskReplyService>.Instance)
+            .RecoverFromBindRefusalAsync(world.TaskId, new DelegateBindRefusalEvidence(["deadbeef"], null), default);
+        await using var observer = world.Host.CreateContext();
+        var settled = await observer.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        Directory.Exists(settled.WorktreePath!).ShouldBeTrue();
+        world.Host.Fixture.Git.Trace.Any(a => a.Contains("commit") || a.Contains("merge") || a.Contains("push")).ShouldBeFalse();
+    }
     [Test] public Task C478_G072_LowerSettlement() => C478_V05_SettlementNeverPublishesSnapshot();
     [Test] public Task C478_G073_NoLocalMerge() => C478_V05_SettlementNeverPublishesSnapshot();
     [Test] public Task C478_G075_NoLandExecution() => C478_V05_SettlementNeverPublishesSnapshot();
@@ -273,7 +301,24 @@ public sealed class PostLandMutationWorktreeTests
         source.SourceLandingOperationId.ShouldBeNull();
     }
 
-    [Test] public Task C478_G081_RetryRegistration() => C478_G064_RetryIdentity();
+    [Test]
+    public async Task C478_G081_RetryRegistration()
+    {
+        await using var world = await PostLandMutationWorld.CreateAsync();
+        await using var scope = world.Host.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
+        var original = task.WorktreePath!;
+        var parked = original + ".parked";
+        Directory.Move(original, parked);
+        await world.Host.Fixture.RequiredAsync(task.RepoPath!, "worktree", "prune");
+        Directory.Move(parked, original);
+        await using var lease = await world.Host.Services.GetRequiredService<IRepositoryMutationLease>()
+            .TryAcquireAsync(task.RepoPath!, default);
+        await Should.ThrowAsync<ConflictException>(() =>
+            scope.ServiceProvider.GetRequiredService<DelegationWorktreeService>().ValidateVerificationAsync(task, lease!, default));
+        Directory.Exists(original).ShouldBeTrue();
+    }
     [Test] public Task C478_G082_ProviderCap() => ConcurrentNextCardCodeAsync();
 
     [Test]
