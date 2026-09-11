@@ -733,7 +733,10 @@ public sealed class PostLandMutationDeliveryTests
         queued.DeliveryVerdict = null;
         queued.LastDeliveryBaselineSequence = floor;
         queued.LastDeliveryStartedAt ??= DateTime.UtcNow.AddSeconds(-1);
-        if (!await db.TranscriptEntries.AnyAsync(e => e.AgentSessionId == sessionId && e.Sequence == promptSequence))
+        await db.SaveChangesAsync();
+        try { await h.Runtime.CatchUpTranscriptAsync(sessionId, CancellationToken.None); }
+        catch (NotSupportedException) { /* FakeSessionRunnerClient has no transcript snapshot. */ }
+        if (!await db.TranscriptEntries.AnyAsync(e => e.AgentSessionId == sessionId && e.Kind == TranscriptKinds.UserPrompt))
         {
             db.TranscriptEntries.Add(new TranscriptEntry
             {
@@ -747,10 +750,8 @@ public sealed class PostLandMutationDeliveryTests
                 Kind = TranscriptKinds.TurnEnd, StopReason = TranscriptKinds.StopReasons.EndTurn,
                 CreatedAt = DateTime.UtcNow, Timestamp = DateTime.UtcNow,
             });
+            await db.SaveChangesAsync();
         }
-        await db.SaveChangesAsync();
-        try { await h.Runtime.CatchUpTranscriptAsync(sessionId, CancellationToken.None); }
-        catch (NotSupportedException) { /* FakeSessionRunnerClient has no transcript snapshot. */ }
         await h.Queue.FlushIfIdleAsync(sessionId, CancellationToken.None);
         await h.Queue.FlushIfIdleAsync(sessionId, CancellationToken.None);
         await using var recovered = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
