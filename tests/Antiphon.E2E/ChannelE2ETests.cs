@@ -11,6 +11,7 @@ using TUnit.Core;
 namespace Antiphon.E2E;
 
 [NotInParallel]
+[Category("OptIn")]
 public sealed class ChannelE2ETests
 {
     private static readonly JsonSerializerOptions JsonOptions = new()

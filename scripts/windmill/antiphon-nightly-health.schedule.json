@@ -1,0 +1,11 @@
+{
+  "path": "u/lndcobra/antiphon_nightly_health",
+  "schedule": "0 */30 * * * *",
+  "timezone": "Europe/London",
+  "script_path": "u/lndcobra/antiphon_nightly_health",
+  "is_flow": false,
+  "args": {},
+  "enabled": true,
+  "tag": "default",
+  "on_failure": null
+}

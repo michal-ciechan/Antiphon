@@ -21,6 +21,7 @@ namespace Antiphon.E2E;
 /// Browser-level coverage for the board-driven E08 workflow.
 /// </summary>
 [NotInParallel]
+[Category("OptIn")]
 public class BoardE2ETests
 {
     private static readonly JsonSerializerOptions JsonOptions = new()

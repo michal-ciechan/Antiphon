@@ -26,6 +26,7 @@ namespace Antiphon.E2E;
 /// <summary>Real providers only. Never invoked without a current operator-authored decision.</summary>
 [Explicit]
 [Category("Headed")]
+[Category("OptIn")]
 [Category("HeadedCanary")]
 [NotInParallel("Headed")]
 [ParallelLimiter<ProcessSpawnLimit>]

@@ -1,0 +1,2 @@
+# CARD-0487: no Slow classes in Antiphon.E2E; the project is a manual exception.
+# E2E requires fresh client/dist and an isolated random runner. Classes carry OptIn.

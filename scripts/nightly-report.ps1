@@ -323,6 +323,58 @@ function Test-CardOpen {
     return @('Backlog', 'InProgress', 'Review', 'NeedsDecision') -contains $status
 }
 
+function Test-NightlyGreenClosureEligible {
+    param($SummaryObject)
+    if (-not [bool]$SummaryObject.succeeded) { return $false }
+    if (-not [bool]$SummaryObject.coverageComplete) { return $false }
+    $trigger = [string]$SummaryObject.trigger
+    if ([string]::IsNullOrWhiteSpace($trigger)) { $trigger = 'scheduled' }
+    if ($trigger -ne 'scheduled') { return $false }
+    $ref = [string]$SummaryObject.gitRef
+    if ($ref -ne 'origin/master' -and $ref -ne 'master') { return $false }
+    if ([bool]$SummaryObject.noReport) { return $false }
+    if ($SummaryObject.requiredPolicyHash) {
+        if ([string]$SummaryObject.policyHash -ne [string]$SummaryObject.requiredPolicyHash) { return $false }
+    }
+    return $true
+}
+
+function Get-NightlyRerunCommand {
+    param($Suite, [string]$FailedName, $PolicyObject)
+    $suiteId = [string]$Suite.id
+    $project = 'tests/Antiphon.Tests/Antiphon.Tests.csproj'
+    $exe = 'tests/Antiphon.Tests/bin/Debug/net9.0/Antiphon.Tests.exe'
+    if ($PolicyObject -and $PolicyObject.suites) {
+        $row = $PolicyObject.suites.$suiteId
+        if ($row -and $row.project) {
+            $project = ([string]$row.project) -replace '\\', '/'
+            if ($row.assembly) {
+                $exe = ('tests/{0}/bin/Debug/net9.0/{0}.exe' -f [string]$row.assembly)
+            }
+        }
+    } else {
+        if ($suiteId -eq 'agents-pty') {
+            $exe = 'tests/Antiphon.Agents.Pty.Tests/bin/Debug/net9.0/Antiphon.Agents.Pty.Tests.exe'
+        } elseif ($suiteId -eq 'session-runner') {
+            $exe = 'tests/Antiphon.SessionRunner.Tests/bin/Debug/net9.0/Antiphon.SessionRunner.Tests.exe'
+            $project = 'tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj'
+        } elseif ($suiteId -eq 'pty-host') {
+            $exe = 'tests/Antiphon.PtyHost.Tests/bin/Debug/net9.0/Antiphon.PtyHost.Tests.exe'
+            $project = 'tests/Antiphon.PtyHost.Tests/Antiphon.PtyHost.Tests.csproj'
+        } elseif ($suiteId -eq 'messaging') {
+            $exe = 'tests/Antiphon.Messaging.Tests/bin/Debug/net9.0/Antiphon.Messaging.Tests.exe'
+            $project = 'tests/Antiphon.Messaging.Tests/Antiphon.Messaging.Tests.csproj'
+        }
+    }
+    if ($suiteId -eq 'client' -or [string]$Suite.name -eq 'client') {
+        $file = $FailedName
+        if ($file -match '^(\S+)\s+>') { $file = $Matches[1] }
+        return ('pwsh -File scripts/test-client.ps1 {0}' -f $file)
+    }
+    $escaped = $FailedName
+    return ('dotnet run --project {0} -- --treenode-filter "/*/*/*/{1}"  ({2})' -f $project, $escaped, $exe)
+}
+
 function Get-CardToken {
     param($Card)
     if ($null -eq $Card) { return $null }
@@ -545,6 +597,7 @@ function Finish-Report {
             Body       = $script:body
             CardMdPath = $script:cardMdPath
             Writes     = $script:intendedWrites
+            ReportDelivered = [bool]$script:reportDelivered
         }
     }
     exit $script:exitCode
@@ -643,7 +696,7 @@ try {
                 (Test-CardHasLabel -Card $_ -Label 'nightly') -and ($null -eq $_.archivedAt -or $_.archivedAt -eq '')
             })
         if ($truncated -and $matched.Count -eq 0) {
-            Write-ReportLine ('truncated=true on status {0} with no nightly match; treating as none' -f $st)
+            throw ('truncated card census on status {0} cannot prove absence' -f $st)
         }
         if ($st -eq 'Done') { $doneNightly += $matched }
         else { $openNightly += $matched }
@@ -652,7 +705,14 @@ try {
     $columns = ConvertTo-FlatArray (Invoke-Antiphon -Method GET -Uri ('{0}/api/boards/{1}/columns' -f $Api, $boardId))
     $terminal = @($columns | Where-Object { $_.isTerminal } | Sort-Object columnOrder) | Select-Object -First 1
 
+    $script:reportDelivered = $false
+    $closureEligible = Test-NightlyGreenClosureEligible -SummaryObject $summaryObject
     if ($succeeded) {
+        if (-not $closureEligible) {
+            $succeededForClose = $false
+        } else {
+            $succeededForClose = $true
+        }
         if ($openNightly.Count -eq 0) {
             $script:action = 'none'
             Write-ReportLine 'green; no open nightly card; nothing to file.'
@@ -664,7 +724,7 @@ try {
         $owner = $card.ownerSessionId
         $unassigned = ($null -eq $assigned -or $assigned -eq '') -and ($null -eq $owner -or $owner -eq '')
         $discussionBody = ('green on {0} at {1}; not closing because the card is {2}/{3}' -f $dateOnly, $sha, $status, $(if ($assigned) { $assigned } else { 'unassigned' }))
-        if ($status -eq 'Backlog' -and $unassigned -and $null -ne $terminal) {
+        if ($succeededForClose -and $status -eq 'Backlog' -and $unassigned -and $null -ne $terminal) {
             $reason = ('[nightly auto-close] green on {0} at {1} - reopen if this was a flake you want tracked' -f $dateOnly, $sha)
             $moveBody = ConvertTo-NightlyJson @{
                 boardColumnId    = [string]$terminal.id

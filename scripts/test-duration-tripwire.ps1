@@ -8,13 +8,12 @@ param(
     [string] $Allowlist = $(Join-Path $PSScriptRoot '..\tests\Antiphon.Tests\slow-tests-allowlist.txt')
 )
 $ErrorActionPreference = 'Stop'
-if (-not (Test-Path $Trx)) { throw "TRX not found: $Trx" }
-if (-not (Test-Path $Allowlist)) { throw "Allowlist not found: $Allowlist" }
-
 function Write-Invalid([string] $message) {
     Write-Output ("SLOW-TEST TRIPWIRE: invalid input: {0}" -f $message)
     exit 2
 }
+if (-not (Test-Path $Trx)) { Write-Invalid ("missing path: {0}" -f $Trx) }
+if (-not (Test-Path $Allowlist)) { Write-Invalid ("missing allowlist: {0}" -f $Allowlist) }
 
 $entries = @(Get-Content $Allowlist | ForEach-Object { $_.Trim() } |
     Where-Object { $_ -and -not $_.StartsWith('#') })
@@ -68,6 +67,9 @@ function Test-Allowlisted([string] $full, [string] $simple) {
 $results = @(Select-Ns '//t:Results/t:UnitTestResult')
 if ($results.Count -eq 0) {
     $results = @(Select-Ns '//t:UnitTestResult')
+}
+if ($results.Count -eq 0) {
+    Write-Invalid 'empty results'
 }
 
 $hits = @()

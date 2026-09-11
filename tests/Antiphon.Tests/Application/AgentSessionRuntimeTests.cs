@@ -18,6 +18,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
+[Category("Slow")]
 public class AgentSessionRuntimeTests
 {
     [Test]

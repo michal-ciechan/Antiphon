@@ -21,5 +21,10 @@
     <ProjectReference Include="..\..\src\Antiphon.PtyHost.Client\Antiphon.PtyHost.Client.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.PtyHost.Protocol\Antiphon.PtyHost.Protocol.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\TestClassificationMetadata.cs" Link="TestSupport\TestClassificationMetadata.cs" />
+    <Compile Include="..\Shared\TestClassificationGuardTests.cs" Link="TestSupport\TestClassificationGuardTests.cs" />
+    <None Include="slow-tests-allowlist.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 
 </Project>

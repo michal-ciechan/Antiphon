@@ -26,8 +26,10 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [NotInParallel("Headed")]
 [Category("Headed")]
+[Category("OptIn")]
 [ParallelLimiter<ProcessSpawnLimit>]
 [Category("Integration")]
+[Category("Slow")]
 public class SlashCommandMenuReconciliationTests
 {
     private const string EnvFlag = "ANTIPHON_HEADED_TESTS";

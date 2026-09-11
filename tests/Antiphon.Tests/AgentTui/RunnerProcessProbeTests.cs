@@ -19,6 +19,7 @@ namespace Antiphon.Tests.AgentTui;
 [NotInParallel("RunnerProcessProbe")]
 [ParallelLimiter<ProcessSpawnLimit>]
 [Category("Integration")]
+[Category("Slow")]
 public sealed class RunnerProcessProbeTests
 {
     [Test]

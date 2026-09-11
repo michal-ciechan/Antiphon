@@ -178,16 +178,31 @@ operational full-suite backstop. See the
 This finding does not activate that plan's reduced-dispatch policy.
 
 The implemented bootstrap is `scripts/nightly-run.ps1`; its intended Windmill
-registration is `u/lndcobra/antiphon_nightly_tests`, 00:30 Europe/London. The
-following describes the current script contract. Do not add a local Windows
-Scheduled Task.
+registration is `u/lndcobra/antiphon_nightly_tests`, 00:30 Europe/London. Checked-in
+payloads live under `scripts/windmill/`. Do not add a local Windows Scheduled
+Task. **Reduced dispatch verification stays inactive** until S4 qualification
+(a manual full unattended green plus a real subsequent 00:30 scheduled green,
+independent health monitor, and recorded notification receipt).
+
+CARD-0487 S1-S3 (landed, policy inactive): `tests/test-execution-policy.json`
+is the execution universe (schemaVersion 1 plus a recomputed `policyHash`).
+Default unattended suites are `antiphon`, `session-runner`, `pty-host`,
+`agents-pty`, `messaging`, `client`, and `scripts`. `e2e` is a manual exception.
+Producer-owned `StateRoot` defaults to `C:\Antiphon\nightly` (Windows backslash
+paths). Lock acquisition is atomic (`FileMode.CreateNew`); a live owner is never
+replaced by age. `last-run.json` is the last attempt; `last-complete-green.json`
+advances only for scheduled master runs with `coverageComplete`, `testsPassed`
+and `reportDelivered`. Unchanged-SHA skipping is removed. Independent health
+evaluation is `scripts/nightly-health.ps1` / `u/lndcobra/antiphon_nightly_health`
+on a server2 worker every 30 minutes (not the desktop tag).
 
 It syncs an **isolated** clone at `C:\Antiphon\nightly\checkout` to
 `origin/master` (never `C:\src\Antiphon`, never a worktree), builds (`npm ci`,
-`npm run build`, `dotnet build Antiphon.sln`), then runs `Antiphon.Tests`,
-`Antiphon.Agents.Pty.Tests` and the client vitest suite sequentially. Logs live
-at `C:\Antiphon\nightly\logs\<yyyy-MM-dd-HHmm>\` (`summary.json`, per-suite
-logs, `build.log`). `C:\Antiphon\nightly\last-run.json` is written every run.
+`npm run build`, client lint, `dotnet build Antiphon.sln`), then runs the
+policy suites sequentially (native project groups one at a time). Logs live
+under `<StateRoot>\logs\<yyyy-MM-dd-HHmm>-<runId>\` (`summary.json`, per-suite
+logs, `build.log`). Headed/live opt-in names are cleared in child environments;
+`ANTIPHON_BROKER_TESTS=1` is set only for the messaging suite.
 
 On red it files or updates **one** Antiphon-board card labelled `nightly`
 (plus `build` or `tests`). A second red night patches that card; it does not
@@ -206,7 +221,11 @@ pwsh -File scripts/test-client.ps1 BoardPage.test
 
 The clone is already at the sha the card names; or pass that filter against any
 checkout of the same commit. Headed tests and `Antiphon.E2E` stay off the
-schedule (`-Suites e2e` is a manual opt-in).
+schedule (`-Suites e2e` is a manual opt-in). Per-project Slow registries are
+`tests/<Project>/slow-tests-allowlist.txt` (FQN plus adjacent reason). Slow is
+a cost marker, never Skip. Offline harnesses: `scripts/test-nightly-run.ps1`,
+`scripts/test-nightly-tests.ps1`, `scripts/test-nightly-report.ps1`,
+`scripts/test-nightly-health.ps1` (`-Case C487_GNNN -ResultsDirectory <fresh>`).
 
 ## Asynchronous outcome delivery verification (CARD-0467)
 

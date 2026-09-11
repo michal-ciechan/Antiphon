@@ -1,0 +1,2 @@
+# CARD-0487: no Slow classes in Antiphon.Agents.Pty.Tests at initial classification.
+# Headed/vendor canaries are OptIn/manual, not Slow. Add FQN entries with reasons when measured.

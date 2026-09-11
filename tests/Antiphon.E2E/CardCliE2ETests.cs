@@ -25,6 +25,7 @@ namespace Antiphon.E2E;
 /// mangles, and "it worked when I ran it by hand" is not a regression test.</para>
 /// </remarks>
 [NotInParallel]
+[Category("OptIn")]
 public class CardCliE2ETests
 {
     private static readonly JsonSerializerOptions JsonOptions = new()

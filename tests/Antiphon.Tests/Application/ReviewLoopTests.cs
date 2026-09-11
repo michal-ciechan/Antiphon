@@ -27,6 +27,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [Category("Integration")]
 [NotInParallel("MessageQueue")]
+[Category("Slow")]
 public class ReviewLoopTests
 {
     // ---------- files listing (needs the git CLI; skips cleanly without it) ----------

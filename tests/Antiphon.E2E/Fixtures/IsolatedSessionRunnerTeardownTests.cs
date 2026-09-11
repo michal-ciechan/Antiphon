@@ -6,6 +6,7 @@ using TUnit.Core;
 
 namespace Antiphon.E2E.Fixtures;
 
+[Category("OptIn")]
 public class IsolatedSessionRunnerTeardownTests
 {
     [Test]

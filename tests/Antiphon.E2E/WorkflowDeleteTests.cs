@@ -18,6 +18,7 @@ namespace Antiphon.E2E;
 /// and the browser-side confirmation flow.
 /// </summary>
 [NotInParallel]
+[Category("OptIn")]
 public class WorkflowDeleteTests
 {
     // Seeded template IDs (from DatabaseSeeder)

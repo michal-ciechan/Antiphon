@@ -22,6 +22,7 @@ namespace Antiphon.E2E;
 /// project screen, see what is about to be destroyed, confirm, watch the row go.
 /// </summary>
 [NotInParallel]
+[Category("OptIn")]
 public class ProjectDeleteE2ETests
 {
     private static readonly JsonSerializerOptions JsonOptions = new()

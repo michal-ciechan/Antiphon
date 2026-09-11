@@ -14,6 +14,7 @@ using static Microsoft.Playwright.Assertions;
 namespace Antiphon.E2E;
 
 [NotInParallel]
+[Category("OptIn")]
 public class OrchestratorE2ETests
 {
     private static readonly JsonSerializerOptions JsonOptions = new()

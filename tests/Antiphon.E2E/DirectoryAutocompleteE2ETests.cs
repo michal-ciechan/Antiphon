@@ -14,6 +14,7 @@ namespace Antiphon.E2E;
 /// (isolating the bug to the client), then asserts the suggestion option actually appears.
 /// </summary>
 [NotInParallel]
+[Category("OptIn")]
 public class DirectoryAutocompleteE2ETests
 {
     private readonly AntiphonAppFixture _appFixture = new();

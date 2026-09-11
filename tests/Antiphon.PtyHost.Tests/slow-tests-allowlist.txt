@@ -1,0 +1,2 @@
+# CARD-0487: no Slow classes in Antiphon.PtyHost.Tests at initial classification.
+# Native does not automatically mean slow. Add FQN entries with reasons when measured.

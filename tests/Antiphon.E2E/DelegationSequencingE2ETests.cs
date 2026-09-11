@@ -35,6 +35,7 @@ namespace Antiphon.E2E;
 /// Opt-in headed: ANTIPHON_HEADED_TESTS=1 + claude on PATH; self-skips otherwise.
 /// </summary>
 [Category("Headed")]
+[Category("OptIn")]
 [Category("HeadedCanary")]
 [NotInParallel("Headed")]
 public class DelegationSequencingE2ETests

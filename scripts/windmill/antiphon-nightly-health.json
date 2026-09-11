@@ -1,0 +1,12 @@
+{
+  "path": "u/lndcobra/antiphon_nightly_health",
+  "summary": "Independent Antiphon nightly health monitor (CARD-0487). Server2 worker, not desktop.",
+  "description": "Every 30 minutes. Must not use the desktop tag. Checks registration, schedule, native last-run completeness and report delivery. Does not kill foreign processes.",
+  "language": "bash",
+  "tag": "default",
+  "schema": {
+    "properties": {},
+    "required": []
+  },
+  "content": "#!/bin/bash\nset -euo pipefail\nssh -i /tmp/windmill/worker_to_windows -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes lndco@host.docker.internal 'powershell -NoProfile -ExecutionPolicy Bypass -File C:\\src\\Antiphon\\scripts\\nightly-health.ps1'\n"
+}

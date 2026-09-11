@@ -28,6 +28,7 @@ namespace Antiphon.Tests.Application;
 [NotInParallel("Pty")]
 [ParallelLimiter<ProcessSpawnLimit>]
 [Category("Integration")]
+[Category("Slow")]
 public class AgentSessionServiceIntegrationTests
 {
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");

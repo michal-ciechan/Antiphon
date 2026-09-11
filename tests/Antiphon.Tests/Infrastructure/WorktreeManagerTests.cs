@@ -146,6 +146,7 @@ public class WorktreeManagerSafetyTests
 [Category("GitIntegration")]
 [Category("Integration")]
 [ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
+[Category("Slow")]
 public class WorktreeManagerGitIntegrationTests
 {
     [Test]

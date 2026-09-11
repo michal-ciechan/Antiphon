@@ -32,6 +32,7 @@ namespace Antiphon.Tests.Agents;
 [Category("Pty")]
 [ParallelLimiter<ProcessSpawnLimit>]
 [Category("Integration")]
+[Category("Slow")]
 public class CodexAdapterLocalShellTests
 {
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");

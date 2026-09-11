@@ -28,6 +28,7 @@ namespace Antiphon.Agents.Pty.Tests;
 /// </summary>
 [NotInParallel("Headed")]
 [Category("Headed")]
+[Category("OptIn")]
 [Category("HeadedCanary")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public class ClaudeSignalCanaryTests

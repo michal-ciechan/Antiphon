@@ -1,0 +1,12 @@
+{
+  "path": "u/lndcobra/antiphon_nightly_tests",
+  "summary": "Antiphon nightly tests (CARD-0487). Desktop tag. 00:30 Europe/London. No suite or ref override.",
+  "description": "SSH-bridge wrapper that runs scripts/nightly-run.ps1 against C:\\Antiphon\\nightly\\checkout. Do not add a Windows Scheduled Task. Reduced dispatch policy stays inactive until S4 qualification.",
+  "language": "bash",
+  "tag": "desktop",
+  "schema": {
+    "properties": {},
+    "required": []
+  },
+  "content": "#!/bin/bash\nset -euo pipefail\nssh -i /tmp/windmill/worker_to_windows -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes lndco@host.docker.internal 'powershell -NoProfile -ExecutionPolicy Bypass -File C:\\src\\Antiphon\\scripts\\nightly-run.ps1'\n"
+}

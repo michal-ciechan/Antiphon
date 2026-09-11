@@ -18,6 +18,7 @@ namespace Antiphon.Tests.Application;
 [Category("GitIntegration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 [Category("Integration")]
+[Category("Slow")]
 public class ProjectReadinessBatchTests
 {
     [Test]

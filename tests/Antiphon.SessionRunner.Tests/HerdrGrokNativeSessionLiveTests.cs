@@ -16,6 +16,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// </summary>
 [NotInParallel("Headed")]
 [Category("Headed")]
+[Category("OptIn")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public class HerdrGrokNativeSessionLiveTests
 {

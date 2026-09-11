@@ -37,6 +37,11 @@
     <ProjectReference Include="..\..\src\Antiphon.FakeGrok\Antiphon.FakeGrok.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.FakeLlmApi\Antiphon.FakeLlmApi.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\TestClassificationMetadata.cs" Link="TestSupport\TestClassificationMetadata.cs" />
+    <Compile Include="..\Shared\TestClassificationGuardTests.cs" Link="TestSupport\TestClassificationGuardTests.cs" />
+    <None Include="slow-tests-allowlist.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 
   <Target Name="CopyFakeClaude" AfterTargets="Build">
     <!-- Query each producer's output: artifacts builds have project-specific absolute paths,

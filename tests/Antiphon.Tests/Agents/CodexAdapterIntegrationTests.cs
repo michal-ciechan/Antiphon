@@ -13,6 +13,7 @@ namespace Antiphon.Tests.Agents;
 
 [NotInParallel("Headed")]
 [Category("Headed")]
+[Category("OptIn")]
 [Category("Card0108")]
 [ParallelLimiter<ProcessSpawnLimit>]
 [Category("Integration")]

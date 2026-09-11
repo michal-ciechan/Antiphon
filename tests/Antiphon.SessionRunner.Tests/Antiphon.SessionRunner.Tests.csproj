@@ -22,6 +22,11 @@
     <ProjectReference Include="..\..\src\Antiphon.SessionRunner\Antiphon.SessionRunner.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.FakeLlmApi\Antiphon.FakeLlmApi.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\TestClassificationMetadata.cs" Link="TestSupport\TestClassificationMetadata.cs" />
+    <Compile Include="..\Shared\TestClassificationGuardTests.cs" Link="TestSupport\TestClassificationGuardTests.cs" />
+    <None Include="slow-tests-allowlist.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- The pinned compact-boundary shape lives beside its primary consumer (Antiphon.Tests);

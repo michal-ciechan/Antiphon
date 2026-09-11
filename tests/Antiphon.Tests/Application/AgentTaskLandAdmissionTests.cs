@@ -15,6 +15,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
+[Category("Slow")]
 public sealed class AgentTaskLandAdmissionTests
 {
     [Test]

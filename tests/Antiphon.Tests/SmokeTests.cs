@@ -21,6 +21,7 @@ namespace Antiphon.Tests;
 /// </summary>
 [NotInParallel(nameof(SmokeTests))]
 [Category("Integration")]
+[Category("Slow")]
 public class SmokeTests
 {
     private static readonly PostgreSqlContainer _container = new PostgreSqlBuilder()
