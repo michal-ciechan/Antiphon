@@ -51,8 +51,7 @@ public sealed class VerificationExecutionService(AppDbContext db, SourceLandingA
             var cwd = await git.CanonicalDirectoryAsync(spec.Cwd, ct);
             foreach (var snapshot in snapshots)
                 if (Directory.Exists(snapshot.WorktreePath)
-                    && string.Equals(await git.CanonicalDirectoryAsync(snapshot.WorktreePath!, ct), cwd,
-                        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                    && DelegationWorkspaceResolver.IsWithinRoot(cwd, await git.CanonicalDirectoryAsync(snapshot.WorktreePath!, ct)))
                 {
                     if (sourcedTask != snapshot.Id) throw new ConflictException("verification_snapshot_owned_by_another_task");
                 }

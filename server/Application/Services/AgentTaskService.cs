@@ -959,6 +959,8 @@ public sealed class AgentTaskService
                     throw new ConflictException("SourceLanding admission is unavailable.", "verification_custody_unsupported_backend");
                 if (task.AgentId is not null)
                     throw new ConflictException("SourceLanding cannot use a pinned process.", "verification_source_mode");
+                await _sourceLanding.RequireAuthorizedDirectoryAsync(task.WorkingDirectory, caller.WorkingDirectory,
+                    caller.CapabilityId is not null ? caller.ExtraAllowedRoots ?? [] : _settings.AllowedRoots, ct);
                 await _sourceLanding.RequireUniqueOpenAsync(sourceOperation, ct);
                 task.SourceLandingSha = (await _sourceLanding.RequireSourceAsync(task, ct)).VerifiedSourceSha;
                 await _sourceLanding.RequireSupportAsync(ct);

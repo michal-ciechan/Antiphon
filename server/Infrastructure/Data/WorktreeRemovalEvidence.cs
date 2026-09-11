@@ -83,10 +83,12 @@ public sealed class WorktreeRemovalEvidence(IServiceScopeFactory scopes) : IWork
             livePaths.AddRange(await db.AgentTasks.AsNoTracking().Where(t => t.Id != task.Id
                     && (t.Status == AgentTaskStatus.Queued || t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Blocked))
                 .Select(t => t.WorktreePath ?? t.WorkingDirectory).ToListAsync(ct));
+            livePaths.AddRange(await db.Agents.AsNoTracking().Where(a => a.Status == AgentStatus.Running || a.PoolIdleSince != null)
+                .Select(a => a.WorkingDirectory).ToListAsync(ct));
             foreach (var path in livePaths.Where(p => !string.IsNullOrWhiteSpace(p)))
             {
-                if (SamePath(path, creation.WorktreePath)) return null;
-                if (Directory.Exists(path) && SamePath(await git.CanonicalDirectoryAsync(path, ct), creation.WorktreePath)) return null;
+                if (DelegationWorkspaceResolver.IsWithinRoot(path, creation.WorktreePath)) return null;
+                if (Directory.Exists(path) && DelegationWorkspaceResolver.IsWithinRoot(await git.CanonicalDirectoryAsync(path, ct), creation.WorktreePath)) return null;
             }
             var root = Path.Combine(creation.CommonGitDirectory, "antiphon", "verification", operationId.ToString("N"), task.Id.ToString("N"));
             var canonicalRoot = await git.CanonicalDirectoryAsync(root, ct);
