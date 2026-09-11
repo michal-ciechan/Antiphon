@@ -152,14 +152,15 @@ public sealed class PostLandMutationAdmissionTests
     {
         await using var world = await PostLandMutationWorld.CreateAsync();
         await world.CancelOpenAsync();
-        await using var scope = world.Host.Services.CreateAsyncScope();
         var stranger = Path.Combine(Path.GetTempPath(), "c478-unauth-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(stranger);
         try
         {
-            var caller = new AgentTaskService.Caller(null, null, stranger);
-            await Should.ThrowAsync<ForbiddenException>(() => world.TaskService(scope.ServiceProvider)
-                .CreateAsync(world.Request(world.Companion), caller, default));
+            await using var scope = world.Host.Services.CreateAsyncScope();
+            var admission = scope.ServiceProvider.GetRequiredService<SourceLandingAdmission>();
+            await admission.RequireAuthorizedDirectoryAsync(world.Host.Fixture.Repository, world.Host.Fixture.Repository, [], default);
+            await Should.ThrowAsync<ForbiddenException>(() =>
+                admission.RequireAuthorizedDirectoryAsync(stranger, world.Host.Fixture.Repository, [], default));
             await using var observer = world.Host.CreateContext();
             (await observer.AgentTasks.CountAsync(t => t.SourceLandingOperationId == world.Operation
                 && t.Status != AgentTaskStatus.Canceled)).ShouldBe(0);
@@ -234,6 +235,7 @@ public sealed class PostLandMutationAdmissionTests
         await using (var db = world.Host.CreateContext())
         {
             var project = await db.Projects.SingleAsync();
+            (await db.AgentTasks.SingleAsync(t => t.Id == world.Host.Fixture.TaskId)).ProjectId = project.Id;
             for (var i = 0; i < 3; i++)
             {
                 var id = Guid.NewGuid();
@@ -247,8 +249,11 @@ public sealed class PostLandMutationAdmissionTests
             await db.SaveChangesAsync();
         }
         await using var scope = world.Host.Services.CreateAsyncScope();
+        await using var projects = world.Host.CreateContext();
+        var projectId = await projects.Projects.Select(p => p.Id).SingleAsync();
+        var caller = new AgentTaskService.Caller(null, null, world.Host.Fixture.Repository, ProjectId: projectId);
         await Should.ThrowAsync<ConcurrencyLimitException>(() => world.TaskService(scope.ServiceProvider)
-            .CreateAsync(world.Request(world.Companion), world.Caller, default));
+            .CreateAsync(world.Request(world.Companion), caller, default));
         await using var observer = world.Host.CreateContext();
         (await observer.AgentTasks.CountAsync(t => t.SourceLandingOperationId == world.Operation
             && t.Status != AgentTaskStatus.Canceled)).ShouldBe(0);
@@ -259,10 +264,13 @@ public sealed class PostLandMutationAdmissionTests
     {
         await using var world = await PostLandMutationWorld.CreateAsync();
         await world.CancelOpenAsync();
+        Guid projectId;
         Guid? otherProject;
         await using (var db = world.Host.CreateContext())
         {
             var project = await db.Projects.SingleAsync();
+            projectId = project.Id;
+            (await db.AgentTasks.SingleAsync(t => t.Id == world.Host.Fixture.TaskId)).ProjectId = project.Id;
             var occupant = Guid.NewGuid();
             db.AgentTasks.Add(new AgentTask
             {
@@ -277,8 +285,9 @@ public sealed class PostLandMutationAdmissionTests
         }
         await using var scope = world.Host.Services.CreateAsyncScope();
         var service = world.TaskService(scope.ServiceProvider);
+        var caller = new AgentTaskService.Caller(null, null, world.Host.Fixture.Repository, ProjectId: projectId);
         await Should.ThrowAsync<ConcurrencyLimitException>(() =>
-            service.CreateAsync(world.Request(world.Companion), world.Caller, default));
+            service.CreateAsync(world.Request(world.Companion), caller, default));
         var unrelated = await service.CreateAsync(new CreateAgentTaskRequest("unrelated mutation", Role: AgentTaskRole.Mutation),
             new AgentTaskService.Caller(null, null, world.Host.Fixture.Repository, ProjectId: otherProject), default);
         unrelated.Status.ShouldBe(AgentTaskStatus.Queued);
