@@ -366,6 +366,17 @@ public class PtyCustodyTests
     public async Task C478_G195_TrackingBeforeResume() => await Atomic_launch_resumes_only_after_tracking_callback();
 
     [Test]
+    public async Task C478_G196_OriginalJobQuery() => await C478_G198_NonemptyJob(0u, 0);
+
+    [Test]
+    public async Task C478_G199_NotificationOnly() =>
+        await Output_drain_cancellation_never_returns_an_exit_observation();
+
+    [Test]
+    public async Task C478_G200_ProducerSeal() =>
+        await Failed_tracked_attempt_cannot_spawn_again_on_the_same_runner();
+
+    [Test]
     public async Task C478_V14_RealDescendantContainer()
     {
         await C478_G198_NonemptyJob(0u, 0);

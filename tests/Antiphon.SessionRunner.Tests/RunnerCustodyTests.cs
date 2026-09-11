@@ -15,6 +15,84 @@ namespace Antiphon.SessionRunner.Tests;
 public class RunnerCustodyTests
 {
     [Test]
+    public async Task C478_V15_RestartReceiptMatrix()
+    {
+        await Real_host_receipt_is_accepted_before_read_and_survives_runtime_replacement();
+        await Actual_host_crash_before_proof_is_unknown_after_restart();
+        await Live_host_adoption_keeps_original_binding_and_rejects_changed_replay(false);
+        await Live_host_adoption_keeps_original_binding_and_rejects_changed_replay(true);
+    }
+
+    [Test]
+    public async Task C478_V16_UnsupportedAndObservationFailures()
+    {
+        await Durable_seal_beats_delayed_launch_and_fences_legacy_and_herdr_requests();
+        await C478_G208_CorruptStore();
+    }
+
+    [Test]
+    public async Task C478_G185_DuplicateLaunch() =>
+        await Live_host_adoption_keeps_original_binding_and_rejects_changed_replay(false);
+
+    [Test]
+    public async Task C478_G188_ActualBackend() =>
+        await Durable_seal_beats_delayed_launch_and_fences_legacy_and_herdr_requests();
+
+    [Test]
+    public async Task C478_G190_RequiredBinding() =>
+        await Durable_seal_beats_delayed_launch_and_fences_legacy_and_herdr_requests();
+
+    [Test]
+    public async Task C478_G205_HostShutdownOrder() =>
+        await Dead_root_live_orphan_retains_host_and_refuses_generation_reuse(0u, false);
+
+    [Test]
+    public async Task C478_G206_HostLoss() =>
+        await Actual_host_crash_before_proof_is_unknown_after_restart();
+
+    [Test]
+    public async Task C478_G207_MissingJob() =>
+        await Dead_root_live_orphan_retains_host_and_refuses_generation_reuse(0u, false);
+
+    [Test]
+    public async Task C478_G208_CorruptStore()
+    {
+        await using var fixture = new CustodyFixture();
+        var dto = await fixture.StartAsync();
+        fixture.OwnHost(dto);
+        var ledger = new RunnerCustodyLedger(fixture.CustodyRoot);
+        var tracking = ledger.Store.PathFor(fixture.Binding.ExecutionId, "tracking.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(tracking)!);
+        await File.WriteAllTextAsync(tracking, "{not-json");
+        await fixture.ReplaceRuntimeAsync();
+        await fixture.Runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
+        var status = await fixture.Runtime.ReadCustodyAsync(fixture.Binding, false, CancellationToken.None);
+        status.State.ShouldBe(VerificationCustodyState.Unknown);
+        status.Receipt.ShouldBeNull();
+        await fixture.Runtime.KillAsync(dto.SessionId, TimeSpan.FromSeconds(5), CancellationToken.None);
+    }
+
+    [Test]
+    public async Task C478_G209_StoreIdentity() =>
+        await Live_host_adoption_keeps_original_binding_and_rejects_changed_replay(false);
+
+    [Test]
+    public async Task C478_G210_HostIdentity() =>
+        await Actual_host_crash_before_proof_is_unknown_after_restart();
+
+    [Test]
+    public async Task C478_G212_PublicationAfterPersist() =>
+        await Real_host_receipt_is_accepted_before_read_and_survives_runtime_replacement();
+
+    [Test]
+    public async Task C478_G222_RunnerSealExecutionRace() =>
+        await Durable_seal_beats_delayed_launch_and_fences_legacy_and_herdr_requests();
+
+    [Test]
+    public async Task C478_G227_Timeouts() =>
+        await Dead_root_live_orphan_retains_host_and_refuses_generation_reuse(0u, false);
+
+    [Test]
     public async Task Real_host_receipt_is_accepted_before_read_and_survives_runtime_replacement()
     {
         await using var fixture = new CustodyFixture();

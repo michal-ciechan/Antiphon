@@ -21,6 +21,26 @@ public class HostCustodyTests
         await Legacy_peer_receives_no_custody_or_tracked_launch_messages(missingFeature: true);
 
     [Test]
+    public async Task C478_V15_ReceiptBeforeShutdown() =>
+        await Durable_receipt_precedes_reply_and_shutdown_requires_runner_acceptance();
+
+    [Test]
+    public async Task C478_G201_DrainBeforeReceipt() =>
+        await Output_write_failure_cannot_certify_drain();
+
+    [Test]
+    public async Task C478_G204_ReceiptBeforeAck() =>
+        await Durable_receipt_precedes_reply_and_shutdown_requires_runner_acceptance();
+
+    [Test]
+    public async Task C478_G211_TerminalConflict() =>
+        await Producer_store_failure_never_acknowledges_exited_and_can_retry_same_job();
+
+    [Test]
+    public async Task C478_G214_NeverStarted() =>
+        await A_native_start_failure_retains_unknown_and_cannot_relaunch();
+
+    [Test]
     public void C478_V14_HostIntermediaryBreakawayDeniedFallback()
     {
         var pid = Win32ProcessSpawner.StartDetachedWithFallback(

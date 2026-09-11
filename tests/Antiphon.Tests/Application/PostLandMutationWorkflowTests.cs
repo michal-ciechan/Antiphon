@@ -156,4 +156,83 @@ public sealed class PostLandMutationWorkflowTests
     {
         await C478_V08_FindingDispositionMatrix();
     }
+
+    [Test]
+    public async Task C478_G125_CompanionVisible()
+    {
+        await using var world = await CardWorkTransitionServiceTests.CardWorkTransitionServiceTestsHarness.CreateAsync();
+        var original = await world.SeedCardAsync(CardStatus.Done);
+        var companion = await world.SeedCardAsync(CardStatus.Backlog);
+        var task = await world.SeedTaskAsync(companion.Id, AgentTaskStatus.Queued, role: AgentTaskRole.Mutation);
+        (await world.ScanAsync()).ShouldBe(0);
+        (await world.ReadCardAsync(original.Id)).Status.ShouldBe(CardStatus.Done);
+        (await world.ReadCardAsync(companion.Id)).Status.ShouldBe(CardStatus.Backlog);
+        await using var db = world.CreateContext();
+        (await db.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(AgentTaskStatus.Queued);
+    }
+
+    [Test]
+    public async Task C478_G127_NoImplicitSpawn()
+    {
+        await using var world = await CardWorkTransitionServiceTests.CardWorkTransitionServiceTestsHarness.CreateAsync();
+        var companion = await world.SeedCardAsync(CardStatus.Backlog);
+        await world.SeedTaskAsync(companion.Id, AgentTaskStatus.Working, dispatchedAt: world.Now, role: AgentTaskRole.Mutation);
+        await world.ScanAsync();
+        (await world.SessionCountForAsync(companion.Id)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C478_G128_HumanMove()
+    {
+        await using var world = await CardWorkTransitionServiceTests.CardWorkTransitionServiceTestsHarness.CreateAsync();
+        var companion = await world.SeedCardAsync(CardStatus.Canceled);
+        await world.SeedTaskAsync(companion.Id, AgentTaskStatus.Succeeded,
+            dispatchedAt: world.Now.AddMinutes(-10), completedAt: world.Now, role: AgentTaskRole.Mutation);
+        await world.ScanAsync();
+        (await world.ReadCardAsync(companion.Id)).Status.ShouldBe(CardStatus.Canceled);
+    }
+
+    [Test]
+    public async Task C478_G130_DecisionRevision() => await C478_V08_FindingDispositionMatrix();
+
+    [Test]
+    public async Task C478_G131_NoAlertSink()
+    {
+        await using var world = await CardWorkTransitionServiceTests.CardWorkTransitionServiceTestsHarness.CreateAsync();
+        var original = await world.SeedCardAsync(CardStatus.Done);
+        await world.SeedCardAsync(CardStatus.NeedsDecision);
+        (await world.ScanAsync()).ShouldBe(0);
+        (await world.ReadCardAsync(original.Id)).Status.ShouldBe(CardStatus.Done);
+        (await world.SessionCountForAsync(original.Id)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C478_G132_HistoricalResult()
+    {
+        await using var world = await CardWorkTransitionServiceTests.CardWorkTransitionServiceTestsHarness.CreateAsync();
+        var verification = await world.SeedCardAsync(CardStatus.InProgress);
+        var task = await world.SeedTaskAsync(verification.Id, AgentTaskStatus.Succeeded,
+            dispatchedAt: world.Now.AddMinutes(-10), completedAt: world.Now, role: AgentTaskRole.Mutation);
+        await using (var db = world.CreateContext())
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            row.Result = "O/L found coverage survivor";
+            await db.SaveChangesAsync();
+        }
+        await world.ScanAsync();
+        await using var observer = world.CreateContext();
+        (await observer.AgentTasks.SingleAsync(t => t.Id == task.Id)).Result.ShouldBe("O/L found coverage survivor");
+        (await world.ReadCardAsync(verification.Id)).Status.ShouldNotBe(CardStatus.Done);
+    }
+
+    [Test]
+    public async Task C478_G133_NoTickSpend()
+    {
+        await using var world = await CardWorkTransitionServiceTests.CardWorkTransitionServiceTestsHarness.CreateAsync();
+        var companion = await world.SeedCardAsync(CardStatus.Backlog);
+        (await world.ScanAsync()).ShouldBe(0);
+        await using var db = world.CreateContext();
+        (await db.AgentTasks.CountAsync(t => t.CardId == companion.Id)).ShouldBe(0);
+        (await world.SessionCountForAsync(companion.Id)).ShouldBe(0);
+    }
 }
